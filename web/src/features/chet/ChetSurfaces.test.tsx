@@ -104,6 +104,7 @@ function request(overrides: Partial<ChetRequestItem>): ChetRequestItem {
     outcomeShownLater: false,
     notStartedReason: "",
     sourceMissing: false,
+    group: null,
     ...overrides,
   };
 }
@@ -113,6 +114,7 @@ function timeline(
   extra: Partial<ChetRequestActions> = {},
   liveTurns: VoiceConversationTurn[] = [],
   liveCallId: string | null = null,
+  onOpenGroupMessage?: (groupId: string, eventId: string) => void,
 ) {
   const actions: ChetRequestActions = {
     problems: new Map(),
@@ -138,11 +140,106 @@ function timeline(
         onLoadOlder={vi.fn()}
         isDark={false}
         actions={actions}
+        onOpenGroupMessage={onOpenGroupMessage}
       />,
     ),
   );
   return actions;
 }
+
+function groupRequest(
+  message: NonNullable<ChetRequestItem["group"]>["message"],
+  overrides: Partial<ChetRequestItem> = {},
+): ChetRequestItem {
+  return request({
+    id: "gi",
+    source: "group",
+    text: message?.status === "available" ? message.text : "",
+    group: {
+      input: {
+        group_id: "g-a",
+        group_generation: "gen-a",
+        event_id: "e-ask",
+        sender: { kind: "actor", actor_id: "peer-1" },
+        reply_to: null,
+      },
+      message,
+    },
+    ...overrides,
+  });
+}
+
+const groupMessage = (overrides: Record<string, unknown> = {}) => ({
+  status: "available" as const,
+  group_title: "Design",
+  sender_title: "Peer One",
+  text: "Can you check the release notes?",
+  sent_at: "2026-11-01T10:00:00.000000Z",
+  has_attachments: false,
+  truncated: false,
+  reply_event_id: null,
+  ...overrides,
+});
+
+it("quotes a Group message where it was sent and opens it, or its reply, there", () => {
+  const open = vi.fn();
+  timeline(
+    [
+      groupRequest(
+        groupMessage({ truncated: true, has_attachments: true, reply_event_id: "e-r" }),
+        {
+          outcome: {
+            generation: "g1",
+            turn_id: "t1",
+            status: "completed",
+            text: "Checked and replied.",
+            error: "",
+          },
+        },
+      ),
+    ],
+    {},
+    [],
+    null,
+    open,
+  );
+  const entry = host.querySelector('[data-chet-group-message="available"]')!;
+  expect(entry.textContent).toContain("Peer One");
+  expect(entry.textContent).toContain("Design");
+  expect(entry.textContent).toContain("Can you check the release notes?");
+  expect(entry.textContent).toContain("chet.groupMessageTruncated · chet.groupMessageAttachments");
+  expect(host.textContent).toContain("Checked and replied.");
+  expect(host.textContent).toContain("chet.repliedInGroup");
+  act(() => buttonByText("chet.openInGroup")!.click());
+  act(() => buttonByText("chet.openReply")!.click());
+  expect(open.mock.calls).toEqual([
+    ["g-a", "e-ask"],
+    ["g-a", "e-r"],
+  ]);
+});
+
+it("says when a finished Group request shows no reply, and offers no link to a gone message", () => {
+  timeline([groupRequest(groupMessage())], {}, [], null, vi.fn());
+  expect(host.textContent).toContain("chet.noGroupReply");
+  timeline([groupRequest(groupMessage(), { state: "working" })], {}, [], null, vi.fn());
+  expect(host.textContent).not.toContain("chet.noGroupReply");
+  timeline([groupRequest({ status: "unavailable" }, { state: "waiting" })], {}, [], null, vi.fn());
+  expect(host.querySelector('[data-chet-group-message="unavailable"]')?.textContent).toContain(
+    "chet.groupMessageUnavailable",
+  );
+  expect(host.textContent).toContain("peer-1");
+  expect(host.textContent).toContain("chet.state.waiting");
+  expect(buttonByText("chet.openInGroup")).toBeUndefined();
+});
+
+it("says a Group message whose sender or source became invalid was not handed to Chet", () => {
+  timeline([
+    groupRequest(groupMessage(), { state: "not_started", notStartedReason: "source_unavailable" }),
+  ]);
+  expect(host.textContent).toContain("chet.state.notStartedSourceUnavailable");
+  expect(buttonByText("chet.sendAgain")).toBeUndefined();
+  expect(host.textContent).not.toContain("chet.noGroupReply");
+});
 
 it("greets on first open", () => {
   timeline([]);

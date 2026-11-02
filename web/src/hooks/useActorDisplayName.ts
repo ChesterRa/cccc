@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { Actor } from "../types";
+import { CHET_NAME, CHET_PRINCIPAL } from "../utils/chetIdentity";
 
 /**
  * Creates a lookup map from actor ID to display name (title or id).
@@ -20,12 +21,14 @@ export function useActorDisplayNameMap(actors: Actor[]): Map<string, string> {
 
 /**
  * Get display name for a recipient token.
- * Special tokens (@all, @foreman, @peers, user) are returned as-is.
+ * Special tokens (@all, @foreman, @peers, user) are returned as-is; Chet's stored
+ * identity reads as its name.
  */
 export function getRecipientDisplayName(
   token: string,
   displayNameMap: Map<string, string>,
 ): string {
+  if (token === CHET_PRINCIPAL) return CHET_NAME;
   if (token.startsWith("@") || token === "user") {
     return token;
   }

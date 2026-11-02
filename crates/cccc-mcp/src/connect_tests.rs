@@ -245,5 +245,27 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
             .len(),
         2
     );
+    // An absolute path names the same file inside the sender's scope; another
+    // Group's scope stays out of reach.
+    std::fs::write(worker_root.join("absolute.txt"), "absolute payload").expect("file");
+    let absolute = call(
+        "cccc_file_send",
+        json!({"path":worker_root.join("absolute.txt"),"dst_instance_id":remote.peer_id,"dst_group_id":group.group_id,"idempotency_key":"absolute-file","insight":"The remote task needs this attachment."}),
+    )
+    .await
+    .expect("absolute file send");
+    assert_eq!(
+        absolute["structuredContent"]["result"]["source_event"]["data"]["attachments"][0]["bytes"],
+        16
+    );
+    assert!(
+        call(
+            "cccc_file_send",
+            json!({"path":root.join("note.txt"),"dst_instance_id":remote.peer_id,"dst_group_id":group.group_id,"idempotency_key":"outside-file","insight":"The remote task needs this attachment."}),
+        )
+        .await
+        .is_err(),
+        "another Group's scope must not be readable"
+    );
     server.abort();
 }

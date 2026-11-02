@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   ping: vi.fn(),
   session: vi.fn(),
   setAccess: vi.fn(),
+  setAdmin: vi.fn(),
   entry: vi.fn(() => "/ui/assets/loaded.js"),
 }));
 vi.mock("../services/api", () => ({ fetchPing: mocks.ping, fetchWebAccessSession: mocks.session }));
@@ -17,7 +18,11 @@ vi.mock("../utils/runtimeBuildInfo", async (importOriginal) => ({
 }));
 vi.mock("../stores", () => ({
   useUIStore: (select: (value: unknown) => unknown) =>
-    select({ canAccessGlobalSettings: null, setCanAccessGlobalSettings: mocks.setAccess }),
+    select({
+      canAccessGlobalSettings: null,
+      setCanAccessGlobalSettings: mocks.setAccess,
+      setIsWebAdmin: mocks.setAdmin,
+    }),
   useGroupStore: { getState: () => ({ runtimeDetectionStatus: "loaded" }) },
   useObservabilityStore: { getState: () => ({ setRuntimeVisibilityFromSession: () => {} }) },
 }));

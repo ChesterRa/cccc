@@ -26,6 +26,7 @@ export function chetConversationStub(overrides: Partial<ChetConversation> = {}):
     clearComposerProblem: vi.fn(),
     duplicateRisk: false,
     working: false,
+    unread: false,
     ...overrides,
   };
 }

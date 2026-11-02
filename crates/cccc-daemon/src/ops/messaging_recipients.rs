@@ -12,6 +12,16 @@ pub(super) fn normalize_chat_data(
     data: &mut Map<String, Value>,
     allow_sender_only_audience: bool,
 ) -> Result<(), OpError> {
+    normalize_chat_data_for_service_reply(group, by, data, allow_sender_only_audience, false)
+}
+
+pub(super) fn normalize_chat_data_for_service_reply(
+    group: &GroupDoc,
+    by: &str,
+    data: &mut Map<String, Value>,
+    allow_sender_only_audience: bool,
+    service_reply: bool,
+) -> Result<(), OpError> {
     let text = data
         .get("text")
         .and_then(Value::as_str)
@@ -28,7 +38,13 @@ pub(super) fn normalize_chat_data(
         ));
     }
 
-    normalize_chat_preflight(group, by, data, allow_sender_only_audience)
+    normalize_chat_preflight_for_service_reply(
+        group,
+        by,
+        data,
+        allow_sender_only_audience,
+        service_reply,
+    )
 }
 
 pub(super) fn normalize_chat_preflight(
@@ -37,6 +53,17 @@ pub(super) fn normalize_chat_preflight(
     data: &mut Map<String, Value>,
     allow_sender_only_audience: bool,
 ) -> Result<(), OpError> {
+    normalize_chat_preflight_for_service_reply(group, by, data, allow_sender_only_audience, false)
+}
+
+pub(super) fn normalize_chat_preflight_for_service_reply(
+    group: &GroupDoc,
+    by: &str,
+    data: &mut Map<String, Value>,
+    allow_sender_only_audience: bool,
+    service_reply: bool,
+) -> Result<(), OpError> {
+    let web_admission = data.remove(actors::CHET_WEB_ADMISSION_ARG);
     let message_mode = normalize_chat_contract_fields(data)?;
     validate_destination_audience(data)?;
     let raw = data
@@ -51,14 +78,83 @@ pub(super) fn normalize_chat_preflight(
         })
         .unwrap_or_default();
     let raw = request_reply::normalize_targets(group, &message_mode, raw)?;
-    let mut recipients = actors::resolve_recipients(group, &raw)
-        .map_err(|error| OpError::new("invalid_recipient", error.to_string()))?;
+    if raw.iter().any(|token| {
+        token
+            .trim()
+            .trim_start_matches('@')
+            .eq_ignore_ascii_case(actors::CHET_SERVICE_PRINCIPAL)
+    }) {
+        return Err(OpError::new(
+            "invalid_recipient",
+            "Use @chet for Chet, or the member's ID if a title matches the service identity",
+        ));
+    }
+    let mut service_selectors = 0;
+    for token in &raw {
+        if actors::is_chet_selector(group, token)
+            .map_err(|error| OpError::new("invalid_recipient", error.to_string()))?
+        {
+            service_selectors += 1;
+        }
+    }
+    let service_target = service_reply || service_selectors > 0;
+    let mut recipients = if service_target {
+        if web_admission.is_some_and(|value| value != Value::Bool(true)) {
+            return Err(OpError::new(
+                "permission_denied",
+                "Only an administrator can address Chet from a Group",
+            ));
+        }
+        if service_reply && !raw.is_empty() {
+            return Err(OpError::new(
+                "invalid_recipient",
+                "service reply must use its default recipient",
+            ));
+        }
+        if raw.iter().filter(|token| !token.trim().is_empty()).count() != service_selectors {
+            return Err(OpError::new(
+                "mixed_recipient_kinds",
+                "Chet must be addressed separately from users and Group members",
+            ));
+        }
+        if data.get("transport").and_then(Value::as_str) == Some("im") {
+            return Err(OpError::new(
+                "chet_im_unsupported",
+                "Chet is not available through IM; use the Chet panel",
+            ));
+        }
+        if by.contains("::") || by.starts_with("connect:") {
+            return Err(OpError::new(
+                "chet_cross_group_unsupported",
+                "Address Chet from the current Group, not through a cross-group route",
+            ));
+        }
+        vec![actors::CHET_SERVICE_PRINCIPAL.into()]
+    } else {
+        actors::resolve_recipients(group, &raw)
+            .map_err(|error| OpError::new("invalid_recipient", error.to_string()))?
+    };
     if recipients.is_empty() && raw.is_empty() {
         recipients.push(default_recipient(group).into());
     }
-    validate_message_audience(&recipients, &message_mode)?;
-    if !allow_sender_only_audience {
-        reject_sender_only_audience(group, by, &recipients)?;
+    if service_target {
+        if message_mode == "mail" {
+            return Err(OpError::new(
+                "chet_mail_unsupported",
+                "Chet does not support Mail; use Send",
+            ));
+        }
+        if by == actors::CHET_SERVICE_PRINCIPAL {
+            return Err(OpError::new(
+                "invalid_recipient",
+                "Chet cannot send to itself",
+            ));
+        }
+    } else {
+        validate_message_audience(&recipients, &message_mode)?;
+        if !allow_sender_only_audience {
+            reject_sender_only_audience(group, by, &recipients)?;
+        }
     }
     data.insert("to".into(), json!(recipients));
     normalize_peer_insight(group, by, data)?;
@@ -327,6 +423,7 @@ fn peer_facing(group: &GroupDoc, by: &str, data: &Map<String, Value>) -> bool {
         .filter_map(Value::as_str);
     recipients.into_iter().any(|recipient| match recipient {
         "user" | "@user" => false,
+        actors::CHET_SERVICE_PRINCIPAL => by != "user" && by != actors::CHET_SERVICE_PRINCIPAL,
         "@all" | "@peers" => group
             .actors
             .iter()

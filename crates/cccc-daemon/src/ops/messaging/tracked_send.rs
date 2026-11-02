@@ -8,6 +8,7 @@ use crate::dispatch::{
 };
 
 pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    super::reject_chet_provenance(&request.args)?;
     let group_id = required_arg(request, "group_id")?.trim().to_owned();
     let by = first_non_blank_arg(request, &["by"]).unwrap_or_else(|| "user".into());
     let text = string_arg(request, "text")
@@ -53,6 +54,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     );
     let request = &normalized_request;
     let group = super::load(home, request)?;
+    let message_by = super::effective_message_author(home, request, &by)?;
     let key =
         first_non_blank_arg(request, &["idempotency_key", "client_request_id"]).unwrap_or_default();
     let client_id = if key.is_empty() {
@@ -65,7 +67,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             home,
             &group_id,
             "chat.message",
-            &by,
+            &message_by,
             &Map::from_iter([("client_id".into(), json!(client_id))]),
         )
     {
@@ -81,7 +83,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     super::message_validation::normalize(home, &group, &by, &mut data)?;
-    super::super::messaging_recipients::normalize_chat_data(&group, &by, &mut data, false)?;
+    super::super::messaging_recipients::normalize_chat_data(&group, &message_by, &mut data, false)?;
     let task_assignee = assignee(request);
     authorize_task_create(&group, &by, &task_assignee)?;
 
@@ -266,6 +268,7 @@ fn message_request(request: &DaemonRequest, client_id: &str) -> DaemonRequest {
         "require_peer_insight",
         "suggested_user_message",
         cccc_core::voice_notifications::ORIGIN_ARG,
+        cccc_core::actors::CHET_WEB_ADMISSION_ARG,
     ] {
         if let Some(value) = request.args.get(key) {
             args.insert(key.into(), value.clone());

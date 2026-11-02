@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useGroupStore } from "../../stores";
+import { useGroupStore, useUIStore } from "../../stores";
 import type { ChetGroupContext } from "../../services/api/chet";
 import { useChetConversation } from "../chet/useChetConversation";
 import { useCodexVoiceSessionController } from "./useCodexVoiceSessionController";
@@ -27,9 +27,13 @@ export function useCodexVoiceShell(enabled: boolean) {
       groupId;
     return { group_id: groupId, group_title: title, scope_key: doc?.active_scope_key || null };
   }, [groupDoc, groups, selectedGroupId]);
+  // Only a confirmed administrator's page reads Chet's history in the background; any other
+  // page would be refused each time.
+  const isWebAdmin = useUIStore((state) => state.isWebAdmin);
   const chet = useChetConversation({
     enabled,
     open: detailsOpen,
+    followClosed: isWebAdmin === true,
     currentContext,
     // The first send can start the shared Analyst; read it so its status shows.
     onRegistered: () => void controller.refresh(false),

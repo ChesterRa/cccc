@@ -62,6 +62,8 @@ import {
 import { ComposerRecipientsRow } from "./ComposerRecipientsRow";
 import { useComposerTextareaAutoResize } from "./useComposerTextareaAutoResize";
 import { useShortTouchViewport } from "../../hooks/useShortTouchViewport";
+import { CHET_SELECTOR } from "../../utils/chetIdentity";
+import { messageModeForRecipients } from "../../stores/composerMessageMode";
 import {
   buildComposerHistoryEntries,
   canStartComposerHistory,
@@ -224,6 +226,7 @@ export function ChatComposer({
   // The draft text is owned here, not by ChatTab: only the composer needs a
   // re-render per keystroke.
   const composerText = useComposerStore((s) => s.composerText);
+  const isWebAdmin = useUIStore((s) => s.isWebAdmin);
   const composerHistoryRef = useRef<ComposerHistorySession | null>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [composerFocused, setComposerFocused] = useState(false);
@@ -854,13 +857,16 @@ export function ChatComposer({
     { key: "request_reply", label: t("modeSendReply"), description: t("modeSendReplyDesc") },
     { key: "mail", label: t("modeMail"), description: t("modeMailDesc") },
   ];
-  const modeOptions = replyTarget
-    ? allModeOptions.filter((option) => option.key !== "request_reply")
-    : allModeOptions;
+  const modeOptions = allModeOptions.filter(
+    (option) =>
+      !(replyTarget && option.key === "request_reply") &&
+      !(toTokens.includes(CHET_SELECTOR) && option.key === "mail"),
+  );
 
-  const effectiveMessageMode: ComposerMessageMode = replyTarget
-    ? normalizeReplyMessageMode(messageMode)
-    : messageMode;
+  const effectiveMessageMode: ComposerMessageMode = messageModeForRecipients(
+    replyTarget ? normalizeReplyMessageMode(messageMode) : messageMode,
+    toTokens,
+  );
   const requestReplyRecipientsReady = hasConcreteReplyRecipients(toTokens);
   const canSend = getComposerCanSend({
     composerText,
@@ -1215,6 +1221,7 @@ export function ChatComposer({
               selectedGroupId={selectedGroupId}
               busy={busy}
               actors={actors}
+              allowChet={isWebAdmin === true && (!destGroupId || destGroupId === selectedGroupId)}
               selectedGroupActorsHydrating={selectedGroupActorsHydrating}
               toTokens={toTokens}
               onToggleRecipient={onToggleRecipient}

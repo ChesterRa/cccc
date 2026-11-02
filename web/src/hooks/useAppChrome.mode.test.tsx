@@ -4,11 +4,20 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { useAppChrome } from "./useAppChrome";
 
-const mocks = vi.hoisted(() => ({ ping: vi.fn(), session: vi.fn(), setAccess: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  ping: vi.fn(),
+  session: vi.fn(),
+  setAccess: vi.fn(),
+  setAdmin: vi.fn(),
+}));
 vi.mock("../services/api", () => ({ fetchPing: mocks.ping, fetchWebAccessSession: mocks.session }));
 vi.mock("../stores", () => ({
   useUIStore: (select: (value: unknown) => unknown) =>
-    select({ canAccessGlobalSettings: null, setCanAccessGlobalSettings: mocks.setAccess }),
+    select({
+      canAccessGlobalSettings: null,
+      setCanAccessGlobalSettings: mocks.setAccess,
+      setIsWebAdmin: mocks.setAdmin,
+    }),
   useGroupStore: { getState: () => ({ runtimeDetectionStatus: "loaded" }) },
   useObservabilityStore: { getState: () => ({ setRuntimeVisibilityFromSession: () => {} }) },
 }));
@@ -17,6 +26,56 @@ afterEach(() => {
   vi.useRealTimers();
   window.localStorage.clear();
   vi.restoreAllMocks();
+});
+
+it("tracks the authenticated administrator separately from bootstrap settings access", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.setAccess.mockClear();
+  mocks.setAdmin.mockClear();
+  mocks.ping.mockResolvedValue({ ok: true, result: { web: { read_only: false } } });
+  mocks.session.mockResolvedValue({
+    ok: true,
+    result: { web_access_session: { is_admin: false, can_access_global_settings: true } },
+  });
+  const noop = () => {};
+  function Harness() {
+    useAppChrome({
+      parseUrlDeepLink: noop,
+      refreshGroups: noop,
+      setWebReadOnly: noop,
+      setSmallScreen: noop,
+      showError: noop,
+      setDirSuggestions: noop,
+      groupEditOpen: false,
+      addActorOpen: false,
+      editingActor: null,
+    });
+    return null;
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Harness />));
+    expect(mocks.setAccess).toHaveBeenLastCalledWith(true);
+    expect(mocks.setAdmin).toHaveBeenLastCalledWith(false);
+    mocks.session.mockResolvedValue({
+      ok: true,
+      result: { web_access_session: { is_admin: true, can_access_global_settings: true } },
+    });
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(mocks.setAdmin).toHaveBeenLastCalledWith(true);
+    const successfulProbes = mocks.setAdmin.mock.calls.length;
+    mocks.session.mockRejectedValue(new Error("offline"));
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(mocks.setAdmin).toHaveBeenCalledTimes(successfulProbes);
+    mocks.session.mockResolvedValue({ ok: false, error: { code: "unauthorized" } });
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(mocks.setAdmin).toHaveBeenLastCalledWith(false);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
 });
 
 it("does not expose the mode until ping confirms it, and retries a failed probe", async () => {

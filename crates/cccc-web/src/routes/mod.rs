@@ -37,7 +37,7 @@ mod nomcp_resources;
 mod nomcp_send;
 mod presentation;
 mod presentation_browser;
-mod process_recovery;
+pub(crate) mod process_recovery;
 mod realtime;
 mod remote_access;
 mod remote_access_projection;

@@ -9,6 +9,7 @@ use crate::auth::Principal;
 
 mod oversized_text;
 pub(super) mod upload_fields;
+pub(super) mod web_authority;
 
 const MAX_LOCAL_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 const MAX_MESSAGE_JSON_BYTES: usize = 12 * 1024 * 1024;
@@ -84,18 +85,21 @@ fn upload_routes() -> Router<AppState> {
 
 async fn send(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
+    web_authority::prepare_user_message(&mut args, principal.is_admin)?;
     oversized_text::dispatch(&state, group_id, "send", &mut args).await
 }
 async fn tracked_send(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    daemon_body(&state, "tracked_send", group_id, body).await
+    daemon_body(&state, &principal, "tracked_send", group_id, body).await
 }
 async fn delegate_contact(
     State(state): State<AppState>,
@@ -105,21 +109,24 @@ async fn delegate_contact(
 ) -> ApiResult {
     let destination = super::messaging_cross_group::required(&body, "dst_group_id")?;
     super::messaging_cross_group::ensure_access(&principal, &destination)?;
-    daemon_body(&state, "relay_user_delegation", group_id, body).await
+    daemon_body(&state, &principal, "relay_user_delegation", group_id, body).await
 }
 async fn slash_skill_dispatch(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    daemon_body(&state, "slash_skill_dispatch", group_id, body).await
+    daemon_body(&state, &principal, "slash_skill_dispatch", group_id, body).await
 }
 async fn reply(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
+    web_authority::prepare_user_message(&mut args, principal.is_admin)?;
     args.remove("quote_text");
     oversized_text::dispatch(&state, group_id, "reply", &mut args).await
 }
@@ -152,6 +159,7 @@ async fn reply_request_cancel(
 }
 async fn reply_request_answer(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path((group_id, source_event_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> ApiResult {
@@ -167,6 +175,10 @@ async fn reply_request_answer(
     args.insert("group_id".into(), Value::String(group_id));
     args.insert("source_event_id".into(), Value::String(source_event_id));
     args.insert("by".into(), Value::String("user".into()));
+    args.insert(
+        cccc_core::actors::CHET_WEB_ADMISSION_ARG.into(),
+        Value::Bool(principal.is_admin),
+    );
     call(&state, "reply_request_answer", args).await
 }
 #[derive(serde::Deserialize)]
@@ -302,6 +314,7 @@ async fn upload(
             upload_fields::insert(&mut args, name, value)?;
         }
     }
+    web_authority::prepare_user_message(&mut args, principal.is_admin)?;
     if is_reply {
         let message_mode = args
             .get("message_mode")
@@ -365,8 +378,16 @@ async fn upload(
     call(state, operation, args).await
 }
 
-async fn daemon_body(state: &AppState, op: &str, group_id: String, body: Value) -> ApiResult {
-    daemon_args(state, op, group_id, body_object(body)?).await
+async fn daemon_body(
+    state: &AppState,
+    principal: &Principal,
+    op: &str,
+    group_id: String,
+    body: Value,
+) -> ApiResult {
+    let mut args = body_object(body)?;
+    web_authority::prepare_user_message(&mut args, principal.is_admin)?;
+    daemon_args(state, op, group_id, args).await
 }
 
 async fn daemon_args(

@@ -1,5 +1,6 @@
 //! Durable facts for the global assistant. A registered input is not proof
 //! that a Runtime received or completed it.
+use cccc_contracts::chet::{GroupInput, GroupInputSender};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -94,6 +95,20 @@ pub enum Record {
         created_at: String,
         delegation: VoiceDelegation,
     },
+    /// A source reference, not a copy of the message or proof that a Runtime
+    /// has received it.
+    GroupInput {
+        id: Uuid,
+        created_at: String,
+        input: GroupInput,
+    },
+    /// The host may have submitted this Group input after this durable claim.
+    /// A restart must not automatically submit it a second time.
+    GroupDispatch {
+        id: Uuid,
+        created_at: String,
+        input_id: Uuid,
+    },
     Receipt {
         id: Uuid,
         created_at: String,
@@ -126,6 +141,7 @@ pub enum Record {
 pub enum StartFailure {
     AssistantUnavailable,
     Cancelled,
+    SourceUnavailable,
 }
 
 impl Record {
@@ -133,6 +149,8 @@ impl Record {
         match self {
             Self::Input { id, .. }
             | Self::VoiceDelegation { id, .. }
+            | Self::GroupInput { id, .. }
+            | Self::GroupDispatch { id, .. }
             | Self::Receipt { id, .. }
             | Self::Result { id, .. }
             | Self::NotStarted { id, .. }
@@ -388,6 +406,143 @@ impl Store {
         Ok(Registration::Inserted)
     }
 
+    /// Register a Group source at most once. The source fields are references
+    /// supplied by the owner; this store does not authorize or inspect the
+    /// Group ledger. The caller must validate them before admission.
+    ///
+    /// An `Existing` result is evidence of a prior record, not permission to
+    /// replay model work. A caller that lost confirmation must reconcile any
+    /// separate admission state before deciding what to do.
+    pub fn register_group_input(&self, input: GroupInput) -> Result<(Uuid, Registration), Error> {
+        self.register_group_input_with(input, |file, data| {
+            file.write_all(data)?;
+            file.sync_all()
+        })
+    }
+
+    /// Claim one Group input before attempting Runtime admission. An uncertain
+    /// append is reconciled by retrying this claim, never by resubmitting work.
+    pub fn claim_group_input(&self, input_id: Uuid) -> Result<Registration, Error> {
+        self.claim_group_input_with(input_id, |file, data| {
+            file.write_all(data)?;
+            file.sync_all()
+        })
+    }
+
+    fn claim_group_input_with(
+        &self,
+        input_id: Uuid,
+        write: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
+    ) -> Result<Registration, Error> {
+        if input_id.is_nil() {
+            return Err(Error::Invalid("input ID is required"));
+        }
+        let mut lock = self.writer()?;
+        self.initialize(&mut lock)?;
+        let id = Uuid::new_v4();
+        let mut found = false;
+        let mut claimed = false;
+        self.scan(|record| {
+            if record.id() == id {
+                return Err(Error::IdConflict);
+            }
+            match record {
+                Record::GroupInput { id, .. } if id == input_id => found = true,
+                Record::GroupDispatch {
+                    input_id: prior, ..
+                }
+                | Record::Receipt {
+                    input_id: prior, ..
+                }
+                | Record::NotStarted {
+                    input_id: prior, ..
+                } if prior == input_id => claimed = true,
+                Record::Result { input_ids, .. } if input_ids.contains(&input_id) => claimed = true,
+                _ => {}
+            }
+            Ok(())
+        })?;
+        if !found {
+            return Err(Error::UnknownInput);
+        }
+        if claimed {
+            return self.confirm_existing();
+        }
+        self.append_with(
+            &Record::GroupDispatch {
+                id,
+                created_at: cccc_contracts::utc_now(),
+                input_id,
+            },
+            write,
+        )?;
+        Ok(Registration::Inserted)
+    }
+
+    fn register_group_input_with(
+        &self,
+        input: GroupInput,
+        write: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
+    ) -> Result<(Uuid, Registration), Error> {
+        let valid = |value: &str| !value.is_empty() && value.trim() == value && value.len() <= 4096;
+        if !valid(&input.group_id)
+            || !valid(&input.group_generation)
+            || input.group_generation == "legacy:"
+            || !valid(&input.event_id)
+            || input
+                .reply_to
+                .as_ref()
+                .is_some_and(|parent| !valid(parent) || parent == &input.event_id)
+            || match &input.sender {
+                GroupInputSender::User => false,
+                GroupInputSender::Actor {
+                    actor_id,
+                    actor_generation,
+                } => !valid(actor_id) || !valid(actor_generation) || actor_generation == "legacy:",
+            }
+        {
+            return Err(Error::Invalid("invalid Group input source"));
+        }
+        let mut lock = self.writer()?;
+        self.initialize(&mut lock)?;
+        let id = Uuid::new_v4();
+        let mut collision = false;
+        let mut existing = None;
+        self.scan(|record| {
+            collision |= record.id() == id;
+            if let Record::GroupInput {
+                id, input: prior, ..
+            } = record
+                && prior.group_id == input.group_id
+                && prior.group_generation == input.group_generation
+                && prior.event_id == input.event_id
+            {
+                if prior != input {
+                    return Err(Error::IdConflict);
+                }
+                if existing.replace(id).is_some() {
+                    return Err(Error::Corrupt);
+                }
+            }
+            Ok(())
+        })?;
+        if let Some(id) = existing {
+            return Ok((id, self.confirm_existing()?));
+        }
+        if collision {
+            return Err(Error::IdConflict);
+        }
+        self.append_with(
+            &Record::GroupInput {
+                id,
+                created_at: cccc_contracts::utc_now(),
+                input,
+            },
+            write,
+        )?;
+        Ok((id, Registration::Inserted))
+    }
+
     pub fn record_result(
         &self,
         id: Uuid,
@@ -430,6 +585,9 @@ impl Store {
                     found.insert(id);
                 }
                 Record::VoiceDelegation { id, .. } if inputs.contains(&id) => {
+                    found.insert(id);
+                }
+                Record::GroupInput { id, .. } if inputs.contains(&id) => {
                     found.insert(id);
                 }
                 Record::Result { input_ids, .. }
@@ -495,6 +653,7 @@ impl Store {
                 other if other.id() == id => return Err(Error::IdConflict),
                 Record::Input { id, .. } if id == input_id => found = true,
                 Record::VoiceDelegation { id, .. } if id == input_id => found = true,
+                Record::GroupInput { id, .. } if id == input_id => found = true,
                 Record::Receipt {
                     input_id: prior, ..
                 } if prior == input_id => {
@@ -536,6 +695,7 @@ impl Store {
         let mut lock = self.writer()?;
         self.initialize(&mut lock)?;
         let mut found = false;
+        let mut group_input = false;
         let mut existing = false;
         self.scan(|record| {
             match record {
@@ -554,6 +714,18 @@ impl Store {
                 other if other.id() == id => return Err(Error::IdConflict),
                 Record::Input { id, .. } if id == input_id => found = true,
                 Record::VoiceDelegation { id, .. } if id == input_id => found = true,
+                Record::GroupInput { id, .. } if id == input_id => {
+                    found = true;
+                    group_input = true;
+                }
+                Record::GroupDispatch {
+                    input_id: prior, ..
+                } if prior == input_id && reason == StartFailure::SourceUnavailable => {
+                    // Another owner may have claimed this input after a
+                    // revalidation snapshot. Only a pre-claim source failure
+                    // is known not to have reached the Runtime.
+                    return Err(Error::OutcomeConflict);
+                }
                 Record::NotStarted {
                     input_id: prior, ..
                 }
@@ -571,6 +743,9 @@ impl Store {
         })?;
         if !found {
             return Err(Error::UnknownInput);
+        }
+        if reason == StartFailure::SourceUnavailable && !group_input {
+            return Err(Error::Invalid("source failure requires a Group input"));
         }
         if existing {
             return self.confirm_existing();
@@ -749,6 +924,35 @@ impl Store {
         })
     }
 
+    /// Resolve Group inputs referenced by a page of facts with one history
+    /// scan. Other input kinds are intentionally omitted.
+    pub fn find_group_inputs(&self, ids: &HashSet<Uuid>) -> Result<Vec<Record>, Error> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some((_lock, mut file)) = self.reader()? else {
+            return Ok(Vec::new());
+        };
+        let end = complete_end(&mut file)?;
+        file.seek(SeekFrom::Start(HEADER.len() as u64))
+            .map_err(Error::Rejected)?;
+        let mut reader = BufReader::new(file.take(end - HEADER.len() as u64));
+        let mut seen = HashSet::new();
+        let mut records = Vec::new();
+        while let Some(line) = read_line(&mut reader)? {
+            let record: Record = serde_json::from_slice(&line).map_err(|_| Error::Corrupt)?;
+            if ids.contains(&record.id()) {
+                if !seen.insert(record.id()) {
+                    return Err(Error::Corrupt);
+                }
+                if matches!(record, Record::GroupInput { .. }) {
+                    records.push(record);
+                }
+            }
+        }
+        Ok(records)
+    }
+
     /// Reconcile an uncertain submission by its original ID without replaying it.
     pub fn find_input(&self, id: Uuid) -> Result<Option<Vec<Record>>, Error> {
         if id.is_nil() {
@@ -780,6 +984,14 @@ impl Store {
                     found = true;
                     true
                 }
+                Record::GroupInput { id: input, .. } if *input == id => {
+                    if found {
+                        return Err(Error::Corrupt);
+                    }
+                    found = true;
+                    true
+                }
+                Record::GroupDispatch { input_id, .. } => *input_id == id,
                 Record::Receipt { input_id, .. } => *input_id == id,
                 Record::NotStarted { input_id, .. } => *input_id == id,
                 Record::Result { input_ids, .. } => input_ids.contains(&id),
@@ -1096,6 +1308,353 @@ mod tests {
                 scope_key: None,
             }),
         }
+    }
+
+    fn group_input() -> GroupInput {
+        GroupInput {
+            group_id: "g_fixture".into(),
+            group_generation: "group-generation".into(),
+            event_id: "member-reply".into(),
+            reply_to: Some("chet-request".into()),
+            sender: GroupInputSender::Actor {
+                actor_id: "peer".into(),
+                actor_generation: "actor-generation".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn group_input_is_one_durable_input_per_group_generation_and_event() {
+        let (temp, store) = fixture();
+        let source = group_input();
+        let (id, registration) = store
+            .register_group_input(source.clone())
+            .expect("register");
+        assert!(!id.is_nil());
+        assert_eq!(registration, Registration::Inserted);
+        let reopened = Store::new(temp.path());
+        assert_eq!(
+            reopened
+                .register_group_input(source.clone())
+                .expect("retry"),
+            (id, Registration::Existing)
+        );
+        let mut conflicting = source.clone();
+        conflicting.sender = GroupInputSender::Actor {
+            actor_id: "peer".into(),
+            actor_generation: "replacement-actor".into(),
+        };
+        assert!(matches!(
+            reopened.register_group_input(conflicting),
+            Err(Error::IdConflict)
+        ));
+        let mut replacement = source;
+        replacement.group_generation = "replacement-group".into();
+        let (other, registration) = reopened
+            .register_group_input(replacement)
+            .expect("different Group generation");
+        assert_ne!(other, id);
+        assert_eq!(registration, Registration::Inserted);
+        assert_eq!(reopened.page(None, 20).expect("history").records.len(), 2);
+    }
+
+    #[test]
+    fn group_input_accepts_receipt_and_result_and_remains_reconcilable() {
+        let (_temp, store) = fixture();
+        let source = group_input();
+        let (id, _) = store.register_group_input(source.clone()).expect("input");
+        store
+            .record_receipt(
+                Uuid::new_v4(),
+                id,
+                Receipt {
+                    generation: "runtime".into(),
+                    turn_id: "turn".into(),
+                },
+            )
+            .expect("receipt");
+        store
+            .record_result(
+                Uuid::new_v4(),
+                vec![id],
+                Outcome {
+                    generation: "runtime".into(),
+                    turn_id: "turn".into(),
+                    status: "completed".into(),
+                    text: "handled".into(),
+                    error: String::new(),
+                },
+            )
+            .expect("result");
+        let facts = store.find_input(id).expect("lookup").expect("known input");
+        assert!(
+            matches!(facts.first(), Some(Record::GroupInput { input, .. }) if input == &source)
+        );
+        assert!(matches!(facts.last(), Some(Record::Result { .. })));
+        assert!(matches!(
+            store.record_not_started(Uuid::new_v4(), id, StartFailure::Cancelled),
+            Err(Error::OutcomeConflict)
+        ));
+    }
+
+    #[test]
+    fn source_unavailable_and_a_group_claim_cannot_both_be_recorded() {
+        let (temp, store) = fixture();
+        let text_input = Uuid::new_v4();
+        store
+            .register_input(text_input, request("hello"))
+            .expect("text input");
+        assert!(matches!(
+            store.record_not_started(Uuid::new_v4(), text_input, StartFailure::SourceUnavailable),
+            Err(Error::Invalid(_))
+        ));
+        let (claimed, _) = store.register_group_input(group_input()).expect("input");
+        assert_eq!(
+            store.claim_group_input(claimed).expect("claim"),
+            Registration::Inserted
+        );
+        assert!(matches!(
+            store.record_not_started(Uuid::new_v4(), claimed, StartFailure::SourceUnavailable),
+            Err(Error::OutcomeConflict)
+        ));
+        assert_eq!(
+            store
+                .record_not_started(Uuid::new_v4(), claimed, StartFailure::AssistantUnavailable)
+                .expect("known post-claim admission failure"),
+            Registration::Inserted
+        );
+        let mut stopped_source = group_input();
+        stopped_source.event_id = "stopped-before-claim".into();
+        let (stopped, _) = store.register_group_input(stopped_source).expect("input");
+        let failure_id = Uuid::new_v4();
+        assert_eq!(
+            store
+                .record_not_started(failure_id, stopped, StartFailure::SourceUnavailable)
+                .expect("source retired"),
+            Registration::Inserted
+        );
+        assert_eq!(
+            store
+                .claim_group_input(stopped)
+                .expect("claim after source failure"),
+            Registration::Existing
+        );
+        assert_eq!(
+            store
+                .record_not_started(failure_id, stopped, StartFailure::SourceUnavailable)
+                .expect("idempotent source failure"),
+            Registration::Existing
+        );
+        for index in 0..8 {
+            let mut source = group_input();
+            source.event_id = format!("event-{index}");
+            let (input, _) = store.register_group_input(source).expect("input");
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let claim_barrier = barrier.clone();
+            let claim_path = temp.path().to_owned();
+            let claim = std::thread::spawn(move || {
+                claim_barrier.wait();
+                Store::new(claim_path).claim_group_input(input)
+            });
+            barrier.wait();
+            let failure =
+                store.record_not_started(Uuid::new_v4(), input, StartFailure::SourceUnavailable);
+            let claim = claim.join().expect("claim thread");
+            assert!(
+                matches!(
+                    (claim, failure),
+                    (Ok(Registration::Inserted), Err(Error::OutcomeConflict))
+                        | (Ok(Registration::Existing), Ok(Registration::Inserted))
+                ),
+                "either the claim or the pre-claim failure wins, never both"
+            );
+            let facts = store.find_input(input).expect("history").expect("input");
+            let claims = facts
+                .iter()
+                .filter(|fact| matches!(fact, Record::GroupDispatch { .. }))
+                .count();
+            let failures = facts
+                .iter()
+                .filter(|fact| matches!(fact, Record::NotStarted { .. }))
+                .count();
+            assert_eq!(claims + failures, 1);
+        }
+    }
+
+    #[test]
+    fn group_input_complete_unknown_write_reconciles_as_existing() {
+        let (_temp, store) = fixture();
+        let source = group_input();
+        let failure = store.register_group_input_with(source.clone(), |file, bytes| {
+            file.write_all(bytes)?;
+            Err(io::Error::other("simulated lost confirmation"))
+        });
+        assert!(matches!(failure, Err(Error::Unknown(_))));
+        let (id, registration) = store.register_group_input(source).expect("reconcile");
+        assert_eq!(registration, Registration::Existing);
+        assert!(!id.is_nil());
+        assert_eq!(store.page(None, 20).expect("history").records.len(), 1);
+    }
+
+    #[test]
+    fn group_input_rejects_missing_or_ambiguous_source_identity() {
+        let (_temp, store) = fixture();
+        for source in [
+            GroupInput {
+                group_generation: "".into(),
+                ..group_input()
+            },
+            GroupInput {
+                sender: GroupInputSender::Actor {
+                    actor_id: "peer".into(),
+                    actor_generation: "legacy:".into(),
+                },
+                ..group_input()
+            },
+            GroupInput {
+                event_id: "chet-request".into(),
+                ..group_input()
+            },
+            GroupInput {
+                sender: GroupInputSender::Actor {
+                    actor_id: " peer ".into(),
+                    actor_generation: "actor-generation".into(),
+                },
+                ..group_input()
+            },
+        ] {
+            assert!(matches!(
+                store.register_group_input(source),
+                Err(Error::Invalid(_))
+            ));
+        }
+        assert!(
+            store
+                .page(None, 20)
+                .expect("empty history")
+                .records
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn group_input_accepts_user_and_proactive_member_sources() {
+        let (_temp, store) = fixture();
+        let member = GroupInput {
+            reply_to: None,
+            ..group_input()
+        };
+        let (member_id, status) = store.register_group_input(member).expect("member input");
+        assert_eq!(status, Registration::Inserted);
+        let user = GroupInput {
+            event_id: "user-message".into(),
+            sender: GroupInputSender::User,
+            reply_to: None,
+            ..group_input()
+        };
+        let (user_id, status) = store.register_group_input(user).expect("user input");
+        assert_eq!(status, Registration::Inserted);
+        assert_ne!(member_id, user_id);
+        assert_eq!(store.page(None, 20).expect("history").records.len(), 2);
+    }
+
+    #[test]
+    fn group_input_accepts_legacy_generations_with_creation_times() {
+        let (_temp, store) = fixture();
+        let source = GroupInput {
+            group_generation: "legacy:2026-10-01T00:00:00Z".into(),
+            sender: GroupInputSender::Actor {
+                actor_id: "peer".into(),
+                actor_generation: "legacy:2026-10-02T00:00:00Z".into(),
+            },
+            ..group_input()
+        };
+        let (_, status) = store.register_group_input(source).expect("legacy source");
+        assert_eq!(status, Registration::Inserted);
+    }
+
+    #[test]
+    fn concurrent_group_input_registration_returns_one_id() {
+        let (temp, store) = fixture();
+        let home = temp.path().to_path_buf();
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                let home = home.clone();
+                std::thread::spawn(move || Store::new(home).register_group_input(group_input()))
+            })
+            .collect();
+        let results: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("worker").expect("registration"))
+            .collect();
+        assert!(results.iter().all(|(id, _)| *id == results[0].0));
+        assert_eq!(
+            results
+                .iter()
+                .filter(|(_, status)| *status == Registration::Inserted)
+                .count(),
+            1
+        );
+        assert_eq!(store.page(None, 20).expect("history").records.len(), 1);
+    }
+
+    #[test]
+    fn group_dispatch_claim_is_durable_and_single_owner() {
+        let dir = tempfile::tempdir().expect("home");
+        let store = Store::new(dir.path());
+        let (input_id, _) = store.register_group_input(group_input()).expect("input");
+        let threads = (0..8)
+            .map(|_| {
+                let home = dir.path().to_path_buf();
+                std::thread::spawn(move || {
+                    Store::new(home).claim_group_input(input_id).expect("claim")
+                })
+            })
+            .collect::<Vec<_>>();
+        let results = threads
+            .into_iter()
+            .map(|thread| thread.join().expect("thread"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            results
+                .iter()
+                .filter(|value| **value == Registration::Inserted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            Store::new(dir.path())
+                .claim_group_input(input_id)
+                .expect("restart"),
+            Registration::Existing
+        );
+        let facts = store.find_input(input_id).expect("find").expect("input");
+        assert_eq!(
+            facts
+                .iter()
+                .filter(|item| matches!(item, Record::GroupDispatch { .. }))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            store.claim_group_input(Uuid::new_v4()),
+            Err(Error::UnknownInput)
+        ));
+    }
+
+    #[test]
+    fn uncertain_group_dispatch_claim_is_reconciled_without_replay() {
+        let (_temp, store) = fixture();
+        let (input_id, _) = store.register_group_input(group_input()).expect("input");
+        let failure = store.claim_group_input_with(input_id, |file, bytes| {
+            file.write_all(bytes)?;
+            Err(io::Error::other("simulated lost confirmation"))
+        });
+        assert!(matches!(failure, Err(Error::Unknown(_))));
+        assert_eq!(
+            store.claim_group_input(input_id).expect("reconcile"),
+            Registration::Existing
+        );
     }
 
     #[test]

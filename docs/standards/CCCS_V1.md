@@ -139,11 +139,43 @@ When a send request omits recipients or supplies an empty list, the daemon MUST 
 - `@peers`: all visible peer actors
 - `@foreman`: foreman actor(s)
 - `@user`: the human user (UI recipient)
+- `@chet`: the instance-wide Chet service, subject to the ambiguity rule below
 
 Internal assistant Actors are not members of `@all`, `@peers`, or `@foreman`.
-The global Voice Secretary and Voice Analyst are services, not chat recipients or
-Group Actors. Their dedicated operations define their inputs; confirmed Secretary
-handoffs use `by="user"` and retain the original Group/scope through normal peer delivery.
+The global Voice Secretary remains a service, not a chat recipient or Group
+Actor; confirmed Secretary handoffs use `by="user"` and retain the original
+Group/scope through normal peer delivery. Chet, the global Voice Analyst, is a
+service principal, not a Group Actor or a member of those broadcast selectors.
+An explicitly addressed `@chet` is stored as `svc:chet`. If a visible Group
+Actor's ID or title equals `chet`, ignoring ASCII case, the selector MUST fail
+as ambiguous rather than silently redirect that Actor's existing address. A
+bare Actor ID retains its existing meaning. A stored service identity is not,
+by itself, proof of a service-authored message under local-trust IPC (§5.4).
+
+For a local Chet-authored chat message, the host writes
+`data._cccc_chet_group_generation` with the current Group generation. This
+field is read-only to clients: message and raw-event write operations MUST
+reject a caller-supplied value. A local service identity is recognized only
+when `by` is `svc:chet`, the host field matches the current Group generation,
+and the event is present in that Group's ledger. Copies and imports retain
+their old field value, which does not attest the new Group's service identity.
+
+When a recipient replies to a host-verified Chet message without an explicit
+recipient, the daemon routes to the service identity as an internal target; it
+MUST NOT resolve the service principal as an Actor title. An explicit different
+recipient retains its ordinary routing. If an event claims that service author
+but cannot be verified in the current Group, the default reply MUST fail with
+an actionable error; it MUST NOT fall back to resolving the author as a name.
+Cross-instance service addressing is not implied by the local selector.
+
+Before Chet sends a reply that addresses the source Actor, the daemon MUST
+verify that the source event belongs to this Group generation and that the
+current Actor is the registration that sent it. If either cannot be
+established, the reply MUST be refused before waking a recipient or appending
+the reply, with guidance to ask the user to relay it. A previously accepted
+idempotent retry still returns its existing event. A reply explicitly addressed
+only to other recipients retains ordinary routing. Older Group ledgers without
+the Actor registration fact may not establish the source identity.
 
 Selector membership describes the logical audience, not permission to start a runtime.
 A user broadcast to `@all` or `@peers` MUST NOT re-enable disabled actors. Explicitly
@@ -160,11 +192,11 @@ Every new `chat.message` MUST address exactly one audience domain:
 - **Human**: the sole normalized recipient is `user` / `@user`.
 - **Agents**: every recipient is an actor ID or an actor selector
   (`@all`, `@peers`, or `@foreman`). Multiple agent recipients are allowed.
+- **Chet**: the sole normalized recipient is `svc:chet`.
 
-A recipient list that mixes the human user with any actor ID or actor selector
-MUST be rejected before the event is appended. Callers that need distinct human
-and agent actions MUST send separate messages so delivery and reply obligations
-remain independently attributable.
+A recipient list that mixes these domains MUST be rejected before the event is
+appended. Callers that need distinct actions MUST send separate messages so
+delivery and reply obligations remain independently attributable.
 
 **Multi-user note**
 - CCCS v1 assumes a single human principal per group, identified as `user`.
@@ -245,8 +277,8 @@ data: {
 - `message_mode="mail"` persists the message in the recipient Inbox without
   immediately invoking, waking, steering, or writing to the recipient runtime.
 - `message_mode="mail"` is valid only for the agent audience domain. The human
-  user has no Mail Inbox in CCCS v1; callers MUST use `send` or `request_reply`
-  when addressing `user` / `@user`.
+  user and Chet do not have Mail Inboxes in CCCS v1; callers MUST use `send` or
+  `request_reply` when addressing either. A reply to Chet MUST use `send`.
 - A message with `reply_to` fulfills the addressed reply obligation regardless
   of whether that reply uses `message_mode="send"` or `message_mode="mail"`.
   Reply operations MUST NOT use `message_mode="request_reply"`; a reply cannot

@@ -3,6 +3,7 @@ use crate::{GroupStore, HomeLayout, fs, ledger};
 use cccc_contracts::Event;
 use cccc_contracts::voice_notifications::*;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read};
 
@@ -331,6 +332,15 @@ pub fn register_origin(
     })
 }
 
+/// Check a host-provided origin before a message has any side effects.
+pub fn require_active_origin(home: &HomeLayout, token: &str) -> io::Result<()> {
+    if read(home)?.origins.contains_key(token) {
+        Ok(())
+    } else {
+        Err(invalid("Voice Analyst origin is no longer active"))
+    }
+}
+
 /// Called BEFORE canonical ledger append. A failed append leaves only an inert intent.
 /// This function never copies the host-only token into the ledger event.
 pub fn register_request(home: &HomeLayout, token: &str, event: &Event) -> io::Result<()> {
@@ -339,13 +349,17 @@ pub fn register_request(home: &HomeLayout, token: &str, event: &Event) -> io::Re
         .get("src_group_id")
         .and_then(|v| v.as_str())
         .is_some_and(|group| event.by == format!("{group}::user"));
-    if event.kind != "chat.message" || !(event.by == "user" || source_user) {
-        return Err(invalid(
-            "Voice request origin requires a user-authored formal message",
-        ));
-    }
     let store = GroupStore::new(home.clone())?;
     let group = store.load(&event.group_id)?;
+    if event.kind != "chat.message"
+        || !(event.by == "user"
+            || source_user
+            || crate::actors::has_current_chet_provenance(&group, event))
+    {
+        return Err(invalid(
+            "Voice request origin requires a user- or Chet-authored formal message",
+        ));
+    }
     let actor_ids = group
         .actors
         .iter()
@@ -459,30 +473,33 @@ pub fn scan(home: &HomeLayout) -> io::Result<()> {
     update(home, |state| {
         let group_ids = state.groups.keys().cloned().collect::<Vec<_>>();
         for group_id in group_ids {
-            if let Err(error) = store.load(&group_id) {
-                if error.kind() != io::ErrorKind::NotFound {
-                    return Err(error);
+            let group = match store.load(&group_id) {
+                Ok(group) => group,
+                Err(error) => {
+                    if error.kind() != io::ErrorKind::NotFound {
+                        return Err(error);
+                    }
+                    state.groups.remove(&group_id);
+                    if state.preferences.groups.remove(&group_id).is_some() {
+                        state.preferences.revision += 1;
+                    }
+                    state
+                        .requests
+                        .retain(|_, request| request.source.group_id != group_id);
+                    state
+                        .notifications
+                        .retain(|_, item| item.source.group_id != group_id);
+                    state.viewed.retain(|source| source.group_id != group_id);
+                    // Do not speak a mixed summary containing a deleted Group's data.
+                    state.results.retain(|_, result| {
+                        !result
+                            .sources
+                            .iter()
+                            .any(|source| source.group_id == group_id)
+                    });
+                    continue;
                 }
-                state.groups.remove(&group_id);
-                if state.preferences.groups.remove(&group_id).is_some() {
-                    state.preferences.revision += 1;
-                }
-                state
-                    .requests
-                    .retain(|_, request| request.source.group_id != group_id);
-                state
-                    .notifications
-                    .retain(|_, item| item.source.group_id != group_id);
-                state.viewed.retain(|source| source.group_id != group_id);
-                // Do not speak a mixed summary containing a deleted Group's data.
-                state.results.retain(|_, result| {
-                    !result
-                        .sources
-                        .iter()
-                        .any(|source| source.group_id == group_id)
-                });
-                continue;
-            }
+            };
             let progress = state.groups.get_mut(&group_id).expect("known group");
             let path = store.ledger_path(&group_id)?;
             let page = ledger::inspect(&path, |events, positions| {
@@ -507,9 +524,13 @@ pub fn scan(home: &HomeLayout) -> io::Result<()> {
                     group_id: group_id.clone(),
                     event_id: event.id.clone(),
                 };
+                let to_chet = recipients(&event)
+                    .iter()
+                    .any(|to| to == crate::actors::CHET_SERVICE_PRINCIPAL);
                 let candidate = event.kind == "chat.message"
                     && event.by != "user"
                     && event.by != "system"
+                    && event.by != crate::actors::CHET_SERVICE_PRINCIPAL
                     && !event.data.contains_key("dst_group_id")
                     && !event.by.ends_with("::user")
                     && (event
@@ -532,7 +553,9 @@ pub fn scan(home: &HomeLayout) -> io::Result<()> {
                     let related = if let Some(request) =
                         request.filter(|r| r.actor_ids.contains(&event.by))
                     {
-                        ledger::find_event(&path, &request.source.event_id)?.is_some()
+                        ledger::find_event(&path, &request.source.event_id)?.is_some_and(|parent| {
+                            !to_chet || crate::actors::has_current_chet_provenance(&group, &parent)
+                        })
                     } else {
                         false
                     };
@@ -556,7 +579,7 @@ pub fn scan(home: &HomeLayout) -> io::Result<()> {
                         processed: false,
                         attempted: false,
                     };
-                    if (related || past_boundary)
+                    if (related || (!to_chet && past_boundary))
                         && eligible(&state.preferences, &state.viewed, &item)
                     {
                         if state.notifications.len() + state.requests.len() + state.viewed.len()
@@ -602,11 +625,145 @@ pub fn reserve(
         }
         let event = ledger::find_event(&store.ledger_path(&source.group_id)?, &source.event_id)?
             .ok_or_else(|| invalid("Voice notification source no longer exists"))?;
+        // Chet-addressed messages belong to the durable GroupInput owner;
+        // the Voice consumer observes them but must not start a second turn.
+        if recipients(&event)
+            .iter()
+            .any(|to| to == crate::actors::CHET_SERVICE_PRINCIPAL)
+        {
+            return Ok(None);
+        }
         item.handoff = Some(VoiceMessageHandoff {
             analyst_generation: generation.into(),
             accepted: false,
         });
         Ok(Some(event))
+    })
+}
+
+/// Bind a Chet-owned Group input to an existing Voice handoff without starting
+/// another Analyst turn. The Group owner remains responsible for execution.
+pub fn reserve_chet_input(
+    home: &HomeLayout,
+    input: &cccc_contracts::chet::GroupInput,
+    generation: &str,
+) -> io::Result<Option<VoiceMessageRef>> {
+    use cccc_contracts::chet::GroupInputSender;
+    let GroupInputSender::Actor {
+        actor_id,
+        actor_generation,
+    } = &input.sender
+    else {
+        return Ok(None);
+    };
+    let Some(parent_id) = input.reply_to.as_deref() else {
+        return Ok(None);
+    };
+    // Most Group replies are not Voice handoffs. Avoid walking their Group
+    // ledger or writing Voice state; repeat the check under the update lock.
+    if !read(home)?
+        .requests
+        .get(&format!("{}:{parent_id}", input.group_id))
+        .is_some_and(|request| request.actor_ids.contains(actor_id))
+    {
+        return Ok(None);
+    }
+    let store = GroupStore::new(home.clone())?;
+    let group = store.load(&input.group_id)?;
+    if crate::connect_groups::generation(&group) != input.group_generation
+        || crate::actors::find(&group, actor_id)
+            .is_none_or(|actor| crate::actors::generation_identity(actor) != *actor_generation)
+    {
+        return Ok(None);
+    }
+    let path = store.ledger_path(&input.group_id)?;
+    let valid = ledger::inspect_status(&path, |events, positions, generations| {
+        let Some(&source_position) = positions.get(&input.event_id) else {
+            return false;
+        };
+        let Some(&parent_position) = positions.get(parent_id) else {
+            return false;
+        };
+        let source = &events[source_position];
+        let parent = &events[parent_position];
+        let same_actor_generation = generations.get(actor_id).is_none_or(|start| {
+            let recorded_matches = events
+                .get(*start)
+                .and_then(|event| event.data.get("actor"))
+                .and_then(|value| {
+                    serde_json::from_value::<cccc_contracts::Actor>(value.clone()).ok()
+                })
+                .filter(|actor| !actor.generation.is_empty() || !actor.created_at.is_empty())
+                .is_none_or(|actor| {
+                    crate::actors::generation_identity(&actor) == *actor_generation
+                });
+            parent_position >= *start && source_position >= *start && recorded_matches
+        });
+        parent_position < source_position
+            && same_actor_generation
+            && source.kind == "chat.message"
+            && source.group_id == input.group_id
+            && source.by == *actor_id
+            && recipients(source) == [crate::actors::CHET_SERVICE_PRINCIPAL]
+            && source.data.get("reply_to").and_then(Value::as_str) == Some(parent_id)
+            && crate::actors::has_current_chet_provenance(&group, parent)
+            && crate::inbox::is_for_actor(&group, parent, actor_id)
+    })?;
+    if !valid
+        || !store.load(&input.group_id).is_ok_and(|current| {
+            crate::connect_groups::generation(&current) == input.group_generation
+        })
+    {
+        return Ok(None);
+    }
+    let source = VoiceMessageRef {
+        group_id: input.group_id.clone(),
+        event_id: input.event_id.clone(),
+    };
+    update(home, |state| {
+        let requested = state
+            .requests
+            .get(&format!("{}:{parent_id}", input.group_id))
+            .is_some_and(|request| request.actor_ids.contains(actor_id));
+        if !requested {
+            return Ok(None);
+        }
+        if !state.notifications.contains_key(&source.key()) {
+            if state.notifications.len() + state.requests.len() + state.viewed.len()
+                >= MAX_REFERENCES
+            {
+                return Err(capacity());
+            }
+            let sequence = state.next_sequence;
+            state.next_sequence = sequence
+                .checked_add(1)
+                .ok_or_else(|| invalid("Voice notification sequence overflow"))?;
+            state.notifications.insert(
+                source.key(),
+                VoiceNotification {
+                    sequence,
+                    source: source.clone(),
+                    kind: VoiceMessageKind::RequestReply,
+                    by: actor_id.clone(),
+                    to_user: false,
+                    handoff: None,
+                    processed: false,
+                    attempted: false,
+                },
+            );
+        }
+        let item = state
+            .notifications
+            .get_mut(&source.key())
+            .expect("inserted");
+        if let Some(handoff) = &item.handoff {
+            return Ok((handoff.analyst_generation == generation).then_some(source.clone()));
+        }
+        item.handoff = Some(VoiceMessageHandoff {
+            analyst_generation: generation.into(),
+            accepted: false,
+        });
+        Ok(Some(source.clone()))
     })
 }
 
@@ -704,10 +861,29 @@ fn speakable_sources_in(
                 && !(state.preferences.suppress_viewed && state.viewed.contains(&item.source))
         })
         .filter_map(|item| {
-            let exists = store
-                .load(&item.source.group_id)
-                .and_then(|_| store.ledger_path(&item.source.group_id))
-                .and_then(|path| ledger::find_event(&path, &item.source.event_id));
+            let exists = store.load(&item.source.group_id).and_then(|group| {
+                let path = store.ledger_path(&item.source.group_id)?;
+                let event = ledger::find_event(&path, &item.source.event_id)?;
+                if let Some(source) = &event
+                    && recipients(source)
+                        .iter()
+                        .any(|to| to == crate::actors::CHET_SERVICE_PRINCIPAL)
+                {
+                    let parent = source
+                        .data
+                        .get("reply_to")
+                        .and_then(Value::as_str)
+                        .map(|id| ledger::find_event(&path, id))
+                        .transpose()?
+                        .flatten();
+                    if !parent.as_ref().is_some_and(|parent| {
+                        crate::actors::has_current_chet_provenance(&group, parent)
+                    }) {
+                        return Ok(None);
+                    }
+                }
+                Ok(event)
+            });
             match exists {
                 Ok(Some(_)) => Some(Ok(item.source.clone())),
                 Ok(None) => None,

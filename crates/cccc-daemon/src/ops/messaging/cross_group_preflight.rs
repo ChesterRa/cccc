@@ -27,18 +27,22 @@ pub(super) fn upload(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
         // A delivered message replays its result. One interrupted after the
         // source entry is ready, so the commit completes the destination copy.
-        return match crate::ops::message_idempotency::find_relay(home, &destination_id, &event.id) {
-            Some(delivered) => object(json!({
+        if let Some(delivered) =
+            crate::ops::message_idempotency::find_relay(home, &destination_id, &event.id)
+        {
+            return object(json!({
                 "ready":false,
                 "duplicate":true,
                 "result":{
                     "source_event":event,"event":delivered,"src_event":event,
                     "dst_event":delivered,"transport":"local","duplicate":true
                 }
-            })),
-            None => object(json!({"ready":true})),
-        };
+            }));
+        }
+        super::reject_chet_cross_group(home, request, &by)?;
+        return object(json!({"ready":true}));
     }
+    super::reject_chet_cross_group(home, request, &by)?;
     let destination = store(home)?
         .load(&destination_id)
         .map_err(OpError::not_found)?;

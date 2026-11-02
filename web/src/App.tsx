@@ -45,6 +45,7 @@ import { publishCapabilityChanged } from "./utils/capabilityEvents";
 import { filterVisibleRuntimeActors } from "./utils/runtimeVisibility";
 import { getEffectiveComposerDestGroupId } from "./stores/useComposerStore";
 import { buildReplyComposerState } from "./utils/chatReply";
+import { chetGeneration } from "./utils/chetIdentity";
 import { useShallow } from "zustand/react/shallow";
 import { useConnectWorkbench } from "./features/connect/useConnectWorkbench";
 import { ConnectRemotePanel } from "./features/connect/ConnectRemotePanel";
@@ -308,6 +309,7 @@ export default function App({
         selectedGroupId,
         actors,
         groupSettings,
+        groupDoc?.group_id === selectedGroupId ? chetGeneration(groupDoc) : "",
       );
       if (!replyComposerState) return;
 
@@ -322,6 +324,7 @@ export default function App({
       selectedGroupId,
       actors,
       composerRef,
+      groupDoc,
       groupSettings,
       setDestGroupId,
       setReplyTarget,

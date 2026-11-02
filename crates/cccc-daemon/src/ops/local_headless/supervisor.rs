@@ -587,16 +587,19 @@ fn submit_with_startup_prompt(
 
 #[cfg(test)]
 fn render_turn(event: &Event) -> Option<(String, String)> {
-    super::super::actor_delivery_render::render_batch(std::slice::from_ref(event)).map(|text| {
-        (
-            text,
-            if event.kind == "system.notify" {
-                "system_notify".into()
-            } else {
-                String::new()
-            },
-        )
-    })
+    let group = super::super::actor_delivery_render::test_group();
+    super::super::actor_delivery_render::render_batch(&group, std::slice::from_ref(event)).map(
+        |text| {
+            (
+                text,
+                if event.kind == "system.notify" {
+                    "system_notify".into()
+                } else {
+                    String::new()
+                },
+            )
+        },
+    )
 }
 
 fn lookup(key: &Key) -> Option<Arc<Session>> {

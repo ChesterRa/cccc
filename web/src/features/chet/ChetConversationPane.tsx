@@ -49,6 +49,7 @@ export function ChetConversationPane({
   voiceStatus,
   voiceActions,
   onReviewRecovery,
+  onOpenGroupMessage,
 }: {
   controller: CodexVoiceSessionController;
   chet: ChetConversation;
@@ -61,6 +62,8 @@ export function ChetConversationPane({
   voiceStatus?: ReactNode;
   voiceActions?: ReactNode;
   onReviewRecovery(owners: ProcessRecoveryOwner[]): void;
+  /** Opens a message in its Group; without it, Group messages offer no way there. */
+  onOpenGroupMessage?: (groupId: string, eventId: string) => void;
 }) {
   const { t } = useTranslation("modals");
   const hasUnknownSend = chet.items.some(
@@ -113,6 +116,7 @@ export function ChetConversationPane({
         loadingOlder={chet.loadingOlder}
         onLoadOlder={chet.loadOlder}
         isDark={isDark}
+        onOpenGroupMessage={onOpenGroupMessage}
         notices={
           chet.skipped ? (
             <p className="text-xs text-[var(--color-text-muted)]">

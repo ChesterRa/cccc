@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
+import { readFileSync } from "node:fs";
+import { fileURLToPath, URL as NodeURL } from "node:url";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MessageBubble } from "./MessageBubble";
@@ -33,12 +35,13 @@ afterEach(() => {
   setUiStylePrefs({ style: "classic" });
 });
 
-async function render(shown: LedgerEvent = event, readOnly = false) {
+async function render(shown: LedgerEvent = event, readOnly = false, isHighlighted = false) {
   await act(async () =>
     root.render(
       <MessageBubble
         event={shown}
         readOnly={readOnly}
+        isHighlighted={isHighlighted}
         actorById={new Map()}
         actors={[]}
         displayNameMap={new Map()}
@@ -62,6 +65,34 @@ it("shows the message actions once, on the LCD head line", async () => {
   expect(actions).toHaveLength(1);
   expect(actions[0].closest(".lcd-row-head")).not.toBeNull();
   expect(host.querySelector(".lcd-row-body [data-message-actions-inline]")).toBeNull();
+});
+
+const lcdCss = () =>
+  readFileSync(fileURLToPath(new NodeURL("../styles/lcd.css", import.meta.url)), "utf8");
+
+it("outlines a jump target on the message box its row draws", async () => {
+  setUiStylePrefs({ style: "lcd" });
+  await render(event, false, true);
+  // Only the row draws the message box (its ::before, below the space above the
+  // message), so the outline rule and the class must both be on the row.
+  const rule = lcdCss().match(
+    /:root\[data-ui-style="lcd"\] \.lcd-row\.lcd-row-highlighted::before \{([^}]*)\}/,
+  );
+  expect(rule?.[1]).toContain("dashed");
+  expect(host.querySelector("[data-lcd-row]")?.matches(".lcd-row.lcd-row-highlighted")).toBe(true);
+  expect(host.querySelector(".lcd-row-content.lcd-row-highlighted")).toBeNull();
+});
+
+it("separates messages with a line, without a ground or a hover tone", () => {
+  const css = lcdCss();
+  const box = css.match(/:root\[data-ui-style="lcd"\] \.lcd-row::before \{([^}]*)\}/);
+  expect(box?.[1]).toBeDefined();
+  expect(box?.[1]).not.toMatch(/background/);
+  const line = css.match(/:root\[data-ui-style="lcd"\] \.lcd-row::after \{([^}]*)\}/);
+  expect(line?.[1]).toContain("border-top: 1px solid var(--lcd-sep)");
+  // A tone change over a whole message read as a jump.
+  expect(css).not.toMatch(/\.lcd-row:is\(:hover[^{]*::before/);
+  expect(css).not.toMatch(/\.lcd-row:hover::before/);
 });
 
 it("keeps the classic actions in the footer", async () => {

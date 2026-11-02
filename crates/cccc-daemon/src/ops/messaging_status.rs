@@ -79,6 +79,34 @@ pub(super) fn user_request(
     })?
 }
 
+/// Whether the sender of `event` is still the one that sent it, as this
+/// Group's ledger shows now, for Chet's reply to that sender. An event the
+/// ledger does not hold unchanged is `Unknown`, and so is one an import
+/// copied: whoever sent it did so in the source Group, even where the copy
+/// keeps the same registration.
+pub(super) fn requester_for_event(
+    home: &HomeLayout,
+    group_id: &str,
+    event: &Event,
+) -> Result<Requester, OpError> {
+    let event_ids = [event.id.clone()];
+    StatusSnapshot::with(home, group_id, &event_ids, |snapshot| {
+        let Some(&position) = snapshot.positions.get(&event.id) else {
+            return Requester::Unknown;
+        };
+        if snapshot.events.get(position) != Some(event) {
+            return Requester::Unknown;
+        }
+        let imported_later = snapshot.events[position + 1..].iter().any(|later| {
+            later.kind == "group.create" && later.data.get("imported") == Some(&Value::Bool(true))
+        });
+        if imported_later {
+            return Requester::Unknown;
+        }
+        snapshot.requester(event)
+    })
+}
+
 type DeliveryStatuses = HashMap<String, HashMap<String, String>>;
 type ReplyPositions = HashMap<String, HashMap<String, usize>>;
 type CancellationPositions = HashMap<String, usize>;
@@ -307,6 +335,9 @@ impl StatusSnapshot<'_> {
         if user_requests::targets_user(event) {
             recipients.push("user".into());
         }
+        if addresses_chet(event) {
+            recipients.push(actors::CHET_SERVICE_PRINCIPAL.into());
+        }
         recipients
     }
 
@@ -353,6 +384,22 @@ impl StatusSnapshot<'_> {
                 .is_some_and(|group| !group.trim().is_empty());
         if relayed {
             return Requester::Unsupported;
+        }
+        if event.by == actors::CHET_SERVICE_PRINCIPAL {
+            // Chet is not a Group Actor: it asked only as this Group's own ledger
+            // event with the current generation's host marker. A copied or
+            // re-created Group keeps the event, not that identity.
+            let stored = self
+                .positions
+                .get(&event.id)
+                .and_then(|&position| self.events.get(position));
+            return if stored == Some(event)
+                && actors::has_current_chet_provenance(&self.group, event)
+            {
+                Requester::Available
+            } else {
+                Requester::Unknown
+            };
         }
         let registered = self.actor_generations.get(&event.by).copied();
         let Some(actor) = self.group.actors.iter().find(|actor| actor.id == event.by) else {
@@ -500,6 +547,21 @@ fn is_cross_group_source(event: &Event) -> bool {
         .get("dst_group_id")
         .and_then(Value::as_str)
         .is_some_and(|group_id| !group_id.trim().is_empty())
+}
+
+/// Only `@chet` stores the service identity as a recipient, and Chet is
+/// addressed alone. Its reply, or the sender's cancellation, then closes the
+/// request like any recipient's.
+fn addresses_chet(event: &Event) -> bool {
+    event.by != actors::CHET_SERVICE_PRINCIPAL
+        && event
+            .data
+            .get("to")
+            .and_then(Value::as_array)
+            .is_some_and(|to| {
+                to.iter()
+                    .any(|item| item.as_str() == Some(actors::CHET_SERVICE_PRINCIPAL))
+            })
 }
 
 fn connect_reply_author(instance: &str, actor: &cccc_contracts::connect::ConnectActor) -> String {

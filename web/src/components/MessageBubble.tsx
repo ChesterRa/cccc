@@ -57,7 +57,8 @@ import { MessageReplyQuote } from "./messageBubble/MessageReplyQuote";
 import { MessageReferenceSections } from "./messageBubble/MessageReferenceSections";
 import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
 import { PendingReplyStoreContext } from "../features/pendingReplies/store";
-import { useUIStore } from "../stores";
+import { useGroupStore, useUIStore } from "../stores";
+import { CHET_NAME, CHET_PRINCIPAL, chetGeneration, isChetMessage } from "../utils/chetIdentity";
 import {
   localizedAnswerReceipt,
   pendingReplyView,
@@ -308,7 +309,8 @@ export const MessageBubble = memo(
     const canShowAgentState = useMemo(() => {
       if (isUserMessage) return false;
       const id = String(ev.by || "");
-      if (!id) return false;
+      // Chet is the instance's service, not a member: it has no state in this Group.
+      if (!id || id === CHET_PRINCIPAL) return false;
       return true;
     }, [ev.by, isUserMessage]);
 
@@ -331,8 +333,15 @@ export const MessageBubble = memo(
       String(msgData?.quote_text || resolvedReplyQuoteText || "").trim() || undefined;
     const replyToEventId =
       typeof msgData?.reply_to === "string" ? String(msgData.reply_to || "").trim() : "";
-    const senderSnapshotTitle =
-      typeof msgData?.sender_title === "string" ? String(msgData.sender_title || "").trim() : "";
+    // Chet's name shows only on a message this Group, as it is now, proves Chet wrote.
+    const groupGeneration = useGroupStore((state) =>
+      state.groupDoc?.group_id === groupId ? chetGeneration(state.groupDoc) : "",
+    );
+    const senderSnapshotTitle = isChetMessage(ev, groupGeneration)
+      ? CHET_NAME
+      : typeof msgData?.sender_title === "string"
+        ? String(msgData.sender_title || "").trim()
+        : "";
     const remoteSourceName =
       typeof msgData?.source_user_name === "string"
         ? String(msgData.source_user_name || "").trim()
@@ -738,7 +747,11 @@ export const MessageBubble = memo(
           : senderDisplayName;
       return (
         <div
-          className={classNames("message-row lcd-row group", isOptimistic ? "opacity-95" : "")}
+          className={classNames(
+            "message-row lcd-row group",
+            isOptimistic ? "opacity-95" : "",
+            isHighlighted ? "lcd-row-highlighted" : "",
+          )}
           data-lcd-row
           data-lcd-user={fromReader || undefined}
           data-lcd-continued={collapseHeader || undefined}
@@ -805,13 +818,7 @@ export const MessageBubble = memo(
           </div>
           {agentStateTooltip}
           <div className="lcd-row-body">
-            <div
-              className={classNames(
-                "lcd-row-content",
-                isHighlighted ? "lcd-row-highlighted" : "",
-                isStreaming ? "lcd-row-streaming" : "",
-              )}
-            >
+            <div className={classNames("lcd-row-content", isStreaming ? "lcd-row-streaming" : "")}>
               {bubbleContent}
             </div>
             {renderMessageFooter(false)}

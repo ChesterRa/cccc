@@ -35,6 +35,7 @@ per-recipient runtime truth is `runtime.delivery`.
 ### Chat
 
 - Targets are `@all`, `@foreman`, `@peers`, `user`, or actor IDs. Before replying, verify `event_id`; before any message, verify `to`. Avoid broad targets for narrow updates.
+- `@chet`, alone, addresses Chet, the user's global assistant, with Send or Request reply, not Mail. A member whose ID or title is `chet` makes it ambiguous, and the send is refused. To reply to a message from Chet, omit `to`.
 - Reply to the current message with its `event_id`; `reply_to` is its optional parent.
 - Use a tracked task, not a reply request, for durable execution and evidence.
 

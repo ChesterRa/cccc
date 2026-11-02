@@ -68,6 +68,8 @@ export type WorkspaceFile = {
 
 export type GroupDoc = {
   generation?: string;
+  /** Names the generation of a Group created before generations were stored. */
+  created_at?: string;
   group_id: string;
   title?: string;
   topic?: string;

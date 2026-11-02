@@ -53,6 +53,20 @@ impl AnalystRuntime {
                 if result.is_err() {
                     writer_failure.store(true, Ordering::Release);
                     tracing::warn!("Chet lifecycle history could not be confirmed");
+                } else if let Some(event) = &completion
+                    && chet_events::persist_group_voice_result(
+                        &history_home,
+                        &history_generation,
+                        event,
+                        &voice,
+                    )
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("Chet Group Voice result could not be confirmed");
+                    if let Some(runtime) = writer_runtime.upgrade() {
+                        runtime.mark_failed("actor_result_return_failed");
+                    }
                 }
                 // Keep a confirmed terminal event live until its fact is
                 // durable or a write failure is visible. An unconfirmed

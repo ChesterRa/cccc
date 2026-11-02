@@ -23,6 +23,7 @@ import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
 import { appendQuotedOriginalPerspective, getMessageInsight } from "../utils/messagePerspective";
 import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
+import { CHET_NAME, CHET_PRINCIPAL } from "../utils/chetIdentity";
 import {
   useGroupStore,
   useUIStore,
@@ -546,7 +547,10 @@ export function AppModals({
       : (Array.isArray(metaData?.to) ? metaData.to : [])
           .map((x) => String(x || "").trim())
           .filter((s) => s.length > 0);
-    const toLabel = toTokensList.length > 0 ? toTokensList.join(", ") : "@all";
+    const toLabel =
+      toTokensList.length > 0
+        ? toTokensList.map((token) => (token === CHET_PRINCIPAL ? CHET_NAME : token)).join(", ")
+        : "@all";
     const messageMode = projectMessageMode(metaData) || "send";
     const rs =
       messageMetaEvent._read_status && typeof messageMetaEvent._read_status === "object"
@@ -625,8 +629,23 @@ export function AppModals({
               cancelled: !!os["user"]?.cancelled,
             }
           : null,
+        // Chet takes a message in its own panel, which this Group's ledger does not
+        // record, so only a request's reply or cancellation is shown for it.
+        os[CHET_PRINCIPAL]?.reply_requested
+          ? {
+              id: CHET_PRINCIPAL,
+              label: CHET_NAME,
+              cleared: !!os[CHET_PRINCIPAL]?.replied || !!os[CHET_PRINCIPAL]?.cancelled,
+              deliveryState: "",
+              read: false,
+              replied: !!os[CHET_PRINCIPAL]?.replied,
+              replyRequested: true,
+              cancelled: !!os[CHET_PRINCIPAL]?.cancelled,
+            }
+          : null,
       ].filter(Boolean) as Array<{
         id: string;
+        label?: string;
         cleared: boolean;
         deliveryState: string;
         read: boolean;

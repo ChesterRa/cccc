@@ -93,3 +93,29 @@ it.each([
   expect(state?.replyTarget.remoteDstGroupId).toBeUndefined();
   expect(state?.replyTarget.remoteReplyToEventId).toBeUndefined();
 });
+
+it("leaves a reply to Chet without recipients, naming Chet only for this Group's current marker", () => {
+  const event = (marker: string) => ({
+    id: "chet-event",
+    kind: "chat.message",
+    by: "svc:chet",
+    data: { text: "Please check the build.", to: ["user"], _cccc_chet_group_generation: marker },
+  });
+  const reply = (marker: string) =>
+    buildReplyComposerState(
+      event(marker),
+      "g_local",
+      [],
+      { default_send_to: "foreman" } as never,
+      "gen-2",
+    );
+  expect(reply("gen-2")).toMatchObject({
+    toText: "",
+    replyTarget: { eventId: "chet-event", by: "Chet" },
+  });
+  // A copied or stale message keeps its bare principal, and still falls back to no one.
+  expect(reply("gen-1")).toMatchObject({
+    toText: "",
+    replyTarget: { eventId: "chet-event", by: "svc:chet" },
+  });
+});

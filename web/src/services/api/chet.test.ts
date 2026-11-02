@@ -93,9 +93,61 @@ it("reads appended records after an opaque cursor", async () => {
   });
 });
 
+it("reads a Group message's records and how its Group shows it, unreadable as unavailable", async () => {
+  const groupInput = {
+    kind: "group_input",
+    id: "gi",
+    created_at: "2026-11-01T10:00:00.000000Z",
+    input: {
+      group_id: "g1",
+      group_generation: "gen",
+      event_id: "e1",
+      sender: { kind: "actor", actor_id: "peer-1" },
+      reply_to: null,
+    },
+  };
+  const dispatch = { kind: "group_dispatch", id: "gd", created_at: "t", input_id: "gi" };
+  expect(isChetRecord(groupInput)).toBe(true);
+  expect(isChetRecord(dispatch)).toBe(true);
+  expect(
+    isChetRecord({ ...groupInput, input: { ...groupInput.input, sender: { kind: "actor" } } }),
+  ).toBe(false);
+  const shown = {
+    status: "available",
+    group_title: "Design",
+    sender_title: "Peer",
+    text: "check this",
+    sent_at: "2026-11-01T10:00:00Z",
+    has_attachments: true,
+    truncated: false,
+    reply_event_id: "e2",
+  };
+  respond({
+    ok: true,
+    result: {
+      records: [groupInput, dispatch],
+      sources: { gi: shown, gone: { status: "unavailable" }, odd: { status: "available" } },
+    },
+  });
+  expect(await fetchChetInput("gi")).toEqual({
+    ok: true,
+    result: {
+      records: [groupInput, dispatch],
+      sources: new Map<string, unknown>([
+        ["gi", shown],
+        ["gone", { status: "unavailable" }],
+        ["odd", { status: "unavailable" }],
+      ]),
+    },
+  });
+});
+
 it("reads an unknown ID as no records, and anything else malformed as an error", async () => {
   respond({ ok: true, result: { records: null } });
-  expect(await fetchChetInput("missing")).toEqual({ ok: true, result: [] });
+  expect(await fetchChetInput("missing")).toEqual({
+    ok: true,
+    result: { records: [], sources: new Map() },
+  });
   respond({ ok: true, result: {} });
   expect((await fetchChetInput("missing")).ok).toBe(false);
 });

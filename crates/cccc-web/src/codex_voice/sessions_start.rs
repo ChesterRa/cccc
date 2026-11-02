@@ -232,6 +232,28 @@ impl CodexVoiceSessions {
         id: uuid::Uuid,
         request: &cccc_core::chet_history::TextRequest,
     ) -> std::result::Result<(), ChetSubmitError> {
+        self.submit_chet_input_with_origin(home, id, request, None)
+            .await
+    }
+
+    pub(crate) async fn submit_chet_group_input(
+        &self,
+        home: &HomeLayout,
+        id: uuid::Uuid,
+        source: &cccc_contracts::chet::GroupInput,
+        request: &cccc_core::chet_history::TextRequest,
+    ) -> std::result::Result<(), ChetSubmitError> {
+        self.submit_chet_input_with_origin(home, id, request, Some(source))
+            .await
+    }
+
+    async fn submit_chet_input_with_origin(
+        &self,
+        home: &HomeLayout,
+        id: uuid::Uuid,
+        request: &cccc_core::chet_history::TextRequest,
+        group_input: Option<&cccc_contracts::chet::GroupInput>,
+    ) -> std::result::Result<(), ChetSubmitError> {
         use cccc_daemon::experimental_codex_voice::VoiceDelegationAdmission;
 
         self.ensure_open()
@@ -254,11 +276,49 @@ impl CodexVoiceSessions {
         } else {
             request.text.clone()
         };
-        let admission = analyst
-            .analyst
-            .submit_input(&format!("chet-input:{id}"), &input)
+        let notification_status = state
+            .active
+            .as_ref()
+            .map(|call| call.notification_paused.clone());
+        let voice_source = if let Some(source) = group_input {
+            let owned_home = home.clone();
+            let source = source.clone();
+            let generation = analyst.analyst.generation().to_owned();
+            match tokio::task::spawn_blocking(move || {
+                cccc_core::voice_notifications::reserve_chet_input(
+                    &owned_home,
+                    &source,
+                    &generation,
+                )
+            })
             .await
-            .map_err(|_| ChetSubmitError::Unconfirmed)?;
+            {
+                Ok(Ok(source)) => source,
+                _ => {
+                    tracing::warn!("Chet Group input could not be linked to Voice notifications");
+                    if let Some(status) = &notification_status {
+                        status.send_replace(true);
+                    }
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let correlation_id = if group_input.is_some() {
+            format!("chet-group:{id}")
+        } else {
+            format!("chet-input:{id}")
+        };
+        let admission = if group_input.is_some() {
+            analyst
+                .analyst
+                .submit_group_input(&correlation_id, &input)
+                .await
+        } else {
+            analyst.analyst.submit_input(&correlation_id, &input).await
+        }
+        .map_err(|_| ChetSubmitError::Unconfirmed)?;
         drop(state);
         if let VoiceDelegationAdmission::NativeInput {
             delegation_id,
@@ -271,6 +331,42 @@ impl CodexVoiceSessions {
                 return Err(ChetSubmitError::Unconfirmed);
             }
         }
+        if let Some(source) = voice_source {
+            let owned_home = home.clone();
+            let generation = analyst.analyst.generation().to_owned();
+            if !matches!(
+                tokio::task::spawn_blocking(move || {
+                    cccc_core::voice_notifications::accepted(&owned_home, &source, &generation)
+                })
+                .await,
+                Ok(Ok(()))
+            ) {
+                tracing::warn!("Chet Group Voice admission could not be confirmed");
+                if let Some(status) = &notification_status {
+                    status.send_replace(true);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Prepare the shared assistant before claiming an offline Group input. A
+    /// temporary startup failure leaves that input eligible for later work.
+    pub(crate) async fn prepare_chet_for_group_input(
+        &self,
+        home: &HomeLayout,
+    ) -> std::result::Result<(), ChetSubmitError> {
+        self.ensure_open()
+            .map_err(|_| ChetSubmitError::NotStarted)?;
+        let state = Arc::clone(&self.state).lock_owned().await;
+        self.ensure_open()
+            .map_err(|_| ChetSubmitError::NotStarted)?;
+        let (_state, _) = self
+            .prepare_analyst_locked(home, state)
+            .await
+            .map_err(|_| ChetSubmitError::NotStarted)?;
+        self.ensure_open()
+            .map_err(|_| ChetSubmitError::NotStarted)?;
         Ok(())
     }
 

@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod browser_surface;
+mod chet_group_input;
 mod codex_voice;
 #[cfg(test)]
 mod connect_browser_fixture;
@@ -241,7 +242,10 @@ fn app_with_shutdown_and_recovery(
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let ledger_events = ledger_event_hub::LedgerEventHub::new(home.clone());
     let im_workers = Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events.clone()));
-    im_workers.restore_enabled(home.clone(), DaemonClient::new(home.clone()));
+    im_workers.restore_enabled(
+        home.clone(),
+        DaemonClient::new(home.clone()).without_voice_origin(),
+    );
     let browser_surfaces = Arc::new(browser_surface::BrowserSurfaces::default());
     let codex_voice = Arc::new(if process_recovery.is_some() {
         codex_voice::CodexVoiceSessions::with_process_recovery(process_recovery)
@@ -276,7 +280,7 @@ fn app_with_shutdown_and_recovery(
         connect_http: connect_frames::http_client()
             .build()
             .map_err(|error| error.to_string()),
-        client: DaemonClient::new(home.clone()),
+        client: DaemonClient::new(home.clone()).without_voice_origin(),
         home,
         browser_surfaces: Arc::clone(&browser_surfaces),
         codex_voice,
@@ -638,6 +642,9 @@ where
     // An exhibit never installs voice models; the full Web clears what installs left behind.
     if !web_mode.is_read_only() {
         routes::spawn_voice_model_cleanup(app_state.home.clone());
+    }
+    if !web_mode.is_read_only() {
+        chet_group_input::spawn(app_state.clone());
     }
     routes::spawn_dots_events(app_state);
     // Also notify shutdown subscribers if the server fails before its graceful

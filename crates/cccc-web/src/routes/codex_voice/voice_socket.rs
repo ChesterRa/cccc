@@ -43,8 +43,9 @@ fn transcript_writer(
 ) {
     let (sender, mut receiver) = mpsc::channel::<TranscriptWrite>(32);
     let (receipts, received) = mpsc::channel(32);
-    let client =
-        cccc_client::DaemonClient::new(state.home.clone()).with_timeout(Duration::from_secs(5));
+    let client = cccc_client::DaemonClient::new(state.home.clone())
+        .without_voice_origin()
+        .with_timeout(Duration::from_secs(5));
     let sessions = Arc::clone(&state.codex_voice);
     tokio::spawn(async move {
         while let Some((id, transcript)) = receiver.recv().await {
@@ -188,6 +189,28 @@ pub(super) async fn serve(
             &generation,
             info.analyst_generation.as_deref(),
             "ready_write_failed",
+            started,
+            None,
+        );
+        lease_heartbeat.stop().await;
+        finish(&state, attachment).await;
+        return;
+    }
+    // A Group input may have paused notifications before this socket was
+    // attached. A new watch receiver treats that value as already seen, so
+    // send the current paused state once before waiting for changes.
+    let already_paused = *notification_status.borrow_and_update();
+    if already_paused
+        && !send_json(
+            &mut socket,
+            json!({"type":"notification_status", "paused":true}),
+        )
+        .await
+    {
+        log_disconnect(
+            &generation,
+            info.analyst_generation.as_deref(),
+            "notification_status_write_failed",
             started,
             None,
         );

@@ -498,6 +498,909 @@ async fn chet_status_does_not_wait_for_an_analyst_launch() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_group_owner_recovers_unclaimed_inputs_without_replaying_claims() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_group_owner_recovers_unclaimed_inputs_without_replaying_claims",
+    ) {
+        return;
+    }
+    let fixture = ChetHttpFixture::new().await;
+    let group = cccc_core::GroupStore::new(fixture.home.clone())
+        .expect("groups")
+        .create("group input fixture", "")
+        .expect("group");
+    let mut sources = Vec::new();
+    for text in [
+        "first group input",
+        "claimed group input",
+        "third group input",
+    ] {
+        let sent = fixture
+            .client
+            .call(&chet_daemon_request(
+                "send",
+                json!({
+                    "by":"user","group_id":group.group_id,"to":["@chet"],
+                    "message_mode":"send","text":text
+                }),
+            ))
+            .await
+            .expect("send");
+        assert!(sent.ok, "fixture event was not accepted");
+        sources.push(
+            sent.result["event"]["id"]
+                .as_str()
+                .expect("event ID")
+                .to_owned(),
+        );
+    }
+    let mut registered = Vec::new();
+    for event_id in &sources[..2] {
+        let input = cccc_contracts::chet::GroupInput {
+            group_id: group.group_id.clone(),
+            group_generation: cccc_core::connect_groups::generation(&group),
+            event_id: event_id.clone(),
+            sender: cccc_contracts::chet::GroupInputSender::User,
+            reply_to: None,
+        };
+        let result = fixture
+            .client
+            .call(&chet_daemon_request(
+                "chet_history_group_input",
+                json!({"by":"user","input":input}),
+            ))
+            .await
+            .expect("register");
+        assert!(result.ok, "fixture registration was rejected");
+        registered
+            .push(uuid::Uuid::parse_str(result.result["id"].as_str().expect("id")).expect("UUID"));
+    }
+    let claim = fixture
+        .client
+        .call(&chet_daemon_request(
+            "chet_history_claim_group_input",
+            json!({"by":"user","input_id":registered[1]}),
+        ))
+        .await
+        .expect("claim");
+    assert_eq!(claim.result["registration"], "inserted");
+
+    // The public history page and per-input reconciliation return the same
+    // bounded source view, without a separate request for each Group message.
+    let (status, history) = fixture
+        .request("GET", "/api/v1/chet/history", json!(null))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let first_id = registered[0].to_string();
+    assert_eq!(
+        history["result"]["sources"][&first_id]["status"],
+        "available"
+    );
+    assert_eq!(
+        history["result"]["sources"][&first_id]["text"],
+        "first group input"
+    );
+    let (status, detail) = fixture
+        .request(
+            "GET",
+            &format!("/api/v1/chet/inputs/{first_id}"),
+            json!(null),
+        )
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(
+        detail["result"]["sources"][&first_id],
+        history["result"]["sources"][&first_id]
+    );
+
+    // The first input was durably registered but not attempted; the second
+    // could already have reached the model; the third is only in the ledger.
+    crate::chet_group_input::spawn(fixture.state.clone());
+    fixture.wait_for(registered[0], "result").await;
+    let third = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let history = fixture
+                .client
+                .call(&chet_daemon_request(
+                    "chet_history_list",
+                    json!({"by":"user","after":"0","limit":100}),
+                ))
+                .await
+                .expect("history");
+            if let Some(id) = history.result["records"]
+                .as_array()
+                .expect("records")
+                .iter()
+                .find(|row| row["kind"] == "group_input" && row["input"]["event_id"] == sources[2])
+                .and_then(|row| row["id"].as_str())
+            {
+                break uuid::Uuid::parse_str(id).expect("UUID");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("third input registered");
+    fixture.wait_for(third, "result").await;
+    let claimed = fixture
+        .client
+        .call(&chet_daemon_request(
+            "chet_history_find",
+            json!({"by":"user","id":registered[1]}),
+        ))
+        .await
+        .expect("claimed history");
+    assert!(
+        claimed.result["records"]
+            .as_array()
+            .expect("records")
+            .iter()
+            .any(|row| row["kind"] == "group_dispatch")
+    );
+    assert!(
+        !claimed.result["records"]
+            .as_array()
+            .expect("records")
+            .iter()
+            .any(|row| row["kind"] == "receipt" || row["kind"] == "result")
+    );
+
+    let requests = cccc_core::codex_voice_settings::workdir(&fixture.home)
+        .expect("workdir")
+        .join("fixture_requests.jsonl");
+    let seen: Vec<String> = std::fs::read_to_string(requests)
+        .expect("fixture requests")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|request| request["method"] == "session/prompt")
+        .filter_map(|request| {
+            request["params"]["prompt"][0]["text"]
+                .as_str()
+                .and_then(|text| text.lines().last())
+                .and_then(|line| serde_json::from_str::<Value>(line).ok())
+                .and_then(|body| body["event_id"].as_str().map(str::to_owned))
+        })
+        .collect();
+    assert_eq!(seen, vec![sources[0].clone(), sources[2].clone()]);
+    let _ = fixture.state.shutdown.send(());
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_pending_group_sources_reconcile_after_restart() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_pending_group_sources_reconcile_after_restart",
+    ) {
+        return;
+    }
+    let fixture = ChetHttpFixture::new().await;
+    let groups = cccc_core::GroupStore::new(fixture.home.clone()).expect("groups");
+    let mut invalid = Vec::new();
+    let mut unreadable = Vec::new();
+    let mut claimed = None;
+
+    for case in [
+        "removed",
+        "replaced",
+        "new_group",
+        "deleted",
+        "missing_event",
+        "unreadable",
+        "transient_missing",
+        "removal_in_progress",
+        "replacement_in_progress",
+        "claimed_removed",
+    ] {
+        let mut group = groups.create(case, "").expect("group");
+        let mut worker = cccc_contracts::Actor::new("worker");
+        worker.generation = "original-member".into();
+        worker.runtime = cccc_contracts::ActorRuntime::WebModel;
+        group.actors.push(worker.clone());
+        groups.save(&group).expect("member");
+        let original_group = group.clone();
+        let mut added = cccc_contracts::Event::new("actor.add", &group.group_id);
+        added.data.insert("actor".into(), json!(worker));
+        let ledger = groups.ledger_path(&group.group_id).expect("ledger");
+        cccc_core::ledger::append(&ledger, &added).expect("member registration");
+        let sent = fixture
+            .client
+            .call(&chet_daemon_request(
+                "send",
+                json!({"group_id":group.group_id,"by":"worker","to":["@chet"],
+                    "message_mode":"send","text":"Please help"}),
+            ))
+            .await
+            .expect("send");
+        assert!(sent.ok, "{sent:?}");
+        let input = cccc_contracts::chet::GroupInput {
+            group_id: group.group_id.clone(),
+            group_generation: cccc_core::connect_groups::generation(&group),
+            event_id: sent.result["event"]["id"].as_str().expect("id").into(),
+            sender: cccc_contracts::chet::GroupInputSender::Actor {
+                actor_id: "worker".into(),
+                actor_generation: "original-member".into(),
+            },
+            reply_to: None,
+        };
+        let registered = fixture
+            .client
+            .call(&chet_daemon_request(
+                "chet_history_group_input",
+                json!({"by":"user","input":input}),
+            ))
+            .await
+            .expect("register");
+        assert!(registered.ok, "{registered:?}");
+        let id =
+            uuid::Uuid::parse_str(registered.result["id"].as_str().expect("id")).expect("UUID");
+        match case {
+            "removed" => {
+                group.actors.clear();
+                groups.save(&group).expect("remove member");
+                let mut event = cccc_contracts::Event::new("actor.remove", &group.group_id);
+                event.data.insert("actor_id".into(), json!("worker"));
+                cccc_core::ledger::append(&ledger, &event).expect("commit removal");
+            }
+            "replaced" => {
+                group.actors[0].generation = "replacement-member".into();
+                groups.save(&group).expect("replace member");
+                let mut event = cccc_contracts::Event::new("actor.add", &group.group_id);
+                event.data.insert("actor".into(), json!(group.actors[0]));
+                cccc_core::ledger::append(&ledger, &event).expect("commit replacement");
+            }
+            "new_group" => {
+                group.generation = "replacement-group".into();
+                groups.save(&group).expect("replace group");
+            }
+            "deleted" => assert!(groups.delete(&group.group_id).expect("delete group")),
+            "missing_event" => std::fs::write(&ledger, b"").expect("replace fixture ledger"),
+            "unreadable" => {
+                let path = ledger.parent().expect("group directory").join("group.yaml");
+                std::fs::write(&path, "[invalid group document").expect("corrupt fixture");
+                unreadable.push((case, id, input.clone(), "io_error", None));
+            }
+            "transient_missing" => {
+                let dir = ledger.parent().expect("group directory");
+                let tombstone = dir.with_file_name(format!(".{}.deleting-test", group.group_id));
+                std::fs::rename(dir, tombstone).expect("simulate deletion before commit");
+                unreadable.push((case, id, input.clone(), "io_error", None));
+            }
+            "removal_in_progress" => {
+                group.actors.clear();
+                groups.save(&group).expect("uncommitted removal");
+                unreadable.push((
+                    case,
+                    id,
+                    input.clone(),
+                    "invalid_chet_source",
+                    Some(original_group.clone()),
+                ));
+            }
+            "replacement_in_progress" => {
+                group.actors[0].generation = "replacement-member".into();
+                groups.save(&group).expect("uncommitted replacement");
+                unreadable.push((
+                    case,
+                    id,
+                    input.clone(),
+                    "invalid_chet_source",
+                    Some(original_group.clone()),
+                ));
+            }
+            "claimed_removed" => {
+                let result = fixture
+                    .client
+                    .call(&chet_daemon_request(
+                        "chet_history_claim_group_input",
+                        json!({"by":"user","input_id":id}),
+                    ))
+                    .await
+                    .expect("claim");
+                assert_eq!(result.result["registration"], "inserted");
+                group.actors.clear();
+                groups.save(&group).expect("remove member after claim");
+                claimed = Some(id);
+            }
+            _ => unreachable!(),
+        }
+        if ![
+            "unreadable",
+            "transient_missing",
+            "removal_in_progress",
+            "replacement_in_progress",
+            "claimed_removed",
+        ]
+        .contains(&case)
+        {
+            invalid.push((case, id));
+        }
+    }
+
+    crate::chet_group_input::spawn(fixture.state.clone());
+    for (case, id) in invalid {
+        let records =
+            tokio::time::timeout(Duration::from_secs(2), fixture.wait_for(id, "not_started"))
+                .await
+                .unwrap_or_else(|_| panic!("{case} must be surfaced as not started"));
+        let fact = records
+            .iter()
+            .find(|record| {
+                record["kind"] == "not_started" && record["reason"] == "source_unavailable"
+            })
+            .unwrap_or_else(|| panic!("{case}: {records:?}"));
+        assert!(
+            !records.iter().any(|record| {
+                ["group_dispatch", "receipt", "result"]
+                    .contains(&record["kind"].as_str().unwrap_or(""))
+            }),
+            "{case} must never reach the model"
+        );
+        let retried = fixture
+            .client
+            .call(&chet_daemon_request(
+                "chet_history_not_started",
+                json!({"by":"user","id":fact["id"],
+                "input_id":id,"reason":"source_unavailable"}),
+            ))
+            .await
+            .expect("idempotent retry");
+        assert_eq!(retried.result["registration"], "existing", "{case}");
+    }
+    // The owner cannot register a later feed event until it has finished the
+    // initial pending reconciliation. This makes the negative assertions
+    // below independent of HashMap iteration order and scheduler timing.
+    let barrier = groups.create("reconcile barrier", "").expect("group");
+    let sent = fixture
+        .client
+        .call(&chet_daemon_request(
+            "send",
+            json!({"group_id":barrier.group_id,"by":"user","to":["@chet"],
+                "message_mode":"send","text":"barrier"}),
+        ))
+        .await
+        .expect("barrier event");
+    assert!(sent.ok, "{sent:?}");
+    let barrier_id = sent.result["event"]["id"].as_str().expect("id");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let page = fixture
+                .client
+                .call(&chet_daemon_request(
+                    "chet_history_list",
+                    json!({"by":"user","after":"0","limit":100}),
+                ))
+                .await
+                .expect("history");
+            if page.result["records"]
+                .as_array()
+                .expect("records")
+                .iter()
+                .any(|record| {
+                    record["kind"] == "group_input" && record["input"]["event_id"] == barrier_id
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("owner finished reconciliation");
+    for (case, id, input, expected_error, rollback) in unreadable {
+        let response = fixture
+            .client
+            .call(&chet_daemon_request(
+                "chet_history_group_input",
+                json!({"by":"user","input":input}),
+            ))
+            .await
+            .expect("validation response");
+        assert!(!response.ok);
+        assert_eq!(
+            response.error.expect("error").code,
+            expected_error,
+            "{case} is not confirmed source retirement"
+        );
+        let (_, detail) = fixture
+            .request("GET", &format!("/api/v1/chet/inputs/{id}"), json!(null))
+            .await;
+        assert!(
+            !detail["result"]["records"]
+                .as_array()
+                .expect("facts")
+                .iter()
+                .any(|record| record["kind"] == "not_started")
+        );
+        if let Some(original) = rollback {
+            groups.save(&original).expect("roll back member mutation");
+            let response = fixture
+                .client
+                .call(&chet_daemon_request(
+                    "chet_history_group_input",
+                    json!({"by":"user","input":input}),
+                ))
+                .await
+                .expect("validation after rollback");
+            assert!(response.ok, "{case}: {response:?}");
+            assert_eq!(response.result["registration"], "existing");
+            assert_eq!(response.result["id"], id.to_string());
+        }
+    }
+    let id = claimed.expect("claimed input");
+    let (_, detail) = fixture
+        .request("GET", &format!("/api/v1/chet/inputs/{id}"), json!(null))
+        .await;
+    let facts = detail["result"]["records"].as_array().expect("facts");
+    assert!(
+        facts
+            .iter()
+            .any(|record| record["kind"] == "group_dispatch")
+    );
+    assert!(
+        !facts.iter().any(|record| record["kind"] == "not_started"),
+        "a claimed input remains unconfirmed"
+    );
+    let _ = fixture.state.shutdown.send(());
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_group_prompt_resolves_only_a_visible_reply_source() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_group_prompt_resolves_only_a_visible_reply_source",
+    ) {
+        return;
+    }
+    let fixture = ChetHttpFixture::new().await;
+    let groups = cccc_core::GroupStore::new(fixture.home.clone()).expect("groups");
+    let mut group = groups.create("source context fixture", "").expect("group");
+    let mut worker = cccc_contracts::Actor::new("worker");
+    worker.generation = "worker-generation".into();
+    worker.runtime = cccc_contracts::ActorRuntime::WebModel;
+    let mut other = cccc_contracts::Actor::new("other");
+    other.runtime = cccc_contracts::ActorRuntime::WebModel;
+    group.actors.extend([worker.clone(), other]);
+    groups.save(&group).expect("actors");
+    let mut registration = cccc_contracts::Event::new("actor.add", &group.group_id);
+    registration.data.insert("actor".into(), json!(worker));
+    cccc_core::ledger::append(
+        &groups.ledger_path(&group.group_id).expect("ledger"),
+        &registration,
+    )
+    .expect("actor registration");
+    let token = "1".repeat(32);
+    cccc_core::voice_notifications::register_origin(
+        &fixture.home,
+        &token,
+        "fixture",
+        "thread",
+        cccc_contracts::ActorRuntime::Codex,
+    )
+    .expect("Chet origin");
+    let client = &fixture.client;
+    let send = |op: &'static str, args: Value| async move {
+        client.call(&chet_daemon_request(op, args)).await
+    };
+    let handoff = send(
+        "send",
+        json!({"group_id":group.group_id,"by":"user",
+        "to":["worker"],"message_mode":"send","text":"Old visible handoff",
+        "_voice_origin":token}),
+    )
+    .await
+    .expect("handoff");
+    assert!(handoff.ok, "{handoff:?}");
+    let handoff_id = handoff.result["event"]["id"].as_str().expect("id");
+    for index in 0..31 {
+        let sent = send(
+            "send",
+            json!({"group_id":group.group_id,"by":"user",
+            "to":["worker"],"message_mode":"send","text":format!("Later context {index}")}),
+        )
+        .await
+        .expect("context");
+        assert!(sent.ok, "{sent:?}");
+    }
+    let visible_reply = send(
+        "reply",
+        json!({"group_id":group.group_id,"by":"worker",
+        "reply_to":handoff_id,"text":"Finished that handoff"}),
+    )
+    .await
+    .expect("reply");
+    assert!(visible_reply.ok, "{visible_reply:?}");
+    let private = send(
+        "send",
+        json!({"group_id":group.group_id,"by":"user","to":["other"],
+        "message_mode":"send","text":"A private message to someone else"}),
+    )
+    .await
+    .expect("private");
+    assert!(private.ok, "{private:?}");
+    let private_id = private.result["event"]["id"].as_str().expect("private id");
+    let hidden_reply = send(
+        "send",
+        json!({"group_id":group.group_id,"by":"worker",
+        "to":["@chet"],"message_mode":"send","reply_to":private_id,"text":"Question"}),
+    )
+    .await
+    .expect("hidden reply");
+    assert!(hidden_reply.ok, "{hidden_reply:?}");
+
+    let mut registered = Vec::new();
+    for (response, parent) in [(&visible_reply, handoff_id), (&hidden_reply, private_id)] {
+        let input = cccc_contracts::chet::GroupInput {
+            group_id: group.group_id.clone(),
+            group_generation: cccc_core::connect_groups::generation(&group),
+            event_id: response.result["event"]["id"].as_str().expect("id").into(),
+            sender: cccc_contracts::chet::GroupInputSender::Actor {
+                actor_id: "worker".into(),
+                actor_generation: "worker-generation".into(),
+            },
+            reply_to: Some(parent.into()),
+        };
+        let result = send(
+            "chet_history_group_input",
+            json!({"by":"user","input":input}),
+        )
+        .await
+        .expect("register");
+        assert!(result.ok, "{result:?}");
+        registered
+            .push(uuid::Uuid::parse_str(result.result["id"].as_str().expect("id")).expect("UUID"));
+    }
+    crate::chet_group_input::spawn(fixture.state.clone());
+    for id in registered {
+        fixture.wait_for(id, "result").await;
+    }
+    let requests = cccc_core::codex_voice_settings::workdir(&fixture.home)
+        .expect("workdir")
+        .join("fixture_requests.jsonl");
+    let prompts: Vec<Value> = std::fs::read_to_string(requests)
+        .expect("fixture requests")
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|request| request["method"] == "session/prompt")
+        .filter_map(|request| {
+            request["params"]["prompt"][0]["text"]
+                .as_str()
+                .and_then(|text| text.lines().last())
+                .and_then(|line| serde_json::from_str::<Value>(line).ok())
+        })
+        .collect();
+    let visible = prompts
+        .iter()
+        .find(|body| body["event_id"] == visible_reply.result["event"]["id"])
+        .expect("visible reply prompt");
+    assert_eq!(visible["replied_message"]["status"], "available");
+    assert_eq!(
+        visible["replied_message"]["event"]["data"]["text"],
+        "Old visible handoff"
+    );
+    let hidden = prompts
+        .iter()
+        .find(|body| body["event_id"] == hidden_reply.result["event"]["id"])
+        .expect("hidden reply prompt");
+    assert_eq!(hidden["replied_message"]["status"], "unavailable");
+    assert!(
+        !hidden
+            .to_string()
+            .contains("A private message to someone else")
+    );
+    let _ = fixture.state.shutdown.send(());
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn chet_group_result_reuses_voice_output_without_a_second_model_turn() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::chet_group_result_reuses_voice_output_without_a_second_model_turn",
+    ) {
+        return;
+    }
+    use cccc_core::{voice_notifications as voice, voice_recording_lease as lease};
+    for (already_viewed, live_call) in [(false, false), (true, false), (false, true)] {
+        let fixture = ChetHttpFixture::new().await;
+        let groups = cccc_core::GroupStore::new(fixture.home.clone()).expect("groups");
+        let mut group = groups.create("Voice handoff fixture", "").expect("group");
+        let mut worker = cccc_contracts::Actor::new("worker");
+        worker.generation = "worker-generation".into();
+        worker.runtime = cccc_contracts::ActorRuntime::WebModel;
+        group.actors.push(worker.clone());
+        groups.save(&group).expect("save");
+        let mut added = cccc_contracts::Event::new("actor.add", &group.group_id);
+        added.data.insert("actor".into(), json!(worker));
+        cccc_core::ledger::append(&groups.ledger_path(&group.group_id).expect("path"), &added)
+            .expect("registration");
+        let session = if live_call {
+            fixture
+                .state
+                .codex_voice
+                .prepare_chet_for_group_input(&fixture.home)
+                .await
+                .expect("fake Analyst");
+            let runtime = fixture
+                .state
+                .codex_voice
+                .state
+                .lock()
+                .await
+                .analyst
+                .clone()
+                .expect("Analyst");
+            Some(
+                local_assistant_call(&fixture.home, &fixture.state.codex_voice, &runtime, true)
+                    .await,
+            )
+        } else {
+            None
+        };
+        let token = "6".repeat(32);
+        voice::register_origin(
+            &fixture.home,
+            &token,
+            "fixture",
+            "thread",
+            cccc_contracts::ActorRuntime::Codex,
+        )
+        .expect("origin");
+        let acquired = if live_call {
+            None
+        } else {
+            Some(
+                lease::update(
+                    &fixture.home,
+                    "",
+                    "",
+                    &json!({"action":"acquire",
+                "owner_id":"codex-voice:fixture","capture_mode":"codex_voice",
+                "dispatch_target":"codex_voice","by":"user"}),
+                )
+                .expect("lease"),
+            )
+        };
+        let parent = fixture
+            .client
+            .call(&chet_daemon_request(
+                "send",
+                json!({"by":"user",
+            "group_id":group.group_id,"to":["worker"],"message_mode":"send",
+            "text":"Voice handoff","_voice_origin":token}),
+            ))
+            .await
+            .expect("parent");
+        assert!(parent.ok, "{parent:?}");
+        if let Some(acquired) = acquired {
+            assert!(
+                lease::release(
+                    &fixture.home,
+                    "",
+                    "codex-voice:fixture",
+                    acquired["lease_id"].as_str().expect("lease id")
+                )
+                .expect("release")
+            );
+        }
+        if let Some(session) = &session {
+            session.start_notifications(
+                fixture.home.clone(),
+                fixture.state.ledger_events.clone(),
+                crate::auth::Principal {
+                    user_id: "local".into(),
+                    allowed_groups: Vec::new(),
+                    is_admin: true,
+                    raw_token: String::new(),
+                },
+            );
+        }
+        let reply = fixture
+            .client
+            .call(&chet_daemon_request(
+                "reply",
+                json!({"by":"worker",
+            "group_id":group.group_id,"reply_to":parent.result["event"]["id"],
+            "text":"Actor reply after call"}),
+            ))
+            .await
+            .expect("reply");
+        assert!(reply.ok, "{reply:?}");
+        let source = cccc_contracts::voice_notifications::VoiceMessageRef {
+            group_id: group.group_id.clone(),
+            event_id: reply.result["event"]["id"].as_str().expect("id").into(),
+        };
+        if already_viewed {
+            voice::mark_viewed(&fixture.home, std::slice::from_ref(&source)).expect("viewed");
+        }
+        voice::scan(&fixture.home).expect("Voice scan before Group owner");
+        assert!(
+            voice::reserve(&fixture.home, &source, "other-owner")
+                .expect("reserve")
+                .is_none()
+        );
+        if live_call {
+            // Give the old consumer a polling interval to encounter the
+            // candidate before the Group owner submits it.
+            tokio::time::sleep(Duration::from_millis(1200)).await;
+            let candidate = voice::snapshot(&fixture.home)
+                .expect("state")
+                .messages
+                .into_iter()
+                .find(|item| item.source == source)
+                .expect("candidate");
+            assert!(
+                candidate.handoff.is_none(),
+                "Voice must leave Group input to its owner"
+            );
+        }
+        let input = cccc_contracts::chet::GroupInput {
+            group_id: group.group_id.clone(),
+            group_generation: cccc_core::connect_groups::generation(&group),
+            event_id: source.event_id.clone(),
+            sender: cccc_contracts::chet::GroupInputSender::Actor {
+                actor_id: "worker".into(),
+                actor_generation: "worker-generation".into(),
+            },
+            reply_to: parent.result["event"]["id"].as_str().map(str::to_owned),
+        };
+        let registered = fixture
+            .client
+            .call(&chet_daemon_request(
+                "chet_history_group_input",
+                json!({"by":"user","input":input}),
+            ))
+            .await
+            .expect("register");
+        assert!(registered.ok, "{registered:?}");
+        let id =
+            uuid::Uuid::parse_str(registered.result["id"].as_str().expect("id")).expect("UUID");
+        crate::chet_group_input::spawn(fixture.state.clone());
+        fixture.wait_for(id, "result").await;
+        let result = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(result) = voice::snapshot(&fixture.home)
+                    .expect("Voice state")
+                    .results
+                    .into_iter()
+                    .next()
+                {
+                    break result;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("Voice result must be retained");
+        assert_eq!(result.sources, vec![source.clone()]);
+        let reserved = voice::reserve_output(&fixture.home, &result.id, "next-call")
+            .expect("reserve output")
+            .expect("result");
+        let output =
+            voice::prepare_output(&fixture.home, &reserved.id, "next-call").expect("prepare");
+        assert_eq!(
+            output.is_none(),
+            already_viewed,
+            "the original viewed policy remains in effect"
+        );
+        let requests = cccc_core::codex_voice_settings::workdir(&fixture.home)
+            .expect("workdir")
+            .join("fixture_requests.jsonl");
+        let count = std::fs::read_to_string(requests)
+            .expect("fixture requests")
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|request| request["method"] == "session/prompt")
+            .filter(|request| {
+                request["params"]["prompt"][0]["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(&source.event_id))
+            })
+            .count();
+        assert_eq!(count, 1, "the fixture observed one model submission");
+        let _ = fixture.state.shutdown.send(());
+        fixture.stop().await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_group_voice_binding_failure_stops_the_current_notification_consumer() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::a_group_voice_binding_failure_stops_the_current_notification_consumer",
+    ) {
+        return;
+    }
+    use cccc_contracts::voice_notifications::NotificationScope;
+    use cccc_core::voice_notifications as voice;
+
+    let fixture = ChetHttpFixture::new().await;
+    fixture
+        .state
+        .codex_voice
+        .prepare_chet_for_group_input(&fixture.home)
+        .await
+        .expect("fake Analyst");
+    let runtime = fixture
+        .state
+        .codex_voice
+        .state
+        .lock()
+        .await
+        .analyst
+        .clone()
+        .expect("Analyst");
+    let session =
+        local_assistant_call(&fixture.home, &fixture.state.codex_voice, &runtime, true).await;
+    let groups = cccc_core::GroupStore::new(fixture.home.clone()).expect("groups");
+    let group = groups.create("Notification fixture", "").expect("group");
+    let mut preferences = voice::preferences(&fixture.home).expect("preferences");
+    preferences
+        .groups
+        .insert(group.group_id.clone(), NotificationScope::ToUser);
+    voice::save_preferences(&fixture.home, preferences).expect("subscribe");
+    let mut other = cccc_contracts::Event::new("chat.message", &group.group_id);
+    other.by = "worker".into();
+    other.data = json!({"text":"Ordinary notification", "to":["user"]})
+        .as_object()
+        .expect("event")
+        .clone();
+    cccc_core::ledger::append(&groups.ledger_path(&group.group_id).expect("path"), &other)
+        .expect("append");
+    voice::scan(&fixture.home).expect("ordinary candidate");
+    let state_path = fixture
+        .home
+        .root()
+        .join("state/codex_voice/notifications.json");
+    let saved = std::fs::read(&state_path).expect("fixture state");
+    std::fs::write(&state_path, "{").expect("inject binding failure");
+    let input = cccc_contracts::chet::GroupInput {
+        group_id: group.group_id.clone(),
+        group_generation: cccc_core::connect_groups::generation(&group),
+        event_id: "synthetic-source".into(),
+        sender: cccc_contracts::chet::GroupInputSender::Actor {
+            actor_id: "worker".into(),
+            actor_generation: "generation".into(),
+        },
+        reply_to: Some("synthetic-parent".into()),
+    };
+    let request = cccc_core::chet_history::TextRequest {
+        text: "fixture input".into(),
+        context: None,
+    };
+    fixture
+        .state
+        .codex_voice
+        .submit_chet_group_input(&fixture.home, uuid::Uuid::new_v4(), &input, &request)
+        .await
+        .expect("Group input is still admitted");
+    assert!(
+        *session.notification_paused.borrow(),
+        "binding failure is visible"
+    );
+    std::fs::write(&state_path, saved).expect("restore fixture state");
+    session.start_notifications(
+        fixture.home.clone(),
+        fixture.state.ledger_events.clone(),
+        crate::auth::Principal {
+            user_id: "local".into(),
+            allowed_groups: Vec::new(),
+            is_admin: true,
+            raw_token: String::new(),
+        },
+    );
+    tokio::time::sleep(Duration::from_millis(1300)).await;
+    let candidate = voice::snapshot(&fixture.home)
+        .expect("snapshot")
+        .messages
+        .into_iter()
+        .find(|item| item.source.event_id == other.id)
+        .expect("ordinary notification retained");
+    assert!(
+        candidate.handoff.is_none(),
+        "a paused call must not consume later candidates"
+    );
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn chet_history_write_does_not_hold_up_voice_analyst_events() {
     if isolated_child(
         "codex_voice::acp_regression_tests::chet_history_write_does_not_hold_up_voice_analyst_events",

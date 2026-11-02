@@ -30,7 +30,7 @@ impl ActiveSession {
                 let Some(session) = weak.upgrade() else {
                     break;
                 };
-                if !session.info().connected {
+                if !session.info().connected || *session.notification_paused.borrow() {
                     break;
                 }
                 if let Err(error) = session.receive_notifications(&home, &principal).await {
@@ -57,7 +57,12 @@ impl ActiveSession {
         }
         store::scan(home).context("scan Voice ledger increments")?;
         for item in store::snapshot(home)?.messages {
-            if !self.info().connected || !principal.current_admin(home)? {
+            // A reservation already started may finish, but a paused call
+            // must not take the next candidate.
+            if !self.info().connected
+                || *self.notification_paused.borrow()
+                || !principal.current_admin(home)?
+            {
                 break;
             }
             if item.handoff.is_some() {

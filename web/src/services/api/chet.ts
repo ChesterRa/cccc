@@ -25,6 +25,37 @@ export type ChetTranscript = {
   complete: boolean;
 };
 
+/** Who wrote a Group message to Chet, as the host verified it when it registered the message. */
+export type ChetGroupSender = { kind: "user" } | { kind: "actor"; actor_id: string };
+
+/** A Group message to Chet. The Group ledger holds its text; this names where it is. */
+export type ChetGroupInput = {
+  group_id: string;
+  group_generation: string;
+  event_id: string;
+  sender: ChetGroupSender;
+  reply_to: string | null;
+};
+
+/**
+ * A Group message as its ledger shows it now. Unavailable when the Group or the message is
+ * gone, the Group was re-created, or its ledger could not be read.
+ */
+export type ChetGroupSource =
+  | {
+      status: "available";
+      group_title: string;
+      sender_title: string;
+      text: string;
+      sent_at: string;
+      has_attachments: boolean;
+      /** The text stops at a size limit; the Group holds the rest. */
+      truncated: boolean;
+      /** Chet's reply to the sender that this Group's ledger shows, if any. */
+      reply_event_id: string | null;
+    }
+  | { status: "unavailable" };
+
 type Base = { id: string; created_at: string };
 
 /**
@@ -38,6 +69,9 @@ export type ChetRecord =
       kind: "voice_delegation";
       delegation: { call_id: string; delegation_id: string; text: string };
     })
+  | (Base & { kind: "group_input"; input: ChetGroupInput })
+  /** The host took a Group message to submit: not proof that a Runtime received it. */
+  | (Base & { kind: "group_dispatch"; input_id: string })
   | (Base & { kind: "receipt"; input_id: string; receipt: { generation: string; turn_id: string } })
   | (Base & { kind: "result"; input_ids: string[]; outcome: ChetOutcome })
   | (Base & { kind: "not_started"; input_id: string; reason: string })
@@ -54,8 +88,12 @@ export type ChetStatus = {
   owner_busy: boolean;
 };
 
+export type ChetSources = ReadonlyMap<string, ChetGroupSource>;
+
 export type ChetPage = {
   records: ChetRecord[];
+  /** Group messages this page names, by their input ID. */
+  sources: ChetSources;
   /** Records this page could not show: malformed, or of a kind this build does not know. */
   skipped: number;
   /** Cursor for older records; null at the start of history. */
@@ -81,6 +119,40 @@ function isContext(value: unknown): value is ChetGroupContext | null {
       isString(value.group_title) &&
       (value.scope_key === null || isString(value.scope_key)))
   );
+}
+
+function isGroupInput(value: unknown): value is ChetGroupInput {
+  if (!isObject(value) || !isObject(value.sender)) return false;
+  const { sender } = value;
+  return (
+    isString(value.group_id) &&
+    isString(value.group_generation) &&
+    isString(value.event_id) &&
+    (value.reply_to === null || value.reply_to === undefined || isString(value.reply_to)) &&
+    (sender.kind === "user" || (sender.kind === "actor" && isString(sender.actor_id)))
+  );
+}
+
+function isGroupSource(value: unknown): value is ChetGroupSource {
+  if (!isObject(value)) return false;
+  if (value.status === "unavailable") return true;
+  return (
+    value.status === "available" &&
+    ["group_title", "sender_title", "text", "sent_at"].every((key) => isString(value[key])) &&
+    typeof value.has_attachments === "boolean" &&
+    typeof value.truncated === "boolean" &&
+    (value.reply_event_id === null || isString(value.reply_event_id))
+  );
+}
+
+/** A source this build cannot read counts as unavailable rather than hiding its input. */
+function sources(value: unknown): ChetSources {
+  const map = new Map<string, ChetGroupSource>();
+  if (!isObject(value)) return map;
+  for (const [id, source] of Object.entries(value)) {
+    map.set(id, isGroupSource(source) ? source : { status: "unavailable" });
+  }
+  return map;
 }
 
 function isTranscript(value: unknown): value is ChetTranscript {
@@ -112,6 +184,10 @@ export function isChetRecord(value: unknown): value is ChetRecord {
         isString(value.delegation.delegation_id) &&
         isString(value.delegation.text)
       );
+    case "group_input":
+      return isGroupInput(value.input);
+    case "group_dispatch":
+      return isString(value.input_id);
     case "receipt":
       return (
         isString(value.input_id) &&
@@ -143,6 +219,7 @@ function page(result: unknown): ChetPage | null {
   const records = result.records.filter(isChetRecord);
   return {
     records,
+    sources: sources(result.sources),
     skipped: result.records.length - records.length,
     before: isString(result.before) ? result.before : null,
     after: result.after,
@@ -183,20 +260,27 @@ export async function fetchChetHistoryAfter(
   return parsed ? { ok: true, result: parsed } : invalid("Chet history response is malformed");
 }
 
-/** Every record about one input: the input itself and what followed it. Empty if unknown. */
+/**
+ * Every record about one input: the input itself and what followed it, with the Group message
+ * it names, if any. Empty if unknown.
+ */
 export async function fetchChetInput(
   id: string,
   signal?: AbortSignal,
-): Promise<ApiResponse<ChetRecord[]>> {
+): Promise<ApiResponse<{ records: ChetRecord[]; sources: ChetSources }>> {
   const response = await apiJson<unknown>(`/api/v1/chet/inputs/${encodeURIComponent(id)}`, {
     signal,
   });
   if (!response.ok) return response;
-  const records = isObject(response.result) ? response.result.records : undefined;
+  const result = isObject(response.result) ? response.result : undefined;
+  const records = result?.records;
   // The host answers an unknown ID with `records: null`.
-  if (records === null) return { ok: true, result: [] };
+  if (records === null) return { ok: true, result: { records: [], sources: new Map() } };
   if (!Array.isArray(records)) return invalid("Chet input response is malformed");
-  return { ok: true, result: records.filter(isChetRecord) };
+  return {
+    ok: true,
+    result: { records: records.filter(isChetRecord), sources: sources(result?.sources) },
+  };
 }
 
 export async function fetchChetStatus(signal?: AbortSignal): Promise<ApiResponse<ChetStatus>> {

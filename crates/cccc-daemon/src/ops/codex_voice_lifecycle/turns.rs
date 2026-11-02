@@ -16,6 +16,15 @@ impl AnalystLifecycle {
             .await
     }
 
+    pub(crate) async fn admit_group(
+        &self,
+        delegation_id: &str,
+        text: &str,
+    ) -> Result<VoiceDelegationAdmission> {
+        self.admit_input(delegation_id, text, AnalystTurnOrigin::Group)
+            .await
+    }
+
     pub(crate) async fn begin_actor_result(
         &self,
         correlation_id: &str,
@@ -48,6 +57,32 @@ impl AnalystLifecycle {
         if self.session.structured_only() {
             // Pure ACP has no native busy-input surface. Every accepted input
             // uses a visible FIFO, never an overlapping session/prompt request.
+            return self.enqueue(delegation_id, text, origin, state);
+        }
+        if origin == AnalystTurnOrigin::Group {
+            let idle = state.active.is_none()
+                && state.pending.is_none()
+                && state.native_pending.is_empty()
+                && state.queue.is_empty();
+            if !idle {
+                return self.enqueue(delegation_id, text, origin, state);
+            }
+        }
+        // No other input, including an older Voice notification, can join a
+        // Group turn whose result belongs to a single Group message.
+        if state
+            .active
+            .as_ref()
+            .is_some_and(|turn| turn.origin == AnalystTurnOrigin::Group)
+            || state
+                .pending
+                .as_ref()
+                .is_some_and(|pending| pending.origin == AnalystTurnOrigin::Group)
+            || state
+                .native_pending
+                .iter()
+                .any(|pending| pending.origin == AnalystTurnOrigin::Group)
+        {
             return self.enqueue(delegation_id, text, origin, state);
         }
         if let Some(receipt) = state.delegations.get(delegation_id) {
@@ -137,6 +172,7 @@ impl AnalystLifecycle {
         {
             let mut state = self.state.lock().await;
             remove_native_pending(&mut state.native_pending, delegation_id);
+            self.queue_notify.notify_one();
             return Err(error).context("register Voice delegation for native Runtime input");
         }
         Ok(VoiceDelegationAdmission::NativeInput {
@@ -184,6 +220,7 @@ impl AnalystLifecycle {
             pending.delegation_id == delegation_id && pending.origin == origin
         }) {
             state.pending = None;
+            self.queue_notify.notify_one();
         }
         let settled_pending = if state
             .settled_pending
@@ -282,6 +319,7 @@ impl AnalystLifecycle {
             // rolled back or replayed.
             return Ok(false);
         }
+        self.queue_notify.notify_one();
         self.session
             .forget_native_input(self.session.generation(), delegation_id)
             .await
@@ -294,9 +332,27 @@ impl AnalystLifecycle {
         let mut lifecycle_events = wait_for_settlement.then(|| self.subscribe());
         let (turn_id, pending_id) = {
             let mut state = self.state.lock().await;
-            let queued = state.queue.drain(..).collect::<Vec<_>>();
+            // Cancelling the user's current turn must not discard an
+            // independent Group request waiting behind it. If the current
+            // turn itself came from a Group, retain the existing cancel-all
+            // behavior for that work and its queued inputs.
+            let current_origin = state
+                .active
+                .as_ref()
+                .map(|active| active.origin)
+                .or_else(|| state.pending.as_ref().map(|pending| pending.origin))
+                .or_else(|| state.native_pending.front().map(|pending| pending.origin))
+                .or_else(|| state.queue.front().map(|input| input.origin));
+            let preserve_group =
+                current_origin.is_some_and(|origin| origin != AnalystTurnOrigin::Group);
+            let (retained, queued): (std::collections::VecDeque<_>, std::collections::VecDeque<_>) =
+                state
+                    .queue
+                    .drain(..)
+                    .partition(|input| preserve_group && input.origin == AnalystTurnOrigin::Group);
+            state.queue = retained;
             self.queue_len
-                .store(0, std::sync::atomic::Ordering::Release);
+                .store(state.queue.len(), std::sync::atomic::Ordering::Release);
             let had_queued = !queued.is_empty();
             for input in queued {
                 self.complete_unadmitted_input(
@@ -306,6 +362,10 @@ impl AnalystLifecycle {
                     "",
                     AnalystCompletionSource::HostNotStarted,
                 );
+            }
+            if !state.queue.is_empty() {
+                // A retained Group input may now be the next runnable item.
+                self.queue_notify.notify_one();
             }
             if let Some(active) = state.active.as_mut() {
                 if active.cancelling {

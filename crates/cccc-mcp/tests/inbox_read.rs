@@ -311,6 +311,44 @@ async fn file_send_uses_daemon_owned_preflight_before_blob_storage() {
         1
     );
 
+    // An absolute path names the same file inside the scope; outside it, none.
+    let absolute = mcp_call(
+        &home,
+        &group.group_id,
+        12,
+        "cccc_file_send",
+        json!({"path": scope_root.join("note.txt"), "to": ["user"], "mode": "send"}),
+    )
+    .await;
+    assert_eq!(
+        absolute["result"]["structuredContent"]["sent"], true,
+        "{absolute}"
+    );
+    std::fs::write(temp.path().join("outside.txt"), "private").expect("outside file");
+    let outside = mcp_call(
+        &home,
+        &group.group_id,
+        13,
+        "cccc_file_send",
+        json!({"path": temp.path().join("outside.txt"), "to": ["user"], "mode": "send"}),
+    )
+    .await;
+    assert_eq!(outside["result"]["isError"], true, "{outside}");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(temp.path().join("outside.txt"), scope_root.join("link.txt"))
+            .expect("link");
+        let linked = mcp_call(
+            &home,
+            &group.group_id,
+            14,
+            "cccc_file_send",
+            json!({"path": scope_root.join("link.txt"), "to": ["user"], "mode": "send"}),
+        )
+        .await;
+        assert_eq!(linked["result"]["isError"], true, "{linked}");
+    }
+
     daemon_task.abort();
     let _ = daemon_task.await;
 }

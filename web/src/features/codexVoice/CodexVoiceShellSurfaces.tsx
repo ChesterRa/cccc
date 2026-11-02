@@ -11,6 +11,7 @@ export function CodexVoiceSidebarDock(props: SharedProps & { collapsed: boolean 
     <CodexVoiceDock
       controller={voice.controller}
       chetWorking={voice.chet.working}
+      chetUnread={voice.chet.unread}
       collapsed={collapsed}
       onOpen={voice.openDetails}
       onStart={voice.start}
@@ -28,6 +29,7 @@ export function CodexVoiceMobileDock(props: SharedProps) {
         variant="mobile"
         controller={voice.controller}
         chetWorking={voice.chet.working}
+        chetUnread={voice.chet.unread}
         onOpen={voice.openDetails}
         onStart={voice.start}
       />

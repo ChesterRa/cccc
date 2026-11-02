@@ -67,6 +67,7 @@ export function useAppChrome({
   const recheckWebMode = useRef<() => void>(() => {});
   const canAccessGlobalSettings = useUIStore((state) => state.canAccessGlobalSettings);
   const setCanAccessGlobalSettings = useUIStore((state) => state.setCanAccessGlobalSettings);
+  const setIsWebAdmin = useUIStore((state) => state.setIsWebAdmin);
 
   const refreshWebAccessSession = useCallback(async () => {
     try {
@@ -76,6 +77,8 @@ export function useAppChrome({
         !["unauthorized", "auth_required", "permission_denied"].includes(resp.error.code)
       ) {
         setCanAccessGlobalSettings(null);
+        // A temporary probe failure is not an authorization change. Keep the
+        // last confirmed display state; each operation is checked by Web.
         return null;
       }
       const session = resp.ok ? (resp.result?.web_access_session ?? null) : null;
@@ -83,13 +86,14 @@ export function useAppChrome({
         Boolean(session) &&
         Boolean(session?.can_access_global_settings ?? !(session?.login_active ?? false));
       setCanAccessGlobalSettings(allowed);
+      setIsWebAdmin(session ? Boolean(session.is_admin) : false);
       useObservabilityStore.getState().setRuntimeVisibilityFromSession(session);
       return Boolean(session?.is_admin);
     } catch {
       setCanAccessGlobalSettings(null);
       return null;
     }
-  }, [setCanAccessGlobalSettings]);
+  }, [setCanAccessGlobalSettings, setIsWebAdmin]);
 
   useEffect(() => {
     void refreshWebAccessSession();

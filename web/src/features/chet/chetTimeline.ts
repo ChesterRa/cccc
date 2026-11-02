@@ -1,7 +1,10 @@
 import type {
   ChetGroupContext,
+  ChetGroupInput,
+  ChetGroupSource,
   ChetOutcome,
   ChetRecord,
+  ChetSources,
   ChetStatus,
 } from "../../services/api/chet";
 import type { VoiceConversationTurn } from "../codexVoice/codexVoiceProtocol";
@@ -20,6 +23,8 @@ export type ChetRequestState =
   | "queued"
   | "working"
   | "checking"
+  /** A Group message waiting for Chet's turn; nothing has been submitted yet. */
+  | "waiting"
   | "completed"
   | "failed"
   | "cancelled"
@@ -33,8 +38,11 @@ export type ChetRequestState =
 export type ChetRequestItem = {
   kind: "request";
   id: string;
-  /** A text input is the user's words; a voice delegation is the voice model's request. */
-  source: "text" | "voice";
+  /**
+   * A text input is the user's words; a voice delegation is the voice model's request; a
+   * Group input is a message someone in a Group sent Chet.
+   */
+  source: "text" | "voice" | "group";
   createdAt: string;
   text: string;
   context: ChetGroupContext | null;
@@ -46,6 +54,8 @@ export type ChetRequestItem = {
   notStartedReason: string;
   /** History shows what followed this request, but not the request itself yet. */
   sourceMissing: boolean;
+  /** For a Group input: where it is, and the message as its Group shows it now, if read. */
+  group: { input: ChetGroupInput; message: ChetGroupSource | null } | null;
 };
 
 export type ChetTranscriptItem = {
@@ -110,7 +120,13 @@ export function liveIds(status: ChetStatus | null): string[] {
   return status ? [...status.preparing, ...status.queued, ...status.working] : [];
 }
 
-type RequestRecord = Extract<ChetRecord, { kind: "input" | "voice_delegation" }>;
+export type RequestRecord = Extract<
+  ChetRecord,
+  { kind: "input" | "voice_delegation" | "group_input" }
+>;
+
+export const isRequestRecord = (record: ChetRecord): record is RequestRecord =>
+  record.kind === "input" || record.kind === "voice_delegation" || record.kind === "group_input";
 
 /** Requests that `records` or live status name but `records` does not contain. */
 export function missingRequestIds(
@@ -120,9 +136,13 @@ export function missingRequestIds(
   const known = new Set<string>();
   const named = liveIds(status);
   for (const record of records) {
-    if (record.kind === "input" || record.kind === "voice_delegation") known.add(record.id);
+    if (isRequestRecord(record)) known.add(record.id);
     else if (record.kind === "result") named.push(...record.input_ids);
-    else if (record.kind === "not_started" || record.kind === "receipt") {
+    else if (
+      record.kind === "not_started" ||
+      record.kind === "receipt" ||
+      record.kind === "group_dispatch"
+    ) {
       named.push(record.input_id);
     }
   }
@@ -139,25 +159,34 @@ export function missingRequestIds(
  * is often before the transcript of what the user said. So it is shown where its latest loaded
  * fact is (its result, refusal or receipt, else the delegation itself), and after everything
  * while it is settled live work. This ties it to no particular transcript.
+ *
+ * A Group input waits for Chet's turn until the host submits it. A dispatch or receipt in
+ * history shows the submission, and so does status, which names only submitted work. Loaded
+ * pages run up to the newest record, so for an input on them, a dispatch they lack has not
+ * been written yet; an input read separately is shown only when a later fact names it.
  */
 export function buildChetTimeline(
   records: readonly ChetRecord[],
   view: ChetLiveView,
   local: readonly ChetLocalRequest[] = [],
   fetched: ReadonlyMap<string, RequestRecord> = new Map(),
+  groupMessages: ChetSources = new Map(),
 ): ChetTimelineItem[] {
   const sources = new Map<string, { record: RequestRecord; index: number }>();
   const receipts = new Map<string, number>();
+  const dispatches = new Map<string, number>();
   const results = new Map<
     string,
     { record: Extract<ChetRecord, { kind: "result" }>; index: number }
   >();
   const notStarted = new Map<string, { reason: string; index: number }>();
   records.forEach((record, index) => {
-    if (record.kind === "input" || record.kind === "voice_delegation") {
+    if (isRequestRecord(record)) {
       if (!sources.has(record.id)) sources.set(record.id, { record, index });
     } else if (record.kind === "receipt") {
       if (!receipts.has(record.input_id)) receipts.set(record.input_id, index);
+    } else if (record.kind === "group_dispatch") {
+      if (!dispatches.has(record.input_id)) dispatches.set(record.input_id, index);
     } else if (record.kind === "result") {
       for (const id of record.input_ids) if (!results.has(id)) results.set(id, { record, index });
     } else if (record.kind === "not_started") {
@@ -167,28 +196,49 @@ export function buildChetTimeline(
     }
   });
   const sourceOf = (id: string) => sources.get(id)?.record || fetched.get(id) || null;
+  const named = new Set(liveIds(view.status));
 
   const requestItem = (id: string, source: RequestRecord | null): ChetRequestItem => {
     const result = results.get(id)?.record;
     const reason = notStarted.get(id)?.reason;
     const live = result || reason !== undefined ? null : liveState(id, view);
+    const message = groupMessages.get(id) ?? null;
+    // Status cannot rule out work it was never given, so it says nothing about a waiting input.
+    const waiting =
+      source?.kind === "group_input" && !dispatches.has(id) && !receipts.has(id) && !named.has(id);
     return {
       kind: "request",
       id,
-      source: source?.kind === "voice_delegation" ? "voice" : "text",
+      source:
+        source?.kind === "voice_delegation"
+          ? "voice"
+          : source?.kind === "group_input"
+            ? "group"
+            : "text",
       createdAt: source?.created_at || "",
-      text: !source ? "" : source.kind === "input" ? source.request.text : source.delegation.text,
+      text: !source
+        ? ""
+        : source.kind === "input"
+          ? source.request.text
+          : source.kind === "voice_delegation"
+            ? source.delegation.text
+            : message?.status === "available"
+              ? message.text
+              : "",
       context: source?.kind === "input" ? source.request.context : null,
       state: result
         ? TERMINAL[result.outcome.status] || "ended"
         : reason !== undefined
           ? "not_started"
-          : live || (receipts.has(id) ? "received_unconfirmed" : "unconfirmed"),
+          : waiting
+            ? "waiting"
+            : live || (receipts.has(id) ? "received_unconfirmed" : "unconfirmed"),
       outcome: result?.outcome || null,
       resultAt: result?.created_at || "",
       outcomeShownLater: false,
       notStartedReason: reason || "",
       sourceMissing: !source,
+      group: source?.kind === "group_input" ? { input: source.input, message } : null,
     };
   };
 
@@ -215,11 +265,15 @@ export function buildChetTimeline(
     }
   };
   records.forEach((record, index) => {
-    if (record.kind === "input" || record.kind === "voice_delegation") {
+    if (isRequestRecord(record)) {
       place(record.id, index);
     } else if (record.kind === "result") {
       for (const id of record.input_ids) place(id, index);
-    } else if (record.kind === "not_started" || record.kind === "receipt") {
+    } else if (
+      record.kind === "not_started" ||
+      record.kind === "receipt" ||
+      record.kind === "group_dispatch"
+    ) {
       place(record.input_id, index);
     } else if (record.kind === "transcript") {
       // The host keeps one record per turn.
@@ -265,6 +319,7 @@ export function buildChetTimeline(
       outcomeShownLater: false,
       notStartedReason: "",
       sourceMissing: false,
+      group: null,
     });
   }
 
@@ -334,7 +389,7 @@ export function hasOpenRequests(items: readonly ChetTimelineItem[]): boolean {
   return items.some(
     (item) =>
       item.kind === "request" &&
-      ["sending", "preparing", "queued", "working", "checking"].includes(item.state),
+      ["sending", "preparing", "queued", "working", "checking", "waiting"].includes(item.state),
   );
 }
 

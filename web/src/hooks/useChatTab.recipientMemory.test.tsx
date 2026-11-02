@@ -7,7 +7,11 @@ import { useComposerStore, useGroupStore, useUIStore } from "../stores";
 import { useChatTab } from "./useChatTab";
 import type { Actor } from "../types";
 
-vi.mock("../services/api", () => ({ sendMessage: vi.fn(), replyMessage: vi.fn() }));
+vi.mock("../services/api", () => ({
+  sendMessage: vi.fn(),
+  sendCrossGroupMessage: vi.fn(),
+  replyMessage: vi.fn(),
+}));
 vi.mock("./useSlashCommandState", () => ({
   useSlashCommandState: () => ({ items: [], loading: false }),
 }));
@@ -61,7 +65,7 @@ beforeEach(async () => {
     groupContext: null,
     chatByGroup: {},
   });
-  useUIStore.setState({ chatSessions: {}, busy: "" });
+  useUIStore.setState({ chatSessions: {}, busy: "", errorMsg: "" });
   useComposerStore.getState().switchGroup(null, "g-a");
   useComposerStore.getState().setToText("peer-1");
   useComposerStore.getState().setComposerText("first message");
@@ -77,9 +81,80 @@ afterEach(async () => {
     root.unmount();
   });
   host.remove();
+  useUIStore.getState().dismissError();
 });
 
 describe("composer recipient isolation through actual send callbacks", () => {
+  it("addresses Chet alone and switches away from Mail before sending", async () => {
+    vi.mocked(api.sendMessage).mockResolvedValue({ ok: true, result: {} });
+    await act(async () => useComposerStore.getState().setMessageMode("mail"));
+    await act(async () => chat.toggleRecipient("@chet"));
+    expect(chat.toTokens).toEqual(["@chet"]);
+    expect(useComposerStore.getState().preferredMessageMode).toBe("mail");
+    await act(async () => chat.sendMessage());
+    expect(vi.mocked(api.sendMessage).mock.calls[0].slice(0, 5)).toEqual([
+      "g-a",
+      "first message",
+      ["@chet"],
+      undefined,
+      "send",
+    ]);
+    await act(async () => chat.toggleRecipient("peer-2"));
+    expect(chat.toTokens).toEqual(["peer-2"]);
+    expect(useComposerStore.getState().preferredMessageMode).toBe("mail");
+  });
+
+  it("keeps a rejected Chet selector and shows the host's ambiguity error", async () => {
+    vi.mocked(api.sendMessage).mockResolvedValue({
+      ok: false,
+      error: { code: "invalid_recipient", message: "Chet conflicts with member chet" },
+    });
+    await act(async () => chat.toggleRecipient("@chet"));
+    await act(async () => chat.sendMessage());
+    expect(vi.mocked(api.sendMessage).mock.calls[0][2]).toEqual(["@chet"]);
+    expect(useUIStore.getState().errorMsg).toContain("Chet conflicts with member chet");
+    expect(useComposerStore.getState()).toMatchObject({
+      toText: "@chet",
+      composerText: "first message",
+    });
+  });
+
+  it("keeps the saved Mail preference when a send to Chet is refused", async () => {
+    vi.mocked(api.sendMessage).mockResolvedValue({
+      ok: false,
+      error: { code: "invalid_recipient", message: "Chet conflicts with member chet" },
+    });
+    await act(async () => useComposerStore.getState().setMessageMode("mail"));
+    await act(async () => chat.toggleRecipient("@chet"));
+    await act(async () => chat.sendMessage());
+    expect(vi.mocked(api.sendMessage).mock.calls[0][4]).toBe("send");
+    expect(useComposerStore.getState()).toMatchObject({
+      toText: "@chet",
+      preferredMessageMode: "mail",
+    });
+  });
+
+  it("does not turn a stale cross-Group Chet target into the default recipient", async () => {
+    vi.mocked(api.sendCrossGroupMessage).mockResolvedValue({
+      ok: false,
+      error: { code: "chet_cross_group_unsupported", message: "Address Chet in this Group" },
+    });
+    await act(async () => {
+      useComposerStore.getState().setDestGroupId("g-b");
+      useComposerStore.getState().setToText("@chet");
+    });
+    expect(chat.toTokens).toEqual(["@chet"]);
+    await act(async () => chat.sendMessage());
+    expect(vi.mocked(api.sendMessage)).not.toHaveBeenCalled();
+    expect(vi.mocked(api.sendCrossGroupMessage).mock.calls[0].slice(0, 4)).toEqual([
+      "g-a",
+      "g-b",
+      "first message",
+      ["@chet"],
+    ]);
+    expect(useUIStore.getState().errorMsg).toContain("Address Chet in this Group");
+  });
+
   it("keeps recipients and sends the same explicit target twice", async () => {
     vi.mocked(api.sendMessage).mockResolvedValue({ ok: true, result: {} });
     await act(async () => {

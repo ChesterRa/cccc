@@ -13,9 +13,33 @@ pub(super) fn normalize(
     // Captured port authority is checked before dispatch, never message content.
     data.remove("_cccc_web_binding");
     data.remove("_cccc_native_binding");
+    normalize_destination(data)?;
     normalize_scoped_path(group, Some(by), data)?;
     normalize_attachments(home, group, data)?;
     super::install_command::prepare(data);
+    Ok(())
+}
+
+pub(super) fn normalize_destination(data: &mut Map<String, Value>) -> Result<(), OpError> {
+    match data.get("dst_group_id") {
+        None => {}
+        Some(Value::Null) => {
+            // An omitted optional destination is a local message, including
+            // when a caller supplies null or an empty string. Do not persist
+            // a relay marker or suppress Chet's host-authored provenance.
+            data.remove("dst_group_id");
+        }
+        Some(Value::String(value)) if value.trim().is_empty() => {
+            data.remove("dst_group_id");
+        }
+        Some(Value::String(_)) => {}
+        Some(_) => {
+            return Err(OpError::new(
+                "invalid_args",
+                "dst_group_id must be a string",
+            ));
+        }
+    }
     Ok(())
 }
 

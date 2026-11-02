@@ -165,7 +165,7 @@ pub(super) async fn daemon_guard_pending(state: &AppState) -> Result<bool, ()> {
 
 /// Called before starting a Voice provider. A missing daemon response is not
 /// an empty ledger; report both relevant owners so the user can review them.
-pub(super) async fn ensure_voice_start_allowed(state: &AppState) -> Result<(), ApiError> {
+pub(crate) async fn ensure_voice_start_allowed(state: &AppState) -> Result<(), ApiError> {
     let web_pending = match state.codex_voice.recover_before_start().await {
         Ok(()) => false,
         Err(crate::codex_voice::restart::VoiceGateError::ProcessRecoveryPending) => true,

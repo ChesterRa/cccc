@@ -165,3 +165,17 @@ it("does not offer local runtime delivery for a qualified remote recipient", () 
   expect(markup).not.toContain("In Inbox");
   expect(markup).not.toContain("Sent to runtime");
 });
+
+it("shows Chet by name with only its reply state, and nothing to deliver", () => {
+  const markup = renderModal([entry({ id: "svc:chet", label: "Chet", replyRequested: true })], {
+    statusKind: "reply",
+    messageMode: "request_reply",
+    toLabel: "Chet",
+    canCancelReply: true,
+  });
+  expect(markup).toContain(">Chet<");
+  expect(markup).not.toContain("svc:chet<");
+  // Chet takes messages in its own panel; the Group cannot deliver to it or report delivery.
+  expect(markup).not.toContain(modalsEn.recipients.sendNow);
+  expect(markup).not.toContain(modalsEn.recipients.notDelivered);
+});

@@ -333,6 +333,7 @@ async fn file(
     action: &str,
 ) -> Result<Value, ToolCallError> {
     let raw = first_non_blank(args, &["path", "rel_path"]).ok_or("path is required")?;
+    let scoped = scope_relative(root, raw);
     if args.contains_key("dst_instance_id") {
         if action != "send" {
             return Err(
@@ -348,7 +349,7 @@ async fn file(
             "message_mode".into(),
             Value::String(file_message_mode(args)?),
         );
-        request.insert("paths".into(), json!([raw]));
+        request.insert("paths".into(), json!([scoped]));
         crate::argument_normalization::normalize_message_author(&mut request);
         crate::argument_normalization::normalize_recipients(&mut request);
         crate::mapping::connect_destination(&mut request)?;
@@ -364,7 +365,7 @@ async fn file(
             .ok_or("group_id is required")?;
         cccc_core::blobs::resolve(home, group_id, raw).map_err(|error| error.to_string())?
     } else {
-        crate::repo::resolve(root, raw, false)?
+        crate::repo::resolve(root, &scoped, false)?
     };
     if action == "send" {
         let message_mode = file_message_mode(args)?;
@@ -458,6 +459,38 @@ fn output_limit(args: &Map<String, Value>) -> usize {
         .clamp(1, 1_000_000) as usize
 }
 
+/// The file tools accept an absolute path inside the scope as the same file as
+/// its relative path. Any other absolute path is left for `repo::resolve`,
+/// which refuses it.
+fn scope_relative(root: &Path, raw: &str) -> String {
+    let path = Path::new(raw);
+    if !path.is_absolute() {
+        return raw.to_owned();
+    }
+    let canonical_root = root.canonicalize().ok();
+    [
+        Some(root.to_path_buf()),
+        Some(cccc_runtime::compatible_path(root).to_path_buf()),
+        canonical_root.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|base| path.strip_prefix(base).ok().map(Path::to_path_buf))
+    // Windows paths can also differ in case or UNC spelling. Compare the
+    // actual existing file to the canonical scope before accepting it.
+    .or_else(|| {
+        path.canonicalize()
+            .ok()?
+            .strip_prefix(canonical_root.as_ref()?)
+            .ok()
+            .map(Path::to_path_buf)
+    })
+    .map_or_else(
+        || raw.to_owned(),
+        |rest| rest.to_string_lossy().into_owned(),
+    )
+}
+
 fn first_non_blank<'a>(args: &'a Map<String, Value>, names: &[&str]) -> Option<&'a str> {
     names.iter().find_map(|name| {
         args.get(*name)
@@ -495,6 +528,36 @@ mod tests {
     use super::{command, file_message_mode, timeout};
     use crate::local_patch::apply as apply_codex_patch;
     use serde_json::json;
+
+    #[cfg(windows)]
+    #[test]
+    fn absolute_file_path_matches_a_canonical_windows_scope() {
+        let root = std::path::Path::new(r"\\?\C:\workspace\project");
+        assert_eq!(
+            super::scope_relative(root, r"C:\workspace\project\notes\result.txt"),
+            r"notes\result.txt"
+        );
+        let outside = r"C:\workspace\other\secret.txt";
+        assert_eq!(super::scope_relative(root, outside), outside);
+        assert_eq!(
+            super::scope_relative(root, r"\\?\C:\workspace\project\result.txt"),
+            "result.txt"
+        );
+
+        let temp = tempfile::tempdir().expect("scope");
+        let root = temp.path().join("MixedScope");
+        std::fs::create_dir(&root).expect("scope");
+        std::fs::write(root.join("Result.txt"), "fixture").expect("file");
+        let canonical_root = root.canonicalize().expect("canonical scope");
+        let other_case = root
+            .join("result.txt")
+            .to_string_lossy()
+            .to_ascii_uppercase();
+        assert_eq!(
+            super::scope_relative(&canonical_root, &other_case),
+            "Result.txt"
+        );
+    }
 
     #[cfg(unix)]
     #[tokio::test]

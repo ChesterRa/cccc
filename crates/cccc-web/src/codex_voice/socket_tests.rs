@@ -302,6 +302,56 @@ async fn voice_sockets_revoke_idle_terminals_and_report_notification_failure() {
         .stop(&call_generation)
         .await
         .expect("stop assistant call");
+    std::fs::remove_file(&notifications).expect("remove synthetic corruption");
+    let pending_call = Arc::new(
+        CodexVoiceCall::start(&home, Some(runtime.analyst()), Some(context.clone()))
+            .await
+            .expect("next fake call"),
+    );
+    let pending_generation = pending_call.generation().to_owned();
+    let pending = Arc::new(ActiveSession {
+        provider_connection: None,
+        verbosity: Default::default(),
+        notification_paused: tokio::sync::watch::channel(true).0,
+        call: pending_call,
+        analyst: Some(Arc::clone(&runtime)),
+        client_session_id: "already-paused".into(),
+        offer_digest: [0; 32],
+        answer_sdp: String::new(),
+        voice: "cove".into(),
+        connection_state: AtomicU8::new(CONNECTION_UNATTACHED),
+    });
+    state.codex_voice.state.lock().await.active = Some(pending);
+    let mut request =
+        format!("ws://{address}/api/v1/codex_voice/calls/{pending_generation}/events")
+            .into_client_request()
+            .expect("events request");
+    request.headers_mut().insert(
+        "Authorization",
+        format!("Bearer {}", owner.token).parse().expect("header"),
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("call connection");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while let Some(Ok(message)) = socket.next().await {
+            if let Message::Text(text) = message {
+                let event: Value = serde_json::from_str(&text).expect("event");
+                if event["type"] == "notification_status" && event["paused"] == true {
+                    return;
+                }
+            }
+        }
+        panic!("call closed without its existing paused status");
+    })
+    .await
+    .expect("a paused status from before attachment must be sent");
+    socket.close(None).await.expect("close call");
+    state
+        .codex_voice
+        .stop(&pending_generation)
+        .await
+        .expect("stop next call");
     let persona = cccc_contracts::codex_voice::VoiceApplicationContext::new_with_mode(
         "training".into(),
         "Play the customer.".into(),

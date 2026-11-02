@@ -6,6 +6,7 @@ use uuid::Uuid;
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 
 pub(super) fn emit(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    super::reject_chet_provenance(&request.args)?;
     let group = super::load(home, request)?;
     let by = required_arg(request, "by")?;
     let operation = required_arg(request, "op")?;

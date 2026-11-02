@@ -3,6 +3,145 @@ use cccc_contracts::ActorRuntime;
 use serde_json::json;
 
 #[test]
+fn unrelated_group_input_does_not_create_voice_notification_state() {
+    let dir = tempfile::tempdir().expect("temp home");
+    let home = HomeLayout::from_path(dir.path()).expect("home");
+    let input = cccc_contracts::chet::GroupInput {
+        group_id: "group".into(),
+        group_generation: "generation".into(),
+        event_id: "message".into(),
+        sender: cccc_contracts::chet::GroupInputSender::Actor {
+            actor_id: "worker".into(),
+            actor_generation: "actor-generation".into(),
+        },
+        reply_to: Some("ordinary-message".into()),
+    };
+    assert_eq!(
+        reserve_chet_input(&home, &input, "analyst").expect("unrelated"),
+        None
+    );
+    assert!(
+        !home
+            .root()
+            .join("state/codex_voice/notifications.json")
+            .exists()
+    );
+}
+
+#[test]
+fn a_chet_handoff_reply_is_visible_to_voice_but_not_claimed_by_its_old_consumer() {
+    for scenario in 0..3 {
+        let f = Fixture::new();
+        let mut group = f.store.load(&f.group).expect("group");
+        group.actors[0].generation = "worker-generation".into();
+        f.store.save(&group).expect("save actor");
+        let mut added = Event::new("actor.add", &f.group);
+        added.data.insert("actor".into(), json!(group.actors[0]));
+        f.append(&added);
+        let mut parent = f.event(
+            crate::actors::CHET_SERVICE_PRINCIPAL,
+            "worker",
+            "Investigate",
+            None,
+        );
+        parent.data.insert(
+            cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD.into(),
+            json!(crate::connect_groups::generation(&group)),
+        );
+        let token = "c".repeat(32);
+        register_origin(&f.home, &token, "analyst", "thread", ActorRuntime::Codex).expect("origin");
+        register_request(&f.home, &token, &parent).expect("service request intent");
+        f.append(&parent);
+        let reply = f.event(
+            "worker",
+            crate::actors::CHET_SERVICE_PRINCIPAL,
+            "Result",
+            Some(&parent.id),
+        );
+        f.append(&reply);
+        let source = f.reference(&reply);
+        // Viewing and scanning can each happen before the GroupInput owner binds.
+        if scenario == 0 {
+            mark_viewed(&f.home, std::slice::from_ref(&source)).expect("viewed");
+        }
+        if scenario != 1 {
+            scan(&f.home).expect("scan first");
+            assert!(
+                reserve(&f.home, &source, "other-owner")
+                    .expect("old consumer")
+                    .is_none(),
+                "the old Voice consumer cannot claim a Chet input before its owner binds"
+            );
+        }
+        let input = cccc_contracts::chet::GroupInput {
+            group_id: f.group.clone(),
+            group_generation: crate::connect_groups::generation(&group),
+            event_id: reply.id.clone(),
+            sender: cccc_contracts::chet::GroupInputSender::Actor {
+                actor_id: "worker".into(),
+                actor_generation: "worker-generation".into(),
+            },
+            reply_to: Some(parent.id.clone()),
+        };
+        assert_eq!(
+            reserve_chet_input(&f.home, &input, "analyst").expect("bind"),
+            Some(source.clone())
+        );
+        if scenario == 1 {
+            scan(&f.home).expect("scan after binding");
+        }
+        let current = snapshot(&f.home).expect("snapshot");
+        assert_eq!(current.messages.len(), 1);
+        assert_eq!(current.messages[0].kind, VoiceMessageKind::RequestReply);
+        assert_eq!(current.viewed.contains(&source), scenario == 0);
+        assert!(
+            reserve(&f.home, &source, "analyst")
+                .expect("reserve")
+                .is_none(),
+            "the Voice consumer must not execute a Chet-owned input"
+        );
+        assert_eq!(
+            reserve_chet_input(&f.home, &input, "other").expect("other owner"),
+            None
+        );
+        accepted(&f.home, &source, "analyst").expect("admission");
+        processed(
+            &f.home,
+            &[source.correlation_id()],
+            "analyst",
+            "turn",
+            "Chet summary",
+        )
+        .expect("group result");
+        processed(
+            &f.home,
+            &[source.correlation_id()],
+            "analyst",
+            "turn",
+            "Chet summary",
+        )
+        .expect("duplicate observation");
+        assert_eq!(snapshot(&f.home).expect("results").results.len(), 1);
+        if scenario == 2 {
+            group.generation = "replacement".into();
+            f.store.save(&group).expect("replace group");
+        }
+        let result = reserve_output(&f.home, "analyst:turn", "call")
+            .expect("reserve output")
+            .expect("result");
+        let spoken = prepare_output(&f.home, &result.id, "call").expect("prepare");
+        if scenario == 1 {
+            assert!(spoken.expect("speech").contains("Chet summary"));
+        } else {
+            assert!(
+                spoken.is_none(),
+                "viewed or replaced sources must not be spoken"
+            );
+        }
+    }
+}
+
+#[test]
 fn public_output_status_tracks_handoff_and_retains_the_original_suppression_reason() {
     for suppressed in [false, true] {
         let f = Fixture::new();
@@ -783,6 +922,30 @@ fn ordinary_request_ack_and_final_survive_replay_without_subscription() {
     scan(&HomeLayout::from_path(f.home.root()).expect("reopened home"))
         .expect("recreated consumer");
     assert_eq!(snapshot(&f.home).expect("snapshot").messages, before);
+}
+
+#[test]
+fn chet_messages_are_not_also_consumed_by_voice_notifications() {
+    let f = Fixture::new();
+    f.subscribe(NotificationScope::AllChat);
+    f.append(&f.event(
+        crate::actors::CHET_SERVICE_PRINCIPAL,
+        "worker",
+        "Task",
+        None,
+    ));
+    f.append(&f.event(
+        "worker",
+        crate::actors::CHET_SERVICE_PRINCIPAL,
+        "Reply",
+        None,
+    ));
+    let ordinary = f.event("worker", "user", "User message", None);
+    f.append(&ordinary);
+    scan(&f.home).expect("scan");
+    let items = snapshot(&f.home).expect("snapshot").messages;
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].source.event_id, ordinary.id);
 }
 
 #[test]

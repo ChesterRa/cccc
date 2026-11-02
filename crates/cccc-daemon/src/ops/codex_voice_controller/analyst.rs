@@ -80,6 +80,14 @@ impl CodexVoiceAnalyst {
         self.lifecycle.admit_terminal(id, text).await
     }
 
+    pub async fn submit_group_input(
+        &self,
+        id: &str,
+        text: &str,
+    ) -> Result<VoiceDelegationAdmission> {
+        self.lifecycle.admit_group(id, text).await
+    }
+
     /// A retired console row must not turn a previously accepted input into new work.
     pub async fn input_was_admitted(&self, id: &str) -> bool {
         self.lifecycle.input_was_admitted(id).await

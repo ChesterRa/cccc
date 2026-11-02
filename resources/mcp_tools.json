@@ -207,7 +207,7 @@
               }
             }
           ],
-          "description": "One audience domain only: user alone, or one/more agent IDs/selectors. Never mix user and agents."
+          "description": "One audience domain only: user alone, @chet alone for Chet, the user's global assistant (Send or Request reply, not Mail), or one/more agent IDs/selectors. Never mix domains."
         },
         "mode": {
           "type": "string",
@@ -476,7 +476,7 @@
               }
             }
           ],
-          "description": "One audience domain only: user alone, or one/more agent IDs/selectors. Never mix user and agents."
+          "description": "One audience domain only: user alone, @chet alone, or one/more agent IDs/selectors. Never mix domains. Omit it to reply to the original sender, including Chet."
         },
         "mode": {
           "type": "string",

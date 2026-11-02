@@ -34,6 +34,8 @@ fn send_with_reply(
     reply: Option<ReplyContext>,
     preflight: bool,
 ) -> OpResult {
+    super::messaging::reject_chet_provenance(&request.args)?;
+    reject_chet_connect(home, request)?;
     super::messaging::reply_questions::reject_fields(&request.args, "a Connect message")?;
     let group_id = connect_peer::authorize_local_source(home, request)?;
     if request
@@ -326,6 +328,31 @@ fn send_with_reply(
     )
 }
 
+/// Connect does not yet carry Chet as a distinct service identity. Refuse the
+/// request before source acceptance or file reads instead of sending as user.
+fn reject_chet_connect(home: &HomeLayout, request: &DaemonRequest) -> Result<(), OpError> {
+    if !request
+        .args
+        .contains_key(cccc_core::voice_notifications::ORIGIN_ARG)
+    {
+        return Ok(());
+    }
+    let by = request
+        .args
+        .get("by")
+        .and_then(Value::as_str)
+        .unwrap_or("user");
+    if super::messaging::effective_message_author(home, request, by)?
+        == cccc_core::actors::CHET_SERVICE_PRINCIPAL
+    {
+        return Err(OpError::new(
+            "chet_cross_group_unsupported",
+            "Chet cannot send through Connect yet; ask the user or a Group member to relay the message",
+        ));
+    }
+    Ok(())
+}
+
 fn check_retry(event: &Event, digest: &str) -> Result<(), OpError> {
     if event
         .data
@@ -495,6 +522,7 @@ pub(super) fn reply(
     mode: &str,
     preflight: bool,
 ) -> OpResult {
+    reject_chet_connect(home, request)?;
     let original = connect_messages::stored_message(target)?;
     let incoming = target
         .data

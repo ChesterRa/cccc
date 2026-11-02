@@ -237,26 +237,29 @@ describe("message chrome", () => {
       expect(bar.map((button) => button.textContent || button.getAttribute("aria-label"))).toEqual([
         "reply",
         "relay",
+        "copyText",
         "messageActions",
       ]);
+      // Copy text is an icon on the bar; its tooltip carries the name.
+      expect(bar[2].textContent).toBe("");
+      expect(bar[2].getAttribute("title")).toBe("copyText");
       await act(async () => bar[0].click());
       await act(async () => bar[1].click());
+      await act(async () => bar[2].click());
       expect(reply).toHaveBeenCalledOnce();
       expect(relay).toHaveBeenCalledWith(event);
+      expect(copy).toHaveBeenCalledOnce();
 
-      const more = bar[2];
+      const more = bar[3];
       await act(async () => more.click());
       expect(menuItems().map((item) => item.textContent)).toEqual([
-        "copyText",
         "copyLink",
         "viewMessageContext",
       ]);
       await act(async () => more.click());
       await settle();
-      await choose(more, "copyText");
       await choose(more, "copyLink");
       await choose(more, "viewMessageContext");
-      expect(copy).toHaveBeenCalledOnce();
       expect(link).toHaveBeenCalledWith("event-1");
       expect(context).toHaveBeenCalledWith("event-1");
 
@@ -274,7 +277,7 @@ describe("message chrome", () => {
       await choose(touch, "reply");
       expect(reply).toHaveBeenCalledTimes(2);
 
-      // Without a copy or a link there is nothing to put behind the bar's ⋯.
+      // Without a copy or a link the bar holds Reply alone: no copy key, and nothing for ⋯.
       await act(async () =>
         root.render(
           <MessageActions
@@ -311,7 +314,7 @@ describe("message chrome", () => {
     }
   });
 
-  it("confirms a copied message with a notice, since its menu closes on use", async () => {
+  it("confirms a copied message with a notice, since its key has no text to change", async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const writeText = vi.fn().mockResolvedValue(undefined);
     const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -342,15 +345,11 @@ describe("message chrome", () => {
           />,
         ),
       );
-      const more = host.querySelector<HTMLButtonElement>(
-        '[data-message-actions-inline] button[aria-label="messageActions"]',
+      const copy = host.querySelector<HTMLButtonElement>(
+        '[data-message-actions-inline] button[aria-label="copyText"]',
       )!;
-      await act(async () => more.click());
-      const copy = Array.from(
-        document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
-      ).find((item) => item.textContent === "copyText")!;
       await act(async () => copy.click());
-      // The quote and the sender's insight travel with the text, as before the menu.
+      // The quote and the sender's insight travel with the text.
       expect(writeText).toHaveBeenCalledWith(
         "> earlier point\n\nhello\n\nsenderPerspective:\nprovisional view",
       );

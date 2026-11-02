@@ -4,6 +4,50 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import { ComposerRecipientsRow } from "./ComposerRecipientsRow";
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+
+it("offers Chet only to an administrator, while allowing a stale selection to be cleared", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const toggle = vi.fn();
+  const render = async (allowChet: boolean, toTokens: string[]) =>
+    act(async () =>
+      root.render(
+        <ComposerRecipientsRow
+          isDark={false}
+          isSmallScreen={false}
+          selectedGroupId="g"
+          busy=""
+          actors={[]}
+          allowChet={allowChet}
+          toTokens={toTokens}
+          onToggleRecipient={toggle}
+          onClearRecipients={vi.fn()}
+        />,
+      ),
+    );
+  const chet = () =>
+    [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "@chet",
+    );
+  try {
+    await render(false, []);
+    expect(chet()).toBeUndefined();
+    await render(true, []);
+    expect(chet()?.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => chet()?.click());
+    expect(toggle).toHaveBeenCalledWith("@chet");
+    await render(false, ["@chet"]);
+    expect(chet()?.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => chet()?.click());
+    expect(toggle).toHaveBeenCalledTimes(2);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
 it("labels recipients accessibly without a visible caption and retains selection", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   const host = document.createElement("div");

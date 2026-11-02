@@ -51,7 +51,7 @@ async fn history(State(state): State<AppState>, Query(query): Query<HistoryQuery
     api::call(
         &state,
         "chet_history_list",
-        object(json!({"by":"user","before":query.before,"after":query.after,"limit":query.limit})),
+        object(json!({"by":"user","before":query.before,"after":query.after,"limit":query.limit,"resolve_sources":true})),
     )
     .await
 }
@@ -61,7 +61,7 @@ async fn find(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult 
     api::call(
         &state,
         "chet_history_find",
-        object(json!({"by":"user","id":id})),
+        object(json!({"by":"user","id":id,"resolve_sources":true})),
     )
     .await
 }

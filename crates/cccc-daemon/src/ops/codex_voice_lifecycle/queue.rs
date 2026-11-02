@@ -20,7 +20,11 @@ pub(super) fn start(lifecycle: &Arc<AnalystLifecycle>) {
             };
             loop {
                 let mut state = lifecycle.state.lock().await;
-                if state.invalidated || state.active.is_some() || state.pending.is_some() {
+                if state.invalidated
+                    || state.active.is_some()
+                    || state.pending.is_some()
+                    || !state.native_pending.is_empty()
+                {
                     break;
                 }
                 let Some(input) = state.queue.pop_front() else {
@@ -40,7 +44,7 @@ pub(super) fn start(lifecycle: &Arc<AnalystLifecycle>) {
                         break;
                     }
                     Err(error) => {
-                        tracing::warn!(%error,"Queued ACP input could not be admitted; no replay");
+                        tracing::warn!(%error,"Queued input could not be admitted; no replay");
                         let cancelled = error
                             .downcast_ref::<std::io::Error>()
                             .is_some_and(|error| error.kind() == std::io::ErrorKind::Interrupted);
@@ -154,17 +158,35 @@ impl AnalystLifecycle {
         if state.queue.len() >= MAX_QUEUED_INPUTS {
             anyhow::bail!("ACP input queue is full; wait for or cancel the current investigation")
         }
-        state.queue.push_back(QueuedInput {
-            delegation_id: id.to_owned(),
-            text: text.to_owned(),
+        // A user speaking or typing while a Group input runs should not wait
+        // behind additional Group work. Preserve arrival order among user
+        // inputs and among all other queued inputs.
+        let insert_at = if matches!(
             origin,
-        });
+            AnalystTurnOrigin::Voice | AnalystTurnOrigin::Terminal
+        ) {
+            state
+                .queue
+                .iter()
+                .position(|input| input.origin == AnalystTurnOrigin::Group)
+                .unwrap_or(state.queue.len())
+        } else {
+            state.queue.len()
+        };
+        state.queue.insert(
+            insert_at,
+            QueuedInput {
+                delegation_id: id.to_owned(),
+                text: text.to_owned(),
+                origin,
+            },
+        );
         state
             .acp_inputs
             .insert(id.to_owned(), (fingerprint, origin));
-        let position = state.queue.len();
+        let position = insert_at + 1;
         self.queue_len
-            .store(position, std::sync::atomic::Ordering::Release);
+            .store(state.queue.len(), std::sync::atomic::Ordering::Release);
         drop(state);
         self.queue_notify.notify_one();
         let _ = self.events.send(AnalystLifecycleEvent::Queued {

@@ -14,7 +14,14 @@ use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg
 
 const MAX_CLIENT_ID_CHARS: usize = 200;
 const DEFAULT_PAGE: usize = 50;
-const ANSWER_ARGS: [&str; 5] = ["group_id", "source_event_id", "by", "client_id", "answer"];
+const ANSWER_ARGS: [&str; 6] = [
+    "group_id",
+    "source_event_id",
+    "by",
+    "client_id",
+    "answer",
+    cccc_core::actors::CHET_WEB_ADMISSION_ARG,
+];
 
 /// Only a missing `by` defaults to the user; any other value, including
 /// `null` or a non-string, is refused rather than read as the user.
@@ -30,6 +37,7 @@ fn require_user(request: &DaemonRequest) -> Result<(), OpError> {
 }
 
 pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    super::messaging::reject_chet_provenance(&request.args)?;
     require_user(request)?;
     if let Some(key) = request
         .args
@@ -142,6 +150,15 @@ pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let target = state.target;
     super::messaging::reject_retired_reply(home, &target)?;
+    let service_reply = target.by == cccc_core::actors::CHET_SERVICE_PRINCIPAL;
+    if service_reply
+        && !cccc_core::actors::is_chet_message(home, &group, &target).map_err(OpError::io)?
+    {
+        return Err(OpError::new(
+            "invalid_source_event",
+            "Cannot verify this Chet request's origin",
+        ));
+    }
     let stored = reply_question::stored(&target.data);
     let (text, in_place) = match &stored {
         Stored::Valid(question) => (
@@ -169,7 +186,15 @@ pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     args.insert("group_id".into(), json!(group.group_id));
     args.insert("by".into(), json!("user"));
     args.insert("text".into(), json!(text));
-    args.insert("to".into(), json!([target.by]));
+    if !service_reply {
+        args.insert("to".into(), json!([target.by]));
+    }
+    if let Some(admission) = request.args.get(cccc_core::actors::CHET_WEB_ADMISSION_ARG) {
+        args.insert(
+            cccc_core::actors::CHET_WEB_ADMISSION_ARG.into(),
+            admission.clone(),
+        );
+    }
     args.insert("message_mode".into(), json!("send"));
     args.insert("reply_to".into(), json!(target.id));
     args.insert("client_id".into(), json!(client_id));
@@ -188,7 +213,7 @@ pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         op: "reply".into(),
         args,
     };
-    super::messaging::send_answer(home, &forwarded, in_place)
+    super::messaging::send_answer(home, &forwarded, in_place, service_reply)
 }
 
 /// Whether `existing` is the reply this answer sends: the user's send to the

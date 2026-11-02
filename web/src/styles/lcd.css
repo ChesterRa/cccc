@@ -84,6 +84,8 @@
   --lcd-muted: #575b4f;
   --lcd-rule: #bcc2b1;
   --lcd-rule-strong: #767a6d;
+  /* The line between messages. */
+  --lcd-sep: #bcc2b1;
   --lcd-wait: #832c0d;
   --lcd-on-wait: #eef0e6;
   --lcd-danger: #7e2f18;
@@ -129,6 +131,9 @@
   --lcd-muted: #9ba69b;
   --lcd-rule: #2e352e;
   --lcd-rule-strong: #6e7764;
+  /* The dark rule all but vanishes on the screen; between messages the line takes
+     the strong rule mixed 45% into the screen. */
+  --lcd-sep: #41483d;
   --lcd-wait: #f2ae4c;
   --lcd-on-wait: #1d221d;
   --lcd-danger: #ee9c80;
@@ -501,8 +506,8 @@
 }
 
 /* A message is a head line and its text. The head carries who, to whom and when,
-   so names never truncate, and the text keeps the full width below it. A rule
-   runs down from the avatar beside the text, the way the log reads as a log. */
+   so names never truncate, and the text keeps the full width below it, starting
+   under the author's name. */
 :root[data-ui-style="lcd"] .lcd-row {
   position: relative;
   width: 100%;
@@ -513,11 +518,49 @@
   line-height: 1.7;
 }
 
-/* A new group of messages starts with clear space, while continued messages stay
-   close, so the gap between groups clearly exceeds any gap inside one. Padding,
-   not margin, keeps the space inside the row the virtual list measures. */
-:root[data-ui-style="lcd"] .lcd-row:not([data-lcd-continued]) {
-  padding-top: 0.875rem;
+/* Messages read as a ledger. A hairline in the space above starts each message that
+   shows its author; a dotted one, from the text column, starts a message continuing
+   under the same head. Space inside a message is reduced (see the Markdown spacing
+   further down) so that it reads apart from the space between messages. Messages get
+   no ground and no hover tone: a fill on every
+   message turned the page into blocks, and a tone change over a whole message read as
+   a jump. Padding, not margin, keeps the space inside the row the virtual list
+   measures; the line sits halfway down it. */
+:root[data-ui-style="lcd"] .lcd-row {
+  --lcd-row-gap: 1.75rem;
+  padding-top: var(--lcd-row-gap);
+}
+
+:root[data-ui-style="lcd"] .lcd-row[data-lcd-continued] {
+  --lcd-row-gap: 0.875rem;
+}
+
+:root[data-ui-style="lcd"] .lcd-row::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--lcd-row-gap) / 2);
+  left: -0.5rem;
+  right: 0;
+  border-top: 1px solid var(--lcd-sep);
+  pointer-events: none;
+}
+
+:root[data-ui-style="lcd"] .lcd-row[data-lcd-continued]::after {
+  left: calc(1.25rem + 0.75ch);
+  border-top-style: dotted;
+}
+
+/* Your messages sit on your side, which already sets them apart. */
+:root[data-ui-style="lcd"] .lcd-row[data-lcd-user]::after {
+  display: none;
+}
+
+/* The message below its space, which a jump outlines. */
+:root[data-ui-style="lcd"] .lcd-row::before {
+  content: "";
+  position: absolute;
+  inset: var(--lcd-row-gap) 0 0 -0.5rem;
+  pointer-events: none;
 }
 
 /* One centred reading column for the conversation, its filters, notices and the
@@ -554,12 +597,6 @@
   min-width: 0;
   min-height: 1.75rem;
   line-height: 1.5;
-}
-
-/* The actions keep their place at the end of the head line, so showing them on
-   hover moves nothing and covers nothing. */
-:root[data-ui-style="lcd"] .lcd-row-head > [data-message-actions-inline] {
-  margin-left: auto;
 }
 
 /* Continued messages from the same author keep only route and time, under the text column. */
@@ -629,38 +666,50 @@
 
 /* Your own messages also sit on your side: head and text on the right, the rule
    beside the text on the right, the text itself left-aligned. Agents stay on the
-   left, however many there are. The actions keep the end away from the time. */
+   left, however many there are. The actions sit on the inner side of the head, next
+   to your name, as they follow the time on an agent's head; they keep their place
+   while hidden, so showing them on hover moves nothing and covers nothing. */
+:root[data-ui-style="lcd"] .lcd-row[data-lcd-user] {
+  width: fit-content;
+  max-width: 85%;
+  margin-left: auto;
+}
+
+/* A jump outlines your message around its text, on your side. */
+:root[data-ui-style="lcd"] .lcd-row[data-lcd-user]::before {
+  right: -0.5rem;
+}
+
 :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .lcd-row-head {
   justify-content: flex-end;
 }
 
 :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .lcd-row-head > [data-message-actions-inline] {
   order: -1;
-  margin-left: 0;
-  margin-right: auto;
 }
 
 :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .lcd-row-body {
   width: fit-content;
-  max-width: 85%;
   margin-left: auto;
-  margin-right: 0.5ch;
-  border-left: 0;
-  border-right: 1px solid var(--lcd-rule-strong);
   padding-left: 0;
-  padding-right: calc(0.5625rem + 0.75ch);
 }
 
 /* Agents leave room on the right as your messages do on the left, so the two edges
    alternate instead of both reaching across the column. Phones keep that width
    for the text. */
 @media (min-width: 640px) {
-  :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .lcd-row-body {
+  :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] {
     max-width: 75%;
   }
 
   :root[data-ui-style="lcd"] .lcd-row:not([data-lcd-user]) {
     padding-right: clamp(6rem, 12%, 12rem);
+  }
+
+  /* The line and the jump outline end where the text does. */
+  :root[data-ui-style="lcd"] .lcd-row:not([data-lcd-user])::before,
+  :root[data-ui-style="lcd"] .lcd-row:not([data-lcd-user])::after {
+    right: clamp(6rem, 12%, 12rem);
   }
 }
 
@@ -674,12 +723,10 @@
   --tw-ring-shadow: 0 0 #0000;
 }
 
-/* The text starts under the author's name; the rule hangs from the avatar's centre. */
+/* The text starts under the author's name. */
 :root[data-ui-style="lcd"] .lcd-row-body {
   min-width: 0;
-  margin-left: 0.625rem;
-  padding: 0.125rem 0 0.5rem calc(0.5625rem + 0.75ch);
-  border-left: 1px solid var(--lcd-rule-strong);
+  padding: 0.125rem 0 0.5rem calc(1.25rem + 0.75ch);
 }
 
 :root[data-ui-style="lcd"] .lcd-row-route {
@@ -688,7 +735,7 @@
   align-items: baseline;
   gap: 0.125rem 1ch;
   min-width: 0;
-  color: var(--lcd-dim);
+  color: var(--lcd-muted);
   font-size: 0.8125rem;
 }
 
@@ -800,7 +847,39 @@
   --tw-prose-td-borders: var(--lcd-rule);
 }
 
-:root[data-ui-style="lcd"] .lcd-row-highlighted {
+/* Inside a message, the space around paragraphs, lists, quotes, code, tables and
+   headings is reduced, so a heading or a break inside a report reads apart from the
+   start of another message, which also takes a line. A Markdown rule is a short mark
+   in the text column for the same reason. */
+:root[data-ui-style="lcd"]
+  .lcd-row
+  .markdown-body.prose-sm
+  :is(p, ul, ol, blockquote, pre, .code-block-wrapper, .markdown-table-scroll) {
+  margin-block: 0.625em;
+}
+
+:root[data-ui-style="lcd"] .lcd-row .markdown-body.prose-sm :is(h1, h2, h3, h4) {
+  margin-top: 1em;
+  margin-bottom: 0.375em;
+}
+
+:root[data-ui-style="lcd"] .lcd-row .markdown-body.prose-sm hr {
+  width: 4rem;
+  margin-block: 0.875em;
+  border-top: 1px solid var(--lcd-rule-strong);
+}
+
+:root[data-ui-style="lcd"] .lcd-row .markdown-body.prose-sm > :first-child {
+  margin-top: 0;
+}
+
+:root[data-ui-style="lcd"] .lcd-row .markdown-body.prose-sm > :last-child {
+  margin-bottom: 0;
+}
+
+/* On the message (the row's ::before), not the row box, whose top is the space
+   above the message. */
+:root[data-ui-style="lcd"] .lcd-row.lcd-row-highlighted::before {
   outline: 1px dashed var(--lcd-ink);
   outline-offset: 2px;
 }

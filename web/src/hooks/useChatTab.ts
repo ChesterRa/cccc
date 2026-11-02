@@ -27,6 +27,8 @@ import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION, getChatSession } from "../stor
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
 import type { Actor, LedgerEvent, MessageRef } from "../types";
 import { formatSendMessageError } from "../utils/chatSend";
+import { CHET_SELECTOR, chetGeneration } from "../utils/chetIdentity";
+import { messageModeForRecipients } from "../stores/composerMessageMode";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
 import { useConnectMentionGroups } from "./useConnectMentionGroups";
@@ -328,7 +330,7 @@ export function useChatTab({
   // the destination group, because @ suggestions can switch source by cursor
   // position while selected chips still serialize into one toText field.
   const validRecipientSet = useMemo(() => {
-    const out = new Set<string>(["@all", "@foreman", "@peers"]);
+    const out = new Set<string>(["@all", "@foreman", "@peers", CHET_SELECTOR]);
     for (const a of actors) {
       const id = String(a.id || "").trim();
       if (id) out.add(id);
@@ -341,7 +343,9 @@ export function useChatTab({
   }, [actors, recipientActors]);
 
   const crossGroupValidRecipientSet = useMemo(() => {
-    const out = new Set<string>(["@all", "@foreman", "@peers"]);
+    // Keep an existing service target visible on a changed route so the
+    // server can reject an unsupported relay, rather than silently retarget it.
+    const out = new Set<string>(["@all", "@foreman", "@peers", CHET_SELECTOR]);
     for (const a of recipientActors) {
       const id = String(a.id || "").trim();
       if (id) out.add(id);
@@ -559,7 +563,10 @@ export function useChatTab({
         );
         setToText(next.join(", "));
       } else {
-        setToText(cur.concat([t]).join(", "));
+        // Chet is a separate audience domain and cannot be mixed with Actors.
+        const next =
+          t === CHET_SELECTOR ? [t] : cur.filter((item) => item !== CHET_SELECTOR).concat(t);
+        setToText(next.join(", "));
       }
     },
     [toTokens, setToText, setComposerAgentMentionTokens],
@@ -620,6 +627,7 @@ export function useChatTab({
     selectedGroupId,
     actors,
     groupSettings,
+    groupGeneration: groupDoc?.group_id === selectedGroupId ? chetGeneration(groupDoc) : "",
     composerRef,
     setChatAtBottom,
     hasForeman,
@@ -982,9 +990,12 @@ export function useChatTab({
         groups: composerRouteGroups,
       }),
     ];
-    const messageModeSnapshot = replyTargetSnapshot
-      ? normalizeReplyMessageMode(composerStateSnapshot.messageMode)
-      : composerStateSnapshot.messageMode;
+    const messageModeSnapshot = messageModeForRecipients(
+      replyTargetSnapshot
+        ? normalizeReplyMessageMode(composerStateSnapshot.messageMode)
+        : composerStateSnapshot.messageMode,
+      localToTokensSnapshot,
+    );
     const groupMentionTokensSnapshot = composerGroupMentionTokens;
     const agentMentionTokensSnapshot = composerAgentMentionTokens;
     const assistantTargets =
@@ -1022,7 +1033,9 @@ export function useChatTab({
           replyTarget: replyTargetSnapshot,
           quotedPresentationRef: quotedPresentationRefSnapshot,
           quotedVoiceDocumentRef: quotedVoiceDocumentRefSnapshot,
-          messageMode: messageModeSnapshot,
+          // The composer's own mode: the send may have changed it for its recipients
+          // (Chet takes no Mail), and restoring that would replace the saved choice.
+          messageMode: composerStateSnapshot.messageMode,
         },
         {
           setComposerText,

@@ -19,7 +19,11 @@ const EVENT_CAPACITY: usize = 1024;
 pub enum AnalystTurnOrigin {
     Voice,
     Terminal,
-    ActorResult { speakable: bool },
+    /// A durable Group input is admitted between user text and Voice turns.
+    Group,
+    ActorResult {
+        speakable: bool,
+    },
 }
 
 impl AnalystTurnOrigin {
@@ -37,7 +41,10 @@ impl AnalystTurnOrigin {
             (Self::ActorResult { speakable: a }, Self::ActorResult { speakable: b }) => {
                 Self::ActorResult { speakable: a || b }
             }
-            (Self::Terminal, origin) | (origin, Self::Terminal) => origin,
+            (Self::Terminal, origin)
+            | (origin, Self::Terminal)
+            | (Self::Group, origin)
+            | (origin, Self::Group) => origin,
         }
     }
 }
@@ -203,9 +210,9 @@ impl AnalystLifecycle {
             .monitor
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = Some(task);
-        if lifecycle.session.structured_only() {
-            queue::start(&lifecycle);
-        }
+        // Native sessions also use this queue when a Group input must wait
+        // for an existing text turn. Ordinary native input is unchanged.
+        queue::start(&lifecycle);
         lifecycle
     }
 

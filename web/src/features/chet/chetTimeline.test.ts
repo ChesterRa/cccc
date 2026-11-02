@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { ChetRecord, ChetStatus } from "../../services/api/chet";
+import type { ChetGroupSource, ChetRecord, ChetStatus } from "../../services/api/chet";
 import {
   buildChetTimeline,
+  hasOpenRequests,
   missingRequestIds,
   unsavedLiveTurns,
   type ChetLiveView,
@@ -61,6 +62,38 @@ function receipt(id: string, inputId: string): ChetRecord {
     created_at: at(4),
     input_id: inputId,
     receipt: { generation: "g1", turn_id: "t" },
+  };
+}
+
+function groupInput(id: string, minute = 1): ChetRecord {
+  return {
+    kind: "group_input",
+    id,
+    created_at: at(minute),
+    input: {
+      group_id: "g-a",
+      group_generation: "gen-a",
+      event_id: `e-${id}`,
+      sender: { kind: "actor", actor_id: "peer-1" },
+      reply_to: null,
+    },
+  };
+}
+
+function dispatch(id: string, inputId: string): ChetRecord {
+  return { kind: "group_dispatch", id, created_at: at(2), input_id: inputId };
+}
+
+function groupMessage(text: string): ChetGroupSource {
+  return {
+    status: "available",
+    group_title: "Design",
+    sender_title: "Peer One",
+    text,
+    sent_at: at(1),
+    has_attachments: false,
+    truncated: false,
+    reply_event_id: null,
   };
 }
 
@@ -371,6 +404,70 @@ describe("buildChetTimeline", () => {
       "not yet",
       "other call",
     ]);
+  });
+
+  it("shows a Group message as waiting until history or status shows it was submitted", () => {
+    const records = [
+      groupInput("w"),
+      groupInput("d"),
+      dispatch("x-d", "d"),
+      groupInput("r"),
+      dispatch("x-r", "r"),
+      receipt("y-r", "r"),
+      groupInput("q"),
+      groupInput("f"),
+      dispatch("x-f", "f"),
+      result("z-f", ["f"]),
+    ];
+    const messages = new Map<string, ChetGroupSource>([
+      ["w", groupMessage("first")],
+      ["d", { status: "unavailable" }],
+    ]);
+    const states = (live: ChetLiveView) =>
+      (buildChetTimeline(records, live, [], new Map(), messages) as ChetRequestItem[]).map(
+        (item) => [item.id, item.state],
+      );
+    // Status names only submitted work: "q" is queued before its dispatch is loaded.
+    expect(states(view({ status: status({ queued: ["q"] }) }))).toEqual([
+      ["w", "waiting"],
+      ["d", "unconfirmed"],
+      ["r", "received_unconfirmed"],
+      ["q", "queued"],
+      ["f", "completed"],
+    ]);
+    // A busy owner rules out nothing it was given, and says nothing of what it was not.
+    expect(states(view({ status: status({ owner_busy: true, queued: ["q"] }) }))).toEqual([
+      ["w", "waiting"],
+      ["d", "checking"],
+      ["r", "checking"],
+      ["q", "checking"],
+      ["f", "completed"],
+    ]);
+    const [waiting, gone] = buildChetTimeline(
+      records.slice(0, 3),
+      view(),
+      [],
+      new Map(),
+      messages,
+    ) as ChetRequestItem[];
+    expect(waiting).toMatchObject({ source: "group", text: "first", sourceMissing: false });
+    expect(waiting.group).toEqual({
+      input: (records[0] as Extract<ChetRecord, { kind: "group_input" }>).input,
+      message: groupMessage("first"),
+    });
+    expect(gone).toMatchObject({ text: "", group: { message: { status: "unavailable" } } });
+    expect(hasOpenRequests([waiting])).toBe(true);
+  });
+
+  it("reads an earlier page's Group message that a dispatch names", () => {
+    const records = [dispatch("x", "old")];
+    expect(missingRequestIds(records)).toEqual(["old"]);
+    const fetched = new Map([
+      ["old", groupInput("old") as Extract<ChetRecord, { kind: "group_input" }>],
+    ]);
+    const [item] = buildChetTimeline(records, view(), [], fetched) as ChetRequestItem[];
+    expect(item).toMatchObject({ id: "old", source: "group", state: "unconfirmed" });
+    expect(item.group?.message).toBeNull();
   });
 
   it("adds this browser's sends until history shows them", () => {

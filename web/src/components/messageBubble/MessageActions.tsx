@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { LedgerEvent } from "../../types";
-import { MoreHorizontalIcon, MoreIcon } from "../Icons";
+import { CopyIcon, MoreHorizontalIcon, MoreIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 
@@ -20,8 +20,9 @@ export interface MessageActionsProps {
 
 type MessageAction = { key: string; label: string; run: () => void };
 
-// Reply and Forward stay on the hover bar; the copy actions, and the context jump a
-// filter adds, wait in its overflow menu. Touch screens list every action in one menu.
+// Reply, Forward and Copy text stay on the hover bar, Copy text as an icon named by its
+// tooltip; Copy link, and the context jump a filter adds, wait in its overflow menu. Touch
+// screens list every action in one menu.
 export function MessageActions(props: MessageActionsProps) {
   const { t } = useTranslation(["chat", "common"]);
   if (props.readOnly) return null;
@@ -29,9 +30,10 @@ export function MessageActions(props: MessageActionsProps) {
   if (props.canReply) primary.push({ key: "reply", label: t("reply"), run: props.onReply });
   if (props.eventId && props.onRelay)
     primary.push({ key: "relay", label: t("relay"), run: () => props.onRelay?.(props.event) });
+  const copy: MessageAction | null = props.copyableMessageText
+    ? { key: "copy", label: t("copyText"), run: props.onCopyMessageText }
+    : null;
   const overflow: MessageAction[] = [];
-  if (props.copyableMessageText)
-    overflow.push({ key: "copy", label: t("copyText"), run: props.onCopyMessageText });
   if (props.eventId && props.onCopyLink)
     overflow.push({
       key: "link",
@@ -44,7 +46,7 @@ export function MessageActions(props: MessageActionsProps) {
       label: t("viewMessageContext"),
       run: () => props.onViewContext?.(props.eventId!),
     });
-  if (!primary.length && !overflow.length) return null;
+  if (!primary.length && !copy && !overflow.length) return null;
   const align = props.event.by === "user" ? "end" : "start";
   return (
     <>
@@ -63,6 +65,18 @@ export function MessageActions(props: MessageActionsProps) {
             {action.label}
           </Button>
         ))}
+        {copy ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="min-h-7 rounded-lg px-2 py-1 text-xs duration-150"
+            aria-label={copy.label}
+            title={copy.label}
+            onClick={copy.run}
+          >
+            <CopyIcon size={14} aria-hidden="true" />
+          </Button>
+        ) : null}
         {overflow.length ? (
           <MessageActionMenu actions={overflow} align={align} label={t("messageActions")}>
             <Button
@@ -79,7 +93,7 @@ export function MessageActions(props: MessageActionsProps) {
       </div>
       <div className="message-actions-menu">
         <MessageActionMenu
-          actions={[...primary, ...overflow]}
+          actions={[...primary, ...(copy ? [copy] : []), ...overflow]}
           align={align}
           label={t("messageActions")}
         >

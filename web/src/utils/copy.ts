@@ -15,6 +15,7 @@ export async function copyTextToClipboard(
   }
 
   if (typeof document === "undefined" || !document.body) return false;
+  const previousFocus = document.activeElement;
   // Reuse the visible field when available: modal focus traps can prevent an
   // off-screen field attached to body from owning the clipboard selection.
   const existing = fallbackTarget?.isConnected && fallbackTarget.value === text;
@@ -38,12 +39,18 @@ export async function copyTextToClipboard(
   } catch {
     return false;
   } finally {
+    const restoreFocus = document.activeElement === textarea;
     // Copied text may be a credential: never leave it in the page, even when
     // the legacy copy throws.
     try {
       if (!existing) textarea.remove();
     } catch {
       // It was never attached.
+    }
+    // The temporary field takes focus for selection. Return it only if that
+    // field still owns focus and the previous control is still on the page.
+    if (restoreFocus && previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+      previousFocus.focus({ preventScroll: true });
     }
   }
 }

@@ -17,6 +17,8 @@ export function useChatMessageActions(input: {
   selectedGroupId: string;
   actors: Actor[];
   groupSettings: Parameters<typeof buildReplyComposerState>[3];
+  /** The selected Group's generation, for messages Chet wrote in it. */
+  groupGeneration: string;
   composerRef?: React.RefObject<HTMLTextAreaElement | null>;
   setChatAtBottom: (value: boolean) => void;
   hasForeman: boolean;
@@ -67,6 +69,7 @@ export function useChatMessageActions(input: {
         input.selectedGroupId,
         input.actors,
         input.groupSettings,
+        input.groupGeneration,
       );
       if (!state) {
         input.showError(

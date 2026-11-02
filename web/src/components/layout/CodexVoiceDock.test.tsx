@@ -54,6 +54,28 @@ function controller(
 
 describe("CodexVoiceDock", () => {
   it.each(["sidebar", "mobile", "collapsed"] as const)(
+    "marks something new in Chet's history on the %s entry, naming it only in its tooltip",
+    (surface) => {
+      const markup = (unread: boolean) =>
+        renderToStaticMarkup(
+          <CodexVoiceDock
+            controller={controller()}
+            chetUnread={unread}
+            variant={surface === "mobile" ? "mobile" : "sidebar"}
+            collapsed={surface === "collapsed"}
+            onOpen={vi.fn()}
+            onStart={vi.fn()}
+          />,
+        );
+      expect(markup(false)).not.toContain("data-chet-unread");
+      const unread = markup(true);
+      expect(unread).toContain("data-chet-unread");
+      expect(unread).toContain('aria-label="modals:chet.open · modals:chet.unread"');
+      expect(unread).toContain("Chet · modals:chet.subtitle · modals:chet.unread");
+    },
+  );
+
+  it.each(["sidebar", "mobile", "collapsed"] as const)(
     "animates only verified local voice activity in the %s dock",
     (surface) => {
       const markup = (overrides: Partial<CodexVoiceSessionController>) =>

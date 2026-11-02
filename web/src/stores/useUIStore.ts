@@ -138,6 +138,8 @@ interface UIState {
   actorBusy: Record<string, number>;
   webReadOnly: boolean;
   canAccessGlobalSettings: boolean | null;
+  /** The current Web principal, not bootstrap access to settings. */
+  isWebAdmin: boolean | null;
   workspaceFileViewerGroupId: string;
   sseStatus: "connected" | "connecting" | "disconnected";
   sseError: SSEErrorDetail | null;
@@ -184,6 +186,7 @@ interface UIState {
   setWorkspaceFileViewerGroupId: (groupId: string) => void;
   setWebReadOnly: (v: boolean) => void;
   setCanAccessGlobalSettings: (v: boolean | null) => void;
+  setIsWebAdmin: (v: boolean | null) => void;
   setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
   setSSEError: (v: SSEErrorDetail | null) => void;
 }
@@ -425,6 +428,7 @@ export const useUIStore = create<UIState>((set) => ({
   chatSessions: loadChatSessions(),
   webReadOnly: false,
   canAccessGlobalSettings: null,
+  isWebAdmin: null,
   workspaceFileViewerGroupId: "",
   sseStatus: "disconnected" as const,
   sseError: null as SSEErrorDetail | null,
@@ -620,6 +624,7 @@ export const useUIStore = create<UIState>((set) => ({
   setWorkspaceFileViewerGroupId: (groupId) => set({ workspaceFileViewerGroupId: groupId }),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
   setCanAccessGlobalSettings: (v) => set({ canAccessGlobalSettings: v }),
+  setIsWebAdmin: (v) => set({ isWebAdmin: v }),
   setSSEStatus: (v) => set({ sseStatus: v }),
   setSSEError: (v) => set({ sseError: v }),
 }));

@@ -41,6 +41,7 @@ const STATE_DOT: Record<ChetRequestState, DotState> = {
   queued: "active",
   working: "active",
   checking: "inactive",
+  waiting: "active",
   completed: "neutral",
   failed: "failed",
   cancelled: "inactive",
@@ -147,6 +148,102 @@ function VoiceMark({ label, hint = label }: { label: string; hint?: string }) {
   );
 }
 
+/** Opens a Group message in its Group. */
+type OpenGroupMessage = (groupId: string, eventId: string) => void;
+
+/** Inline in a meta line, so it adds no height. */
+function MetaLink({ children, ...props }: ComponentProps<"button">) {
+  return (
+    <button
+      type="button"
+      className="rounded-sm underline-offset-2 hover:text-[var(--color-text-secondary)] hover:underline focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * A message someone sent Chet in a Group, quoted from that Group's ledger: it keeps the
+ * Group's own words and attachments, so the panel names where it is and opens it there.
+ */
+function GroupMessageBlock({ item, onOpen }: { item: ChetRequestItem; onOpen?: OpenGroupMessage }) {
+  const { t } = useTranslation("modals");
+  if (!item.group) return null;
+  const { input, message } = item.group;
+  const shown = message?.status === "available" ? message : null;
+  const sender =
+    input.sender.kind === "user" ? t("chet.you") : shown?.sender_title || input.sender.actor_id;
+  const notes = shown
+    ? [
+        shown.truncated ? t("chet.groupMessageTruncated") : "",
+        shown.has_attachments ? t("chet.groupMessageAttachments") : "",
+      ].filter(Boolean)
+    : [];
+  return (
+    <div
+      className="w-fit min-w-0 max-w-[88%] rounded-md border border-[var(--glass-border-subtle)] px-3 py-2 sm:max-w-[80%]"
+      data-chet-group-message={shown ? "available" : "unavailable"}
+    >
+      <Meta>
+        <span className="max-w-full truncate font-semibold text-[var(--color-text-primary)]">
+          {sender}
+        </span>
+        {shown ? (
+          <span className="max-w-full truncate" title={shown.group_title}>
+            · {shown.group_title}
+          </span>
+        ) : null}
+        <Time value={shown?.sent_at || item.createdAt} />
+        {shown && onOpen ? (
+          <MetaLink onClick={() => onOpen(input.group_id, input.event_id)}>
+            {t("chet.openInGroup")}
+          </MetaLink>
+        ) : null}
+      </Meta>
+      {shown ? (
+        <div className="mt-0.5 whitespace-pre-wrap break-words text-sm leading-6 text-[var(--color-text-primary)]">
+          {shown.text}
+        </div>
+      ) : (
+        <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+          {t("chet.groupMessageUnavailable")}
+        </p>
+      )}
+      {notes.length ? (
+        <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">{notes.join(" · ")}</p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Whether Chet's reply to the sender is in the Group. It shows the reply was written there,
+ * not that the sender has read it.
+ */
+function GroupReplyLine({ item, onOpen }: { item: ChetRequestItem; onOpen?: OpenGroupMessage }) {
+  const { t } = useTranslation("modals");
+  const message = item.group?.message;
+  if (!item.group || message?.status !== "available") return null;
+  const replyId = message.reply_event_id;
+  if (replyId) {
+    const { group_id: groupId } = item.group.input;
+    return (
+      <p className="flex flex-wrap items-baseline gap-x-2 text-xs text-[var(--color-text-muted)]">
+        <span>{t("chet.repliedInGroup")}</span>
+        {onOpen ? (
+          <MetaLink onClick={() => onOpen(groupId, replyId)}>{t("chet.openReply")}</MetaLink>
+        ) : null}
+      </p>
+    );
+  }
+  // Only a finished request is expected to have replied by now.
+  return item.state === "completed" ? (
+    <p className="text-xs text-[var(--color-text-muted)]">{t("chet.noGroupReply")}</p>
+  ) : null;
+}
+
 /** What Chet noted to hand off during a call: its wording, not the user's. */
 function VoiceDelegationNote({ item }: { item: ChetRequestItem }) {
   const { t } = useTranslation("modals");
@@ -178,7 +275,9 @@ function StateLine({ item, actions }: { item: ChetRequestItem; actions: ChetRequ
             ? "chet.state.notStartedCancelled"
             : item.notStartedReason === "assistant_unavailable"
               ? "chet.state.notStartedUnavailable"
-              : "chet.state.notStarted",
+              : item.notStartedReason === "source_unavailable"
+                ? "chet.state.notStartedSourceUnavailable"
+                : "chet.state.notStarted",
         )
       : state === "unconfirmed" && item.source === "voice"
         ? t("chet.state.voicePending")
@@ -259,10 +358,12 @@ function RequestEntry({
   item,
   isDark,
   actions,
+  onOpenGroupMessage,
 }: {
   item: ChetRequestItem;
   isDark: boolean;
   actions: ChetRequestActions;
+  onOpenGroupMessage?: OpenGroupMessage;
 }) {
   const { t } = useTranslation("modals");
   const [delegationShown, setDelegationShown] = useState(false);
@@ -293,6 +394,8 @@ function RequestEntry({
             </>
           }
         />
+      ) : item.source === "group" ? (
+        <GroupMessageBlock item={item} onOpen={onOpenGroupMessage} />
       ) : folded ? null : (
         <VoiceDelegationNote item={item} />
       )}
@@ -344,6 +447,7 @@ function RequestEntry({
         </ChetBlock>
       ) : null}
       {showState ? <StateLine item={item} actions={actions} /> : null}
+      {item.source === "group" ? <GroupReplyLine item={item} onOpen={onOpenGroupMessage} /> : null}
     </article>
   );
 }
@@ -465,6 +569,7 @@ export function ChetTimeline({
   isDark,
   actions,
   notices,
+  onOpenGroupMessage,
 }: {
   items: readonly ChetTimelineItem[];
   /** The current call's captions, until history holds them. */
@@ -478,6 +583,7 @@ export function ChetTimeline({
   isDark: boolean;
   actions: ChetRequestActions;
   notices?: ReactNode;
+  onOpenGroupMessage?: OpenGroupMessage;
 }) {
   const { t } = useTranslation("modals");
   // The reader's choice, kept by turn so it holds as a run grows or earlier history joins it.
@@ -624,7 +730,13 @@ export function ChetTimeline({
           }
           const item = row.item;
           return item.kind === "request" ? (
-            <RequestEntry key={item.id} item={item} isDark={isDark} actions={actions} />
+            <RequestEntry
+              key={item.id}
+              item={item}
+              isDark={isDark}
+              actions={actions}
+              onOpenGroupMessage={onOpenGroupMessage}
+            />
           ) : (
             <TranscriptEntry
               key={item.id}

@@ -517,7 +517,7 @@ enum Permit {
 impl Notifier {
     fn new(home: HomeLayout, sender: Sender) -> Self {
         let mut notifier = Self {
-            client: DaemonClient::new(home.clone()),
+            client: DaemonClient::new(home.clone()).without_voice_origin(),
             store: PushStore::new(home.clone()),
             home,
             sender,

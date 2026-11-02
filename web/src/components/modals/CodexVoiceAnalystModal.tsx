@@ -132,6 +132,13 @@ export function CodexVoiceAnalystModal({
         ? ""
         : phaseLabel;
   const touchTarget = "max-sm:min-h-11 pointer-coarse:min-h-11";
+  // A message opens in its Group, behind this dialog, so the dialog steps aside.
+  const openSource = onOpenSource
+    ? (groupId: string, eventId: string) => {
+        onClose();
+        onOpenSource(groupId, eventId);
+      }
+    : undefined;
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return undefined;
@@ -474,6 +481,7 @@ export function CodexVoiceAnalystModal({
                 analystExpanded={analystExpanded}
                 onToggleAnalyst={() => setAnalystExpanded((expanded) => !expanded)}
                 onReviewRecovery={setRecoveryOwners}
+                onOpenGroupMessage={openSource}
                 voiceStatus={voiceStatus}
                 voiceActions={voiceActions}
                 analystBar={
@@ -498,14 +506,7 @@ export function CodexVoiceAnalystModal({
                   <CodexVoiceMessageSources
                     active={isOpen}
                     outputStatus={controller.owned ? controller.outputStatus : undefined}
-                    onOpenSource={
-                      onOpenSource
-                        ? (groupId, eventId) => {
-                            onClose();
-                            onOpenSource(groupId, eventId);
-                          }
-                        : undefined
-                    }
+                    onOpenSource={openSource}
                   />
                 }
               />

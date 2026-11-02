@@ -9,6 +9,7 @@ import {
   submitChetInput,
   type ChetGroupContext,
   type ChetRecord,
+  type ChetSources,
   type ChetStatus,
   type ChetTextRequest,
 } from "../../services/api/chet";
@@ -21,28 +22,45 @@ import { resendId } from "./chetResend";
 import {
   CHET_DRAFT_KEY,
   CHET_PENDING_PREFIX,
+  CHET_SEEN_KEY,
   loadChetDraft,
   loadChetPending,
+  forgetChetSeen,
+  loadChetSeen,
   parseChetPending,
   removeChetPending,
   saveChetDraft,
   saveChetPending,
+  saveChetSeen,
   type ChetPendingRequest,
 } from "./chetDraft";
 import {
   buildChetTimeline,
   hasLiveWork,
   hasOpenRequests,
+  isRequestRecord,
   liveIds,
   missingRequestIds,
   type ChetLiveView,
   type ChetLocalRequest,
+  type RequestRecord,
 } from "./chetTimeline";
 
 const PAGE_SIZE = 50;
 const BUSY_POLL_MS = 1_500;
 const IDLE_POLL_MS = 5_000;
 const CLOSED_POLL_MS = 3_000;
+/** A closed page with no known work still reads, slowly, so its entry can show what is new. */
+const CLOSED_IDLE_POLL_MS = 15_000;
+/** History read on per status read while closed; the next read goes on from there. */
+const SCAN_PAGES = 20;
+
+/** What the entry marks as new: someone in a Group asked, an answer came, or a request did not start. */
+const NOTEWORTHY: ReadonlySet<ChetRecord["kind"]> = new Set([
+  "group_input",
+  "result",
+  "not_started",
+]);
 
 /** A refusal before registration: the message came back to the composer. */
 export type ChetComposerProblem = {
@@ -57,8 +75,6 @@ export type ChetSendProblem =
   /** A retry was refused, but the earlier attempt may still have registered. */
   | { kind: "retry_refused"; code: string; message: string; recoveryOwners: ProcessRecoveryOwner[] }
   | { kind: "conflict"; code: string; message: string };
-
-type RequestRecord = Extract<ChetRecord, { kind: "input" | "voice_delegation" }>;
 
 function mergeAppended(current: ChetRecord[], appended: ChetRecord[]): ChetRecord[] {
   if (!appended.length) return current;
@@ -103,11 +119,14 @@ function appendText(current: string, text: string): string {
 export function useChetConversation({
   enabled,
   open,
+  followClosed = false,
   currentContext,
   onRegistered,
 }: {
   enabled: boolean;
   open: boolean;
+  /** Read new history while the conversation is closed, so its entry can mark it. */
+  followClosed?: boolean;
   /** The group open when a message is sent; it travels with the message as a label. */
   currentContext: ChetGroupContext | null;
   onRegistered?: () => void;
@@ -126,8 +145,21 @@ export function useChetConversation({
   const [settledLive, setSettledLive] = useState<ReadonlySet<string>>(() => new Set());
   const [registeredAt, setRegisteredAt] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [fetched, setFetched] = useState<ReadonlyMap<string, RequestRecord>>(() => new Map());
+  /** Group messages that inputs name, as their Groups last showed them. */
+  const [groupMessages, setGroupMessages] = useState<ChetSources>(() => new Map());
   /** Facts about an earlier page's sends that history holds beyond the loaded pages. */
   const [found, setFound] = useState<ChetRecord[]>([]);
+  /** Where history had been read to with the conversation open, here or in another tab. */
+  const [seenCursor, setSeenCursor] = useState(loadChetSeen);
+  /** What reading on from `seenCursor` found; `cursor` is where to read on from. */
+  const scanRef = useRef<{ from: string; cursor: string } | null>(null);
+  const [scan, setScan] = useState<{ from: string; unread: boolean } | null>(null);
+  const scanningRef = useRef(false);
+  /** For a browser that never had the conversation open: history before the loaded pages. */
+  const [earlier, setEarlier] = useState<{ before: string; unread: boolean } | null>(null);
+  const earlierKeyRef = useRef("");
+  const openRef = useRef(open);
+  openRef.current = open;
   const [draft, setDraft] = useState(() => loadChetDraft() ?? "");
   const [pending, setPending] = useState<ReadonlyMap<string, ChetPendingRequest>>(
     () => new Map(loadChetPending().map((entry) => [entry.id, entry])),
@@ -146,6 +178,10 @@ export function useChetConversation({
   const tickingRef = useRef(false);
   const mountedRef = useRef(true);
   const lookedUpRef = useRef(new Set<string>());
+  /** Numbers each read that can bring Group messages, in the order this page asked. */
+  const sourceReadRef = useRef(0);
+  /** For each input, the read whose answer about its Group message is shown. */
+  const sourceShownRef = useRef(new Map<string, number>());
   /** Requests history has shown this page, kept at once so a late send response sees them. */
   const historyIdsRef = useRef(new Set<string>());
   /** Moves the next read forward, keeping one polling schedule. */
@@ -210,6 +246,9 @@ export function useChetConversation({
         const next = event.newValue ?? "";
         draftRef.current = next;
         setDraft(next);
+      } else if (event.key === CHET_SEEN_KEY) {
+        // Another tab read further with the conversation open.
+        setSeenCursor(event.newValue || null);
       } else if (event.key.startsWith(CHET_PENDING_PREFIX)) {
         const id = event.key.slice(CHET_PENDING_PREFIX.length);
         const entry = parseChetPending(id, event.newValue);
@@ -242,6 +281,18 @@ export function useChetConversation({
     );
   }, []);
 
+  /**
+   * Shows how a read found each Group message, unless a read asked for later already answered
+   * for it: reads overlap, and an earlier one that returns last must not undo a newer reply.
+   */
+  const applySources = useCallback((read: number, sources: ChetSources) => {
+    const shown = sourceShownRef.current;
+    const fresh = [...sources].filter(([id]) => (shown.get(id) ?? 0) <= read);
+    if (!fresh.length) return;
+    for (const [id] of fresh) shown.set(id, read);
+    setGroupMessages((current) => new Map([...current, ...fresh]));
+  }, []);
+
   const tick = useCallback(async () => {
     if (tickingRef.current) return;
     tickingRef.current = true;
@@ -251,6 +302,7 @@ export function useChetConversation({
       // Status first: a finished request whose record is saved leaves live status only after the
       // save, so a history read that follows the status read already includes that record.
       const statusResponse = await fetchChetStatus();
+      const read = ++sourceReadRef.current;
       const historyResponse = await (after === null
         ? fetchChetHistory({ limit: PAGE_SIZE })
         : fetchChetHistoryAfter(after));
@@ -262,6 +314,7 @@ export function useChetConversation({
       }
       const page = historyResponse.result;
       setHistoryError("");
+      applySources(read, page.sources);
       if (after === null) {
         setRecords(page.records);
         setBefore(page.before);
@@ -272,6 +325,8 @@ export function useChetConversation({
         if (page.skipped) setSkipped((count) => count + page.skipped);
       }
       afterRef.current = page.after;
+      // An open conversation has shown everything up to here.
+      if (openRef.current && !page.has_more) setSeenCursor(saveChetSeen(page.after));
       // History shows these requests now; this browser no longer needs to hold them.
       const shown = requestIds(page.records);
       shown.forEach((id) => historyIdsRef.current.add(id));
@@ -280,7 +335,7 @@ export function useChetConversation({
     } finally {
       tickingRef.current = false;
     }
-  }, [applyStatus, dropPending]);
+  }, [applySources, applyStatus, dropPending]);
 
   // Sends stored by an earlier page may be older than the newest history page: ask by ID.
   useEffect(() => {
@@ -289,10 +344,16 @@ export function useChetConversation({
       if (lookedUpRef.current.has(entry.id)) continue;
       lookedUpRef.current.add(entry.id);
       void fetchChetInput(entry.id).then((response) => {
-        if (!mountedRef.current || !response.ok) return;
-        if (response.result.some((record) => record.id === entry.id && record.kind === "input")) {
+        if (!mountedRef.current) return;
+        if (!response.ok) {
+          // A failed read is no answer; the next status read asks again.
+          lookedUpRef.current.delete(entry.id);
+          return;
+        }
+        const { records: facts } = response.result;
+        if (facts.some((record) => record.id === entry.id && record.kind === "input")) {
           // Shown from these facts in place of the reminder, until a loaded page holds them.
-          setFound((previous) => mergeAppended(previous, response.result));
+          setFound((previous) => mergeAppended(previous, facts));
           dropPending([entry.id]);
         } else if (entry.state === "registered") {
           // Accepted earlier but not found now: keep it as unknown rather than lose it.
@@ -300,7 +361,8 @@ export function useChetConversation({
         }
       });
     }
-  }, [dropPending, enabled, pending, putPending]);
+    // A failed lookup is asked again with each status read.
+  }, [appliedStatusSeq, dropPending, enabled, pending, putPending]);
 
   const local = useMemo<ChetLocalRequest[]>(
     () =>
@@ -326,8 +388,17 @@ export function useChetConversation({
       [...registeredAt].filter(([, at]) => at >= appliedStatusSeq).map(([id]) => id),
     );
     const view: ChetLiveView = { status, assumedLive, settledLive };
-    return buildChetTimeline(shownRecords, view, local, fetched);
-  }, [appliedStatusSeq, fetched, local, registeredAt, settledLive, shownRecords, status]);
+    return buildChetTimeline(shownRecords, view, local, fetched, groupMessages);
+  }, [
+    appliedStatusSeq,
+    fetched,
+    groupMessages,
+    local,
+    registeredAt,
+    settledLive,
+    shownRecords,
+    status,
+  ]);
 
   // When the successor is visible, the older request should not offer another resend.
   const resentIds = useMemo(() => {
@@ -340,7 +411,8 @@ export function useChetConversation({
     );
   }, [items]);
 
-  // A page can start after a request it holds facts about; read such requests by ID once.
+  // A page can start after a request it holds facts about; read such requests by ID once, and
+  // again at the next status read if reading failed.
   useEffect(() => {
     if (!enabled) return;
     const missing = missingRequestIds(shownRecords, status).filter(
@@ -348,24 +420,33 @@ export function useChetConversation({
     );
     for (const id of missing.slice(0, 10)) {
       lookedUpRef.current.add(id);
+      const read = ++sourceReadRef.current;
       void fetchChetInput(id).then((response) => {
-        if (!mountedRef.current || !response.ok) return;
-        const source = response.result.find(
-          (record): record is RequestRecord =>
-            (record.kind === "input" || record.kind === "voice_delegation") && record.id === id,
+        if (!mountedRef.current) return;
+        if (!response.ok) {
+          lookedUpRef.current.delete(id);
+          return;
+        }
+        const source = response.result.records.find(
+          (record): record is RequestRecord => isRequestRecord(record) && record.id === id,
         );
         if (source) setFetched((previous) => new Map(previous).set(id, source));
+        applySources(read, response.result.sources);
       });
     }
-  }, [enabled, shownRecords, status]);
+  }, [appliedStatusSeq, applySources, enabled, shownRecords, status]);
 
   // Polling follows anything status may still change; `working` claims only confirmed work.
   const open_requests = hasOpenRequests(items);
   const working = hasLiveWork(items);
   const workingRef = useRef(open_requests);
   workingRef.current = open_requests;
-  // A closed page only follows work it already knows about.
-  const polling = enabled && (open || pending.size > 0 || registeredAt.size > 0 || liveReported);
+  // A closed page follows work it knows about closely and, when allowed, the rest of history
+  // slowly.
+  const following = pending.size > 0 || registeredAt.size > 0 || liveReported;
+  const followingRef = useRef(following);
+  followingRef.current = following;
+  const polling = enabled && (open || following || followClosed);
 
   useEffect(() => {
     if (!polling) return undefined;
@@ -379,7 +460,15 @@ export function useChetConversation({
       if (document.visibilityState === "visible") await tick();
       if (cancelled) return;
       // Busy work is read more often; the pace changes at the next read, not by restarting.
-      schedule(!open ? CLOSED_POLL_MS : workingRef.current ? BUSY_POLL_MS : IDLE_POLL_MS);
+      schedule(
+        !open
+          ? followingRef.current
+            ? CLOSED_POLL_MS
+            : CLOSED_IDLE_POLL_MS
+          : workingRef.current
+            ? BUSY_POLL_MS
+            : IDLE_POLL_MS,
+      );
     };
     readSoonRef.current = () => schedule(0);
     // Opening reads at once.
@@ -391,9 +480,86 @@ export function useChetConversation({
     };
   }, [open, polling, tick]);
 
+  // Closed, read on from where the open conversation had read to, in the order history was
+  // written, to the first thing new. Each status read goes on from where the last one stopped.
+  useEffect(() => {
+    if (!enabled || !followClosed || open || !seenCursor || scanningRef.current) return;
+    const from = seenCursor;
+    if (scanRef.current?.from !== from) scanRef.current = { from, cursor: from };
+    else if (scan?.from === from && scan.unread) return;
+    scanningRef.current = true;
+    void (async () => {
+      try {
+        let unread = false;
+        for (let pages = 0; pages < SCAN_PAGES && !unread; pages += 1) {
+          const position = scanRef.current;
+          if (position?.from !== from) return;
+          const response = await fetchChetHistoryAfter(position.cursor);
+          if (!mountedRef.current) return;
+          if (!response.ok) {
+            // A refused cursor names no place in this history, which was made again; any
+            // other failure is no answer, and the next status read asks again.
+            if (response.error.code === "invalid_args") {
+              forgetChetSeen(from);
+              setSeenCursor((current) => (current === from ? null : current));
+            }
+            return;
+          }
+          unread = response.result.records.some((record) => NOTEWORTHY.has(record.kind));
+          scanRef.current = { from, cursor: response.result.after };
+          if (!response.result.has_more) break;
+        }
+        setScan((current) =>
+          current?.from === from && current.unread === unread ? current : { from, unread },
+        );
+      } finally {
+        scanningRef.current = false;
+      }
+    })();
+  }, [appliedStatusSeq, enabled, followClosed, open, scan, seenCursor]);
+
+  // Never open here: anything of note in history is new. The loaded pages answer first; past
+  // them, read back a page at a time to the first thing of note.
+  const loadedNoteworthy = useMemo(
+    () => records.some((record) => NOTEWORTHY.has(record.kind)),
+    [records],
+  );
+  useEffect(() => {
+    if (!enabled || !followClosed || open || !loaded || seenCursor || loadedNoteworthy) return;
+    if (!before || earlierKeyRef.current === before) return;
+    const start = before;
+    earlierKeyRef.current = start;
+    void (async () => {
+      let cursor: string | null = start;
+      while (cursor) {
+        const response = await fetchChetHistory({ before: cursor, limit: PAGE_SIZE });
+        if (!mountedRef.current) return;
+        if (!response.ok) {
+          // A failed read is no answer; the next status read asks again.
+          if (earlierKeyRef.current === start) earlierKeyRef.current = "";
+          return;
+        }
+        if (response.result.records.some((record) => NOTEWORTHY.has(record.kind))) {
+          setEarlier({ before: start, unread: true });
+          return;
+        }
+        cursor = response.result.before;
+      }
+      setEarlier({ before: start, unread: false });
+    })();
+  }, [appliedStatusSeq, before, enabled, followClosed, loaded, loadedNoteworthy, open, seenCursor]);
+
+  const unread =
+    !open &&
+    loaded &&
+    (seenCursor
+      ? scan?.from === seenCursor && scan.unread
+      : loadedNoteworthy || (earlier?.before === before && earlier.unread));
+
   const loadOlder = useCallback(async () => {
     if (!before || loadingOlder) return;
     setLoadingOlder(true);
+    const read = ++sourceReadRef.current;
     const response = await fetchChetHistory({ before, limit: PAGE_SIZE });
     if (!mountedRef.current) return;
     setLoadingOlder(false);
@@ -402,13 +568,14 @@ export function useChetConversation({
       return;
     }
     const known = new Set(recordsRef.current.map((record) => record.id));
+    applySources(read, response.result.sources);
     setRecords((current) => [
       ...response.result.records.filter((record) => !known.has(record.id)),
       ...current,
     ]);
     setBefore(response.result.before);
     if (response.result.skipped) setSkipped((count) => count + response.result.skipped);
-  }, [before, loadingOlder]);
+  }, [applySources, before, loadingOlder]);
 
   const setText = useCallback((text: string) => updateDraft(() => text), [updateDraft]);
 
@@ -547,6 +714,8 @@ export function useChetConversation({
     clearComposerProblem: () => setComposerProblem(null),
     duplicateRisk,
     working,
+    /** History holds something new since the conversation was last open here. */
+    unread,
   };
 }
 

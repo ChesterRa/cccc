@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "./ModalFrame";
+import { CHET_PRINCIPAL } from "../../utils/chetIdentity";
 
 export interface RecipientEntry {
   id: string;
@@ -105,9 +106,12 @@ export function RecipientsModal({
         {entries.length > 0 ? (
           <div className="rounded-xl border divide-y border-[var(--glass-border-subtle)] divide-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]">
             {entries.map((entry) => {
+              // Chet's intake is not a Group delivery.
+              const chet = entry.id === CHET_PRINCIPAL;
               const canDeliver =
                 !remoteDelivery &&
                 entry.id !== "user" &&
+                !chet &&
                 (messageMode !== "mail" || !entry.read) &&
                 !entry.replied &&
                 !entry.cancelled &&
@@ -152,9 +156,11 @@ export function RecipientsModal({
                     >
                       {entry.label || entry.id}
                     </div>
-                    <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
-                      {deliveryLabel(entry)}
-                    </div>
+                    {chet ? null : (
+                      <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+                        {deliveryLabel(entry)}
+                      </div>
+                    )}
                   </div>
                   <div className="flex shrink-0 items-center gap-2" data-recipient-controls>
                     {canDeliver ? (

@@ -9,9 +9,18 @@ pub(super) use native_notice::claude_notice;
 #[cfg(test)]
 #[path = "actor_delivery_render/reply_guidance_tests.rs"]
 mod reply_guidance_tests;
+
+#[cfg(test)]
+pub(crate) fn test_group() -> GroupDoc {
+    serde_json::from_value(serde_json::json!({
+        "v": 1, "group_id": "g_test", "generation": "generation-1", "title": "test",
+        "created_at": "2026-11-02T00:00:00Z", "updated_at": "2026-11-02T00:00:00Z"
+    }))
+    .expect("test group")
+}
 mod system_notify;
 
-fn render_message(event: &Event) -> Option<String> {
+fn render_message(group: &GroupDoc, event: &Event) -> Option<String> {
     if event.kind == "system.notify" {
         return render_system(event);
     }
@@ -24,7 +33,7 @@ fn render_message(event: &Event) -> Option<String> {
             .trim_end_matches(['\r', '\n'])
             .to_owned()
     });
-    let mut protocol = protocol_lines(event);
+    let mut protocol = protocol_lines(group, event);
     protocol.extend(references::lines(event));
     protocol.extend(attachment_lines(event));
     if !protocol.is_empty() {
@@ -37,13 +46,13 @@ fn render_message(event: &Event) -> Option<String> {
     if body.is_empty() {
         return None;
     }
-    Some(format_envelope(event, &body))
+    Some(format_envelope(group, event, &body))
 }
 
-pub fn render_batch(events: &[Event]) -> Option<String> {
+pub fn render_batch(group: &GroupDoc, events: &[Event]) -> Option<String> {
     let messages = events
         .iter()
-        .map(render_message)
+        .map(|event| render_message(group, event))
         .collect::<Option<Vec<_>>>()?;
     let rendered = match messages.as_slice() {
         [] => None,
@@ -63,7 +72,7 @@ pub fn render_batch_with_mail_context(
     actor_id: &str,
     events: &[Event],
 ) -> Option<String> {
-    let mut output = render_batch(events)?;
+    let mut output = render_batch(group, events)?;
     let has_direct_message = events.iter().any(|event| {
         event.kind == "chat.message"
             && matches!(
@@ -91,8 +100,14 @@ pub fn render_batch_with_mail_context(
     Some(output)
 }
 
-fn protocol_lines(event: &Event) -> Vec<String> {
+fn protocol_lines(group: &GroupDoc, event: &Event) -> Vec<String> {
     let mut lines = Vec::new();
+    if cccc_core::actors::has_current_chet_provenance(group, event) {
+        lines.push(
+            "[cccc] Chet is the user's global assistant. To reply to Chet, omit to in cccc_message_reply and use Send, not Mail."
+                .into(),
+        );
+    }
     let source_group = text(event, "src_group_id");
     let source_event = text(event, "src_event_id");
     if is_connect_message(event) {
@@ -158,7 +173,7 @@ fn is_connect_message(event: &Event) -> bool {
     !instance.is_empty() && event.by == format!("connect:{instance}")
 }
 
-fn format_envelope(event: &Event, body: &str) -> String {
+fn format_envelope(group: &GroupDoc, event: &Event, body: &str) -> String {
     let source = ["source_platform", "source_user_name", "source_user_id"]
         .into_iter()
         .map(|key| text(event, key))
@@ -175,6 +190,8 @@ fn format_envelope(event: &Event, body: &str) -> String {
             label("src_instance_name", &text(event, "src_instance_id")),
             label("src_group_title", &text(event, "src_group_id"))
         )
+    } else if cccc_core::actors::has_current_chet_provenance(group, event) {
+        "Chet".to_owned()
     } else if source.is_empty() {
         event.by.clone()
     } else {
@@ -303,7 +320,7 @@ mod tests {
         .as_object()
         .expect("data")
         .clone();
-        let rendered = render_batch(&[event]).expect("message");
+        let rendered = render_batch(&test_group(), &[event]).expect("message");
         assert!(rendered.contains("Remote worker [Mac / temp_task]"));
         assert!(rendered.contains("instance_id=i_remote, group_id=g_remote, actor_id=worker"));
         assert!(rendered.contains("cccc_message_reply(event_id=\"received-local-id\""));
@@ -326,7 +343,7 @@ mod tests {
         .cloned()
         .expect("object");
         event.ts = "2026-10-28T01:45:03.676332Z".into();
-        let rendered = render_batch(&[event]).expect("render");
+        let rendered = render_batch(&test_group(), &[event]).expect("render");
         assert!(rendered.starts_with(
             "[cccc] user → peer1 [event_id=event-123 sent=2026-10-28T01:45:03Z reply_required]:\n"
         ));
@@ -399,7 +416,7 @@ mod tests {
         .cloned()
         .expect("event data");
 
-        let rendered = render_batch(&[event]).expect("rendered");
+        let rendered = render_batch(&test_group(), &[event]).expect("rendered");
         assert!(rendered.contains(
             "REMOTE REPLY DEFAULT: omit to in cccc_message_reply to reply to remote group-a/actor-1, group-b/actor-2."
         ));
@@ -427,7 +444,7 @@ mod tests {
         .cloned()
         .expect("event data");
 
-        let rendered = render_batch(&[event]).expect("rendered");
+        let rendered = render_batch(&test_group(), &[event]).expect("rendered");
         assert!(rendered.contains("[CCCC] INTERNAL CONTROL"));
         assert!(rendered.contains("skill_command: /using-superpowers"));
         assert!(rendered.contains("capability_id: skill:test:using-superpowers"));
@@ -456,7 +473,7 @@ mod tests {
         .cloned()
         .expect("event data");
 
-        let rendered = render_batch(&[event]).expect("rendered");
+        let rendered = render_batch(&test_group(), &[event]).expect("rendered");
         assert!(rendered.contains("[cccc] Slash command: /install"));
         assert!(rendered.contains("skill:cccc:install"));
         assert!(rendered.contains("cccc_capability_install"));
@@ -482,7 +499,7 @@ mod tests {
         .cloned()
         .expect("object");
 
-        let rendered = render_batch(&[event]).expect("rendered");
+        let rendered = render_batch(&test_group(), &[event]).expect("rendered");
         assert!(rendered.contains("kind=voice_secretary_action_request"));
         assert!(rendered.contains("request_id=request-9"));
         assert!(rendered.contains("document_path=voice/meeting.md"));
@@ -504,7 +521,7 @@ mod tests {
         .cloned()
         .expect("object");
 
-        let rendered = render_batch(&[event]).expect("rendered");
+        let rendered = render_batch(&test_group(), &[event]).expect("rendered");
         assert!(rendered.contains("legacy request text"));
         assert!(!rendered.contains("Request:\nevent fallback"));
     }

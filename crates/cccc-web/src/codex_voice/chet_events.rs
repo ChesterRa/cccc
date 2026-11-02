@@ -116,7 +116,10 @@ fn project_live(
 }
 
 fn input_id(value: &str) -> Option<Uuid> {
-    Uuid::parse_str(value.strip_prefix("chet-input:")?).ok()
+    let raw = value
+        .strip_prefix("chet-input:")
+        .or_else(|| value.strip_prefix("chet-group:"))?;
+    Uuid::parse_str(raw).ok()
 }
 
 fn resolve_input_id(key: &str, voice: &HashMap<String, Uuid>) -> Option<Uuid> {
@@ -256,7 +259,9 @@ pub(super) async fn persist_event(
     event: &AnalystLifecycleEvent,
     voice: &HashMap<String, Uuid>,
 ) -> Result<()> {
-    let client = cccc_client::DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(5));
+    let client = cccc_client::DaemonClient::new(home.clone())
+        .without_voice_origin()
+        .with_timeout(Duration::from_secs(5));
     let mut failed = false;
     for (op, args) in operations(generation, event, voice) {
         if !client
@@ -277,6 +282,104 @@ pub(super) async fn persist_event(
     Ok(())
 }
 
+/// Project a completed Group input into the existing Voice notification path.
+/// Group history remains the only owner of the model turn; this only makes its
+/// result available to Voice's normal viewed and subscription checks.
+pub(super) async fn persist_group_voice_result(
+    home: &HomeLayout,
+    generation: &str,
+    event: &AnalystLifecycleEvent,
+    voice: &HashMap<String, Uuid>,
+) -> Result<()> {
+    let AnalystLifecycleEvent::Completed {
+        source,
+        turn_id,
+        delegation_ids,
+        status,
+        result,
+        ..
+    } = event
+    else {
+        return Ok(());
+    };
+    if *source == AnalystCompletionSource::HostUnconfirmed {
+        return Ok(());
+    }
+    let mut inputs = HashSet::new();
+    for key in delegation_ids
+        .iter()
+        .filter(|key| key.starts_with("chet-group:"))
+    {
+        let Some(id) = resolve_input_id(key, voice) else {
+            bail!("ambiguous or invalid Chet Group input identity");
+        };
+        inputs.insert(id);
+    }
+    if inputs.is_empty() {
+        return Ok(());
+    }
+
+    let home = home.clone();
+    let generation = generation.to_owned();
+    let turn_id = turn_id.clone();
+    let text = if *source == AnalystCompletionSource::Runtime && status == "completed" {
+        result.clone()
+    } else {
+        format!(
+            "The work on this update did not complete ({status}). Check the source messages; do not report it as completed."
+        )
+    };
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        // Most Group inputs have no Voice handoff. It was bound before
+        // submission, so without a pending handoff in this generation there
+        // is no Voice result to project and no reason to scan Chet history.
+        if !cccc_core::voice_notifications::snapshot(&home)?
+            .messages
+            .iter()
+            .any(|message| {
+                !message.processed
+                    && message
+                        .handoff
+                        .as_ref()
+                        .is_some_and(|handoff| handoff.analyst_generation == generation)
+            })
+        {
+            return Ok(());
+        }
+        let records = cccc_core::chet_history::Store::new(home.root())
+            .find_group_inputs(&inputs)
+            .context("resolve Group inputs for Voice")?;
+        if records.len() != inputs.len() {
+            bail!("Chet Group input is missing from history");
+        }
+        let correlations: Vec<_> = records
+            .into_iter()
+            .filter_map(|record| match record {
+                cccc_core::chet_history::Record::GroupInput { input, .. } => Some(
+                    cccc_contracts::voice_notifications::VoiceMessageRef {
+                        group_id: input.group_id,
+                        event_id: input.event_id,
+                    }
+                    .correlation_id(),
+                ),
+                _ => None,
+            })
+            .collect();
+        cccc_core::voice_notifications::processed(
+            &home,
+            &correlations,
+            &generation,
+            &turn_id,
+            &text,
+        )
+        .context("persist Group Voice notification result")?;
+        Ok(())
+    })
+    .await
+    .context("join Group Voice notification writer")??;
+    Ok(())
+}
+
 pub(super) async fn persist_voice(
     home: &HomeLayout,
     generation: &str,
@@ -289,7 +392,9 @@ pub(super) async fn persist_voice(
     if input_id(key).is_some() {
         bail!("Voice delegation ID collides with a Chet text input ID");
     }
-    let client = cccc_client::DaemonClient::new(home.clone()).with_timeout(Duration::from_secs(5));
+    let client = cccc_client::DaemonClient::new(home.clone())
+        .without_voice_origin()
+        .with_timeout(Duration::from_secs(5));
     let args = json!({"by":"user","id":id,"delegation":delegation});
     let response = client
         .call(&DaemonRequest {
@@ -322,7 +427,7 @@ mod tests {
             "voice-key".into(),
             "unrelated".into(),
         ];
-        let active_ids = vec![format!("chet-input:{active}"), format!("chet-input:{text}")];
+        let active_ids = vec![format!("chet-group:{active}"), format!("chet-input:{text}")];
         let (queued, working) = in_flight_status(&live, &voice, &pending, &active_ids);
         assert_eq!(queued, vec![voice_id]);
         assert_eq!(working.len(), 2);
@@ -422,6 +527,57 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].0, "chet_history_not_started");
         assert_eq!(records[0].1["reason"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn uncertain_and_ambiguous_group_completions_do_not_create_voice_results() {
+        let dir = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(dir.path().join("cccc")).expect("home");
+        let id = Uuid::new_v4();
+        let key = format!("chet-group:{id}");
+        let event = |source| AnalystLifecycleEvent::Completed {
+            source,
+            turn_id: "turn".into(),
+            delegation_id: key.clone(),
+            delegation_ids: vec![key.clone()],
+            status: "completed".into(),
+            error: String::new(),
+            result: "must not be published".into(),
+            speakable: false,
+        };
+        persist_group_voice_result(
+            &home,
+            "generation",
+            &event(AnalystCompletionSource::HostUnconfirmed),
+            &HashMap::new(),
+        )
+        .await
+        .expect("unconfirmed is not a result");
+        assert!(!home.root().exists());
+
+        persist_group_voice_result(
+            &home,
+            "generation",
+            &event(AnalystCompletionSource::Runtime),
+            &HashMap::new(),
+        )
+        .await
+        .expect("an ordinary Group result needs no Voice state");
+        assert!(!home.root().exists());
+
+        let collision = HashMap::from([(key.clone(), Uuid::new_v4())]);
+        assert!(
+            persist_group_voice_result(
+                &home,
+                "generation",
+                &event(AnalystCompletionSource::Runtime),
+                &collision,
+            )
+            .await
+            .is_err(),
+            "an ambiguous provider ID must not be attributed to a Group input"
+        );
+        assert!(!home.root().exists());
     }
 
     #[test]

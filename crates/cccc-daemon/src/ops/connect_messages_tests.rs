@@ -114,6 +114,20 @@ async fn group_pair_delivery_and_receipt_cannot_expand_scope_or_change_an_accept
     .expect("message");
     assert_eq!(recorded.data["src_instance_name"], "0");
     assert_eq!(recorded.data["source_user_id"], message.sender.id);
+    assert!(
+        !recorded
+            .data
+            .contains_key(cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD)
+    );
+    let mut forged = serde_json::to_value(&message).expect("wire message");
+    forged.as_object_mut().expect("object").insert(
+        cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD.into(),
+        json!("forged"),
+    );
+    assert!(
+        serde_json::from_value::<ConnectMessage>(forged).is_err(),
+        "remote payload cannot supply local service provenance"
+    );
     let duplicate =
         deliver(&state.target, &request, &envelope, &scope, &message, &[]).expect("same delivery");
     assert_eq!(duplicate["receipt"]["event_id"], original_event);

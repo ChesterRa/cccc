@@ -30,15 +30,24 @@ let host: HTMLDivElement;
 let root: Root;
 let chet: ChetConversation;
 
-function Harness(props: { open: boolean; currentContext: ChetGroupContext | null }) {
+function Harness(props: {
+  open: boolean;
+  currentContext: ChetGroupContext | null;
+  followClosed?: boolean;
+}) {
   chet = useChetConversation({ enabled: true, ...props });
   return null;
 }
 
 const ok = <T,>(result: T): ApiResponse<T> => ({ ok: true, result });
 const fail = (code: string): ApiResponse<never> => ({ ok: false, error: { code, message: code } });
-const page = (records: ChetRecord[] = [], after = "0"): ApiResponse<ChetPage> =>
-  ok({ records, skipped: 0, before: null, after, has_more: false });
+const page = (
+  records: ChetRecord[] = [],
+  after = "0",
+  sources: ChetPage["sources"] = new Map(),
+): ApiResponse<ChetPage> =>
+  ok({ records, sources, skipped: 0, before: null, after, has_more: false });
+const facts = (records: ChetRecord[]) => ok({ records, sources: new Map() });
 const status = (overrides: Partial<ChetStatus> = {}): ApiResponse<ChetStatus> =>
   ok({
     generation: "g1",
@@ -68,8 +77,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function render(currentContext: ChetGroupContext | null = GROUP_A, open = true) {
-  await act(async () => root.render(<Harness open={open} currentContext={currentContext} />));
+async function render(
+  currentContext: ChetGroupContext | null = GROUP_A,
+  open = true,
+  followClosed = false,
+) {
+  await act(async () =>
+    root.render(
+      <Harness open={open} currentContext={currentContext} followClosed={followClosed} />,
+    ),
+  );
   await act(async () => vi.advanceTimersByTimeAsync(0));
 }
 
@@ -86,7 +103,7 @@ beforeEach(() => {
   vi.mocked(api.fetchChetStatus).mockResolvedValue(status());
   vi.mocked(api.fetchChetHistory).mockResolvedValue(page());
   vi.mocked(api.fetchChetHistoryAfter).mockResolvedValue(page());
-  vi.mocked(api.fetchChetInput).mockResolvedValue(ok([]));
+  vi.mocked(api.fetchChetInput).mockResolvedValue(facts([]));
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -347,10 +364,17 @@ it("shows an earlier page's send and answer from its lookup, once, when newer hi
     },
   };
   vi.mocked(api.fetchChetHistory).mockResolvedValueOnce(
-    ok({ records: [newer], skipped: 0, before: "5", after: "9", has_more: false }),
+    ok({
+      records: [newer],
+      sources: new Map(),
+      skipped: 0,
+      before: "5",
+      after: "9",
+      has_more: false,
+    }),
   );
   vi.mocked(api.fetchChetInput).mockResolvedValueOnce(
-    ok([inputRecord("old", "before reload"), answer]),
+    facts([inputRecord("old", "before reload"), answer]),
   );
   await render();
   await flush();
@@ -374,7 +398,7 @@ it("asks by ID about a send an earlier page stored", async () => {
       createdAt: "t",
     }),
   );
-  vi.mocked(api.fetchChetInput).mockResolvedValueOnce(ok([inputRecord("old", "before reload")]));
+  vi.mocked(api.fetchChetInput).mockResolvedValueOnce(facts([inputRecord("old", "before reload")]));
   await render();
   await flush();
   expect(api.fetchChetInput).toHaveBeenCalledWith("old");
@@ -483,4 +507,267 @@ it("can retry a resend that was definitely refused before registration", async (
     resendId("source"),
     resendId("source"),
   ]);
+});
+
+it("keeps the newest reading of a Group message, which a later fact about it brings", async () => {
+  const input: ChetRecord = {
+    kind: "group_input",
+    id: "gi",
+    created_at: "2026-11-01T10:00:00.000000Z",
+    input: {
+      group_id: "g-a",
+      group_generation: "gen-a",
+      event_id: "e-ask",
+      sender: { kind: "user" },
+      reply_to: null,
+    },
+  };
+  const message = {
+    status: "available" as const,
+    group_title: "Design",
+    sender_title: "",
+    text: "@chet what changed?",
+    sent_at: "2026-11-01T10:00:00Z",
+    has_attachments: false,
+    truncated: false,
+    reply_event_id: null,
+  };
+  vi.mocked(api.fetchChetHistory).mockResolvedValueOnce(
+    page([input], "1", new Map([["gi", message]])),
+  );
+  await render();
+  expect(requests()).toMatchObject([{ id: "gi", source: "group", state: "waiting" }]);
+
+  const answer: ChetRecord = {
+    kind: "result",
+    id: "res",
+    created_at: "2026-11-01T10:02:00.000000Z",
+    input_ids: ["gi"],
+    outcome: { generation: "g1", turn_id: "t1", status: "completed", text: "Replied", error: "" },
+  };
+  vi.mocked(api.fetchChetHistoryAfter)
+    .mockResolvedValueOnce(
+      page([answer], "2", new Map([["gi", { ...message, reply_event_id: "e-r" }]])),
+    )
+    .mockResolvedValueOnce(page([], "2"));
+  await act(async () => vi.advanceTimersByTimeAsync(1_500));
+  await act(async () => vi.advanceTimersByTimeAsync(5_000));
+  expect(vi.mocked(api.fetchChetHistoryAfter)).toHaveBeenCalledTimes(2);
+  expect(requests()).toMatchObject([
+    { id: "gi", state: "completed", group: { message: { reply_event_id: "e-r" } } },
+  ]);
+});
+
+it("asks again about an earlier request after a failed read, at the next status read", async () => {
+  const answer: ChetRecord = {
+    kind: "result",
+    id: "res",
+    created_at: "2026-11-01T10:02:00.000000Z",
+    input_ids: ["old"],
+    outcome: { generation: "g1", turn_id: "t1", status: "completed", text: "Done", error: "" },
+  };
+  vi.mocked(api.fetchChetHistory).mockResolvedValueOnce(page([answer], "1"));
+  vi.mocked(api.fetchChetInput)
+    .mockResolvedValueOnce(fail("unavailable"))
+    .mockResolvedValueOnce(facts([inputRecord("old", "from an earlier page"), answer]));
+  await render();
+  expect(requests()).toMatchObject([{ id: "old", sourceMissing: true }]);
+  await act(async () => vi.advanceTimersByTimeAsync(5_000));
+  expect(api.fetchChetInput).toHaveBeenCalledTimes(2);
+  expect(requests()).toMatchObject([
+    { id: "old", sourceMissing: false, text: "from an earlier page" },
+  ]);
+});
+
+it("keeps a newer reading of a Group message when an earlier read returns after it", async () => {
+  const input: ChetRecord = {
+    kind: "group_input",
+    id: "gi",
+    created_at: "2026-11-01T10:00:00.000000Z",
+    input: {
+      group_id: "g-a",
+      group_generation: "gen-a",
+      event_id: "e-ask",
+      sender: { kind: "actor", actor_id: "peer-1" },
+      reply_to: null,
+    },
+  };
+  const message = {
+    status: "available" as const,
+    group_title: "Design",
+    sender_title: "Peer",
+    text: "@chet check this",
+    sent_at: "2026-11-01T10:00:00Z",
+    has_attachments: false,
+    truncated: false,
+    reply_event_id: null,
+  };
+  const dispatched: ChetRecord = {
+    kind: "group_dispatch",
+    id: "gd",
+    created_at: "t",
+    input_id: "gi",
+  };
+  const answer: ChetRecord = {
+    kind: "result",
+    id: "res",
+    created_at: "2026-11-01T10:02:00.000000Z",
+    input_ids: ["gi"],
+    outcome: { generation: "g1", turn_id: "t1", status: "completed", text: "Replied", error: "" },
+  };
+  // The first page starts after the input, so the hook reads it by ID; that read is slow.
+  const slow = deferred<ApiResponse<{ records: ChetRecord[]; sources: ChetPage["sources"] }>>();
+  vi.mocked(api.fetchChetHistory).mockResolvedValueOnce(page([dispatched], "1"));
+  vi.mocked(api.fetchChetInput).mockReturnValueOnce(slow.promise);
+  await render();
+  vi.mocked(api.fetchChetHistoryAfter).mockResolvedValueOnce(
+    page([answer], "2", new Map([["gi", { ...message, reply_event_id: "e-r" }]])),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(5_000));
+  expect(api.fetchChetHistoryAfter).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    slow.resolve(ok({ records: [input, dispatched], sources: new Map([["gi", message]]) }));
+  });
+  await flush();
+  expect(requests()).toMatchObject([
+    {
+      id: "gi",
+      state: "completed",
+      text: "@chet check this",
+      group: { message: { reply_event_id: "e-r" } },
+    },
+  ]);
+});
+
+/** History as the host keeps it: cursors are positions, and each read answers from them. */
+function fakeHistory(initial: ChetRecord[]) {
+  const records = [...initial];
+  vi.mocked(api.fetchChetHistory).mockImplementation(async (options = {}) => {
+    const end = options.before ? Number(options.before) : records.length;
+    const start = Math.max(0, end - (options.limit ?? 50));
+    return ok({
+      records: records.slice(start, end),
+      sources: new Map(),
+      skipped: 0,
+      before: start > 0 ? String(start) : null,
+      after: String(records.length),
+      has_more: false,
+    });
+  });
+  vi.mocked(api.fetchChetHistoryAfter).mockImplementation(async (after) => {
+    const from = Number(after);
+    if (!Number.isInteger(from) || from > records.length) return fail("invalid_args");
+    const page = records.slice(from, from + 50);
+    const next = from + page.length;
+    return ok({
+      records: page,
+      sources: new Map(),
+      skipped: 0,
+      before: null,
+      after: String(next),
+      has_more: next < records.length,
+    });
+  });
+  return { append: (...more: ChetRecord[]) => records.push(...more) };
+}
+
+const answered = (n: number): ChetRecord => ({
+  kind: "result",
+  id: `r${n}`,
+  created_at: "2026-11-01T10:02:00.000000Z",
+  input_ids: [`in${n}`],
+  outcome: { generation: "g1", turn_id: `t${n}`, status: "completed", text: "Done", error: "" },
+});
+const askedInGroup = (n: number): ChetRecord => ({
+  kind: "group_input",
+  id: `gi${n}`,
+  created_at: "2026-11-01T10:05:00.000000Z",
+  input: {
+    group_id: "g-a",
+    group_generation: "gen-a",
+    event_id: `e${n}`,
+    sender: { kind: "actor", actor_id: "peer-1" },
+    reply_to: null,
+  },
+});
+const spoken = (n: number): ChetRecord => ({
+  kind: "transcript",
+  id: `t${n}`,
+  // The same time for every record: order comes from history, not clocks.
+  created_at: "2026-11-01T10:05:00.000000Z",
+  transcript: {
+    call_id: "c",
+    turn_id: `t${n}`,
+    seq: n,
+    role: "user",
+    text: "…",
+    final_update: true,
+    complete: true,
+  },
+});
+const SEEN = "cccc.chet.seen.v2";
+
+it("marks what is new since the conversation was last open, including before it ever was", async () => {
+  const history = fakeHistory([answered(1)]);
+  await render(GROUP_A, false, true);
+  await act(async () => vi.advanceTimersByTimeAsync(3_000));
+  expect(chet.unread).toBe(true);
+
+  await render(GROUP_A, true, true);
+  expect(chet.unread).toBe(false);
+  expect(window.localStorage.getItem(SEEN)).toBe("1");
+  await render(GROUP_A, false, true);
+  await act(async () => vi.advanceTimersByTimeAsync(3_000));
+  expect(chet.unread).toBe(false);
+
+  history.append(askedInGroup(1));
+  await act(async () => vi.advanceTimersByTimeAsync(15_000));
+  expect(chet.unread).toBe(true);
+});
+
+it.each([
+  ["a Group message", true],
+  ["only other history", false],
+])("reads on from what was seen past a full page of history to find %s", async (_, unread) => {
+  window.localStorage.setItem(SEEN, "1");
+  fakeHistory([
+    answered(1),
+    ...(unread ? [askedInGroup(1)] : []),
+    ...Array.from({ length: 60 }, (_, index) => spoken(index)),
+  ]);
+  await render(GROUP_A, false, true);
+  await act(async () => vi.advanceTimersByTimeAsync(3_000));
+  await flush();
+  expect(chet.unread).toBe(unread);
+});
+
+it("keeps what another tab has read past, and forgets a place history no longer has", async () => {
+  window.localStorage.setItem(SEEN, "60");
+  fakeHistory([answered(1), askedInGroup(1)]);
+  await render(GROUP_A, true, true);
+  expect(window.localStorage.getItem(SEEN)).toBe("60");
+
+  // Closed, the stored place is refused: history was made again, and all of it is new here.
+  await render(GROUP_A, false, true);
+  await act(async () => vi.advanceTimersByTimeAsync(3_000));
+  await flush();
+  expect(window.localStorage.getItem(SEEN)).toBeNull();
+  expect(chet.unread).toBe(true);
+});
+
+it("reads on after a failed read, without starting over", async () => {
+  window.localStorage.setItem(SEEN, "1");
+  const history = fakeHistory([answered(1), spoken(1)]);
+  // The first read on from what was seen fails.
+  vi.mocked(api.fetchChetHistoryAfter).mockResolvedValueOnce(fail("unavailable"));
+  await render(GROUP_A, false, true);
+  await act(async () => vi.advanceTimersByTimeAsync(3_000));
+  expect(chet.unread).toBe(false);
+  history.append(askedInGroup(1));
+  await act(async () => vi.advanceTimersByTimeAsync(15_000));
+  expect(chet.unread).toBe(true);
+  // Reads after the first go on from where history had been read to.
+  expect(
+    vi.mocked(api.fetchChetHistoryAfter).mock.calls.filter(([after]) => after === "1").length,
+  ).toBeLessThanOrEqual(3);
 });

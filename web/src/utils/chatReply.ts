@@ -1,6 +1,7 @@
 import type { Actor, ChatMessageData, GroupSettings, LedgerEvent, ReplyTarget } from "../types";
 import { isConnectMessage, isCrossInstanceInboundMessage } from "./crossInstanceMessages";
 import { projectCrossGroupRecipients } from "./crossGroupRecipients";
+import { CHET_NAME, CHET_PRINCIPAL, isChetMessage } from "./chetIdentity";
 
 type ReplyComposerState = { destGroupId: string; toText: string; replyTarget: ReplyTarget };
 
@@ -45,6 +46,8 @@ export function buildReplyComposerState(
   selectedGroupId: string,
   actors: Actor[],
   groupSettings: GroupSettings | null | undefined,
+  /** The selected Group's generation, which a message Chet wrote in it carries. */
+  groupGeneration = "",
 ): ReplyComposerState | null {
   const replyEventId = getReplyEventId(event);
   if (!replyEventId) return null;
@@ -81,17 +84,25 @@ export function buildReplyComposerState(
     (typeof data?.dst_event_id === "string" ? String(data.dst_event_id || "").trim() : "") ||
     (typeof data?.remote_event_id === "string" ? String(data.remote_event_id || "").trim() : "");
   const policy = groupSettings?.default_send_to || "foreman";
+  // A reply to Chet names no recipient: the daemon returns it to Chet once it has
+  // verified that Chet wrote the message in this Group.
   const defaultTo = remoteDstGroupId
     ? remoteDstTo
-    : authorIsActor
-      ? [by]
-      : originalTo.length > 0
-        ? originalTo
-        : policy === "foreman"
-          ? ["@foreman"]
-          : [];
-  const replyBy =
-    by === "user" && defaultTo.length > 0 ? defaultTo.join(", ") : String(event.by || "unknown");
+    : by === CHET_PRINCIPAL
+      ? []
+      : authorIsActor
+        ? [by]
+        : originalTo.length > 0
+          ? originalTo
+          : policy === "foreman"
+            ? ["@foreman"]
+            : [];
+  // Named Chet only where the message row names it; otherwise the bare principal shows.
+  const replyBy = isChetMessage(event, groupGeneration)
+    ? CHET_NAME
+    : by === "user" && defaultTo.length > 0
+      ? defaultTo.join(", ")
+      : String(event.by || "unknown");
 
   return {
     destGroupId: remoteDstGroupId || String(selectedGroupId || "").trim(),

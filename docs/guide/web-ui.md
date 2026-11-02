@@ -68,13 +68,20 @@ Reduced-motion preferences show a static hint, and hidden tabs pause the animati
 look, **Motion** set to **Off** also shows a static hint.
 Hints are decorative and never become draft content or screen-reader live announcements.
 
-Message bubbles retain their framed surfaces. Sender, recipient routing, Mail mode
+Classic message bubbles retain their framed surfaces. In the LCD look, a thin line starts each
+message that shows its author, and a dotted line from the text column starts a message that
+continues under the same header; your own messages sit on your side without a line. Space
+inside a message is reduced so that it reads apart from the space between messages, and a
+Markdown rule inside a message is a short mark in the text column. Messages have no background, and pointing at
+one changes only its actions. Sender, recipient routing, Mail mode
 and time share a compact header; delivery failures and reply/read status stay visible.
 A reply shows up to two lines of the message it answers; clicking or tapping that
 quote, or pressing Enter on it, opens the original message. On hover-capable desktop
-screens, message actions appear on hover or keyboard focus; touch and narrow screens
-use a **More** menu. Read-only views retain status information without exposing
-these actions. The composer groups recipients, text and tools into one surface.
+screens, **Reply**, **Forward** and a copy icon appear in the message header on hover or
+keyboard focus, in space kept for them so nothing shifts; the icon copies the message
+content as the menu item did before. **Copy link** and other actions are in the **More** menu.
+Touch and narrow screens list every action, including copying, in one **More** menu.
+Read-only views retain status information without exposing these actions. The composer groups recipients, text and tools into one surface.
 Short, transform/opacity-only message entry feedback respects reduced-motion
 preferences.
 
@@ -483,6 +490,49 @@ or incomplete. While available, live transcripts and warnings that a transcript 
 its saving is unconfirmed appear outside these grouped rows. Voice transcripts and written results
 arrive independently, so their display order does not establish a one-to-one relationship.
 
+#### Messages from Groups
+
+A Group member can address Chet with `@chet` as the only recipient, using **Send** or
+**Request reply**; Mail is not available for Chet. In the Web UI, a CCCC administrator can choose
+`@chet` in a Group's recipient row. If a member's ID or title is `chet`, `@chet` is ambiguous and
+the send is refused. Chet's messages in a Group are labelled **Chet**, and a reply to one without
+other recipients goes back to Chet. Chet writes to a Group directly; it does not forward
+messages between Groups or send through Connect.
+
+A Group message to Chet appears in Chet's conversation with its sender, Group and time, and
+**Open in Group** opens it there. Its text is read from the Group when the conversation loads: a
+long message is shortened and attachments stay in the Group. If the Group or the message was
+removed, or the Group was re-created, the entry says the message is no longer available. Group
+messages that Chet can take up are queued as turns of their own, and Chet is instructed to reply
+in the Group each came from; your typed or spoken requests go ahead of Group messages still
+waiting, and a Group turn already running is not interrupted. Once Chet has finished, the entry
+links the reply it finds in the Group, which **View reply** opens, or says that no reply is seen
+yet; a reply in the Group does not show that the sender has read it. A Group message whose
+submission cannot be confirmed is not resent automatically. While the CCCC Web service is
+stopped, messages to Chet wait in their Groups and are taken up when it starts again; while
+Chet's Runtime is unavailable, they wait as well. A message whose sender has left the Group or
+been replaced by the time it is taken up can remain only in its Group. A message in Chet's
+conversation is checked again just before it is handed to Chet: if its sender has left the Group
+or been replaced, or the Group was removed or re-created, the entry says it was not handed to
+Chet.
+
+Group messages enter Chet's usual session, which can also hold your own conversation with Chet
+and other Groups' content. Chet is instructed not to carry that into a Group and to pass requests
+for work outside a Group on to you rather than do them. These are instructions to the model, not
+isolation or a permission limit: a model or Runtime can still disregard them.
+
+While Chet's conversation is closed, its entry shows a dot when history holds something new: a
+Group message, an answer, or a request that did not start. Opening the conversation in this
+browser clears it. In a browser where the conversation has never been opened, any such Group
+message, answer or request already in history counts as new.
+
+During a call, a message Chet sends to a Group while the call is recording counts as a call-time
+handoff, so the member's reply can be read aloud. The recording state approximates this; it does not
+show which input started Chet's turn. A request you typed during the call can therefore be
+included, and a handoff Chet sends after the call has ended is not read aloud, although a
+member's reply to it can still be taken up by Chet when the CCCC Web service and Chet's Runtime
+are available.
+
 During a call, investigations include a bounded recent excerpt so Chet
 can understand follow-ups and retain your limits; that excerpt becomes part of its retained conversation.
 Voice is instructed to prepare a self-contained task and clarify essential ambiguity before handing it off.
@@ -669,7 +719,9 @@ behavior follows its selected command and mode.
 
 For a pure ACP Runtime, **Activity** shows structured output instead of a terminal.
 Chet's main input remains available; busy ACP work uses a visible FIFO. Cancel stops the
-current task and queued inputs, including while provider admission is pending.
+current task and queued inputs, including while provider admission is pending. When the
+current task is your own request, Group messages waiting for Chet stay queued; when it is a
+Group message, Cancel clears everything queued.
 While this page owns an assistant-mode call, Activity also offers a task input whose
 settled result is returned to that exact call. Ending the original call does not retarget
 its queued or late results to a replacement call. If the call ends with text still in
@@ -698,7 +750,8 @@ native `agy` availability and its login do not satisfy this prerequisite. Readin
 download the component or start authentication. An explicit
 `--model` is reapplied on resume; `--dangerously-skip-permissions` selects unrestricted operation,
 otherwise permissions require Allow once / Deny. ACP serializes additional inputs in a visible
-queue of up to 32; cancellation clears current and queued inputs. Other Runtime input behavior
+queue of up to 32; cancellation clears current and queued inputs, except Group messages
+waiting behind your own request. Other Runtime input behavior
 and Realtime credentials stay unchanged.
 
 For Codex, CCCC removes conflicting host flags and pins app-server,

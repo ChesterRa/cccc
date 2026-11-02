@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import { useComposerStore } from "../../stores/useComposerStore";
 import { useGroupStore } from "../../stores";
+import { useUIStore } from "../../stores/useUIStore";
 import { ChatComposer } from "./ChatComposer";
 
 const voice = vi.hoisted(() => vi.fn());
@@ -16,7 +17,7 @@ function Harness({
   mode = "send",
   initialTokens = [],
 }: {
-  mode?: "send" | "request_reply";
+  mode?: "send" | "request_reply" | "mail";
   initialTokens?: string[];
 }) {
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -71,6 +72,42 @@ function Harness({
     />
   );
 }
+
+it("uses the Web principal for Chet and shows Send instead of the saved Mail preference", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useComposerStore.setState({ composerText: "hello" });
+  useUIStore.setState({ isWebAdmin: false });
+  const originalRefreshSettings = useGroupStore.getState().refreshSettings;
+  useGroupStore.setState({ refreshSettings: async () => {} });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const chet = () =>
+    [...host.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent === "@chet",
+    );
+  try {
+    await act(async () => root.render(<Harness />));
+    expect(chet()).toBeUndefined();
+    await act(async () => useUIStore.setState({ isWebAdmin: true }));
+    expect(chet()).toBeDefined();
+    await act(async () =>
+      root.render(<Harness key="selected" mode="mail" initialTokens={["@chet"]} />),
+    );
+    expect(host.querySelector("[data-composer-send-primary]")?.getAttribute("aria-label")).toBe(
+      "sendMessage",
+    );
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>("[data-composer-send-options]")?.click(),
+    );
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("modeMail");
+  } finally {
+    await act(async () => root.unmount());
+    useUIStore.setState({ isWebAdmin: null });
+    useGroupStore.setState({ refreshSettings: originalRefreshSettings });
+    host.remove();
+  }
+});
 
 it("keeps a compact control in place until its first click and preserves recipient selection", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });

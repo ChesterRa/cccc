@@ -490,7 +490,34 @@ and rejects exhibit access.
   path. The same ID and complete request return `{ registration: "existing" }`;
   a different request using that ID returns `chet_history_id_conflict`. Only a
   confirmed `"inserted"` result can authorize the Web owner to submit input.
-- `chet_history_list`: `{ by, before?: string, after?: string, limit?: number }`.
+- `chet_history_group_input`: `{ by, input: GroupInput }`. The daemon verifies
+  the Group generation, source ledger event, recipient, sender and current
+  Actor generation before appending a reference. The Group ledger owns the
+  message body and attachments. The same Group generation and event ID return
+  the original input UUID with `registration: "existing"`; inconsistent source
+  information is rejected. `inserted` records receipt, not model admission or
+  completion. An uncertain model submission MUST NOT be blindly replayed.
+  `group_not_found` requires the Group to be absent from the registry as well
+  as unavailable on disk; a Group read or registry error is `io_error`, not
+  proof of deletion. `chet_source_unavailable` means the inspected ledger
+  confirms that the source is missing, no longer matches its reference,
+  imported from an earlier Group, or its member was removed or replaced after
+  the source message. An inconsistent
+  Group document without a committed membership event is not proof of member
+  retirement and remains `invalid_chet_source`. For a previously recorded,
+  unclaimed Group input, the Web owner records `not_started` with
+  `source_unavailable` when validation confirms the source is no longer usable.
+  Read failures and other uncertain errors remain pending for retry. A retry
+  of that fact uses the same ID. The history write MUST reject this reason if
+  a Group dispatch claim already exists, and a later claim MUST NOT submit an
+  input with this terminal fact. Other known pre-admission failures can follow
+  a claim when the host can establish that submission did not occur.
+- `chet_history_claim_group_input`: `{ by, input_id }` atomically records that
+  the host is about to attempt submission. Only a confirmed `"inserted"` claim
+  permits that attempt; an existing claim or terminal fact does not. After an
+  uncertain claim, the host may reconcile the claim but MUST NOT infer model
+  admission or completion from it.
+- `chet_history_list`: `{ by, before?: string, after?: string, limit?: number, resolve_sources?: boolean }`.
   `before` and `after` are mutually exclusive opaque cursors and `limit` is
   1–100. A backward page returns `{ records, before, after }`, where `after`
   is the history head from the same snapshot. A forward page returns
@@ -501,9 +528,21 @@ and rejects exhibit access.
   only complete records, and the next writer may discard that unfinished
   suffix after validating the preceding records. A complete record whose write
   acknowledgement was lost is retained and must not cause a replay.
-- `chet_history_find`: `{ by, id }` returns `{ records }`, either null or the
+- `chet_history_find`: `{ by, id, resolve_sources?: boolean }` returns `{ records }`, either null or the
   facts associated with that input ID. It supports reconciliation after a lost
   response without resubmitting the input.
+- When `resolve_sources` is true, either read also returns `sources`, an object
+  keyed by Group input IDs present in, or referenced by, records in that response. A source is
+  `{ status: "available", group_title, sender_title, text, sent_at,
+  has_attachments, truncated, reply_event_id }` or `{ status: "unavailable" }`.
+  `reply_event_id` is null or a later Chet-authored message in this Group that
+  replies to the source and explicitly addresses its sender. Its presence means
+  that a reply was recorded, not that a recipient received it; its absence does
+  not prove a failed attempt. Available text
+  is at most 8 KiB at a UTF-8 boundary; `truncated` says if more was present.
+  A missing, unreadable, or changed Group or source is unavailable. These are
+  current read-only projections of the Group ledger, not additional durable
+  message copies or evidence of Runtime admission.
 - `chet_history_voice_delegation` records the request produced by a Realtime
   Voice provider. This is neither the user's verbatim transcript nor proof
   that an Analyst received it.
@@ -513,7 +552,8 @@ and rejects exhibit access.
   input was submitted. A pre-admission failure MUST NOT coexist with a receipt
   or result for the same input. A receipt is not completion; a missing result
   does not establish whether the Runtime acted. These operations require an
-  already recorded text input or Voice delegation and do not dispatch or replay it.
+  already recorded text input, Group input, or Voice delegation and do not
+  dispatch or replay it.
 - `chet_history_transcript` appends an observed voice transcript update with
   its call, turn, in-call sequence, role, text, and explicit final/incomplete status.
   An update is evidence supplied by the call owner; it is not a guarantee that
@@ -530,12 +570,19 @@ type Transcript = {
 }
 type Receipt = { generation: string; turn_id: string }
 type Outcome = { generation: string; turn_id: string; status: string; text: string; error: string }
+type GroupInput = {
+  group_id: string; group_generation: string; event_id: string;
+  sender: { kind: "user" } | { kind: "actor"; actor_id: string; actor_generation: string };
+  reply_to: string | null
+}
 type ChetHistoryRecord =
   | { kind: "input"; id: string; created_at: string; request: { text: string; context: GroupContext | null } }
+  | { kind: "group_input"; id: string; created_at: string; input: GroupInput }
+  | { kind: "group_dispatch"; id: string; created_at: string; input_id: string }
   | { kind: "voice_delegation"; id: string; created_at: string; delegation: VoiceDelegation }
   | { kind: "receipt"; id: string; created_at: string; input_id: string; receipt: Receipt }
   | { kind: "result"; id: string; created_at: string; input_ids: string[]; outcome: Outcome }
-  | { kind: "not_started"; id: string; created_at: string; input_id: string; reason: "assistant_unavailable" | "cancelled" }
+  | { kind: "not_started"; id: string; created_at: string; input_id: string; reason: "assistant_unavailable" | "cancelled" | "source_unavailable" }
   | { kind: "transcript"; id: string; created_at: string; transcript: Transcript }
 type GroupContext = { group_id: string; group_title: string; scope_key: string | null }
 ```
@@ -4012,12 +4059,17 @@ exhaustion MUST fail atomically without marking sources processed. This order su
 Analyst restarts and does not alter Runtime input admission or imply speech completion.
 
 The shared local client carries a host-owned Analyst origin on message-write operations. The
-daemon MUST validate that origin and persist an exact source-event/expected-recipient association
-before appending its canonical message. Expected recipients MUST snapshot the same inbox routing
-semantics as delivery, including `@foreman`, `@all`, `@peers` and internal-actor exclusions. Later
-role changes MUST NOT retarget this persisted reply association. Internal origin metadata MUST NOT enter public chat data.
-Ordinary Send, tracked Send, and nested code-mode calls use this same boundary. Failed appends may
-leave an inert source intent, but only an existing canonical ledger event can activate it.
+daemon MUST validate that origin. For a user-authored Voice handoff, it persists an exact
+source-event/expected-recipient association before appending the canonical message. A
+Chet-authored handoff uses the same association when the existing recording lease identifies an
+active `codex_voice` capture dispatched to `codex_voice`. The lease identifies an active call,
+not the modality of an individual Analyst turn: a text handoff during the call may be associated,
+and a slow Voice turn that sends after lease release may not be. Expected recipients MUST snapshot
+the same inbox routing semantics as delivery, including `@foreman`, `@all`, `@peers` and
+internal-actor exclusions. Later role changes MUST NOT retarget this persisted reply association.
+Internal origin metadata MUST NOT enter public chat data. Ordinary Send, tracked Send, and nested
+code-mode calls use this same boundary. Failed appends may leave an inert source intent, but only
+an existing canonical ledger event can activate it.
 
 An active call consumes ledger increments in bounded pages and atomically registers candidate
 references before advancing cursors. Lost broadcasts MUST be recoverable from these cursors.
@@ -4025,6 +4077,12 @@ The first acknowledgement does not terminate reply association. Only the expecte
 reply association is a request result; subscription matching is independent and deduplicated by
 the canonical group/event pair. Attachment-only messages remain eligible; their contents MUST NOT
 be read automatically. Source copies of cross-group messages MUST NOT duplicate the destination.
+For a reply addressed to Chet, the persistent Group-input owner alone submits the model turn;
+the Voice consumer MUST NOT submit a second turn for that reply. If it corresponds to a registered
+Voice handoff, the result may be projected to the existing Voice notification output after its
+Chet history fact is confirmed, including when the reply arrives after the call ends. Output still
+requires the current Group/source, viewed and policy checks. An unconfirmed model submission MUST
+NOT become a Voice result.
 
 Before Runtime handoff, persist the source references and receiving Analyst generation. On an
 unproven post-handoff failure, retain unknown delivery rather than automatically executing again.
@@ -4041,7 +4099,8 @@ Capacity exhaustion MUST stop scanning before losing references or advancing pas
 events. Unknown handoffs MUST NOT be evicted to free capacity. Completed notification attempts may
 be compacted after their cursor has passed; Group deletion retires its derived references, never
 another Group with the same name. Source associations remain until their Group is retired; they
-are not synthetic permanently-running tasks. Voice-off MUST NOT cause notification model turns.
+are not synthetic permanently-running tasks. Voice-off MUST NOT cause the Voice notification
+consumer to start model turns; an independent Chet Group input may still be processed.
 Cancelling an unhanded background candidate because it was viewed or excluded by preferences
 MUST retire its viewed reference in the same transaction: scan has already passed that source.
 Viewed references ahead of the scan cursor, explicit request context, and handed-off observations

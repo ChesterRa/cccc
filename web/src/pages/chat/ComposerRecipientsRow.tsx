@@ -5,6 +5,7 @@ import { CloseIcon } from "../../components/Icons";
 import { ScrollFade } from "../../components/ScrollFade";
 import type { Actor } from "../../types";
 import { classNames } from "../../utils/classNames";
+import { CHET_SELECTOR } from "../../utils/chetIdentity";
 import { RecipientPopover } from "./RecipientPopover";
 import { useRecipientPopover } from "./useRecipientPopover";
 
@@ -14,6 +15,7 @@ interface ComposerRecipientsRowProps {
   selectedGroupId: string;
   busy: string;
   actors: Actor[];
+  allowChet?: boolean;
   selectedGroupActorsHydrating?: boolean;
   toTokens: string[];
   onToggleRecipient: (token: string) => void;
@@ -26,6 +28,7 @@ export function ComposerRecipientsRow({
   selectedGroupId,
   busy,
   actors,
+  allowChet = false,
   selectedGroupActorsHydrating,
   toTokens,
   onToggleRecipient,
@@ -82,7 +85,12 @@ export function ComposerRecipientsRow({
               selectedGroupActorsHydrating ? "opacity-50 pointer-events-none" : "",
             )}
           >
-            {["@all", "@foreman", "@peers"].map((token) => {
+            {[
+              "@all",
+              "@foreman",
+              "@peers",
+              ...(allowChet || toTokens.includes(CHET_SELECTOR) ? [CHET_SELECTOR] : []),
+            ].map((token) => {
               const active = toTokens.includes(token);
               const target = popover.selectorTarget(token);
               return (

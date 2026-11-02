@@ -16,6 +16,52 @@ export type ChetPendingRequest = {
 /** The unsent text, kept only in this browser. Its tabs share one draft. */
 export const CHET_DRAFT_KEY = "cccc.chet.draft.v1";
 export const CHET_PENDING_PREFIX = "cccc.chet.pending.";
+/** Where this browser had read history to with the conversation open: the host's cursor. */
+export const CHET_SEEN_KEY = "cccc.chet.seen.v2";
+
+/** Null when nothing was seen here, or this browser gives no storage access. */
+export function loadChetSeen(): string | null {
+  try {
+    return window.localStorage.getItem(CHET_SEEN_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stores `cursor` unless another tab has read further; returns what is stored now. */
+export function saveChetSeen(cursor: string): string {
+  try {
+    const current = window.localStorage.getItem(CHET_SEEN_KEY);
+    if (current && !chetCursorAhead(cursor, current)) return current;
+    window.localStorage.setItem(CHET_SEEN_KEY, cursor);
+  } catch {
+    // Without storage, what was seen lasts as long as this page.
+  }
+  return cursor;
+}
+
+/** Forgets `cursor` if it is still the one stored; history no longer has that place. */
+export function forgetChetSeen(cursor: string): void {
+  try {
+    if (window.localStorage.getItem(CHET_SEEN_KEY) === cursor) {
+      window.localStorage.removeItem(CHET_SEEN_KEY);
+    }
+  } catch {
+    // Nothing is stored.
+  }
+}
+
+/**
+ * Whether `next` is further on than `current`. The API keeps cursors opaque; this page ships
+ * with a host whose cursors are positions in history, and uses that only so a tab that has
+ * read less does not move what was seen back. Cursors it cannot compare count as further on:
+ * moving back can only mark something seen as new again, never hide something new.
+ */
+export function chetCursorAhead(next: string, current: string): boolean {
+  const position = /^\d+$/;
+  if (!position.test(next) || !position.test(current)) return true;
+  return BigInt(next) > BigInt(current);
+}
 
 function isContext(value: unknown): value is ChetGroupContext {
   if (!value || typeof value !== "object") return false;

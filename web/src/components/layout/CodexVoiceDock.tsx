@@ -13,6 +13,7 @@ import type { CodexVoiceDockProps } from "./codexVoiceDockTypes";
 export function CodexVoiceDock({
   controller,
   chetWorking = false,
+  chetUnread = false,
   collapsed = false,
   variant = "sidebar",
   onOpen,
@@ -45,7 +46,10 @@ export function CodexVoiceDock({
     controller.externalCall ? "modals:codexVoiceStopExisting" : "modals:codexVoiceStop",
   );
   const startDisabled = controller.checking || controller.isStarting;
-  const identityTitle = ["Chet", statusLabel].filter(Boolean).join(" · ");
+  // The mark carries it; the words are for the tooltip and the button's name.
+  const unreadLabel = chetUnread ? t("modals:chet.unread") : "";
+  const identityTitle = ["Chet", statusLabel, unreadLabel].filter(Boolean).join(" · ");
+  const openLabel = [t("modals:chet.open"), unreadLabel].filter(Boolean).join(" · ");
   const active =
     working ||
     voicePhaseHasLocalActivity(controller.phase, {
@@ -90,8 +94,10 @@ export function CodexVoiceDock({
           attention={attention || (controller.isEngaged && callStatus.blocked)}
           active={controller.isEngaged || working}
           working={active}
+          unread={chetUnread}
+          title={identityTitle}
           status={statusLabel}
-          label={t("modals:chet.open")}
+          label={openLabel}
         />
         {callControl}
       </div>
@@ -110,10 +116,11 @@ export function CodexVoiceDock({
             controller.isEngaged && "text-[var(--color-accent-primary)]",
           )}
           onClick={onOpen}
-          label={t("modals:chet.open")}
+          label={openLabel}
           title={identityTitle}
         >
           {attention ? <AlertIcon size={18} /> : <ChetMark />}
+          {chetUnread ? <UnreadMark className="right-1.5 top-1.5" /> : null}
           <span className="absolute bottom-1.5 right-1.5">
             <VoiceStatusDot
               active={controller.isEngaged || working}
@@ -135,12 +142,29 @@ export function CodexVoiceDock({
           attention={attention || (controller.isEngaged && callStatus.blocked)}
           active={controller.isEngaged || working}
           working={active}
+          unread={chetUnread}
+          title={identityTitle}
           status={statusLabel}
-          label={t("modals:chet.open")}
+          label={openLabel}
         />
         {callControl}
       </div>
     </div>
+  );
+}
+
+/** Something new in Chet's history: worth a glance, neither working nor waiting on you. */
+function UnreadMark({ className }: { className: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-chet-unread
+      data-status-dot="neutral"
+      className={classNames(
+        "absolute h-2 w-2 rounded-full bg-[var(--color-accent-primary)]",
+        className,
+      )}
+    />
   );
 }
 
@@ -158,6 +182,8 @@ function ConsoleButton({
   attention,
   active,
   working,
+  unread,
+  title,
   status,
   label,
 }: {
@@ -165,6 +191,8 @@ function ConsoleButton({
   attention: boolean;
   active: boolean;
   working: boolean;
+  unread: boolean;
+  title: string;
   status: string;
   label: string;
 }) {
@@ -174,10 +202,11 @@ function ConsoleButton({
       onClick={onOpen}
       className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl px-2 py-2 text-left outline-none transition-colors hover:bg-[var(--glass-tab-bg-hover)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent-primary)]"
       aria-label={label}
-      title={["Chet", status].join(" · ")}
+      title={title}
     >
       <span className="relative flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
         {attention ? <AlertIcon size={17} /> : <ChetMark />}
+        {unread ? <UnreadMark className="right-0.5 top-0.5" /> : null}
         <span className="absolute bottom-0.5 right-0.5">
           <VoiceStatusDot active={active} attention={attention} working={working} />
         </span>

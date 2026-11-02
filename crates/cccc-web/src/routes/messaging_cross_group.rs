@@ -24,6 +24,7 @@ async fn send_json(
     let destination = required(&body, "dst_group_id")?;
     ensure_access(&principal, &destination)?;
     let mut args = body_object(body)?;
+    super::messaging::web_authority::prepare_user_message(&mut args, principal.is_admin)?;
     args.insert("group_id".into(), Value::String(group_id));
     call(&state, "send_cross_group", args).await
 }

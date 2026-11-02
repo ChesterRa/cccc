@@ -1,4 +1,5 @@
 pub mod actor;
+pub mod chet;
 pub mod codex_voice;
 pub mod connect;
 pub mod connect_groups;
