@@ -17,6 +17,7 @@ import {
   type ProcessRecoveryOwner,
 } from "../../services/api/processRecovery";
 import { newClientId } from "../../utils/clientId";
+import { resendId } from "./chetResend";
 import {
   CHET_DRAFT_KEY,
   CHET_PENDING_PREFIX,
@@ -86,8 +87,8 @@ function storageWorks(): boolean {
   }
 }
 
-function newEntry(request: ChetTextRequest): ChetPendingRequest {
-  return { id: newClientId(), request, state: "unknown", createdAt: new Date().toISOString() };
+function newEntry(request: ChetTextRequest, id = newClientId()): ChetPendingRequest {
+  return { id, request, state: "unknown", createdAt: new Date().toISOString() };
 }
 
 function appendText(current: string, text: string): string {
@@ -133,6 +134,7 @@ export function useChetConversation({
   );
   // Updated at once, so a send that finishes before the next render sees its own entry.
   const pendingRef = useRef(pending);
+  const resendingRef = useRef(new Set<string>());
   const [sendingIds, setSendingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [problems, setProblems] = useState<ReadonlyMap<string, ChetSendProblem>>(() => new Map());
   const [composerProblem, setComposerProblem] = useState<ChetComposerProblem | null>(null);
@@ -327,6 +329,17 @@ export function useChetConversation({
     return buildChetTimeline(shownRecords, view, local, fetched);
   }, [appliedStatusSeq, fetched, local, registeredAt, settledLive, shownRecords, status]);
 
+  // When the successor is visible, the older request should not offer another resend.
+  const resentIds = useMemo(() => {
+    const requests = items.filter((item) => item.kind === "request");
+    const ids = new Set(requests.map((item) => item.id));
+    return new Set(
+      requests
+        .filter((item) => item.state === "not_started" && ids.has(resendId(item.id)))
+        .map((item) => item.id),
+    );
+  }, [items]);
+
   // A page can start after a request it holds facts about; read such requests by ID once.
   useEffect(() => {
     if (!enabled) return;
@@ -478,9 +491,19 @@ export function useChetConversation({
     [sendingIds, submit],
   );
 
-  /** Sends a request that never started again, as a new request about the same group. */
+  /** Gives one not-started request a stable successor, even across tabs or reloads. */
   const sendAgain = useCallback(
-    (request: ChetTextRequest) => void submit(newEntry(request), "again"),
+    (sourceId: string, request: ChetTextRequest) => {
+      const id = resendId(sourceId);
+      if (
+        resendingRef.current.has(id) ||
+        pendingRef.current.has(id) ||
+        historyIdsRef.current.has(id)
+      )
+        return;
+      resendingRef.current.add(id);
+      void submit(newEntry(request, id), "again").finally(() => resendingRef.current.delete(id));
+    },
     [submit],
   );
 
@@ -516,6 +539,7 @@ export function useChetConversation({
     send,
     retry,
     sendAgain,
+    resentIds,
     putBack,
     dismiss,
     problems,

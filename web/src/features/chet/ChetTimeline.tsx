@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDownIcon } from "../../components/Icons";
+import { ChevronDownIcon, VoiceWaveformIcon } from "../../components/Icons";
 import { LazyMarkdownRenderer } from "../../components/LazyMarkdownRenderer";
 import { Button } from "../../components/ui/button";
 import type { ChetTextRequest } from "../../services/api/chet";
@@ -23,7 +23,8 @@ export type ChetRequestActions = {
   storageAvailable: boolean;
   /** Another unknown send exists, so a new one must wait. */
   sendAgainDisabled: boolean;
-  onSendAgain(request: ChetTextRequest): void;
+  resentIds: ReadonlySet<string>;
+  onSendAgain(sourceId: string, request: ChetTextRequest): void;
   onRetry(id: string): void;
   onPutBack(id: string): void;
   onDismiss(id: string): void;
@@ -124,6 +125,15 @@ function Chevron({ expanded }: { expanded: boolean }) {
   );
 }
 
+/** Marks what came from a call in place of a word; the tooltip names or explains it. */
+function VoiceMark({ label, hint = label }: { label: string; hint?: string }) {
+  return (
+    <span role="img" aria-label={label} title={hint} className="inline-flex flex-none self-center">
+      <VoiceWaveformIcon size={12} aria-hidden="true" />
+    </span>
+  );
+}
+
 /** What Chet noted to hand off during a call: its wording, not the user's. */
 function VoiceDelegationNote({ item }: { item: ChetRequestItem }) {
   const { t } = useTranslation("modals");
@@ -185,11 +195,13 @@ function StateLine({ item, actions }: { item: ChetRequestItem; actions: ChetRequ
         </span>
         {state === "not_started" && item.source === "text" ? (
           <ActionButton
-            disabled={actions.sendAgainDisabled}
+            disabled={
+              actions.sendAgainDisabled || actions.resentIds.has(item.id) || item.sourceMissing
+            }
             title={t("chet.sendAgainHint")}
-            onClick={() => actions.onSendAgain({ text: item.text, context: item.context })}
+            onClick={() => actions.onSendAgain(item.id, { text: item.text, context: item.context })}
           >
-            {t("chet.sendAgain")}
+            {t(actions.resentIds.has(item.id) ? "chet.resent" : "chet.sendAgain")}
           </ActionButton>
         ) : null}
         {state === "send_unknown" ? (
@@ -260,7 +272,6 @@ function RequestEntry({
                 {t("chet.you")}
               </span>
               <Time value={item.createdAt} />
-              <span>· {t("chet.sourceText")}</span>
               {item.context ? (
                 <span className="max-w-full truncate" title={item.context.group_title}>
                   · {item.context.group_title}
@@ -284,18 +295,22 @@ function RequestEntry({
                   aria-expanded={delegationShown}
                   title={t("chet.voiceDelegationHint")}
                   onClick={() => setDelegationShown((shown) => !shown)}
-                  className="inline-flex items-baseline gap-0.5 rounded-sm hover:text-[var(--color-text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+                  className="inline-flex items-center gap-0.5 self-center rounded-sm px-0.5 hover:text-[var(--color-text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
                 >
                   <Chevron expanded={delegationShown} />
-                  {t("chet.voiceDelegation")}
+                  <VoiceMark
+                    label={t("chet.voiceDelegation")}
+                    hint={t("chet.voiceDelegationHint")}
+                  />
                 </button>
               ) : null}
             </>
           }
         >
+          {/* Opened, it is named in words: its icon alone would read as something Chet said. */}
           {folded && delegationShown ? (
-            <div className="mb-2 whitespace-pre-wrap break-words border-l border-dashed border-[var(--color-text-tertiary)] pl-3 text-sm leading-6 text-[var(--color-text-secondary)]">
-              {item.text}
+            <div className="mb-2">
+              <VoiceDelegationNote item={item} />
             </div>
           ) : null}
           {outcome.text.trim() ? (
@@ -377,10 +392,7 @@ function VoiceRun({
       >
         <Chevron expanded={expanded} />
         <span className="font-semibold">Chet</span>
-        <span>
-          · {t("chet.sourceTranscript")}
-          {turns.length > 1 ? ` · ${t("chet.voiceSegments", { count: turns.length })}` : ""}
-        </span>
+        <VoiceMark label={t("chet.sourceTranscript")} hint={t("chet.voiceRunHint")} />
         <Time value={last.createdAt} />
         {/* Shares the line while there is room; on a narrow screen it takes its own line. */}
         {expanded ? null : <span className="min-w-24 flex-1 basis-0 truncate">{last.text}</span>}
@@ -453,7 +465,7 @@ export function ChetTimeline({
   loaded: boolean;
   hasOlder: boolean;
   loadingOlder: boolean;
-  onLoadOlder(): void;
+  onLoadOlder(): void | Promise<void>;
   isDark: boolean;
   actions: ChetRequestActions;
   notices?: ReactNode;
@@ -463,7 +475,12 @@ export function ChetTimeline({
   const [turnChoices, setTurnChoices] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const followRef = useRef(true);
-  const anchorRef = useRef<{ height: number; top: number } | null>(null);
+  const anchorRef = useRef<{
+    height: number;
+    top: number;
+    firstId: string | undefined;
+    knownIds: Set<string>;
+  } | null>(null);
   const firstId = items[0]?.id;
   const contentKey = `${items.length}:${items[items.length - 1]?.id || ""}:${
     items[items.length - 1]?.kind === "request"
@@ -476,18 +493,47 @@ export function ChetTimeline({
     if (!element) return;
     const anchor = anchorRef.current;
     if (anchor) {
-      // Earlier history went in above: keep the entry the reader was looking at in place.
-      element.scrollTop = anchor.top + (element.scrollHeight - anchor.height);
-      anchorRef.current = null;
+      // Existing items can move while a page loads. Only an unseen item above the
+      // original first item needs a prepend adjustment.
+      const firstIndex = items.findIndex((item) => item.id === anchor.firstId);
+      if (
+        firstIndex > 0 &&
+        items.slice(0, firstIndex).some((item) => !anchor.knownIds.has(item.id))
+      ) {
+        element.scrollTop = anchor.top + (element.scrollHeight - anchor.height);
+        anchorRef.current = null;
+      } else {
+        // Keep the baseline current if another entry arrives or moves while loading.
+        anchor.height = element.scrollHeight;
+        anchor.top = element.scrollTop;
+        for (const item of items) anchor.knownIds.add(item.id);
+      }
       return;
     }
     if (followRef.current) element.scrollTop = element.scrollHeight;
-  }, [contentKey, firstId]);
+  }, [contentKey, firstId, items]);
 
   const loadOlder = () => {
     const element = scrollRef.current;
-    if (element) anchorRef.current = { height: element.scrollHeight, top: element.scrollTop };
-    onLoadOlder();
+    const anchor = element
+      ? {
+          height: element.scrollHeight,
+          top: element.scrollTop,
+          firstId,
+          knownIds: new Set(items.map((item) => item.id)),
+        }
+      : null;
+    anchorRef.current = anchor;
+    const clearUnapplied = () =>
+      requestAnimationFrame(() => {
+        if (anchorRef.current === anchor) anchorRef.current = null;
+      });
+    try {
+      void Promise.resolve(onLoadOlder()).then(clearUnapplied, clearUnapplied);
+    } catch (error) {
+      anchorRef.current = null;
+      throw error;
+    }
   };
 
   const empty = loaded && !items.length && !liveTurns.length;
@@ -513,6 +559,7 @@ export function ChetTimeline({
       onScroll={(event) => {
         const element = event.currentTarget;
         followRef.current = element.scrollHeight - element.clientHeight - element.scrollTop < 80;
+        if (anchorRef.current) anchorRef.current.top = element.scrollTop;
       }}
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-5">
@@ -584,10 +631,8 @@ export function ChetTimeline({
                   <span className="font-semibold text-[var(--color-text-primary)]">
                     {item.role === "user" ? t("chet.you") : "Chet"}
                   </span>
+                  <VoiceMark label={t("chet.sourceTranscript")} />
                   <Time value={item.createdAt} />
-                  <span>
-                    · {t(item.role === "user" ? "chet.sourceTranscript" : "chet.sourceVoiceReply")}
-                  </span>
                 </>
               }
             />
@@ -610,10 +655,7 @@ export function ChetTimeline({
                 <span className="font-semibold text-[var(--color-text-primary)]">
                   {turn.role === "user" ? t("chet.you") : "Chet"}
                 </span>
-                <span>
-                  · {t(turn.role === "user" ? "chet.sourceTranscript" : "chet.sourceVoiceReply")} ·{" "}
-                  {t("chet.liveCall")}
-                </span>
+                <VoiceMark label={t("chet.sourceTranscript")} />
               </>
             }
           />

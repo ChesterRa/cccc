@@ -8,7 +8,7 @@ use std::path::Path;
 /// portable-pty passes it on unchanged, and cmd.exe started there falls back to
 /// the Windows directory. The prefix is dropped only when the drive path names
 /// the same location; UNC paths, reserved names and paths over the legacy length
-/// keep it, and cmd.exe may still fall back for UNC paths in either spelling.
+/// keep it. cmd.exe cannot work in those, so a PTY launch through it is refused.
 /// Compare canonical paths, not this form: the two spellings of one directory
 /// differ under `starts_with`.
 pub fn compatible_path(path: &Path) -> &Path {

@@ -112,13 +112,18 @@ impl AnalystLifecycle {
         }
     }
 
-    async fn register_native_input(
+    pub(super) async fn register_native_input(
         &self,
         delegation_id: &str,
         text: &str,
         origin: AnalystTurnOrigin,
         mut state: tokio::sync::MutexGuard<'_, LifecycleState>,
     ) -> Result<VoiceDelegationAdmission> {
+        // A start request can return busy after the lifecycle was invalidated.
+        // Do not queue a new native delivery on an owner that cannot track it.
+        if state.invalidated {
+            bail!("Voice Analyst lifecycle ended before native input could be registered");
+        }
         state.native_pending.push_back(PendingStart {
             delegation_id: delegation_id.to_owned(),
             origin,
@@ -202,6 +207,13 @@ impl AnalystLifecycle {
                         .delegations
                         .insert(delegation_id.to_owned(), receipt.clone());
                     return Ok(receipt);
+                }
+                // The receipt alone cannot restore event tracking after a gap or
+                // disconnect. The Runtime may have done work, so do not replay it.
+                if state.invalidated {
+                    bail!(
+                        "Voice Analyst lifecycle ended during admission; the outcome is unconfirmed"
+                    );
                 }
                 let emit_started = if let Some(active) = state.active.as_mut() {
                     if active.turn_id != receipt.turn_id {

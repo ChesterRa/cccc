@@ -251,9 +251,9 @@ cccc doctor                       # 检查环境和运行时可用性
 
 Antigravity 配置还会在其用户设置中关闭原生评分问卷，避免问卷消耗自动投递的终端输入。其它偏好保持不变；同一用户独立运行的 AGY 也会关闭问卷。
 
-GitHub Copilot、Devin CLI、Cursor、Kimi Code、Auggie、Kiro V3、Hermes、Droid 也支持可选的**官方纯 ACP 模式**，可用于 Actor、Voice Analyst 与语音秘书，默认原生 TUI 保留。ACP 使用本机 CLI 登录，为每个 Actor 注入独立 CCCC 身份，并显示输入队列、取消和单次权限确认。Cursor 的问题与计划即使在 YOLO 下也必须由用户明确决定。详情见[运行时指南](https://chesterra.github.io/cccc/guide/runtimes#native-tui-or-official-acp)。
+GitHub Copilot、Devin CLI、Cursor、Kimi Code、Auggie、Kiro V3、Hermes、Droid 也支持可选的**官方纯 ACP 模式**，可用于 Actor、Chet 与语音秘书，默认原生 TUI 保留。ACP 使用本机 CLI 登录，为每个 Actor 注入独立 CCCC 身份，并显示输入队列、取消和单次权限确认。Cursor 的问题与计划即使在 YOLO 下也必须由用户明确决定。详情见[运行时指南](https://chesterra.github.io/cccc/guide/runtimes#native-tui-or-official-acp)。
 
-Antigravity 还支持可选的**官方 ACP 模式**，可用于 Actor 与 Voice Analyst，以结构化工作区代替终端。在 Actor／Profile 设置中选择 ACP，并运行一次 `cccc setup --runtime antigravity --runtime-mode acp --login`，完成独立的 CCCC 登录。忙时输入排队和单次权限确认均在工作区中显示。详情见[运行时指南](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp)。
+Antigravity 还支持可选的**官方 ACP 模式**，可用于 Actor 与 Chet，以结构化工作区代替终端。在 Actor／Profile 设置中选择 ACP，并运行一次 `cccc setup --runtime antigravity --runtime-mode acp --login`，完成独立的 CCCC 登录。忙时输入排队和单次权限确认均在工作区中显示。详情见[运行时指南](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp)。
 
 用户只需选择 Runtime，CCCC 会自动确定交互方式。Claude Code、Codex CLI、Grok Build、OpenCode 和 Kilo 在同一个 provider session 上配对原生可写终端与后台结构化协议。消息进入原生终端后，由接收 Runtime 决定是 steer 还是 queue。托管的 Pi Actor 使用官方 RPC，不嵌入原生终端，要求 Pi 1.1.0 或更新版本（`@earendil-works/pi-coding-agent`）；你自己启动的 Pi 会话则可以作为[原生会话](https://chesterra.github.io/cccc/guide/local-sessions)接入，要求 Pi 1.4.0 或更新版本。托管的 OpenCode Actor 要求 OpenCode V2 2.1.4 或更新版本。DeepSeek Harness 使用结构化 ACP，不提供原生终端；ChatGPT Web 使用浏览器投递和远程 MCP；Grok Bot Web Model 使用原生 Webhook Routine 和远程 MCP。
 

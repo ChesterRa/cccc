@@ -21,6 +21,7 @@ import * as api from "../../services/api/chet";
 import { CHET_DRAFT_KEY, CHET_PENDING_PREFIX, parseChetPending } from "./chetDraft";
 import type { ChetRequestItem } from "./chetTimeline";
 import { useChetConversation, type ChetConversation } from "./useChetConversation";
+import { resendId } from "./chetResend";
 
 const GROUP_A: ChetGroupContext = { group_id: "g-a", group_title: "Design", scope_key: "s1" };
 const GROUP_B: ChetGroupContext = { group_id: "g-b", group_title: "Release", scope_key: null };
@@ -287,7 +288,7 @@ it("sends the group open at send time, and retries the request unchanged", async
 it("sends a request again about the group it was asked about", async () => {
   vi.mocked(api.submitChetInput).mockResolvedValue(ok("inserted"));
   await render(GROUP_B);
-  await act(async () => chet.sendAgain({ text: "again", context: GROUP_A }));
+  await act(async () => chet.sendAgain("original", { text: "again", context: GROUP_A }));
   const [id, request] = vi.mocked(api.submitChetInput).mock.calls[0]!;
   expect(request).toEqual({ text: "again", context: GROUP_A });
   expect(requests()).toMatchObject([{ id, state: "preparing" }]);
@@ -378,4 +379,108 @@ it("asks by ID about a send an earlier page stored", async () => {
   await flush();
   expect(api.fetchChetInput).toHaveBeenCalledWith("old");
   expect(pendingKeys()).toEqual([]);
+});
+
+it("gives a not-started input a stable valid successor without secure-context APIs", () => {
+  const id = "e692a83f-a26e-47ff-92d7-57ce2bd090c1";
+  const successor = resendId(id);
+  expect(successor).toMatch(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
+  expect(resendId(id.toUpperCase())).toBe(successor);
+  expect(resendId(successor)).not.toBe(successor);
+  expect(resendId("11111111-1111-1111-8111-111111111111")).not.toBe(
+    resendId("11111111-1111-4111-8111-111111111111"),
+  );
+});
+
+it("allows one successor per not-started request, including after history has reloaded", async () => {
+  const original = "e692a83f-a26e-47ff-92d7-57ce2bd090c1";
+  const request = { text: "try again", context: GROUP_A };
+  const end: ChetRecord = {
+    kind: "not_started",
+    id: "n1",
+    created_at: "2026-11-01T10:00:01Z",
+    input_id: original,
+    reason: "assistant_unavailable",
+  };
+  vi.mocked(api.fetchChetHistory).mockResolvedValue(
+    page([inputRecord(original, request.text, request.context), end]),
+  );
+  const response = deferred<ApiResponse<"inserted">>();
+  vi.mocked(api.submitChetInput).mockReturnValue(response.promise);
+  await render();
+  act(() => {
+    chet.sendAgain(original, request);
+    chet.sendAgain(original, request);
+  });
+  expect(vi.mocked(api.submitChetInput)).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(api.submitChetInput).mock.calls[0]).toEqual([resendId(original), request]);
+  await act(async () => response.resolve(ok("inserted")));
+  expect(chet.resentIds.has(original)).toBe(true);
+  await act(async () => root.unmount());
+  host.remove();
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  vi.mocked(api.fetchChetHistory).mockResolvedValue(
+    page([
+      inputRecord(original, request.text, request.context),
+      end,
+      inputRecord(resendId(original), request.text, request.context),
+    ]),
+  );
+  await render();
+  expect(chet.resentIds.has(original)).toBe(true);
+  await act(async () => chet.sendAgain(original, request));
+  expect(vi.mocked(api.submitChetInput)).toHaveBeenCalledTimes(1);
+});
+
+it("uses one registration identity when two tabs resend the same input", async () => {
+  let first!: ChetConversation, second!: ChetConversation;
+  function TwoTabs() {
+    first = useChetConversation({ enabled: true, open: true, currentContext: GROUP_A });
+    second = useChetConversation({ enabled: true, open: true, currentContext: GROUP_B });
+    return null;
+  }
+  const registered = new Set<string>();
+  let dispatches = 0;
+  vi.mocked(api.submitChetInput).mockImplementation(async (id) => {
+    if (registered.has(id)) return ok("existing");
+    registered.add(id);
+    dispatches++;
+    return ok("inserted");
+  });
+  await act(async () => root.render(<TwoTabs />));
+  const request = { text: "again", context: GROUP_A };
+  await act(async () => {
+    first.sendAgain("source", request);
+    second.sendAgain("source", request);
+  });
+  expect(vi.mocked(api.submitChetInput)).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(api.submitChetInput).mock.calls.map(([id]) => id)).toEqual([
+    resendId("source"),
+    resendId("source"),
+  ]);
+  expect(dispatches).toBe(1);
+  expect(first.items.find((item) => item.id === resendId("source"))).toMatchObject({
+    state: "preparing",
+  });
+  expect(second.items.find((item) => item.id === resendId("source"))).toMatchObject({
+    state: "preparing",
+  });
+});
+
+it("can retry a resend that was definitely refused before registration", async () => {
+  const request = { text: "again", context: GROUP_A };
+  vi.mocked(api.submitChetInput)
+    .mockResolvedValueOnce(fail("read_only"))
+    .mockResolvedValueOnce(ok("inserted"));
+  await render();
+  await act(async () => chet.sendAgain("source", request));
+  await act(async () => chet.sendAgain("source", request));
+  expect(vi.mocked(api.submitChetInput).mock.calls.map(([id]) => id)).toEqual([
+    resendId("source"),
+    resendId("source"),
+  ]);
 });

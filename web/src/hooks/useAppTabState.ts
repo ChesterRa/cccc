@@ -1,9 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef } from "react";
-import { useGroupStore, useUIStore, useModalStore } from "../stores";
+import { useGroupStore, useUIStore, useModalStore, selectChatBucketState } from "../stores";
 import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 import { groupMessagesVisible } from "../stores/useUIStore";
 import type { Actor } from "../types";
 import { useShortTouchViewport } from "./useShortTouchViewport";
+import { isLiveChatBottom } from "./chat/chatScrollFocus";
 
 export function isChatViewportAtBottom(
   scrollHeight: number,
@@ -127,7 +128,15 @@ export function useAppTabState({
     const el = eventContainerRef.current;
     if (!el) return;
 
-    const atBottom = isChatViewportAtBottom(el.scrollHeight, el.scrollTop, el.clientHeight);
+    const currentWindow = selectChatBucketState(
+      useGroupStore.getState(),
+      selectedGroupId,
+    ).chatWindow;
+    const inChatWindow = currentWindow?.groupId === selectedGroupId;
+    const atBottom = isLiveChatBottom(
+      isChatViewportAtBottom(el.scrollHeight, el.scrollTop, el.clientHeight),
+      inChatWindow,
+    );
     chatAtBottomRef.current = atBottom;
     setShowScrollButton(selectedGroupId, !atBottom);
     if (atBottom) setChatUnreadCount(selectedGroupId, 0);

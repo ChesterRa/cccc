@@ -16,6 +16,11 @@ const MERMAID_DEPENDENCY_PATTERN =
   /[\\/]node_modules[\\/](@braintree[\\/]sanitize-url|@iconify[\\/](utils|types)|@mermaid-js|@upsetjs[\\/]venn\.js|cytoscape(?:-cose-bilkent|-fcose)?|cose-base|layout-base|d3(?:-[^\\/]+)?|internmap|delaunator|robust-predicates|dagre-d3-es|lodash-es|dayjs|dompurify|es-toolkit|katex|khroma|marked|roughjs|hachure-fill|path-data-parser|points-on-curve|points-on-path|stylis|ts-dedent|uuid)[\\/]/;
 
 export default defineConfig({
+  // Happy DOM supplies its own per-test storage; Node 26 exposes a different
+  // global even without a storage file, which shadows the browser environment.
+  test: {
+    execArgv: Object.hasOwn(globalThis, "localStorage") ? ["--no-experimental-webstorage"] : [],
+  },
   plugins: [react()],
   fmt: { ignorePatterns: ["dist/**"], objectWrap: "collapse" },
   lint: {

@@ -79,6 +79,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   initialScrollOffsetPx,
   highlightInitialScrollAnchor = false,
   highlightEventId,
+  liveJumpActive,
+  contextWindow,
   className,
   topInsetPx = 0,
   scrollRef,
@@ -94,6 +96,11 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onScrollButtonClick,
   chatUnreadCount,
   onScrollChange,
+  onContextReady,
+  onReachedContextEnd,
+  onLoadNewerContext,
+  isLoadingNewerContext,
+  newerContextError,
   onScrollSnapshot,
   sendScrollRequest,
   onSendScrollRequestConsumed,
@@ -189,7 +196,19 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   // A view the reader only looks at writes no snapshot, so returning keeps the saved place;
   // once they act here, snapshots carry this view and the message being read.
-  const { engagedRef, touchedIdRef } = useReadingEngagement(parentRef);
+  const {
+    engagedRef,
+    touchedIdRef,
+    scrollIntentAtRef,
+    scrollIntentStartTopRef,
+    scrollIntentIdRef,
+  } = useReadingEngagement(parentRef);
+  const consumedContextScrollIntentRef = useRef(0);
+  const awaitingLiveEndRef = useRef(false);
+  const onReachedContextEndRef = useRef(onReachedContextEnd);
+  const onContextReadyRef = useRef(onContextReady);
+  onReachedContextEndRef.current = onReachedContextEnd;
+  onContextReadyRef.current = onContextReady;
   const optimisticIds = useMemo(
     () =>
       new Set(
@@ -402,6 +421,33 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     return true;
   }, [displayMessages.length, shouldVirtualize, virtualizer]);
 
+  const notifyContextEnd = useCallback(
+    (initial: boolean) => {
+      const el = parentRef.current;
+      const tailId = String(displayMessages.at(-1)?.id || "");
+      if (!onReachedContextEndRef.current || !el || el.clientHeight <= 0) return false;
+      const atBottom = checkIsAtBottom();
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < el.clientHeight;
+      if (!atBottom && (!nearBottom || initial)) return false;
+      const visible = (id: string) => {
+        const row = getMessageRowById(id);
+        if (!row) return false;
+        const box = el.getBoundingClientRect();
+        const item = row.getBoundingClientRect();
+        return item.bottom > box.top && item.top < box.bottom;
+      };
+      if (!tailId || !(atBottom ? visible(tailId) : getMessageRowById(tailId))) return false;
+      if (
+        initial &&
+        (engagedRef.current || !initialScrollTargetId || !visible(initialScrollTargetId))
+      )
+        return false;
+      const result = onReachedContextEndRef.current(initial, atBottom) === true;
+      return result;
+    },
+    [checkIsAtBottom, displayMessages, engagedRef, getMessageRowById, initialScrollTargetId],
+  );
+
   const captureCurrentScrollSnapshot = useCallback((): ChatScrollSnapshot | null => {
     const el = parentRef.current;
     const latest = latestSnapshotRef.current;
@@ -557,6 +603,96 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     onLoadMore,
   });
 
+  const captureContextAppend = useCallback(
+    (scrollTop: number) => {
+      const anchor = getAnchorSnapshot(scrollTop);
+      return {
+        previousOffset: scrollTop,
+        previousTotalSize: getCurrentContentSize(),
+        anchorId: anchor?.anchorId || "",
+        anchorOffsetPx: anchor?.offsetPx || 0,
+        anchorTop: anchor?.anchorId ? getAnchorTop(anchor.anchorId) : null,
+        kind: "append" as const,
+      };
+    },
+    [getAnchorSnapshot, getAnchorTop, getCurrentContentSize],
+  );
+
+  // The ordinary list detaches its DOM ref while it changes to virtual rows. Its most recent
+  // user-scroll snapshot is still available and identifies the reader's message and offset.
+  const thresholdSnapshotRef = useRef<ChatScrollSnapshot | null>(null);
+  const captureThresholdRef = useRef(() => {});
+  const restoreThresholdRef = useRef(() => {});
+  captureThresholdRef.current = () => {
+    const snapshot = latestSnapshotRef.current;
+    thresholdSnapshotRef.current =
+      followModeRef.current === "detached" &&
+      snapshot?.mode === "detached" &&
+      snapshot.anchorId &&
+      !prependCompensation.pendingRef.current
+        ? snapshot
+        : null;
+  };
+  restoreThresholdRef.current = () => {
+    const snapshot = thresholdSnapshotRef.current;
+    thresholdSnapshotRef.current = null;
+    if (!snapshot || prependCompensation.pendingRef.current) return;
+    anchorRestoration.begin({ anchorId: snapshot.anchorId, offsetPx: snapshot.offsetPx });
+  };
+  useLayoutEffect(() => {
+    if (shouldVirtualize) restoreThresholdRef.current();
+    return () => {
+      if (!shouldVirtualize) captureThresholdRef.current();
+    };
+  }, [shouldVirtualize]);
+
+  // At the end of a scroll container, another downward gesture produces no scroll event.
+  // Treat that gesture as a request to continue through the context or return to live chat.
+  const continueContextAtBottom = useCallback(() => {
+    const el = parentRef.current;
+    if (!el || !checkIsAtBottom() || !onReachedContextEndRef.current) return;
+    if (contextWindow && !onLoadNewerContext) awaitingLiveEndRef.current = true;
+    const top = el.scrollTop;
+    const anchor = captureContextAppend(top);
+    if (!notifyContextEnd(false)) return;
+    consumedContextScrollIntentRef.current = scrollIntentIdRef.current;
+    prependCompensation.begin(anchor);
+    lastScrollTopRef.current = top;
+    setAtBottom(false);
+    setFollowMode("detached");
+    cancelPendingBottomScroll();
+    onScrollChange?.(false);
+  }, [
+    cancelPendingBottomScroll,
+    captureContextAppend,
+    checkIsAtBottom,
+    contextWindow,
+    lastScrollTopRef,
+    notifyContextEnd,
+    onLoadNewerContext,
+    onScrollChange,
+    prependCompensation,
+    scrollIntentIdRef,
+    setAtBottom,
+    setFollowMode,
+  ]);
+  const contextTouchStartY = useRef<number | null>(null);
+  const nestedCanScrollDown = (target: EventTarget | null) => {
+    const el = parentRef.current;
+    let node = target instanceof Element ? target : null;
+    while (node && node !== el) {
+      if (
+        node instanceof HTMLElement &&
+        node.scrollHeight > node.clientHeight + 1 &&
+        /^(auto|scroll|overlay)$/.test(getComputedStyle(node).overflowY) &&
+        node.scrollTop + node.clientHeight < node.scrollHeight - 1
+      )
+        return true;
+      node = node.parentElement;
+    }
+    return false;
+  };
+
   const cancelForcedFollowForUserScroll = useCallback(() => {
     cancelPendingReplyFollow();
     anchorRestoration.cancel();
@@ -681,7 +817,52 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       const atBottom = checkIsAtBottom();
       const wasAtBottom = isAtBottomRef.current;
       setAtBottom(atBottom);
-      if (atBottom) {
+      const recentDown =
+        scrollIntentIdRef.current !== consumedContextScrollIntentRef.current &&
+        curTop > scrollIntentStartTopRef.current &&
+        Date.now() - scrollIntentAtRef.current <= 2000;
+      if (
+        Date.now() - scrollIntentAtRef.current <= 2000 &&
+        curTop < scrollIntentStartTopRef.current
+      )
+        awaitingLiveEndRef.current = false;
+      if (
+        recentDown &&
+        atBottom &&
+        contextWindow &&
+        !onLoadNewerContext &&
+        onReachedContextEndRef.current
+      )
+        awaitingLiveEndRef.current = true;
+      const appendAnchor = recentDown ? captureContextAppend(curTop) : null;
+      const loadingNewer = recentDown && notifyContextEnd(false);
+      if (recentDown && !loadingNewer && onReachedContextEndRef.current) {
+        const intentId = scrollIntentIdRef.current;
+        // The virtualizer may not render its last row until after this scroll event.
+        // Check again after measurement, without treating a layout scroll as reader intent.
+        window.requestAnimationFrame(() =>
+          window.requestAnimationFrame(() => {
+            if (
+              parentRef.current !== currentEl ||
+              intentId !== scrollIntentIdRef.current ||
+              intentId === consumedContextScrollIntentRef.current ||
+              Date.now() - scrollIntentAtRef.current > 2000
+            )
+              return;
+            const top = currentEl.scrollTop;
+            const anchor = captureContextAppend(top);
+            if (!notifyContextEnd(false)) return;
+            consumedContextScrollIntentRef.current = intentId;
+            prependCompensation.begin(anchor);
+            lastScrollTopRef.current = top;
+            setAtBottom(false);
+            setFollowMode("detached");
+            cancelPendingBottomScroll();
+            onScrollChange?.(false);
+          }),
+        );
+      }
+      if (atBottom && !isLoadingNewerContext) {
         if (
           shouldPromoteScrollToFollow({
             followMode: followModeRef.current,
@@ -699,6 +880,15 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       }
       if (shouldNotifyScrollChange({ wasAtBottom, atBottom, showScrollButton, chatUnreadCount })) {
         onScrollChange?.(atBottom);
+      }
+      if (loadingNewer) {
+        consumedContextScrollIntentRef.current = scrollIntentIdRef.current;
+        if (appendAnchor) prependCompensation.begin(appendAnchor);
+        lastScrollTopRef.current = curTop;
+        setAtBottom(false);
+        setFollowMode("detached");
+        cancelPendingBottomScroll();
+        onScrollChange?.(false);
       }
     }
 
@@ -731,7 +921,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       }
       lastScrollTopRef.current = curTop;
 
-      if (atBottom && followModeRef.current === "detached") {
+      if (atBottom && !isLoadingNewerContext && followModeRef.current === "detached") {
         if (
           shouldPromoteScrollToFollow({
             followMode: followModeRef.current,
@@ -788,6 +978,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     });
   }, [
     cancelPendingBottomScroll,
+    captureContextAppend,
+    contextWindow,
+    onLoadNewerContext,
+    prependCompensation,
     anchorRestoration,
     bottomScrollRequestTokenRef,
     chatUnreadCount,
@@ -798,9 +992,14 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     isAtBottomRef,
     isContainerResizingRef,
     isLoadingHistory,
+    isLoadingNewerContext,
     lastScrollTopRef,
     latestSnapshotRef,
     onScrollChange,
+    notifyContextEnd,
+    scrollIntentAtRef,
+    scrollIntentStartTopRef,
+    scrollIntentIdRef,
     scrollRafScheduledRef,
     scrollToBottom,
     shouldForceStickToBottom,
@@ -922,6 +1121,94 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     highlightAnchor: highlightInitialScrollAnchor,
     onHighlightAnchor: markArrival,
   });
+
+  // The explicit context target must be positioned before it moves to live chat. Do not move a
+  // reader who has already acted in the context, even if the live tail finishes loading later.
+  useEffect(() => {
+    if (
+      (!onContextReady && !onReachedContextEnd) ||
+      isLoadingHistory ||
+      !initialScrollTargetId ||
+      !displayMessages.length
+    )
+      return;
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        const el = parentRef.current;
+        const target = getMessageRowById(initialScrollTargetId);
+        if (!engagedRef.current && el && target) {
+          const box = el.getBoundingClientRect();
+          const row = target.getBoundingClientRect();
+          if (row.bottom > box.top && row.top < box.bottom && onContextReadyRef.current) {
+            onContextReadyRef.current();
+            return;
+          }
+        }
+        notifyContextEnd(true);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+    };
+  }, [
+    displayMessages.length,
+    engagedRef,
+    getMessageRowById,
+    initialScrollTargetId,
+    isLoadingHistory,
+    notifyContextEnd,
+    onContextReady,
+    onReachedContextEnd,
+  ]);
+
+  // If the live tail was still loading when the reader reached the end, complete the handoff
+  // when it arrives. A reader who moves away from the end keeps their place.
+  useEffect(() => {
+    if (!awaitingLiveEndRef.current || !contextWindow || onLoadNewerContext || !onReachedContextEnd)
+      return;
+    if (!checkIsAtBottom()) {
+      awaitingLiveEndRef.current = false;
+      return;
+    }
+    notifyContextEnd(false);
+  }, [checkIsAtBottom, contextWindow, notifyContextEnd, onLoadNewerContext, onReachedContextEnd]);
+
+  // If a target was opened at the live end, resume following even when the list was too short
+  // to emit a scroll event. A deliberately detached reader keeps their position.
+  useEffect(() => {
+    if (!liveJumpActive || isLoadingHistory || !displayMessages.length) return;
+    let secondFrame = 0;
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (engagedRef.current || !parentRef.current?.clientHeight || !checkIsAtBottom()) return;
+        const tailId = String(displayMessages.at(-1)?.id || "");
+        const tail = getMessageRowById(tailId);
+        const box = parentRef.current.getBoundingClientRect();
+        if (!tail || tail.getBoundingClientRect().top >= box.bottom) return;
+        anchorRestoration.cancel();
+        setAtBottom(true);
+        setFollowMode("follow");
+        onScrollChange?.(true);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      cancelAnimationFrame(secondFrame);
+    };
+  }, [
+    anchorRestoration,
+    checkIsAtBottom,
+    displayMessages,
+    engagedRef,
+    getMessageRowById,
+    isLoadingHistory,
+    liveJumpActive,
+    onScrollChange,
+    setAtBottom,
+    setFollowMode,
+  ]);
 
   useSendScrollRequestLifecycle({
     activeRequestRef: activeSendScrollRequestRef,
@@ -1074,11 +1361,13 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   }, [engagedRef, latestSnapshotRef, resetKey, scrollRef, snapshotFlushTimerRef]);
 
   useLayoutEffect(() => {
-    topHistoryLoad.applyPendingPrependCompensation({ isLoadingHistory });
-  }, [displayMessages, isLoadingHistory, topHistoryLoad]);
+    topHistoryLoad.applyPendingPrependCompensation({
+      isLoadingHistory: isLoadingHistory || !!isLoadingNewerContext,
+    });
+  }, [displayMessages, isLoadingHistory, isLoadingNewerContext, topHistoryLoad]);
 
   const effectiveHighlightEventId = replyJumpHighlightId || arrivalHighlightId || highlightEventId;
-  const showHistoryStatus = isLoadingHistory || (!hasMoreHistory && !isLoadingHistory);
+  const showHistoryStatus = isLoadingHistory || (!contextWindow && !hasMoreHistory);
   const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset });
   const scrollLatestLabel = t("scrollToBottom");
   const unreadDisplayCount = chatUnreadCount > 99 ? "99+" : String(chatUnreadCount);
@@ -1100,9 +1389,31 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           scrollbarGutter: "stable both-edges",
           scrollPaddingTop: topInset || undefined,
         }}
-        onKeyDownCapture={cancelForcedFollowOnKey}
+        onKeyDownCapture={(event) => {
+          cancelForcedFollowOnKey(event);
+          if (event.target === event.currentTarget) {
+            if (
+              event.key === "Home" ||
+              event.key === "PageUp" ||
+              event.key === "ArrowUp" ||
+              (event.key === " " && event.shiftKey)
+            )
+              awaitingLiveEndRef.current = false;
+            if (
+              event.key === "End" ||
+              event.key === "PageDown" ||
+              event.key === "ArrowDown" ||
+              (event.key === " " && !event.shiftKey)
+            )
+              continueContextAtBottom();
+          }
+        }}
         onFocusCapture={cancelForcedFollowForUserScroll}
-        onWheel={cancelForcedFollowForUserScroll}
+        onWheel={(event) => {
+          cancelForcedFollowForUserScroll();
+          if (event.deltaY < 0) awaitingLiveEndRef.current = false;
+          if (event.deltaY > 0 && !nestedCanScrollDown(event.target)) continueContextAtBottom();
+        }}
         onPointerDown={(event) => {
           if (event.target === event.currentTarget) cancelForcedFollowForUserScroll();
           else {
@@ -1110,7 +1421,18 @@ const VirtualMessageListInner = function VirtualMessageListInner({
             anchorRestoration.cancel();
           }
         }}
-        onTouchStart={cancelForcedFollowForUserScroll}
+        onTouchStart={(event) => {
+          cancelForcedFollowForUserScroll();
+          contextTouchStartY.current = event.touches.length === 1 ? event.touches[0].clientY : null;
+        }}
+        onTouchMove={(event) => {
+          const startY = contextTouchStartY.current;
+          if (startY != null && event.touches.length === 1) {
+            if (event.touches[0].clientY > startY + 8) awaitingLiveEndRef.current = false;
+            if (event.touches[0].clientY < startY - 8 && !nestedCanScrollDown(event.target))
+              continueContextAtBottom();
+          }
+        }}
         onScroll={displayMessages.length > 0 ? handleScroll : undefined}
         role="log"
         tabIndex={-1}
@@ -1191,6 +1513,32 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               onOpenReplyTarget={handleOpenReplyTarget}
               measureElement={measureElement}
             />
+            {onLoadNewerContext && (
+              <div className="chat-reading-width flex justify-center py-3">
+                <button
+                  type="button"
+                  className="min-h-9 text-xs text-[var(--color-text-secondary)] underline"
+                  disabled={isLoadingNewerContext}
+                  onClick={() => {
+                    const top = parentRef.current?.scrollTop ?? 0;
+                    prependCompensation.begin(captureContextAppend(top));
+                    lastScrollTopRef.current = top;
+                    setAtBottom(false);
+                    setFollowMode("detached");
+                    cancelPendingBottomScroll();
+                    onLoadNewerContext();
+                  }}
+                >
+                  {t(
+                    isLoadingNewerContext
+                      ? "loadingNewerContext"
+                      : newerContextError
+                        ? "retryNewerContext"
+                        : "loadNewerContext",
+                  )}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -1201,17 +1549,32 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           type="button"
           data-scroll-latest
           onClick={(event) => {
-            // The button disappears after activation. Keep keyboard and assistive
-            // technology users in the log instead of dropping focus onto the body.
+            // The button disappears after activation. Keep its focus in the log
+            // instead of dropping it onto the body when a context view is replaced.
             // Focus first: entering the log cancels any earlier forced follow.
-            if (event.detail === 0 && document.activeElement === event.currentTarget) {
+            if (
+              (event.detail === 0 || contextWindow) &&
+              document.activeElement === event.currentTarget
+            ) {
               parentRef.current?.focus({ preventScroll: true });
             }
             markEngaged();
             cancelPendingReplyFollow();
             anchorRestoration.cancel();
+            if (contextWindow) {
+              onScrollButtonClick();
+              return;
+            }
             scrollToBottom({ force: true });
             onScrollButtonClick();
+            const appendAnchor = captureContextAppend(parentRef.current?.scrollTop ?? 0);
+            if (onReachedContextEndRef.current?.(false, true) === true) {
+              prependCompensation.begin(appendAnchor);
+              lastScrollTopRef.current = parentRef.current?.scrollTop ?? 0;
+              setAtBottom(false);
+              setFollowMode("detached");
+              cancelPendingBottomScroll();
+            }
           }}
           aria-label={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}
           title={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}

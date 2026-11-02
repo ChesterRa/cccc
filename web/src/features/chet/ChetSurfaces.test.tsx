@@ -51,6 +51,7 @@ function composer(draft: string, extra: Partial<Parameters<typeof ChetComposer>[
 
 const buttonByText = (text: string) =>
   [...host.querySelectorAll("button")].find((button) => button.textContent?.includes(text));
+const marks = (label: string) => host.querySelectorAll(`[role="img"][aria-label="${label}"]`);
 
 function key(init: KeyboardEventInit & { isComposing?: boolean }) {
   const field = host.querySelector("textarea")!;
@@ -117,6 +118,7 @@ function timeline(
     problems: new Map(),
     storageAvailable: true,
     sendAgainDisabled: false,
+    resentIds: new Set(),
     onSendAgain: vi.fn(),
     onRetry: vi.fn(),
     onPutBack: vi.fn(),
@@ -167,8 +169,15 @@ it("sends a request that never started again as a new one, unless an unknown sen
   const actions = timeline([item]);
   expect(host.textContent).toContain("chet.state.notStartedUnavailable");
   act(() => buttonByText("chet.sendAgain")!.click());
-  expect(actions.onSendAgain).toHaveBeenCalledWith({ text: "a question", context: GROUP_A });
+  expect(actions.onSendAgain).toHaveBeenCalledWith(item.id, {
+    text: "a question",
+    context: GROUP_A,
+  });
   timeline([item], { sendAgainDisabled: true });
+  expect(buttonByText("chet.sendAgain")?.disabled).toBe(true);
+  timeline([item], { resentIds: new Set([item.id]) });
+  expect(buttonByText("chet.resent")?.disabled).toBe(true);
+  timeline([{ ...item, sourceMissing: true }]);
   expect(buttonByText("chet.sendAgain")?.disabled).toBe(true);
 });
 
@@ -184,7 +193,9 @@ it("names a cancelled queue entry and a too-long answer for what they are", () =
 
 it("shows a voice request as the voice model's, with a neutral pending state", () => {
   timeline([request({ source: "voice", state: "unconfirmed", text: "check the release" })]);
+  // Standing alone it is named in words, so it does not read as something Chet said.
   expect(host.textContent).toContain("chet.voiceDelegation");
+  expect(host.textContent).toContain("check the release");
   expect(host.textContent).toContain("chet.state.voicePending");
   expect(host.textContent).not.toContain("chet.state.unconfirmed");
   expect(buttonByText("chet.sendAgain")).toBeUndefined();
@@ -259,11 +270,38 @@ it("keeps Chet's wording of an answered voice request one click behind the answe
   timeline([request({ source: "voice", text: "check tomorrow's weather", outcome })]);
   expect(host.textContent).toContain("Rain, 14-19");
   expect(host.textContent).not.toContain("check tomorrow's weather");
-  const toggle = buttonByText("chet.voiceDelegation")!;
+  const toggle = marks("chet.voiceDelegation")[0].closest("button")!;
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   act(() => toggle.click());
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
   expect(host.textContent).toContain("check tomorrow's weather");
+  // Opened, the wording is named in words, which a touch screen shows without a tooltip.
+  expect(host.textContent).toContain("chet.voiceDelegation");
+});
+
+it("marks what was spoken with the voice icon instead of a word, and leaves typed requests unmarked", () => {
+  const live: VoiceConversationTurn = {
+    id: "l1",
+    role: "assistant",
+    text: "said just now",
+    final: true,
+    callId: "c",
+  };
+  timeline(
+    [
+      request({ id: "typed", context: GROUP_A }),
+      turn("u1", "user", "spoken"),
+      turn("a1", "assistant", "spoken back"),
+    ],
+    {},
+    [live],
+  );
+  const typed = host.querySelector('[data-chet-request="text"]')!;
+  expect(typed.textContent).toContain("Design");
+  expect(typed.querySelector('[role="img"]')).toBeNull();
+  const spoken = [...marks("chet.sourceTranscript")].map((mark) => mark.getAttribute("title"));
+  expect(spoken).toEqual(["chet.sourceTranscript", "chet.voiceRunHint", "chet.sourceTranscript"]);
+  expect(host.textContent).not.toContain("chet.sourceTranscript");
 });
 
 it("folds each run of Chet's voice turns to its last turn, and keeps it open as it grows", () => {
@@ -278,7 +316,6 @@ it("folds each run of Chet's voice turns to its last turn, and keeps it open as 
   expect(host.querySelectorAll("[data-chet-voice-run]")).toHaveLength(2);
   expect(host.textContent).toContain("what's the weather");
   expect(host.textContent).toContain("thanks");
-  expect(host.textContent).toContain('chet.voiceSegments:{"count":2}');
   expect(host.textContent).toContain("light rain tomorrow");
   expect(host.textContent).not.toContain("let me check");
   const run = host.querySelector("[data-chet-voice-run] button")!;
@@ -286,7 +323,6 @@ it("folds each run of Chet's voice turns to its last turn, and keeps it open as 
   expect(host.textContent).toContain("let me check");
   timeline([...items.slice(0, 3), turn("a4", "assistant", "and windy"), ...items.slice(3)]);
   expect(host.textContent).toContain("let me check");
-  expect(host.textContent).toContain('chet.voiceSegments:{"count":3}');
   expect(host.textContent).toContain("and windy");
 });
 
@@ -323,4 +359,115 @@ it("says a folded run's transcript is incomplete or unfinished without opening i
   timeline([turn("u1", "user", "weather?"), turn("a2", "assistant", "bring an umbrella")]);
   expect(host.textContent).not.toContain("chet.transcriptIncomplete");
   expect(host.textContent).not.toContain("chet.transcriptUnfinished");
+});
+
+it("does not apply an older-page scroll anchor to new entries after a load fails", async () => {
+  let finish!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const frames: FrameRequestCallback[] = [];
+  const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  const actions: ChetRequestActions = {
+    problems: new Map(),
+    storageAvailable: true,
+    sendAgainDisabled: false,
+    resentIds: new Set(),
+    onSendAgain: vi.fn(),
+    onRetry: vi.fn(),
+    onPutBack: vi.fn(),
+    onDismiss: vi.fn(),
+    onReviewRecovery: vi.fn(),
+  };
+  const draw = (items: ChetTimelineItem[]) =>
+    act(() =>
+      root.render(
+        <ChetTimeline
+          items={items}
+          liveTurns={[]}
+          loaded
+          hasOlder
+          loadingOlder={false}
+          onLoadOlder={() => waiting}
+          isDark={false}
+          actions={actions}
+        />,
+      ),
+    );
+  const a = request({ id: "a" }),
+    b = request({ id: "b" }),
+    c = request({ id: "c" });
+  draw([a]);
+  const view = host.querySelector<HTMLElement>("[data-chet-timeline]")!;
+  let height = 1000;
+  Object.defineProperty(view, "scrollHeight", { configurable: true, get: () => height });
+  Object.defineProperty(view, "clientHeight", { configurable: true, value: 400 });
+  view.scrollTop = 200;
+  act(() => view.dispatchEvent(new Event("scroll")));
+  act(() => buttonByText("chet.loadOlder")!.click());
+  height = 1100;
+  draw([a, b]);
+  expect(view.scrollTop).toBe(200);
+  await act(async () => {
+    finish();
+    await Promise.resolve();
+  });
+  act(() => frames.splice(0).forEach((frame) => frame(performance.now())));
+  height = 1200;
+  draw([a, b, c]);
+  expect(view.scrollTop).toBe(200);
+  raf.mockRestore();
+});
+
+it("keeps the reader's place when an earlier page arrives", () => {
+  const actions: ChetRequestActions = {
+    problems: new Map(),
+    storageAvailable: true,
+    sendAgainDisabled: false,
+    resentIds: new Set(),
+    onSendAgain: vi.fn(),
+    onRetry: vi.fn(),
+    onPutBack: vi.fn(),
+    onDismiss: vi.fn(),
+    onReviewRecovery: vi.fn(),
+  };
+  const pending = new Promise<void>(() => {});
+  const draw = (items: ChetTimelineItem[]) =>
+    act(() =>
+      root.render(
+        <ChetTimeline
+          items={items}
+          liveTurns={[]}
+          loaded
+          hasOlder
+          loadingOlder={false}
+          onLoadOlder={() => pending}
+          isDark={false}
+          actions={actions}
+        />,
+      ),
+    );
+  const current = request({ id: "current" });
+  const existing = request({ id: "existing" });
+  draw([current, existing]);
+  const view = host.querySelector<HTMLElement>("[data-chet-timeline]")!;
+  let height = 1000;
+  Object.defineProperty(view, "scrollHeight", { configurable: true, get: () => height });
+  Object.defineProperty(view, "clientHeight", { configurable: true, value: 400 });
+  view.scrollTop = 200;
+  act(() => view.dispatchEvent(new Event("scroll")));
+  act(() => buttonByText("chet.loadOlder")!.click());
+  // A voice delegation can move when its result arrives. It is not an older page.
+  draw([existing, current]);
+  expect(view.scrollTop).toBe(200);
+  height = 1100;
+  const newer = request({ id: "newer" });
+  draw([existing, current, newer]);
+  expect(view.scrollTop).toBe(200);
+  height = 1200;
+  draw([request({ id: "older" }), existing, current, newer]);
+  expect(view.scrollTop).toBe(300);
 });

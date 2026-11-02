@@ -32,6 +32,7 @@ type ChatEmptyState = "ready" | "hydrating" | "business_empty" | "filtered_empty
 
 export function useChatMessageView(input: {
   selectedGroupId: string;
+  liveJump: { groupId: string; eventId: string; offsetPx: number; requestId: number } | null;
   events: LedgerEvent[];
   streamingEvents: LedgerEvent[];
   outboxEntries: Pick<OutboxEntry, "localId" | "event">[];
@@ -62,10 +63,17 @@ export function useChatMessageView(input: {
     pending.active ? EMPTY_SENDERS : senders,
   );
   const conversationEvents = senders.length === 0 ? input.events : senderHistory.events;
+  const liveJump =
+    !inChatWindow &&
+    input.liveJump?.groupId === input.selectedGroupId &&
+    input.chatFilter === "all" &&
+    !senders.length
+      ? input.liveJump
+      : null;
   const viewKey =
     inChatWindow && input.chatWindow
       ? `${input.selectedGroupId}:window:${input.chatWindow.centerEventId}`
-      : `${input.selectedGroupId}:live:${input.chatFilter}:${JSON.stringify(senders)}`;
+      : `${input.selectedGroupId}:live:${input.chatFilter}:${JSON.stringify(senders)}${liveJump ? `:jump:${liveJump.requestId}` : ""}`;
   const orderState = useMemo(
     () => ({ viewKey, map: new Map<string, number>(), next: 0 }),
     [viewKey],
@@ -211,16 +219,19 @@ export function useChatMessageView(input: {
     unfilteredLiveChatMessages,
     chatMessages: displayedMessages,
     hasAnyChatMessages,
-    chatInitialScrollAnchorId: initialScroll.anchorId,
-    chatInitialScrollAnchorOffsetPx: initialScroll.anchorOffsetPx,
+    chatInitialScrollAnchorId: liveJump?.eventId || initialScroll.anchorId,
+    chatInitialScrollAnchorOffsetPx: liveJump?.offsetPx ?? initialScroll.anchorOffsetPx,
     chatInitialScrollOffsetPx: initialScroll.scrollOffsetPx,
-    chatInitialScrollHighlight: initialScroll.highlight === true,
+    chatInitialScrollHighlight: !!liveJump || initialScroll.highlight === true,
+    liveJumpActive: !!liveJump,
     chatWindowProps:
       inChatWindow && input.chatWindow
         ? {
             centerEventId: input.chatWindow.centerEventId,
             hasMoreBefore: input.chatWindow.hasMoreBefore,
             hasMoreAfter: input.chatWindow.hasMoreAfter,
+            isLoadingAfter: input.chatWindow.isLoadingAfter === true,
+            afterError: input.chatWindow.afterError === true,
           }
         : null,
     chatInitialScrollTargetId: centerEventId,

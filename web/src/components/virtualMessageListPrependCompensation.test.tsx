@@ -10,6 +10,7 @@ import {
 } from "./virtualMessageListPrependCompensation";
 
 type Coordinator = ReturnType<typeof useTopHistoryLoadCoordinator>;
+type Compensation = ReturnType<typeof usePrependCompensationController>;
 
 const ANCHOR_ID = "evt-anchor";
 const SCROLL_PARAMS = { topTriggerPx: 80, topRearmPx: 240, hasMoreHistory: true };
@@ -26,7 +27,11 @@ function Probe({
   scrollToMessageAnchor: (eventId: string, offsetPx?: number) => boolean;
   revealMessageAnchor?: (eventId: string) => void;
   onAnchorVerified?: () => void;
-  onReady: (coordinator: Coordinator, scrollEl: HTMLDivElement | null) => void;
+  onReady: (
+    coordinator: Coordinator,
+    scrollEl: HTMLDivElement | null,
+    compensation: Compensation,
+  ) => void;
 }) {
   const parentRef = useRef<HTMLDivElement | null>(null);
   const lastScrollTopRef = useRef(0);
@@ -59,7 +64,7 @@ function Probe({
     <div
       ref={(el) => {
         parentRef.current = el;
-        onReady(coordinator, el);
+        onReady(coordinator, el, compensation);
       }}
     />
   );
@@ -81,6 +86,65 @@ describe("useTopHistoryLoadCoordinator", () => {
     await act(async () => root.unmount());
     host.remove();
     vi.useRealTimers();
+  });
+
+  it("keeps an appended page's offset when its anchor cannot be rendered", async () => {
+    let coordinator: Coordinator | null = null;
+    let compensation: Compensation | null = null;
+    let scrollEl: HTMLDivElement | null = null;
+    await act(async () =>
+      root.render(
+        <Probe
+          scrollToMessageAnchor={() => false}
+          onReady={(next, el, controller) => {
+            coordinator = next;
+            scrollEl = el;
+            compensation = controller;
+          }}
+        />,
+      ),
+    );
+    const scrollTo = vi.spyOn(scrollEl!, "scrollTo");
+    compensation!.begin({
+      kind: "append",
+      previousOffset: 123,
+      previousTotalSize: 1000,
+      anchorId: "",
+      anchorOffsetPx: 0,
+      anchorTop: null,
+    });
+    expect(coordinator!.applyPendingPrependCompensation({ isLoadingHistory: false })).toBe(true);
+    expect(scrollTo).toHaveBeenCalledWith({ top: 123, behavior: "auto" });
+  });
+
+  it("keeps append semantics when the reader moves during the request", async () => {
+    let coordinator: Coordinator | null = null;
+    let compensation: Compensation | null = null;
+    await act(async () =>
+      root.render(
+        <Probe
+          scrollToMessageAnchor={() => true}
+          onReady={(next, _el, controller) => {
+            coordinator = next;
+            compensation = controller;
+          }}
+        />,
+      ),
+    );
+    compensation!.begin({
+      kind: "append",
+      previousOffset: 123,
+      previousTotalSize: 1000,
+      anchorId: ANCHOR_ID,
+      anchorOffsetPx: 0,
+      anchorTop: 0,
+    });
+    coordinator!.handleTopHistoryScroll({
+      ...SCROLL_PARAMS,
+      scrollTop: 250,
+      isLoadingHistory: true,
+    });
+    expect(compensation!.pendingRef.current).toMatchObject({ kind: "append", previousOffset: 250 });
   });
 
   it("restores the position the reader scrolled to while history was loading", async () => {

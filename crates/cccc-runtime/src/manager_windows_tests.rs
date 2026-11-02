@@ -92,3 +92,53 @@ fn pty_actor_starts_in_the_drive_path_of_its_working_directory() {
     let _ = stop(group, actor);
     panic!("cmd did not start in {expected}: {output:?}");
 }
+
+#[test]
+fn cmd_actors_are_refused_in_a_reserved_name_directory() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    // Only the \\?\ form names it, and cmd.exe treats that form like a UNC path.
+    let reserved = temp
+        .path()
+        .canonicalize()
+        .expect("canonical temp")
+        .join("aux");
+    std::fs::create_dir(&reserved).expect("reserved-name directory");
+    assert_cmd_actors_refused_in(&reserved);
+    std::fs::remove_dir(&reserved).expect("remove reserved-name directory");
+}
+
+#[test]
+#[ignore = "needs a reachable UNC directory in CCCC_TEST_UNC_DIR"]
+fn cmd_actors_are_refused_in_a_unc_working_directory() {
+    let _guard = test_guard();
+    let unc = std::env::var_os("CCCC_TEST_UNC_DIR").expect("CCCC_TEST_UNC_DIR");
+    assert_cmd_actors_refused_in(std::path::Path::new(&unc));
+}
+
+fn assert_cmd_actors_refused_in(cwd: &std::path::Path) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let shim = temp.path().join("actor.cmd");
+    std::fs::write(&shim, "@echo off\r\ncmd.exe /Q\r\n").expect("batch shim");
+    let cmd = std::env::var("ComSpec").expect("ComSpec");
+    for command in [
+        vec![cmd, "/d".into(), "/q".into(), "/k".into(), "cd".into()],
+        vec![shim.to_string_lossy().into_owned()],
+    ] {
+        let error = start(LaunchSpec {
+            group_id: "g_windows_prefixed_cwd".into(),
+            actor_id: "peer1".into(),
+            runner: RunnerKind::Pty,
+            command: command.clone(),
+            cwd: cwd.into(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect_err("cmd.exe must not start in this directory");
+        assert!(
+            matches!(error, crate::RuntimeError::CmdInPrefixedDirectory(_)),
+            "{command:?}: {error}"
+        );
+    }
+}

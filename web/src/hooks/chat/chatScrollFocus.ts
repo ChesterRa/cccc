@@ -1,6 +1,11 @@
 import type { ChatScrollSnapshot } from "../../stores/useUIStore";
 import type { LedgerEvent } from "../../types";
 
+/** The end of a historical window is not the end of the live conversation. */
+export function isLiveChatBottom(atBottom: boolean, inChatWindow: boolean): boolean {
+  return atBottom && !inChatWindow;
+}
+
 function confirmedId(event: LedgerEvent): string {
   const data = event.data as { _optimistic?: unknown } | undefined;
   return event.id && !data?._optimistic ? String(event.id) : "";

@@ -11,6 +11,7 @@ import type { Actor, LedgerEvent } from "../../types";
 import { buildReplyComposerState } from "../../utils/chatReply";
 import { copyTextToClipboard } from "../../utils/copy";
 import { canOpenSourceMessageLocally } from "./chatTabBasics";
+import { isLiveChatBottom } from "./chatScrollFocus";
 
 export function useChatMessageActions(input: {
   selectedGroupId: string;
@@ -140,10 +141,13 @@ export function useChatMessageActions(input: {
   const handleScrollChange = useCallback(
     (isAtBottom: boolean) => {
       if (!groupMessagesVisible(input.selectedGroupId, useUIStore.getState())) return;
-      input.setChatAtBottom(isAtBottom);
+      // A context window can end before the live timeline. Its bottom is not
+      // evidence that the reader has seen the latest live messages.
+      const atLiveBottom = isLiveChatBottom(isAtBottom, input.inChatWindow);
+      input.setChatAtBottom(atLiveBottom);
       if (!input.selectedGroupId) return;
-      input.setShowScrollButton(input.selectedGroupId, !isAtBottom);
-      if (isAtBottom) input.setChatUnreadCount(input.selectedGroupId, 0);
+      input.setShowScrollButton(input.selectedGroupId, !atLiveBottom);
+      if (atLiveBottom) input.setChatUnreadCount(input.selectedGroupId, 0);
     },
     [input],
   );

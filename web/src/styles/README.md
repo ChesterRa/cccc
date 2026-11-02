@@ -6,7 +6,8 @@ the LCD rules in this folder read the hooks.
 
 ## Scope
 
-- Every LCD rule starts with `:root[data-ui-style="lcd"]`, and rules that restyle shared
+- Every LCD rule starts with `:root[data-ui-style="lcd"]`, except the two rules that hide
+  LCD-only elements in classic (`lcdIcons.css`, `lcdComposer.css`). Rules that restyle shared
   components also require `[data-lcd-scope]`: a surface takes the look only inside an
   element with `data-lcd-scope`.
 - Dialogs: `ModalFrame lcdScope`, or `DialogContent lcdScope` for the Radix dialog in

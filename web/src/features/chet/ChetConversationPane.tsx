@@ -111,7 +111,7 @@ export function ChetConversationPane({
         loaded={chet.loaded}
         hasOlder={chet.hasOlder}
         loadingOlder={chet.loadingOlder}
-        onLoadOlder={() => void chet.loadOlder()}
+        onLoadOlder={chet.loadOlder}
         isDark={isDark}
         notices={
           chet.skipped ? (
@@ -124,6 +124,7 @@ export function ChetConversationPane({
           problems: chet.problems,
           storageAvailable: chet.storageAvailable,
           sendAgainDisabled: hasUnknownSend,
+          resentIds: chet.resentIds,
           onSendAgain: chet.sendAgain,
           onRetry: chet.retry,
           onPutBack: chet.putBack,

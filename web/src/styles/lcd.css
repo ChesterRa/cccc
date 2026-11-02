@@ -40,6 +40,14 @@
   src: url("@/assets/fonts/lcd/fusion-pixel-12px-proportional-ja.otf.woff2") format("woff2");
 }
 
+/* Use the Japanese glyph shapes in pixel body text while keeping RoundPix for Latin. */
+@font-face {
+  font-family: "Fusion Pixel 12 JA Body";
+  font-display: swap;
+  src: url("@/assets/fonts/lcd/fusion-pixel-12px-proportional-ja.otf.woff2") format("woff2");
+  unicode-range: U+2E80-9FFF, U+F900-FAFF, U+FF00-FFEF, U+20000-2FA1F;
+}
+
 @font-face {
   font-family: "Departure Mono";
   font-display: swap;
@@ -85,21 +93,27 @@
   --lcd-sel-soft: #c8d2b8;
   --lcd-code-bg: #c9d3b9;
   --lcd-overlay: rgba(14, 18, 12, 0.35);
-  --lcd-font-body:
-    "IBM Plex Mono", "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "PingFang SC", "Hiragino Sans",
-    "Microsoft YaHei", "Yu Gothic", "Meiryo", monospace;
+  --lcd-font-cjk:
+    "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "PingFang SC", "Hiragino Sans", "Microsoft YaHei",
+    "Yu Gothic", "Meiryo", monospace;
+  --lcd-font-body: "IBM Plex Mono", var(--lcd-font-cjk);
   --lcd-font-pixel: "Fusion Pixel 12 SC", var(--lcd-font-body);
   --lcd-font-brand: "Departure Mono", var(--lcd-font-body);
 }
 
 :root[data-ui-style="lcd"]:lang(ja) {
+  --lcd-font-cjk:
+    "Noto Sans Mono CJK JP", "Noto Sans CJK JP", "Hiragino Sans", "Yu Gothic", "Meiryo",
+    "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", monospace;
   --lcd-font-pixel: "Fusion Pixel 12 JA", var(--lcd-font-body);
 }
 
 :root[data-ui-style="lcd"][data-lcd-body="pixel"] {
-  --lcd-font-body:
-    "RoundPix 16", "IBM Plex Mono", "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "PingFang SC",
-    "Hiragino Sans", "Microsoft YaHei", "Yu Gothic", "Meiryo", monospace;
+  --lcd-font-body: "RoundPix 16", "IBM Plex Mono", var(--lcd-font-cjk);
+}
+
+:root[data-ui-style="lcd"][data-lcd-body="pixel"]:lang(ja) {
+  --lcd-font-body: "Fusion Pixel 12 JA Body", "RoundPix 16", "IBM Plex Mono", var(--lcd-font-cjk);
 }
 
 :root[data-ui-style="lcd"].dark {

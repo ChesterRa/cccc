@@ -26,6 +26,11 @@ async fn in_flight_snapshot_includes_starting_native_and_active_inputs_without_w
         origin: AnalystTurnOrigin::Terminal,
         cancelling: false,
     });
+    state.queue.push_back(queue::QueuedInput {
+        delegation_id: "queued".into(),
+        text: "later".into(),
+        origin: AnalystTurnOrigin::Terminal,
+    });
     state.active = Some(ActiveTurn {
         turn_id: "turn".into(),
         latest_delegation_id: "active".into(),
@@ -42,8 +47,167 @@ async fn in_flight_snapshot_includes_starting_native_and_active_inputs_without_w
     );
     drop(state);
     let (queued, working) = lifecycle.try_in_flight().expect("unlocked");
-    assert_eq!(queued, ["starting", "native"]);
+    assert_eq!(queued, ["starting", "native", "queued"]);
     assert_eq!(working, ["active"]);
+    session.stop(session.generation()).await.expect("stop");
+    server.await.expect("fake server");
+}
+
+#[tokio::test]
+async fn invalidation_reports_queued_inputs_as_never_started() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    lifecycle
+        .state
+        .lock()
+        .await
+        .queue
+        .push_back(queue::QueuedInput {
+            delegation_id: "queued".into(),
+            text: "later".into(),
+            origin: AnalystTurnOrigin::Terminal,
+        });
+    lifecycle.invalidate().await;
+    match events.recv().await.expect("not started") {
+        AnalystLifecycleEvent::Completed {
+            source,
+            delegation_id,
+            status,
+            ..
+        } => {
+            assert_eq!(source, AnalystCompletionSource::HostNotStarted);
+            assert_eq!(delegation_id, "queued");
+            assert_eq!(status, "cancelled");
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+    assert!(matches!(
+        events.recv().await.expect("disconnected"),
+        AnalystLifecycleEvent::Disconnected
+    ));
+    assert!(lifecycle.state.lock().await.queue.is_empty());
+    session.stop(session.generation()).await.expect("stop");
+    server.await.expect("fake server");
+}
+
+#[tokio::test]
+async fn busy_input_is_not_requeued_after_invalidation() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    let mut state = lifecycle.state.lock().await;
+    lifecycle.requeue_after_busy(
+        queue::QueuedInput {
+            delegation_id: "live".into(),
+            text: "later".into(),
+            origin: AnalystTurnOrigin::Terminal,
+        },
+        &mut state,
+    );
+    assert_eq!(
+        state
+            .queue
+            .pop_front()
+            .expect("live input requeued")
+            .delegation_id,
+        "live"
+    );
+    lifecycle
+        .queue_len
+        .store(0, std::sync::atomic::Ordering::Release);
+    assert!(events.try_recv().is_err());
+    state.invalidated = true;
+    lifecycle.requeue_after_busy(
+        queue::QueuedInput {
+            delegation_id: "busy".into(),
+            text: "later".into(),
+            origin: AnalystTurnOrigin::Terminal,
+        },
+        &mut state,
+    );
+    assert!(state.queue.is_empty());
+    drop(state);
+    assert!(matches!(
+        events.recv().await.expect("not started"),
+        AnalystLifecycleEvent::Completed {
+            source: AnalystCompletionSource::HostNotStarted,
+            delegation_id,
+            ..
+        } if delegation_id == "busy"
+    ));
+    session.stop(session.generation()).await.expect("stop");
+    server.await.expect("fake server");
+}
+
+#[tokio::test]
+async fn invalidated_lifecycle_refuses_native_input_registration() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut state = lifecycle.state.lock().await;
+    state.invalidated = true;
+    let error = lifecycle
+        .register_native_input("late", "question", AnalystTurnOrigin::Voice, state)
+        .await
+        .expect_err("an invalidated owner cannot register native input");
+    assert!(error.to_string().contains("lifecycle ended"));
+    assert!(lifecycle.state.lock().await.native_pending.is_empty());
+    session.stop(session.generation()).await.expect("stop");
+    server.await.expect("fake server");
+}
+
+#[tokio::test]
+async fn late_receipt_after_invalidation_does_not_revive_queued_work() {
+    let (session, server, start_seen, release_start) = test_session_with_delayed_start().await;
+    let session = Arc::new(session);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    // The fake session is a native protocol; start the same queue worker used
+    // by structured sessions to exercise its admission boundary.
+    queue::start(&lifecycle);
+    lifecycle
+        .state
+        .lock()
+        .await
+        .queue
+        .push_back(queue::QueuedInput {
+            delegation_id: "late".into(),
+            text: "question".into(),
+            origin: AnalystTurnOrigin::Terminal,
+        });
+    lifecycle.queue_notify.notify_one();
+    tokio::time::timeout(Duration::from_secs(3), start_seen)
+        .await
+        .expect("start request deadline")
+        .expect("fake provider saw start");
+    lifecycle.invalidate().await;
+    release_start.send(()).expect("release receipt");
+    assert!(matches!(
+        events.recv().await.expect("disconnected"),
+        AnalystLifecycleEvent::Disconnected
+    ));
+    let event = tokio::time::timeout(Duration::from_secs(3), events.recv())
+        .await
+        .expect("completion deadline")
+        .expect("completion event");
+    assert!(matches!(
+        event,
+        AnalystLifecycleEvent::Completed {
+            source: AnalystCompletionSource::HostUnconfirmed,
+            delegation_id,
+            ..
+        } if delegation_id == "late"
+    ));
+    assert!(
+        events.try_recv().is_err(),
+        "no Started may follow invalidation"
+    );
+    let state = lifecycle.state.lock().await;
+    assert!(state.invalidated && state.active.is_none() && state.queue.is_empty());
+    drop(state);
     session.stop(session.generation()).await.expect("stop");
     server.await.expect("fake server");
 }
@@ -734,6 +898,63 @@ async fn test_session() -> (AnalystSession, JoinHandle<()>) {
     .await
     .expect("connect test Analyst");
     (session, server)
+}
+
+async fn test_session_with_delayed_start() -> (
+    AnalystSession,
+    JoinHandle<()>,
+    oneshot::Receiver<()>,
+    oneshot::Sender<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let endpoint = format!("ws://{}", listener.local_addr().expect("address"));
+    let (seen_tx, seen_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept");
+        let mut socket = accept_async(stream).await.expect("websocket");
+        let mut start_gate = Some((seen_tx, release_rx));
+        while let Some(frame) = socket.next().await {
+            let Message::Text(text) = frame.expect("frame") else {
+                continue;
+            };
+            let request: Value = serde_json::from_str(&text).expect("request");
+            let Some(id) = request["id"].as_u64() else {
+                continue;
+            };
+            let result = match request["method"].as_str().expect("method") {
+                "initialize" | "thread/name/set" => json!({}),
+                "thread/start" => json!({"thread":{"id":"thread-lifecycle"}}),
+                "thread/read" => json!({"thread":{"id":"thread-lifecycle","turns":[]}}),
+                "turn/start" => {
+                    let (seen, release) = start_gate.take().expect("single start");
+                    seen.send(()).expect("notify start");
+                    release.await.expect("release start");
+                    json!({"turn":{"id":"late-turn"}})
+                }
+                method => panic!("unexpected lifecycle test method: {method}"),
+            };
+            socket
+                .send(Message::Text(
+                    json!({"jsonrpc":"2.0","id":id,"result":result})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .expect("response");
+        }
+    });
+    let session = AnalystSession::connect_for_test(
+        WorkspaceBinding {
+            root: PathBuf::from("/tmp"),
+        },
+        "generation-lifecycle".into(),
+        endpoint,
+        PathBuf::from("codex"),
+    )
+    .await
+    .expect("connect test Analyst");
+    (session, server, seen_rx, release_tx)
 }
 
 async fn test_session_with_delayed_interrupt() -> (

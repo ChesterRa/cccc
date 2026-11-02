@@ -46,6 +46,16 @@ export interface VirtualMessageListProps {
   onScrollButtonClick: () => void;
   chatUnreadCount: number;
   onScrollChange?: (isAtBottom: boolean) => void;
+  /** A context's target can be shown in live chat after its initial positioning. */
+  onContextReady?: () => void;
+  /** The current live view was opened on an explicit message. */
+  liveJumpActive?: boolean;
+  contextWindow?: boolean;
+  /** The reader reached the end of a context window; initial means it opened there. */
+  onReachedContextEnd?: (initial: boolean, atBottom: boolean) => boolean | void;
+  onLoadNewerContext?: () => void;
+  isLoadingNewerContext?: boolean;
+  newerContextError?: boolean;
   onScrollSnapshot?: (snapshot: ChatScrollSnapshot, groupId?: string) => void;
   sendScrollRequest?: ChatSendScrollRequest | null;
   onSendScrollRequestConsumed?: (requestId: number) => void;

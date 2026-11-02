@@ -200,7 +200,13 @@ describe("static graphic navigation", () => {
       pointer(region(), "pointerdown", 40, 40);
       pointer(region(), "pointerup", 40, 40);
     });
+    // Keep the modal mounted through the browser's subsequent click; removing it at
+    // pointerup can send a touch-generated click to a control below the modal.
+    expect(close).not.toHaveBeenCalled();
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 });
+    await act(async () => region().dispatchEvent(click));
     expect(close).toHaveBeenCalledOnce();
+    expect(click.defaultPrevented).toBe(true);
   });
   it("requires two touch taps to toggle and leaves SVG links alone", async () => {
     const linked = '<svg viewBox="0 0 12000 8000"><a href="#detail"><text>Detail</text></a></svg>';

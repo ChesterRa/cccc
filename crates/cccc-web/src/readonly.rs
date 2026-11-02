@@ -85,6 +85,14 @@ fn is_mutating_get(path: &str) -> bool {
             .strip_prefix("/nomcp/s/")
             .and_then(|rest| rest.strip_suffix("/send"))
             .is_some_and(|session_id| !session_id.is_empty() && !session_id.contains('/'))
+        // The Voice Secretary's socket upgrade is a GET, but the session saves
+        // recordings and appends transcripts.
+        || path
+            .strip_prefix("/api/v1/groups/")
+            .and_then(|rest| rest.split_once('/'))
+            .is_some_and(|(group_id, tail)| {
+                !group_id.is_empty() && tail == "assistants/voice_secretary/transcriptions/ws"
+            })
 }
 
 /// The user's open reply requests and notification subscriptions. An
@@ -148,8 +156,15 @@ mod tests {
             "/api/v1/registry/reconcile",
             "/nomcp/s/session-1/send",
             "/api/v1/codex_voice/calls/generation/events",
+            "/api/v1/groups/g_1/assistants/voice_secretary/transcriptions/ws",
         ] {
             assert!(!is_read_only_safe(&Method::GET, path), "{path}");
+        }
+        for path in [
+            "/api/v1/groups//assistants/voice_secretary/transcriptions/ws",
+            "/api/v1/groups/g_1/assistants/voice_secretary/transcriptions",
+        ] {
+            assert!(is_read_only_safe(&Method::GET, path), "{path}");
         }
         assert!(!is_read_only_safe(
             &Method::HEAD,

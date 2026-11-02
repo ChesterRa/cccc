@@ -290,6 +290,7 @@ export function ChatTab({
     chatInitialScrollAnchorOffsetPx,
     chatInitialScrollOffsetPx,
     chatInitialScrollHighlight,
+    liveJumpActive,
     chatHighlightEventId,
     isLoadingHistory,
     hasMoreHistory,
@@ -348,9 +349,12 @@ export function ChatTab({
     showRecipients,
     relayMessage,
     openSourceMessage,
-    exitChatWindow,
+    returnToLatest,
     handleScrollButtonClick,
     handleScrollChange,
+    onContextReady,
+    onReachedContextEnd,
+    onLoadNewerContext,
     handleScrollSnapshot,
     addAgent,
   } = useChatTab({
@@ -877,25 +881,30 @@ export function ChatTab({
                             >
                               {isLoadingHistory
                                 ? t("loadingContext")
-                                : chatWindowProps.hasMoreBefore || chatWindowProps.hasMoreAfter
+                                : chatWindowProps.hasMoreBefore
                                   ? t("contextTruncated")
-                                  : t("contextLoaded")}
+                                  : chatWindowProps.hasMoreAfter
+                                    ? t("contextNewerNotLoaded")
+                                    : t("contextLoaded")}
                             </div>
                           </div>
-                          {!readOnly && (
-                            <button
-                              type="button"
-                              className={classNames(
-                                "flex-shrink-0 text-xs font-semibold px-3 py-1.5 min-h-[36px] flex items-center rounded-full border transition-colors",
-                                isDark
-                                  ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
-                                  : "border-gray-200 text-gray-800 hover:bg-gray-100",
-                              )}
-                              onClick={exitChatWindow}
-                            >
-                              {t(hasChatFilter ? "returnToFilteredChat" : "returnToLatest")}
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            className={classNames(
+                              "flex-shrink-0 text-xs font-semibold px-3 py-1.5 min-h-[36px] flex items-center rounded-full border transition-colors",
+                              isDark
+                                ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
+                                : "border-gray-200 text-gray-800 hover:bg-gray-100",
+                            )}
+                            onClick={(event) =>
+                              returnToLatest(
+                                event.detail === 0 ||
+                                  document.activeElement === event.currentTarget,
+                              )
+                            }
+                          >
+                            {t(hasChatFilter ? "returnToFilteredChat" : "returnToLatest")}
+                          </button>
                         </div>
                       </div>
                     )}
@@ -1126,6 +1135,8 @@ export function ChatTab({
                           initialScrollOffsetPx={chatInitialScrollOffsetPx}
                           highlightInitialScrollAnchor={chatInitialScrollHighlight}
                           highlightEventId={chatHighlightEventId}
+                          liveJumpActive={liveJumpActive}
+                          contextWindow={!!chatWindowProps}
                           className={
                             !chatWindowProps &&
                             runtimeActors.length > 0 &&
@@ -1158,6 +1169,11 @@ export function ChatTab({
                           sendScrollRequest={sendScrollRequest}
                           onSendScrollRequestConsumed={consumeSendScrollRequest}
                           onScrollChange={handleScrollChange}
+                          onContextReady={onContextReady}
+                          onReachedContextEnd={onReachedContextEnd}
+                          onLoadNewerContext={onLoadNewerContext}
+                          isLoadingNewerContext={chatWindowProps?.isLoadingAfter}
+                          newerContextError={chatWindowProps?.afterError}
                           onScrollSnapshot={handleScrollSnapshot}
                           isLoadingHistory={listIsLoadingHistory}
                           hasMoreHistory={listHasMoreHistory}

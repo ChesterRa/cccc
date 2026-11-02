@@ -37,6 +37,13 @@ fn prepare_pty_command_for(
     )
 }
 
+/// Whether a prepared PTY command would start cmd.exe in a directory it cannot
+/// use. Pass the working directory in the form given to the launcher.
+#[must_use]
+pub(crate) fn runs_cmd_in_prefixed_directory(prepared_command: &[String], cwd: &Path) -> bool {
+    windows::runs_cmd_in_prefixed_directory(prepared_command, cwd, cfg!(windows))
+}
+
 #[must_use]
 pub fn resolve_command_executable(
     command: &[String],

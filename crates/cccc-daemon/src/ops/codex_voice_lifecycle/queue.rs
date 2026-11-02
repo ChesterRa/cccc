@@ -36,10 +36,7 @@ pub(super) fn start(lifecycle: &Arc<AnalystLifecycle>) {
                     Ok(_) => {}
                     Err(error) if super::turns::is_would_block(&error) => {
                         let mut state = lifecycle.state.lock().await;
-                        state.queue.push_front(input);
-                        lifecycle
-                            .queue_len
-                            .store(state.queue.len(), std::sync::atomic::Ordering::Release);
+                        lifecycle.requeue_after_busy(input, &mut state);
                         break;
                     }
                     Err(error) => {
@@ -67,6 +64,24 @@ pub(super) fn start(lifecycle: &Arc<AnalystLifecycle>) {
 }
 
 impl AnalystLifecycle {
+    /// Busy is a confirmed rejection. A lifecycle that was invalidated while
+    /// admission was in flight cannot consume a requeued input.
+    pub(super) fn requeue_after_busy(&self, input: QueuedInput, state: &mut LifecycleState) {
+        if state.invalidated {
+            self.complete_unadmitted_input(
+                &input.delegation_id,
+                input.origin,
+                "cancelled",
+                "",
+                AnalystCompletionSource::HostNotStarted,
+            );
+            return;
+        }
+        state.queue.push_front(input);
+        self.queue_len
+            .store(state.queue.len(), std::sync::atomic::Ordering::Release);
+    }
+
     pub(super) fn complete_unadmitted_input(
         &self,
         id: &str,

@@ -1,4 +1,4 @@
-use super::windows::wrap_resolved_command;
+use super::windows::{runs_cmd_in_prefixed_directory, wrap_resolved_command};
 use super::{prepare_pty_command_for, resolve_executable};
 use std::collections::BTreeMap;
 use std::fs;
@@ -67,6 +67,48 @@ fn windows_batch_shims_are_routed_through_command_processor() {
             "--version",
         ]
     );
+}
+
+#[test]
+fn windows_refuses_cmd_only_in_a_directory_that_keeps_a_prefix() {
+    let cmd = r"C:\Windows\System32\cmd.exe";
+    let shim = wrap_resolved_command(
+        &["claude".into()],
+        Path::new(r"C:\npm\claude.cmd"),
+        true,
+        Some(cmd),
+    );
+    let prefixed = [
+        r"\\?\UNC\wsl.localhost\Ubuntu\home\demo",
+        r"\\server\share\demo",
+        r"\\?\C:\work\aux",
+    ];
+    for command in [vec![cmd.to_owned(), "/k".into()], vec!["CMD".into()], shim] {
+        for cwd in prefixed {
+            assert!(
+                runs_cmd_in_prefixed_directory(&command, Path::new(cwd), true),
+                "{command:?} in {cwd}"
+            );
+            assert!(!runs_cmd_in_prefixed_directory(
+                &command,
+                Path::new(cwd),
+                false
+            ));
+        }
+        assert!(!runs_cmd_in_prefixed_directory(
+            &command,
+            Path::new(r"C:\work\demo"),
+            true
+        ));
+    }
+    let other = [r"C:\tools\codex.exe".to_owned()];
+    for cwd in prefixed {
+        assert!(!runs_cmd_in_prefixed_directory(
+            &other,
+            Path::new(cwd),
+            true
+        ));
+    }
 }
 
 #[test]

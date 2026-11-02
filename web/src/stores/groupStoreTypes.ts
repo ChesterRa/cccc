@@ -142,6 +142,7 @@ export interface GroupState {
   warmGroup: (groupId: string) => Promise<void>;
   loadMoreHistory: (groupId?: string) => Promise<void>;
   openChatWindow: (groupId: string, centerEventId: string) => Promise<void>;
+  loadMoreChatWindowAfter: (groupId: string) => Promise<void>;
   closeChatWindow: (groupId?: string) => void;
 }
 
@@ -165,5 +166,6 @@ export type GroupStoreAsyncActions = Pick<
   | "warmGroup"
   | "loadMoreHistory"
   | "openChatWindow"
+  | "loadMoreChatWindowAfter"
   | "closeChatWindow"
 >;

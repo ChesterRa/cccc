@@ -18,6 +18,7 @@ export function chetConversationStub(overrides: Partial<ChetConversation> = {}):
     send: vi.fn(),
     retry: vi.fn(),
     sendAgain: vi.fn(),
+    resentIds: new Set(),
     putBack: vi.fn(),
     dismiss: vi.fn(),
     problems: new Map(),

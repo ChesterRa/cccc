@@ -2,7 +2,8 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
-import { useUIStore } from "../stores";
+import { useGroupStore, useUIStore } from "../stores";
+import { EMPTY_CHAT_BUCKET } from "../stores/groupStoreCore";
 import { useAppTabState } from "./useAppTabState";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -68,6 +69,103 @@ it("focuses the composer on arriving at the messages, not when the viewport chan
   } finally {
     act(() => root.unmount());
     useUIStore.setState({ activeTab: previous.activeTab, isSmallScreen: previous.isSmallScreen });
+    host.remove();
+  }
+});
+
+it("keeps unread messages when returning to the bottom of a historical window", async () => {
+  const previousUi = useUIStore.getState();
+  const previousGroups = useGroupStore.getState();
+  const setUnread = vi.fn();
+  const setScrollButton = vi.fn();
+  let state: ReturnType<typeof useAppTabState>;
+  function VisibilityHarness() {
+    state = useAppTabState({
+      activeTab: "chat",
+      runtimeActors: [],
+      selectedGroupId: "g1",
+      isSmallScreen: false,
+      setActiveTab: vi.fn(),
+      setShowScrollButton: setScrollButton,
+      setChatUnreadCount: setUnread,
+    });
+    return (
+      <div
+        ref={(element) => {
+          state.eventContainerRef.current = element;
+          if (!element) return;
+          Object.defineProperties(element, {
+            scrollHeight: { configurable: true, value: 1000 },
+            clientHeight: { configurable: true, value: 400 },
+            scrollTop: { configurable: true, value: 600 },
+          });
+        }}
+      />
+    );
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    useGroupStore.setState({
+      selectedGroupId: "g1",
+      chatByGroup: {
+        g1: {
+          ...EMPTY_CHAT_BUCKET,
+          chatWindow: {
+            groupId: "g1",
+            centerEventId: "earlier",
+            centerIndex: 0,
+            events: [],
+            hasMoreBefore: true,
+            hasMoreAfter: true,
+          },
+        },
+      },
+    });
+    useUIStore.setState({
+      activeTab: "chat",
+      isSmallScreen: false,
+      workspaceFileViewerGroupId: "g1",
+      chatSessions: {},
+    });
+    await act(async () => root.render(<VisibilityHarness />));
+    setUnread.mockClear();
+    setScrollButton.mockClear();
+
+    await act(async () => useUIStore.getState().setWorkspaceFileViewerGroupId(""));
+    expect(setUnread).not.toHaveBeenCalled();
+    expect(setScrollButton).toHaveBeenCalledWith("g1", true);
+    expect(state!.chatAtBottomRef.current).toBe(false);
+
+    // The same physical position is the true bottom once the live list is shown.
+    await act(async () => {
+      useUIStore.getState().setWorkspaceFileViewerGroupId("g1");
+      useGroupStore.setState((previous) => ({
+        chatByGroup: {
+          ...previous.chatByGroup,
+          g1: { ...previous.chatByGroup.g1, chatWindow: null },
+        },
+      }));
+    });
+    setUnread.mockClear();
+    setScrollButton.mockClear();
+    await act(async () => useUIStore.getState().setWorkspaceFileViewerGroupId(""));
+    expect(setUnread).toHaveBeenCalledWith("g1", 0);
+    expect(setScrollButton).toHaveBeenCalledWith("g1", false);
+    expect(state!.chatAtBottomRef.current).toBe(true);
+  } finally {
+    act(() => root.unmount());
+    useUIStore.setState({
+      activeTab: previousUi.activeTab,
+      isSmallScreen: previousUi.isSmallScreen,
+      workspaceFileViewerGroupId: previousUi.workspaceFileViewerGroupId,
+      chatSessions: previousUi.chatSessions,
+    });
+    useGroupStore.setState({
+      selectedGroupId: previousGroups.selectedGroupId,
+      chatByGroup: previousGroups.chatByGroup,
+    });
     host.remove();
   }
 });

@@ -449,8 +449,8 @@ RecoveryDiagnostic[] }`. A record contains `id`, an opaque `version`, `kind`
 `legacy_identity`, `identity_unconfirmed`, `foreign_namespace`, `origin_unknown`,
 `cleanup_unconfirmed`, and `evidence_invalid`. An opaque artifact can contain
 multiple old records; no contents are returned. Diagnostic entries contain
-`reason`, a `hint`, and MAY include a relative path. Clients MUST handle unknown
-codes without assuming that the evidence is absent.
+`reason`, a `hint`, and MAY include `relative_path`, relative to `CCCC_HOME`.
+Clients MUST handle unknown codes without assuming that the evidence is absent.
 
 Retry returns `{ owner, result: "cleared" | "still_pending", record,
 diagnostics }`, where `record` is null when no longer present. Accept returns
@@ -475,7 +475,9 @@ cross-process transaction with unrelated later launches.
 
 #### `chet_history_*`
 
-The daemon owns the local, append-only history of the global assistant. These
+The daemon owns the local, append-only history of the global assistant, which
+the product calls Chet and which uses the Voice Analyst session described
+elsewhere in this standard. These
 operations require `by: "user"` and reject Actor-bound and Group-scoped
 requests. They record or read evidence; none starts a Runtime. The local IPC
 transport is protected by its operating-system access boundary, not by this

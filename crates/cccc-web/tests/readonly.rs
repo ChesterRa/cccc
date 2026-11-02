@@ -48,7 +48,11 @@ async fn normal_mode_does_not_apply_read_only_guard() {
 async fn exhibit_mode_rejects_mutating_get_and_websocket_routes() {
     let (_temp, home) = home();
     let app = auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Exhibit);
-    for path in ["/api/v1/registry/reconcile", "/nomcp/s/session-1/send"] {
+    for path in [
+        "/api/v1/registry/reconcile",
+        "/nomcp/s/session-1/send",
+        "/api/v1/groups/g_1/assistants/voice_secretary/transcriptions/ws",
+    ] {
         let response = app
             .clone()
             .oneshot(Request::get(path).body(Body::empty()).expect("request"))
@@ -64,6 +68,28 @@ async fn exhibit_mode_rejects_mutating_get_and_websocket_routes() {
         let payload: Value = serde_json::from_slice(&body).expect("json");
         assert_eq!(payload["error"]["code"], "read_only", "{path}");
     }
+}
+
+#[tokio::test]
+async fn normal_mode_lets_the_transcription_socket_reach_its_handler() {
+    let (_temp, home) = home();
+    let response = auth_support::authenticated_app_with_mode(home, cccc_web::WebMode::Normal)
+        .oneshot(
+            Request::get("/api/v1/groups/g_1/assistants/voice_secretary/transcriptions/ws")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    // The request reaches the socket route and is refused for its missing upgrade header.
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    assert!(String::from_utf8_lossy(&body).contains("upgrade"));
 }
 
 #[tokio::test]

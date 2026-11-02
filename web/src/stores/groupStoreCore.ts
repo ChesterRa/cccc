@@ -38,6 +38,8 @@ export type ChatWindowState = {
   events: LedgerEvent[];
   hasMoreBefore: boolean;
   hasMoreAfter: boolean;
+  isLoadingAfter?: boolean;
+  afterError?: boolean;
 };
 
 export type GroupChatBucket = {

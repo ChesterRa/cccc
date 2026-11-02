@@ -178,6 +178,28 @@ it("keeps the latest action outside the log and reports capped unread messages",
   expect(host.querySelector("[data-scroll-latest]")).toBeNull();
 });
 
+it("hands a context's latest button to its owner instead of loading a page", async () => {
+  logHeights(1000);
+  const input = props();
+  const onReachedContextEnd = vi.fn();
+  await act(async () =>
+    root.render(
+      <VirtualMessageList {...input} contextWindow onReachedContextEnd={onReachedContextEnd} />,
+    ),
+  );
+  mocks.scroll.mockClear();
+  const button = host.querySelector<HTMLButtonElement>("[data-scroll-latest]")!;
+  const log = host.querySelector<HTMLElement>('[role="log"]')!;
+  await act(async () => button.focus());
+  await act(async () =>
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })),
+  );
+  expect(document.activeElement).toBe(log);
+  expect(input.onScrollButtonClick).toHaveBeenCalledOnce();
+  expect(mocks.scroll).not.toHaveBeenCalled();
+  expect(onReachedContextEnd).not.toHaveBeenCalled();
+});
+
 it("saves no place for a view that was only looked at, and saves its view once acted in", async () => {
   const onScrollSnapshot = vi.fn();
   await act(async () =>

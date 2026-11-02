@@ -14,6 +14,7 @@ export type PendingPrependCompensation = {
   anchorId: string;
   anchorOffsetPx: number;
   anchorTop: number | null;
+  kind?: "append";
 };
 
 export function shouldTriggerTopHistoryLoad(input: {
@@ -293,7 +294,10 @@ export function useTopHistoryLoadCoordinator(input: {
       // page loads. Track where they are now, otherwise the compensation would
       // snap back to the position captured when the load was triggered.
       if (compensation.pendingRef.current) {
-        compensation.begin(capturePendingCompensation(params.scrollTop));
+        compensation.begin({
+          ...capturePendingCompensation(params.scrollTop),
+          kind: compensation.pendingRef.current.kind,
+        });
         return false;
       }
 
@@ -343,6 +347,11 @@ export function useTopHistoryLoadCoordinator(input: {
         return true;
       }
 
+      if (pending.kind === "append") {
+        compensation.scrollToOffset(pending.previousOffset);
+        compensation.scheduleAnchorCorrection(pending.anchorId, pending.anchorTop);
+        return true;
+      }
       const nextTotalSize = getCurrentContentSize();
       const delta = Math.max(0, nextTotalSize - pending.previousTotalSize);
       if (delta <= 0) {

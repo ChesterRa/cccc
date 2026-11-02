@@ -31,17 +31,21 @@ function messageRowId(target: EventTarget | null): string {
 export function useReadingEngagement(parentRef: RefObject<HTMLElement | null>) {
   const engagedRef = useRef(false);
   const touchedIdRef = useRef("");
+  const scrollIntentAtRef = useRef(0);
+  const scrollIntentStartTopRef = useRef(0);
+  const scrollIntentIdRef = useRef(0);
   useEffect(() => {
     const el = parentRef.current;
     if (!el) return undefined;
     let lastTabAt = 0;
-    let scrollIntentAt = 0;
     const engage = () => {
       engagedRef.current = true;
     };
     const intendScroll = () => {
       engage();
-      scrollIntentAt = Date.now();
+      scrollIntentAtRef.current = Date.now();
+      scrollIntentStartTopRef.current = el.scrollTop;
+      scrollIntentIdRef.current += 1;
     };
     const touch = (event: Event) => {
       engage();
@@ -54,12 +58,13 @@ export function useReadingEngagement(parentRef: RefObject<HTMLElement | null>) {
     // from a focused button, then scrolls it and clears that touch like any other scroll.
     const onKeyDown = (event: KeyboardEvent) => {
       touch(event);
-      if (SCROLL_KEYS.has(event.key) && !isEditable(event.target)) scrollIntentAt = Date.now();
+      if (SCROLL_KEYS.has(event.key) && !isEditable(event.target)) intendScroll();
     };
     // Once the reader scrolls the list, the message they touched gives way to the middle one.
     // A wheel inside a message's own scroller moves nothing here and keeps it.
     const onScroll = () => {
-      if (Date.now() - scrollIntentAt <= SCROLL_INTENT_WINDOW_MS) touchedIdRef.current = "";
+      if (Date.now() - scrollIntentAtRef.current <= SCROLL_INTENT_WINDOW_MS)
+        touchedIdRef.current = "";
     };
     const noteTab = (event: KeyboardEvent) => {
       if (event.key === "Tab") lastTabAt = Date.now();
@@ -84,7 +89,13 @@ export function useReadingEngagement(parentRef: RefObject<HTMLElement | null>) {
       document.removeEventListener("keydown", noteTab, true);
     };
   }, [parentRef]);
-  return { engagedRef, touchedIdRef };
+  return {
+    engagedRef,
+    touchedIdRef,
+    scrollIntentAtRef,
+    scrollIntentStartTopRef,
+    scrollIntentIdRef,
+  };
 }
 
 export type ReadingFocus = {

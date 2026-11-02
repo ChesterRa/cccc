@@ -94,6 +94,12 @@ impl Session {
         let (program, args) = prepared_command
             .split_first()
             .ok_or(RuntimeError::EmptyCommand)?;
+        let working_directory = crate::compatible_path(&cwd);
+        if crate::executable::runs_cmd_in_prefixed_directory(&prepared_command, working_directory) {
+            return Err(RuntimeError::CmdInPrefixedDirectory(
+                spec.cwd.display().to_string(),
+            ));
+        }
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: spec.rows.max(1),
@@ -104,7 +110,7 @@ impl Session {
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let mut command = CommandBuilder::new(program);
         command.args(args);
-        command.cwd(crate::compatible_path(&cwd));
+        command.cwd(working_directory);
         for (key, value) in spec.env {
             command.env(key, value);
         }

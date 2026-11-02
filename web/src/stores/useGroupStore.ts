@@ -34,6 +34,7 @@ import {
   saveGroupView,
   saveSelectedGroupId,
   beginGroupRequestEpoch,
+  chatWindowRequestEpochByGroup,
   settingsRequestEpochByGroup,
   updateObligationAtIndex,
   updateReadThroughIndex,
@@ -213,6 +214,12 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       // so marking actors as hydrating here would leave recipient chips disabled.
       if (gid && statePrevGid === gid) return state;
 
+      // A pending newer-context page belongs to this visit; a late response must not
+      // update the old window after switching away and back.
+      const previousWindow = state.chatByGroup[statePrevGid]?.chatWindow;
+      if (statePrevGid && statePrevGid !== gid && previousWindow?.isLoadingAfter) {
+        beginGroupRequestEpoch(chatWindowRequestEpochByGroup, statePrevGid);
+      }
       // Cache the current view before switching groups so returning to it is instant.
       if (statePrevGid && statePrevGid !== gid) {
         saveCurrentViewSnapshot(statePrevGid, state);
@@ -232,7 +239,17 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         };
       }
 
-      const nextChatByGroup = ensureGroupChatBucket(state.chatByGroup, gid);
+      let nextChatByGroup = ensureGroupChatBucket(state.chatByGroup, gid);
+      const previous = nextChatByGroup[statePrevGid];
+      if (statePrevGid !== gid && previous?.chatWindow?.isLoadingAfter) {
+        nextChatByGroup = {
+          ...nextChatByGroup,
+          [statePrevGid]: {
+            ...previous,
+            chatWindow: { ...previous.chatWindow, isLoadingAfter: false },
+          },
+        };
+      }
       return {
         selectedGroupId: gid,
         chatByGroup: nextChatByGroup,

@@ -58,6 +58,9 @@ function GraphicViewport(graphic: Graphic) {
     moved: boolean;
   } | null>(null);
   const lastTap = useRef<{ at: number; point: Point } | null>(null);
+  // The synthesized click follows pointerup on touch devices. Keep the overlay mounted until
+  // it can consume that click, otherwise the click can activate whatever lies underneath.
+  const blankClickPending = useRef(false);
   const pendingWheelScale = useRef<number | null>(null);
   const pinch = useRef<{ distance: number; scale: number; content: Point } | null>(null);
   const geometry = useRef({ scale, fitted, left, top });
@@ -254,6 +257,7 @@ function GraphicViewport(graphic: Graphic) {
             }
           }}
           onPointerDown={(event) => {
+            blankClickPending.current = false;
             if (
               event.button !== 0 ||
               (!ready && !graphic.onBlankClick) ||
@@ -355,7 +359,7 @@ function GraphicViewport(graphic: Graphic) {
             if (active.moved || pointers.current.size) return;
             if (!active.image) {
               lastTap.current = null;
-              graphic.onBlankClick?.();
+              blankClickPending.current = !!graphic.onBlankClick;
               return;
             }
             if (!ready) return;
@@ -379,7 +383,15 @@ function GraphicViewport(graphic: Graphic) {
               toggleAt(point);
             }
           }}
+          onClick={(event) => {
+            if (!blankClickPending.current) return;
+            blankClickPending.current = false;
+            event.preventDefault();
+            event.stopPropagation();
+            graphic.onBlankClick?.();
+          }}
           onPointerCancel={(event) => {
+            blankClickPending.current = false;
             pointers.current.delete(event.pointerId);
             pinch.current = null;
             gesture.current = null;

@@ -72,7 +72,7 @@ impl ProcView {
         if pid <= 0 {
             return Err(invalid("invalid process id"));
         }
-        let stat = parse_process_stat(&self.read(&format!("{pid}/stat"))?)?;
+        let stat = parse_process_stat(&self.read_bytes(&format!("{pid}/stat"))?)?;
         if stat.pid != pid {
             return Err(invalid("process row does not match requested pid"));
         }
@@ -267,7 +267,7 @@ impl ProcView {
         for pid in pids {
             let before = match self.process(pid) {
                 Ok(stat) => stat,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) if process_gone(&error) => continue,
                 Err(_) => {
                     uncertain = true;
                     continue;
@@ -294,7 +294,7 @@ impl ProcView {
             };
             let stat = match self.process(pid) {
                 Ok(stat) => stat,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) if process_gone(&error) => continue,
                 Err(_) => {
                     uncertain = true;
                     continue;
@@ -332,6 +332,11 @@ impl ProcView {
     }
 
     fn read(&self, path: &str) -> io::Result<String> {
+        String::from_utf8(self.read_bytes(path)?)
+            .map_err(|_| invalid("process evidence is not UTF-8"))
+    }
+
+    fn read_bytes(&self, path: &str) -> io::Result<Vec<u8>> {
         let fd = openat(
             &self.root,
             path,
@@ -345,7 +350,7 @@ impl ProcView {
         if bytes.len() as u64 > MAX_PROC_READ {
             return Err(invalid("process evidence exceeds size limit"));
         }
-        String::from_utf8(bytes).map_err(|_| invalid("process evidence is not UTF-8"))
+        Ok(bytes)
     }
 }
 
@@ -447,20 +452,32 @@ fn parse_boot_id(text: &str) -> io::Result<String> {
     Ok(id.to_ascii_lowercase())
 }
 
-fn parse_process_stat(text: &str) -> io::Result<ProcessStat> {
-    let (pid, rest) = text
-        .split_once('(')
+/// A process that exits between opening and reading its row reports ESRCH.
+fn process_gone(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+        || error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error())
+}
+
+/// The name between the parentheses is raw bytes: the kernel keeps 15 of them,
+/// which can end inside a UTF-8 character. Only the fields around it are read.
+fn parse_process_stat(bytes: &[u8]) -> io::Result<ProcessStat> {
+    let open = bytes
+        .iter()
+        .position(|byte| *byte == b'(')
         .ok_or_else(|| invalid("invalid process stat"))?;
-    let end = rest
-        .rfind(')')
+    let close = bytes
+        .iter()
+        .rposition(|byte| *byte == b')')
+        .filter(|close| *close > open)
         .ok_or_else(|| invalid("invalid process stat name"))?;
-    let pid = pid
-        .trim()
-        .parse::<i32>()
+    let pid = std::str::from_utf8(&bytes[..open])
         .ok()
+        .and_then(|pid| pid.trim().parse::<i32>().ok())
         .filter(|pid| *pid > 0)
         .ok_or_else(|| invalid("invalid process stat pid"))?;
-    let fields = rest[end + 1..].split_whitespace().collect::<Vec<_>>();
+    let rest = std::str::from_utf8(&bytes[close + 1..])
+        .map_err(|_| invalid("invalid process stat fields"))?;
+    let fields = rest.split_whitespace().collect::<Vec<_>>();
     let state = fields
         .first()
         .and_then(|state| {
@@ -538,11 +555,14 @@ mod tests {
     #[test]
     fn parsers_reject_ambiguous_rows_and_accept_names_with_parentheses() {
         let stat = parse_process_stat(
-            "55 (a ) tricky (name)) S 10 55 55 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1234 0",
+            b"55 (a ) tricky (name)) S 10 55 55 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1234 0",
         )
         .expect("valid stat");
         assert_eq!((stat.pid, stat.group, stat.start_ticks), (55, 55, 1234));
-        assert!(parse_process_stat("55 (bad) S 1 55").is_err());
+        assert!(parse_process_stat(b"55 (bad) S 1 55").is_err());
+        let cut = b"55 (run_\xe3\x83\x86\xe3\x82) S 10 55 55 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1234 0";
+        let stat = parse_process_stat(cut).expect("a name cut inside a character");
+        assert_eq!((stat.pid, stat.group, stat.start_ticks), (55, 55, 1234));
         assert_eq!(
             parse_pidfd_pid("pos:\t0\nPid:\t55\n").expect("pidfd pid"),
             55
@@ -551,6 +571,63 @@ mod tests {
             assert!(parse_pidfd_pid(text).is_err());
         }
         assert!(parse_boot_id("not a boot id").is_err());
+    }
+
+    #[test]
+    fn a_name_cut_inside_a_character_does_not_block_member_signals() {
+        // The kernel keeps 15 bytes of an executable's name, which can end inside a
+        // UTF-8 character. Such a process elsewhere on the host does not make an
+        // unrelated group unverifiable.
+        struct Reap(std::process::Child);
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let view = ProcView::open().expect("local procfs");
+        let directory = tempfile::tempdir().expect("tempdir");
+        let program = directory.path().join("run_テストサーバー");
+        std::fs::copy("/bin/sleep", &program).expect("copy sleep");
+        let other = Reap(Command::new(&program).arg("60").spawn().expect("cut name"));
+        let other_pid = other.0.id() as i32;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !std::fs::read(format!("/proc/{other_pid}/comm"))
+            .is_ok_and(|name| name.starts_with(b"run_"))
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "renamed process did not start"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(std::fs::read_to_string(format!("/proc/{other_pid}/comm")).is_err());
+        let leader = Reap(
+            Command::new("/bin/sleep")
+                .arg("60")
+                .process_group(0)
+                .spawn()
+                .expect("fixture leader"),
+        );
+        let pgid = leader.0.id() as i32;
+        let leader_fd = pidfd_open(
+            Pid::from_raw(pgid).expect("leader pid"),
+            PidfdFlags::empty(),
+        )
+        .expect("pin fixture leader");
+        view.signal_members_in(pgid, &leader_fd, Signal::CONT, vec![other_pid, pgid])
+            .expect("an unrelated cut name leaves the group verifiable");
+    }
+
+    #[test]
+    fn a_process_that_ends_while_its_row_is_read_is_gone() {
+        assert!(process_gone(&io::Error::from_raw_os_error(
+            rustix::io::Errno::SRCH.raw_os_error()
+        )));
+        assert!(process_gone(&io::Error::from(io::ErrorKind::NotFound)));
+        assert!(!process_gone(&io::Error::from(
+            io::ErrorKind::PermissionDenied
+        )));
     }
 
     #[test]

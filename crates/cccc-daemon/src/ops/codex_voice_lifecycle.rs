@@ -222,6 +222,7 @@ impl AnalystLifecycle {
             .iter()
             .chain(state.native_pending.iter())
             .map(|item| item.delegation_id.clone())
+            .chain(state.queue.iter().map(|input| input.delegation_id.clone()))
             .collect();
         let working = state
             .active
@@ -237,7 +238,17 @@ impl AnalystLifecycle {
         state.pending = None;
         state.settled_pending = None;
         state.native_pending.clear();
-        state.queue.clear();
+        // Queued inputs never reached the Runtime: say so, as a cancel does.
+        let queued = state.queue.drain(..).collect::<Vec<_>>();
+        for input in queued {
+            self.complete_unadmitted_input(
+                &input.delegation_id,
+                input.origin,
+                "cancelled",
+                "",
+                AnalystCompletionSource::HostNotStarted,
+            );
+        }
         self.queue_len
             .store(0, std::sync::atomic::Ordering::Release);
         state.invalidated = true;

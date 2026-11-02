@@ -496,7 +496,7 @@ fn read_recovery_watch_lists(ledger: &Path) -> io::Result<(Vec<Record>, Vec<Path
                 io::Error::new(
                     error.kind(),
                     format!(
-                        "cannot read Web process watch list {}: {:?}",
+                        "cannot read process watch list {}: {:?}; review it with `cccc daemon process-recovery`",
                         name.escape_debug(),
                         error.kind()
                     ),
@@ -506,7 +506,10 @@ fn read_recovery_watch_lists(ledger: &Path) -> io::Result<(Vec<Record>, Vec<Path
             parse_watch_text(&text, entry.file_name().as_bytes()).map_err(|_| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("invalid Web process watch list {}", name.escape_debug()),
+                    format!(
+                        "invalid process watch list {}; review it with `cccc daemon process-recovery`",
+                        name.escape_debug()
+                    ),
                 )
             })?,
         );
@@ -1378,15 +1381,34 @@ fn write_watch_list_at(path: &Path, groups: &[OwnedGroup], observed_at: u64) -> 
 }
 
 fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    publish_atomically(path, |file| file.write_all(bytes))
+}
+
+/// `create_new` makes the temporary file this call's own. If writing it fails
+/// (a full disk, for example), it holds no complete evidence and would stop the
+/// next owner as unreadable, so it is removed; this process keeps its state and
+/// publishes again. A complete file whose rename fails stays as evidence, and
+/// files left by an earlier interrupted owner are never touched here.
+fn publish_atomically(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
     let mut temporary = path.as_os_str().to_owned();
     temporary.push(format!(".tmp.{}", uuid::Uuid::new_v4()));
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)?;
-    file.write_all(bytes)?;
-    file.flush()?;
+    let written = write(&mut file).and_then(|()| file.flush());
     drop(file);
+    if let Err(error) = written {
+        if let Err(cleanup) = std::fs::remove_file(&temporary) {
+            crate::diagnostic(format_args!(
+                "could not remove an unfinished process guard file: {cleanup}"
+            ));
+        }
+        return Err(error);
+    }
     std::fs::rename(temporary, path)
 }
 
@@ -1663,7 +1685,6 @@ fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
         .collect()
 }
 
-#[cfg(target_os = "linux")]
 fn leader_and_group_absent(pgid: i32) -> bool {
     // A leader can leave its original process group and later recreate it.
     // An empty PGID alone therefore does not establish that the leader ended.
@@ -1679,16 +1700,29 @@ fn leader_and_group_absent(pgid: i32) -> bool {
 
 #[cfg(not(target_os = "linux"))]
 fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
-    records
-        .into_iter()
-        .filter(|record| {
-            !matches!(
-                record,
-                Record::ProcessGroup(group)
-                    if group.evidence == GroupEvidence::Legacy && group_absent(group.pgid)
-            )
-        })
-        .collect()
+    records.into_iter().filter(keep_without_identity).collect()
+}
+
+/// Where no stronger identity is captured, records are released without
+/// signalling. A group this version recorded on this host is released only once
+/// its leader and its group have both ended; a record in the earlier format,
+/// once its group has ended, as that version did. A launch intent, a record with
+/// a Linux identity this platform cannot check, or a leader or group still
+/// present keeps the record for review; a reused number does the same, which is
+/// the conservative outcome.
+#[cfg(any(test, not(target_os = "linux")))]
+fn keep_without_identity(record: &Record) -> bool {
+    match record {
+        Record::ProcessGroup(group) if group.evidence == GroupEvidence::Legacy => {
+            !group_absent(group.pgid)
+        }
+        Record::ProcessGroup(group)
+            if group.evidence == GroupEvidence::Unconfirmed && group.origin.is_none() =>
+        {
+            !leader_and_group_absent(group.pgid)
+        }
+        _ => true,
+    }
 }
 
 fn group_absent(pgid: i32) -> bool {

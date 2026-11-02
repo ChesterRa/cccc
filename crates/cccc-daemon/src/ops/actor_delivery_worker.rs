@@ -233,7 +233,10 @@ fn process_external_batch(
                 "actor_id":actor.id,
                 "role":cccc_core::actors::effective_role(&group, &actor.id),
                 "scope_key":scope.map(|scope| &scope.scope_key),
-                "scope_root":scope.map(|scope| &scope.url),
+                // Shown in the same spelling as the startup prompt's workspace.
+                "scope_root":scope.map(|scope| {
+                    cccc_runtime::compatible_path(std::path::Path::new(&scope.url))
+                }),
             });
             text = format!("[CCCC] Receiving context: {context}\n\n{text}");
         }

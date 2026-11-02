@@ -101,7 +101,7 @@ Reordering or archiving Groups does not move an existing selection.
 
 ### Group message and terminal views
 
-Use **Connect sessions**, beside the **Working Groups** heading in the sidebar, to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
+Use **Connect sessions**, beside or just below the **Working Groups** heading in the sidebar, to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups
@@ -264,6 +264,15 @@ Sending keeps the filters. If they hide the sent message, a confirmation offers
 **View message**, including cross-Group sends; the action returns to the originating
 Group even if you have switched Groups. **View context**, in a filtered message's **⋯** menu, opens
 its surrounding conversation; returning to the conversation restores the filters.
+
+Opening a message from a notification, a link or search shows it in the live conversation when it
+is already loaded and no filter is on; new messages keep arriving as usual. Otherwise **Viewing a
+message** shows it with the messages around it. Scrolling down past the end, or **Load newer
+messages**, loads the messages that follow, and scrolling on from the newest returns to the live
+conversation when no filter is on. Earlier messages cannot be loaded in that view. **Return to
+latest** at the top leaves it at any time, and the floating **Back to latest** button, when shown,
+also leaves it. With a filter on, the top button reads **Back to filtered conversation**, and both
+return to the filtered conversation.
 
 Message search shows the current Group name and Actor display names. Enter or **Search** submits the keywords; changing a filter reruns the submitted query. Typing new keywords does not change existing highlights or pagination until you submit again. Initial guidance, loading, no matches and failed requests are separate states. **Open** returns to the message context; reply and copying the event ID remain available.
 
@@ -456,8 +465,9 @@ finished; if the outcome cannot be confirmed, Chet says so and does not automati
 Voice transcripts record what this browser received and can be incomplete. There is no history-clear
 action in this version.
 
-Written results can include an expandable **Voice request**: this is Chet's task wording, not a
-verbatim quotation of your speech. Adjacent saved Chet voice transcripts from the same call are
+Spoken entries carry a voice icon instead of a text label. A written result for a voice request shows
+the same icon, with an arrow, after its time; it expands the **Voice request**, Chet's task wording
+rather than a verbatim quotation of your speech. Adjacent saved Chet voice transcripts from the same call are
 grouped in an expandable row. The most recent loaded group for an active call starts open unless
 you change it; other groups show a preview. A folded group is marked if any transcript is unfinished
 or incomplete. While available, live transcripts and warnings that a transcript was not saved or
@@ -791,8 +801,9 @@ notice stops Chet. Provider receipts confirm receipt, not that every detail was 
 Realtime Call and the Chet Runtime have separate lifecycles. Stopping voice disconnects browser audio
 and releases the microphone lease, but keeps Chet warm. Ongoing Chet or linked
 Actor work continues. Completed Chet results are retained without waking audio. Actor replies
-arriving while voice is off stay in the ledger and are consumed on the next explicit call; they do
-not start notification model work in the background. A later call reuses the warm
+arriving while voice is off stay in the Group's chat and ledger, and do not start notification model
+work in the background. Chet looks for correlated replies only during an assistant call, and handling
+them is not guaranteed. A later call reuses the warm
 Chet session. If the selected Runtime supports a native TUI, Activity embeds it for that same
 session; otherwise Activity shows structured output. It stays available after the call stops and does
 not create an Actor or a second session. Codex creates its resumable rollout lazily, so its terminal appears when the first real
@@ -1274,12 +1285,15 @@ basis, CCCC releases records from an earlier boot without signalling anything
 when it can identify that boot; this does not prove that remote requests ended.
 
 On Linux, cleanup prefers the strongest process identity the system offers and
-keeps records it cannot confirm for review; some systems still need
-approximate matching, which can misjudge. On macOS, the crash watchdog still
-judges processes approximately, by process group number and start time to the
-second: a reused number, or the gap between that check and the signal, could
-stop another process by mistake. How often this happens is unknown; earlier
-versions behave the same way.
+keeps records it cannot confirm for review; some systems still need approximate
+matching, which can misjudge. On macOS, the crash watchdog still judges
+processes approximately, by process group number and start time to the second: a
+reused number, or the gap between that check and the signal, could stop another
+process by mistake. How often this happens is unknown; earlier versions behave
+the same way. At the next start, CCCC on macOS signals nothing: it releases a
+record from this version once its process and its process group have both ended,
+or a record from an earlier version once its process group has ended, and keeps
+the others for review.
 
 For the default local app flow, prefer restarting from the owning `cccc` session itself: `Ctrl+C` to stop the whole app, then run `cccc` again. That keeps daemon and Web on the same fresh code/runtime.
 

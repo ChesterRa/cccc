@@ -97,6 +97,10 @@ pub enum RuntimeError {
     NotFound(String, String),
     #[error("runtime command is empty")]
     EmptyCommand,
+    #[error(
+        "cmd.exe cannot run in {0}: it cannot use a UNC path, or a path that needs the \\\\?\\ prefix, as its current directory, and would start in the Windows directory or not at all. Use a workspace on a local disk with an ordinary path, or a program that does not start through cmd.exe"
+    )]
+    CmdInPrefixedDirectory(String),
     #[error("runtime session is not running: {0}/{1}")]
     NotRunning(String, String),
     #[error(

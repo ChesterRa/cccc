@@ -728,6 +728,82 @@ export function createGroupStoreAsyncActions(
       }
     },
 
+    loadMoreChatWindowAfter: async (groupId: string) => {
+      const gid = String(groupId || "").trim();
+      const original = get().chatByGroup[gid]?.chatWindow;
+      const tailId = String(original?.events.at(-1)?.id || "").trim();
+      if (!gid || !original || !original.hasMoreAfter || original.isLoadingAfter || !tailId) return;
+      const centerId = original.centerEventId;
+      const epoch = beginGroupRequestEpoch(chatWindowRequestEpochByGroup, gid);
+      const currentWindow = (state: GroupState) => {
+        const current = state.chatByGroup[gid]?.chatWindow;
+        return isLatestGroupRequestEpoch(chatWindowRequestEpochByGroup, gid, epoch) &&
+          current?.centerEventId === centerId &&
+          current.events.at(-1)?.id === tailId
+          ? current
+          : null;
+      };
+      set((state) => {
+        const current = currentWindow(state);
+        return current
+          ? (buildChatBucketPatch(state, gid, {
+              chatWindow: { ...current, isLoadingAfter: true, afterError: false },
+            }) ?? state)
+          : state;
+      });
+      try {
+        const response = await api.fetchMessageWindow(gid, tailId, { before: 0, after: 50 });
+        if (
+          !response.ok ||
+          response.result.center_id !== tailId ||
+          typeof response.result.has_more_after !== "boolean" ||
+          !Array.isArray(response.result.events)
+        )
+          throw new Error("invalid context page");
+        const events = projectFetchedChatEvents(response.result.events);
+        if (events[0]?.id !== tailId || (response.result.has_more_after && events.length <= 1))
+          throw new Error("invalid context page");
+        set((state) => {
+          const current = currentWindow(state);
+          if (!current) return state;
+          const ids = new Set(current.events.map((event) => event.id));
+          const newer = events.slice(1);
+          const duplicate = newer.some((event) => {
+            if (!event.id || ids.has(event.id)) return true;
+            ids.add(event.id);
+            return false;
+          });
+          if (duplicate) {
+            return (
+              buildChatBucketPatch(state, gid, {
+                chatWindow: { ...current, isLoadingAfter: false, afterError: true },
+              }) ?? state
+            );
+          }
+          return (
+            buildChatBucketPatch(state, gid, {
+              chatWindow: {
+                ...current,
+                events: [...current.events, ...newer],
+                hasMoreAfter: response.result.has_more_after,
+                isLoadingAfter: false,
+                afterError: false,
+              },
+            }) ?? state
+          );
+        });
+      } catch {
+        set((state) => {
+          const current = currentWindow(state);
+          return current
+            ? (buildChatBucketPatch(state, gid, {
+                chatWindow: { ...current, isLoadingAfter: false, afterError: true },
+              }) ?? state)
+            : state;
+        });
+      }
+    },
+
     closeChatWindow: (groupId?: string) =>
       set((state) => {
         const gid = String(groupId || state.selectedGroupId || "").trim();

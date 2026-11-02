@@ -73,6 +73,22 @@ pub(super) fn wrap_resolved_command(
     prepared
 }
 
+/// cmd.exe cannot use a UNC path, or a path that needs the `\\?\` prefix, as
+/// its current directory: it warns and runs in the Windows directory, or Windows
+/// refuses the directory. This holds when cmd.exe is the command and when it
+/// runs a batch shim. A ComSpec naming another command processor is not judged.
+pub(super) fn runs_cmd_in_prefixed_directory(
+    prepared_command: &[String],
+    cwd: &Path,
+    windows: bool,
+) -> bool {
+    let runs_cmd = prepared_command.first().is_some_and(|program| {
+        let name = program.rsplit(['\\', '/']).next().unwrap_or_default();
+        name.eq_ignore_ascii_case("cmd.exe") || name.eq_ignore_ascii_case("cmd")
+    });
+    windows && runs_cmd && cwd.to_string_lossy().starts_with(r"\\")
+}
+
 fn escape_batch_argument(argument: &str) -> String {
     if argument.is_empty() {
         return String::new();

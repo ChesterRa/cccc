@@ -217,6 +217,127 @@ fn incomplete_ledger_temporary_blocks_recovery_and_remains_unchanged() {
 }
 
 #[test]
+fn a_failed_write_removes_only_its_own_unfinished_file() {
+    // A full disk must not leave an unreadable file that stops the next owner.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("owned.json");
+    let earlier = temp.path().join("owned.json.tmp");
+    std::fs::write(&path, b"[]").expect("committed ledger");
+    std::fs::write(&earlier, b"[{\"pgid\":400").expect("earlier interrupted publication");
+    let error = publish_atomically(&path, |file| {
+        file.write_all(b"[{\"pgid\":")?;
+        Err(io::Error::other("disk full"))
+    })
+    .expect_err("the write fails");
+    assert_eq!(error.to_string(), "disk full");
+    let mut names = std::fs::read_dir(temp.path())
+        .expect("ledger directory")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["owned.json", "owned.json.tmp"]);
+    assert_eq!(
+        std::fs::read(&earlier).expect("earlier evidence"),
+        b"[{\"pgid\":400"
+    );
+    assert_eq!(std::fs::read(&path).expect("committed ledger"), b"[]");
+}
+
+#[test]
+fn a_complete_file_whose_rename_fails_stays_as_evidence() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let path = temp.path().join("owned.json");
+    // A nonempty directory in the ledger's place makes the rename fail.
+    std::fs::create_dir(&path).expect("blocking directory");
+    std::fs::write(path.join("keep"), b"").expect("nonempty directory");
+    write_ledger_atomically(&path, b"[]").expect_err("rename fails");
+    let kept = std::fs::read_dir(temp.path())
+        .expect("ledger directory")
+        .map(|entry| entry.expect("entry").path())
+        .filter(|candidate| candidate != &path)
+        .collect::<Vec<_>>();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(
+        std::fs::read(&kept[0]).expect("complete publication"),
+        b"[]"
+    );
+}
+
+fn unconfirmed_record(pgid: i32, origin: Option<Origin>) -> Record {
+    Record::ProcessGroup(GroupRecord {
+        id: uuid::Uuid::new_v4(),
+        source_id: None,
+        pgid,
+        spawned_at: 100,
+        observed_at: 130,
+        origin,
+        evidence: GroupEvidence::Unconfirmed,
+    })
+}
+
+#[test]
+fn without_identity_only_an_ended_leader_and_group_release_a_record() {
+    // The policy for platforms without a stronger identity, such as macOS.
+    let mut ended = Command::new("/bin/sleep")
+        .arg("60")
+        .process_group(0)
+        .spawn()
+        .expect("ended fixture");
+    let ended_pid = ended.id() as i32;
+    ended.kill().expect("end fixture");
+    ended.wait().expect("reap fixture");
+    assert!(!keep_without_identity(&unconfirmed_record(ended_pid, None)));
+
+    // A leader outside the group its number names: the group is gone, the leader is not.
+    let outside = KillOnDrop(
+        Command::new("/bin/sleep")
+            .arg("60")
+            .spawn()
+            .expect("leader outside its group"),
+    );
+    let outside_pid = outside.0.id() as i32;
+    assert!(group_absent(outside_pid));
+    assert!(keep_without_identity(&unconfirmed_record(
+        outside_pid,
+        None
+    )));
+
+    let running = KillOnDrop(
+        Command::new("/bin/sleep")
+            .arg("60")
+            .process_group(0)
+            .spawn()
+            .expect("running group"),
+    );
+    assert!(keep_without_identity(&unconfirmed_record(
+        running.0.id() as i32,
+        None
+    )));
+
+    let elsewhere = Origin {
+        boot_id: "00000000-0000-4000-8000-000000000000".into(),
+        pid_namespace: 1,
+        time_namespace: None,
+    };
+    assert!(keep_without_identity(&unconfirmed_record(
+        ended_pid,
+        Some(elsewhere)
+    )));
+    assert!(keep_without_identity(&Record::LaunchIntent(LaunchIntent {
+        id: uuid::Uuid::new_v4(),
+        source_id: None,
+        created_at: 100,
+        origin: None,
+    })));
+}
+
+#[test]
 fn replaying_the_same_legacy_source_does_not_duplicate_its_record() {
     let temp = tempfile::tempdir().expect("tempdir");
     let path = temp.path().join("owned.json");
