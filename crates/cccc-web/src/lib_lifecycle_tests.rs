@@ -41,6 +41,76 @@ async fn windows_reserved_port_retries_with_zero_and_returns_the_effective_liste
     );
     assert!(listener.local_addr().expect("effective address").port() > 0);
 }
+
+#[tokio::test]
+async fn occupied_requested_web_port_suggests_how_to_choose_another() {
+    use std::io;
+
+    for windows in [false, true] {
+        let error = web_listener::bind_web_listener_with(
+            "127.0.0.1",
+            8448,
+            windows,
+            |_host, _port| async {
+                Err(io::Error::new(io::ErrorKind::AddrInUse, "occupied fixture"))
+            },
+        )
+        .await
+        .expect_err("occupied requested port");
+        let message = error.to_string();
+        assert!(message.contains("127.0.0.1"), "{message}");
+        assert!(message.contains("8448"), "{message}");
+        assert!(
+            message.contains("for `cccc`, use `--port <port>`"),
+            "{message}"
+        );
+        assert!(format!("{error:?}").contains("occupied fixture"));
+        assert_eq!(
+            error.downcast_ref::<io::Error>().map(io::Error::kind),
+            Some(io::ErrorKind::AddrInUse)
+        );
+    }
+}
+
+#[tokio::test]
+async fn other_web_bind_failures_do_not_claim_the_requested_port_is_occupied() {
+    use std::io;
+
+    // Windows may deny the requested port and then fail while finding an ephemeral port.
+    let fallback =
+        web_listener::bind_web_listener_with("127.0.0.1", 8448, true, |_host, port| async move {
+            if port == 8448 {
+                Err(io::Error::from_raw_os_error(10013))
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    "no ephemeral port",
+                ))
+            }
+        })
+        .await
+        .expect_err("ephemeral fallback failed");
+    assert_eq!(fallback.to_string(), "no ephemeral port");
+    assert_eq!(
+        fallback.downcast_ref::<io::Error>().map(io::Error::kind),
+        Some(io::ErrorKind::AddrInUse)
+    );
+
+    for (port, kind, detail) in [
+        (0, io::ErrorKind::AddrInUse, "no ephemeral port"),
+        (8448, io::ErrorKind::PermissionDenied, "binding denied"),
+    ] {
+        let error = web_listener::bind_web_listener_with(
+            "127.0.0.1",
+            port,
+            false,
+            move |_host, _port| async move { Err(io::Error::new(kind, detail)) },
+        )
+        .await
+        .expect_err("fixture bind failure");
+        assert_eq!(error.to_string(), detail);
+    }
+}
 use futures_util::StreamExt;
 use tower::ServiceExt;
 

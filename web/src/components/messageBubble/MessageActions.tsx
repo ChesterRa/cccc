@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { LedgerEvent } from "../../types";
 import { CopyIcon, MoreHorizontalIcon, MoreIcon } from "../Icons";
 import { Button } from "../ui/button";
+import { classNames } from "../../utils/classNames";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 
 export interface MessageActionsProps {
@@ -16,13 +17,16 @@ export interface MessageActionsProps {
   canReply: boolean;
   eventId?: string;
   event: LedgerEvent;
+  /** Ready replies sent to the message's author in one choice; none where they do not apply. */
+  quickReplies?: MessageAction[];
 }
 
-type MessageAction = { key: string; label: string; run: () => void };
+export type MessageAction = { key: string; label: string; run: () => void };
+type MenuSection = { key: string; label?: string; actions: MessageAction[] };
 
 // Reply, Forward and Copy text stay on the hover bar, Copy text as an icon named by its
-// tooltip; Copy link, and the context jump a filter adds, wait in its overflow menu. Touch
-// screens list every action in one menu.
+// tooltip; quick replies, Copy link and the context jump a filter adds wait in its overflow
+// menu. Touch screens list every action in one menu.
 export function MessageActions(props: MessageActionsProps) {
   const { t } = useTranslation(["chat", "common"]);
   if (props.readOnly) return null;
@@ -46,7 +50,17 @@ export function MessageActions(props: MessageActionsProps) {
       label: t("viewMessageContext"),
       run: () => props.onViewContext?.(props.eventId!),
     });
-  if (!primary.length && !copy && !overflow.length) return null;
+  const quick: MenuSection[] = props.quickReplies?.length
+    ? [{ key: "quick", label: t("quickReply.menu"), actions: props.quickReplies }]
+    : [];
+  const more: MenuSection[] = overflow.length ? [{ key: "more", actions: overflow }] : [];
+  const barMenu = [...quick, ...more];
+  const touchMenu = [
+    { key: "main", actions: [...primary, ...(copy ? [copy] : [])] },
+    ...quick,
+    ...more,
+  ].filter((section) => section.actions.length > 0);
+  if (!touchMenu.length) return null;
   const align = props.event.by === "user" ? "end" : "start";
   return (
     <>
@@ -77,8 +91,8 @@ export function MessageActions(props: MessageActionsProps) {
             <CopyIcon size={14} aria-hidden="true" />
           </Button>
         ) : null}
-        {overflow.length ? (
-          <MessageActionMenu actions={overflow} align={align} label={t("messageActions")}>
+        {barMenu.length ? (
+          <MessageActionMenu sections={barMenu} align={align} label={t("messageActions")}>
             <Button
               variant="ghost"
               size="sm"
@@ -92,11 +106,7 @@ export function MessageActions(props: MessageActionsProps) {
         ) : null}
       </div>
       <div className="message-actions-menu">
-        <MessageActionMenu
-          actions={[...primary, ...(copy ? [copy] : []), ...overflow]}
-          align={align}
-          label={t("messageActions")}
-        >
+        <MessageActionMenu sections={touchMenu} align={align} label={t("messageActions")}>
           <Button
             variant="ghost"
             size="sm"
@@ -113,12 +123,12 @@ export function MessageActions(props: MessageActionsProps) {
 }
 
 function MessageActionMenu({
-  actions,
+  sections,
   align,
   label,
   children,
 }: {
-  actions: MessageAction[];
+  sections: MenuSection[];
   align: "start" | "end";
   label: string;
   children: ReactNode;
@@ -140,23 +150,41 @@ function MessageActionMenu({
           }
         }}
       >
-        <div className="flex flex-col" role="group" aria-label={label}>
-          {actions.map((action) => (
-            <Button
-              key={action.key}
-              variant="ghost"
-              size="sm"
-              className="justify-start rounded-lg px-3"
-              onClick={() => {
-                replySelected.current = action.key === "reply";
-                setOpen(false);
-                action.run();
-              }}
-            >
-              {action.label}
-            </Button>
-          ))}
-        </div>
+        {sections.map((section, index) => (
+          <div
+            key={section.key}
+            className={classNames(
+              "flex flex-col",
+              index > 0 && "mt-1 border-t border-[var(--glass-border-subtle)] pt-1",
+            )}
+            role="group"
+            aria-label={section.label || label}
+          >
+            {section.label ? (
+              <div
+                className="px-3 pb-0.5 pt-1 text-xs text-[var(--color-text-muted)]"
+                aria-hidden="true"
+              >
+                {section.label}
+              </div>
+            ) : null}
+            {section.actions.map((action) => (
+              <Button
+                key={action.key}
+                variant="ghost"
+                size="sm"
+                className="justify-start rounded-lg px-3"
+                onClick={() => {
+                  replySelected.current = action.key === "reply";
+                  setOpen(false);
+                  action.run();
+                }}
+              >
+                {action.label}
+              </Button>
+            ))}
+          </div>
+        ))}
       </PopoverContent>
     </Popover>
   );

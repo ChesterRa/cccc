@@ -16,7 +16,7 @@ import {
 } from "../types";
 import { formatFullTime, formatMessageTimestamp } from "../utils/time";
 import { classNames } from "../utils/classNames";
-import { getReplyEventId } from "../utils/chatReply";
+import { buildReplyComposerState, getReplyEventId } from "../utils/chatReply";
 import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
 import { connectGroupLabel, isCrossInstanceInboundMessage } from "../utils/crossInstanceMessages";
 import { getPresentationMessageRefs } from "../utils/presentationRefs";
@@ -31,6 +31,12 @@ import {
 } from "./messageBubbleDelegation";
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageActions } from "./messageBubble/MessageActions";
+import {
+  QUICK_REPLY_KINDS,
+  sendQuickReply,
+  type QuickReplyKind,
+  type QuickReplyTarget,
+} from "./messageBubble/quickReplies";
 import { MessageFooter } from "./messageBubble/MessageBubbleChrome";
 import { withAuthToken } from "../services/api/base";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
@@ -602,6 +608,51 @@ export const MessageBubble = memo(
       });
     }, [copyWithFeedback, copyableMessageText, t]);
 
+    // A quick reply is a Reply sent at once. It is offered on a message from a current agent of
+    // this Group where Reply would address that agent alone, in this Group; Chet, IM users and
+    // other Groups or instances write under IDs that name no member. A message relayed from
+    // another Group, even by a member, one still being written and a question with its own
+    // answer card keep to the composer.
+    const quickReplyTarget = useMemo<QuickReplyTarget | null>(() => {
+      if (!senderActor || isStreaming || srcGroupId || msgData?.question) return null;
+      const reply = buildReplyComposerState(ev, groupId, actors, null, groupGeneration);
+      const target = reply?.replyTarget;
+      const author = String(ev.by || "");
+      if (!reply || !target || reply.toText !== author || target.remoteDstGroupId) return null;
+      return {
+        groupId: reply.destGroupId,
+        replyEventId: target.eventId,
+        to: [author],
+        quoteText: target.text,
+      };
+    }, [actors, ev, groupGeneration, groupId, isStreaming, msgData, senderActor, srcGroupId]);
+    const showNotice = useUIStore((state) => state.showNotice);
+    const quickReplies = useMemo(() => {
+      if (!quickReplyTarget) return undefined;
+      const send = async (kind: QuickReplyKind) => {
+        const label = t(`quickReply.${kind}`);
+        const result = await sendQuickReply(quickReplyTarget, kind, t(`quickReply.${kind}Text`));
+        if (result.status === "sent") {
+          showNotice({ message: t("quickReply.sent", { name: senderDisplayName, label }) });
+        } else if (result.status === "failed") {
+          // A retry from the notice reuses the client ID, even after this row has scrolled
+          // away and unmounted: the quick reply module keeps it until the reply is sent.
+          showNotice({
+            message: result.unknown
+              ? t("quickReply.unknown")
+              : t("quickReply.failed", { error: result.message }),
+            actionLabel: t("quickReply.retry"),
+            onAction: () => void send(kind),
+          });
+        }
+      };
+      return QUICK_REPLY_KINDS.map((kind) => ({
+        key: `quick-${kind}`,
+        label: t(`quickReply.${kind}`),
+        run: () => void send(kind),
+      }));
+    }, [quickReplyTarget, senderDisplayName, showNotice, t]);
+
     const routingMetadata = (
       <MessageRoutingMetadata
         toLabel={toLabel}
@@ -767,6 +818,7 @@ export const MessageBubble = memo(
             canReply={canReply}
             eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
             event={ev}
+            quickReplies={quickReplies}
           />
         </div>
         {agentStateTooltip}

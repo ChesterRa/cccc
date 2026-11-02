@@ -84,8 +84,8 @@ A reply shows up to two lines of the message it answers; clicking or tapping tha
 quote, or pressing Enter on it, opens the original message. On hover-capable desktop
 screens, **Reply**, **Forward** and a copy icon appear beside the message header on hover or
 keyboard focus, in the free space next to it, so nothing shifts; a long header wraps to leave
-them room. The icon copies the message content as the menu item did before. **Copy link** and
-other actions are in the **More** menu.
+them room. The icon copies the message content as the menu item did before. **Quick reply**,
+**Copy link** and other actions are in the **More** menu.
 Touch screens, narrow screens and reading columns too narrow for the actions beside the
 header list every action, including copying, in one **More** menu.
 Read-only views retain status information without exposing these actions. The composer groups recipients, text and tools into one surface.
@@ -1077,7 +1077,15 @@ For concrete delegated work that needs an owner, done criterion, evidence, hando
 
 ### Replying
 
-Click the reply icon on a message to quote and reply.
+Choose **Reply** on a message to quote it and reply in the composer.
+
+**Quick reply**, in the **More** menu of a message from one of the Group's agents, sends a ready
+reply at once without the composer: **Agree, go ahead**, **Explain why**, **Try another way** or
+**Give me choices**. It goes to that agent alone, quotes the message, and a notice confirms it.
+Chet's messages, messages from or sent to another Group or CCCC instance and
+questions answered in their own card have no quick replies; reply to them in the composer. When
+CCCC cannot confirm that a quick reply was sent, the notice says so and offers **Retry**; check
+the messages first, because a retry can send the reply twice.
 
 ## Project Context
 
