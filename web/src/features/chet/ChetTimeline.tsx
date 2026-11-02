@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDownIcon, VoiceWaveformIcon } from "../../components/Icons";
+import { ChevronDownIcon, MessageSquareQuoteIcon, VoiceWaveformIcon } from "../../components/Icons";
 import { LazyMarkdownRenderer } from "../../components/LazyMarkdownRenderer";
 import { Button } from "../../components/ui/button";
 import type { ChetTextRequest } from "../../services/api/chet";
@@ -89,11 +89,24 @@ function UserBlock({ meta, text, note }: { meta: ReactNode; text: string; note?:
   );
 }
 
+/** Chet's answer: the only entry with a rule, so it reads apart from what was said aloud. */
 function ChetBlock({ meta, children }: { meta: ReactNode; children: ReactNode }) {
   return (
-    <div className="min-w-0 border-l-2 border-[var(--color-text-secondary)] pl-3">
+    <div className="min-w-0 border-l-2 border-[var(--color-text-secondary)] pl-3" data-chet-answer>
       <Meta>{meta}</Meta>
       <div className="mt-0.5 min-w-0 break-words text-sm leading-6 text-[var(--color-text-primary)]">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** What Chet said aloud: a caption in the answer's column, without its rule or its ink. */
+function SpokenBlock({ meta, children }: { meta: ReactNode; children: ReactNode }) {
+  return (
+    <div className="min-w-0 pl-3.5" data-chet-spoken>
+      <Meta>{meta}</Meta>
+      <div className="mt-0.5 min-w-0 break-words text-sm leading-6 text-[var(--color-text-muted)]">
         {children}
       </div>
     </div>
@@ -290,24 +303,23 @@ function RequestEntry({
               <span className="font-semibold text-[var(--color-text-primary)]">Chet</span>
               <Time value={item.resultAt} />
               {folded ? (
+                // Not the voice icon: that marks what was said aloud, and this is the answer.
                 <button
                   type="button"
                   aria-expanded={delegationShown}
+                  aria-label={t("chet.voiceDelegation")}
                   title={t("chet.voiceDelegationHint")}
                   onClick={() => setDelegationShown((shown) => !shown)}
-                  className="inline-flex items-center gap-0.5 self-center rounded-sm px-0.5 hover:text-[var(--color-text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+                  className="-my-0.5 inline-flex h-6 min-w-6 items-center justify-center gap-0.5 self-center rounded-sm px-1 hover:text-[var(--color-text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
                 >
                   <Chevron expanded={delegationShown} />
-                  <VoiceMark
-                    label={t("chet.voiceDelegation")}
-                    hint={t("chet.voiceDelegationHint")}
-                  />
+                  <MessageSquareQuoteIcon size={12} aria-hidden="true" className="flex-none" />
                 </button>
               ) : null}
             </>
           }
         >
-          {/* Opened, it is named in words: its icon alone would read as something Chet said. */}
+          {/* Opened, it is named in words, so Chet's wording does not read as its answer. */}
           {folded && delegationShown ? (
             <div className="mb-2">
               <VoiceDelegationNote item={item} />
@@ -350,10 +362,10 @@ function TranscriptEntry({
   return role === "user" ? (
     <UserBlock meta={meta} text={text} note={note} />
   ) : (
-    <ChetBlock meta={meta}>
+    <SpokenBlock meta={meta}>
       <div className="whitespace-pre-wrap">{text}</div>
       {note ? <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{note}</p> : null}
-    </ChetBlock>
+    </SpokenBlock>
   );
 }
 
@@ -379,10 +391,7 @@ function VoiceRun({
       ? "chet.transcriptIncomplete"
       : null;
   return (
-    <div
-      className="min-w-0 border-l-2 border-[var(--color-text-tertiary)] pl-3"
-      data-chet-voice-run
-    >
+    <div className="min-w-0 pl-3.5" data-chet-voice-run data-chet-spoken>
       <button
         type="button"
         aria-expanded={expanded}
@@ -404,7 +413,7 @@ function VoiceRun({
         <div className="mt-1 space-y-2">
           {turns.map((turn) => (
             <div key={turn.id} className="min-w-0">
-              <div className="whitespace-pre-wrap break-words text-sm leading-6 text-[var(--color-text-secondary)]">
+              <div className="whitespace-pre-wrap break-words text-sm leading-6 text-[var(--color-text-muted)]">
                 {turn.text}
               </div>
               {turn.complete ? null : (
@@ -628,7 +637,12 @@ export function ChetTimeline({
               }
               meta={
                 <>
-                  <span className="font-semibold text-[var(--color-text-primary)]">
+                  <span
+                    className={classNames(
+                      "font-semibold",
+                      item.role === "user" && "text-[var(--color-text-primary)]",
+                    )}
+                  >
                     {item.role === "user" ? t("chet.you") : "Chet"}
                   </span>
                   <VoiceMark label={t("chet.sourceTranscript")} />
@@ -652,7 +666,13 @@ export function ChetTimeline({
             }
             meta={
               <>
-                <span className="font-semibold text-[var(--color-text-primary)]">
+                {/* Chet's spoken line is named as quietly as a saved run of its turns. */}
+                <span
+                  className={classNames(
+                    "font-semibold",
+                    turn.role === "user" && "text-[var(--color-text-primary)]",
+                  )}
+                >
                   {turn.role === "user" ? t("chet.you") : "Chet"}
                 </span>
                 <VoiceMark label={t("chet.sourceTranscript")} />

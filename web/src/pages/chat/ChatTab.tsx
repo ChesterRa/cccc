@@ -5,7 +5,6 @@ import {
   lazy,
   Suspense,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -27,8 +26,7 @@ import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { getMessageAnchorOffset } from "../../components/virtualMessageListAnchorRestore";
 import { PendingReplyEditingContext } from "../../components/messageBubble/PendingReplyEditingContext";
 import { LivePendingStatusContext } from "../../features/pendingReplies/liveStatusContext";
-import { PendingSummaryContext } from "../../features/pendingReplies/context";
-import { pendingFilterIndicator } from "../../features/pendingReplies/indicator";
+import { useWaitingFilterIndicator } from "../../features/pendingReplies/useWaitingFilterIndicator";
 import { useLivePendingStatuses } from "../../features/pendingReplies/useLivePendingStatuses";
 import { NotificationPrompt } from "../../features/pushNotifications/NotificationPrompt";
 import { useNotificationPromptOffer } from "../../features/pushNotifications/useNotificationPromptOffer";
@@ -238,7 +236,6 @@ export function ChatTab({
   setMentionTargetGroupId,
 }: ChatTabProps) {
   const lcd = useLcdStyle();
-  const pendingSummary = useContext(PendingSummaryContext);
   const shortTouchViewport = useShortTouchViewport();
   const [composerInputFocused, setComposerInputFocused] = useState(false);
   const [inlineReplyEditor, setInlineReplyEditor] = useState<string | null>(null);
@@ -735,13 +732,10 @@ export function ChatTab({
     ],
   );
 
-  const waitingIndicator =
-    pendingSummary && selectedGroupId
-      ? pendingFilterIndicator(
-          pendingSummary.summaries[selectedGroupId],
-          chatFilter === "pending_user",
-        )
-      : null;
+  const waitingIndicator = useWaitingFilterIndicator(
+    selectedGroupId,
+    chatFilter === "pending_user",
+  );
   const hasChatFilter = chatFilter !== "all" || chatSenderFilter.length > 0;
   const showMessageFilters =
     !readOnly &&

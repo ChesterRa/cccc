@@ -5,11 +5,11 @@ use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Value, json};
 
-async fn send(home: &HomeLayout, group_id: &str, arguments: Value) -> Value {
+async fn call(home: &HomeLayout, group_id: &str, tool: &str, arguments: Value) -> Value {
     cccc_mcp::handle_request_for_actor(
         home,
         &json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
-            "params":{"name":"cccc_message_send","arguments":arguments}}),
+            "params":{"name":tool,"arguments":arguments}}),
         group_id,
         "lead",
     )
@@ -49,9 +49,10 @@ async fn an_actor_asks_the_user_a_question_through_the_send_tool() {
         "options": [{"label": "Ship today"}, {"label": "Wait for review", "consequence": "one day later"}],
         "recommended": {"option_id": "B", "reason": "the change touches deletion"}
     });
-    let asked = send(
+    let asked = call(
         &home,
         group_id,
+        "cccc_message_send",
         json!({"to": "user", "mode": "request_reply", "text": "Tests pass.", "question": question}),
     )
     .await;
@@ -64,10 +65,25 @@ async fn an_actor_asks_the_user_a_question_through_the_send_tool() {
          Recommended: B — the change touches deletion\n\nReply with A, B, or your own answer."
     );
 
-    let on_reply = send(
+    // A send starts a new message, so it takes no existing event at all.
+    let send_on_event = call(
         &home,
         group_id,
+        "cccc_message_send",
         json!({"event_id": event["id"], "to": "user", "text": "again", "question": question}),
+    )
+    .await;
+    assert_eq!(send_on_event["isError"], true, "{send_on_event}");
+    assert!(
+        send_on_event.to_string().contains("cccc_message_reply"),
+        "{send_on_event}"
+    );
+
+    let on_reply = call(
+        &home,
+        group_id,
+        "cccc_message_reply",
+        json!({"event_id": event["id"], "text": "again", "question": question}),
     )
     .await;
     assert_eq!(on_reply["isError"], true, "{on_reply}");

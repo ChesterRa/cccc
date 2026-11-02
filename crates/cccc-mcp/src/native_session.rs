@@ -1139,7 +1139,11 @@ mod tests {
                 json!({"mode":false}),
                 json!({"mode":"invalid"}),
             ] {
-                let mut args = json!({"action":"send","group_id":member_group.group_id,"to":["offline-peer"],"event_id":incoming.id,"text":"This message must not be appended","insight":"Synthetic invalid mode verification"});
+                let mut args = json!({"action":"send","group_id":member_group.group_id,"to":["offline-peer"],"text":"This message must not be appended","insight":"Synthetic invalid mode verification"});
+                // Only a reply takes an existing event; a send would fail on that first.
+                if tool == "cccc_message_reply" {
+                    args["event_id"] = json!(incoming.id);
+                }
                 args.as_object_mut()
                     .expect("args")
                     .extend(invalid.as_object().expect("invalid mode").clone());
@@ -1155,6 +1159,31 @@ mod tests {
                     "{tool} must not send on invalid mode"
                 );
             }
+        }
+        // A send starts a new message on the native route and through capability_use.
+        for nested in [false, true] {
+            let args = json!({"group_id":member_group.group_id,"to":["offline-peer"],"event_id":incoming.id,"mode":"request_reply","text":"This message must not be appended","insight":"Synthetic reply target verification"});
+            let (tool, args) = if nested {
+                (
+                    "cccc_capability_use",
+                    json!({"group_id":member_group.group_id,"capability_id":"core","tool_name":"cccc_message_send","tool_arguments":args}),
+                )
+            } else {
+                ("cccc_message_send", args)
+            };
+            let rejected = context
+                .handle(
+                    &home,
+                    &client,
+                    &json!({"id":8,"method":"tools/call","params":{"name":tool,"arguments":args}}),
+                )
+                .await;
+            assert_eq!(rejected["result"]["isError"], true, "{tool}: {rejected}");
+            assert!(
+                rejected.to_string().contains("cccc_message_reply"),
+                "{tool}: {rejected}"
+            );
+            assert_eq!(message_count(), before, "{tool} must not answer an event");
         }
         let binding = cccc_contracts::local_session::LocalSessionBinding {
             group_id: member_group.group_id.clone(),

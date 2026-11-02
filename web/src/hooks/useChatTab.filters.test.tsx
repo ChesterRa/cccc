@@ -11,6 +11,7 @@ import { useChatTab } from "./useChatTab";
 import { ChatSenderFilter } from "../pages/chat/ChatSenderFilter";
 import * as composerSendPlan from "./composerSendPlan";
 import { useAppGroupLifecycle } from "./useAppGroupLifecycle";
+import { PendingSummaryContext } from "../features/pendingReplies/context";
 
 vi.mock("../services/api", () => ({
   sendMessage: vi.fn(),
@@ -343,4 +344,25 @@ it("renders the filtered conversation in ledger order despite clock rollback", a
   });
   await act(async () => chat.setChatSenderFilter(["leader"]));
   expect(chat.chatMessages.map((event) => event.id)).toEqual(["2", "3"]);
+});
+
+it("drops a stored Waiting for you filter while those prompts are off", async () => {
+  const summaries = { a: { state: "fresh" as const, pending: 1 } };
+  const withPending = (
+    <PendingSummaryContext.Provider value={{ summaries, refresh: noop }}>
+      <Harness />
+    </PendingSummaryContext.Provider>
+  );
+  await act(async () => useUIStore.getState().setChatFilter("a", "pending_user"));
+  await act(async () => root.render(withPending));
+  expect(chat.chatFilter).toBe("pending_user");
+
+  // Its tab is gone, so the filter must not keep hiding ordinary messages.
+  await act(async () => useUIStore.getState().setShowPendingPrompts(false));
+  expect(chat.chatFilter).toBe("all");
+  expect(getChatSession("a", useUIStore.getState().chatSessions).chatFilter).toBe("pending_user");
+
+  await act(async () => useUIStore.getState().setShowPendingPrompts(true));
+  expect(chat.chatFilter).toBe("pending_user");
+  localStorage.removeItem("cccc-pending-prompts");
 });

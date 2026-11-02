@@ -8,6 +8,7 @@ import {
   PendingReplyStoreContext,
   replyKey,
 } from "../../features/pendingReplies/store";
+import { useUIStore } from "../../stores/useUIStore";
 import type { LedgerEvent } from "../../types";
 import { PendingReplySlot } from "./PendingReplySlot";
 
@@ -166,6 +167,68 @@ it("retains an uncertain answer and retries the identical request before marking
     expect(mocks.update).toHaveBeenCalledOnce();
     expect(refresh).toHaveBeenCalledOnce();
   } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
+it("shows a request without a question as an ordinary message while the prompts are off", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  mocks.answer.mockReset();
+  mocks.answer.mockResolvedValueOnce({ ok: false, error: { code: "NETWORK_ERROR" } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const store = createPendingReplyStore();
+  const plain: LedgerEvent = {
+    ...event,
+    data: { to: ["user"], message_mode: "request_reply", text: "Which path?" },
+    _user_request: { question: "none", requester: "available" },
+  };
+  const render = (request: LedgerEvent) =>
+    act(async () =>
+      root.render(
+        <PendingReplyStoreContext.Provider value={store}>
+          <PendingReplySlot event={request} groupId="g1" onUseComposer={() => {}} />
+        </PendingReplyStoreContext.Provider>,
+      ),
+    );
+  try {
+    useUIStore.getState().setShowPendingPrompts(false);
+    await render(plain);
+    expect(host.innerHTML).toBe("");
+    await render({
+      ...plain,
+      _obligation_status: {
+        user: { reply_requested: true, replied: true, cancelled: false, delivery_state: "" },
+      },
+    });
+    expect(host.innerHTML).toBe("");
+
+    // A question keeps its choices, without the emphasis of the prompts.
+    await render(event);
+    expect(host.querySelectorAll('input[type="radio"]')).toHaveLength(3);
+    expect(host.querySelector("form")?.hasAttribute("data-pending-reply-quiet")).toBe(true);
+
+    // An answer written before the prompts were turned off can still be retried.
+    useUIStore.getState().setShowPendingPrompts(true);
+    await render(plain);
+    expect(host.querySelector("form")?.hasAttribute("data-pending-reply-quiet")).toBe(false);
+    await act(async () =>
+      store.getState().setDraft(replyKey("g1", "r1"), { selection: null, text: "Left" }),
+    );
+    await act(async () =>
+      host
+        .querySelector<HTMLFormElement>("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    );
+    expect(store.getState().entries[replyKey("g1", "r1")].attempt?.phase).toBe("uncertain");
+    useUIStore.getState().setShowPendingPrompts(false);
+    await render(plain);
+    expect(host.querySelector("button")?.textContent).toBe("pendingReply.retrySame");
+  } finally {
+    useUIStore.getState().setShowPendingPrompts(true);
+    localStorage.removeItem("cccc-pending-prompts");
     await act(async () => root.unmount());
     host.remove();
   }

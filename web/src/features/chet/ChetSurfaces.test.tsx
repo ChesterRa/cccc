@@ -270,13 +270,53 @@ it("keeps Chet's wording of an answered voice request one click behind the answe
   timeline([request({ source: "voice", text: "check tomorrow's weather", outcome })]);
   expect(host.textContent).toContain("Rain, 14-19");
   expect(host.textContent).not.toContain("check tomorrow's weather");
-  const toggle = marks("chet.voiceDelegation")[0].closest("button")!;
+  const toggle = host.querySelector<HTMLButtonElement>(
+    '[data-chet-answer] button[aria-label="chet.voiceDelegation"]',
+  )!;
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   act(() => toggle.click());
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
   expect(host.textContent).toContain("check tomorrow's weather");
   // Opened, the wording is named in words, which a touch screen shows without a tooltip.
   expect(host.textContent).toContain("chet.voiceDelegation");
+});
+
+it("sets an answer apart from what Chet said aloud, saved or live", () => {
+  const outcome = {
+    generation: "g",
+    turn_id: "t",
+    status: "completed",
+    text: "Rain, 14-19",
+    error: "",
+  };
+  const live: VoiceConversationTurn = {
+    id: "l1",
+    role: "assistant",
+    text: "said just now",
+    final: false,
+    callId: "c",
+  };
+  timeline(
+    [
+      request({ source: "voice", text: "check tomorrow's weather", outcome }),
+      turn("a1", "assistant", "spoken back"),
+    ],
+    {},
+    [live],
+  );
+  const answers = host.querySelectorAll("[data-chet-answer]");
+  expect(answers).toHaveLength(1);
+  expect(answers[0].textContent).toContain("Rain, 14-19");
+  // The answer carries no voice mark, its request toggle included.
+  expect(answers[0].querySelector('[role="img"]')).toBeNull();
+  const spoken = [...host.querySelectorAll("[data-chet-spoken]")];
+  expect(spoken).toHaveLength(2);
+  for (const line of spoken) {
+    expect(line.closest("[data-chet-answer]")).toBeNull();
+    expect(line.querySelector('[role="img"]')).not.toBeNull();
+  }
+  // A live line is a caption like a saved run, but stays open while it is spoken.
+  expect(spoken[1].textContent).toContain("said just now");
 });
 
 it("marks what was spoken with the voice icon instead of a word, and leaves typed requests unmarked", () => {

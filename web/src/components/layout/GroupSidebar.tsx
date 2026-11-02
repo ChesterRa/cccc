@@ -93,6 +93,7 @@ export function GroupSidebar({
 }: GroupSidebarProps) {
   const { t } = useTranslation("layout");
   const pending = useContext(PendingSummaryContext);
+  const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
   const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
   const branding = useBrandingStore((s) => s.branding);
   const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
@@ -108,18 +109,20 @@ export function GroupSidebar({
     () => orderedGroups.filter((g) => archivedSet.has(String(g.group_id || "").trim())),
     [archivedSet, orderedGroups],
   );
-  const archivedPending = pending
-    ? aggregatePendingIndicator(
-        pending.summaries,
-        archivedGroups.map((group) => group.group_id),
-      )
-    : null;
-  const totalPending = pending
-    ? aggregatePendingIndicator(
-        pending.summaries,
-        orderedGroups.map((group) => group.group_id),
-      )
-    : null;
+  const archivedPending =
+    pending && showPendingPrompts
+      ? aggregatePendingIndicator(
+          pending.summaries,
+          archivedGroups.map((group) => group.group_id),
+        )
+      : null;
+  const totalPending =
+    pending && showPendingPrompts
+      ? aggregatePendingIndicator(
+          pending.summaries,
+          orderedGroups.map((group) => group.group_id),
+        )
+      : null;
   const collapsedGroups = useMemo(() => {
     if (!isCollapsed) return workingGroups;
     const selectedArchived = archivedGroups.find(

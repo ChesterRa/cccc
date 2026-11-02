@@ -193,9 +193,13 @@ export function useChatTab({
     scrollSnapshot,
   } = chatSession;
   const pendingContext = useContext(PendingSummaryContext);
-  // A filter persisted by a writable session must not hide ordinary messages in exhibit mode.
+  const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
+  // A persisted Waiting for you filter must not hide messages where its tab is not shown:
+  // in exhibit mode, or while the user has turned those prompts off.
   const chatFilter =
-    storedChatFilter === "pending_user" && !pendingContext ? "all" : storedChatFilter;
+    storedChatFilter === "pending_user" && (!pendingContext || !showPendingPrompts)
+      ? "all"
+      : storedChatFilter;
   const senders = chatSenderFilter;
 
   const {

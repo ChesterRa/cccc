@@ -130,6 +130,8 @@ interface UIState {
   sidebarOpen: boolean;
   sidebarCollapsed: boolean; // Desktop sidebar collapsed state
   sidebarWidth: number;
+  /** Counts and the filter for requests waiting for the user's answer. */
+  showPendingPrompts: boolean;
   isSmallScreen: boolean;
   composerHeight: number | null;
   chatSessions: Record<string, ChatSessionState>;
@@ -153,6 +155,7 @@ interface UIState {
   setSidebarOpen: (v: boolean) => void;
   setSidebarCollapsed: (v: boolean) => void;
   setSidebarWidth: (v: number) => void;
+  setShowPendingPrompts: (v: boolean) => void;
   toggleSidebarCollapsed: () => void;
   setShowScrollButton: (groupId: string, v: boolean) => void;
   setChatUnreadCount: (groupId: string, v: number) => void;
@@ -198,6 +201,7 @@ let noticeTimeoutId: number | null = null;
 // localStorage key for sidebar collapsed state
 const SIDEBAR_COLLAPSED_KEY = "cccc-sidebar-collapsed";
 const SIDEBAR_WIDTH_KEY = "cccc-sidebar-width";
+const PENDING_PROMPTS_KEY = "cccc-pending-prompts";
 const CHAT_SESSIONS_KEY = "cccc-chat-sessions";
 
 export function clampSidebarWidth(value: number): number {
@@ -225,6 +229,22 @@ function saveSidebarCollapsed(collapsed: boolean): void {
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
   } catch (e) {
     console.warn("Failed to persist sidebar state to localStorage:", e);
+  }
+}
+
+function loadPendingPrompts(): boolean {
+  try {
+    return localStorage.getItem(PENDING_PROMPTS_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function savePendingPrompts(show: boolean): void {
+  try {
+    localStorage.setItem(PENDING_PROMPTS_KEY, String(show));
+  } catch {
+    // The choice still applies until this page is closed.
   }
 }
 
@@ -399,6 +419,7 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: true,
   sidebarCollapsed: loadSidebarCollapsed(),
   sidebarWidth: loadSidebarWidth(),
+  showPendingPrompts: loadPendingPrompts(),
   isSmallScreen: false,
   composerHeight: loadComposerHeight(),
   chatSessions: loadChatSessions(),
@@ -472,6 +493,10 @@ export const useUIStore = create<UIState>((set) => ({
     const next = clampSidebarWidth(v);
     saveSidebarWidth(next);
     set({ sidebarWidth: next });
+  },
+  setShowPendingPrompts: (show) => {
+    savePendingPrompts(show);
+    set({ showPendingPrompts: show });
   },
   toggleSidebarCollapsed: () =>
     set((state) => {

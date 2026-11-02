@@ -106,8 +106,12 @@ an option or writes their own answer in place, under the message.
   for you filter appears first on its messages page with their number and
   lists all of them; it stays while it is being viewed. The Requests filter
   lists every request, answered or not, between any members. The sidebar
-  shows each Group's count, including stopped and archived Groups. In the
-  terminal interface, a Group's page has a Waiting for you row. A count that
+  shows each Group's count, including stopped and archived Groups. A browser
+  can turn the counts and the Waiting for you filter off under Appearance →
+  ‘Waiting for you’ indicators; the requests then read as ordinary messages,
+  and only a request that asks a question, or an answer still being sent,
+  keeps its answer form.
+  In the terminal interface, a Group's page has a Waiting for you row. A count that
   may be out of date is marked as such, one that cannot be confirmed is shown
   as unknown rather than zero, and neither appears in read-only (exhibit)
   mode. When the running daemon does not support Waiting for you, as one

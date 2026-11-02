@@ -1,5 +1,6 @@
 import { useContext } from "react";
 import { useTranslation } from "react-i18next";
+import { useUIStore } from "../../stores/useUIStore";
 import { PendingReplyNavigationContext, PendingSummaryContext } from "./context";
 import { pendingIndicator, type PendingIndicator as Indicator } from "./indicator";
 
@@ -38,7 +39,8 @@ export function GroupPendingIndicator({
   const context = useContext(PendingSummaryContext);
   const open = useContext(PendingReplyNavigationContext);
   const { t } = useTranslation("layout");
-  if (!context) return null;
+  const shown = useUIStore((state) => state.showPendingPrompts);
+  if (!context || !shown) return null;
   const indicator = pendingIndicator(context.summaries[groupId]);
   if (!indicator) return null;
   if (collapsed || !open)

@@ -114,6 +114,14 @@ option keeps the containing menu open and returns focus to its trigger. Arrow ke
 options; Escape closes only the inner choice menu. Narrow headers use the existing overflow
 sheet with the same choices and access rules; choice panels are portalled above its scroll area.
 Message identities, recipients, references, timestamps and actions follow the text-size preference.
+**‘Waiting for you’ indicators** under Appearance turns off what marks requests waiting for your
+answer: the sidebar's counts, including the archived Groups' total and the one on the phone's sidebar
+button, and the **Waiting for you** filter inside each Group. Those requests then read as ordinary
+messages: one without a question is answered with the message's **Reply**, and one that asks a
+question still shows it so you can answer in place, without the LCD style's Waiting for you frame.
+An answer already being sent keeps its form until it is confirmed, so it can be retried. Browser
+notifications keep their own switch under Settings → Notifications. The indicators show by default;
+the choice is saved in this browser.
 With **Style** set to **LCD**, **Message area width** sets how wide the conversation runs on
 screens 768px and wider: **Medium** keeps a centered reading column, **Wide** gives tables and
 code more room and **Full** uses the whole chat area. The choice is saved in this browser. It
@@ -465,8 +473,9 @@ finished; if the outcome cannot be confirmed, Chet says so and does not automati
 Voice transcripts record what this browser received and can be incomplete. There is no history-clear
 action in this version.
 
-Spoken entries carry a voice icon instead of a text label. A written result for a voice request shows
-the same icon, with an arrow, after its time; it expands the **Voice request**, Chet's task wording
+Spoken entries carry a voice icon instead of a text label, and Chet's spoken lines appear as lighter
+captions without the rule that marks its written results. A written result for a voice request has a
+quote icon, with an arrow, after its time; it expands the **Voice request**, Chet's task wording
 rather than a verbatim quotation of your speech. Adjacent saved Chet voice transcripts from the same call are
 grouped in an expandable row. The most recent loaded group for an active call starts open unless
 you change it; other groups show a preview. A folded group is marked if any transcript is unfinished

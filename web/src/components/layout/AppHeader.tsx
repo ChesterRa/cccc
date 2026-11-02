@@ -72,9 +72,11 @@ export function AppHeader({
 }: AppHeaderProps) {
   const { t } = useTranslation("layout");
   const pending = useContext(PendingSummaryContext);
-  const totalPending = pending
-    ? aggregatePendingIndicator(pending.summaries, Object.keys(pending.summaries))
-    : null;
+  const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
+  const totalPending =
+    pending && showPendingPrompts
+      ? aggregatePendingIndicator(pending.summaries, Object.keys(pending.summaries))
+      : null;
   const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
   const isSmallScreen = useUIStore((state) => state.isSmallScreen);
   const groupTitle = groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"));

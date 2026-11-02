@@ -1,6 +1,7 @@
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import type { TextScale, Theme } from "../../types";
+import { useUIStore } from "../../stores/useUIStore";
 import { normalizeLanguageCode } from "../../i18n/languages";
 import { getTextScaleLabel, TEXT_SCALE_OPTIONS } from "../../utils/textScale";
 import {
@@ -30,7 +31,15 @@ function AppearanceChoice<Value extends string | number>({
   onChange,
   className = "",
 }: {
-  name: "theme" | "uiStyle" | "lcdBody" | "lcdWidth" | "lcdMotion" | "textScale" | "language";
+  name:
+    | "theme"
+    | "uiStyle"
+    | "lcdBody"
+    | "lcdWidth"
+    | "lcdMotion"
+    | "textScale"
+    | "language"
+    | "pendingPrompts";
   label: string;
   value: Value;
   options: SegmentedOption<Value>[];
@@ -63,6 +72,8 @@ export function AppearancePreferences({
   const { t, i18n } = useTranslation(["layout", "common"]);
   const uiStyle = useUiStylePrefs();
   const systemReducedMotion = useSystemReducedMotion();
+  const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
+  const setShowPendingPrompts = useUIStore((state) => state.setShowPendingPrompts);
   return (
     <fieldset className="min-w-0" data-appearance-preferences>
       <legend className="px-2 pt-1.5 pb-1 text-xs font-semibold text-[var(--color-text-tertiary)]">
@@ -137,6 +148,16 @@ export function AppearancePreferences({
           ) : null}
         </>
       ) : null}
+      <AppearanceChoice
+        name="pendingPrompts"
+        label={t("pendingPromptsLabel")}
+        value={showPendingPrompts ? "show" : "off"}
+        onChange={(value) => setShowPendingPrompts(value === "show")}
+        options={[
+          { value: "show", label: t("pendingPromptsShow") },
+          { value: "off", label: t("pendingPromptsOff") },
+        ]}
+      />
       <AppearanceChoice<TextScale>
         name="textScale"
         label={t("textSizeLabel")}

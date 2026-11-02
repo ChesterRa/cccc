@@ -225,6 +225,18 @@ it("adds the title block, in the product's existing words, only in the LCD previ
   }
 });
 
+it("drops the LCD title while the 'Waiting for you' indicators are off", async () => {
+  try {
+    await act(async () => setUiStylePrefs({ style: "lcd" }));
+    await render({ question, state: "pending", quiet: true, onSubmit: vi.fn() });
+    expect(host.querySelector(".lcd-ask-title")).toBeNull();
+    expect(host.querySelector("form")?.hasAttribute("data-pending-reply-quiet")).toBe(true);
+    expect(radios()).toHaveLength(3);
+  } finally {
+    await act(async () => setUiStylePrefs({ style: "classic" }));
+  }
+});
+
 it("keeps the LCD action in the last row, enabled while the choices are locked", async () => {
   const onRetry = vi.fn();
   try {

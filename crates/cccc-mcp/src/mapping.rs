@@ -18,7 +18,7 @@ pub fn daemon_call(
         }
         "cccc_message_history" => "message_history",
         "cccc_message_send" => {
-            alias(&mut args, "event_id", "reply_to");
+            reject_reply_target(&mut args)?;
             normalize_message_author(&mut args);
             let mode = message_mode(&mut args, "mail")?;
             args.insert("message_mode".into(), Value::String(mode));
@@ -31,13 +31,6 @@ pub fn daemon_call(
                 .is_some_and(|value| !value.trim().is_empty())
             {
                 "send_cross_group"
-            } else if args
-                .get("reply_to")
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty())
-            {
-                args.remove("message_mode");
-                "reply"
             } else {
                 "send"
             }
@@ -350,6 +343,25 @@ fn retain_fields(args: &mut Map<String, Value>, allowed: &[&str]) {
     args.retain(|key, _| allowed.contains(&key.as_str()));
 }
 
+/// A send starts a new message. Answering an existing event belongs to
+/// cccc_message_reply: routing a target through send used to drop an explicit
+/// mode, so a request for a reply went out as a plain message.
+fn reject_reply_target(args: &mut Map<String, Value>) -> Result<(), String> {
+    for key in ["event_id", "reply_to"] {
+        let blank = match args.get(key) {
+            None => continue,
+            Some(Value::Null) => true,
+            Some(Value::String(value)) => value.trim().is_empty(),
+            Some(_) => false,
+        };
+        if !blank {
+            return Err("invalid_args: cccc_message_send starts a new message; to answer an existing event, use cccc_message_reply with its event_id".into());
+        }
+        args.remove(key);
+    }
+    Ok(())
+}
+
 /// Qualified remote routes are selected before any legacy/local Group lookup.
 pub(crate) fn connect_destination(args: &mut Map<String, Value>) -> Result<bool, String> {
     let Some(instance) = args.remove("dst_instance_id") else {
@@ -500,10 +512,14 @@ mod tests {
                 "group_id":"g_test",
                 "actor_id":"backend",
                 "text":"done",
-                "to":["user"],
-                "reply_to":"event-1"
+                "to":["user"]
             });
-            let args = value.as_object_mut().expect("args").clone();
+            let args = value.as_object_mut().expect("args");
+            // A send starts a new message, so only the other tools take a target.
+            if tool != "cccc_message_send" {
+                args.insert("reply_to".into(), json!("event-1"));
+            }
+            let args = args.clone();
             let (_, args) = daemon_call(tool, args).expect("mapping");
             assert_eq!(args["by"], "backend", "tool={tool}");
         }
@@ -727,16 +743,75 @@ mod tests {
     }
 
     #[test]
-    fn message_with_reply_target_maps_to_reply() {
+    fn message_send_rejects_reply_targets_on_every_route() {
+        let routes = [
+            json!({}),
+            json!({"dst_group_id":"g_remote"}),
+            json!({"dst_instance_id":"i_other","dst_group_id":"g_remote"}),
+        ];
+        let targets = [
+            json!({"event_id":"event-1"}),
+            json!({"reply_to":"event-1"}),
+            json!({"event_id":"event-1","reply_to":"event-2"}),
+            json!({"reply_to":7}),
+        ];
+        for route in &routes {
+            for target in &targets {
+                for mode in [None, Some("send"), Some("mail"), Some("request_reply")] {
+                    let mut args = json!({
+                        "group_id":"g_test","actor_id":"backend","to":["peer"],"text":"done"
+                    })
+                    .as_object()
+                    .cloned()
+                    .expect("args");
+                    for fields in [route, target] {
+                        args.extend(fields.as_object().expect("fields").clone());
+                    }
+                    if let Some(mode) = mode {
+                        args.insert("mode".into(), json!(mode));
+                    }
+                    let error = daemon_call("cccc_message_send", args)
+                        .expect_err("a send must not answer an existing event");
+                    assert!(error.starts_with("invalid_args:"), "{error}");
+                    assert!(error.contains("cccc_message_reply"), "{error}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn message_send_treats_blank_reply_targets_as_absent() {
+        for key in ["event_id", "reply_to"] {
+            for blank in [json!(null), json!(""), json!("  ")] {
+                let mut args = json!({
+                    "group_id":"g_test","actor_id":"backend","to":["peer"],
+                    "text":"new","mode":"mail"
+                })
+                .as_object()
+                .cloned()
+                .expect("args");
+                args.insert(key.into(), blank);
+                let (op, args) = daemon_call("cccc_message_send", args).expect("new message");
+                assert_eq!(op, "send");
+                assert_eq!(args["message_mode"], "mail");
+                assert!(!args.contains_key("event_id") && !args.contains_key("reply_to"));
+            }
+        }
+    }
+
+    #[test]
+    fn message_reply_keeps_the_target_and_an_explicit_mail_mode() {
         let args = json!({
-            "group_id":"g_test","actor_id":"backend","text":"done",
-            "reply_to":"event-1"
+            "group_id":"g_test","actor_id":"backend","event_id":"event-1",
+            "text":"done","mode":"mail"
         })
         .as_object()
         .cloned()
         .expect("args");
-        let (op, args) = daemon_call("cccc_message_send", args).expect("mapping");
+        let (op, args) = daemon_call("cccc_message_reply", args).expect("reply");
         assert_eq!(op, "reply");
+        assert_eq!(args["reply_to"], "event-1");
+        assert_eq!(args["message_mode"], "mail");
         assert_eq!(args["by"], "backend");
     }
 

@@ -1494,6 +1494,15 @@
   border: 3px double var(--lcd-wait);
 }
 
+/* With 'Waiting for you' indicators off, the question keeps its choices under the
+   plain rule that a closed question has, without the frame or its title. */
+:root[data-ui-style="lcd"] [data-lcd-scope] form[data-pending-reply][data-pending-reply-quiet] {
+  padding-inline: 0;
+  border-width: 1px 0 0;
+  border-style: solid;
+  border-color: var(--glass-border-subtle);
+}
+
 /* The title sits in the frame's top line like a legend, at the pixel font's own 12px. */
 :root[data-ui-style="lcd"] .lcd-ask-title {
   position: absolute;

@@ -34,6 +34,7 @@ export function PendingReplyCard({
   error,
   showRetainedDraft,
   answeredOption,
+  quiet,
   draft,
   onDraftChange,
   onSubmit,
@@ -49,6 +50,8 @@ export function PendingReplyCard({
   error?: string;
   showRetainedDraft?: boolean;
   answeredOption?: { id: string; label: string } | null;
+  /** 'Waiting for you' indicators are off: the question without their emphasis. */
+  quiet?: boolean;
   draft: ReplyDraft;
   onDraftChange: (draft: ReplyDraft) => void;
   onSubmit: (answer: ReplyAnswer) => void;
@@ -322,9 +325,10 @@ export function PendingReplyCard({
     <form
       className="border-t border-[var(--glass-border-subtle)] pt-3"
       data-pending-reply
+      data-pending-reply-quiet={quiet || undefined}
       onSubmit={submit}
     >
-      {lcd ? (
+      {lcd && !quiet ? (
         // LCD preview: a small title set into the frame, in the product's existing words.
         // The button says when the answer is being sent; the title does not repeat it.
         <p className="lcd-ask-title">{t("filterWaitingForYou")}</p>

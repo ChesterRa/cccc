@@ -16,6 +16,7 @@ import {
 import type { ReplyAnswer } from "../../features/pendingReplies/types";
 import { answerPendingReply, type PendingReplyAnswer } from "../../services/api/pendingReplies";
 import { useGroupStore } from "../../stores";
+import { useUIStore } from "../../stores/useUIStore";
 import type { ChatMessageData, LedgerEvent } from "../../types";
 import { newClientId } from "../../utils/clientId";
 import { PendingReplyCard } from "./PendingReplyCard";
@@ -38,6 +39,7 @@ function ReplyEntry({
   const eventId = event.id!;
   const key = replyKey(groupId, eventId);
   const entry = useStore(store, (state) => state.entries[key] ?? EMPTY_REPLY_ENTRY);
+  const prompts = useUIStore((state) => state.showPendingPrompts);
   const view = pendingReplyView(event)!;
   const state = entry.closed ?? (entry.attempt ? "pending" : view.state);
   const replyId = event._user_request?.reply_event_id;
@@ -145,6 +147,11 @@ function ReplyEntry({
     void send(
       answer.kind === "option" ? { v: 1, option_id: answer.id } : { v: 1, text: answer.text },
     );
+  // With 'Waiting for you' indicators off, a request without a question reads as an
+  // ordinary message, answered with the usual Reply. A question keeps its choices, and
+  // an answer already being sent keeps its card so that it can still be retried.
+  if (!prompts && (event.data as ChatMessageData | undefined)?.question == null && !entry.attempt)
+    return null;
   return (
     <PendingReplyCard
       question={entry.attempt ? entry.attempt.question : view.question}
@@ -156,6 +163,7 @@ function ReplyEntry({
       error={entry.error ? t(`pendingReply.${entry.error}`) : undefined}
       showRetainedDraft={!entry.confirmed}
       answeredOption={answeredOption}
+      quiet={!prompts}
       onDraftChange={(draft) => store.getState().setDraft(key, draft)}
       onSubmit={submit}
       onRetry={() => {

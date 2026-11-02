@@ -57,6 +57,7 @@ import { MessageReplyQuote } from "./messageBubble/MessageReplyQuote";
 import { MessageReferenceSections } from "./messageBubble/MessageReferenceSections";
 import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
 import { PendingReplyStoreContext } from "../features/pendingReplies/store";
+import { useUIStore } from "../stores";
 import {
   localizedAnswerReceipt,
   pendingReplyView,
@@ -274,7 +275,11 @@ export const MessageBubble = memo(
             },
       [ev, liveEntry, liveStatus],
     );
-    const replyView = !readOnly && pendingStore ? pendingReplyView(replyEvent) : null;
+    // Whether this is a request to the user follows from the event alone, so it
+    // holds while the reply store is not available yet.
+    const userRequest = readOnly ? null : pendingReplyView(replyEvent);
+    const replyView = pendingStore ? userRequest : null;
+    const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
 
     const [isAgentStateOpen, setIsAgentStateOpen] = useState(false);
     const floatingMiddleware = useMemo(() => [offset(8), flip(), shift({ padding: 8 })], []);
@@ -343,6 +348,9 @@ export const MessageBubble = memo(
         : "";
     const displayedMessageMode = projectMessageMode(msgData);
     const replyRequested = displayedMessageMode === "request_reply";
+    // With 'Waiting for you' indicators off, a request to the user reads as an
+    // ordinary message; a request between members keeps its mark.
+    const replyMarked = replyRequested && !(userRequest && !showPendingPrompts);
     const isMail = displayedMessageMode === "mail";
     const srcGroupId =
       typeof msgData?.src_group_id === "string" ? String(msgData.src_group_id || "").trim() : "";
@@ -773,9 +781,7 @@ export const MessageBubble = memo(
             <span className="lcd-row-route">
               {routingMetadata}
               {/* The reply card below already shows the request and its state. */}
-              {replyRequested && !replyView ? (
-                <span className="lcd-tag">{t("needReply")}</span>
-              ) : null}
+              {replyMarked && !replyView ? <span className="lcd-tag">{t("needReply")}</span> : null}
             </span>
             <time
               className="lcd-row-time"
@@ -914,9 +920,9 @@ export const MessageBubble = memo(
               "relative max-w-full min-w-0 md:w-auto",
               isUserMessage ? "w-auto self-end" : "w-full",
             )}
-            style={replyRequested ? { minWidth: "min(8.5rem, 85vw)" } : undefined}
+            style={replyMarked ? { minWidth: "min(8.5rem, 85vw)" } : undefined}
           >
-            {replyRequested && (
+            {replyMarked && (
               <span
                 className={classNames(
                   "absolute -top-2 z-10 text-xs font-semibold px-2 py-0.5 rounded-full border shadow-sm",
@@ -931,7 +937,7 @@ export const MessageBubble = memo(
               isUserMessage={isUserMessage}
               isStreaming={isStreaming}
               motionClass={bubbleMotionClass}
-              replyRequested={replyRequested}
+              replyRequested={replyMarked}
               isHighlighted={Boolean(isHighlighted)}
             >
               {bubbleContent}
