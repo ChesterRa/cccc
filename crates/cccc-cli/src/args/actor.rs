@@ -8,15 +8,15 @@ pub struct ActorArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ActorAction {
-    /// List Actors and their effective workspaces.
+    /// List agents and their effective workspaces.
     List {
         /// Target Group ID; omit to use the current Group.
         #[arg(long = "group")]
         group_id: Option<String>,
     },
-    /// Add an Actor to a Group.
+    /// Add an agent to a Group.
     Add {
-        /// Actor ID within the Group.
+        /// Agent ID within the Group.
         actor_id: String,
         /// Display title.
         #[arg(long, default_value = "")]
@@ -45,21 +45,21 @@ pub enum ActorAction {
         /// Target Group ID; omit to use the current Group.
         #[arg(long = "group")]
         group_id: Option<String>,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
-    /// Remove an Actor from the Group.
+    /// Remove an agent from the Group.
     Remove(ActorTarget),
-    /// Start a managed Actor, or restore native Group access.
+    /// Start a managed agent, or restore native Group access.
     Start(ActorTarget),
-    /// Stop a managed Actor, or pause native Group access.
+    /// Stop a managed agent, or pause native Group access.
     Stop(ActorTarget),
-    /// Restart a managed Actor.
+    /// Restart a managed agent.
     Restart(ActorTarget),
-    /// Update Actor settings; running managed sessions apply launch settings on restart.
+    /// Update agent settings; running managed sessions apply launch settings on restart.
     Update {
-        /// Actor ID within the Group.
+        /// Agent ID within the Group.
         actor_id: String,
         /// Target Group ID; omit to use the current Group.
         #[arg(long = "group")]
@@ -88,16 +88,16 @@ pub enum ActorAction {
         /// Terminal submission: enter, newline or none.
         #[arg(long)]
         submit: Option<String>,
-        /// Enable or disable this Actor.
+        /// Enable or disable this agent.
         #[arg(long)]
         enabled: Option<bool>,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
-    /// Manage runtime-only secrets without writing them to Actor configuration.
+    /// Manage runtime-only secrets without writing them to agent configuration.
     Secrets {
-        /// Actor ID within the Group.
+        /// Agent ID within the Group.
         actor_id: String,
         /// Target Group ID; omit to use the current Group.
         #[arg(long = "group")]
@@ -108,16 +108,16 @@ pub enum ActorAction {
         /// Remove a runtime-only secret by key; repeat for multiple keys.
         #[arg(long = "unset")]
         unset: Vec<String>,
-        /// Remove all runtime-only secrets for this Actor.
+        /// Remove all runtime-only secrets for this agent.
         #[arg(long)]
         clear: bool,
         /// List secret keys without their values.
         #[arg(long)]
         keys: bool,
-        /// Restart the Actor after updating its secrets.
+        /// Restart the agent after updating its secrets.
         #[arg(long)]
         restart: bool,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -125,12 +125,12 @@ pub enum ActorAction {
 
 #[derive(Debug, Args)]
 pub struct ActorTarget {
-    /// Actor ID within the Group.
+    /// Agent ID within the Group.
     pub actor_id: String,
     /// Target Group ID; omit to use the current Group.
     #[arg(long = "group")]
     pub group_id: Option<String>,
-    /// Author identity: user or an Actor ID.
+    /// Author identity: user or an agent ID.
     #[arg(long, default_value = "user")]
     pub by: String,
 }

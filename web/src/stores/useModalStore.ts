@@ -49,7 +49,6 @@ interface ModalState {
   presentationPin: PresentationPinState | null;
   presentationAttention: PresentationAttentionState;
   editingActor: Actor | null;
-  actorEditorVisit: number;
   editingActorSection: "chatgpt" | null;
   settingsTarget: {
     scope?: "group" | "global";
@@ -111,7 +110,6 @@ export const useModalStore = create<ModalState>((set) => ({
   presentationPin: null,
   presentationAttention: {},
   editingActor: null,
-  actorEditorVisit: 0,
   editingActorSection: null,
   settingsTarget: null,
 
@@ -238,19 +236,11 @@ export const useModalStore = create<ModalState>((set) => ({
       editActorTitle: actor.title || "",
       editActorCapabilityAutoloadText: formatCapabilityIdInput(actor.capability_autoload),
     });
-    set((state) => ({
-      editingActor: actor,
-      actorEditorVisit: state.actorEditorVisit + 1,
-      editingActorSection: section || null,
-    }));
+    set({ editingActor: actor, editingActorSection: section || null });
   },
   setEditingActor: (actor) =>
     set((state) => ({
       editingActor: actor,
-      actorEditorVisit:
-        actor && actor.id !== state.editingActor?.id
-          ? state.actorEditorVisit + 1
-          : state.actorEditorVisit,
       editingActorSection:
         actor && actor.id === state.editingActor?.id ? state.editingActorSection : null,
     })),

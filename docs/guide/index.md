@@ -20,7 +20,7 @@ Use this section based on what you are trying to do next.
 
 - [Operations Runbook](/guide/operations) for triage, recovery, and upgrade flow
 - [Web UI Guide](/guide/web-ui) for control-plane behavior
-- [Supported Runtimes](/guide/runtimes) for Claude Code, Codex, ChatGPT Web, Grok, Kimi, and other actor runtimes
+- [Supported Runtimes](/guide/runtimes) for Claude Code, Codex, ChatGPT Web, Grok, Kimi, and other agent runtimes
 - [CCCC Connect](/guide/connect) for same-account instance aggregation and collaboration
 - [Capability Allowlist Baseline](/guide/capability-allowlist) for MCP/skill curation levels
 - [Contributor Quality Gates](/guide/quality-gates) for local checks, CI boundaries, and native release verification
@@ -35,7 +35,8 @@ Use this section based on what you are trying to do next.
 ## Core Concepts (Short Version)
 
 - **Working Group**: the collaboration unit with durable history
-- **Actor**: an agent runtime session (foreman/peer)
+- **Agent**: a Group member running or connected to an agent runtime (foreman/peer). The CLI and
+  API keep the existing `actor` and `actor_id` names for these members.
 - **Scope**: a directory context attached to a group
 - **Ledger**: append-only collaboration event stream
 - **Daemon**: single writer and source of operational truth

@@ -20,7 +20,7 @@ an existing `CLAUDE.md`; configure its native instruction loading when necessary
 Saving a file does not prove that running sessions have reloaded it. You can
 optionally notify the team in chat after saving.
 
-Web Model and Dots Actors can read repository files on demand with the existing
+Web Model and Dots agents can read repository files on demand with the existing
 `cccc_file` tool, for example `cccc_file(path="AGENTS.md")`. Local coding runtimes
 use their own file and instruction-loading facilities.
 
@@ -39,7 +39,7 @@ The help protocol reference is the group-specific CCCC collaboration contract. Y
 CCCC composes help from two layers:
 
 1. **Built-in contract**: the canonical message-delivery section always comes from `resources/cccc-help.md`.
-2. **Group overlay (CCCC_HOME)**: `CCCC_HOME/groups/<group_id>/prompts/CCCC_HELP.md` adds common, role, and actor guidance without replacing that canonical section.
+2. **Group overlay (CCCC_HOME)**: `CCCC_HOME/groups/<group_id>/prompts/CCCC_HELP.md` adds common, role, and agent guidance without replacing that canonical section.
 
 To customize local guidance, edit the group overlay (recommended: Web UI → Settings → Guidance).
 
@@ -74,10 +74,10 @@ You can show different content to different roles using conditional markers:
 **Marker syntax:**
 - `## @role: foreman` - Only foreman sees this section
 - `## @role: peer` - Only peers see this section
-- `## @actor: <actor_id>` - Only the specific actor sees this section
+- `## @actor: <actor_id>` - Only the specific agent sees this section
 - Sections without markers are the shared/common content visible to everyone
 
-In the Web structured Help editor, these untagged sections are surfaced as `Common Notes`, while the tagged blocks are surfaced as role sections and actor notes.
+In the Web structured Help editor, these untagged sections are surfaced as `Common Notes`, while the tagged blocks are surfaced as role sections and agent notes.
 
 #### How Agents Consume Help
 

@@ -120,7 +120,7 @@ docker run -d \
   cccc
 ```
 
-Open `http://localhost:8848` in your browser. The sample command binds the host port to `127.0.0.1` on purpose, so you can safely create an **Admin Access Token** in **Settings > Web Access** before any broader exposure.
+Open `http://localhost:8848` in your browser. The sample command binds the host port to `127.0.0.1` on purpose, so you can safely create an **Admin Access Token** in **Settings > This instance > Web Access** before any broader exposure.
 
 The image includes Chromium, the required shared libraries, and `Xvfb` for
 projected browser surfaces such as NotebookLM sign-in and Presentation browser
@@ -154,7 +154,7 @@ docker exec cccc cccc doctor
 | `ANTHROPIC_AUTH_TOKEN` | _(none)_ | Auth token for Claude Code runtime (do not set together with `ANTHROPIC_API_KEY`) |
 | `ANTHROPIC_BASE_URL` | _(none)_ | Custom API endpoint for Claude Code |
 | `OPENAI_API_KEY` | _(none)_ | API key for Codex runtime |
-| `OPENAI_BASE_URL` | _(none)_ | CCCC compatibility entry for Codex custom endpoints. CCCC maps this to Codex CLI's `openai_base_url` runtime config when launching Codex actors. |
+| `OPENAI_BASE_URL` | _(none)_ | CCCC compatibility entry for Codex custom endpoints. CCCC maps this to Codex CLI's `openai_base_url` runtime config when launching Codex agents. |
 
 ### Volume Mounts
 

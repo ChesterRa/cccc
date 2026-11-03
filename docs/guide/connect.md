@@ -1,22 +1,22 @@
 # CCCC Connect
 
 CCCC Connect brings instances linked to the same membership account into one
-workspace while each instance keeps its own Groups, files, Actors and history.
+workspace while each instance keeps its own Groups, files, agents and history.
 Local CCCC use continues to work without an account. For collaboration between
 selected Groups without the account service, see
 [Direct connections](#direct-connections-without-an-account).
 
 ## Link instances
 
-In each instance, open **Settings → Account** and link the same account. Connect
-background discovery and Group/Actor communication are enabled by that binding;
+In each instance, open **Settings → This instance → Account** and link the same account. Connect
+background discovery and Group and agent communication are enabled by that binding;
 there is no Network to create or Group pair to configure. Link only instances
 whose Groups may communicate with every other instance on the account.
 
 Linking from trusted localhost administration prepares the first administrator
 Access Token and signs that browser in automatically. Existing Tokens remain
 unchanged; remote first setup still requires the local bootstrap code. In
-**Settings → Account**, edit **Instance name** to identify the workstation. This
+**Settings → This instance → Account**, edit **Instance name** to identify the workstation. This
 is the same instance name shown on the account website. New device grants use
 the machine hostname as an initial name when available; reconnecting does not
 overwrite an existing name. The editor identifies the instance and its address.
@@ -61,23 +61,23 @@ and connected Groups. Remote entries show **Group · Instance**; their cached
 information may be outdated and does not prove they are online. Selecting an
 entry adds a reference for your current recipients—it does **not** change `To`
 or send your text to that Group. For example, ask your local Agent to coordinate
-with `#Team · Mac`; the reference carries the exact remote identity so the Agent
+with `#Team · Mac`; the reference carries the exact remote identity so the agent
 can discover and contact it through Connect. `#Group @` also offers that Group's
-cached enabled Actors. Switching local Groups preserves references with their
+cached enabled agents. Switching local Groups preserves references with their
 drafts. Restricted Web sessions continue to offer only local Groups.
 
 The same tools serve account connections and Direct connections. They are part
-of the ordinary Actor's core MCP catalog; no capability installation or Access
+of the ordinary agent's core MCP catalog; no capability installation or Access
 Token is needed for Agent messaging.
 
 1. Call `cccc_connect()` in the local Group. Check both `instances` (same account)
    and `external_groups` (connections granted to this specific Group).
 2. For a same-account instance, call `cccc_connect(instance_id="...")`. For an
    `external_groups` entry, also set `target_group_id` to that entry's `group_id`.
-   The result includes the Group's Actors. Follow `next` with `after` if present.
+   The result includes the Group's agents. Follow `next` with `after` if present.
    Instance/Group names are labels; use the returned IDs to address messages.
 3. Send with `cccc_message_send(dst_instance_id="...", dst_group_id="...",
-   to=["@foreman"], text="...", insight="...", mode="send")`. Use an Actor ID
+   to=["@foreman"], text="...", insight="...", mode="send")`. Use an agent ID
    for a specific recipient. `mode="send"` requests immediate delivery; the
    MCP default `mode="mail"` leaves Mail for the recipient to read.
    `cccc_file_send(...)` supports the same qualified destination for small
@@ -101,28 +101,28 @@ cccc send "Hello" --group LOCAL_GROUP --dst-instance REMOTE_INSTANCE \
 cccc reply LOCAL_EVENT_ID "Received" --group LOCAL_GROUP --insight "Ready to collaborate"
 ```
 
-Inside a CCCC Actor, `--group` and `--by` default to its injected Group and Actor
-identity. Outside an Actor, the active Group and `user` are used. Supply a stable
+Inside a CCCC agent, `--group` and `--by` default to its injected Group and agent
+identity. Outside an agent, the active Group and `user` are used. Supply a stable
 `--idempotency-key` (MCP: `idempotency_key`) when retrying unchanged content after
 an uncertain response; do not create a new message merely because a receipt is
 still pending.
 
 Queued means the local instance accepted responsibility to deliver. Sent means
-the target Group confirmed receipt; it does not mean an Actor finished the task.
+the target Group confirmed receipt; it does not mean an agent finished the task.
 Bounded retries survive restarts. Failed or unconfirmed deliveries produce an
 explicit result, and a slow peer does not block healthy peers. Cancelling a
 request to reply closes the obligation; it does not retract the message or stop
-the receiving Actor.
+the receiving agent.
 
 ## Connect a Group with another member
 
 This is a connection between two selected Groups, not a shared administrator
-workspace. Both Groups can discover each other's Actors and exchange messages,
+workspace. Both Groups can discover each other's agents and exchange messages,
 replies and files. It does not expose terminals, Presentation, full history,
 Context or arbitrary remote tools. Other Groups do not inherit the connection.
 
 1. Both members link their instances to their own accounts and enable a reachable
-   HTTPS route in **Settings → Account → Remote Access**.
+   HTTPS route in **Settings → This instance → Account → Remote Access**.
 2. The recipient opens **Group connections** on the account website and copies
    their **Member ID**.
 3. The sender opens the intended Group in native CCCC Web as an administrator,
@@ -133,8 +133,8 @@ Context or arbitrary remote tools. Other Groups do not inherit the connection.
    **Accept in one of your instances**, and opens their chosen instance. Sign in
    there as an administrator if needed, choose the local Group, then click
    **Review invitation on website**. Check both Groups and confirm.
-5. Allow up to two minutes for both online instances to synchronize. Their Actors
-   can now use `cccc_connect` to discover the connected Group and its Actors,
+5. Allow up to two minutes for both online instances to synchronize. Their agents
+   can now use `cccc_connect` to discover the connected Group and its agents,
    then use the normal message, reply and file tools described above.
 
 An invitation expires after 24 hours. If either instance is offline, reconnect it
@@ -153,7 +153,7 @@ Either member can cancel a pending invitation, decline an incoming one, or
 **Disconnect** an active connection on the account website. The native dialog
 also links directly to the selected connection's disconnect confirmation.
 Disconnect takes effect within the authorization lease (at most two minutes);
-already delivered messages remain, and running Actors are not stopped. Deleting
+already delivered messages remain, and running agents are not stopped. Deleting
 or importing a Group, resetting it to a replacement Group, or unlinking its
 device requires a fresh connection. Reconnecting never resumes old queued work.
 
@@ -161,13 +161,13 @@ The native **Group connections** dialog distinguishes a confirmed empty list
 from pending or failed synchronization. A temporary confirmation failure does not
 mean the account was unlinked. The last check and error are shown, and the existing
 background service retries automatically. **Refresh** reads its latest result;
-it does not create a new connection or restart an Actor.
+it does not create a new connection or restart an agent.
 
 ## Disconnect and historical data
 
 Unlinking a device or withdrawing its account grant ends its Connect authority.
 Browser Token revocation ends that browser's access independently; it does not
-stop Actors. Offline directory entries are not proof that an instance is online.
+stop agents. Offline directory entries are not proof that an instance is online.
 
 [Manual Group Bridge](/guide/group-bridge) is retired. Old grants and unfinished
 operations are not silently migrated to Connect. Historical messages remain
@@ -236,7 +236,7 @@ provide a relay, discover devices or change firewall/router settings.
 5. Return to the receiving panel. Check the requesting instance and Group,
    verify its identity with the other administrator, then approve it. This side
    explicitly shows that it is waiting for **your** approval. Both panels
-   should show **Connected**. Actors can now use `cccc_connect`, then ordinary
+   should show **Connected**. Agents can now use `cccc_connect`, then ordinary
    message/file/reply tools with the returned qualified destination.
 
 The first invitation or join uses the current account instance name when

@@ -20,18 +20,19 @@ fn confirmation_pty_preserves_the_configured_settings_sources() {
         ],
     ] {
         let mut f = Fixture::new("disclaimer");
-        std::fs::remove_file(f.receipt_path()).unwrap();
+        std::fs::remove_file(f.receipt_path()).expect("remove saved fixture receipt");
         f.actor
             .command
             .extend(arguments.iter().map(|value| value.to_string()));
         f.group.actors = vec![f.actor.clone()];
         cccc_core::GroupStore::new(f.home.clone())
-            .unwrap()
+            .expect("open fixture group store")
             .save(&f.group)
-            .unwrap();
+            .expect("save configured fixture actor");
         start_prompt(&f);
-        let prompt: Value = cccc_core::fs::read_json(&f.config.join("prompt_launch.json")).unwrap();
-        let argv = prompt["argv"].as_array().unwrap();
+        let prompt: Value = cccc_core::fs::read_json(&f.config.join("prompt_launch.json"))
+            .expect("read confirmation launch");
+        let argv = prompt["argv"].as_array().expect("confirmation arguments");
         assert!(argv.windows(arguments.len()).any(|window| {
             window
                 .iter()

@@ -31,18 +31,18 @@ describe("Actor working directory", () => {
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
   };
-  const listing = (path: string, readable: boolean) => {
+  // A listing that fails; a folder the server may not list still lists, empty.
+  const listing = (path: string, listed: boolean) => {
     vi.mocked(globalThis.fetch).mockResolvedValueOnce(
       new Response(
-        JSON.stringify({
-          ok: true,
-          result: {
-            path,
-            parent: path.slice(0, path.lastIndexOf("/")) || "/",
-            items: [],
-            readable,
-          },
-        }),
+        JSON.stringify(
+          listed
+            ? {
+                ok: true,
+                result: { path, parent: path.slice(0, path.lastIndexOf("/")) || "/", items: [] },
+              }
+            : { ok: false, error: { code: "io_error", message: "Fixture listing failure" } },
+        ),
         { headers: { "content-type": "application/json" } },
       ),
     );

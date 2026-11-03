@@ -38,10 +38,6 @@ export function useWorkspaceDirectoryPicker() {
         setError(response.error?.message || t("copyGroups.failedToListWorkspace"));
         return false;
       }
-      if (response.result.readable === false) {
-        setError(t("copyGroups.failedToListWorkspace"));
-        return false;
-      }
       setItems(response.result.items);
       setCurrentDir(response.result.path);
       setParentDir(response.result.parent);

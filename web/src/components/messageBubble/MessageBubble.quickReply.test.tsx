@@ -6,6 +6,17 @@ import { useUIStore } from "../../stores";
 import type { Actor, LedgerEvent } from "../../types";
 import { MessageBubble } from "../MessageBubble";
 import { MessageActions } from "./MessageActions";
+import type { MessageActionsProps } from "./MessageActions";
+
+/** The pointer bar and the touch menu, both as a message renders them. */
+function BothParts(props: Omit<MessageActionsProps, "part">) {
+  return (
+    <>
+      <MessageActions part="bar" {...props} />
+      <MessageActions part="menu" {...props} />
+    </>
+  );
+}
 
 const replyMessage = vi.hoisted(() => vi.fn());
 vi.mock("../../services/api", async (importOriginal) => ({
@@ -89,7 +100,7 @@ describe("quick replies", () => {
     const event = { id: "event-1", kind: "chat.message", by: "worker", data: {} };
     await act(async () =>
       root.render(
-        <MessageActions
+        <BothParts
           copyableMessageText="text"
           onCopyMessageText={vi.fn()}
           onCopyLink={vi.fn()}

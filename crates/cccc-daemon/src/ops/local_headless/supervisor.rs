@@ -319,13 +319,19 @@ fn lifecycle_keys() -> io::Result<HashSet<Key>> {
 }
 
 pub fn stop_group(group_id: &str) -> io::Result<()> {
-    let actor_ids = lifecycle_keys()?
+    let mut actor_ids = lifecycle_keys()?
         .into_iter()
         .filter(|key| key.0 == group_id)
         .map(|key| key.1)
-        .collect::<Vec<_>>();
+        .collect::<HashSet<_>>();
+    // A cancelled watcher may leave its protected terminal alive after launch
+    // preparation fails; it still belongs to the Group being paused.
+    actor_ids.extend(super::confirmation_terminal::group_actor_ids(group_id)?);
     for actor_id in actor_ids {
         stop(group_id, &actor_id)?;
+        // Group pause stops managed owners. A pending confirmation has no
+        // managed owner yet, so retire its protected terminal separately.
+        super::confirmation_terminal::stop_owned(group_id, &actor_id)?;
     }
     Ok(())
 }

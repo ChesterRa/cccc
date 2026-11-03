@@ -24,6 +24,10 @@ export function LocalSessionsDialog({
   const [helpRequest, setHelpRequest] = useState<LocalSessionsHelpRequest | null>(null);
   const showHelp = (section: LocalSessionsHelpRequest["section"]) =>
     setHelpRequest((previous) => ({ section, sequence: (previous?.sequence || 0) + 1 }));
+  // Setup opens by itself only when the first list is empty; after that the reader decides.
+  const [firstListEmpty, setFirstListEmpty] = useState<boolean | null>(null);
+  if (firstListEmpty === null && !connection.loading)
+    setFirstListEmpty(!connection.error && connection.displayedSources.length === 0);
   return (
     <ModalFrame
       isDark={isDark}
@@ -130,15 +134,13 @@ export function LocalSessionsDialog({
           {!connection.loading && connection.anyUnavailable ? (
             <p className="text-xs text-[var(--color-text-secondary)]">
               {t("localSessions.unavailableHint")}{" "}
-              <Button
+              <button
                 type="button"
-                variant="ghost"
-                size="sm"
-                className="h-auto px-0 text-xs underline underline-offset-2"
+                className="underline underline-offset-2"
                 onClick={() => showHelp("troubleshooting")}
               >
                 {t("localSessions.showTroubleshooting")}
-              </Button>
+              </button>
             </p>
           ) : null}
           <LocalSessionsList
@@ -153,7 +155,6 @@ export function LocalSessionsDialog({
             isDark={isDark}
             limit={MAX_SELECTED_SESSIONS}
             onResume={connection.resume}
-            onShowSetup={() => showHelp("setup")}
           />
         </section>
         {!connection.joining && (
@@ -163,7 +164,7 @@ export function LocalSessionsDialog({
             busy={connection.busy}
           />
         )}
-        <LocalSessionsHelp request={helpRequest} />
+        <LocalSessionsHelp request={helpRequest} openSetup={firstListEmpty === true} />
       </div>
     </ModalFrame>
   );

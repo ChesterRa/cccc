@@ -408,7 +408,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const commonScope = {
     id: "common" as HelpScopeId,
     title: t("guidance.commonNotesTitle", "Common Notes"),
-    hint: t("guidance.commonNotesHint", "Untagged help content shared by all actors."),
+    hint: t("guidance.commonNotesHint", "Untagged help content shared by all agents."),
     placeholder: t(
       "guidance.commonNotesPlaceholder",
       "Keep shared guidance, workflow details, and appendices here...",
@@ -421,7 +421,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const foremanScope = {
     id: "role:foreman" as HelpScopeId,
     title: t("guidance.foremanNotesTitle", "Foreman Notes"),
-    hint: t("guidance.foremanNotesHint", "Only foreman actors receive this scoped block."),
+    hint: t("guidance.foremanNotesHint", "Only foreman agents receive this scoped block."),
     placeholder: t(
       "guidance.foremanNotesPlaceholder",
       "Own outcome quality, review peer outputs, and keep shared direction coherent...",
@@ -434,7 +434,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
   const peerScope = {
     id: "role:peer" as HelpScopeId,
     title: t("guidance.peerNotesTitle", "Peer Notes"),
-    hint: t("guidance.peerNotesHint", "Only peer actors receive this scoped block."),
+    hint: t("guidance.peerNotesHint", "Only peer agents receive this scoped block."),
     placeholder: t(
       "guidance.peerNotesPlaceholder",
       "Report risks early, deliver verifiable outputs, and say when the direction is wrong...",
@@ -455,11 +455,11 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
       title: displayActorName(actor),
       hint: t(
         "guidance.actorNotesHint",
-        "Local notes for specific actors. This is the same source edited from the actor modal shortcut.",
+        "Local notes for specific agents. This is the same source edited from the agent modal shortcut.",
       ),
       placeholder: t(
         "guidance.actorNotePlaceholder",
-        "Describe only this actor's local responsibilities, boundaries, and preferred behavior...",
+        "Describe only this agent's local responsibilities, boundaries, and preferred behavior…",
       ),
       value: note,
       roleLabel,
@@ -474,11 +474,11 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
       title: actorId,
       hint: t(
         "guidance.actorNotesHint",
-        "Local notes for specific actors. This is the same source edited from the actor modal shortcut.",
+        "Local notes for specific agents. This is the same source edited from the agent modal shortcut.",
       ),
       placeholder: t(
         "guidance.orphanActorNotePlaceholder",
-        "Keep or clean this leftover note for an actor that no longer exists...",
+        "Keep or clean this leftover note for an agent that no longer exists…",
       ),
       value: note,
       roleLabel: t("guidance.orphanActorRole", "No longer in group"),
@@ -531,7 +531,7 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
         label={t("guidance.helpEditorTitle")}
         help={t(
           "guidance.helpEditorHint",
-          "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.",
+          "Structured mode edits common, role, and agent notes; raw mode keeps full-file control.",
         )}
         labelId={idFor("helpMode", expanded)}
       >
@@ -569,21 +569,21 @@ export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: st
               peerScope,
             ])}
             {actorScopes.length ? (
-              scopeChoice(t("guidance.actorNotesTitle", "Actor Notes"), actorScopes)
+              scopeChoice(t("guidance.actorNotesTitle", "Agent Notes"), actorScopes)
             ) : (
               <div className="flex flex-col gap-1.5">
-                <span className={captionClass}>{t("guidance.actorNotesTitle", "Actor Notes")}</span>
+                <span className={captionClass}>{t("guidance.actorNotesTitle", "Agent Notes")}</span>
                 <span className="text-xs text-[var(--color-text-muted)]">
                   {t(
                     "guidance.noActorsForStructuredHelp",
-                    "No actors available in this group yet.",
+                    "No agents available in this group yet.",
                   )}
                 </span>
               </div>
             )}
             {orphanActorScopes.length
               ? scopeChoice(
-                  t("guidance.orphanActorNotesTitle", "Other actor notes"),
+                  t("guidance.orphanActorNotesTitle", "Other agent notes"),
                   orphanActorScopes,
                 )
               : null}

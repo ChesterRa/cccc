@@ -15,26 +15,34 @@ fn start_prompt(f: &Fixture) {
     assert!(started.ok, "{:?}", started.error);
     f.wait(|| f.config.join("prompt_stage").exists());
     f.assert_no_private_output(&started);
-    assert!(headless::waiting_for_workspace_trust(&f.group.group_id, &f.actor.id).unwrap());
+    assert!(
+        headless::waiting_for_workspace_trust(&f.group.group_id, &f.actor.id)
+            .expect("check confirmation watcher")
+    );
     assert!(!headless::running(&f.group.group_id, &f.actor.id));
-    let launch: Value = cccc_core::fs::read_json(&f.config.join("prompt_launch.json")).unwrap();
+    let launch: Value = cccc_core::fs::read_json(&f.config.join("prompt_launch.json"))
+        .expect("read confirmation launch");
     assert!(
         launch["argv"]
             .as_array()
-            .unwrap()
+            .expect("confirmation arguments")
             .iter()
             .any(|arg| arg == "--dangerously-skip-permissions")
     );
     assert!(
         !launch["argv"]
             .as_array()
-            .unwrap()
+            .expect("confirmation arguments")
             .iter()
             .any(|arg| arg == "--bg" || arg == "agents")
     );
     assert_eq!(
         launch["config_dir"],
-        f.config.canonicalize().unwrap().to_string_lossy().as_ref()
+        f.config
+            .canonicalize()
+            .expect("canonical fixture config")
+            .to_string_lossy()
+            .as_ref()
     );
     f.assert_launch_contexts_match();
 }
@@ -44,7 +52,8 @@ fn input(f: &Fixture, bytes: &[u8]) {
 }
 
 fn waiting(f: &Fixture) -> bool {
-    headless::waiting_for_workspace_trust(&f.group.group_id, &f.actor.id).unwrap()
+    headless::waiting_for_workspace_trust(&f.group.group_id, &f.actor.id)
+        .expect("check confirmation watcher")
 }
 
 fn assert_saved_receipt(f: &Fixture, failures: u64, status: &str) {
@@ -65,7 +74,7 @@ fn accepting_disclaimer_in_pty_resumes_and_delivers_only_after_confirmation() {
     let old_global = std::fs::read(f.config.join(".claude.json")).ok();
     start_prompt(&f);
     let prompt_pid = cccc_runtime::status(&f.group.group_id, &f.actor.id)
-        .unwrap()
+        .expect("confirmation terminal status")
         .pid;
     let job = f.delivery();
     let event = job.event.clone();
@@ -95,7 +104,7 @@ fn accepting_disclaimer_in_pty_resumes_and_delivers_only_after_confirmation() {
     assert!(headless::running(&f.group.group_id, &f.actor.id));
     assert_ne!(
         cccc_runtime::status(&f.group.group_id, &f.actor.id)
-            .unwrap()
+            .expect("managed terminal status")
             .pid,
         prompt_pid
     );
@@ -104,13 +113,15 @@ fn accepting_disclaimer_in_pty_resumes_and_delivers_only_after_confirmation() {
         std::fs::read(f.config.join(".claude.json")).ok(),
         old_global
     );
-    let settings: Value = cccc_core::fs::read_json(&f.config.join("settings.json")).unwrap();
+    let settings: Value = cccc_core::fs::read_json(&f.config.join("settings.json"))
+        .expect("read approved fixture settings");
     assert_eq!(settings["skipDangerousModePermissionPrompt"], true);
     assert_eq!(
-        std::fs::read_to_string(f.config.join("confirmation_inputs")).unwrap(),
+        std::fs::read_to_string(f.config.join("confirmation_inputs"))
+            .expect("read fixture confirmation input"),
         "\"yes\"\n"
     );
-    let received = std::fs::read_to_string(f.config.join("received")).unwrap();
+    let received = std::fs::read_to_string(f.config.join("received")).expect("read delivery");
     assert_eq!(received.matches("PENDING_TASK").count(), 1);
     assert!(!f.config.join("unexpected_confirmation_tasks").exists());
     f.assert_launch_contexts_match();
@@ -127,10 +138,11 @@ fn default_home_approval_preserves_an_unset_config_directory() {
     for fresh in [false, true] {
         let f = Fixture::with_config_dir("disclaimer", false);
         if fresh {
-            std::fs::remove_file(f.receipt_path()).unwrap();
+            std::fs::remove_file(f.receipt_path()).expect("remove saved fixture receipt");
         }
         start_prompt(&f);
-        let prompt: Value = cccc_core::fs::read_json(&f.config.join("prompt_launch.json")).unwrap();
+        let prompt: Value = cccc_core::fs::read_json(&f.config.join("prompt_launch.json"))
+            .expect("read confirmation launch");
         assert!(prompt["config_dir_env"].is_null());
         assert_eq!(prompt["home"], f.actor.env["HOME"]);
         input(&f, b"yes\r");
@@ -139,10 +151,12 @@ fn default_home_approval_preserves_an_unset_config_directory() {
         if fresh {
             assert_ne!(f.receipt()["provider_session_id"], SAVED);
             for line in std::fs::read_to_string(f.config.join("launch_contexts"))
-                .unwrap()
+                .expect("read fixture launch contexts")
                 .lines()
             {
-                f.assert_private_settings(&serde_json::from_str(line).unwrap());
+                f.assert_private_settings(
+                    &serde_json::from_str(line).expect("parse launch context"),
+                );
             }
         } else {
             assert_saved_receipt(&f, 0, "usable");
@@ -176,6 +190,43 @@ fn declining_or_closing_the_disclaimer_does_not_start_a_managed_session() {
 }
 
 #[test]
+fn declined_confirmation_keeps_claimed_work_for_one_explicit_retry() {
+    if isolated("confirmation::declined_confirmation_keeps_claimed_work_for_one_explicit_retry") {
+        return;
+    }
+    let f = Fixture::new("disclaimer");
+    start_prompt(&f);
+    input(&f, b"no\r");
+    f.wait(|| !waiting(&f));
+    assert!(
+        headless::confirmation_paused(&f.group.group_id, &f.actor.id)
+            .expect("check declined confirmation")
+    );
+
+    let job = f.delivery();
+    let event_id = job.event.id.clone();
+    assert_eq!(
+        process_batch(&mut vec![job], &mut String::new(), &AtomicBool::new(false)),
+        BatchOutcome::Delivered
+    );
+    assert!(!f.config.join("received").exists());
+    assert_eq!(f.delivery_state(&event_id).as_deref(), Some("failed"));
+
+    // The first prompt left this marker behind. Waiting only for the watcher
+    // would allow input before the replacement fixture is ready to read it.
+    std::fs::remove_file(f.config.join("prompt_stage")).expect("clear old prompt marker");
+    let retried = f.lifecycle("actor_start");
+    assert!(retried.ok, "{:?}", retried.error);
+    f.wait(|| waiting(&f) && f.config.join("prompt_stage").exists());
+    assert!(!f.config.join("received").exists());
+    input(&f, b"yes\r");
+    f.wait(|| f.delivery_state(&event_id).as_deref() == Some("accepted"));
+    let received = std::fs::read_to_string(f.config.join("received")).expect("fixture receipt");
+    assert_eq!(received.matches("PENDING_TASK").count(), 1);
+    assert!(!f.config.join("unexpected_confirmation_tasks").exists());
+}
+
+#[test]
 fn actor_stop_retires_the_confirmation_owner_without_accepting() {
     if isolated("confirmation::actor_stop_retires_the_confirmation_owner_without_accepting") {
         return;
@@ -201,16 +252,16 @@ fn workspace_and_disclaimer_require_two_human_confirmations() {
     let f = Fixture::new("workspace_then_disclaimer");
     start_prompt(&f);
     let prompt_pid = cccc_runtime::status(&f.group.group_id, &f.actor.id)
-        .unwrap()
+        .expect("confirmation terminal status")
         .pid;
     assert_eq!(
-        std::fs::read_to_string(f.config.join("prompt_stage")).unwrap(),
+        std::fs::read_to_string(f.config.join("prompt_stage")).expect("workspace prompt stage"),
         "workspace"
     );
     input(&f, b"yes\r");
     f.wait(|| f.launches() == 2);
     assert_eq!(
-        std::fs::read_to_string(f.config.join("prompt_stage")).unwrap(),
+        std::fs::read_to_string(f.config.join("prompt_stage")).expect("disclaimer prompt stage"),
         "disclaimer"
     );
     assert!(waiting(&f));
@@ -218,7 +269,7 @@ fn workspace_and_disclaimer_require_two_human_confirmations() {
     assert!(!f.config.join("settings.json").exists());
     assert_eq!(
         cccc_runtime::status(&f.group.group_id, &f.actor.id)
-            .unwrap()
+            .expect("confirmation terminal status")
             .pid,
         prompt_pid
     );
@@ -229,7 +280,8 @@ fn workspace_and_disclaimer_require_two_human_confirmations() {
     assert_eq!(f.launches(), 3);
     assert_saved_receipt(&f, 0, "usable");
     assert_eq!(
-        std::fs::read_to_string(f.config.join("confirmation_inputs")).unwrap(),
+        std::fs::read_to_string(f.config.join("confirmation_inputs"))
+            .expect("read fixture confirmation inputs"),
         "\"yes\"\n\"yes\"\n"
     );
     assert!(!f.config.join("unexpected_confirmation_tasks").exists());
@@ -245,15 +297,16 @@ fn a_settings_change_is_not_approval_and_an_ordinary_failure_is_not_success() {
     let f = Fixture::new("confirmation_failure");
     start_prompt(&f);
     let prompt_pid = cccc_runtime::status(&f.group.group_id, &f.actor.id)
-        .unwrap()
+        .expect("confirmation terminal status")
         .pid;
     // This is a harmless edit to the isolated fixture, not provider consent.
-    std::fs::write(f.config.join("settings.json"), r#"{"theme":"dark"}"#).unwrap();
+    std::fs::write(f.config.join("settings.json"), r#"{"theme":"dark"}"#)
+        .expect("write unrelated fixture setting");
     f.wait(|| f.launches() == 2);
     assert!(waiting(&f));
     assert_eq!(
         cccc_runtime::status(&f.group.group_id, &f.actor.id)
-            .unwrap()
+            .expect("confirmation terminal status")
             .pid,
         prompt_pid
     );

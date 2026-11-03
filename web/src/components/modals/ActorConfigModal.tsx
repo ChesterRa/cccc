@@ -1530,7 +1530,7 @@ function EditActorConfigModal({
               <div className={sectionHintClass}>
                 {t(
                   "sectionBasicsHint",
-                  "Edit the actor label, group role, actor preset, and actor notes here.",
+                  "Edit the agent label, group role, behavior preset, and agent notes here.",
                 )}
               </div>
 

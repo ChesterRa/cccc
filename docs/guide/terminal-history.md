@@ -12,13 +12,13 @@ always scroll local history, including when another page owns terminal input.
 Writer handoffs take effect on the next touch move without recreating xterm.
 Read-only alternate buffers cannot send scrolling input and have no local history.
 
-Native PTY actors always keep terminal output in two bounded memory layers, with an optional durable third layer:
+Native PTY agents always keep terminal output in two bounded memory layers, with an optional durable third layer:
 
-- A configurable in-memory hot buffer serves live WebSocket output, cursor reconnects, history queries, and raw-replay fallback. It defaults to 10 MiB per actor.
-- A completed-session cache keeps up to 256 KiB per stopped actor and 8 MiB total queryable without reopening files.
-- When durable persistence is enabled, an append-oriented rolling transcript under `CCCC_HOME/groups/<group_id>/state/terminal/<actor_id>/` preserves raw PTY bytes across actor and daemon restarts.
+- A configurable in-memory hot buffer serves live WebSocket output, cursor reconnects, history queries, and raw-replay fallback. It defaults to 10 MiB per agent.
+- A completed-session cache keeps up to 256 KiB per stopped agent and 8 MiB total queryable without reopening files.
+- When durable persistence is enabled, an append-oriented rolling transcript under `CCCC_HOME/groups/<group_id>/state/terminal/<actor_id>/` preserves raw PTY bytes across agent and daemon restarts.
 
-Fresh WebSocket clients negotiate `snapshot_v1`. Rust maintains a bounded headless terminal mirror beside the raw byte ring and serializes its current screen plus up to 512 recent scrollback lines into one ANSI snapshot. The snapshot carries the exact raw PTY cursor it represents; after xterm parses and acknowledges it, the stream continues with untouched PTY bytes after that cursor. Snapshot encoding bytes never advance the raw cursor. This makes a newly opened actor show the latest terminal state immediately instead of parsing the oldest retained output first.
+Fresh WebSocket clients negotiate `snapshot_v1`. Rust maintains a bounded headless terminal mirror beside the raw byte ring and serializes its current screen plus up to 512 recent scrollback lines into one ANSI snapshot. The snapshot carries the exact raw PTY cursor it represents; after xterm parses and acknowledges it, the stream continues with untouched PTY bytes after that cursor. Snapshot encoding bytes never advance the raw cursor. This makes a newly opened agent show the latest terminal state immediately instead of parsing the oldest retained output first.
 
 Reconnects with a valid consumed cursor remain tail-only and do not reset the terminal. If the cursor has expired, the server sends a new snapshot. Unsupported stateful graphics/control strings, unsafe mirror dimensions, an oversized snapshot, or a client that does not negotiate `snapshot_v1` automatically uses the retained raw ANSI replay path. The raw ring and optional durable transcript remain the source for `/terminal/history`; older durable sessions are not injected into an interactive xterm attach.
 
@@ -29,8 +29,8 @@ For a control connection that explicitly takes ownership, the browser includes i
 `terminal_replay` is an active-session operation: it never stitches an older
 durable transcript into a new interactive terminal. Memory-only absolute
 cursors remain continuous across replacement sessions while the same daemon
-process owns the actor. A daemon restart does not transfer that live PTY, its
-input mode, or its hot output ring. The actor is
+process owns the agent. A daemon restart does not transfer that live PTY, its
+input mode, or its hot output ring. The agent is
 started again; provider-level session resume, where supported, is a separate
 runtime feature.
 
@@ -53,11 +53,11 @@ observability:
     per_actor_bytes: 10485760
 ```
 
-Restart the affected PTY actors after changing this setting; capture mode is selected when each session starts.
+Restart the affected PTY agents after changing this setting; capture mode is selected when each session starts.
 
 When the durable limit is reached, CCCC keeps the newest bytes, removes older session files, and reports `cursor_expired` for cursors older than the retained boundary. Disabling persistence stops new durable writes; it does not silently delete existing transcript files.
 
-If the archive cannot be created or written, actor startup and PTY draining continue with bounded in-memory history. CCCC reports the archive failure locally instead of turning an observability failure into a runtime outage.
+If the archive cannot be created or written, agent startup and PTY draining continue with bounded in-memory history. CCCC reports the archive failure locally instead of turning an observability failure into a runtime outage.
 
 Transcript files are created with owner-only permissions on Unix. They contain raw terminal output and can therefore include commands or secrets printed by a runtime. Protect `CCCC_HOME` accordingly.
 
@@ -99,7 +99,7 @@ history to capture the current retained output.
 When a second Ctrl-C or the launcher's normal-shutdown deadline forces exit,
 the launcher terminates registered OS process trees directly. This path does not
 call normal runtime stop, wait for session/protocol locks, or add another cleanup
-timeout. PTY actors, managed provider processes and their helpers, DeepSeek
+timeout. PTY agents, managed provider processes and their helpers, DeepSeek
 supervisors, and Web-owned detached daemons register ownership during spawn.
 Registration and forced admission closure are serialized, so a new child cannot
 slip between creation and registration during forced exit.

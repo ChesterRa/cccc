@@ -159,7 +159,7 @@ fn print_membership_copy(response: &DaemonResponse) {
     eprintln!(
         "Website sign-in does not sign you into this device. Local Web Access can create a temporary sign-in link."
     );
-    eprintln!("Web Model connectors are managed per actor in CCCC settings.");
+    eprintln!("Web Model connectors are managed per agent in CCCC settings.");
 }
 
 fn display_or_none(value: &str) -> &str {

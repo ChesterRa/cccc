@@ -9,18 +9,13 @@ import {
 } from "../features/pendingReplies/store";
 import { useUIStore } from "../stores/useUIStore";
 import type { LedgerEvent } from "../types";
-import * as pendingApi from "../services/api/pendingReplies";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 // The store is read on the client, as in the app; a server render would see its initial state.
-async function render(
-  event: LedgerEvent,
-  replyStore = true,
-  inspect?: (host: HTMLDivElement) => Promise<void>,
-) {
+async function render(event: LedgerEvent, replyStore = true) {
   const host = document.createElement("div");
   const root = createRoot(host);
   await act(async () =>
@@ -43,12 +38,9 @@ async function render(
       </PendingReplyStoreContext.Provider>,
     ),
   );
-  try {
-    if (inspect) await inspect(host);
-    return host.innerHTML;
-  } finally {
-    await act(async () => root.unmount());
-  }
+  const markup = host.innerHTML;
+  await act(async () => root.unmount());
+  return markup;
 }
 
 const toUser: LedgerEvent = {
@@ -98,42 +90,4 @@ it("keeps the mark on a request between members while the indicators are off", a
   useUIStore.getState().setShowPendingPrompts(false);
   const markup = await render(betweenMembers);
   expect(markup).toContain("needReply");
-});
-
-it("still submits an inline answer when only local navigation reminders are hidden", async () => {
-  const original = useUIStore.getState();
-  const stored = localStorage.getItem("cccc-show-pending-reply-reminders");
-  const answer = vi
-    .spyOn(pendingApi, "answerPendingReply")
-    .mockResolvedValue({ ok: false, error: { code: "NETWORK_ERROR", message: "Fixture failure" } });
-  try {
-    useUIStore.getState().setShowPendingPrompts(true);
-    useUIStore.getState().setShowPendingReplyReminders(false);
-    await render(toUser, true, async (host) => {
-      const input = host.querySelector<HTMLTextAreaElement>("textarea")!;
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
-          input,
-          "Fixture answer",
-        );
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      });
-      expect(host.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled).toBe(false);
-      await act(async () =>
-        host
-          .querySelector("form")!
-          .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
-      );
-      expect(answer).toHaveBeenCalledExactlyOnceWith("g_local", "to-user", expect.any(String), {
-        v: 1,
-        text: "Fixture answer",
-      });
-      expect(host.textContent).toContain("pendingReply.retrySame");
-    });
-  } finally {
-    answer.mockRestore();
-    useUIStore.setState(original);
-    if (stored === null) localStorage.removeItem("cccc-show-pending-reply-reminders");
-    else localStorage.setItem("cccc-show-pending-reply-reminders", stored);
-  }
 });

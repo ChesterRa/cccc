@@ -2,7 +2,6 @@ import { useId } from "react";
 import { useTranslation, Trans } from "react-i18next";
 
 import { SegmentedChoice } from "../../ui/segmented-choice";
-import { PendingReplyRemindersPreference } from "./PendingReplyRemindersPreference";
 import { SettingsCard, SettingsPage, SettingsRow, SettingsSaveBar } from "./SettingsKit";
 
 interface MessagingTabProps {
@@ -51,7 +50,6 @@ export function MessagingTab(props: MessagingTabProps) {
           />
         </SettingsRow>
       </SettingsCard>
-      <PendingReplyRemindersPreference />
     </SettingsPage>
   );
 }

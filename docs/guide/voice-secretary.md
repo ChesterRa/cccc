@@ -5,7 +5,7 @@ authority. Local ASR is provided by the linked `sherpa-onnx` runtime.
 
 Voice Secretary is one global, on-demand service with direct Runtime configuration
 or a linked Runtime Profile. Groups keep their own documents, transcripts and requests;
-no secretary appears in the normal Actor roster. Chet is a separate global
+no secretary appears in the normal agent roster. Chet is a separate global
 assistant with its own Runtime, conversation and optional Realtime calls.
 
 In the expanded Secretary workspace, **View Secretary** opens the shared execution
@@ -112,8 +112,8 @@ Both runtime forms support **Add to Runtime Profiles**, **Create Profile** and
 settings copies only that service's saved private environment and staged changes;
 values remain write-only. Applying the new Profile is a separate Runtime save.
 Editing a shared Profile also affects its other users. Custom Secretary credentials
-are independent of Chet and Actor credentials, and secret values are never read back.
-No extra model configuration layer or per-Group secretary Actor is created.
+are independent of Chet and agent credentials, and secret values are never read back.
+No extra model configuration layer or per-Group secretary agent is created.
 
 There is no Group Voice settings page or enable switch. Shared recognition backend,
 language, update interval and work rules belong to the global Secretary. Specific
@@ -221,7 +221,7 @@ to keep the user's current request language, technical identifiers and any expli
 requirement. Both services attach a bounded, speaker-labelled excerpt from the current call
 to help Chet resolve follow-ups such as "check that one". The provider request remains intact;
 drafts and omitted history are marked. This excerpt becomes part of the retained Chet conversation.
-Assistant speech and quoted Actor messages confer no additional authority. Essential ambiguity should
+Assistant speech and quoted agent messages confer no additional authority. Essential ambiguity should
 prompt one focused question. This uses Chet's existing Runtime, with no extra rewrite model or task console.
 
 Grok Voice acknowledges investigation acceptance briefly, then announces each complete result in arrival
@@ -422,7 +422,7 @@ their original IDs before saving the final revision. This also recovers availabl
 segments from an incomplete recording without treating them as a complete final
 transcript. If a browser retry still fails, recording stops with an error and
 the remaining unconfirmed text returns to the original Group's composer for
-review; it is not automatically sent to an Actor.
+review; it is not automatically sent to an agent.
 Connection failures retain known document segments and recover available text to
 the composer for non-document capture. A disconnected document recording gets a
 bounded attempt to finalize its provider stream. Lease release is fenced to its
@@ -618,7 +618,7 @@ Archived documents are retained in durable state but omitted from the working
 document projection. Archiving the current document selects the most recently
 updated remaining active document, or clears the active target when none remain.
 
-There is no per-Group secretary Actor or legacy execution path. Global tasks use their own business receipts. Provider turn completion and console
+There is no per-Group secretary agent or legacy execution path. Global tasks use their own business receipts. Provider turn completion and console
 text do not count as a delivered answer or committed document.
 Document paths remain repository-relative Markdown paths with symlink rejection.
 
@@ -628,7 +628,7 @@ Empty refinements use `no_op=true`; drafts are never sent as messages.
 Ask records a durable request before execution. A terminal report updates that
 request and its ledger feedback, allowing results to survive refresh/reconnect.
 For explicit peer coordination, the Secretary may propose a message to one
-current Group Actor. The user reviews and confirms forwarding; the task cannot
+current Group agent. The user reviews and confirms forwarding; the task cannot
 send messages itself. Secretary answers/drafts are not injected into Realtime Voice.
 
 In **Prompt** with **Polish after recording** off, microphone input routes directly to the composer. Local ASR accepts the explicit `composer` dispatch target, but the
@@ -697,12 +697,12 @@ billing plan must be enabled for that account. Connection tests distinguish a
 known resource-not-granted rejection from authentication failure, unspecified
 access denial, and quota limits without exposing upstream response bodies.
 
-## Existing documents and obsolete Actors
+## Existing documents and obsolete agents {#existing-documents-and-obsolete-actors}
 
 Groups retain documents, transcripts and fixed-target tasks; they do not own another
-Secretary configuration. Old Actor HELP files are preserved but their protocol is
+Secretary configuration. Old agent HELP files are preserved but their protocol is
 not imported into the task executor. Daemon startup stops and removes obsolete
-secretary Actors through the normal resource lifecycle before restoring Group
-runtimes. No legacy executor or automatic replay of old Actor history is retained.
+secretary agents through the normal resource lifecycle before restoring Group
+runtimes. No legacy executor or automatic replay of old agent history is retained.
 Configure the global Secretary explicitly, and choose what to do with unclaimed
 saved input when selecting its Runtime.

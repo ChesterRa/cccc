@@ -101,17 +101,39 @@ describe("create-group directory browser", () => {
     expect(host.querySelector('[role="alert"]')).toBeNull();
   });
 
+  it("keeps a folder it may not list open, empty, with the way back up", async () => {
+    api.fetchDirContents.mockImplementation(fetchDirContents);
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          result: { path: "/src/other", parent: "/src", items: [], readable: false },
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+    );
+    await act(async () =>
+      useFormStore.setState({ dirItems: [{ name: "other", path: "/src/other", is_dir: true }] }),
+    );
+    await act(async () => button("other")!.click());
+    expect(useFormStore.getState().currentDir).toBe("/src/other");
+    expect(useFormStore.getState().parentDir).toBe("/src");
+    expect(host.textContent).toContain("createGroup.noSubdirectories");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it("retries opening an already created folder without creating it again", async () => {
     api.createDirectory.mockResolvedValue({ ok: true, result: { path: "/src/fresh" } });
     api.fetchDirContents.mockImplementation(fetchDirContents);
     const fetch = vi.spyOn(globalThis, "fetch");
-    for (const readable of [false, false, true]) {
+    for (const listed of [false, false, true]) {
       fetch.mockResolvedValueOnce(
         new Response(
-          JSON.stringify({
-            ok: true,
-            result: { path: "/src/fresh", parent: "/src", items: [], readable },
-          }),
+          JSON.stringify(
+            listed
+              ? { ok: true, result: { path: "/src/fresh", parent: "/src", items: [] } }
+              : { ok: false, error: { code: "io_error", message: "Fixture listing failure" } },
+          ),
           { headers: { "content-type": "application/json" } },
         ),
       );

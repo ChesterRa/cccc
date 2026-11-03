@@ -320,6 +320,34 @@ it.each([
   },
 );
 
+it("keeps a folder it may not list selectable, empty, with the way back up", async () => {
+  const { host, button, unmount } = await mountTab("g1");
+  api.fetchDirSuggestions.mockResolvedValue({ ok: true, result: { suggestions: [] } });
+  api.fetchDirContents.mockImplementation(async (path: string) =>
+    path === "/src"
+      ? {
+          ok: true,
+          result: {
+            path,
+            parent: "/",
+            items: [{ name: "private", path: "/src/private", is_dir: true }],
+          },
+        }
+      : { ok: true, result: { path, parent: "/src", items: [], readable: false } },
+  );
+  try {
+    await choosePackage(host, new File(["zip"], "pack.zip"));
+    await act(async () => button("Choose or create folder")!.click());
+    await act(async () => button("private")!.click());
+    expect(api.fetchDirContents).toHaveBeenLastCalledWith("/src/private");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(button("copyGroups.useFolder")!.disabled).toBe(false);
+    expect(button("..")).toBeDefined();
+  } finally {
+    await unmount();
+  }
+});
+
 it("does not offer a misleading retry of the previous folder after navigation fails", async () => {
   const { host, button, unmount } = await mountTab("g1");
   api.fetchDirSuggestions.mockResolvedValue({ ok: true, result: { suggestions: [] } });

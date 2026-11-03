@@ -35,7 +35,7 @@ export function LocalSessionsButton({
           type="button"
           variant="ghost"
           size="sm"
-          className="h-[44px] min-h-[44px] shrink-0 gap-1 px-1 py-0 text-[0.8125rem] md:h-8 md:min-h-8"
+          className="h-[44px] min-h-[44px] shrink-0 gap-1 px-2 py-0 text-[0.8125rem] md:h-8 md:min-h-8"
           onClick={() => setOpen(true)}
           title={t("localSessions.connect")}
         >

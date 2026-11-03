@@ -104,7 +104,7 @@ fn groups_lists_states_and_the_selected_groups_members() {
     );
     let rows = draw_rows(&app, 80, 16);
     assert_eq!(rows[0], " cccc-dev");
-    assert_eq!(rows[1], " g_dev  Running | State active | 2 actors running");
+    assert_eq!(rows[1], " g_dev  Running | State active | 2 agents running");
     assert_eq!(rows[2], " Web  http://127.0.0.1:8848/?group=g_dev");
     assert!(rows[4].starts_with(" > Tasks: reading"));
     assert_eq!(rows[5], "   Start group");
@@ -188,10 +188,10 @@ fn an_empty_started_group_shows_its_state_beside_the_running_count() {
     with_members(&mut app, "g_new", Vec::new());
     let rows = draw_rows(&app, 80, 16);
     assert_eq!(rows[0], " empty");
-    assert_eq!(rows[1], " g_new  Offline | State active | 0 actors running");
+    assert_eq!(rows[1], " g_new  Offline | State active | 0 agents running");
     assert_eq!(rows[5], "   Start group");
     assert_eq!(rows[6], "   Stop group");
-    assert_eq!(rows[9], "   No actors in this group.");
+    assert_eq!(rows[9], "   No agents in this group.");
 }
 
 #[test]
@@ -213,10 +213,10 @@ fn confirmations_name_the_group_and_the_effect() {
     press(&mut app, KeyCode::Enter);
     let rows = draw_rows(&app, 80, 16);
     assert_eq!(rows[2], " Stop cccc-dev?");
-    assert_eq!(rows[3], " g_dev  State active | 2 actors running");
+    assert_eq!(rows[3], " g_dev  State active | 2 agents running");
     assert_eq!(rows[4], "");
     // No native members, so nothing is said about them.
-    assert_eq!(rows[5], " Its managed actors stop.");
+    assert_eq!(rows[5], " Its managed agents stop.");
     assert_eq!(rows[6], "");
     assert!(rows[11].starts_with(" > Cancel"));
     assert!(rows[12].contains("Stop group"));
@@ -233,7 +233,7 @@ fn confirmations_name_the_group_and_the_effect() {
     // Members not read yet: they may be native, so they are covered.
     let body = words(&rows[5..9]);
     assert!(
-        body.contains("Delivery resumes and its enabled actors run"),
+        body.contains("Delivery resumes and its enabled agents run"),
         "{body}"
     );
     assert!(
@@ -252,7 +252,7 @@ fn starting_a_running_group_explains_the_effect_on_enabled_actors() {
     press(&mut app, KeyCode::Enter);
     let rows = draw_rows(&app, 60, 16);
     assert_eq!(rows[2], " Start cccc-dev?");
-    assert!(words(&rows[5..13]).contains("enabled actors that are not running start"));
+    assert!(words(&rows[5..13]).contains("enabled agents that are not running start"));
 }
 
 #[test]
@@ -265,7 +265,7 @@ fn stopped_group_with_a_running_actor_offers_a_confirmed_stop() {
         1,
     )]);
     let rows = draw_rows(&app, 60, 16);
-    assert!(rows[1].contains("Stopped | State stopped | 1 actor running"));
+    assert!(rows[1].contains("Stopped | State stopped | 1 agent running"));
     assert!(rows.iter().any(|line| line.contains("Stop group")));
     press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Down);
@@ -329,7 +329,7 @@ fn the_whole_question_fits_the_smallest_screen_with_many_groups_and_a_long_name(
     let body = words(&rows[5..11]);
     assert!(
         body.ends_with(
-            "Its managed actors stop. Native members stop receiving from this group. \
+            "Its managed agents stop. Native members stop receiving from this group. \
              Their apps stay open, and work they already received is not interrupted."
         ),
         "{body}"

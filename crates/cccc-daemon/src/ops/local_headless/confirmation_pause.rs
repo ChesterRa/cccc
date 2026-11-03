@@ -2,6 +2,7 @@
 //! This is daemon-local intent, not a provider receipt or a change to Actor configuration.
 use super::supervisor::Key;
 use std::collections::HashSet;
+use std::fmt;
 use std::io;
 use std::sync::{Mutex, OnceLock};
 
@@ -28,15 +29,35 @@ pub(super) fn clear_group(group_id: &str) -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn ensure_allowed(key: &Key) -> io::Result<()> {
-    if paused()
+#[derive(Debug)]
+struct ConfirmationPaused;
+
+impl fmt::Display for ConfirmationPaused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Claude's confirmation ended before the managed session connected; launch the agent again to retry")
+    }
+}
+
+impl std::error::Error for ConfirmationPaused {}
+
+pub(super) fn is_paused_error(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<ConfirmationPaused>())
+}
+
+pub(super) fn is_paused(key: &Key) -> io::Result<bool> {
+    Ok(paused()
         .lock()
         .map_err(|_| super::poisoned())?
-        .contains(key)
-    {
+        .contains(key))
+}
+
+pub(super) fn ensure_allowed(key: &Key) -> io::Result<()> {
+    if is_paused(key)? {
         return Err(io::Error::new(
             io::ErrorKind::WouldBlock,
-            "Runtime confirmation was closed or failed; choose Start to retry in the Actor terminal",
+            ConfirmationPaused,
         ));
     }
     Ok(())

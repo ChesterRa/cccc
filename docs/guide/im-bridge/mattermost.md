@@ -58,15 +58,15 @@ Mattermost intercepts input beginning with `/`. Prefix CCCC commands with `@cccc
 | Input | Action |
 |---|---|
 | `@cccc_bot Hello` | Send to the default foreman |
-| `@cccc_bot /send @reviewer Review this material` | Send to the specified Actor |
-| `@cccc_bot /send @all Please respond` | Broadcast to all Actors |
+| `@cccc_bot /send @reviewer Review this material` | Send to the specified agent |
+| `@cccc_bot /send @all Please respond` | Broadcast to all agents |
 | `@cccc_bot /send @peers Add your feedback` | Send to members other than the foreman |
 | `@cccc_bot /status`, `@cccc_bot /help` | Show status or help without calling a model |
 | `@cccc_bot /pause`, `@cccc_bot /resume` | Pause or resume this chat target's subscription |
 | `@cccc_bot /verbose on`, `@cccc_bot /verbose off` | Toggle more detailed public exchanges; private events remain private |
 | `@cccc_bot /unsubscribe` | Unsubscribe; `/unsub` is also supported |
 
-Authorized direct messages accept ordinary text without the Bot prefix. Questions and files in channels require explicit addressing. Mentioning another Actor in the body does not add a recipient. `/sub` aliases `/subscribe`; `/verbose` without an argument enables it, and also accepts `true/false` and `1/0`.
+Authorized direct messages accept ordinary text without the Bot prefix. Questions and files in channels require explicit addressing. Mentioning another agent in the body does not add a recipient. `/sub` aliases `/subscribe`; `/verbose` without an argument enables it, and also accepts `true/false` and `1/0`.
 
 Channel subscription output appears in the main timeline. Separately approved thread subscriptions retain their original thread. Eligible Group output follows the subscription rules, rather than going exclusively to the person who first asked a question.
 
@@ -103,7 +103,7 @@ cccc im logs --group g_example -f
 cccc im stop --group g_example
 ```
 
-The existing `config`, `unset`, `reject` and `revoke` operations also apply; consult `cccc im --help` for arguments. Stopping the connector does not stop Actors. Network workers run in the CCCC Web process, without a separate connector service.
+The existing `config`, `unset`, `reject` and `revoke` operations also apply; consult `cccc im --help` for arguments. Stopping the connector does not stop agents. Network workers run in the CCCC Web process, without a separate connector service.
 
 ### Errors and logs
 

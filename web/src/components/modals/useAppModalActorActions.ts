@@ -10,7 +10,7 @@ import {
   supportsAcpMode,
 } from "../../types";
 import * as api from "../../services/api";
-import { useGroupStore, useModalStore, useUIStore } from "../../stores";
+import { useGroupStore, useUIStore } from "../../stores";
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/actorProfiles";
 import { normalizeCapabilityIdList, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
 import { parseHelpMarkdown, updateActorHelpNote } from "../../utils/helpMarkdown";
@@ -345,7 +345,6 @@ export function useAppModalActorActions(args: {
     const targetGroupId = selectedGroupId;
     const expectedTab = useUIStore.getState().activeTab;
     const visit = ++editActorVisitRef.current;
-    const confirmationVisit = useModalStore.getState().actorEditorVisit;
     const isCurrentEdit = () =>
       editActorVisitRef.current === visit &&
       useGroupStore.getState().selectedGroupId === targetGroupId;
@@ -535,15 +534,9 @@ export function useAppModalActorActions(args: {
       );
       if (!awaitingConfirmation && restartNotice) showNotice({ message: restartNotice });
     } catch (error) {
+      // A failed save leaves the editor open with its draft; the Actor's own view shows any
+      // confirmation still waiting once the user returns to it.
       await refreshActors(targetGroupId);
-      if (isCurrentEdit()) {
-        revealRuntimeConfirmation(targetGroupId, actorId, expectedTab, undefined, {
-          autoOpen: false,
-          // The modal layer unmounts on close; a later editor visit still invalidates this action.
-          canNavigate: () => useModalStore.getState().actorEditorVisit === confirmationVisit,
-          beforeNavigate: () => setEditingActor(null),
-        });
-      }
       throw error;
     } finally {
       if (useUIStore.getState().busy === "actor-update") setBusy("");

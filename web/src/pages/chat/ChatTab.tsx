@@ -26,7 +26,7 @@ import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { getReadingTopAnchorOffset } from "../../components/virtualMessageListAnchorRestore";
 import { PendingReplyEditingContext } from "../../components/messageBubble/PendingReplyEditingContext";
 import { LivePendingStatusContext } from "../../features/pendingReplies/liveStatusContext";
-import { usePendingReplyIndicators } from "../../features/pendingReplies/useVisiblePendingSummary";
+import { useWaitingFilterIndicator } from "../../features/pendingReplies/useWaitingFilterIndicator";
 import { useLivePendingStatuses } from "../../features/pendingReplies/useLivePendingStatuses";
 import { NotificationPrompt } from "../../features/pushNotifications/NotificationPrompt";
 import { useNotificationPromptOffer } from "../../features/pushNotifications/useNotificationPromptOffer";
@@ -734,7 +734,7 @@ export function ChatTab({
     ],
   );
 
-  const { waitingIndicator, hasPendingReplies } = usePendingReplyIndicators(
+  const waitingIndicator = useWaitingFilterIndicator(
     selectedGroupId,
     chatFilter === "pending_user",
   );
@@ -748,7 +748,7 @@ export function ChatTab({
     (needsScope || needsActors) &&
     chatMessages.length > 0 &&
     !(inlineReplyEditor !== null && hideDockForKeyboard);
-  const notificationOffer = useNotificationPromptOffer(hasPendingReplies);
+  const notificationOffer = useNotificationPromptOffer((waitingIndicator?.count ?? 0) > 0);
   const messageFiltersRef = useRef<HTMLDivElement | null>(null);
   const focusActiveFilter = useCallback(() => {
     messageFiltersRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus();
@@ -780,6 +780,8 @@ export function ChatTab({
     !showSetupNotice &&
     !senderHistoryError &&
     !pendingPageError &&
+    !pinnedError &&
+    !(pinnedUnavailable.length > 0 && toggleMessagePin) &&
     showMessageFilters;
   useLayoutEffect(() => {
     onMobileReadingOverlayChange?.(overlayMobileChrome);
@@ -1157,8 +1159,14 @@ export function ChatTab({
                           liveJumpActive={liveJumpActive}
                           contextWindow={!!chatWindowProps}
                           className={
-                            !chatWindowProps && runtimeActors.length > 0
-                              ? "pb-[max(5rem,72px)] [scroll-padding-bottom:max(5rem,72px)]"
+                            // Room to scroll the last message clear of the members over the
+                            // list, only while they show: hidden for a keyboard or for reading,
+                            // they leave no gap (chatMessage.css).
+                            !chatWindowProps &&
+                            runtimeActors.length > 0 &&
+                            !hideDockForKeyboard &&
+                            !reading.hidden
+                              ? "chat-list-over-dock"
                               : undefined
                           }
                           scrollRef={scrollRef}
@@ -1225,15 +1233,16 @@ export function ChatTab({
                   {!chatWindowProps && runtimeActors.length > 0 ? (
                     !isSmallScreen && workView === "messages" ? (
                       // Only the member controls catch input. The list keeps its full
-                      // viewport and can scroll its final message above this overlay.
+                      // viewport and can scroll its final message above this overlay; text
+                      // passing under it fades out before the members (chatMessage.css).
                       <div
                         className={classNames(
-                          "pointer-events-none absolute inset-x-0 bottom-2 z-20 px-2 sm:px-4",
+                          "pointer-events-none absolute inset-x-0 bottom-0 z-20 px-2 sm:px-4",
                           // A touch screen's keyboard leaves little height; the input needs it.
                           hideDockForKeyboard && "hidden",
                         )}
                       >
-                        <div className="chat-reading-width">
+                        <div className="chat-reading-width chat-dock-fade">
                           <RuntimeDock
                             placement="row"
                             motionVisible={!hideDockForKeyboard}
@@ -1253,7 +1262,10 @@ export function ChatTab({
                     ) : (
                       <div
                         className={classNames(
-                          "pointer-events-none absolute inset-x-0 bottom-2 z-20",
+                          "pointer-events-none absolute inset-x-0 z-20",
+                          // On a phone the dock floats over the message list; elsewhere it
+                          // floats over the work area's panes, which keep their own ground.
+                          isSmallScreen ? "chat-dock-fade bottom-0" : "bottom-2",
                           (hideDockForKeyboard || reading.hidden) && "hidden",
                         )}
                         data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}

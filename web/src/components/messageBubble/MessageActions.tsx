@@ -23,13 +23,18 @@ export interface MessageActionsProps {
   /** Whether the message is pinned, with the way to change it; absent where pins are not offered. */
   pinned?: boolean;
   onTogglePin?: () => void;
+  /** "bar" for a pointer, shown under the message on hover or focus; "menu" for touch, ⋮ at
+   *  the end of the message's head. CSS shows the one that fits the device. */
+  part: "bar" | "menu";
 }
 
 export type MessageAction = { key: string; label: string; emoji?: string; run: () => void };
 type MenuSection = { key: string; label?: string; actions: MessageAction[] };
 
-// Every message owns a footer: Reply, Forward and Copy on its hover bar, with quick
-// replies, Pin and Copy link in More. Touch keeps a visible menu and Show in chat shortcut.
+// With a pointer, Reply, Forward and Copy (an icon named by its tip) show under the message on
+// hover or focus, with quick replies, Pin and Copy link in its ⋯ menu, and a filtered view's
+// Show in chat first; nothing is reserved for them. Touch lists every action in the ⋮ that
+// ends the message's head, where Show in chat follows the time (MessageBubble).
 export function MessageActions(props: MessageActionsProps) {
   const { t } = useTranslation(["chat", "common"]);
   if (props.readOnly) return null;
@@ -64,75 +69,64 @@ export function MessageActions(props: MessageActionsProps) {
     ? [{ key: "quick", label: t("quickReply.menu"), actions: props.quickReplies }]
     : [];
   const more: MenuSection[] = overflow.length ? [{ key: "more", actions: overflow }] : [];
+  const align = props.event.by === "user" ? "end" : "start";
+  if (props.part === "menu") {
+    const touchMenu = [{ key: "main", actions: primary }, ...quick, ...more].filter(
+      (section) => section.actions.length > 0,
+    );
+    if (!touchMenu.length) return null;
+    return (
+      <div className="message-actions-menu">
+        <MessageActionMenu sections={touchMenu} align={align} label={t("messageActions")}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="rounded-lg px-2 text-xs"
+            aria-label={t("messageActions")}
+            title={t("messageActions")}
+          >
+            <MoreIcon size={14} aria-hidden="true" />
+          </Button>
+        </MessageActionMenu>
+      </div>
+    );
+  }
   const bar = show ? [show, ...primary] : primary;
   const barMenu = [...quick, ...more];
-  const touchMenu = [{ key: "main", actions: primary }, ...quick, ...more].filter(
-    (section) => section.actions.length > 0,
-  );
-  if (!touchMenu.length && !bar.length) return null;
-  const align = props.event.by === "user" ? "end" : "start";
+  if (!bar.length && !barMenu.length) return null;
   return (
-    <div className="message-actions-footer" data-message-actions-align={align}>
-      <div
-        className={`message-actions-inline flex-wrap items-center gap-0.5 ${props.event.by === "user" ? "justify-end" : "justify-start"}`}
-        data-message-actions-inline
-      >
-        {bar.map((action) => (
+    <div
+      className={`message-actions-inline flex-wrap items-center gap-0.5 ${align === "end" ? "justify-end" : "justify-start"}`}
+      data-message-actions-inline
+      data-message-actions-align={align}
+    >
+      {bar.map((action) => (
+        <Button
+          key={action.key}
+          variant="ghost"
+          size="sm"
+          className="min-h-7 rounded-lg px-2 py-1 text-xs duration-150"
+          data-show-in-chat={action === show || undefined}
+          aria-label={action.key === "copy" ? action.label : undefined}
+          title={action.key === "copy" ? action.label : undefined}
+          onClick={action.run}
+        >
+          {action.key === "copy" ? <CopyIcon size={14} aria-hidden="true" /> : action.label}
+        </Button>
+      ))}
+      {barMenu.length ? (
+        <MessageActionMenu sections={barMenu} align={align} label={t("messageActions")}>
           <Button
-            key={action.key}
             variant="ghost"
             size="sm"
             className="min-h-7 rounded-lg px-2 py-1 text-xs duration-150"
-            data-show-in-chat={action === show || undefined}
-            aria-label={action.key === "copy" ? action.label : undefined}
-            title={action.key === "copy" ? action.label : undefined}
-            onClick={action.run}
+            aria-label={t("messageActions")}
+            title={t("messageActions")}
           >
-            {action.key === "copy" ? <CopyIcon size={14} aria-hidden="true" /> : action.label}
+            <MoreHorizontalIcon size={14} aria-hidden="true" />
           </Button>
-        ))}
-        {barMenu.length ? (
-          <MessageActionMenu sections={barMenu} align={align} label={t("messageActions")}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="min-h-7 rounded-lg px-2 py-1 text-xs duration-150"
-              aria-label={t("messageActions")}
-              title={t("messageActions")}
-            >
-              <MoreHorizontalIcon size={14} aria-hidden="true" />
-            </Button>
-          </MessageActionMenu>
-        ) : null}
-      </div>
-      <div className="message-actions-touch">
-        {show ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="lcd-row-jump rounded-lg px-2 text-xs"
-            data-show-in-chat
-            onClick={show.run}
-          >
-            {show.label}
-          </Button>
-        ) : null}
-        {touchMenu.length ? (
-          <div className="message-actions-menu">
-            <MessageActionMenu sections={touchMenu} align={align} label={t("messageActions")}>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1 rounded-lg px-2 text-xs"
-                aria-label={t("messageActions")}
-              >
-                <MoreIcon size={14} aria-hidden="true" />
-                <span className="message-actions-label">{t("messageActions")}</span>
-              </Button>
-            </MessageActionMenu>
-          </div>
-        ) : null}
-      </div>
+        </MessageActionMenu>
+      ) : null}
     </div>
   );
 }

@@ -97,7 +97,7 @@
     "resetGroup": "Reset group",
     "deleteGroup": "Delete group",
     "resetTitle": "Create a clean replacement and delete this group",
-    "resetHint": "Reset group creates a clean replacement and deletes the current group. It keeps the name, project scope, actors, stored secrets, and automation rules/settings; it does not copy message history, memory, context, runtime sessions, or provider state.",
+    "resetHint": "Reset group creates a clean replacement and deletes the current group. It keeps the name, project scope, agents, stored secrets, and automation rules/settings; it does not copy message history, memory, context, runtime sessions, or provider state.",
     "deleteTitle": "Delete this group permanently"
   },
   "inbox": {
@@ -585,8 +585,8 @@
   "codexVoiceOutputSelectionUnavailable": "This browser uses the system speaker.",
   "codexVoiceAnalystRuntimeHint": "Use a supported Runtime Profile or configure one directly. Chet's credentials are independent from the Realtime Voice login.",
   "codexVoiceAnalystSupportedRuntimesHint": "Choose from the runtimes above. ACP and RPC options use the runtime's controlled session and have no native terminal.",
-  "codexVoiceAnalystCommandHint": "Uses the same launch-command syntax as the matching Group Actor. CCCC owns the managed session, YOLO policy, MCP, workspace, and attach flags.",
-  "codexVoiceAnalystCompatibleProfilesEmpty": "No compatible Runtime Profiles are available. Create one in Settings > Runtime Profiles or use Custom.",
+  "codexVoiceAnalystCommandHint": "Uses the same launch-command syntax as the matching Group agent. CCCC owns the managed session, YOLO policy, MCP, workspace, and attach flags.",
+  "codexVoiceAnalystCompatibleProfilesEmpty": "No compatible Runtime Profiles are available. Create one in Settings > This instance > Agent Profiles or use Custom.",
   "codexVoiceAnalystProfileDetails": "View launch details",
   "codexVoiceAnalystProfilesUnavailable": "Runtime Profiles could not be loaded. Custom settings remain available; reload before selecting a profile.",
   "codexVoiceAnalystProfileSaving": "Saving profile…",
@@ -702,7 +702,7 @@
     "unexpected_approval": "Chet, running in YOLO mode, requested an unexpected approval. The task was stopped.",
     "analyst_disconnected": "Chet disconnected. Its retained session will be resumed on the next start.",
     "analyst_event_gap": "Chet's event stream lost state. Start Voice again to recover safely.",
-    "actor_result_return_failed": "A linked Actor result could not be returned to this Chet session."
+    "actor_result_return_failed": "A linked agent result could not be returned to this Chet session."
   },
   "codexVoicePhase": {
     "idle": "Ready",

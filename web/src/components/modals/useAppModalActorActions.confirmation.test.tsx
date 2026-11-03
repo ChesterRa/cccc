@@ -13,7 +13,6 @@ it.each([
   "restart",
   "save_only",
   "rollback_failure",
-  "rollback_other_group",
   "ordinary_success",
   "ordinary_failure",
 ] as const)(
@@ -132,49 +131,20 @@ it.each([
       else expect(restart).toHaveBeenCalledExactlyOnceWith("g", "claude");
       if (failed) {
         expect(failure).toEqual(new Error("rollback_failed: Fixture persistence failure"));
+        // The editor keeps its draft: nothing closes it, navigates away or offers to.
         expect(setEditingActor).not.toHaveBeenCalled();
         expect(useUIStore.getState().activeTab).toBe("chat");
-        if (waiting) {
-          expect(useUIStore.getState().notice?.actionLabel).toBe("Open confirmation terminal");
-          if (waitingAt === "rollback_other_group") {
-            useGroupStore.setState({ selectedGroupId: "other" });
-          } else {
-            useUIStore.setState({ activeTab: "chat" });
-            await act(async () => actions.handleCancelEditActor());
-            args.editingActor = null;
-            await act(async () => root.render(null));
-            expect(useModalStore.getState().editingActor).toBeNull();
-          }
-          await act(async () => useUIStore.getState().notice?.onAction?.());
-          expect(useUIStore.getState().activeTab).toBe(
-            waitingAt === "rollback_other_group" ? "chat" : actor.id,
-          );
-          if (waitingAt === "rollback_other_group") {
-            expect(setEditingActor).not.toHaveBeenCalled();
-            useGroupStore.setState({ selectedGroupId: "g" });
-            await act(async () => root.render(null));
-            args.editingActor = { ...actor, id: "other-actor" };
-            useModalStore.getState().setEditingActor(args.editingActor);
-            await act(async () => root.render(<Probe />));
-            args.editingActor = null;
-            useModalStore.getState().setEditingActor(null);
-            await act(async () => root.render(null));
-            await act(async () => useUIStore.getState().notice?.onAction?.());
-            expect(useUIStore.getState().activeTab).toBe("chat");
-            expect(setEditingActor).not.toHaveBeenCalled();
-          } else expect(setEditingActor).toHaveBeenLastCalledWith(null);
-        }
+        expect(useUIStore.getState().notice).toBeNull();
       } else {
         expect(failure).toBeUndefined();
         expect(setEditingActor).toHaveBeenLastCalledWith(null);
+        // Waiting, the Actor's terminal opens and its own notice says what to do, so no
+        // pop-up repeats it; a save for the next start still says so.
         expect(useUIStore.getState().activeTab).toBe(waiting ? actor.id : "chat");
+        if (waitingAt === "save_only")
+          expect(useUIStore.getState().notice?.message).toContain("Saved for the next start");
+        else expect(useUIStore.getState().notice).toBeNull();
       }
-      if (waiting) {
-        expect(useUIStore.getState().notice?.message).toContain("confirmation");
-        expect(useUIStore.getState().notice?.message).toContain("Updated Claude");
-      } else expect(useUIStore.getState().notice).toBeNull();
-      if (waitingAt === "save_only")
-        expect(useUIStore.getState().notice?.message).toContain("Saved for the next start");
       expect(args.showError).not.toHaveBeenCalled();
       expect(useUIStore.getState().busy).toBe("");
     } finally {

@@ -1,4 +1,3 @@
-import { openPendingReplies as navigateToPendingReplies } from "../../features/pendingReplies/navigation";
 import { requestWorkspaceNavigation } from "../../stores/workspaceNavigation";
 import { WorkspaceNavigationDialog } from "../workspace/WorkspaceNavigationDialog";
 import { useCallback, useState, type CSSProperties } from "react";
@@ -14,7 +13,7 @@ import {
 } from "../../features/codexVoice/CodexVoiceShellSurfaces";
 import type { CodexVoiceShellState } from "../../features/codexVoice/useCodexVoiceShell";
 import { useVoiceViewedMessages } from "../../features/codexVoice/useVoiceViewedMessages";
-import { useUIStore } from "../../stores";
+import { useGroupStore, useUIStore } from "../../stores";
 import { PendingReplyNavigationContext } from "../../features/pendingReplies/context";
 import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
@@ -223,7 +222,17 @@ export function AppShell({
   const messagesVisible = useUIStore((state) => groupMessagesVisible(selectedGroupId, state));
   const openPendingReplies = useCallback(
     (groupId: string) => {
-      navigateToPendingReplies(groupId, onSelectGroup, onCloseSidebar);
+      requestWorkspaceNavigation(() => {
+        onSelectGroup(groupId);
+        useGroupStore.getState().closeChatWindow(groupId);
+        const ui = useUIStore.getState();
+        ui.setChatSenderFilter(groupId, []);
+        ui.setChatFilter(groupId, "pending_user");
+        ui.setGroupWorkView(groupId, "messages");
+        ui.setChatMobileSurface(groupId, "messages");
+        ui.setActiveTab("chat");
+        onCloseSidebar();
+      });
     },
     [onSelectGroup, onCloseSidebar],
   );

@@ -174,7 +174,7 @@ cccc status
 cccc doctor
 ```
 
-`status` shows the native product, daemon, groups, actors, and detected agent
+`status` shows the native product, daemon, groups, agents, and detected agent
 runtimes. `doctor` checks the installation, agent runtimes, system
 configuration, invoked CCCC executable, PATH resolution, and duplicate `cccc`
 commands.

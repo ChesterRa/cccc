@@ -37,7 +37,7 @@ Once authorized, these commands work across platforms:
 | Command | Description |
 |---------|-------------|
 | `/send <message>` | Send to foreman (default) |
-| `/send @<actor> <message>` | Send to specific actor |
+| `/send @<actor> <message>` | Send to specific agent |
 | `/send @all <message>` | Send to all agents |
 | `/send @peers <message>` | Send to non-foreman agents |
 | `/subscribe` | Request authorization and receive a one-time binding key (not required for the Weixin QR-login account) |
@@ -92,7 +92,7 @@ plain-text message reaches another. If the reply names the wrong group, stop the
 stale worker or correct the credential assignment before approving access.
 :::
 
-Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints. Use plain text, `/send @foreman <message>`, or a specific actor target for routine coordination.
+Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints. Use plain text, `/send @foreman <message>`, or a specific agent target for routine coordination.
 
 ## CLI Commands
 

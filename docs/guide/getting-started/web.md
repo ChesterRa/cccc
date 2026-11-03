@@ -26,7 +26,7 @@ The pencil beside the name edits the Group's name and description.
 ## 3. Add an Agent
 
 Use the **+** in the Agent bar near the composer. Choose an installed Runtime
-(for example, Claude Code or Codex), set an Actor ID and review the configuration.
+(for example, Claude Code or Codex), set an agent ID and review the configuration.
 Add the Agent when ready. The first Group coordinator has the **foreman** role;
 additional Agents can work as peers.
 

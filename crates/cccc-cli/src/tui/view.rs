@@ -732,7 +732,7 @@ fn help_screen(frame: &mut Frame, app: &App, theme: Theme) {
             None,
         ),
         (
-            "RUNNING counts managed actors running and native members ready to receive from that group; it is not the number of busy models or total members. Offline means the group is not stopped or paused but no actors are running.",
+            "RUNNING counts managed agents running and native members ready to receive from that group; it is not the number of busy models or total members. Offline means the group is not stopped or paused but no agents are running.",
             None,
         ),
         (

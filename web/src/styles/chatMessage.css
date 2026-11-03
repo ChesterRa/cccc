@@ -1,72 +1,63 @@
-/* Every message reserves its footer before hover, so revealing actions moves nothing. */
-.message-footer-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-}
-
-.message-footer-row:empty {
-  display: none;
-}
-
-.message-footer-row[data-message-footer-align="end"] {
-  flex-direction: row-reverse;
-}
-
-.message-delivery-footer {
-  flex: 1 1 auto;
-}
-
-.message-actions-footer {
-  display: flex;
-  flex: 0 1 auto;
-  align-items: center;
-  min-height: 1.75rem;
-  max-width: 100%;
-}
-
-.message-actions-footer[data-message-actions-align="end"] {
-  justify-content: flex-end;
-}
-
+/* With a pointer, a message's actions show under it on hover or keyboard focus, laid over the
+   space before the next message: nothing is reserved for them, so showing them moves nothing
+   and a short message stays as wide as its text. The row in use comes forward, so its bar is
+   above the next row and takes the click; the last row keeps room for its bar inside the
+   list, whose column clips what reaches past it. The bar needs a column of 22rem (its keys
+   with Show in chat leading them, beside an agent's avatar). A narrower column, beside a side
+   panel or at a large text size, and touch have no bar: every action is in the ⋮ that ends
+   the message's head (lcd.css). */
 .message-actions-inline {
   display: none;
-  max-width: 100%;
-}
-
-.message-actions-touch {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem;
-}
-
-@media (pointer: coarse) {
-  .message-actions-touch > button,
-  .message-actions-menu > button {
-    min-width: 44px;
-    min-height: 44px;
-  }
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .message-actions-touch {
-    display: none;
+  @container messages (width >= 22rem) {
+    .message-actions-menu {
+      display: none;
+    }
+    [data-message-row] {
+      position: relative;
+    }
+    [data-message-row]:hover,
+    [data-message-row]:focus-within {
+      z-index: 1;
+    }
+    [data-message-row][data-last-message] {
+      padding-bottom: 2rem;
+    }
+    .lcd-row-body {
+      position: relative;
+    }
+    .message-actions-inline {
+      position: absolute;
+      top: 100%;
+      z-index: 1;
+      display: flex;
+      width: max-content;
+      max-width: 100cqi;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 140ms ease-out;
+    }
+    .message-actions-inline[data-message-actions-align="start"] {
+      left: 0;
+    }
+    .message-actions-inline[data-message-actions-align="end"] {
+      right: 0;
+    }
+    [data-message-row]:hover .message-actions-inline,
+    [data-message-row]:focus-within .message-actions-inline,
+    .message-actions-inline:has([aria-expanded="true"]) {
+      opacity: 1;
+      pointer-events: auto;
+    }
   }
-  .message-actions-inline {
-    display: flex;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 140ms ease-out;
-  }
-  .message-row:hover .message-actions-inline,
-  [data-message-row]:hover .message-actions-inline,
-  .message-row:focus-within .message-actions-inline,
-  .message-actions-inline:has([aria-expanded="true"]) {
-    opacity: 1;
-    pointer-events: auto;
+}
+
+@media (pointer: coarse) {
+  .message-actions-menu > button {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
 
@@ -75,12 +66,36 @@
     transition: none;
   }
 }
+/* The members float over the end of the message list (ChatTab). The list ends with room for
+   them, so its last message scrolls clear; text scrolled under them fades out before it
+   reaches their keys, and at rest nothing sits in the fade, so the members stand on the
+   page's own ground. On a phone, where their strip spans the width, the key back to the
+   latest message rises above them. */
+.chat-reading-scroller.chat-list-over-dock {
+  padding-bottom: max(5rem, 72px);
+  scroll-padding-bottom: max(5rem, 72px);
+}
+
+.chat-dock-fade {
+  padding-top: 1rem;
+  padding-bottom: 0.5rem;
+  background-image:
+    linear-gradient(to bottom, transparent, var(--color-chat-bg) 1rem),
+    linear-gradient(to bottom, transparent, var(--color-bg-primary) 1rem);
+}
+
+@media (max-width: 767px) {
+  .chat-list-over-dock ~ [data-scroll-latest] {
+    --chat-latest-bottom: calc(max(5rem, 72px) + 0.5rem);
+  }
+}
+
 /* Float the latest action above the log without reducing its reading height. */
 [data-scroll-latest] {
   position: absolute;
   z-index: 30;
   right: 1.25rem;
-  bottom: 1.5rem;
+  bottom: var(--chat-latest-bottom, 1.5rem);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -126,7 +141,7 @@
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-scroll-latest] {
   right: 0.75rem;
-  bottom: 0.75rem;
+  bottom: var(--chat-latest-bottom, 0.75rem);
   width: 2.5rem;
   height: 2.5rem;
   border-color: var(--lcd-ink);

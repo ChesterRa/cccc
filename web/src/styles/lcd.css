@@ -528,12 +528,15 @@
   line-height: 1.7;
 }
 
-/* Messages are separated by space alone. Each message, an agent's or yours,
-   is as wide as its own text. Space inside a message is
+/* Messages read as a ledger. A hairline in the space above a message marks a change
+   of speaker; messages that follow from the same sender are set apart by space alone.
+   Each message, an agent's or yours, is as wide as its own text, and its line spans
+   exactly that width, so no line reaches past its message. Space inside a message is
    reduced (see the Markdown spacing further down) so that it reads apart from the
    space between messages. Messages get no ground and no hover tone: a fill on every
    message turned the page into blocks, and a tone change over a whole message read as
-   a jump. Padding, not margin, keeps the space inside the row the virtual list measures. */
+   a jump. Padding, not margin, keeps the space inside the row the virtual list
+   measures; the line sits halfway down it. */
 :root[data-ui-style="lcd"] .lcd-row {
   --lcd-row-gap: 1.75rem;
   padding-top: var(--lcd-row-gap);
@@ -541,6 +544,16 @@
 
 :root[data-ui-style="lcd"] .lcd-row[data-lcd-continued] {
   --lcd-row-gap: 0.875rem;
+}
+
+:root[data-ui-style="lcd"] .lcd-row:not([data-lcd-same-sender])::after {
+  content: "";
+  position: absolute;
+  top: calc(var(--lcd-row-gap) / 2);
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--lcd-sep);
+  pointer-events: none;
 }
 
 /* The message below its space, which a jump outlines. */
@@ -634,7 +647,10 @@
   color: var(--lcd-muted);
 }
 
-/* Touch keeps the filtered view’s Show in chat shortcut beside the footer menu. */
+/* Without the bar under a message (touch, or a column too narrow for it), a filtered view gives
+   every message it lists a way into the whole conversation after the time: a short underlined
+   key, in ink so it reads as something to press, set in reverse under the pointer like the
+   other keys. Where the bar shows, it carries Show in chat instead (chatMessage.css). */
 :root[data-ui-style="lcd"] .lcd-row-jump {
   color: var(--lcd-ink);
   font-size: 0.8125rem;
@@ -646,6 +662,53 @@
 :root[data-ui-style="lcd"] .lcd-row-jump:hover {
   background: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);
+}
+
+/* Without the bar, ⋮ ends the head line instead of taking a row under the text or a column
+   beside it, so the text keeps the column's width; on a coarse pointer its 44px target sets
+   the head line's height, and author, route and time centre on it. Where the bar shows (the
+   same query as in chatMessage.css), ⋮ and the key after the time give way to it. */
+:root[data-ui-style="lcd"] .lcd-row:has(.message-actions-menu) .lcd-row-head {
+  align-items: center;
+}
+
+/* The key keeps its icon at its right edge, so ⋮ ends where the text does while the whole key,
+   and its focus ring, stay inside the column, which clips what reaches past it in a long
+   conversation. */
+:root[data-ui-style="lcd"] .lcd-row .message-actions-menu {
+  margin-left: auto;
+}
+
+:root[data-ui-style="lcd"] .lcd-row .message-actions-menu > button {
+  justify-content: flex-end;
+  padding-right: 0;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] .lcd-row .message-actions-menu > button:focus-visible {
+  outline-offset: -2px;
+}
+
+:root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .message-actions-menu {
+  margin-left: 0;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  @container messages (width >= 22rem) {
+    :root[data-ui-style="lcd"] .lcd-row:has(.message-actions-menu) .lcd-row-head {
+      align-items: baseline;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row-jump {
+      display: none;
+    }
+  }
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-style="lcd"] .lcd-row-jump {
+    min-height: 44px;
+    padding-inline: 0.5ch;
+  }
 }
 
 /* The name gives the head its baseline, so author, route and time sit on one line;
@@ -911,20 +974,28 @@
 }
 
 /* Message actions are one strip of keys: without colour, a frame is what says
-   "press me", and the key under the pointer is set in reverse. */
+   "press me", and the key under the pointer is set in reverse. The strip keeps its own
+   width (chatMessage.css), so under a short message its keys stay on one line. Keys are
+   1.25rem tall and their icons 0.875rem, so at any text size the strip with its frame fits
+   the space between continued messages (0.5rem under the row and their 0.875rem gap) and
+   covers nothing of the next head. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-message-actions-inline] {
   justify-content: flex-start;
   gap: 0;
-  width: fit-content;
   border: 1px solid var(--lcd-rule-strong);
   background: var(--lcd-bg);
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-message-actions-inline] > button {
-  min-height: 1.5rem;
+  min-height: 1.25rem;
   padding: 0 1ch;
   border-radius: 0;
   color: var(--lcd-ink);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-message-actions-inline] > button svg {
+  width: 0.875rem;
+  height: 0.875rem;
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-message-actions-inline] > button + button {

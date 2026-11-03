@@ -5,7 +5,7 @@ pub struct PromptArgs {
     /// Legacy positional spelling retained for 0.4.35 command compatibility.
     #[arg(value_name = "ACTOR_ID")]
     pub legacy_actor_id: Option<String>,
-    /// Actor ID within the Group.
+    /// Agent ID within the Group.
     #[arg(long = "actor-id")]
     pub actor_id: Option<String>,
     /// Target Group ID; omit to use the current Group.
@@ -188,7 +188,7 @@ pub enum SpaceAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -203,7 +203,7 @@ pub enum SpaceAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -227,7 +227,7 @@ pub enum SpaceAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -289,7 +289,7 @@ pub enum SpaceAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -328,7 +328,7 @@ pub enum SpaceJobsAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -345,7 +345,7 @@ pub enum SpaceJobsAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -358,7 +358,7 @@ pub enum SpaceAuthAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -367,7 +367,7 @@ pub enum SpaceAuthAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
         /// Maximum time to wait for provider login.
@@ -382,7 +382,7 @@ pub enum SpaceAuthAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -391,7 +391,7 @@ pub enum SpaceAuthAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -404,7 +404,7 @@ pub enum SpaceCredentialAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -419,7 +419,7 @@ pub enum SpaceCredentialAction {
         /// Read provider authentication JSON from this file.
         #[arg(long, conflicts_with = "auth_json")]
         auth_json_file: Option<String>,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -428,7 +428,7 @@ pub enum SpaceCredentialAction {
         /// Group Space provider.
         #[arg(long, default_value = "notebooklm")]
         provider: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },

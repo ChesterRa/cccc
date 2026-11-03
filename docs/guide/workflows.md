@@ -62,7 +62,7 @@ cccc actor add tester --runtime kimi         # Testing
 
 ### Coordination
 
-- The first enabled actor (architect) becomes foreman
+- The first enabled agent (architect) becomes foreman
 - Foreman coordinates work across peers
 - Use @mentions to direct tasks to specific agents
 - Use Context panel for shared understanding

@@ -48,7 +48,7 @@ When a group appears stuck:
 
 1. Check daemon health.
 2. Check group state (`active/idle/paused/stopped`).
-3. Check actor runtime status.
+3. Check agent runtime status.
 4. Check runtime delivery, Inbox read state, pending replies, and tracked tasks.
 5. Check automation and delivery policy.
 
@@ -63,7 +63,7 @@ cccc tail -n 100 -f
 
 ## 4) Fast Recovery Playbook
 
-### Actor-level recovery (preferred)
+### Agent-level recovery (preferred) {#actor-level-recovery-preferred}
 
 ```bash
 cccc actor restart <actor_id>
@@ -88,7 +88,7 @@ cccc daemon start
 ## 5) Secure Remote Access
 
 Required baseline:
-- Create an **Admin Access Token** in **Settings > Web Access** before any non-local exposure.
+- Create an **Admin Access Token** in **Settings > This instance > Web Access** before any non-local exposure.
 - Use Cloudflare Access or Tailscale for network boundary.
 
 Do not:
@@ -131,7 +131,7 @@ cccc mcp
 
 Run a small end-to-end smoke:
 - create/attach group
-- add/start actor
+- add/start agent
 - send/reply
 - verify ledger and inbox behavior
 
@@ -166,7 +166,7 @@ If an issue repeats:
 
 1. Collect evidence:
    - group id
-   - actor id
+   - agent ID
    - event ids
    - recent `cccc tail -n 100`
 2. Capture reproducible sequence.
@@ -208,7 +208,7 @@ stored credential and disable provider access from this installation.
 Expected after disconnect:
 
 - Group Space operations may return degraded/disabled provider results.
-- Core CCCC chat/task/actor workflows continue normally.
+- Core CCCC chat, task and agent workflows continue normally.
 
 Optional throughput tuning:
 

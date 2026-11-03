@@ -133,7 +133,7 @@ pub async fn deliver(client: &DaemonClient, home: &HomeLayout, args: DeliverArgs
         .collect::<Vec<_>>();
     anyhow::ensure!(
         !actor_ids.is_empty(),
-        "deliver requires at least one --to actor id"
+        "deliver requires at least one --to agent ID"
     );
     print(
         call(

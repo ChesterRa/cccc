@@ -17,7 +17,6 @@ export function LocalSessionsList({
   isDark,
   limit,
   onResume,
-  onShowSetup,
 }: {
   sources: LocalSessionSource[];
   selected: LocalSessionSource[];
@@ -30,7 +29,6 @@ export function LocalSessionsList({
   isDark: boolean;
   limit: number;
   onResume: (actor: Actor, source: LocalSessionSource) => Promise<void>;
-  onShowSetup: () => void;
 }) {
   const { t } = useTranslation("layout");
   if (loading) return <p role="status">{t("common:loading")}</p>;
@@ -50,9 +48,6 @@ export function LocalSessionsList({
             {t("localSessions.emptyHint")}
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={onShowSetup}>
-          {t("localSessions.setupAction")}
-        </Button>
       </div>
     );
   const selectedIds = selected.map((source) => source.source_id);

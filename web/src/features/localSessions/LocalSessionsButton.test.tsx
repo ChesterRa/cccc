@@ -182,7 +182,7 @@ it("discovers only when opened and creates a new Group with a separate selection
   const select = vi.fn();
   await mount(select);
   expect(mocks.fetch).not.toHaveBeenCalled();
-  const entry = button("Sessions");
+  const entry = button("Connect sessions");
   // Beside the Group heading the visible name is short but still says what it connects;
   // the tip gives the full name.
   expect(entry.title).toBe("Connect existing sessions");
@@ -233,10 +233,16 @@ it("explains an empty directory without creating a Group or enabling an empty su
   mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [] } });
   await open();
   expect(document.body.textContent).toContain(enLayout.localSessions.empty);
-  const [, troubleshooting] = Array.from(document.querySelectorAll("details")).filter(
+  // With nothing connected yet, the setup steps are what the reader needs, opened once
+  // without a second control for them.
+  const [setupDetails, troubleshooting] = Array.from(document.querySelectorAll("details")).filter(
     (details) => !details.parentElement?.closest("details"),
   );
+  expect(setupDetails?.open).toBe(true);
   expect(troubleshooting?.open).toBe(false);
+  expect(Array.from(document.querySelectorAll("button"), (b) => b.textContent)).not.toContain(
+    "View setup steps",
+  );
   expect(document.body.textContent).not.toContain(enLayout.localSessions.unavailableHint);
   expect(document.querySelector('[role="alert"]')).toBeNull();
   expect(document.body.textContent).toContain("Selected sessions: 0 / 16");
@@ -373,7 +379,7 @@ it("preserves selection order across targets and offline polls, then joins the e
   await click(document.querySelector('[role="menuitemradio"][data-value="g-existing"]'));
   expect(button("Connect to Group").disabled).toBe(false);
   expect(document.querySelector('section[aria-label="New Group defaults"]')).toBeNull();
-  expect(document.body.textContent).toContain("Selected sessions join this Group as Actors.");
+  expect(document.body.textContent).toContain("Selected sessions join this Group as agents.");
   expect(document.body.textContent).not.toContain(enLayout.localSessions.groupHint);
   await chooseTarget("");
   expect(document.querySelector("section dd")?.textContent).toBe(second.title);
@@ -472,8 +478,15 @@ it("shows registered but unready sources without allowing their admission", asyn
     (details) => !details.parentElement?.closest("details"),
   );
   expect(setupDetails?.open).toBe(false);
+  const scroll = vi.fn();
+  troubleshooting!.scrollIntoView = scroll;
   await click(button(enLayout.localSessions.showTroubleshooting));
   expect(troubleshooting?.open).toBe(true);
+  expect(scroll).toHaveBeenCalledOnce();
+  // Opening the other section afterwards leaves the view where the reader puts it.
+  await click(setupDetails!.querySelector("summary"));
+  expect(setupDetails?.open).toBe(true);
+  expect(scroll).toHaveBeenCalledOnce();
 });
 
 it("marks existing members and resumes only a paused source on an explicit user action", async () => {
@@ -877,9 +890,9 @@ it("offers the terminal /setup path, the enable commands and a collapsed trouble
 });
 
 it.each([
-  ["en", "Sessions", "Connect existing sessions"],
+  ["en", "Connect sessions", "Connect existing sessions"],
   ["zh", "接入会话", "接入已有会话"],
-  ["ja", "セッション", "既存セッションを接続"],
+  ["ja", "セッション接続", "既存セッションを接続"],
 ])(
   "names the expanded entry briefly, with its full name for tips, in %s",
   async (language, short, full) => {

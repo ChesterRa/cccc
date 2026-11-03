@@ -39,10 +39,14 @@ cd /path/to/your/project
 cccc attach .
 ```
 
-新しい Group を作成し、現在のディレクトリをプロジェクトの作業場所
-（「スコープ」）として関連付け、その Group をアクティブにします。
-出力には `group_id` が含まれます。既存の Group に戻るには、`cccc groups` と
-`cccc use <group_id>` を使ってください。`cccc attach .` を再実行すると、別の Group が作成されます。
+新しいグループを作成し、現在のディレクトリをプロジェクトの作業場所
+（「スコープ」）として関連付け、そのグループをアクティブにします。
+出力には `group_id` が含まれます。既存のグループに戻るには、`cccc groups` と
+`cccc use <group_id>` を使ってください。`cccc attach .` を再実行すると、別のグループが作成されます。
+
+画面ではエージェントランタイムで動くメンバーをエージェントと呼びます。CLI では引き続き `cccc actor`
+コマンドと `actor_id` などのフィールドを使います。グループに対応する
+コマンドやフィールドの名前も、`cccc group` や `group_id` のままです。
 
 ## ステップ 3: 最初のエージェントを追加
 
@@ -50,7 +54,7 @@ cccc attach .
 cccc actor add assistant --runtime claude
 ```
 
-最初の有効な Actor が、自動的に「foreman」（調整役）になります。
+最初の有効なエージェントが、自動的に「foreman」（調整役）になります。
 
 この Claude Code セッションでは、CCCC が起動時に CCCC MCP 連携を設定するため、
 別途 `cccc setup` を実行する必要はありません。他のランタイムでは設定が必要な場合があります。
@@ -63,14 +67,14 @@ cccc actor add assistant --runtime claude
 cccc group start
 ```
 
-`group start` は Group 内の有効な Actor を起動します。特定の Actor だけを起動する場合は、次を使います。
+`group start` はグループ内の有効なエージェントを起動します。特定のエージェントだけを起動する場合は、次を使います。
 
 ```bash
 cccc actor start assistant
 ```
 
 `cccc actor list` で状態を確認できます。起動時に対話操作が必要な場合は、
-[Web UI](#web-ui-を起動-任意)でその Actor のターミナルを開いてください。
+[Web UI](#web-ui-を起動-任意)でそのエージェントのターミナルを開いてください。
 
 ## ステップ 5: メッセージを送信
 
@@ -80,7 +84,7 @@ cccc send "こんにちは。自己紹介をお願いします。" --to assistan
 
 ## ステップ 6: 応答を確認
 
-Group に記録されたメッセージやその他のイベントを JSON で追跡します。
+グループに記録されたメッセージやその他のイベントを JSON で追跡します。
 
 ```bash
 cccc tail -f
@@ -90,7 +94,7 @@ cccc tail -f
 ネイティブターミナルの出力は Web UI で確認できます。
 **Ctrl+C** で追跡を終了しても、エージェントは動き続けます。
 
-`cccc inbox` は、Actor の未読 Mail を読み取り、**既読として消費する**コマンドです。
+`cccc inbox` は、エージェントの未読 Mail を読み取り、**既読として消費する**コマンドです。
 応答の確認には `tail` または Web のチャットを使ってください。
 
 ## エージェントを追加
@@ -133,53 +137,53 @@ cccc reply <event_id> "急ぎではない補足です" --to assistant --mode mai
 
 Mail はエージェント宛てに使い、受信したエージェントを即座に起動・実行させません。
 
-## Group と送信者の選択
+## グループと送信者の選択 {#group-と送信者の選択}
 
 `--group` を受け付けるコマンドは、明示的なオプション → `CCCC_GROUP_ID` 環境変数 →
-`attach` または `cccc use` で選択したアクティブ Group の順に対象を決定します。
-ディレクトリを移動するだけでは Group は切り替わりません。
+`attach` または `cccc use` で選択したアクティブなグループの順に対象を決定します。
+ディレクトリを移動するだけではグループは切り替わりません。
 送信者は `--by` → `CCCC_ACTOR_ID` → `user` の順に決定します。
-別のセッションがアクティブ Group を切り替えても、Actor は自分の Group を保持します。
+別のセッションがアクティブなグループを切り替えても、エージェントは自分のグループを保持します。
 
 ## よく使うコマンド
 
-別のインスタンスに送信する場合は、`cccc connect` でアクセス可能な Group を調べ、
+別のインスタンスに送信する場合は、`cccc connect` でアクセス可能なグループを調べ、
 `cccc send --dst-instance ... --dst-group ...` を使います。
 返信には、受信したメッセージのローカルイベント ID を使ってください。
 Direct 接続を含む手順は[エージェント間の連携](../connect.md#agent-collaboration)を参照してください。
 
-### Group の管理
+### グループの管理 {#group-の管理}
 
 ```bash
-cccc groups                # 全 Group を表示
-cccc use <group_id>        # 対象の Group を選択
-cccc active                # アクティブ Group を表示
-cccc group show <group_id> # Group の情報を表示
-cccc group start           # この Group の有効なエージェントを起動
-cccc group stop            # この Group のエージェントを停止し、履歴は保持
+cccc groups                # 全グループを表示
+cccc use <group_id>        # 対象のグループを選択
+cccc active                # アクティブなグループを表示
+cccc group show <group_id> # グループの情報を表示
+cccc group start           # このグループの有効なエージェントを起動
+cccc group stop            # このグループのエージェントを停止し、履歴は保持
 ```
 
-### Actor の管理
+### エージェントの管理 {#actor-の管理}
 
 ```bash
-cccc actor list                  # Actor を一覧表示
-cccc actor add <id> --runtime <r> # Actor を追加
-cccc actor start <id>            # Actor を起動
-cccc actor stop <id>             # Actor を停止
-cccc actor restart <id>          # Actor を再起動
-cccc actor remove <id>           # Actor を削除
+cccc actor list                  # エージェントを一覧表示
+cccc actor add <id> --runtime <r> # エージェントを追加
+cccc actor start <id>            # エージェントを起動
+cccc actor stop <id>             # エージェントを停止
+cccc actor restart <id>          # エージェントを再起動
+cccc actor remove <id>           # エージェントを削除
 ```
 
 ### メッセージ
 
 ```bash
 cccc send "メッセージ"             # --to なし: 既定の宛先ポリシーを使用（初期値は foreman）
-cccc send "メッセージ" --to assistant # 特定の Actor に送信
+cccc send "メッセージ" --to assistant # 特定のエージェントに送信
 cccc send "メッセージ" --to "@foreman"  # 調整役に送信
 cccc send "メッセージ" --to "@all"      # 明示的な全員送信。通常のタスク割り当てとは別
 cccc tracked-send "作業内容" --to assistant --title "タスク名" --outcome "完了条件"
 cccc reply <event_id> "応答"       # メッセージに返信
-cccc inbox --actor-id assistant   # Actor の未読 Mail を読み取り、既読として消費
+cccc inbox --actor-id assistant   # エージェントの未読 Mail を読み取り、既読として消費
 cccc tail -n 50                   # 最近のイベントを表示
 cccc tail -f                      # 新しいイベントを追跡
 ```
@@ -189,7 +193,7 @@ cccc tail -f                      # 新しいイベントを追跡
 ```bash
 cccc daemon status # 状態を確認
 cccc daemon start  # 起動
-cccc daemon stop   # daemon と、各 Group の管理対象プロセスを停止
+cccc daemon stop   # daemon と、各グループの管理対象プロセスを停止
 ```
 
 ## Web UI を起動（任意） {#web-ui-を起動-任意}
@@ -213,19 +217,19 @@ daemon を利用し、必要なら起動します。既定の設定では http:/
 | `CCCC_HOME` | `~/.cccc` | ランタイムデータの保存先 |
 | `CCCC_WEB_PORT` | `8848` | 保存済みの設定や `--port` が優先されない場合の Web UI ポート |
 
-同じ Group やランタイム状態を使うコマンドでは、同じ `CCCC_HOME` を指定してください。
+同じグループやランタイム状態を使うコマンドでは、同じ `CCCC_HOME` を指定してください。
 Web のアドレス・ポート設定と優先順位は[CLI リファレンス](/reference/cli#environment-variables)を参照してください。
 
 ## 作業を終える
 
-**Ctrl+C** で `tail -f` を終了した後、現在の Group のエージェントを停止します。
+**Ctrl+C** で `tail -f` を終了した後、現在のグループのエージェントを停止します。
 
 ```bash
 cccc group stop
 ```
 
-Group と記録済みの履歴は残ります。`cccc group start` で Actor を再び起動できます。
-他の Group の管理対象プロセスも含めてインスタンス全体を停止する場合は、`cccc daemon stop` を使います。
+グループと記録済みの履歴は残ります。`cccc group start` でエージェントを再び起動できます。
+他のグループの管理対象プロセスも含めてインスタンス全体を停止する場合は、`cccc daemon stop` を使います。
 
 ## トラブルシューティング
 
@@ -238,36 +242,36 @@ cccc doctor
 
 停止している場合は `cccc daemon start` を実行してください。
 応答しない場合は、表示されたエラーを確認してから停止・再起動を判断してください。
-daemon の再起動は、各 Group の管理対象プロセスを中断します。
+daemon の再起動は、各グループの管理対象プロセスを中断します。
 
 ### エージェントが応答しない
 
 ```bash
-# Actor の状態を確認
+# エージェントの状態を確認
 cccc actor list
 
 # 記録されたエラーやメッセージを確認
 cccc tail -n 50
 ```
 
-Web UI の Actor ターミナルで、ログイン・信頼確認・承認待ちを確認してください。
+Web UI のエージェントのターミナルで、ログイン・信頼確認・承認待ちを確認してください。
 [ランタイム連携](../runtimes)も確認します。原因を解消した後、
 `cccc actor start <actor_id>` で起動するか、必要なら
 `cccc actor restart <actor_id>` で再起動してください。
 
-### Group が見つからない
+### グループが見つからない {#group-が見つからない}
 
 ```bash
-# 全 Group を表示
+# 全グループを表示
 cccc groups
 
-# 既存の Group を選択
+# 既存のグループを選択
 cccc use <group_id>
 cccc active
 ```
 
 ターミナルが想定どおりの `CCCC_HOME` を使っているか確認してください。
-`attach` は、新しい Group を作る場合、または対象を明示して既存の Group にスコープを追加する場合に使います。
+`attach` は、新しいグループを作る場合、または対象を明示して既存のグループにスコープを追加する場合に使います。
 
 ## 次のステップ
 

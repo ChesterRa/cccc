@@ -7,13 +7,6 @@ import {
   saveComposerHeight,
 } from "../utils/composerHeight";
 import { clampSidePanelWidth, SIDE_PANEL_DEFAULT_WIDTH } from "../utils/sidePanelLayout";
-import {
-  clearPendingReplyFilters,
-  clearStoredPendingReplyFilters,
-  loadPendingReplyReminders,
-  savePendingReplyReminders,
-  subscribePendingReplyReminders,
-} from "../utils/pendingReplyReminders";
 
 export const SIDEBAR_COLLAPSED_WIDTH = 60;
 export const SIDEBAR_DEFAULT_WIDTH = 248;
@@ -141,7 +134,6 @@ interface UIState {
   showPendingPrompts: boolean;
   isSmallScreen: boolean;
   composerHeight: number | null;
-  showPendingReplyReminders: boolean;
   chatSessions: Record<string, ChatSessionState>;
   actorBusy: Record<string, number>;
   webReadOnly: boolean;
@@ -173,7 +165,6 @@ interface UIState {
   setSmallScreen: (v: boolean) => void;
   setChatSidePanelLayout: (groupId: string, layout: { width?: number; compact?: boolean }) => void;
   setComposerHeight: (v: number | null) => void;
-  setShowPendingReplyReminders: (value: boolean) => void;
   setChatFilter: (groupId: string, v: ChatFilter) => void;
   setChatSenderFilter: (groupId: string, v: ChatSenderFilter) => void;
   setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
@@ -368,13 +359,11 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
   return next;
 }
 
-function loadChatSessions(showPendingReplyReminders: boolean): Record<string, ChatSessionState> {
+function loadChatSessions(): Record<string, ChatSessionState> {
   try {
-    if (!showPendingReplyReminders) clearStoredPendingReplyFilters(CHAT_SESSIONS_KEY);
     const raw = localStorage.getItem(CHAT_SESSIONS_KEY);
     if (!raw) return {};
-    const sessions = sanitizeChatSessions(JSON.parse(raw));
-    return showPendingReplyReminders ? sessions : clearPendingReplyFilters(sessions);
+    return sanitizeChatSessions(JSON.parse(raw));
   } catch (e) {
     console.warn("Failed to read chat sessions from localStorage:", e);
     return {};
@@ -433,13 +422,6 @@ function updateChatSessionState(
   return chatSessions === state.chatSessions ? state : { chatSessions };
 }
 
-function pendingReplyRemindersPatch(state: UIState, show: boolean) {
-  const chatSessions = show ? state.chatSessions : clearPendingReplyFilters(state.chatSessions);
-  return { showPendingReplyReminders: show, chatSessions };
-}
-
-const initialShowPendingReplyReminders = loadPendingReplyReminders();
-
 export const useUIStore = create<UIState>((set) => ({
   // Initial state
   activeTab: "chat",
@@ -454,8 +436,7 @@ export const useUIStore = create<UIState>((set) => ({
   showPendingPrompts: loadPendingPrompts(),
   isSmallScreen: false,
   composerHeight: loadComposerHeight(),
-  showPendingReplyReminders: initialShowPendingReplyReminders,
-  chatSessions: loadChatSessions(initialShowPendingReplyReminders),
+  chatSessions: loadChatSessions(),
   webReadOnly: false,
   canAccessGlobalSettings: null,
   isWebAdmin: null,
@@ -559,11 +540,6 @@ export const useUIStore = create<UIState>((set) => ({
     saveComposerHeight(next);
     set({ composerHeight: next });
   },
-  setShowPendingReplyReminders: (value) => {
-    savePendingReplyReminders(value);
-    if (!value) clearStoredPendingReplyFilters(CHAT_SESSIONS_KEY);
-    set((state) => pendingReplyRemindersPatch(state, value));
-  },
   setChatSidePanelLayout: (groupId, layout) =>
     set((state) => {
       const previous = getChatSession(groupId, state.chatSessions);
@@ -578,17 +554,6 @@ export const useUIStore = create<UIState>((set) => ({
   // Filters keep the snapshot: the next view restores the message being read from it.
   setChatFilter: (groupId, v) =>
     set((state) => {
-      if (v === "pending_user") {
-        const storedShow = loadPendingReplyReminders();
-        if (!state.showPendingReplyReminders || !storedShow) {
-          if (!storedShow) clearStoredPendingReplyFilters(CHAT_SESSIONS_KEY);
-          const patch = pendingReplyRemindersPatch(state, false);
-          return {
-            ...patch,
-            chatSessions: updateChatSession(patch.chatSessions, groupId, { chatFilter: "all" }),
-          };
-        }
-      }
       const chatSessions = updateChatSession(state.chatSessions, groupId, { chatFilter: v });
       saveChatSessions(chatSessions);
       return { chatSessions };
@@ -674,9 +639,3 @@ export const useUIStore = create<UIState>((set) => ({
   setSSEStatus: (v) => set({ sseStatus: v }),
   setSSEError: (v) => set({ sseError: v }),
 }));
-
-const unsubscribePendingReplyReminders = subscribePendingReplyReminders((show) => {
-  if (!show) clearStoredPendingReplyFilters(CHAT_SESSIONS_KEY);
-  useUIStore.setState((state) => pendingReplyRemindersPatch(state, show));
-});
-import.meta.hot?.dispose(unsubscribePendingReplyReminders);

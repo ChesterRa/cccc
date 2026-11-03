@@ -18,7 +18,7 @@ fn untrusted_claude_workspace_gets_its_own_code_and_names_the_workspace() {
     assert_eq!(error.details["workspace"], "/work/app");
     assert!(error.message.contains("'/work/app'"), "{}", error.message);
     assert!(
-        error.message.contains("accept the trust prompt"),
+        error.message.contains("review the trust prompt"),
         "{}",
         error.message
     );

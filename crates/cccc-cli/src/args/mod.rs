@@ -125,21 +125,21 @@ pub enum CommandKind {
     },
     /// Show the active Group.
     Active,
-    /// Add, start, stop and manage Actors in a Group.
+    /// Add, start, stop and manage agents in a Group.
     Actor(ActorArgs),
     /// Work with user-owned native Codex, Claude, Pi and OpenCode sessions.
     Sessions(SessionsArgs),
-    /// Show the session prompt CCCC gives an Actor.
+    /// Show the session prompt CCCC gives an agent.
     Prompt(PromptArgs),
     /// Manage a Group's IM bridge.
     Im(ImArgs),
     /// Manage Group Space shared memory.
     Space(SpaceArgs),
-    /// Read and consume the next unread Mail batch for an actor.
+    /// Read and consume the next unread Mail batch for an agent.
     Inbox(InboxArgs),
     /// Summarize current awaiting Mail across a Group without consuming it.
     InboxSummary(InboxSummaryArgs),
-    /// Read cached same-account and Group connection directories. Does not connect or start Actors.
+    /// Read cached same-account and Group connection directories. Does not connect or start agents.
     Connect(ConnectArgs),
     /// Send a message to a Group.
     Send(SendArgs),
@@ -349,7 +349,7 @@ pub enum HermesAction {
         #[arg(long)]
         force: bool,
     },
-    /// Run Hermes' MCP test against CCCC with a probe Actor.
+    /// Run Hermes' MCP test against CCCC with a probe agent.
     #[command(name = "mcp-test")]
     McpTest {
         /// Project directory used for runtime preparation.
@@ -358,7 +358,7 @@ pub enum HermesAction {
         /// Target Group ID.
         #[arg(long, default_value = "g_probe")]
         group_id: String,
-        /// Actor ID within the Group.
+        /// Agent ID within the Group.
         #[arg(long, default_value = "hermes-probe")]
         actor_id: String,
     },

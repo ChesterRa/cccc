@@ -3,7 +3,7 @@ use cccc_core::GroupStore;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crate::ops::actor_delivery::{DeliveryJob, complete_job};
+use crate::ops::actor_delivery::{CompletedDelivery, DeliveryJob, complete_job, finish_job};
 use crate::ops::actor_runtime;
 use crate::ops::deepseek_runtime::TurnDelivery;
 
@@ -395,6 +395,14 @@ fn process_managed_batch(
             Err(error) => {
                 if let Some(reason) = terminal_reason(&error) {
                     return BatchOutcome::Terminal(reason);
+                }
+                if error.code == actor_runtime::RUNTIME_CONFIRMATION_PAUSED {
+                    // No native submission occurred. Keep the durable messages
+                    // retryable while freeing the worker for an explicit start.
+                    for job in jobs {
+                        finish_job(job, CompletedDelivery::Unsubmitted(error.message.clone()));
+                    }
+                    return BatchOutcome::Delivered;
                 }
                 if matches!(
                     error.code.as_str(),

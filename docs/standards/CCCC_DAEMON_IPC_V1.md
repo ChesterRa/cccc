@@ -3691,6 +3691,12 @@ Result:
 { actors: Array<Record<string, unknown>> } // includes at least id/title/runtime/enabled + role/running/effective_scope
 ```
 
+Each Actor row includes the observed Boolean `runtime_confirmation_required`.
+For a managed Claude Actor it is true while a recovery-owned confirmation PTY
+is running without a ready managed session. It is a live projection, not Actor
+configuration, consent, provider readiness or task-delivery acceptance. A false
+value alone MUST NOT be interpreted as approval. Reads MUST NOT start a Runtime.
+
 Each row's `effective_scope` is the `group_show.effective_scope` projection
 evaluated for that row's Actor rather than the caller, with the same shape and
 `{}` when unavailable. For a running managed owner, `path` is its immutable
@@ -3814,7 +3820,7 @@ launch another Actor, or start the user-owned native process. An unchanged
 
 Result:
 ```ts
-{ actor: Record<string, unknown>; event: CCCSEventV1 }
+{ actor: Record<string, unknown>; event: CCCSEventV1; runtime_confirmation_required: boolean }
 ```
 
 #### `actor_remove`
@@ -3875,7 +3881,7 @@ Args:
 
 Result:
 ```ts
-{ actor: Record<string, unknown>; event: CCCSEventV1 }
+{ actor: Record<string, unknown>; event: CCCSEventV1; runtime_confirmation_required: boolean; runtime: Record<string, unknown> | null }
 ```
 
 Notes:
@@ -3903,7 +3909,9 @@ Notes:
 - Kilo retains its CCCC-owned ACP controller, authenticated workdir `/event` stream and `kilo attach` topology. Its version numbering is independent of OpenCode. Text parts marked `metadata["kilocode.lifecycle"]="transient"` are temporary Kilo UI progress and MUST NOT contribute to streamed or completed Actor/Analyst answer text; later deltas for these parts MUST also be excluded. The `synthetic` flag alone MUST NOT exclude ordinary answer text. This backend event stream MUST order user admission, assistant output, and terminal session status for both controlled and native turns; a prompt RPC response or a duplicate ACP output update MUST NOT finish or contribute text to another turn. Persisted native input is not evidence that the current turn consumed it: correlation MUST follow the assistant message's parent user identity, retaining queued inputs across the preceding turn's idle status. A lost or malformed non-replayable stream invalidates the session. The lifecycle reader MUST bound each encoded LF-terminated line to 16 MiB, including CR/LF framing, rather than applying that budget to an entire HTTP chunk. Valid lines within this bound MUST preserve input correlation, output and subsequent status across transport fragmentation or coalescing. An oversized line MUST invalidate the session through the same non-replayable-stream failure path; it MUST NOT be silently skipped or automatically replayed. This is a per-line bound, not a total process-memory guarantee. A model selection submitted by the native Kilo TUI MUST be mirrored into the same ACP session. Stop/start MUST validate its matching `kilo_acp_attach` managed receipt.
 - Completion of a temporary Actor restore worker or retirement of an IPC request worker MUST NOT terminate an otherwise healthy managed provider session. Providers that bind their lifetime to the spawning OS thread MUST be launched by daemon-lifetime workers. Explicit stop, failed-start rollback, and daemon shutdown retain ownership of process cleanup.
 - If managed Claude startup reports an untrusted workspace, the Actor terminal MAY present the configured Claude command for the operator to approve trust. CCCC MUST NOT write the trust decision. Configuration observation MUST begin before opening that prompt; approval recorded before the watcher starts MUST remain observable. Task delivery stays pending until the managed session is attached. Recovery MUST acquire the runtime-start permit before the Actor start guard and revalidate cancellation and the same live terminal before attachment. Actor and Group stop MUST cancel pending recovery, including prompts without a managed session, and clean up a cancelled launch instead of attaching it.
-- Claude trust recovery MUST continue waiting only for a verified workspace-trust refusal. Other launch errors MUST end that watcher and retire its own temporary trust terminal; an unrelated provider configuration rewrite MUST NOT trigger another recovery launch. The trust terminal is not a managed task-delivery surface.
+- Claude confirmation recovery MAY continue waiting for a verified workspace-trust refusal or a verified bypass-permissions disclaimer refusal. Other launch errors MUST end that watcher and retire its own temporary confirmation terminal. Changes to watched provider confirmation files MAY trigger a managed retry; the change itself MUST NOT be treated as approval, and unrelated configuration changes MUST NOT establish readiness. The temporary terminal is not a managed task-delivery surface.
+- The successful `actor_update`, `actor_start`, `actor_stop` and `actor_restart` results include the same `runtime_confirmation_required` observation both at the top level and in `actor`. A failed rollback MUST NOT claim the former managed owner was restored merely because a confirmation terminal remains open; its existing `rollback_failed` result reports an incomplete restoration. A confirmation ending without a managed session MAY append `headless.session.exited` with reason `interactive_confirmation_ended`; the reason is not proof of consent or denial.
+- During the current daemon process, closing or declining a managed Claude confirmation pauses automatic restarts for that Actor. A queued delivery that has not entered the provider MUST remain retryable, and the pause MUST NOT prevent other enabled Actors from starting with the Group. An explicit authorized Actor or Group start/restart MAY retry it. This pause is in-memory: normal daemon restart restoration MAY attempt that Actor again, without treating restart as approval.
 - A failed Claude resume MUST retain the original provider session ID, record a bounded safe diagnostic and failure count, and fence that outcome to the exact resume attempt. Provider stderr and credential values MUST NOT be persisted in this record. Known temporary startup/control failures MAY remain retryable. Copied session IDs, unavailable durable history after the bounded discovery wait, invalid identity/protocol/credential evidence and other unverifiable resume failures MUST pause automatic startup with `runtime_session_status="resume_failed"`, `runtime_session_resume_eligible=false` and `runtime_session_last_resume_error`. Paused startup returns `claude_resume_failed`; it MUST NOT silently start a fresh session. Undelivered messages remain pending and their handoff claims become retryable `runtime.delivery=failed`, leaving the automatic worker retry lane. An authorized explicit `actor_start` or `actor_restart` MAY retry the same saved conversation and redispatch those messages. Only explicit `actor_new_session` (or configured resume disablement / changed launch identity) selects a fresh conversation; provider history remains intact. Successful resume clears the failure diagnostic and count. Process absence alone is not a resume failure.
 - Codex, Grok, OpenCode and Kilo Actor startup with a validated saved conversation MUST NOT replace that conversation after a resume failure. CCCC MUST retain the provider identity, safe diagnostic and attempt-fenced failure count, project `runtime_session_status="resume_failed"` / `runtime_session_resume_eligible=false`, and leave undelivered messages pending outside the automatic startup retry lane. Paused startup returns `runtime_resume_failed`. Explicit `actor_start` / `actor_restart` MAY retry the same identity; only New session, disabled resume or a changed validated launch identity selects fresh work. Successful resume clears the diagnostic. An unresolved process-cleanup error MUST preserve its ownership and remain distinct from an ordinary paused resume.
 - Managed runtime startup MAY synchronously enumerate the injected actor-scoped CCCC MCP tools before its provider session becomes ready. That catalog discovery MUST use `capability_state` with `view="mcp_catalog"` so it cannot wait on the same Group lifecycle lock held by `actor_start`; ordinary capability reads remain serialized normally.

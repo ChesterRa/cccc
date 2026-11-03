@@ -52,8 +52,26 @@ pub(crate) fn confirmation_pending_active(group_id: &str, actor_id: &str) -> std
     workspace_trust_recovery::active(&(group_id.to_owned(), actor_id.to_owned()))
 }
 
+/// A protected confirmation PTY with no active watcher cannot complete its recovery.
+pub(super) fn orphaned_confirmation(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
+    Ok(!confirmation_pending_active(group_id, actor_id)?
+        && confirmation_terminal::owns(group_id, actor_id)?)
+}
+
 pub(crate) fn pause_confirmation(group_id: &str, actor_id: &str) -> std::io::Result<()> {
     confirmation_pause::pause((group_id.to_owned(), actor_id.to_owned()))
+}
+
+pub(crate) fn confirmation_paused(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
+    confirmation_pause::is_paused(&(group_id.to_owned(), actor_id.to_owned()))
+}
+
+pub(super) fn ensure_confirmation_allowed(group_id: &str, actor_id: &str) -> std::io::Result<()> {
+    confirmation_pause::ensure_allowed(&(group_id.to_owned(), actor_id.to_owned()))
+}
+
+pub(super) fn is_confirmation_paused_error(error: &std::io::Error) -> bool {
+    confirmation_pause::is_paused_error(error)
 }
 
 pub(crate) fn retry_confirmation(group_id: &str, actor_id: &str) -> std::io::Result<()> {

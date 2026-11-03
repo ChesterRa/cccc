@@ -31,6 +31,7 @@ pub(super) use workspace::{caller_scope, displayed_scope, effective_scope, sessi
 pub(crate) const CLAUDE_WORKSPACE_UNTRUSTED: &str = "claude_workspace_untrusted";
 pub(crate) const CLAUDE_RESUME_FAILED: &str = "claude_resume_failed";
 pub(crate) const RUNTIME_RESUME_FAILED: &str = "runtime_resume_failed";
+pub(crate) const RUNTIME_CONFIRMATION_PAUSED: &str = "runtime_confirmation_paused";
 
 pub fn apply(
     home: &HomeLayout,
@@ -111,6 +112,12 @@ pub(super) fn apply_resolved(
     {
         return Ok(None);
     }
+    // A confirmation that ends before connecting pauses only this member.
+    // Check it before teardown, startup baselines or provider configuration.
+    if actor.runtime == ActorRuntime::Claude && super::local_headless::supports(actor) {
+        super::local_headless::ensure_confirmation_allowed(&group.group_id, actor_id)
+            .map_err(launch_error)?;
+    }
     // Also retire a disconnected registration whose previous cleanup failed.
     stop_registered(group, actor_id)?;
     if kind == "actor.new_session" {
@@ -158,6 +165,9 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
 }
 
 fn launch_error(error: std::io::Error) -> OpError {
+    if super::local_headless::is_confirmation_paused_error(&error) {
+        return OpError::new(RUNTIME_CONFIRMATION_PAUSED, error.to_string());
+    }
     if super::runtime_session::resume_failure::is_blocked(&error) {
         return OpError::new(RUNTIME_RESUME_FAILED, error.to_string());
     }
@@ -272,6 +282,7 @@ pub fn start_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionSta
                     statuses.push(status);
                 }
             }
+            Err(error) if error.code == RUNTIME_CONFIRMATION_PAUSED => continue,
             Err(error) => {
                 let mut rollback_failures = Vec::new();
                 for actor_id in started_actor_ids.iter().rev() {

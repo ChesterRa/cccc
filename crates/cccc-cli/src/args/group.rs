@@ -33,7 +33,7 @@ pub enum GroupAction {
         /// Short description of the Group purpose.
         #[arg(long)]
         topic: Option<String>,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -44,7 +44,7 @@ pub enum GroupAction {
         /// Target Group ID; omit to use the current Group.
         #[arg(long = "group")]
         group_id: Option<String>,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -56,7 +56,7 @@ pub enum GroupAction {
         /// Exact Group ID confirming the destructive operation.
         #[arg(long)]
         confirm: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -68,7 +68,7 @@ pub enum GroupAction {
         /// Exact Group ID confirming the destructive operation.
         #[arg(long)]
         confirm: String,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -80,21 +80,21 @@ pub enum GroupAction {
         #[arg(default_value = ".")]
         path: String,
     },
-    /// Start the enabled Actors and resume Group delivery.
+    /// Start the enabled agents and resume Group delivery.
     Start {
         /// Target Group ID; omit to use the current Group.
         #[arg(long = "group")]
         group_id: Option<String>,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
-    /// Stop managed Actors and delivery to native members.
+    /// Stop managed agents and delivery to native members.
     Stop {
         /// Target Group ID; omit to use the current Group.
         #[arg(long = "group")]
         group_id: Option<String>,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },
@@ -105,7 +105,7 @@ pub enum GroupAction {
         /// Target Group ID; omit to use the current Group.
         #[arg(long = "group")]
         group_id: Option<String>,
-        /// Author identity: user or an Actor ID.
+        /// Author identity: user or an agent ID.
         #[arg(long, default_value = "user")]
         by: String,
     },

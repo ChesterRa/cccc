@@ -44,13 +44,16 @@ This creates a new Group, binds the current directory as its project workspace
 `group_id`. To return to an existing Group, use `cccc groups` and
 `cccc use <group_id>`; running `cccc attach .` again creates another Group.
 
+In CCCC, a Group member running or connected to an agent runtime is called an agent. The CLI keeps the command name
+`cccc actor` and fields such as `actor_id` for that same member.
+
 ## Step 3: Add Your First Agent
 
 ```bash
 cccc actor add assistant --runtime claude
 ```
 
-The first enabled actor automatically becomes the "foreman" (coordinator).
+The first enabled agent automatically becomes the "foreman" (coordinator).
 
 CCCC injects the CCCC MCP integration when it starts this Claude Code session;
 no separate `cccc setup` step is needed for this example. Other runtimes may
@@ -63,14 +66,14 @@ require setup. See [Supported Runtimes](../runtimes) and
 cccc group start
 ```
 
-`group start` starts the Group's enabled actors. To start just one actor, use:
+`group start` starts the Group's enabled agents. To start just one agent, use:
 
 ```bash
 cccc actor start assistant
 ```
 
-Check `cccc actor list` for actor state. If startup requires an interactive
-prompt, use the actor's terminal in the [Web UI](#start-web-ui-optional).
+Check `cccc actor list` for agent state. If startup requires an interactive
+prompt, use the agent's terminal in the [Web UI](#start-web-ui-optional).
 
 ## Step 5: Send a Message
 
@@ -90,7 +93,7 @@ Look for the agent's `chat.message` events. Its native terminal output is
 available in the Web UI. Press **Ctrl+C** to stop following; this leaves the
 agents running.
 
-`cccc inbox` serves a different purpose: it reads and **consumes** an actor's
+`cccc inbox` serves a different purpose: it reads and **consumes** an agent's
 unread Mail, marking that batch as read. Use `tail` or Web chat to view responses.
 
 ## Adding More Agents
@@ -139,7 +142,7 @@ Mail is for agent recipients and does not prompt them immediately.
 Commands that accept `--group` resolve it in this order: the explicit option,
 the `CCCC_GROUP_ID` environment variable, then the active Group selected by
 `attach` or `cccc use`. Changing directories alone does not switch Groups.
-Messaging uses `--by`, then `CCCC_ACTOR_ID`, then `user`. An Actor therefore
+Messaging uses `--by`, then `CCCC_ACTOR_ID`, then `user`. An agent therefore
 keeps its own Group when another session changes the active Group.
 
 ## Common Commands
@@ -160,27 +163,27 @@ cccc group start         # Start this Group's enabled agents
 cccc group stop          # Stop this Group's agents; keep history
 ```
 
-### Actor Management
+### Agent Management {#actor-management}
 
 ```bash
-cccc actor list                    # List actors
-cccc actor add <id> --runtime <r>  # Add actor
-cccc actor start <id>              # Start actor
-cccc actor stop <id>               # Stop actor
-cccc actor restart <id>            # Restart actor
-cccc actor remove <id>             # Remove actor
+cccc actor list                    # List agents
+cccc actor add <id> --runtime <r>  # Add agent
+cccc actor start <id>              # Start agent
+cccc actor stop <id>               # Stop agent
+cccc actor restart <id>            # Restart agent
+cccc actor remove <id>             # Remove agent
 ```
 
 ### Messaging
 
 ```bash
 cccc send "message"                # No --to: default recipient policy applies (default: foreman)
-cccc send "msg" --to assistant     # To specific actor
+cccc send "msg" --to assistant     # To specific agent
 cccc send "msg" --to "@foreman"      # Ask the coordinator
 cccc send "msg" --to "@all"          # Explicit broadcast, not default task dispatch
 cccc tracked-send "work" --to assistant --title "Task title" --outcome "Done criterion"
 cccc reply <event_id> "response"   # Reply to message
-cccc inbox --actor-id assistant    # Read and consume an actor's unread Mail
+cccc inbox --actor-id assistant    # Read and consume an agent's unread Mail
 cccc tail -n 50                    # Recent events
 cccc tail -f                       # Follow events
 ```
@@ -228,7 +231,7 @@ cccc group stop
 ```
 
 The Group and its recorded history remain available. `cccc group start` starts
-its actors again. Use `cccc daemon stop` when you want to stop the whole instance,
+its agents again. Use `cccc daemon stop` when you want to stop the whole instance,
 including managed processes in other Groups.
 
 ## Troubleshooting
@@ -254,7 +257,7 @@ cccc actor list
 cccc tail -n 50
 ```
 
-Inspect the actor's terminal in the Web UI for login, trust or approval prompts.
+Inspect the agent's terminal in the Web UI for login, trust or approval prompts.
 Check its [runtime integration](../runtimes). After fixing the cause, retry with
 `cccc actor start <actor_id>` or deliberately restart it with
 `cccc actor restart <actor_id>`.

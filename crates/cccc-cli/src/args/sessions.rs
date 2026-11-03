@@ -59,7 +59,7 @@ pub enum SessionsAction {
         /// Target Group ID.
         #[arg(long)]
         group: String,
-        /// Native Actor ID to inspect.
+        /// Native agent ID to inspect.
         #[arg(long)]
         actor: String,
         /// Explicitly recheck Codex's existing receive channel before reading.

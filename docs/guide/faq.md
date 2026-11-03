@@ -202,7 +202,7 @@ fails browser startup when Xvfb is missing instead of silently falling back to t
 
 ### What's the difference between Foreman and Peer?
 
-- **Foreman**: The first enabled actor. Coordinates work, receives system notifications, can manage other actors.
+- **Foreman**: The first enabled agent. Coordinates work, receives system notifications, can manage other agents.
 - **Peer**: Independent expert. Has their own judgment, can only manage themselves.
 
 ### How do I add a custom agent?
@@ -263,7 +263,7 @@ CCCC_WEB_HOST=$(tailscale ip -4) cccc
 
 ### Is it safe to expose the Web UI?
 
-Before exposing the Web UI, create an **Admin Access Token** in **Settings > Web Access** and then sign in with that token.
+Before exposing the Web UI, create an **Admin Access Token** in **Settings > This instance > Web Access** and then sign in with that token.
 
 Use Cloudflare Access or Tailscale for additional security.
 
@@ -287,9 +287,9 @@ CCCC supports snapshot/compaction. Large blobs are stored separately in the `blo
 
 ## Troubleshooting
 
-### Why do git worktrees remain after an Actor stops?
+### Why do git worktrees remain after an agent stops? {#why-do-git-worktrees-remain-after-an-actor-stops}
 
-CCCC does not manage worktree cleanup. Agents or custom native launch commands can create worktrees, and stopping an Actor does not guarantee the runtime's cleanup flow. See [Git worktrees and long-lived Actors](runtimes.md#git-worktrees-and-long-lived-actors) for ownership and manual cleanup steps.
+CCCC does not manage worktree cleanup. Agents or custom native launch commands can create worktrees, and stopping an agent does not guarantee the runtime's cleanup flow. See [Git worktrees and long-lived agents](runtimes.md#git-worktrees-and-long-lived-actors) for ownership and manual cleanup steps.
 
 ### Daemon won't start
 
@@ -339,7 +339,7 @@ cccc doctor                  # Check configuration
 
 A working group is like an IM group chat with execution capabilities. It includes:
 - An append-only ledger (message history)
-- One or more actors (agents)
+- One or more agents (agents)
 - Optional scopes (project directories)
 
 ### What is the Ledger?

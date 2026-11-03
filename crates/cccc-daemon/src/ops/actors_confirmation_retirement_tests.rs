@@ -154,3 +154,79 @@ fn explicit_actor_and_group_stop_keep_queued_delivery_from_reopening_confirmatio
         );
     }
 }
+
+#[test]
+fn pausing_group_retires_confirmation_but_keeps_other_terminal_running() {
+    if isolated(
+        "retirement_tests::pausing_group_retires_confirmation_but_keeps_other_terminal_running",
+    ) {
+        return;
+    }
+    let fixture = Fixture::new();
+    let store = GroupStore::new(fixture.home.clone()).expect("store");
+    store
+        .mutate(&fixture.group.group_id, |group| {
+            let mut other = Actor::new("other");
+            other.runtime = ActorRuntime::Custom;
+            other.runner = cccc_contracts::RunnerKind::Pty;
+            other.command = vec!["/bin/sleep".into(), "60".into()];
+            group.actors.push(other);
+            Ok(())
+        })
+        .expect("add ordinary member");
+    cccc_runtime::start(cccc_runtime::LaunchSpec {
+        group_id: fixture.group.group_id.clone(),
+        actor_id: "other".into(),
+        runner: cccc_contracts::RunnerKind::Pty,
+        command: vec!["/bin/sleep".into(), "60".into()],
+        cwd: fixture._temp.path().to_owned(),
+        env: BTreeMap::new(),
+        cols: 80,
+        rows: 24,
+    })
+    .expect("start ordinary terminal");
+    let started = fixture.request("actor_start", Value::Null);
+    assert!(started.ok, "{:?}", started.error);
+    assert!(actor_runtime::confirmation_required(
+        &fixture.group.group_id,
+        "claude"
+    ));
+
+    let set_state = |state: &str| {
+        crate::handle_request(
+            &fixture.home,
+            &DaemonRequest {
+                v: 1,
+                op: "group_set_state".into(),
+                args: json!({"group_id":fixture.group.group_id,"by":"user","state":state})
+                    .as_object()
+                    .expect("state arguments")
+                    .clone(),
+            },
+        )
+    };
+    let paused = set_state("paused");
+    assert!(paused.ok, "{:?}", paused.error);
+    assert!(
+        !cccc_runtime::status(&fixture.group.group_id, "claude").is_ok_and(|status| status.running)
+    );
+    assert!(
+        cccc_runtime::status(&fixture.group.group_id, "other").is_ok_and(|status| status.running)
+    );
+    let resumed = set_state("active");
+    assert!(resumed.ok, "{:?}", resumed.error);
+    let retried = fixture.request("actor_start", Value::Null);
+    assert!(retried.ok, "{:?}", retried.error);
+    assert!(actor_runtime::confirmation_required(
+        &fixture.group.group_id,
+        "claude"
+    ));
+    assert_eq!(
+        std::fs::read_to_string(fixture.config.join("launches"))
+            .expect("launch log")
+            .lines()
+            .count(),
+        2
+    );
+    cccc_runtime::stop(&fixture.group.group_id, "other").expect("stop ordinary fixture");
+}

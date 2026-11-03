@@ -64,7 +64,7 @@ impl fmt::Display for DisclaimerRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Claude Code requires your bypassPermissions confirmation. Open this Actor's terminal in '{}', review Claude's own disclaimer, and keep the terminal open until CCCC switches to the managed session. You may decline or stop the Actor; retry with Start when ready. Configured executable: '{}'; Resolved settings directory: '{}'.",
+            "Claude Code requires your bypassPermissions confirmation. Open the configured executable interactively with --dangerously-skip-permissions in '{}', using the same settings, and review Claude's disclaimer before retrying. Configured executable: '{}'; resolved settings directory: '{}'.",
             self.workspace.display(),
             self.launch.executable,
             self.launch.config_dir.display()

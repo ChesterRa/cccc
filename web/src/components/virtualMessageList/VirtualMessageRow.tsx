@@ -38,6 +38,8 @@ type VirtualMessageRowProps = {
   onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
   onOpenReplyTarget?: (replyToEventId: string) => void;
   measureElement: (node: Element | null) => void;
+  /** The list's last message keeps room under it for its actions (chatMessage.css). */
+  isLast: boolean;
 };
 
 export const VirtualMessageRow = memo(function VirtualMessageRow({
@@ -48,6 +50,7 @@ export const VirtualMessageRow = memo(function VirtualMessageRow({
   compactSpacing,
   sameSender,
   measureElement,
+  isLast,
   highlightEventId,
   onReply,
   onShowRecipients,
@@ -62,6 +65,7 @@ export const VirtualMessageRow = memo(function VirtualMessageRow({
       data-index={virtualRow.index}
       data-message-row="true"
       data-message-id={message.id ? String(message.id) : ""}
+      data-last-message={isLast || undefined}
       data-voice-viewable={
         message.kind === "chat.message" &&
         message.by !== "user" &&

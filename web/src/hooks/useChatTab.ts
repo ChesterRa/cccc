@@ -703,7 +703,7 @@ export function useChatTab({
       !bucket.isChatWindowLoading ||
       !bucket.hasLoadedTail ||
       shownChatFilter(session.chatFilter, {
-        waiting: waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+        waiting: waitingTabOffered && ui.showPendingPrompts,
         pinned: pinnedTabOffered,
       }) !== "all" ||
       session.chatSenderFilter.length ||
@@ -754,7 +754,7 @@ export function useChatTab({
       bucket.isChatWindowLoading ||
       !bucket.hasLoadedTail ||
       shownChatFilter(session.chatFilter, {
-        waiting: waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+        waiting: waitingTabOffered && ui.showPendingPrompts,
         pinned: pinnedTabOffered,
       }) !== "all" ||
       session.chatSenderFilter.length ||
@@ -881,7 +881,7 @@ export function useChatTab({
         !atBottom ||
         !bucket.hasLoadedTail ||
         shownChatFilter(session.chatFilter, {
-          waiting: waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+          waiting: waitingTabOffered && ui.showPendingPrompts,
           pinned: pinnedTabOffered,
         }) !== "all" ||
         session.chatSenderFilter.length ||
@@ -1211,7 +1211,7 @@ export function useChatTab({
       const ui = useUIStore.getState();
       const currentSession = getChatSession(selectedGroupId, ui.chatSessions);
       const currentFilter = shownChatFilter(currentSession.chatFilter, {
-        waiting: waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+        waiting: waitingTabOffered && ui.showPendingPrompts,
         pinned: pinnedTabOffered,
       });
       if (

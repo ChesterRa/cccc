@@ -773,6 +773,21 @@ export const MessageBubble = memo(
       : isUserMessage
         ? t("senderUser")
         : senderDisplayName;
+    const messageActionProps = {
+      readOnly,
+      copyableMessageText,
+      onCopyMessageText: () => void handleCopyMessageText(),
+      onShowInConversation: showInConversation,
+      onCopyLink,
+      onRelay,
+      onReply,
+      canReply,
+      eventId: typeof ev.id === "string" ? String(ev.id) : undefined,
+      event: ev,
+      quickReplies,
+      pinned,
+      onTogglePin: pinnableId && onTogglePin ? () => onTogglePin(pinnableId, !pinned) : undefined,
+    };
     return (
       <div
         className={classNames(
@@ -839,35 +854,26 @@ export const MessageBubble = memo(
               <span className="sr-only">{t("pins.pinnedMark")}</span>
             </span>
           ) : null}
+          {/* Touch has no bar under the message: a filtered view shows its way into the
+              whole conversation after the time, and ⋮ ends the head (lcd.css). */}
+          {showInConversation ? (
+            <button
+              type="button"
+              className="lcd-row-jump"
+              onClick={() => showInConversation(String(ev.id))}
+            >
+              {t("showInConversation")}
+            </button>
+          ) : null}
+          <MessageActions part="menu" {...messageActionProps} />
         </div>
         {agentStateTooltip}
         <div className="lcd-row-body">
           <div className={classNames("lcd-row-content", isStreaming ? "lcd-row-streaming" : "")}>
             {bubbleContent}
           </div>
-          <div
-            className="message-footer-row"
-            data-message-footer-align={fromReader ? "end" : undefined}
-          >
-            <MessageActions
-              readOnly={readOnly}
-              copyableMessageText={copyableMessageText}
-              onCopyMessageText={() => void handleCopyMessageText()}
-              onShowInConversation={showInConversation}
-              onCopyLink={onCopyLink}
-              onRelay={onRelay}
-              onReply={onReply}
-              canReply={canReply}
-              eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
-              event={ev}
-              quickReplies={quickReplies}
-              pinned={pinned}
-              onTogglePin={
-                pinnableId && onTogglePin ? () => onTogglePin(pinnableId, !pinned) : undefined
-              }
-            />
-            {messageFooter}
-          </div>
+          {messageFooter}
+          <MessageActions part="bar" {...messageActionProps} />
         </div>
       </div>
     );

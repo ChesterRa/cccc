@@ -10,7 +10,14 @@ const runtimes = [
   { value: "opencode", label: "OpenCode V2", instruction: "setupOpencode" },
 ];
 
-export function LocalSessionsHelp({ request }: { request: LocalSessionsHelpRequest | null }) {
+export function LocalSessionsHelp({
+  request,
+  openSetup,
+}: {
+  request: LocalSessionsHelpRequest | null;
+  /** The first list came back empty: setup opens by itself, without scrolling to it. */
+  openSetup: boolean;
+}) {
   const { t } = useTranslation("layout");
   const [runtime, setRuntime] = useState("codex");
   const [setupOpen, setSetupOpen] = useState(false);
@@ -19,12 +26,21 @@ export function LocalSessionsHelp({ request }: { request: LocalSessionsHelpReque
   const troubleshootingRef = useRef<HTMLDetailsElement>(null);
   const current = runtimes.find((item) => item.value === runtime) || runtimes[0];
   useEffect(() => {
+    if (openSetup) setSetupOpen(true);
+  }, [openSetup]);
+  useEffect(() => {
     if (request?.section === "setup") setSetupOpen(true);
     if (request?.section === "troubleshooting") setTroubleshootingOpen(true);
   }, [request]);
+  // Scroll to a requested section once, when it has opened; opening or closing either
+  // section later leaves the view where the reader put it.
+  const scrolledFor = useRef(0);
   useEffect(() => {
-    const target = request?.section === "setup" ? setupRef.current : troubleshootingRef.current;
-    if (request && target?.open) target.scrollIntoView?.({ block: "nearest" });
+    if (!request || scrolledFor.current === request.sequence) return;
+    const target = request.section === "setup" ? setupRef.current : troubleshootingRef.current;
+    if (!target?.open) return;
+    scrolledFor.current = request.sequence;
+    target.scrollIntoView?.({ block: "nearest" });
   }, [request, setupOpen, troubleshootingOpen]);
   return (
     <div className="space-y-2 border-t border-[var(--glass-border-subtle)] pt-3 text-sm text-[var(--color-text-secondary)]">

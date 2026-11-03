@@ -150,7 +150,7 @@ fn details(frame: &mut Frame, app: &App, theme: Theme, now: Instant, area: Rect)
             text::one_line(&group.state),
             count(
                 usize::try_from(group.running_actors).unwrap_or(usize::MAX),
-                "actor"
+                "agent"
             ),
         ),
         width,
@@ -244,15 +244,15 @@ fn confirmation(
     );
     let (effect, native) = match confirm.action {
         GroupAction::Start { resume: false } => (
-            "Its enabled actors that are not running start; actors that are off stay off.",
+            "Its enabled agents that are not running start; agents that are off stay off.",
             "Its enabled native members can receive from this group again.",
         ),
         GroupAction::Start { resume: true } => (
-            "Delivery resumes and its enabled actors run; actors that are off stay off.",
+            "Delivery resumes and its enabled agents run; agents that are off stay off.",
             "Its enabled native members can receive from this group again.",
         ),
         GroupAction::Stop => (
-            "Its managed actors stop.",
+            "Its managed agents stop.",
             "Native members stop receiving from this group. Their apps stay open, and work \
              they already received is not interrupted.",
         ),
@@ -272,7 +272,7 @@ fn confirmation(
                 text::one_line(&group.state),
                 count(
                     usize::try_from(group.running_actors).unwrap_or(usize::MAX),
-                    "actor"
+                    "agent"
                 )
             ),
             room.saturating_sub(text::width(&confirm.group_id) + 2),
@@ -340,7 +340,7 @@ fn members(
         (None, Some(_)) => {}
     }
     if list.members.is_empty() {
-        lines.push(Line::raw(format!("{INDENT}No actors in this group.")));
+        lines.push(Line::raw(format!("{INDENT}No agents in this group.")));
         return lines;
     }
     let room = rows.saturating_sub(lines.len());

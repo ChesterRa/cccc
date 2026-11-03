@@ -253,7 +253,7 @@ pub(super) async fn read_members(
     let actors = result
         .get("actors")
         .and_then(Value::as_array)
-        .ok_or_else(|| "the daemon answered without an actor list".to_owned())?;
+        .ok_or_else(|| "the daemon answered without an agent list".to_owned())?;
     Ok(actors.iter().filter_map(member).collect())
 }
 

@@ -1,5 +1,6 @@
 use super::*;
 use crate::ops::{actor_delivery::DeliveryJob, actor_delivery_worker};
+use cccc_contracts::RunnerKind;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
@@ -46,7 +47,6 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
         let store = GroupStore::new(fixture.home.clone()).expect("store");
         let ledger_path = store.ledger_path(&fixture.group.group_id).expect("ledger");
         ledger::append(&ledger_path, &event).expect("queued message");
-        let before_ledger = std::fs::read(&ledger_path).expect("ledger before retries");
         let before_actor = json!(fixture.stored().actors[0]);
         let mut jobs = vec![DeliveryJob {
             home: fixture.home.clone(),
@@ -55,27 +55,36 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
             event: event.clone(),
             claimed: true,
         }];
-        for _ in 0..3 {
-            assert_eq!(
-                actor_delivery_worker::process_batch(
-                    &mut jobs,
-                    &mut String::new(),
-                    &AtomicBool::new(false)
-                ),
-                actor_delivery_worker::BatchOutcome::Retry
-            );
-            assert_eq!(jobs.len(), 1);
-            assert_eq!(jobs[0].event.id, event.id);
-            assert!(jobs[0].claimed);
-        }
+        assert_eq!(
+            actor_delivery_worker::process_batch(
+                &mut jobs,
+                &mut String::new(),
+                &AtomicBool::new(false)
+            ),
+            actor_delivery_worker::BatchOutcome::Delivered
+        );
         assert_eq!(
             launches(&fixture),
             1,
             "automatic retries must not reopen a declined prompt"
         );
-        assert_eq!(
-            std::fs::read(&ledger_path).expect("ledger after retries"),
-            before_ledger
+        let records = ledger::read_all(&ledger_path).expect("delivery records");
+        assert!(records.iter().any(|record| {
+            record.kind == "runtime.delivery"
+                && record.data["source_event_id"] == event.id
+                && record.data["state"] == "failed"
+                && record.data["retryable"] == true
+        }));
+        assert!(
+            crate::ops::runtime_delivery::pending_sources(
+                &fixture.home,
+                &fixture.stored(),
+                &fixture.group.actors[0],
+                20,
+            )
+            .expect("pending work")
+            .iter()
+            .any(|pending| pending.id == event.id)
         );
         assert_eq!(json!(fixture.stored().actors[0]), before_actor);
 
@@ -83,6 +92,11 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
             assert_eq!(fixture.stored().state, cccc_contracts::GroupState::Active);
             store
                 .mutate(&fixture.group.group_id, |group| {
+                    let mut other = Actor::new("other");
+                    other.runtime = ActorRuntime::Custom;
+                    other.runner = RunnerKind::Pty;
+                    other.command = vec!["/bin/sleep".into(), "60".into()];
+                    group.actors.push(other);
                     group.automation = json!({"version":1,"rules":[{
                         "id":"confirmation-retry", "enabled":true, "scope":"group",
                         "trigger":{"kind":"at","at":"2020-01-01T00:00:00Z"},
@@ -114,16 +128,14 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
                         .as_object().expect("automatic request").clone(),
                 },
             );
+            assert!(ordinary.ok, "paused Claude must not block the other member");
             assert!(
-                !ordinary.ok,
-                "an ordinary active-group start must not clear confirmation pause"
+                cccc_runtime::status(&fixture.group.group_id, "other")
+                    .is_ok_and(|status| status.running)
             );
             assert!(
-                ordinary
-                    .error
-                    .expect("paused start")
-                    .message
-                    .contains("confirmation")
+                crate::ops::local_headless::confirmation_paused(&fixture.group.group_id, "claude")
+                    .expect("pause remains")
             );
             assert_eq!(launches(&fixture), 1);
             let stopped = fixture.request("group_stop", Value::Null);
@@ -147,6 +159,167 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
             assert_eq!(retried.result["runtime_confirmation_required"], true);
         }
     }
+}
+
+#[test]
+fn paused_confirmation_keeps_new_and_preclaimed_work_retryable() {
+    if isolated("pause_tests::paused_confirmation_keeps_new_and_preclaimed_work_retryable") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let actor = &fixture.group.actors[0];
+    let store = GroupStore::new(fixture.home.clone()).expect("store");
+    let ledger_path = store.ledger_path(&fixture.group.group_id).expect("ledger");
+    crate::ops::local_headless::pause_confirmation(&fixture.group.group_id, &actor.id)
+        .expect("pause");
+
+    let mut events = Vec::new();
+    for mode in ["send", "request_reply", "mail"] {
+        let mut event = Event::new("chat.message", &fixture.group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":[actor.id],"text":mode,"message_mode":mode})
+            .as_object()
+            .expect("message")
+            .clone();
+        ledger::append(&ledger_path, &event).expect("append message");
+        events.push(event);
+    }
+    let mut notice = Event::new("system.notify", &fixture.group.group_id);
+    notice.by = "system".into();
+    notice.data = json!({"kind":"mail_notice","target_actor_id":actor.id,
+        "context":{"actor_id":actor.id,"source_event_ids":[events[2].id]}})
+    .as_object()
+    .expect("notice")
+    .clone();
+    ledger::append(&ledger_path, &notice).expect("append notice");
+    events.push(notice);
+
+    // New messages and notices stay in the ledger, without repeatedly
+    // claiming work that cannot be submitted while the confirmation is closed.
+    for event in [&events[0], &events[1], &events[3]] {
+        assert_eq!(
+            actor_delivery::dispatch(&fixture.home, &fixture.group, event).queued,
+            0
+        );
+        assert!(
+            crate::ops::runtime_delivery::latest_state(
+                &fixture.home,
+                &fixture.group.group_id,
+                &actor.id,
+                &event.id,
+            )
+            .expect("delivery state")
+            .is_none()
+        );
+    }
+
+    // A claim can already exist when the prompt closes. It is known not to
+    // have crossed the provider boundary, including for an explicitly
+    // redelivered Mail event, and remains eligible after the pause.
+    let mut jobs = Vec::new();
+    for event in &events {
+        crate::ops::runtime_delivery::claim(
+            &fixture.home,
+            &fixture.group,
+            actor,
+            &event.id,
+            "pty",
+            false,
+        )
+        .expect("claim");
+        jobs.push(DeliveryJob {
+            home: fixture.home.clone(),
+            group: fixture.group.clone(),
+            actor: actor.clone(),
+            event: event.clone(),
+            claimed: true,
+        });
+    }
+    assert_eq!(
+        actor_delivery_worker::process_batch(
+            &mut jobs,
+            &mut String::new(),
+            &AtomicBool::new(false)
+        ),
+        actor_delivery_worker::BatchOutcome::Delivered
+    );
+    let records = ledger::read_all(&ledger_path).expect("delivery records");
+    for event in &events {
+        assert!(
+            records.iter().any(|record| {
+                record.kind == "runtime.delivery"
+                    && record.data["source_event_id"] == event.id
+                    && record.data["state"] == "failed"
+                    && record.data["retryable"] == true
+            }),
+            "{} remains retryable",
+            event.id
+        );
+    }
+    let pending =
+        crate::ops::runtime_delivery::pending_sources(&fixture.home, &fixture.group, actor, 20)
+            .expect("pending work");
+    for event in &events {
+        assert!(
+            pending.iter().any(|item| item.id == event.id),
+            "{} was lost",
+            event.id
+        );
+    }
+
+    crate::ops::local_headless::retry_confirmation(&fixture.group.group_id, &actor.id)
+        .expect("explicit retry");
+    assert_eq!(
+        actor_delivery::dispatch_unread(&fixture.home, &fixture.group, &actor.id),
+        events.len(),
+        "the explicit retry rediscovers each event once"
+    );
+}
+
+#[test]
+fn paused_claude_does_not_block_a_profile_switched_to_another_runtime() {
+    if isolated("pause_tests::paused_claude_does_not_block_a_profile_switched_to_another_runtime") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let profile = cccc_core::profiles::ProfileStore::new(fixture.home.clone())
+        .expect("profile store")
+        .upsert(
+            json!({"name":"Custom fixture","runtime":"custom","command":["/bin/sleep","60"]})
+                .as_object()
+                .expect("profile")
+                .clone(),
+            None,
+        )
+        .expect("profile");
+    let store = GroupStore::new(fixture.home.clone()).expect("group store");
+    let group = store
+        .mutate(&fixture.group.group_id, |group| {
+            group.actors[0].profile_id = profile["id"].as_str().expect("profile id").into();
+            Ok(group.clone())
+        })
+        .expect("link profile");
+    assert_eq!(group.actors[0].runtime, ActorRuntime::Claude);
+    assert_eq!(
+        actor_profile_runtime::resolve(&fixture.home, &group.actors[0])
+            .expect("effective profile")
+            .runtime,
+        ActorRuntime::Custom
+    );
+    crate::ops::local_headless::pause_confirmation(&group.group_id, "claude").expect("old pause");
+    let mut event = Event::new("chat.message", &group.group_id);
+    event.by = "user".into();
+    event.data = json!({"to":["claude"],"text":"PENDING_TASK","message_mode":"send"})
+        .as_object()
+        .expect("message")
+        .clone();
+    ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &event)
+        .expect("append message");
+    assert_eq!(
+        actor_delivery::dispatch(&fixture.home, &group, &event).queued,
+        1,
+        "an old Claude pause must not suppress the effective Custom runtime"
+    );
 }
 
 #[test]

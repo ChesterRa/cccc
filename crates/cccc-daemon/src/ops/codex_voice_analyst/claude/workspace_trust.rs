@@ -37,7 +37,7 @@ impl fmt::Display for WorkspaceUntrusted {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "Claude Code has not trusted the workspace '{}'. Open this Actor's terminal, accept the trust prompt if appropriate, and keep it open until the managed session connects. Configured executable: '{}'; resolved settings directory: '{}'. Trusting a parent folder does not cover a separate Git repository.",
+            "Claude Code has not trusted the workspace '{}'. Open Claude interactively in that workspace, review the trust prompt, and retry when ready. Configured executable: '{}'; resolved settings directory: '{}'. Trusting a parent folder does not cover a separate Git repository.",
             self.workspace.display(),
             self.launch.executable,
             self.launch.config_dir.display()

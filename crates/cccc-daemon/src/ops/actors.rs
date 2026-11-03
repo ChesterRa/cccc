@@ -869,7 +869,15 @@ pub(super) fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) 
             "Reset this session in its original runtime; CCCC only controls collaboration access",
         ));
     }
-    let runtime_was_running = actor_process_running(&group, &original_actor);
+    // Only an explicit user Start may replace a protected confirmation PTY
+    // whose watcher was cancelled. Automatic delivery must leave it alone.
+    let orphaned_confirmation = kind == "actor.start"
+        && actor_runtime::user_confirmation_retry(request)
+        && original_actor.external_session_id.is_empty()
+        && super::local_headless::orphaned_confirmation(&group_id, &actor_id)
+            .map_err(OpError::io)?;
+    let runtime_was_running =
+        actor_process_running(&group, &original_actor) && !orphaned_confirmation;
     let retry_runtime = if original_actor.external_session_id.is_empty()
         && matches!(kind, "actor.start" | "actor.restart")
     {
@@ -910,7 +918,9 @@ pub(super) fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) 
     let enabled = kind != "actor.stop";
     // An old trust terminal is not a resumed managed session. An explicit retry
     // must retire that attachment before retrying the same durable conversation.
-    let apply_kind = if retry_claude_trust && retried_claude_resume && kind == "actor.start" {
+    let apply_kind = if kind == "actor.start"
+        && (orphaned_confirmation || (retry_claude_trust && retried_claude_resume))
+    {
         "actor.restart"
     } else {
         kind

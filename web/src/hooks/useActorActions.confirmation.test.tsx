@@ -67,9 +67,9 @@ it.each(["start", "restart"] as const)(
     await act(async () =>
       action === "start" ? actions.toggleActorEnabled(actor) : actions.relaunchActor(actor),
     );
+    // The terminal's own notice says what to do; no pop-up repeats it.
     expect(useUIStore.getState().activeTab).toBe(actor.id);
-    expect(useUIStore.getState().notice?.message).toContain("confirmation");
-    expect(useUIStore.getState().notice?.message).toContain("keep the terminal open");
+    expect(useUIStore.getState().notice).toBeNull();
     expect(useUIStore.getState().actorBusy).toEqual({});
     expect(useGroupStore.getState().actors[0].runtime_state_source).toBe("terminal");
   },
@@ -82,7 +82,7 @@ it("recognizes the refreshed Actor flag when the action response omits it", asyn
   });
   await act(async () => actions.toggleActorEnabled(actor));
   expect(useUIStore.getState().activeTab).toBe(actor.id);
-  expect(useUIStore.getState().notice?.message).toContain("confirmation");
+  expect(useUIStore.getState().notice).toBeNull();
 });
 
 it("keeps ordinary success and errors on their existing paths", async () => {
@@ -99,40 +99,51 @@ it("keeps ordinary success and errors on their existing paths", async () => {
   expect(useUIStore.getState().actorBusy).toEqual({});
 });
 
-it.each([false, true])(
-  "keeps late confirmation actionable and respects a later tab choice (%s)",
-  async (changedTab) => {
-    vi.useFakeTimers();
-    vi.mocked(api.fetchActors).mockResolvedValue({
-      ok: true,
-      result: {
-        actors: [
-          { ...actor, running: true, runtime_confirmation_required: true },
-          { id: "other-actor", runtime: "claude", running: true },
-        ],
-      },
-    });
-    vi.mocked(api.startActor).mockImplementation(async () => {
-      useGroupStore.getState().setSelectedGroupId("other");
-      return { ok: true, result: { runtime_confirmation_required: true } };
-    });
-    await act(async () => actions.toggleActorEnabled(actor));
-    expect(useUIStore.getState().activeTab).toBe("chat");
-    expect(useGroupStore.getState().selectedGroupId).toBe("other");
-    const notice = useUIStore.getState().notice!;
-    expect(notice.actionLabel).toContain("Open confirmation terminal");
-    expect(notice.actionLabel).toContain("g / claude");
-    expect(notice.onAction).toBeTypeOf("function");
-    await act(async () => vi.advanceTimersByTimeAsync(4000));
-    expect(useUIStore.getState().notice).toBe(notice);
-    await act(async () => notice.onAction!());
-    expect(useGroupStore.getState().selectedGroupId).toBe("g");
-    expect(useUIStore.getState().activeTab).toBe("chat");
-    if (changedTab) useUIStore.getState().setActiveTab("other-actor");
-    await act(async () => useGroupStore.getState().refreshActors("g"));
-    expect(useUIStore.getState().activeTab).toBe(changedTab ? "other-actor" : actor.id);
-  },
-);
+it("offers the terminal when the user moved to another tab, and withdraws it once answered", async () => {
+  vi.mocked(api.fetchActors).mockResolvedValue({
+    ok: true,
+    result: { actors: [{ ...actor, running: true, runtime_confirmation_required: true }] },
+  });
+  vi.mocked(api.startActor).mockImplementation(async () => {
+    useUIStore.getState().setActiveTab("settings");
+    return { ok: true, result: { runtime_confirmation_required: true } };
+  });
+  await act(async () => actions.toggleActorEnabled(actor));
+  expect(useUIStore.getState().activeTab).toBe("settings");
+  const notice = useUIStore.getState().notice!;
+  expect(notice.message).toBe("Claude is waiting for your confirmation in its terminal.");
+  expect(notice.actionLabel).toBe("Open confirmation terminal");
+  // As the pop-up does: run the action, then close.
+  await act(async () => notice.onAction!());
+  useUIStore.getState().dismissNotice();
+  expect(useUIStore.getState().activeTab).toBe(actor.id);
+
+  // Answered in the terminal, the Actor no longer waits and the offer goes with it.
+  useUIStore.getState().setActiveTab("chat");
+  await act(async () => actions.toggleActorEnabled(actor));
+  const again = useUIStore.getState().notice!;
+  expect(again).not.toBe(notice);
+  expect(again.onAction).toBeTypeOf("function");
+  vi.mocked(api.fetchActors).mockResolvedValue({
+    ok: true,
+    result: { actors: [{ ...actor, running: true, runtime_confirmation_required: false }] },
+  });
+  await act(async () => useGroupStore.getState().refreshActors("g"));
+  expect(useUIStore.getState().notice).toBeNull();
+});
+
+it("only names the Group and Actor when the user has moved to another Group", async () => {
+  vi.mocked(api.startActor).mockImplementation(async () => {
+    useGroupStore.getState().setSelectedGroupId("other");
+    return { ok: true, result: { runtime_confirmation_required: true } };
+  });
+  await act(async () => actions.toggleActorEnabled(actor));
+  expect(useGroupStore.getState().selectedGroupId).toBe("other");
+  expect(useUIStore.getState().activeTab).toBe("chat");
+  const notice = useUIStore.getState().notice!;
+  expect(notice.message).toBe("g / claude is waiting for your confirmation in its terminal.");
+  expect(notice.onAction).toBeUndefined();
+});
 
 it.each(["start", "restart"] as const)(
   "preserves a %s failure while revealing restored confirmation",
@@ -149,7 +160,6 @@ it.each(["start", "restart"] as const)(
       action === "start" ? actions.toggleActorEnabled(actor) : actions.relaunchActor(actor),
     );
     expect(useUIStore.getState().errorMsg).toBe("rollback_failed: Fixture persistence failure");
-    expect(useUIStore.getState().notice?.message).toContain("confirmation");
     expect(useUIStore.getState().activeTab).toBe(actor.id);
     expect(useGroupStore.getState().actors[0].runtime_confirmation_required).toBe(true);
     expect(useUIStore.getState().actorBusy).toEqual({});

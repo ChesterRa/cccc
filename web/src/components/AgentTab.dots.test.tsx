@@ -177,8 +177,9 @@ it("keeps confirmation visible after Actor refresh without adding read-only cont
   await render(true, waiting, "g_confirmation", true, false);
   const notice = host.querySelector("[data-runtime-confirmation]")!;
   expect(notice.getAttribute("role")).toBe("status");
-  expect(notice.textContent).toContain("runtimeConfirmationPending");
-  expect(notice.textContent).toContain("runtimeConfirmationRequired");
+  // The header names the state; the notice says once what to do.
+  expect(notice.textContent).toBe("runtimeConfirmationHint");
+  expect(host.textContent).toContain("runtimeConfirmationPending");
   expect(notice.querySelector("button,input")).toBeNull();
   expect(mocks.launch).not.toHaveBeenCalled();
   expect(mocks.pause).not.toHaveBeenCalled();

@@ -26,18 +26,18 @@ export function runtimeConfirmationRequired(result: unknown, actor?: Actor): boo
   return actor?.runtime_confirmation_required === true;
 }
 
-/** Reveal the existing PTY without answering its prompt or changing its authority. */
+/**
+ * After the user's own start, show the Actor whose Claude prompt waits for them, without
+ * answering it. Where the user still is where they acted, open its terminal, whose notice
+ * says what to do; where they have moved on in the same Group, say so with a way there;
+ * in another Group, only say so. Returns whether the Actor awaits confirmation.
+ */
 export function revealRuntimeConfirmation(
   groupId: string,
   actorId: string,
   expectedTab: string,
   result?: unknown,
-  options: {
-    autoOpen?: boolean;
-    noticePrefix?: string;
-    canNavigate?: () => boolean;
-    beforeNavigate?: () => void;
-  } = {},
+  options: { noticePrefix?: string } = {},
 ): boolean {
   const state = useGroupStore.getState();
   const actor =
@@ -45,65 +45,47 @@ export function revealRuntimeConfirmation(
       ? state.actors.find((item) => item.id === actorId)
       : undefined;
   if (!runtimeConfirmationRequired(result, actor)) return false;
-  const canNavigate = () =>
-    useGroupStore.getState().selectedGroupId === groupId &&
-    useUIStore.getState().activeTab === expectedTab &&
-    (options.canNavigate?.() ?? true);
-  const openTerminal = (explicit = false) => {
-    if ((!explicit && !canNavigate()) || options.canNavigate?.() === false) return;
+  const ui = useUIStore.getState();
+  const sameGroup = () => useGroupStore.getState().selectedGroupId === groupId;
+  const openTerminal = () =>
     requestWorkspaceNavigation(() => {
-      const current = useGroupStore.getState();
-      const ui = useUIStore.getState();
-      if ((!explicit && !canNavigate()) || options.canNavigate?.() === false) return;
-      const enter = () => {
-        const group = useGroupStore.getState();
-        if (group.selectedGroupId !== groupId || !group.actors.some((item) => item.id === actorId))
-          return;
-        if (options.canNavigate?.() === false) return;
-        options.beforeNavigate?.();
-        useUIStore.getState().setChatMobileSurface(groupId, "messages");
-        useUIStore.getState().setActiveTab(actorId);
-      };
-      if (current.selectedGroupId === groupId) {
-        enter();
+      const group = useGroupStore.getState();
+      if (group.selectedGroupId !== groupId || !group.actors.some((item) => item.id === actorId))
         return;
-      }
-      if (!explicit || !current.groups.some((group) => group.group_id === groupId)) return;
-      // Group selection owns loading and resets its tab. Open the Actor only after
-      // that visit's hydration, and retire the request if the user leaves again.
-      const unsubscribe = useGroupStore.subscribe((group) => {
-        if (group.selectedGroupId !== groupId) {
-          unsubscribe();
-        } else if (!group.selectedGroupActorsHydrating) {
-          unsubscribe();
-          if (useUIStore.getState().activeTab === "chat") enter();
-        }
-      });
-      ui.setActiveTab("chat");
-      current.setSelectedGroupId(groupId);
+      const current = useUIStore.getState();
+      current.setChatMobileSurface(groupId, "messages");
+      current.setActiveTab(actorId);
     });
+  if (sameGroup() && ui.activeTab === expectedTab) {
+    if (options.noticePrefix) ui.showNotice({ message: options.noticePrefix });
+    openTerminal();
+    return true;
+  }
+  const label = sameGroup()
+    ? actor?.title || actorId
+    : `${state.groups.find((group) => group.group_id === groupId)?.title || groupId} / ${actor?.title || actorId}`;
+  const notice = {
+    message: [options.noticePrefix, i18n.t("actors:runtimeConfirmationRequired", { label })]
+      .filter(Boolean)
+      .join("\n"),
+    ...(sameGroup()
+      ? { actionLabel: i18n.t("actors:runtimeConfirmationOpenTerminal"), onAction: openTerminal }
+      : {}),
   };
-  const offerNavigation = options.autoOpen === false || !canNavigate();
-  const actionTarget =
-    state.selectedGroupId !== groupId
-      ? ` · ${state.groups.find((group) => group.group_id === groupId)?.title || groupId} / ${actor?.title || actorId}`
-      : "";
-  useUIStore
-    .getState()
-    .showNotice({
-      message: [
-        options.noticePrefix,
-        i18n.t("actors:runtimeConfirmationRequired", { label: actor?.title || actorId }),
-      ]
-        .filter(Boolean)
-        .join("\n"),
-      ...(offerNavigation
-        ? {
-            actionLabel: `${i18n.t("actors:runtimeConfirmationOpenTerminal")}${actionTarget}`,
-            onAction: () => openTerminal(true),
-          }
-        : {}),
+  ui.showNotice(notice);
+  if (notice.onAction) {
+    // A notice with an action stays until used; once the prompt is answered it has nothing
+    // left to offer, so it goes.
+    const stop = useGroupStore.subscribe((group) => {
+      if (useUIStore.getState().notice !== notice) return stop();
+      const current =
+        group.selectedGroupId === groupId
+          ? group.actors.find((item) => item.id === actorId)
+          : undefined;
+      if (current?.runtime_confirmation_required) return;
+      stop();
+      useUIStore.getState().dismissNotice();
     });
-  if (!offerNavigation) openTerminal();
+  }
   return true;
 }

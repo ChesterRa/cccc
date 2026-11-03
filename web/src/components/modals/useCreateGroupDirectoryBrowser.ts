@@ -38,10 +38,6 @@ export function useCreateGroupDirectoryBrowser() {
           setError(response.error?.message || t("createGroup.failedToListDirectory"));
           return false;
         }
-        if (response.result.readable === false) {
-          setError(t("createGroup.failedToListDirectory"));
-          return false;
-        }
         setDirItems(response.result.items || []);
         setCurrentDir(response.result.path || path);
         setParentDir(response.result.parent || null);

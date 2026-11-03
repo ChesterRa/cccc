@@ -342,6 +342,18 @@ fn dispatch_to_inner(
         if !actor.enabled {
             continue;
         }
+        // Leave new events pending while this managed Claude awaits an explicit
+        // retry. Already claimed work must reach the worker to be settled safely.
+        if !preclaimed
+            && crate::ops::local_headless::confirmation_paused(&group.group_id, &actor.id)
+                .unwrap_or(false)
+            && crate::ops::actor_profile_runtime::resolve(home, actor).is_ok_and(|resolved| {
+                resolved.runtime == ActorRuntime::Claude
+                    && crate::ops::local_headless::supports(&resolved)
+            })
+        {
+            continue;
+        }
         let actor_online = if !actor.external_session_id.is_empty() {
             super::local_sessions::connected(home, &actor.external_session_id)
         } else if actor.runtime == ActorRuntime::Deepseek {

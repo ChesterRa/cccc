@@ -15,7 +15,7 @@ Actual NotebookLM operations such as query, ingest, source management, artifacts
 Connecting Google in CCCC Web stores the provider credential and activates the
 real NotebookLM path. CCCC does not require an environment toggle.
 
-If you expose Web outside localhost, first create an **Admin Access Token** in **Settings > Web Access** and keep the service behind a network boundary until that token exists.
+If you expose Web outside localhost, first create an **Admin Access Token** in **Settings > This instance > Web Access** and keep the service behind a network boundary until that token exists.
 
 ## 2. Open Notebook Settings
 

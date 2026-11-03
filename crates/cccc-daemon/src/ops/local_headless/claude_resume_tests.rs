@@ -217,18 +217,18 @@ impl Fixture {
     }
 
     fn assert_launch_contexts_match(&self) {
-        let prompt: Value =
-            cccc_core::fs::read_json(&self.config.join("prompt_launch.json")).unwrap();
+        let prompt: Value = cccc_core::fs::read_json(&self.config.join("prompt_launch.json"))
+            .expect("read confirmation launch");
         self.assert_private_settings(&prompt);
         assert!(
             prompt["host_oauth_url"].is_null(),
             "confirmation inherited the synthetic host OAuth override"
         );
         for line in std::fs::read_to_string(self.config.join("launch_contexts"))
-            .unwrap()
+            .expect("read fixture launch contexts")
             .lines()
         {
-            let background: Value = serde_json::from_str(line).unwrap();
+            let background: Value = serde_json::from_str(line).expect("parse launch context");
             if background["settings_arg"] == true {
                 self.assert_private_settings(&background);
             }
@@ -284,11 +284,25 @@ impl Fixture {
         let listing = self.lifecycle("actor_list");
         assert!(listing.ok, "actor_list failed");
         let store = GroupStore::new(self.home.clone()).expect("store");
-        let events = ledger::read_all(&store.ledger_path(&self.group.group_id).unwrap()).unwrap();
+        let events = ledger::read_all(
+            &store
+                .ledger_path(&self.group.group_id)
+                .expect("fixture ledger path"),
+        )
+        .expect("read fixture ledger");
         for (surface, text) in [
-            ("response", serde_json::to_string(response).unwrap()),
-            ("actor_list", serde_json::to_string(&listing).unwrap()),
-            ("ledger", serde_json::to_string(&events).unwrap()),
+            (
+                "response",
+                serde_json::to_string(response).expect("serialize response"),
+            ),
+            (
+                "actor_list",
+                serde_json::to_string(&listing).expect("serialize actor list"),
+            ),
+            (
+                "ledger",
+                serde_json::to_string(&events).expect("serialize ledger"),
+            ),
         ] {
             for secret in [PRIVATE_AUTH, PRIVATE_ROUTE] {
                 assert!(
@@ -718,7 +732,7 @@ fn new_claude_session_retires_pending_trust_recovery_before_removing_the_receipt
     assert!(started.ok, "{:?}", started.error);
     f.wait(|| f.config.join("terminal_ready").exists());
     let prompt_pid = cccc_runtime::status(&f.group.group_id, &f.actor.id)
-        .unwrap()
+        .expect("confirmation terminal status")
         .pid;
     let receipt_path = f.receipt_path();
     let receipt = std::fs::read(&receipt_path).expect("saved receipt");
@@ -727,12 +741,13 @@ fn new_claude_session_retires_pending_trust_recovery_before_removing_the_receipt
     let rejected = f.lifecycle("actor_new_session");
     assert!(!rejected.ok, "snapshot failure must reject the new session");
     assert!(
-        super::confirmation_pending_active(&f.group.group_id, &f.actor.id).unwrap(),
+        super::confirmation_pending_active(&f.group.group_id, &f.actor.id)
+            .expect("check confirmation ownership"),
         "failed preparation must not cancel the live confirmation owner"
     );
     assert_eq!(
         cccc_runtime::status(&f.group.group_id, &f.actor.id)
-            .unwrap()
+            .expect("confirmation terminal status")
             .pid,
         prompt_pid
     );

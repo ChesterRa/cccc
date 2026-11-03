@@ -104,7 +104,7 @@ export function useRecipientPopover({ isSmallScreen }: { isSmallScreen: boolean 
       return {
         key: `actor:${id || label}`,
         label,
-        kindLabel: t("recipientActorDetail", { defaultValue: "Local actor" }),
+        kindLabel: t("recipientActorDetail", { defaultValue: "Local agent" }),
         badgeLabel: role || undefined,
         identifier: formatRecipientIdentifier({ kind: "actor", label, id, role }),
         idValue: id,

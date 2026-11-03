@@ -56,10 +56,20 @@ describe("GroupSidebarItem mobile actions", () => {
     expect(onMenuAction).toHaveBeenCalledOnce();
     expect(onSelect).not.toHaveBeenCalled();
   });
-  it("renders the Group section action", async () => {
+  it("names the Group list for screen readers only and draws no empty row", async () => {
+    await act(async () => root.render(<GroupSidebarSectionHeader />));
+    // Only the hidden name: no row of padding above the list.
+    expect([...host.children].map((child) => child.className)).toEqual(["sr-only"]);
+    expect(host.textContent).toBe("workingGroups");
     await act(async () =>
       root.render(<GroupSidebarSectionHeader action={<button type="button">Connect</button>} />),
     );
+    const named = [...host.querySelectorAll("*")].filter((node) =>
+      [...node.childNodes].some(
+        (child) => child.nodeType === 3 && child.textContent === "workingGroups",
+      ),
+    );
+    expect(named.map((node) => node.className)).toEqual(["sr-only"]);
     expect(host.querySelector("button")?.textContent).toBe("Connect");
   });
   it("opens complete instance details from the compact section header", async () => {
