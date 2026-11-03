@@ -125,7 +125,6 @@ export function MessageRows({
               onReply={onReply}
               onShowRecipients={onShowRecipients}
               measureElement={measureElement}
-              isLast={virtualRow.index === messages.length - 1}
             />
           );
         })}
@@ -151,7 +150,6 @@ export function MessageRows({
             data-index={index}
             data-message-row="true"
             data-message-id={message.id ? String(message.id) : ""}
-            data-last-message={index === messages.length - 1 || undefined}
             data-voice-viewable={
               message.kind === "chat.message" &&
               message.by !== "user" &&

@@ -35,7 +35,7 @@
   "sendInterruptLabel": "割り込みシグナルを送信",
   "relaunch": "再起動",
   "relaunchAgent": "エージェントの再起動",
-  "newSession": "New Session",
+  "newSession": "新しいセッション",
   "newSessionAgent": "新しいセッションを開始",
   "newSessionConfirm": "このエージェントで新しいセッションを開始しますか？",
   "editAgentConfig": "エージェント構成の編集",

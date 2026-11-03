@@ -30,8 +30,8 @@
   "voiceSecretaryDocumentDeleted": "文档已删除。",
   "voiceSecretaryDocumentDeleteFailed": "删除文档失败。",
   "voiceSecretaryBackToActivity": "返回活动",
-  "connectMentionLoading": "正在读取已连接的群组…",
-  "connectMentionIncomplete": "部分连接群组暂不可用，请重新输入 # 重试。",
+  "connectMentionLoading": "正在读取已连接的工作组…",
+  "connectMentionIncomplete": "部分已连接的工作组暂不可用，请重新输入 # 重试。",
   "connectMentionStale": "缓存信息 · 可能已过时",
   "presentationCloseSplitAction": "关闭展示查看器",
   "presentationOpenWindowAction": "在窗口中打开",
@@ -48,7 +48,7 @@
   "emptyStateSubtitle": "及时沟通用发送，可稍后处理用邮件；只有需要追踪的工作才使用任务关联委派。",
   "emptyStateQuickNoteTitle": "快速消息",
   "emptyStateQuickNoteBody": "需及时看到的讨论或短请求用发送，可稍后处理时用邮件。",
-  "emptyStateAskForemanTitle": "询问 foreman",
+  "emptyStateAskForemanTitle": "询问领班",
   "emptyStateAskForemanBody": "需要规划、拆分或路由时发给 @foreman。",
   "emptyStateDurableTitle": "委派工作",
   "emptyStateDurableBody": "需要负责人、完成标准、证据或交接时才使用任务关联委派。",
@@ -108,7 +108,7 @@
     "unavailable": "原请求者已离开或被替换，请先联系对方再回复。",
     "requesterUnknown": "无法确认原请求者，请先联系对方再回复。",
     "unknown": "暂时无法确认请求状态。",
-    "unsupported": "这条请求来自其他组或设备，请核实请求者后在聊天中回复。",
+    "unsupported": "这条请求来自其他工作组或设备，请核实请求者后在聊天中回复。",
     "openComposer": "在聊天中回复"
   },
   "pins": {

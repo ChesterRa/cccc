@@ -1,52 +1,33 @@
-/* With a pointer, a message's actions show under it on hover or keyboard focus, laid over the
-   space before the next message: nothing is reserved for them, so showing them moves nothing
-   and a short message stays as wide as its text. The row in use comes forward, so its bar is
-   above the next row and takes the click; the last row keeps room for its bar inside the
-   list, whose column clips what reaches past it. The bar needs a column of 22rem (its keys
-   with Show in chat leading them, beside an agent's avatar). A narrower column, beside a side
-   panel or at a large text size, and touch have no bar: every action is in the ⋮ that ends
-   the message's head (lcd.css). */
+/* With a pointer, a message's actions show beside its head on hover or keyboard focus, in the
+   free space after the time, or before your name on your own messages (lcd.css places them):
+   nothing is reserved for them, so showing them moves nothing and a short message stays as
+   wide as its text. A column narrower than 28rem, beside a side panel or at a large text size,
+   and touch have no bar: every action is in the ⋮ that ends the message's head (lcd.css). */
 .message-actions-inline {
   display: none;
 }
 
 @media (hover: hover) and (pointer: fine) {
-  @container messages (width >= 22rem) {
+  @container messages (width >= 28rem) {
     .message-actions-menu {
       display: none;
     }
-    [data-message-row] {
-      position: relative;
-    }
-    [data-message-row]:hover,
-    [data-message-row]:focus-within {
-      z-index: 1;
-    }
-    [data-message-row][data-last-message] {
-      padding-bottom: 2rem;
-    }
-    .lcd-row-body {
-      position: relative;
-    }
     .message-actions-inline {
-      position: absolute;
-      top: 100%;
-      z-index: 1;
       display: flex;
-      width: max-content;
-      max-width: 100cqi;
       opacity: 0;
       pointer-events: none;
       transition: opacity 140ms ease-out;
     }
-    .message-actions-inline[data-message-actions-align="start"] {
-      left: 0;
-    }
-    .message-actions-inline[data-message-actions-align="end"] {
-      right: 0;
-    }
+    /* A message's whole band keeps its actions showing, not only the message itself: they sit
+       beside a short message's head, past the message's own box, and a pointer heading there
+       from the text must not lose them on the way. An open ⋯ menu keeps them too. */
     [data-message-row]:hover .message-actions-inline,
-    [data-message-row]:focus-within .message-actions-inline,
+    [data-message-row]:focus-within .message-actions-inline {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    /* Its own rule: a browser without :has() drops a whole selector list, which would take
+       the hover and focus cases above with it and leave a pointer with no message actions. */
     .message-actions-inline:has([aria-expanded="true"]) {
       opacity: 1;
       pointer-events: auto;
@@ -67,26 +48,62 @@
   }
 }
 /* The members float over the end of the message list (ChatTab). The list ends with room for
-   them, so its last message scrolls clear; text scrolled under them fades out before it
-   reaches their keys, and at rest nothing sits in the fade, so the members stand on the
-   page's own ground. On a phone, where their strip spans the width, the key back to the
-   latest message rises above them. */
+   them, so its last message scrolls clear, and the room stays while reading hides them on a
+   phone, so hiding them never moves the list. Text scrolled under them fades out behind their
+   keys only, with soft ends, and shows on either side; at rest nothing sits in the fade, so
+   the members stand on the page's own ground. Where they show on a phone, whose width their
+   strip can span, the key back to the latest message rises above them. */
 .chat-reading-scroller.chat-list-over-dock {
-  padding-bottom: max(5rem, 72px);
-  scroll-padding-bottom: max(5rem, 72px);
+  padding-bottom: max(4.5rem, 64px);
+  scroll-padding-bottom: max(4.5rem, 64px);
+}
+
+/* On a phone a line of agent activity above the members makes them taller; ChatTab measures
+   them (useFloatingDockReserve) and the room grows with them. */
+@media (max-width: 767px) {
+  .chat-reading-scroller.chat-list-over-dock {
+    padding-bottom: max(4.5rem, 64px, calc(var(--chat-dock-height, 0px) + 0.75rem));
+    scroll-padding-bottom: max(4.5rem, 64px, calc(var(--chat-dock-height, 0px) + 0.75rem));
+  }
 }
 
 .chat-dock-fade {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
   padding-top: 1rem;
-  padding-bottom: 0.5rem;
+}
+
+.chat-dock-fade::before {
+  content: "";
+  position: absolute;
+  inset: 0 -1.5rem;
+  z-index: -1;
   background-image:
     linear-gradient(to bottom, transparent, var(--color-chat-bg) 1rem),
     linear-gradient(to bottom, transparent, var(--color-bg-primary) 1rem);
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 1.5rem,
+    #000 calc(100% - 1.5rem),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 1.5rem,
+    #000 calc(100% - 1.5rem),
+    transparent
+  );
 }
 
 @media (max-width: 767px) {
-  .chat-list-over-dock ~ [data-scroll-latest] {
-    --chat-latest-bottom: calc(max(5rem, 72px) + 0.5rem);
+  .chat-dock-shown ~ [data-scroll-latest] {
+    --chat-latest-bottom: calc(
+      max(4.5rem, 64px, calc(var(--chat-dock-height, 0px) + 0.75rem)) + 0.5rem
+    );
   }
 }
 

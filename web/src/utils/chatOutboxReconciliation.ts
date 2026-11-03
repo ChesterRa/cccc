@@ -39,23 +39,10 @@ export function reconcileCanonicalOutboxEvent(
   if (optimisticAttachments.length === 0 || canonicalAttachments.length === 0) {
     return { event, clientId, transferredPreviewUrls: [] };
   }
-
-  const attachments = canonicalAttachments.map((attachment: unknown, index: number) => {
-    if (!attachment || typeof attachment !== "object") return attachment;
-    const optimistic = optimisticAttachments[index];
-    if (!optimistic || typeof optimistic !== "object") return attachment;
-    const previewUrl = String(
-      (optimistic as Record<string, unknown>).local_preview_url || "",
-    ).trim();
-    return previewUrl.startsWith("blob:")
-      ? { ...attachment, local_preview_url: previewUrl }
-      : attachment;
-  });
-  return {
-    event: { ...event, data: { ...data, attachments } },
-    clientId,
-    transferredPreviewUrls: transferOutboxPreviewUrls(groupId, clientId),
-  };
+  // The confirmed message shows its stored copies (messageAttachmentLinks). The local copies
+  // stay valid a little longer, so a raster image already on screen switches to its stored copy
+  // without a blank frame, and are released after that.
+  return { event, clientId, transferredPreviewUrls: transferOutboxPreviewUrls(groupId, clientId) };
 }
 
 export function completeCanonicalOutboxReconciliation(

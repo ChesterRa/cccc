@@ -7,9 +7,10 @@ English | [简体中文](./cli-zh) | [日本語](./cli-ja)
 ## Before You Start
 
 Install CCCC using the [installation guide](./#installation). This walkthrough
-uses Claude Code: install its CLI and complete its login and any required
-workspace trust prompts in your project first. You can use another
-[supported runtime](../runtimes) that you have already configured.
+uses Claude Code: install its CLI and sign in first. If Claude asks you to trust
+your project, you can answer in the project beforehand or later in the agent's
+terminal (Step 4). You can use another [supported runtime](../runtimes) that you
+have already configured.
 
 Check that CCCC is available in your terminal:
 

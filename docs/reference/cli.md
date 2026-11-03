@@ -25,9 +25,9 @@ and says how old it is.
 
 The Groups table has NAME, STATUS and RUNNING columns. STATUS uses the Web UI's
 words: Running, Idle, Paused, Offline and Stopped. Stopped means the Group was
-stopped. Offline means it was not stopped or paused, but no actor is running:
-for example a new Group, or one whose actors exited or whose native sessions are
-closed. RUNNING counts the managed actors that are running and the native
+stopped. Offline means it was not stopped or paused, but no agent is running:
+for example a new Group, or one whose agents exited or whose native sessions are
+closed. RUNNING counts the managed agents that are running and the native
 members ready to receive from that Group; it is neither the number of members
 nor the number of busy models. The native sessions table has APP, DIRECTORY,
 STATUS and ID columns; ID is the end of the session's source id, which
@@ -43,16 +43,16 @@ Ctrl+A/E/U edit a typed command. Pasting only inserts text: in terminals with
 bracketed paste, pasted newlines do not run a command.
 
 A Group's page shows its recorded state, how many tasks it has in each state,
-its actors and a link that opens it in the Web UI. Its rows are Tasks and the
+its agents and a link that opens it in the Web UI. Its rows are Tasks and the
 actions the Group's state allows: Start for a stopped Group (and Stop while it
-still reports running actors), Resume and Stop for a paused one, and Start and
+still reports running agents), Resume and Stop for a paused one, and Start and
 Stop otherwise. Each action asks for a confirmation
 that names the Group and what will happen. The confirmation starts on Cancel:
 choose the action with Up/Down and press Enter to run it, so pressing Enter
-twice changes nothing. Starting runs the enabled actors that
+twice changes nothing. Starting runs the enabled agents that
 are not running and lets enabled native members receive again, so Start also
-helps a running Group whose other actors have exited; stopping stops the managed
-actors and stops delivery to native members, whose apps stay open. Tasks lists the Group's tasks: Left/Right switches between the unfinished
+helps a running Group whose other agents have exited; stopping stops the managed
+agents and stops delivery to native members, whose apps stay open. Tasks lists the Group's tasks: Left/Right switches between the unfinished
 ones (Active, then Planned) and the Done ones, and PgUp/PgDn pages through a
 long list. Enter shows one task read-only, with its status, assignee,
 checklist, notes and outcome; tasks are edited in the Web UI.
@@ -164,7 +164,7 @@ cccc reach off         # Stop publication without removing local identity
 ```
 
 The token-bearing Web URL is shown here; keep it private. ChatGPT/Web Model
-connector credentials are actor-specific and are managed from that actor's Web
+connector credentials are agent-specific and are managed from that agent's Web
 Model settings. Windows helper installation is not included in this release
 candidate, so Reach is unavailable there.
 
@@ -211,21 +211,21 @@ cccc group create --title "my-group"         # Create group
 cccc group show <group_id>                   # Show group metadata
 cccc group update --group <id> --title "..." # Update title/topic
 cccc group use <group_id> .                  # Set active scope
-cccc group start --group <id>                # Start group actors
-cccc group stop --group <id>                 # Stop group actors
+cccc group start --group <id>                # Start the Group's agents
+cccc group stop --group <id>                 # Stop the Group's agents
 cccc group set-state idle --group <id>       # Set state: active/idle/paused/stopped
 cccc group detach-scope <scope_key> --group <id>
 cccc group delete --group <id> --confirm <id>
 ```
 
-`set-state stopped` is the same as `group stop`: it stops the Group's actors and
+`set-state stopped` is the same as `group stop`: it stops the Group's agents and
 delivery to its native members, never only its recorded state.
 
-## Actor Commands
+## Agent Commands {#actor-commands}
 
 ### `cccc actor add`
 
-Add a new actor to the group.
+Add a new agent to the Group.
 
 ```bash
 cccc actor add <actor_id> --runtime claude
@@ -240,11 +240,11 @@ Options:
 - `--title`: Display title
 - `--model-label`: Optional model name the operator declares for people and external tools; CCCC does not check it or use it to launch the runtime
 
-For the ChatGPT Web Model actor, create and start the actor from the target CCCC Web group, then finish ChatGPT sign-in, MCP URL, and chat binding in `Settings > Global > ChatGPT Web Model`.
+For a ChatGPT Web Model agent, create and start the agent from the target Group in the CCCC Web UI, then finish ChatGPT sign-in, MCP URL and chat binding in **Settings → This instance → Web Models → ChatGPT**.
 
 ### `cccc actor`
 
-Manage actors.
+Manage agents.
 
 ```bash
 cccc actor list                    # List actors
@@ -258,7 +258,7 @@ cccc actor update <actor_id> --model-label "gpt-5-codex"   # An empty value clea
 cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
 ```
 
-Actor scope arguments are project paths at the CLI boundary. CCCC resolves them
+Agent scope arguments are project paths at the CLI boundary. CCCC resolves them
 to the attached scope key before persistence.
 
 ## Message Commands
@@ -270,7 +270,7 @@ Send a message.
 ```bash
 cccc send "Hello"                  # No --to: default recipient policy applies (default: foreman)
 cccc send "Hello" --to @foreman    # Send to foreman
-cccc send "Hello" --to peer-1      # Send to specific actor
+cccc send "Hello" --to peer-1      # Send to a specific agent
 cccc send "Announcement" --to @all # Explicit broadcast
 cccc send "Please answer" --to peer-1 --mode request-reply
 cccc send "For later" --to peer-1 --mode mail
@@ -333,8 +333,8 @@ cccc cancel-reply <event_id>
 
 ### `cccc inbox`
 
-Read and consume an actor's unread Mail, advancing its read cursor. This changes
-the actor's unread state; it is not a read-only view of the actor's responses.
+Read and consume an agent's unread Mail, advancing its read cursor. This changes
+the agent's unread state; it is not a read-only view of the agent's responses.
 Use `cccc tail` or Web chat to view recorded messages without consuming Mail.
 
 ```bash
@@ -344,13 +344,13 @@ cccc inbox --actor-id <id> --limit 10
 
 ### `cccc inbox-summary`
 
-Summarize the Mail still waiting for every actor in a Group, without consuming it.
+Summarize the Mail still waiting for every agent in a Group, without consuming it.
 
 ```bash
-cccc inbox-summary --cutoff 2026-10-30T00:00:00Z   # Per actor: waiting Mail, how much was sent at or before the cutoff, the oldest's age when known
+cccc inbox-summary --cutoff 2026-10-30T00:00:00Z   # Per agent: waiting Mail, how much was sent at or before the cutoff, the oldest's age when known
 ```
 
-It does not move read cursors, start actors or send notices, and returns no
+It does not move read cursors, start agents or send notices, and returns no
 message text. The user, the system and the Group's Foreman may use it (`--by`,
 default `user`); peers may not.
 
@@ -450,7 +450,7 @@ a runtime choice. Use ordinary commands directly:
 
 ```bash
 cccc                 # launch daemon + Web
-cccc status          # show product, daemon, groups, actors, and agent runtimes
+cccc status          # show product, daemon, groups, agents and agent runtimes
 cccc doctor          # inspect the native installation and environment
 cccc daemon start    # explicit daemon lifecycle
 ```

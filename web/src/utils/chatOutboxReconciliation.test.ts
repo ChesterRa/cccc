@@ -13,9 +13,9 @@ describe("canonical outbox reconciliation", () => {
     vi.restoreAllMocks();
   });
 
-  it("replaces pending state immediately while preserving its local image preview", () => {
+  it("replaces pending state at once and releases its local image preview a minute later", () => {
     vi.useFakeTimers();
-    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const optimistic: LedgerEvent = {
       id: "client-1",
       kind: "chat.message",
@@ -41,7 +41,12 @@ describe("canonical outbox reconciliation", () => {
     const reconciliation = reconcileCanonicalOutboxEvent(canonical, "g1");
     completeCanonicalOutboxReconciliation("g1", reconciliation);
 
-    expect(reconciliation.event.data?.attachments?.[0]?.local_preview_url).toBe("blob:preview");
+    // The confirmed message previews its stored copy; the local one is not carried over, and it
+    // stays valid long enough for a raster image on screen to switch without a blank frame.
+    expect(reconciliation.event).toBe(canonical);
     expect(getOutboxEntry("g1", "client-1")).toBeNull();
+    expect(revoke).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60_000);
+    expect(revoke).toHaveBeenCalledWith("blob:preview");
   });
 });

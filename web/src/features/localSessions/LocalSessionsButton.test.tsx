@@ -696,6 +696,23 @@ it("does not present a failed directory load as an empty session directory and r
   expect(button("Create & connect").disabled).toBe(false);
 });
 
+it("opens the setup steps when the directory turns out empty after a failed first load, not because of the failure", async () => {
+  vi.useFakeTimers();
+  mocks.fetch.mockResolvedValueOnce({
+    ok: false,
+    error: { message: "Synthetic directory failure" },
+  });
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [] } });
+  await open();
+  const setup = () => document.querySelector("details");
+  expect(document.querySelector('[role="alert"]')).not.toBeNull();
+  expect(setup()?.open).toBe(false);
+  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  expect(document.querySelector('[role="alert"]')).toBeNull();
+  expect(document.body.textContent).toContain(enLayout.localSessions.empty);
+  expect(setup()?.open).toBe(true);
+});
+
 it("requires a selected session when connecting to an existing Group instead of navigating", async () => {
   const select = vi.fn();
   await open(select);

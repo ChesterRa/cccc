@@ -23,18 +23,19 @@ export interface MessageActionsProps {
   /** Whether the message is pinned, with the way to change it; absent where pins are not offered. */
   pinned?: boolean;
   onTogglePin?: () => void;
-  /** "bar" for a pointer, shown under the message on hover or focus; "menu" for touch, ⋮ at
-   *  the end of the message's head. CSS shows the one that fits the device. */
+  /** "bar" for a pointer, shown beside the message's head on hover or focus; "menu" for touch
+   *  or a narrow column, ⋮ at the end of the head. CSS shows the one that fits. */
   part: "bar" | "menu";
 }
 
 export type MessageAction = { key: string; label: string; emoji?: string; run: () => void };
 type MenuSection = { key: string; label?: string; actions: MessageAction[] };
 
-// With a pointer, Reply, Forward and Copy (an icon named by its tip) show under the message on
-// hover or focus, with quick replies, Pin and Copy link in its ⋯ menu, and a filtered view's
-// Show in chat first; nothing is reserved for them. Touch lists every action in the ⋮ that
-// ends the message's head, where Show in chat follows the time (MessageBubble).
+// With a pointer, Reply, Forward and Copy (an icon named by its tip) show beside the message's
+// head on hover or focus, with quick replies, Pin and Copy link in its ⋯ menu, and a filtered
+// view's Show in chat first where the column has room; nothing is reserved for them. Touch and
+// a narrow column list every action in the ⋮ that ends the head, where Show in chat follows
+// the time (MessageBubble).
 export function MessageActions(props: MessageActionsProps) {
   const { t } = useTranslation(["chat", "common"]);
   if (props.readOnly) return null;
@@ -98,7 +99,6 @@ export function MessageActions(props: MessageActionsProps) {
     <div
       className={`message-actions-inline flex-wrap items-center gap-0.5 ${align === "end" ? "justify-end" : "justify-start"}`}
       data-message-actions-inline
-      data-message-actions-align={align}
     >
       {bar.map((action) => (
         <Button

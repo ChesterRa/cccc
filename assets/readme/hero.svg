@@ -23,14 +23,14 @@
       <text x="34" y="25" fill="#D9DCE0">DELIVERED</text>
     </g>
     <g transform="translate(216 346)">
-      <rect width="120" height="38" rx="19" fill="#15181D" stroke="#343941"/>
+      <rect width="130" height="38" rx="19" fill="#15181D" stroke="#343941"/>
       <circle cx="20" cy="19" r="5" fill="#20B486"/>
-      <text x="34" y="25" fill="#D9DCE0">ACK 2/2</text>
+      <text x="34" y="25" fill="#D9DCE0">READ 2/2</text>
     </g>
-    <g transform="translate(348 346)">
-      <rect width="194" height="38" rx="19" fill="#15181D" stroke="#343941"/>
+    <g transform="translate(358 346)">
+      <rect width="164" height="38" rx="19" fill="#15181D" stroke="#343941"/>
       <circle cx="20" cy="19" r="5" fill="#F0B44D"/>
-      <text x="34" y="25" fill="#D9DCE0">REPLY REQUIRED</text>
+      <text x="34" y="25" fill="#D9DCE0">REPLIED 1/2</text>
     </g>
   </g>
 

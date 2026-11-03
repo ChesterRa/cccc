@@ -24,9 +24,26 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
         "group_start",
     ] {
         let fixture = Fixture::new();
-        std::fs::write(fixture.config.join("immediate_exit"), "").expect("decline prompt");
         let started = fixture.request("actor_start", Value::Null);
         assert!(started.ok, "{:?}", started.error);
+        // actor_update starts an enabled member only when the Group is running.
+        // Let the prompt survive startup so this precondition is deterministic,
+        // then close that fixture process as a user would close the prompt.
+        assert!(
+            fixture.stored().running,
+            "confirmation keeps the Group running"
+        );
+        let confirmation = cccc_runtime::status(&fixture.group.group_id, "claude")
+            .expect("fixture confirmation status");
+        assert!(confirmation.running, "fixture confirmation is open");
+        let pid = i32::try_from(confirmation.pid.expect("fixture confirmation pid"))
+            .expect("fixture confirmation pid fits i32");
+        assert!(pid > 1, "fixture confirmation has a child process id");
+        nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid),
+            nix::sys::signal::Signal::SIGTERM,
+        )
+        .expect("close fixture confirmation");
         let deadline = Instant::now() + Duration::from_secs(5);
         while crate::ops::local_headless::waiting_for_workspace_trust(
             &fixture.group.group_id,
@@ -141,8 +158,6 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
             let stopped = fixture.request("group_stop", Value::Null);
             assert!(stopped.ok, "{:?}", stopped.error);
         }
-        std::fs::remove_file(fixture.config.join("immediate_exit"))
-            .expect("keep the next prompt open");
         let retried = fixture.request(operation, json!({"enabled":true}));
         assert!(retried.ok, "{operation}: {:?}", retried.error);
         assert_eq!(

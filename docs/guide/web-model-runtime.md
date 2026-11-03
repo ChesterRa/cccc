@@ -65,7 +65,7 @@ existing URL, enable the CCCC
 connector in that chat, then select **Use this conversation**. CCCC sends the setup
 message and verifies the reply automatically. Previewing alone does not switch the
 binding. Failed or cancelled verification preserves the previous binding and
-pending work. After successful replacement, **Start agent** is available in the
+pending work. After successful replacement, **Enable CCCC access** is available in the
 same section; verification does not start it for you. These operations are independent of the
 agent editor's Save button. Disconnecting is a separate maintenance action and is
 not required to replace a conversation.

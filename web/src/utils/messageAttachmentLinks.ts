@@ -6,8 +6,6 @@ type AttachmentLinkInput = {
   title?: string;
   localPreviewUrl?: string;
   fallbackLabel: string;
-  /** Load on demand: never rely on a local URL that may be revoked by then. */
-  preferStoredPreview?: boolean;
 };
 
 export type MessageAttachmentLinks = {
@@ -51,16 +49,14 @@ export function buildMessageAttachmentLinks(input: AttachmentLinkInput): Message
   const previewParams = new URLSearchParams({ filename: downloadName });
   const downloadParams = new URLSearchParams(previewParams);
   downloadParams.set("download", "true");
-  // An image already shown from the local copy keeps it to avoid a reload
-  // flash. Anything fetched later uses the stored blob: the local URL is
-  // revoked shortly after the upload is confirmed.
+  // Once stored, everything loads the stored blob: the local URL is revoked shortly after the
+  // upload is confirmed, and a message can be shown again long after that, for example after
+  // a filter change. A raster image on screen keeps showing until its stored copy has loaded
+  // (ImagePreview), so the switch is not seen; an SVG shows its placeholder while it is fetched.
   return {
     label,
     downloadName,
-    previewHref:
-      local && !input.preferStoredPreview
-        ? local
-        : withAuthToken(`${base}?${previewParams.toString()}`),
+    previewHref: withAuthToken(`${base}?${previewParams.toString()}`),
     downloadHref: withAuthToken(`${base}?${downloadParams.toString()}`),
   };
 }

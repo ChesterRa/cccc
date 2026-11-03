@@ -6,12 +6,12 @@
 
 ### Coordinate your coding agents like a group chat
 
-**Local-first coordination for coding agents, with durable collaboration state,
-explicit message status, cross-instance collaboration, and Web/IM access.**
+**Local-first coordination for coding agents: durable Group history, explicit message status,
+cross-instance collaboration, and access from the Web, the terminal and IM.**
 
-Run multiple coding agents as a **persistent, coordinated team** across runtimes, machines, and trusted working groups.
+Connect the Claude Code, Codex, Pi and OpenCode sessions you already run, or let CCCC run agents for you, as one persistent team.
 
-One install command. No Rust toolchain, database server, message broker, or Docker required.
+One install command. No Rust toolchain, database server, message broker or Docker required.
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
@@ -26,500 +26,47 @@ One install command. No Rust toolchain, database server, message broker, or Dock
 
 <div align="center">
 
-<a href="screenshots/overview.webp?raw=1" title="View desktop screenshot at full size"><img src="screenshots/overview.webp" alt="CCCC Web UI desktop overview" width="76%" align="top"></a>
+<a href="screenshots/overview.webp?raw=1" title="View desktop screenshot at full size"><img src="screenshots/overview.webp" alt="CCCC Web UI on desktop" width="76%" align="top"></a>
 &nbsp;
-<a href="screenshots/iphone.webp?raw=1" title="View mobile screenshot at full size"><img src="screenshots/iphone.webp" alt="CCCC Web UI mobile overview" width="20%" align="top"></a>
+<a href="screenshots/iphone.webp?raw=1" title="View mobile screenshot at full size"><img src="screenshots/iphone.webp" alt="CCCC Web UI on a phone" width="20%" align="top"></a>
 
 </div>
 
-## Why CCCC
+## What CCCC does
 
-When several coding agents share work, you need to know who owns a task, whether a message reached its recipient, and what survives a restart. CCCC brings that coordination into one place, with Web and IM access when you are away from the terminal.
+When several coding agents share work, you need to know who owns a task, whether a message reached its recipient, and what survives a restart. CCCC keeps that in one place:
 
-CCCC runs your agents as one durable, coordinated system:
+- **A durable Group chat.** Each Group records messages and events in an append-only ledger; tasks and shared context are stored as well.
+- **Explicit delivery.** Messages go out as Send, Send + Reply or Mail, and delivery, read and reply are recorded as separate facts.
+- **Your sessions or CCCC's.** Connect sessions you already run, or let CCCC manage agents on many CLI and Web runtimes, in the same Group.
+- **One control plane.** The Web UI, the terminal interface, the CLI, MCP tools and IM bridges share the daemon's state.
+- **Chet**, a global assistant you can write or talk to.
+- **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
+- **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-- **Durable coordination** — message history lives in an append-only ledger; tasks and shared context have their own persistent stores.
-- **Visible delivery semantics** — routing plus separate stored, runtime-delivery, read, and reply facts replace best-effort prompting.
-- **One control plane** — Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
-- **Multi-runtime by default** — supported CLI runtimes and optional Web integrations can collaborate in one group, with runtime-specific capabilities and setup requirements.
-- **CCCC Connect across instances** — use same-account discovery, approved cross-member Group connections, or account-free Direct connections; each instance keeps its own state and access boundaries.
-- **Local-first operations** — one install command, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
+## What's new in 0.4.47
 
-## What CCCC Does
+- **A new look.** The Web UI is now a pixel-terminal screen, light or dark, and fully replaces the previous look.
+- **Chet by text.** Chet, formerly the Voice Analyst, takes typed messages without a voice call, and Group members can address it as `@chet`.
+- **Connect sessions** now sits above the Group list, and its dialog shows setup steps for one app at a time.
+- **Pin message** keeps a message in the **Pinned** tab, up to 100 per Group. A message's **More** menu offers four ready answers to its agent under **Quick reply · sends immediately**.
+- **Reading.** Changing a chat filter keeps your place, and **Show in chat** opens a filtered message in the whole conversation.
+- **Claude's first-run prompts** for workspace trust and the `--dangerously-skip-permissions` disclaimer open in the agent's terminal. CCCC never answers them for you.
+- **Smaller tool results.** `cccc_task` lists one short row per task and `cccc_coordination` no longer repeats the task list, so agents read far less: about 2,900 instead of 98,000 characters for 60 tasks in a probe Group.
 
-CCCC installs with one command and needs no separately operated database, message broker, or Docker:
+**Security fixes**
 
-| Capability | How |
-|---|---|
-| **Durable event history** | Append-only ledger (`ledger.jsonl`) records messages and collaboration events for replay and audit |
-| **Reliable messaging** | Send / Send + Reply / Mail, separate delivery/read/reply facts, and a Mail-only Inbox consumed in ledger order — runtime handoff never pretends a message was read |
-| **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Mix supported coding-agent runtimes in one Group, with `custom` for other command-line agents |
-| **CCCC Connect** | Connect your own instances, selected Groups across member accounts, or two Groups directly without an account |
-| **Workspace tools** | Browse and edit files, inspect Git changes, pin documents in Presentation, and operate tiled native terminals |
-| **Voice workflows** | One global Voice Secretary handles speech, documents and composer drafts for all Groups in a shared conversation; experimental Codex Voice and Grok Voice use a separate Analyst |
-| **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
-| **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
+- Web Access Tokens restricted to certain Groups could access, change or delete other Groups. Authorization now checks the Group identified by the route.
+- The Web routes for sending, replying, sending attachments and sending to another Group now send as the authenticated human's `user` identity and reject a caller-supplied agent or Chet author.
+- Copy Groups packages now leave out Weixin login credentials, DingTalk reply sessions, pending IM binding keys, legacy actor secrets, and in-progress temporary files in the Group root and its state directory.
 
+**Upgrade notes.** Reload open Web pages once; pages opened before 0.4.47 cannot show the new **Refresh page** notice. The chat's tabs are now **Waiting for you**, **All**, **Pinned** and **User-related**, and **Relay** is **Forward**. The Web `delegate_contact` route and the daemon `relay_user_delegation` operation are removed; use the Web `send_cross_group` route. Native-session users should [reload the integration in each app](https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration). The interface says agents; `cccc actor` and `actor_id` are unchanged.
 
-## 0.4.46 Highlights
+Details: [0.4.47 release notes](https://chesterra.github.io/cccc/release/v0.4.47_release_notes).
 
-- **Bring the sessions you already run:** Codex, Claude Code, Pi and OpenCode V2 sessions that you started yourself can join Groups and contact each other, while each application keeps its process, conversation, account and approvals. Experimental; tested on Linux and WSL.
-- **A terminal interface for `cccc`:** a status panel with the Web address, Groups, agents and native sessions, plus `/setup`, `/sessions`, Group pages, read-only tasks and confirmed Start and Stop. Scripts should use `cccc --headless`.
-- **Answer agents in place:** agents can ask you to choose between options, answered under the message. Waiting for you lists every open request, and browsers can show system notifications for messages and requests.
-- **More room on phones:** a shorter header, one-line filters, a single-row message box and bars that slide away while you read. The chat is more compact on every screen.
-- **A task board that tells more:** cards show when a task last changed, its next checklist item, subtask progress and search matches. Moving a card changes only its status.
-
-See the [0.4.46 release notes](https://chesterra.github.io/cccc/release/v0.4.46_release_notes) for upgrade steps and feature boundaries. **OpenCode agents that CCCC manages now need OpenCode V2 2.1.4 or later.** Live voice remains experimental; Grok's reported pitch/timbre drift is not confirmed fixed. The global Secretary still shares model history across Groups.
-
-## Quick Start
+## Quick start
 
 ### Install
-
-```bash
-# macOS / Linux (recommended)
-curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
-
-# Windows CMD or PowerShell (recommended)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
-
-# Native platform wheel (pip compatibility)
-python -m pip install -U "cccc-pair>=0.4.36"
-```
-
-> **CCCC uses one native Rust implementation.** The website installer is
-> recommended. The pip command installs the same native executable in a
-> platform wheel for package-manager compatibility; it does not install a
-> Python daemon, launcher, or fallback. Supported targets are Linux x86-64
-> (glibc 2.28+), Apple Silicon macOS 11+, and Windows x86-64. CCCC v0.4.37
-> is the final release for Intel Macs; newer releases do not publish
-> `x86_64-apple-darwin` artifacts.
-
-### Upgrade
-
-```bash
-# Website-installer ownership
-cccc update
-
-# pip ownership
-python -m pip install -U "cccc-pair>=0.4.36"
-```
-
-Use `cccc update --check` to query the latest channel release and inspect the
-installation owner and native platform requirements without changing the installation
-or running services. It also works for pip-owned commands. Add `--offline` for
-local details without a network request. A pip-owned command refuses standalone self-update
-and prints the package-manager command instead. Both channels install the same
-native product, but each remains owned by the installer that created it. Before
-a pip upgrade, run `cccc daemon stop` and close any foreground CCCC process so
-the package manager can replace the executable, especially on Windows. To
-switch from pip to the website installer in the same command directory, first
-run `python -m pip uninstall cccc-pair`; the standalone installer deliberately
-refuses to overwrite pip-owned files, even with
-`CCCC_ALLOW_REPLACE_EXISTING=1`.
-
-If an older `cccc update` stays on `0.4.35`, use the version-constrained pip
-command above in the Python environment that owns that installation.
-`0.4.35` was the last portable Python release; an unsupported platform can
-silently select it with an unconstrained pip upgrade. The minimum version makes
-that mismatch an explicit error. See the [upgrade FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35).
-
-### Launch
-
-```bash
-cccc
-```
-
-In an interactive terminal, `cccc` opens a small terminal interface and brings up the daemon and the
-local Web UI with it. The screen is a status panel: the Web address, whether this launch owns the
-daemon, your Groups with their status and running agents, and your native sessions. Up/Down picks a
-Group and Enter opens it, where you can read its tasks and start or stop it. Type `/` to see the commands: `/sessions` lists every
-native session, `/setup` connects Codex, Claude Code, Pi or OpenCode sessions, and `/quit` (or
-Ctrl+C) stops what this launch started. Everything else stays in the Web UI.
-
-Open **http://127.0.0.1:8848** for the full Web UI. To run without the terminal interface — on a
-server, in a container, under a service manager or from scripts — use `cccc --headless` (or
-`cccc web`), which keeps the plain log output. `cccc` also runs headless when its input or output is
-not a terminal, or in read-only Exhibit mode.
-Direct `localhost` / `127.0.0.1` use stays passwordless and does not create an Access Token.
-Explicit Admin Access Tokens are required only when enabling LAN, Remote Access, public URL, or
-reverse-proxied access.
-
-```bash
-cccc status            # product, daemon, Groups, agents, and runtimes
-cccc doctor            # installation and environment diagnostics
-cccc daemon status     # explicit daemon lifecycle status
-```
-
-`cccc python`, `cccc rust`, and the former `ccccd` alias are retired. Existing
-automation should use `cccc daemon ...`; compatible daemon state filenames are
-retained so 0.4.35 homes can be adopted without a Python runtime.
-
-In the interface, a Group member running or connected to an agent runtime is called an agent. The CLI retains `cccc actor` for agent commands; the API retains fields such as `actor_id`.
-
-### Create a multi-agent group
-
-Install and sign in to the agent CLIs you intend to use first. This example uses Claude Code and Codex CLI.
-
-```bash
-cd /path/to/your/repo
-cccc attach .                              # bind this directory as a scope
-cccc setup --runtime claude                # prepare only the runtimes used here
-cccc setup --runtime codex
-cccc actor add lead --runtime claude       # first agent becomes foreman
-cccc actor add implementer --runtime codex # add a peer
-cccc group start                           # start all agents
-cccc send "Please inspect the repo and propose the first safe task." --to @foreman
-cccc tracked-send "Please take the first concrete task and reply with validation evidence." \
-  --to implementer \
-  --title "First concrete task" \
-  --outcome "The change and validation evidence are reported"
-```
-
-You now have two agents collaborating in a persistent group with full message history, delivery tracking, and a web dashboard. The daemon owns delivery and coordination, and runtime state stays in `CCCC_HOME` rather than inside your repo.
-
-**What you should see:** in the Web UI at http://127.0.0.1:8848, both agents show as running, the foreman's reply arrives in **Messages**, and the tracked request displays its delivery and read state on the message. If an agent stays stopped, run `cccc doctor` to check the runtime, and see the [FAQ](https://chesterra.github.io/cccc/guide/faq) for common first-run fixes.
-
-## Programmatic Access (SDK)
-
-Use the official SDK when you need to integrate CCCC into external applications or services:
-
-```bash
-pip install -U cccc-sdk
-npm install cccc-sdk
-cargo add cccc-sdk
-```
-
-The SDK does not include a daemon. It connects to a running `cccc` core instance.
-
-## Architecture
-
-```mermaid
-graph TB
-    A1["CLI runtimes + custom<br/>Codex · Claude · Grok · ..."]
-    A3["Web runtimes<br/>ChatGPT Web · Grok Bot"]
-    A6["ChatGPT Dots"]
-    Daemon["CCCC daemon · single writer<br/>Ledger · tasks · context · agent lifecycle"]
-    Ports["CCCC Web UI · CLI · MCP"]
-    IM["IM bridges"]
-    Remote["Connected CCCC Groups"]
-
-    A1 <-->|Terminal / runtime protocols<br/>MCP| Daemon
-    A3 <-->|Browser delivery<br/>Remote MCP| Daemon
-    A6 <-->|MCP Events<br/>Remote MCP| Daemon
-    Daemon <--> Ports
-    Ports <-->|Web-hosted bridges| IM
-    Daemon <-->|CCCC Connect / Direct<br/>approved connections| Remote
-```
-
-**Key design decisions:**
-
-- **Daemon owns shared coordination** — agent lifecycle, message delivery and collaboration mutations go through its control plane
-- **Ledger is append-only** — new events record changes without rewriting past events; Group configuration and context have separate authoritative stores
-- **Ports share that control plane** — Web, CLI, MCP and IM route collaboration through the daemon; Web also hosts browser, voice and IM integration services
-- **Instance authority stays separate** — account/device bindings or approved Direct Group grants authorize cross-instance messages; each target independently authorizes its Web view
-- **Runtime home is `CCCC_HOME`** (default `~/.cccc/`) — runtime state stays out of your repo
-
-## Supported Runtimes
-
-CCCC provides the following runtime integrations, plus `custom` for other command-line agents. Each agent in a Group can use a different runtime. Integration surfaces and setup requirements vary:
-
-| Runtime | Integration | Entrypoint / Surface |
-|---------|-------------|----------------------|
-| Claude Code | Managed Agent View session + native TUI; per-session MCP | `claude` |
-| Cline CLI | Auto MCP setup | `cline` |
-| Codex CLI | Managed app-server session + native TUI; per-agent MCP | `codex` |
-| DeepSeek Harness | Managed ACP developer preview; no native terminal | CCCC-managed `dsh-acp-demo` |
-| GitHub Copilot CLI | Auto MCP setup | `copilot` |
-| Cursor CLI | Prompt-assisted MCP setup | `cursor-agent` |
-| Devin CLI | Auto MCP setup | `devin` |
-| Kiro CLI | Native TUI or official ACP; session MCP | `kiro-cli` |
-| Kilo Code CLI | Managed ACP session + native TUI; per-session MCP | `kilo` |
-| Antigravity CLI | Auto MCP setup | `agy` |
-| ChatGPT Web | Browser UI delivery + remote MCP | `chatgpt.com` conversation |
-| ChatGPT Dots | MCP Events + task-scoped remote MCP; no browser message delivery | One explicitly paired Dot |
-| Grok Bot Web Model | Remote MCP + native Webhook; per-agent task authority | Required `grok.com/bot/<UUID>` URL |
-| Grok Build | Managed ACP session + native TUI; automatic native MCP setup | `grok` |
-| Hermes Agent | Native TUI or official ACP; session MCP | `hermes` |
-| Droid | Native TUI or official ACP; session MCP | `droid` |
-| Amp | Auto MCP setup | `amp` |
-| Auggie | Native TUI or official ACP; session MCP | `auggie` |
-| Kimi Code | Native TUI or official ACP; session MCP | `kimi` |
-| OpenCode | Managed OpenCode V2 server (HTTP/SSE) + native TUI; per-session MCP; OpenCode V2 2.1.4+ | `opencode` |
-| Pi | Official RPC; per-session MCP; managed agents have no embedded native terminal | `pi` |
-| Custom | Manual | Any command |
-
-These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific launch defaults automatically; agent and profile commands can be reviewed and customized in settings. The [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes) lists the default autonomy flags, including approval-bypass modes such as `agy --dangerously-skip-permissions`, `grok --always-approve`, and `opencode --auto`.
-
-```bash
-cccc setup --runtime claude       # reports CCCC-owned per-session MCP
-cccc setup --runtime cline        # configures Cline CLI MCP for its native TUI
-cccc setup --runtime cursor       # shows the prompt-assisted MCP setup contract
-cccc setup --runtime kilo         # reports CCCC-owned per-session MCP
-cccc setup --runtime antigravity  # configures Antigravity MCP before agent startup
-cccc runtime list --all           # show all available runtimes
-cccc doctor                       # verify environment and runtime availability
-```
-
-Antigravity setup also disables native feedback surveys in its user settings, because the rating prompt can consume automated terminal input. Other preferences are preserved; this also applies to standalone AGY sessions under the same user.
-
-GitHub Copilot, Devin CLI, Cursor, Kimi Code, Auggie, Kiro V3, Hermes and Droid also support optional **official headless ACP** for agents, Chet and Voice Secretary, while native TUI remains their default. ACP reuses native CLI login, injects an independent CCCC identity per agent, and exposes serialized input, cancellation and one-time approvals. Cursor questions and plans require explicit user decisions even with YOLO. See the [Runtime guide](https://chesterra.github.io/cccc/guide/runtimes#native-tui-or-official-acp).
-
-Antigravity also supports an optional **official ACP mode** for agents and Chet, with a structured workspace instead of a terminal. Select ACP in agent or profile settings and run `cccc setup --runtime antigravity --runtime-mode acp --login` once for its separate CCCC login. Busy inputs and one-time permission requests are visible in the workspace. See the [runtime guide](https://chesterra.github.io/cccc/guide/runtimes#antigravity-tui-or-official-acp).
-
-Choose a Runtime; CCCC derives its interaction surface automatically. Claude Code, Codex CLI, Grok Build, OpenCode and Kilo pair a native writable terminal with a structured background protocol on the same provider session. Messages enter that terminal, leaving queue-versus-steer behavior to the receiving Runtime. A managed Pi agent uses official RPC without an embedded native terminal and requires Pi 1.1.0 or newer (`@earendil-works/pi-coding-agent`); a Pi session you start yourself can instead connect as a [native session](https://chesterra.github.io/cccc/guide/local-sessions) with Pi 1.4.0 or newer. Managed OpenCode agents require OpenCode V2 2.1.4 or newer. DeepSeek Harness uses structured ACP without a native terminal; ChatGPT Web uses browser delivery and remote MCP; Grok Bot Web Model uses native Webhook Routines and remote MCP.
-
-For setup commands, interaction details, and troubleshooting for every supported Runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
-
-### ChatGPT Web as a local development agent
-
-CCCC delivers Group messages into paired ChatGPT conversations through browser UI automation. Multiple Web Model agents share one dedicated browser login and one authenticated remote MCP connector, with a persistent window and confirmed conversation pairing for each agent. They can receive messages, reply, inspect or edit repository files, and run scoped shell/git commands. Shared setup lives in instance settings; conversation setup lives in agent settings. Normal agent startup verifies its conversation automatically before delivering queued tasks; no preparatory pairing click is required.
-
-Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). CCCC defaults to text-only browser delivery and also offers an experimental **GPT Pro** mode that attaches a tiny blank PNG when delivering each batch. This compatibility workaround does not switch ChatGPT models or guarantee connector availability, and may stop working when ChatGPT changes. Shared login means these agent conversations use the same configured ChatGPT account, with that account's features and limits. Full setup and integration boundaries: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
-
-### ChatGPT Dots
-
-**ChatGPT Dots** (`chatgpt_dots`) uses ChatGPT-native event-triggered tasks and remote MCP. It shares the configured CCCC plugin with ChatGPT Web agents, but does not use browser message delivery or require CCCC's browser login. Pair your Dot with one agent and save its native event task to enable delivery. Event acceptance, task claim and completion are reported separately. See [Dots setup](https://chesterra.github.io/cccc/guide/runtimes#chatgpt-dots).
-
-### Grok Bot Web Model
-
-**Grok Bot Web Model** (`grok_web_model`) connects an existing `https://grok.com/bot/<UUID>` per agent through a native Webhook Routine and the CCCC remote MCP connector. It uses your Grok subscription without browser delivery or a separate model API key. Setup requires copying the Routine URL and Key from the Grok desktop app. CCCC owns task ordering, single admission and exact completion; provider approvals, limits and cloud execution remain with Grok. This is separate from Grok Build CLI (`grok`). See [setup, recovery and validation boundaries](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
-
-## CCCC Connect: across instances and teams
-
-Account here means your CCCC account. Provider logins and usage entitlements are separate from CCCC Connect authorization.
-
-Choose the connection scope that fits your work:
-
-| Method | Scope and setup |
-|---|---|
-| **Same account** | Link instances in **Settings → This instance → Account**. Their Groups and agents can discover and message one another without manual Group pairing. |
-| **Different members** | Open **Group connections** from the Group's sidebar **⋮** menu or Group settings. Invite a Member ID; both members confirm their own Group on the account website. |
-| **Direct, no account** | Open **Group connections → Direct connection**. Exchange an invitation over a trusted channel and approve the exact Group pair. One instance must accept connections over a reachable LAN, VPN or existing network route. |
-
-Every instance retains its own state and history. Cross-member and Direct connections grant messages, replies and small files between the selected Groups, not terminals, workspace browsing or arbitrary tools. Direct does not require a public Web interface or provide a network relay.
-
-The sidebar can open same-account remote workspaces for administrators, using **each target instance's own admin Access Token** and a reachable HTTPS route. Restricted access stays within one instance. Browser authority is separate from background collaboration grants.
-
-Agents discover qualified targets with `cccc_connect` and send through `cccc_message_send` or `cccc_file_send` using both `dst_instance_id` and `dst_group_id`. Replies use the received local Event ID. Selecting a remote **`#Group`** in the composer preserves that qualified identity for local Agents; it does not itself send remotely or grant access. See the [CCCC Connect guide](https://chesterra.github.io/cccc/guide/connect).
-
-## Messaging & Coordination
-
-CCCC implements IM-grade messaging semantics, not just "paste text into a terminal":
-
-- **Recipient routing** — `@all`, `@peers`, `@foreman`, or specific agent IDs
-- **Three explicit modes** — Send for active delivery, Send + Reply for a concrete response, and Mail for non-interrupting Inbox delivery
-- **Separate facts** — `runtime.delivery`, Mail read cursors, replies, cancellations, and task completion never impersonate one another
-- **Consuming Inbox reads** — `cccc_inbox_read` returns the next ordered Mail batch and advances its Mail cursor atomically
-- **Reply & quote** — structured `reply_to` with quoted context
-- **Reply requests** — Send + Reply is tracked until the recipient responds or the sender cancels it
-- **Lifecycle boundaries** — paused, stopped, or disabled agents are not silently awakened by delivery
-- **Qualified remote recipients** — Connect uses both instance and Group IDs, avoiding collisions with local Groups.
-
-Use Mail for useful agent updates that can wait, Send when delayed awareness would cost more than interrupting the recipient, and Send + Reply only when a concrete answer is also required. Mail cannot target the human user. One message addresses either `user` alone or one/more agents—send separate messages instead of mixing those audiences. Use `tracked-send` when delegated work needs a durable owner, outcome, evidence, handoff, or acceptance trail. `@all` remains available for announcements or urgent shared coordination, but it should not be the default way to start concrete work.
-
-Push attempts travel through the daemon-managed delivery pipeline. Their `runtime.delivery` facts remain separate from Inbox read state and replies.
-
-## Automation & Policies
-
-A small set of delivery timers and automation rules handles operational concerns without turning every message into a prompt:
-
-| Policy | What it does |
-|--------|-------------|
-| **Mail notice** | Sends at most one content-free reminder after a configurable wait for concrete-recipient Mail |
-| **Reply notice** | Sends at most one reminder for an accepted Send + Reply whose reply is still open |
-| **Agent idle detection** | Notifies foreman when an agent goes silent |
-| **Keepalive** | Periodic check-in reminders for the foreman |
-| **Silence detection** | Alerts when an entire group goes quiet |
-
-Beyond built-in policies, you can create custom automation rules:
-
-- **Interval triggers** — "every N minutes, send a standup reminder"
-- **Cron schedules** — "every weekday at 9am, post a status check"
-- **One-time triggers** — "at 5pm today, pause the group"
-- **Operational actions** — set group state or control agent lifecycles (admin-only, one-time only)
-
-## Web UI
-
-The built-in Web UI at `http://127.0.0.1:8848` provides:
-
-- **Messages** — `@Actor` and `#Group` completion, replies, search and separate delivery/read/reply states
-- **Tiled native terminals** — direct input, paging and retained recent views across Group switches
-- **Files & Git** — workspace browsing, code/document/media previews, desktop editing and file management; Git changes are read-only
-- **Presentation** — four compact pinned slots with expandable readers, zoom and quoting
-- **Group & agent management** — lifecycle controls, linked Runtime Profiles or Custom configuration, and private environment settings
-- **Automation rule editor** — configure triggers, schedules, and actions visually
-- **Project Context** — shared coordination, tasks, Agent state and self-evolving skills
-- **Group Space** — NotebookLM integration for shared knowledge management
-- **ChatGPT Web Model setup** — connect one ChatGPT Web conversation as a CCCC agent
-- **Voice Secretary & Codex Voice** — a global Secretary with Custom runtime settings or a linked Profile, processing tasks sequentially in a shared conversation while preserving each task's Group destination. Experimental Codex Voice uses a ChatGPT-backed call connection and a separate Analyst. Both workflows share voice settings and audio device preferences; each Group retains its documents, requests and capture choices, without a per-Group secretary agent. See [voice setup and provider connection](https://chesterra.github.io/cccc/guide/voice-secretary#codex-voice-provider-connection).
-- **CCCC Connect settings** — account discovery, selected Group connections and Direct pairing
-- **IM bridge configuration** — Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom and Weixin
-- **Settings** — messaging policies, delivery tuning, terminal transcript controls
-- **Text scale** — 90% / 100% / 125% font size with per-browser persistence
-- **Light / Dark / System themes**
-
-### Remote access
-
-Direct localhost use needs no Access Token. Before exposing Web to another machine, create an **Admin Access Token** in **Settings → This instance → Web Access**; remote access remains authenticated. Local first-time setup does not require a bootstrap code; first-time setup through a remote address requires host proof.
-
-- **LAN / private network** — use the saved Web Access binding or an explicit override: `cccc --host 0.0.0.0 --port 8848`. On WSL2's default NAT network, LAN access also needs mirrored networking or a Windows forwarding/firewall rule.
-- **Existing tunnel or reverse proxy** — expose Web through HTTPS, for example `cloudflared tunnel --url http://127.0.0.1:8848`. Protect forwarding headers at the proxy and follow the [Web access guide](https://chesterra.github.io/cccc/guide/web-ui#security).
-- **Managed Remote Access (CLI: `reach`)** — link the instance in **Settings → This instance → Account**, then enable Remote Access in **Web Access**. Local account linking prepares administrator access while preserving existing credentials. The managed helper is currently available on Linux and macOS, not Windows; Windows can use an external tunnel or reverse proxy.
-
-```bash
-cccc login
-cccc reach on
-cccc reach status
-cccc reach off
-```
-
-Changing the saved binding takes effect after **Apply now** restarts a CCCC-managed Web process, or after restarting your external supervisor. Explicit `--host` / `--port` overrides take precedence over saved settings, which take precedence over `CCCC_WEB_HOST` / `CCCC_WEB_PORT`.
-
-Remote Access installs a pinned `cloudflared` helper under `CCCC_HOME`; it does not upload the repository or ledger. Direct Group connections are a separate daemon-to-daemon path and do not require exposing the management Web UI.
-
-## IM Bridges
-
-Bridge your working group to your team's IM platform:
-
-```bash
-cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
-cccc im start
-```
-
-| Platform | Status |
-|----------|--------|
-| Telegram | ✅ Supported |
-| Slack | ✅ Supported |
-| Discord | ✅ Supported |
-| Mattermost | ✅ Supported |
-| Feishu / Lark | ✅ Supported |
-| DingTalk | ✅ Supported |
-| WeCom / 企业微信 | ✅ Supported |
-| Weixin / 微信 | ✅ Supported |
-
-> Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, and WeCom support progressive replies; overlong results fall back to lossless final-message chunks. Weixin delivers lossless final messages and currently supports direct bot chats only.
-
-Use plain text or `/send @foreman <message>` for coordination, `/status` to inspect Group health, and `/pause` / `/resume` to pause or resume that chat's subscription. Mattermost commands use an `@botname` prefix, for example `@cccc_bot /status`; see the [Mattermost setup guide](https://chesterra.github.io/cccc/guide/im-bridge/mattermost).
-
-## CLI Reference
-
-```bash
-# Lifecycle
-cccc                           # start daemon + Web UI with the terminal interface
-cccc --headless                # start daemon + Web UI without it (same as cccc web)
-cccc daemon start|status|stop  # daemon management
-
-# Groups
-cccc attach .                  # bind current directory
-cccc groups                    # list all groups
-cccc use <group_id>            # switch active group
-cccc group start|stop          # start/stop all agents
-
-# Agents
-cccc actor add <id> --runtime <runtime>
-cccc actor start|stop|restart <id>
-
-# Messaging
-cccc send "message" --to @foreman
-cccc tracked-send "delegated work" --to implementer --title "Task title" --outcome "Done criterion"
-cccc send "announcement" --to @all  # explicit broadcast
-cccc reply <event_id> "response"
-cccc tail -n 50 -f             # follow the ledger
-
-# Inbox
-cccc inbox --actor-id <id>     # read and consume the next unread Mail batch
-
-# Operations
-cccc doctor                    # environment check
-cccc setup --runtime <name>    # configure MCP
-cccc runtime list --all        # available runtimes
-
-# IM
-cccc im set <platform> --token-env <ENV_VAR>
-cccc im start|stop|status
-```
-
-## MCP Tools
-
-Ordinary agents always see a compact collaboration core, including `cccc_connect`. Other built-in tools remain callable through `cccc_capability_use` without exposing their full packs in every session. Web Model connectors and specialized assistants have role-specific tool surfaces.
-
-| Surface | Examples |
-|---------|----------|
-| **Always-visible protocol core** | `cccc_bootstrap`, `cccc_help`, capability search/use, inbox, messaging, files, `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state` |
-| **Project context & memory (on demand)** | `cccc_tracked_send`, `cccc_memory`, `cccc_context_sync` |
-| **Group & agent control (on demand)** | `cccc_group`, `cccc_actor`, `cccc_runtime_list` |
-| **Workspace utilities (on demand)** | `cccc_repo`, `cccc_presentation`, `cccc_terminal`, `cccc_debug` |
-| **Instance discovery** | `cccc_connect`; qualified targets in `cccc_message_send` and `cccc_file_send` |
-| **Other capability-backed tools** | `cccc_automation`, `cccc_space`, capability administration, `cccc_im_bind` |
-
-The reduced core preserves the collaboration protocol while leaving workflow, reasoning style, and optional machinery to the agent and current task.
-`cccc_help` remains the on-demand reference for CCCC-specific state, recovery, delegation, and capability routes; it does not prescribe a general reasoning or writing method.
-
-## Where CCCC Fits
-
-| Scenario | Fit |
-|----------|-----|
-| Multiple coding agents collaborating on one codebase | ✅ Core use case |
-| Human + agent coordination with full audit trail | ✅ Core use case |
-| Long-running groups managed remotely via phone/IM | ✅ Strong fit |
-| Multi-runtime teams (e.g., Claude + Codex + Kimi) | ✅ Strong fit |
-| Groups collaborating across machines or teams | ✅ Strong fit |
-| Single-agent local coding helper | ⚠️ Works, but CCCC's value shines with multiple participants |
-| Pure DAG workflow orchestration | ❌ Use a dedicated orchestrator; CCCC can complement it |
-
-CCCC is a **collaboration kernel** — it owns the coordination layer and stays composable with external CI/CD, orchestrators, and deployment tools.
-
-## How CCCC Compares
-
-| If you already use | It is great at | What CCCC adds |
-|---|---|---|
-| **Native agent teams** (e.g. Claude Code subagents/teams) | The smoothest single-vendor teamwork inside one session | Cross-vendor groups (Claude + Codex + Grok + Kimi…), state that survives restarts, phone/IM operations, and a full audit ledger |
-| **Parallel task runners** (worktree/task-board tools) | Isolated, parallel task execution | A coordination layer: agents that talk, hand off, choose interruption levels, and get bounded reminders — plus 24/7 daemon-owned operations |
-| **IM assistant gateways** | A personal assistant living in your chat app | Delivery-grade work semantics: tracked tasks, delivery/read/reply facts, multi-agent groups, and a durable audit trail |
-
-CCCC does not replace your agents — it is the layer that makes them a team. Longer discussion: [FAQ — How does CCCC compare?](https://chesterra.github.io/cccc/guide/faq#how-does-cccc-compare-to-native-agent-teams-and-other-tools)
-
-## Security
-
-- **Web UI is high-privilege.** Create an Admin Access Token before non-local exposure. Public access requires HTTPS through a trusted tunnel or reverse proxy.
-- **Daemon IPC is a trusted local interface without application authentication.** It uses a Unix socket where available or loopback TCP; do not expose it publicly or share the runtime home with untrusted users.
-- **IM credentials** may be configured as environment-variable references or literal values. Prefer references when sharing configuration; do not publish credentials or runtime state.
-- **Runtime state** lives in `CCCC_HOME` (`~/.cccc/`), separate from the repository.
-- **Connection scope is explicit.** Same-account binding enables background collaboration among those instances; cross-member and Direct grants apply to selected Group pairs. Remote workbench access still requires each target's administrator Token.
-- **Capability allowlists** control optional MCP surfaces. They are not a sandbox for native agent processes; review the Runtime's own permissions and autonomy defaults.
-
-For security reporting, see [SECURITY.md](SECURITY.md); for operational access controls, see the [Web UI guide](https://chesterra.github.io/cccc/guide/web-ui).
-
-## Documentation
-
-📚 **[Full documentation](https://chesterra.github.io/cccc/)**
-
-| Section | Description |
-|---------|-------------|
-| [Getting Started](https://chesterra.github.io/cccc/guide/getting-started/) | Install, launch, create your first group |
-| [Use Cases](https://chesterra.github.io/cccc/guide/use-cases) | Practical multi-agent scenarios |
-| [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
-| [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | Account and Direct connections, delivery and permissions |
-| [Native sessions](https://chesterra.github.io/cccc/guide/local-sessions) | Connect user-owned Codex, Claude Code, Pi and OpenCode V2 sessions without importing history |
-| [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | Dictation, documents and composer workflows |
-| [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom, Weixin |
-| [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |
-| [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | Connect MCP-capable ChatGPT Web as a CCCC agent, with an optional experimental GPT Pro delivery mode |
-| [Capability Allowlist](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP capability governance |
-| [Best Practices](https://chesterra.github.io/cccc/guide/best-practices) | Recommended patterns and workflows |
-| [FAQ](https://chesterra.github.io/cccc/guide/faq) | Frequently asked questions |
-| [Operations Runbook](https://chesterra.github.io/cccc/guide/operations) | Recovery, troubleshooting, maintenance |
-| [CLI Reference](https://chesterra.github.io/cccc/reference/cli) | Complete command reference |
-| [SDK (Python/TypeScript/Rust)](https://github.com/ChesterRa/cccc-sdk) | Integrate apps/services with official daemon clients |
-| [Architecture](https://chesterra.github.io/cccc/reference/architecture) | Design decisions and system model |
-| [Features Deep Dive](https://chesterra.github.io/cccc/reference/features) | Messaging, automation, runtimes in detail |
-| [CCCS Standard](docs/standards/CCCS_V1.md) | Collaboration protocol specification |
-| [Daemon IPC Standard](docs/standards/CCCC_DAEMON_IPC_V1.md) | IPC protocol specification |
-
-## Installation Options
-
-### Website installer (recommended)
 
 ```bash
 # macOS / Linux
@@ -527,78 +74,306 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
 # Windows CMD or PowerShell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
-```
 
-This installs the checksum-verified native product from GitHub Releases and
-updates through the same installer. It targets glibc 2.28+ Linux x86-64 without
-a system OpenSSL dependency, Apple Silicon macOS 11+, and Windows x86-64. The
-installer refuses to overwrite an existing `cccc` command that it does not own;
-uninstall that command deliberately or choose another `CCCC_INSTALL_DIR` first.
-Commands in other directories are left untouched. For the default install
-directory, the installer places the new command first in the user PATH and lists
-any remaining duplicates. Open a new terminal and run `cccc doctor`; its
-`Installation` section reports the invoked executable, the command selected by
-PATH, and every conflicting command.
-
-The installer selects the current published stable release unless an explicit
-`CCCC_VERSION` is requested.
-
-### pip compatibility (v0.4.36+)
-
-```bash
+# Or through pip: the same native executable in a platform wheel
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
-Pip installs a 0.4.36-or-newer platform wheel containing the same `cccc`
-executable. The lower bound prevents pip from silently selecting a historical
-Python-only wheel when 0.4.36 has no wheel for the current platform. There is no
-0.4.36 sdist, universal wheel, importable CCCC Python package, or fallback
-implementation; unsupported platforms therefore fail resolution. Generic
-`pip install .` and `pip install -e .` source builds are also rejected instead
-of installing an empty package; use the source build commands below.
+CCCC runs on Linux x86-64 (glibc 2.28+), Apple Silicon macOS 11+ and Windows x86-64. See [Installation and upgrades](#installation-and-upgrades) for more.
 
-Cargo installation is retained for workspace development, not as a supported
-end-user distribution.
+### Launch
 
-### From source
+```bash
+cccc
+```
 
-Source packaging requires Rust 1.88+, Node.js 24 with npm, and Python 3.11+
-for the archive helper only. Python is not part of the built CCCC product.
+`cccc` starts the daemon and the Web UI. In an interactive terminal it also opens a status panel; type `/` for its commands, and `/quit` or Ctrl+C stops what this launch started. Open **http://127.0.0.1:8848** for the full Web UI; local use needs no password.
+
+On servers, in containers and in scripts, use `cccc --headless` (the same as `cccc web`). If port 8848 is in use, choose another with `cccc --port 9000`. `cccc doctor` checks the installation and the agent CLIs it detects.
+
+### Choose how agents join
+
+| | Sessions you already run | Agents CCCC runs |
+|---|---|---|
+| Who starts it | You, in Codex, Claude Code, Pi or OpenCode V2 | CCCC, with the Runtime you choose |
+| Who owns it | The app keeps its process, conversation, account, model, approvals and terminal | CCCC starts, stops and restarts it; most runtimes show their terminal in the Web UI |
+| Approval prompts | The app's own prompts still apply | Many runtimes start with them bypassed |
+| Set up with | `/setup` or `cccc sessions enable`, then **Connect sessions** | **New** and **Add an agent** in the Web UI, or `cccc attach` and `cccc actor add` |
+
+Both kinds can work in the same Group. Steps: [Connect the sessions you already run](#connect-the-sessions-you-already-run) or [Let CCCC run agents](#let-cccc-run-agents).
+
+## Connect the sessions you already run
+
+Codex, Claude Code, Pi and OpenCode V2 sessions that you started yourself can join Groups and contact each other through the local daemon. CCCC imports no history and needs no provider API key. This is experimental: it was tested on Linux and WSL, and macOS and native Windows still need acceptance testing. Antigravity sessions cannot connect this way yet.
+
+**Requirements.** Codex 0.163.0, Claude Code 2.1.306, Pi 1.4.0 or OpenCode V2 2.1.4, or later, on the machine running CCCC, as the same OS user and with the same `CCCC_HOME` as the daemon. Enable this only if your local sessions may receive work from each other and from this instance's administrator. Codex also needs its shared app-server: add this to `$CODEX_HOME/config.toml` (normally `~/.codex/config.toml`), inside the existing `[features]` table if there is one:
+
+```toml
+[features]
+daemon_auto_start = true
+```
+
+1. **Enable each app once.** In the `cccc` status panel, type `/setup`, tick the apps with Enter, choose **Continue**, then **Connect**. Or run `cccc sessions enable --runtime codex` (or `claude`, `pi`, `opencode`).
+2. **Load it in the app.**
+   - **Codex:** restart it, approve the CCCC hooks when asked (`/hooks`), then send any message.
+   - **Claude Code:** restart it (`claude --resume` picks the conversation to continue), then send any message. Plugin Monitor must be enabled.
+   - **Pi:** run `/reload`, or start Pi.
+   - **OpenCode V2:** reopen the original session; a blank new session needs a first message.
+3. **Check** with `cccc sessions list`. Add `--include-offline` to also see registered sessions that cannot receive right now.
+4. **Connect them to a Group.** In the Web UI, choose **Connect sessions** above the Group list (an icon under **New** when the sidebar is collapsed). In **Connect existing sessions**, pick a **Target Group** and choose **Connect to Group**, or pick **+ New Group** and choose **Create & connect**. For a new Group with several sessions, choose the **Foreman** under **New Group defaults**. Setup steps for each app are under **App to connect**, and when a session is marked **Unavailable to receive**, the dialog offers **See troubleshooting**.
+
+You can also ask from inside a session; CCCC creates or reuses a Group for both:
+
+> Use CCCC to contact the Codex session in /path/to/project about the current task. Use Send + Reply and ask it to reply through CCCC using Send. If several sessions match, ask me to choose.
+
+The app keeps its tool approvals, so a CCCC tool call can wait for you in its terminal. Only what a session sends through CCCC reaches the Group, not its ordinary terminal output. **Pause CCCC access** and **Resume CCCC access** change one Group membership without touching the app. `cccc sessions disable --runtime codex` (or `claude`, `pi`, `opencode`) removes only what this CCCC installation registered.
+
+After upgrading CCCC, [reload the integration in each app](https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration). The [native sessions guide](https://chesterra.github.io/cccc/guide/local-sessions) also covers the CLI commands, resuming conversations, recovery and limits.
+
+## Let CCCC run agents
+
+Install and sign in to the agent CLIs you want to use first. In the Web UI:
+
+1. Choose **New** in the sidebar, pick the **Project Directory** on the machine running CCCC (**Browse** helps), then **Create Group**.
+2. Choose **+** (**Add an agent**) in the members' row above the message box, pick a detected **Runtime**, enter an **Agent ID** and choose **Add Agent**. The first agent becomes the foreman; later ones are peers.
+3. Open the Group status button in the header and choose **Start Group**.
+4. Write in **Messages** and choose **Send** (Ctrl+Enter, or Cmd+Enter on a Mac).
+
+From the command line, with CCCC running (for example `cccc` in another terminal):
+
+```bash
+cd /path/to/your/repo
+cccc attach .                                # create a Group for this folder and make it active
+cccc actor add lead --runtime claude         # the first agent becomes the foreman
+cccc actor add implementer --runtime codex   # a peer
+cccc group start                             # start the Group's enabled agents
+cccc send "Please inspect the repo and propose the first safe task." --to "@foreman"
+cccc tracked-send "Please take the first concrete task and reply with validation evidence." \
+  --to implementer \
+  --title "First concrete task" \
+  --outcome "The change and validation evidence are reported"
+```
+
+Claude Code and Codex receive CCCC's MCP tools when CCCC starts them, so no `cccc setup` step is needed. The CLI calls agents `actor`. In PowerShell, keep `"@foreman"` in quotes, since a bare `@` starts splatting, and enter `tracked-send` on one line: the trailing `\` continues a line only in POSIX shells.
+
+**On first launch**, Claude may ask you to trust the workspace or accept its `--dangerously-skip-permissions` disclaimer, and the agent shows **Awaiting your confirmation in the terminal**. Answer in its terminal in the Web UI (**Open confirmation terminal** takes you there); CCCC never answers for you. If you decline, choose **Launch** or **Relaunch** to try again.
+
+**Approvals.** Many runtimes start with approval prompts bypassed, for example `claude --dangerously-skip-permissions`. Review each agent's command in its settings and the [autonomy defaults](https://chesterra.github.io/cccc/guide/runtimes#autonomy-defaults).
+
+**You should see** both agents in the members' row, the foreman's reply in **Messages** and the tracked request with a linked task. If an agent does not start, open it to read the error, check that its CLI is installed and signed in, and run `cccc doctor`; see also the [FAQ](https://chesterra.github.io/cccc/guide/faq).
+
+## Chet, the global assistant
+
+Chet is one assistant for the whole CCCC instance, outside every Group's member list. Open it with the **Chet** control below the Group list and type, or choose **Start voice** beside it for a live call. A Group selected when you send is included as context, not as a permission boundary.
+
+- **Runtime:** set it under **Settings → This instance → Voice → Chet → Runtime**. CCCC keeps Chet's history of inputs, transcripts and results on the machine running CCCC; what you send still goes to the model and voice providers you configure.
+- **Voice (experimental):** **Codex Voice** uses `codex login`; **Grok Voice** uses `grok login` and needs `grok` on CCCC's PATH. Neither needs an extra API key. Reported Grok Voice pitch and timbre drift is not confirmed fixed.
+- **In Groups:** members reach Chet by choosing `@chet` as the only recipient, with Send or Send + Reply but not Mail.
+- **Limits:** messages from every Group enter Chet's one session, and keeping them apart is an instruction to the model, not isolation. Chet does not forward between Groups or send through CCCC Connect.
+
+**Voice Secretary**, under **Settings → This instance → Voice → Voice Secretary**, is a separate global service that turns recordings into documents, prompt drafts or answers for each Group; all Groups share its conversation. See [Chet](https://chesterra.github.io/cccc/guide/web-ui#chet-global-assistant-experimental) and the [Voice Secretary guide](https://chesterra.github.io/cccc/guide/voice-secretary).
+
+## Key ideas
+
+| Term | Meaning |
+|---|---|
+| Group | A shared conversation with its own ledger, tasks and context; it can span several project folders |
+| Agent | A Group member that runs or is connected to an agent runtime. The CLI keeps `cccc actor`, and APIs keep fields such as `actor_id` |
+| Foreman and peers | The first agent is the foreman, who coordinates; the others are peers. `@foreman`, `@peers` and `@all` address them |
+| Send, Send + Reply, Mail | Send delivers now; Send + Reply also tracks a reply; Mail waits in an agent's Inbox without interrupting. A message goes to you or to agents, not both |
+| Waiting for you | Requests from agents that need your answer |
+| `CCCC_HOME` | Where runtime state lives, `~/.cccc/` by default |
+| Connect sessions, CCCC Connect | **Connect sessions** adds sessions on this machine to a Group; CCCC Connect links Groups across instances |
+
+Use Mail for updates that can wait, Send when the recipient should know now, and Send + Reply when you need an answer. Use `tracked-send` for delegated work that needs an owner, an outcome and evidence.
+
+## Working in the Web UI
+
+- **Messages.** `@` mentions agents and `#` mentions Groups. Point at a message for **Reply**, **Forward** and copy; its **More** menu adds quick replies, **Pin message** and **Copy link**. On touch screens, **More** holds every action.
+- **Tabs.** **Waiting for you** (requests you can answer in place), **All**, **Pinned** and **User-related**. In a filtered view, **Show in chat** opens a message in the whole conversation.
+- **Messages** and **Terminals** in the Group header switch views. The terminal view shows up to four agents per page and takes keyboard input.
+- **Files**, **Presentation** (four pinned slots) and **Project Context** (**Tasks**, **AGENTS.md**, **Coordination log**, **Agent State**, **Skills**).
+- **Settings and more**, then **All settings**: **This group** includes Guidance, Automation, Delivery, Messaging and IM Bridge; **This instance** includes Account, Web Access, Notifications and Voice.
+- **Appearance.** **Theme** is Light, Dark or Automatic (light from 07:00 to 19:00 local time), and the language is English, Chinese or Japanese. **More appearance settings** has **Body font**, **Message area width** (Medium, Wide or Full, on screens 768px and wider), **Motion**, **‘Waiting for you’ indicators** and **Text Size** (70%, 90%, 100% or 125%).
+- **Notifications.** **Settings → This instance → Notifications → Enable notifications**, in each browser, over HTTPS or on localhost. On iPhone or iPad (iOS or iPadOS 16.4 or later), add CCCC to the Home Screen first.
+- **Automation** sends bounded reminders for unread Mail, open replies, idle agents and quiet Groups, and runs your interval, recurring or one-time rules.
+- **Copy Groups** exports and imports a Group's durable state. It leaves out workspace files and the credential files CCCC keeps, but the history and attachments it carries can still hold sensitive content.
+
+## Supported runtimes
+
+Each agent can use a different runtime:
+
+| How CCCC runs it | Runtimes (`--runtime` id) |
+|---|---|
+| Native terminal plus a CCCC-managed session | Claude Code (`claude`), Codex CLI (`codex`), Grok Build (`grok`), OpenCode V2 2.1.4+ (`opencode`), Kilo Code (`kilo`) |
+| Native terminal or official ACP | GitHub Copilot (`copilot`), Cursor (`cursor`), Devin (`devin`), Kiro (`kiro`), Antigravity (`antigravity`), Droid (`droid`), Auggie (`auggie`), Hermes (`hermes`), Kimi Code (`kimi`) |
+| Native terminal | Cline (`cline`), Amp (`amp`) |
+| Structured, no terminal | Pi 1.1.0+ (`pi`), DeepSeek Harness (`deepseek`, developer preview) |
+| Web models | ChatGPT Web (`web_model`), ChatGPT Dots (`chatgpt_dots`), Grok Bot Web Model (`grok_web_model`) |
+| Any command | `custom` |
+
+CCCC sets up MCP for these runtimes itself, with three exceptions: for Cursor's terminal, `cccc setup --runtime cursor` prints a prompt to run inside Cursor; the Web models use a remote MCP connector; and `custom` is configured by hand. Antigravity's ACP mode needs a separate login once: `cccc setup --runtime antigravity --runtime-mode acp --login`. `cccc runtime list` shows which runtimes are available here (`--all` adds `custom`).
+
+The Web models need their own setup. ChatGPT Web uses browser delivery and a remote MCP connector at a public HTTPS URL; its experimental **GPT Pro** mode attaches a tiny blank PNG. ChatGPT Dots uses ChatGPT's event-triggered tasks. Grok Bot Web Model uses a Webhook Routine on an existing `https://grok.com/bot/<UUID>`. See the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes), [ChatGPT Web](https://chesterra.github.io/cccc/guide/web-model-runtime), [Dots](https://chesterra.github.io/cccc/guide/runtimes#chatgpt-dots) and [Grok Bot](https://chesterra.github.io/cccc/guide/grok-web-model-runtime).
+
+## Reach CCCC from anywhere
+
+### Remote access
+
+Direct local use needs no Access Token. Before you open the Web UI to other machines, create an **Admin Access Token** in **Settings → This instance → Web Access**.
+
+- **LAN:** `cccc --host 0.0.0.0 --port 8848`, or the binding saved in **Web Access**. Under WSL2's default NAT, also enable mirrored networking or add a Windows forwarding rule.
+- **Your tunnel or reverse proxy:** serve it over HTTPS, for example with `cloudflared tunnel --url http://127.0.0.1:8848`, and protect forwarding headers as the [Web UI guide](https://chesterra.github.io/cccc/guide/web-ui#security) describes.
+- **Managed Remote Access** (Linux and macOS): link the instance in **Settings → This instance → Account** and turn on **Remote Access** in **Web Access**, or run `cccc login` and `cccc reach on`. It installs a pinned `cloudflared` under `CCCC_HOME` and uploads neither your repository nor your ledger.
+
+A changed binding applies after **Apply now**, or after you restart your own supervisor. `--host` and `--port` override the saved binding, which overrides `CCCC_WEB_HOST` and `CCCC_WEB_PORT`.
+
+### IM bridges
+
+```bash
+cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
+cccc im start
+```
+
+Telegram, Slack, Discord, Mattermost, Feishu/Lark, DingTalk, WeCom and Weixin (direct bot chats only) are supported. In the chat, write plain text or `/send @foreman <message>`; `/status` shows Group health, and `/pause` and `/resume` control that chat's subscription. See the [IM bridge guide](https://chesterra.github.io/cccc/guide/im-bridge/).
+
+### CCCC Connect
+
+CCCC Connect links Groups across CCCC instances; it is separate from **Connect sessions**. "Account" means your CCCC account, not a provider login. With an account, each instance also needs a reachable HTTPS address, such as the one **Remote Access** sets up; linking the account alone does not make it reachable.
+
+| Method | Scope and setup |
+|---|---|
+| **Same account** | Link instances in **Settings → This instance → Account**; their Groups and agents can then message each other. |
+| **Different members** | Open **Group connections** from the Group's sidebar **⋮** menu or Group settings and invite a Member ID; both members confirm on the account website. |
+| **Direct, no account** | Open **Group connections → Direct connection**, exchange an invitation over a trusted channel and approve the Group pair. One instance must be reachable over a LAN, VPN or other route. |
+
+Connections carry messages, replies and small files between the selected Groups, not terminals or workspace access, and each instance keeps its own state. Agents find targets with `cccc_connect` and address them with `dst_instance_id` and `dst_group_id`. See the [CCCC Connect guide](https://chesterra.github.io/cccc/guide/connect).
+
+## Security
+
+- **The Web UI is high-privilege.** Create an Admin Access Token before any non-local exposure, and use HTTPS for public access.
+- **Daemon IPC is a trusted local interface without application authentication** (a Unix socket or loopback TCP). Do not expose it or share the runtime home with untrusted users.
+- **Native sessions trust this OS user.** Enabled sessions can receive work from each other and from this instance's administrator; source IDs are not credentials.
+- **Managed agents often run with approval prompts bypassed.** Review their commands before giving them sensitive work.
+- **IM credentials** can be environment-variable references or literal values; prefer references.
+- **Connection scope is explicit.** Opening another instance's workspace needs that instance's administrator Access Token.
+- **Capability allowlists** control optional MCP tools. They are not a sandbox for agent processes.
+
+Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
+
+## CLI cheat sheet
+
+```bash
+cccc                         # daemon + Web UI with the status panel (cccc --headless: without it)
+cccc doctor                  # installation and environment checks
+cccc daemon status           # also: start, stop
+
+cccc attach .                # create a Group for this folder
+cccc groups                  # list Groups; cccc use <group_id> makes one active
+cccc group start             # start the Group's agents (also: stop)
+
+cccc actor add <agent_id> --runtime <runtime>   # agents are "actor" in the CLI
+cccc actor restart <agent_id>                   # also: start, stop; cccc actor list
+
+cccc sessions enable --runtime codex            # or claude, pi, opencode
+cccc sessions list
+cccc sessions join --group <group_id> --sources <source_id>
+
+cccc send "Please coordinate the next step." --to "@foreman"
+cccc tracked-send "Implement the feature." --to <agent_id> --title "Feature" --outcome "Done and validated"
+cccc reply <event_id> "Thanks, that looks good."
+cccc tail -n 50 -f           # follow the Group's ledger
+cccc inbox --actor-id <agent_id>   # read and consume an agent's next Mail batch
+
+cccc runtime list            # runtimes available here (--all adds custom)
+cccc setup --runtime <id>    # prepare a runtime's MCP setup explicitly
+cccc im start                # also: stop, status
+```
+
+`cccc --help` describes every command; see also the [CLI reference](https://chesterra.github.io/cccc/reference/cli).
+
+## For integrators
+
+**MCP tools.** Agents always see a compact core: `cccc_bootstrap`, `cccc_help`, capability search and use, Inbox, messaging, files, `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state` and `cccc_connect`. Other built-in tools, such as `cccc_tracked_send`, `cccc_memory`, `cccc_group`, `cccc_actor`, `cccc_repo`, `cccc_terminal` and `cccc_automation`, are available through `cccc_capability_use`. Native sessions also get `cccc_session` to list, message and group other sessions.
+
+**SDK.** The [Python, TypeScript and Rust clients](https://github.com/ChesterRa/cccc-sdk) connect to a running `cccc`; they contain no daemon.
+
+```bash
+pip install -U cccc-sdk
+npm install cccc-sdk
+cargo add cccc-sdk
+```
+
+**Architecture.**
+
+```mermaid
+graph TB
+    M["Agents CCCC runs<br/>Claude Code · Codex · Grok Build · ... · custom"]
+    N["Sessions you run<br/>Codex · Claude Code · Pi · OpenCode"]
+    W["Web models<br/>ChatGPT Web · Grok Bot"]
+    D["ChatGPT Dots"]
+    Daemon["CCCC daemon · single writer<br/>ledger · tasks · context · agent lifecycle"]
+    Ports["Web UI · terminal interface · CLI · MCP"]
+    IM["IM bridges"]
+    Remote["Connected CCCC Groups"]
+
+    M <-->|Terminal / runtime protocols<br/>MCP| Daemon
+    N <-->|MCP + native hooks,<br/>plugin or extension| Daemon
+    W <-->|Browser delivery or Webhook<br/>Remote MCP| Daemon
+    D <-->|MCP Events<br/>Remote MCP| Daemon
+    Daemon <--> Ports
+    Ports <-->|Web-hosted bridges| IM
+    Daemon <-->|CCCC Connect / Direct<br/>approved connections| Remote
+```
+
+The daemon owns agent lifecycle, delivery and collaboration changes, and the ledger is append-only. The Web UI, terminal interface, CLI, MCP and IM bridges all go through the daemon; the Web process also hosts browser, voice, Chet and IM integrations. See [Architecture](https://chesterra.github.io/cccc/reference/architecture).
+
+## Is CCCC a fit?
+
+CCCC fits several agents sharing a codebase, mixed runtimes such as Claude + Codex + Kimi, long-running Groups supervised from a phone or IM, and Groups that span machines or teams. It works for a single helper, but most of its value comes with several participants, and it is not a DAG workflow orchestrator. It complements native agent teams, parallel task runners and IM assistant gateways rather than replacing them; see the [FAQ comparison](https://chesterra.github.io/cccc/guide/faq#how-does-cccc-compare-to-native-agent-teams-and-other-tools) and [Positioning](https://chesterra.github.io/cccc/reference/positioning).
+
+## Installation and upgrades
+
+**Website installer.** It downloads a checksum-verified executable from GitHub Releases: the latest stable release, or the one named in `CCCC_VERSION`. It refuses to overwrite a `cccc` command it does not own (uninstall that command or set `CCCC_INSTALL_DIR`), and for the default directory it puts the new command first in your user PATH. In a new terminal, `cccc doctor` shows which `cccc` your PATH selects and any conflicts.
+
+**pip** (`cccc-pair>=0.4.36`) installs the same executable in a platform wheel. The lower bound stops pip from picking an old Python-only release; there is no Python package or fallback.
+
+**Upgrade** with `cccc update` for the website installer, or the pip command for pip. `cccc update --check` shows the latest release and the installation owner without changing anything. Before a pip upgrade, run `cccc daemon stop` and close foreground CCCC processes. To switch from pip to the website installer, run `python -m pip uninstall cccc-pair` first. If an older `cccc update` stays on 0.4.35, see the [upgrade FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35); the [Operations Runbook](https://chesterra.github.io/cccc/guide/operations) has a full checklist.
+
+**From source**, with Rust 1.88+, Node.js 24 with npm, and Python 3.11+ for the archive helper only:
 
 ```bash
 git clone https://github.com/ChesterRa/cccc
 cd cccc
 ./scripts/build_package.sh
 ./target/release/cccc --version
-./target/release/cccc
 ```
 
-For an iterative debug build, use
-`cargo run --locked --features standalone -p cccc --bin cccc -- --port 0`.
-On Windows, run
-`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_package.ps1`
-and then `.\target\release\cccc.exe`.
+On Windows, use the `x86_64-pc-windows-msvc` toolchain and run `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build_package.ps1`. For a debug build, run `cargo run --locked --features standalone -p cccc --bin cccc -- --port 0`.
 
-### Native Windows Notes
+**Docker.** Run `docker compose up -d` in [`docker/`](docker/), then create an Admin Access Token in **Settings → This instance → Web Access** before exposing it beyond localhost. The image includes Claude Code, Codex CLI and Factory CLI.
 
-- `scripts/build_package.ps1` installs the locked Web dependencies, embeds the
-  Web bundle, compiles the native executable, and creates the archive.
-- Use the `x86_64-pc-windows-msvc` Rust toolchain and run the newly built
-  `cccc.exe doctor` after building.
-- `scripts/build_web.ps1` is available as a convenience wrapper for the Web build.
+**Older versions.** CCCC v0.4.37 is the last release for Intel Macs. The tmux-first 0.3.x line is archived at [cccc-tmux](https://github.com/ChesterRa/cccc-tmux); uninstall it through its package manager before installing 0.4.x, and keep your data, because reinstalling does not convert 0.3.x sessions into Groups. `cccc python`, `cccc rust` and the `ccccd` alias are retired; use `cccc daemon …`.
 
-### Docker
+## Documentation
 
-```bash
-cd docker
-docker compose up -d  # then create an Admin Access Token in Settings > This instance > Web Access before exposing beyond localhost
-```
-
-The Docker image bundles Claude Code, Codex CLI, and Factory CLI. See [`docker/`](docker/) for full configuration.
-
-### Upgrading from 0.3.x
-
-The tmux-first 0.3.x line is archived at [cccc-tmux](https://github.com/ChesterRa/cccc-tmux). The 0.4.x line uses a different architecture. Identify the old installation's owner, uninstall it through that package manager, then follow the installation steps above and run `cccc doctor`. Preserve your existing data; reinstalling the executable does not convert 0.3.x sessions into 0.4.x Groups.
+| Section | Description |
+|---|---|
+| [Getting Started](https://chesterra.github.io/cccc/guide/getting-started/) | Install, launch, create your first Group |
+| [Native sessions](https://chesterra.github.io/cccc/guide/local-sessions) | Connect your own Codex, Claude Code, Pi and OpenCode V2 sessions |
+| [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | The Web UI, Chet, notifications and remote access |
+| [Supported Runtimes](https://chesterra.github.io/cccc/guide/runtimes) | Setup, defaults and behavior of each runtime |
+| [Use Cases](https://chesterra.github.io/cccc/guide/use-cases) and [Best Practices](https://chesterra.github.io/cccc/guide/best-practices) | Practical scenarios and patterns |
+| [CCCC Connect](https://chesterra.github.io/cccc/guide/connect) | Account and Direct connections, delivery and permissions |
+| [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | Dictation, documents and live voice |
+| [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Telegram, Slack, Discord, Mattermost, Feishu, DingTalk, WeCom, Weixin |
+| [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |
+| [Capability Allowlist](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP capability governance |
+| [FAQ](https://chesterra.github.io/cccc/guide/faq) and [Operations Runbook](https://chesterra.github.io/cccc/guide/operations) | Questions, recovery, troubleshooting, upgrades |
+| [CLI Reference](https://chesterra.github.io/cccc/reference/cli) | Complete command reference |
+| [Release notes](https://chesterra.github.io/cccc/release/) | Changes in each release |
+| [Architecture](https://chesterra.github.io/cccc/reference/architecture) and [Features](https://chesterra.github.io/cccc/reference/features) | Design decisions and features in detail |
+| [CCCS Standard](docs/standards/CCCS_V1.md) and [Daemon IPC Standard](docs/standards/CCCC_DAEMON_IPC_V1.md) | Protocol specifications |
 
 ## Community
 

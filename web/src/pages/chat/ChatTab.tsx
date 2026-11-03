@@ -62,6 +62,7 @@ import {
   readChatGptAppPermissionHintDismissed,
 } from "../../utils/chatGptAppPermissionHint";
 import { useRuntimeDockWorkCards } from "./useRuntimeDockWorkCards";
+import { useFloatingDockReserve } from "./useFloatingDockReserve";
 import { type ComposerMentionKind } from "./chatMentionSuggestions";
 import { useWorkspaceFiles } from "../../components/workspace/useWorkspaceFiles";
 import { WorkspaceFilesTrigger } from "../../components/workspace/WorkspaceFilesTrigger";
@@ -792,12 +793,15 @@ export function ChatTab({
     reachedLatestWhileHidden.current = selectedGroupId;
   }, [selectedGroupId]);
   const reading = useMobileReadingChrome(
-    overlayMobileChrome && !composerInputFocused && inlineReplyEditor === null,
+    overlayMobileChrome && inlineReplyEditor === null,
     selectedGroupId,
     scrollRef,
     onMobileReadingHiddenChange,
     rememberReachedLatest,
   );
+  // The phone's members grow with a line of agent activity; the list's end room follows them.
+  const [dockFade, setDockFade] = useState<HTMLDivElement | null>(null);
+  useFloatingDockReserve(dockFade, scrollRef, isSmallScreen);
   useKeepInlineReplyVisible(
     scrollRef,
     (isSmallScreen || shortTouchViewport) && inlineReplyEditor !== null,
@@ -825,8 +829,11 @@ export function ChatTab({
             <section
               className="relative flex min-h-0 min-w-0 flex-1 flex-col"
               onTouchStartCapture={reading.onTouchStartCapture}
+              onTouchMoveCapture={reading.onTouchMoveCapture}
               onTouchEndCapture={reading.onTouchEndCapture}
               onTouchCancelCapture={reading.onTouchCancelCapture}
+              onCompositionStartCapture={reading.onCompositionStartCapture}
+              onCompositionEndCapture={reading.onCompositionEndCapture}
               onScrollCapture={reading.onScrollCapture}
               onPointerDownCapture={(event) => {
                 if (event.target instanceof Element && event.target.closest("footer")) {
@@ -1160,13 +1167,13 @@ export function ChatTab({
                           contextWindow={!!chatWindowProps}
                           className={
                             // Room to scroll the last message clear of the members over the
-                            // list, only while they show: hidden for a keyboard or for reading,
-                            // they leave no gap (chatMessage.css).
-                            !chatWindowProps &&
-                            runtimeActors.length > 0 &&
-                            !hideDockForKeyboard &&
-                            !reading.hidden
-                              ? "chat-list-over-dock"
+                            // list. It stays while reading hides them, so hiding them never
+                            // moves the list, and goes only for a keyboard (chatMessage.css).
+                            !chatWindowProps && runtimeActors.length > 0 && !hideDockForKeyboard
+                              ? classNames(
+                                  "chat-list-over-dock",
+                                  !reading.hidden && "chat-dock-shown",
+                                )
                               : undefined
                           }
                           scrollRef={scrollRef}
@@ -1234,7 +1241,7 @@ export function ChatTab({
                     !isSmallScreen && workView === "messages" ? (
                       // Only the member controls catch input. The list keeps its full
                       // viewport and can scroll its final message above this overlay; text
-                      // passing under it fades out before the members (chatMessage.css).
+                      // passing under it fades out behind the members' keys (chatMessage.css).
                       <div
                         className={classNames(
                           "pointer-events-none absolute inset-x-0 bottom-0 z-20 px-2 sm:px-4",
@@ -1242,10 +1249,44 @@ export function ChatTab({
                           hideDockForKeyboard && "hidden",
                         )}
                       >
-                        <div className="chat-reading-width chat-dock-fade">
+                        <div className="chat-reading-width">
+                          <div className="chat-dock-fade">
+                            <RuntimeDock
+                              placement="row"
+                              motionVisible={!hideDockForKeyboard}
+                              groupId={selectedGroupId}
+                              runtimeActors={runtimeActors}
+                              liveWorkCards={liveWorkCards}
+                              activeRuntimeActorId={activeRuntimeActorId}
+                              isDark={isDark}
+                              isSmallScreen={isSmallScreen}
+                              readOnly={readOnly}
+                              actorStatusProvisional={selectedGroupActorStatusProvisional}
+                              onAddAgent={!readOnly ? addAgent : undefined}
+                              onOpenRuntimeActor={onOpenRuntimeActor}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        className={classNames(
+                          "pointer-events-none absolute inset-x-0 z-20",
+                          // On a phone the dock floats over the message list; elsewhere it
+                          // floats over the work area's panes, which keep their own ground.
+                          isSmallScreen ? "bottom-0" : "bottom-2",
+                          (hideDockForKeyboard || reading.hidden) && "hidden",
+                        )}
+                        data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}
+                      >
+                        {/* Hidden by display, its rings restart on return; this lets them
+                            take the shared phase again instead of their old offsets. */}
+                        <div
+                          ref={setDockFade}
+                          className={isSmallScreen ? "chat-dock-fade" : undefined}
+                        >
                           <RuntimeDock
-                            placement="row"
-                            motionVisible={!hideDockForKeyboard}
+                            motionVisible={!(hideDockForKeyboard || reading.hidden)}
                             groupId={selectedGroupId}
                             runtimeActors={runtimeActors}
                             liveWorkCards={liveWorkCards}
@@ -1258,33 +1299,6 @@ export function ChatTab({
                             onOpenRuntimeActor={onOpenRuntimeActor}
                           />
                         </div>
-                      </div>
-                    ) : (
-                      <div
-                        className={classNames(
-                          "pointer-events-none absolute inset-x-0 z-20",
-                          // On a phone the dock floats over the message list; elsewhere it
-                          // floats over the work area's panes, which keep their own ground.
-                          isSmallScreen ? "chat-dock-fade bottom-0" : "bottom-2",
-                          (hideDockForKeyboard || reading.hidden) && "hidden",
-                        )}
-                        data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}
-                      >
-                        {/* Hidden by display, its rings restart on return; this lets them
-                            take the shared phase again instead of their old offsets. */}
-                        <RuntimeDock
-                          motionVisible={!(hideDockForKeyboard || reading.hidden)}
-                          groupId={selectedGroupId}
-                          runtimeActors={runtimeActors}
-                          liveWorkCards={liveWorkCards}
-                          activeRuntimeActorId={activeRuntimeActorId}
-                          isDark={isDark}
-                          isSmallScreen={isSmallScreen}
-                          readOnly={readOnly}
-                          actorStatusProvisional={selectedGroupActorStatusProvisional}
-                          onAddAgent={!readOnly ? addAgent : undefined}
-                          onOpenRuntimeActor={onOpenRuntimeActor}
-                        />
                       </div>
                     )
                   ) : null}

@@ -85,9 +85,9 @@ status stay visible.
 A reply shows up to two lines of the message it answers; clicking or tapping that
 quote, or pressing Enter on it, opens the original message. With a mouse or trackpad
 and enough room in the message column, **Reply**, **Forward** and a copy icon appear
-under a message on hover or keyboard focus, over the space before the next message,
-without shifting messages or reserving an extra line for each one. The icon copies
-the message content as the menu item did before. **Quick reply**, **Pin message**,
+beside the message header on hover or keyboard focus, after the time or before your name,
+in the free space next to it, so nothing shifts; a long header wraps to leave them room.
+The icon copies the message content as the menu item did before. **Quick reply**, **Pin message**,
 **Copy link** and other actions are in the bar's **More** menu. On touch screens or
 in a narrow message column, **More** ends each message's header and lists every
 action, including copying.
@@ -97,8 +97,10 @@ On phones, the chat keeps as much of the screen as possible for messages. An emp
 composer that is not in use is a single row with the attachment button, the message
 box, voice and Send, plus a short label for a chosen recipient; tapping it or one of
 its controls expands it. Scrolling the messages by touch toward newer ones slides the
-header, the filter row and the runtime dock out of view. They return when you scroll
-back, tap the messages, reach the newest message or touch the composer. The **More**
+header, the filter row and the runtime dock out of view. They return when you scroll back,
+tap the messages, reach the newest message or touch the composer. A deliberate touch scroll
+of the messages can also take the focus out of the message box, so the keyboard can close;
+a draft stays, and text an input method is still composing is left alone. The **More**
 button sits beside each message. Phones in landscape also use the single-row composer.
 
 The header uses its existing Group status dot for page-connection health: red
@@ -145,9 +147,9 @@ code more room and **Full** uses the whole chat area. With **Medium** or **Wide*
 conversation's scrollbar sits beside the column, and the mouse wheel scrolls the conversation
 from the blank space on either side as well. The choice is saved in this browser. It
 does not appear on narrower screens, where the conversation already has no width limit.
-The members' status floats in a compact centered row above the composer. Messages
-remain visible and interactive on either side; the scrollable tail lets the final
-message move fully above the member controls.
+The members' status floats in a compact centered row above the composer. Text scrolled
+behind the member keys fades out, while messages remain visible and interactive on either
+side; the scrollable tail lets the final message move fully above the member controls.
 Activity and feedback move in whole steps: a busy member's ring of pixel dots, three blinks when
 the page sees a member start needing attention, a pixel spinner for waits longer than a quarter of
 a second, and a block cursor that can follow a headless agent's live text, though not after code
@@ -305,9 +307,10 @@ are not loaded, such as older ones a filter has not reached yet, cannot be kept.
 Sending keeps the filters. If they hide the sent message, a confirmation offers
 **View message**, including cross-Group sends; the action returns to the originating
 Group even if you have switched Groups. In a filtered view, **Show in chat** opens a message with the
-messages around it in the whole conversation. It leads the bar under the message, or follows
-the message's time on touch screens and in a narrow message column. **Back to filtered
-conversation** restores the filters and returns to the place you were reading.
+messages around it in the whole conversation. It leads the bar beside the message header
+where the column has room for it, or follows the message's time on touch screens and in a
+narrower column. **Back to filtered conversation** restores the filters and returns to the
+place you were reading.
 
 Opening a message from a notification, a link or search shows it in the live conversation when it
 is already loaded and no filter is on; new messages keep arriving as usual. Otherwise **Viewing a

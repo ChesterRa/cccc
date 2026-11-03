@@ -24,10 +24,11 @@ export function LocalSessionsDialog({
   const [helpRequest, setHelpRequest] = useState<LocalSessionsHelpRequest | null>(null);
   const showHelp = (section: LocalSessionsHelpRequest["section"]) =>
     setHelpRequest((previous) => ({ section, sequence: (previous?.sequence || 0) + 1 }));
-  // Setup opens by itself only when the first list is empty; after that the reader decides.
+  // Setup opens by itself only when the first list that loads is empty; after that the reader
+  // decides. A failed load decides nothing, so a later empty list still opens it.
   const [firstListEmpty, setFirstListEmpty] = useState<boolean | null>(null);
-  if (firstListEmpty === null && !connection.loading)
-    setFirstListEmpty(!connection.error && connection.displayedSources.length === 0);
+  if (firstListEmpty === null && !connection.loading && !connection.error)
+    setFirstListEmpty(connection.displayedSources.length === 0);
   return (
     <ModalFrame
       isDark={isDark}

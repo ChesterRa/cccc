@@ -647,10 +647,10 @@
   color: var(--lcd-muted);
 }
 
-/* Without the bar under a message (touch, or a column too narrow for it), a filtered view gives
-   every message it lists a way into the whole conversation after the time: a short underlined
-   key, in ink so it reads as something to press, set in reverse under the pointer like the
-   other keys. Where the bar shows, it carries Show in chat instead (chatMessage.css). */
+/* Where messages have no hover bar, as on touch screens or in a narrow column, or no room on it
+   for Show in chat, a filtered view gives every message it lists a way into the whole
+   conversation: a short underlined key after the time, in ink so it reads as something to
+   press, and set in reverse under the pointer like the other keys. */
 :root[data-ui-style="lcd"] .lcd-row-jump {
   color: var(--lcd-ink);
   font-size: 0.8125rem;
@@ -667,7 +667,7 @@
 /* Without the bar, ⋮ ends the head line instead of taking a row under the text or a column
    beside it, so the text keeps the column's width; on a coarse pointer its 44px target sets
    the head line's height, and author, route and time centre on it. Where the bar shows (the
-   same query as in chatMessage.css), ⋮ and the key after the time give way to it. */
+   same query as in chatMessage.css), ⋮ gives way to it. */
 :root[data-ui-style="lcd"] .lcd-row:has(.message-actions-menu) .lcd-row-head {
   align-items: center;
 }
@@ -690,18 +690,6 @@
 
 :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .message-actions-menu {
   margin-left: 0;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  @container messages (width >= 22rem) {
-    :root[data-ui-style="lcd"] .lcd-row:has(.message-actions-menu) .lcd-row-head {
-      align-items: baseline;
-    }
-
-    :root[data-ui-style="lcd"] .lcd-row-jump {
-      display: none;
-    }
-  }
 }
 
 @media (pointer: coarse) {
@@ -799,6 +787,89 @@
   :root[data-ui-style="lcd"] .lcd-row,
   :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] {
     max-width: calc(100% - clamp(6rem, 12%, 12rem));
+  }
+}
+
+/* With a pointer, the actions show in the free space beside the head instead of keeping a
+   place in it, so a short message, and its line, stay as wide as its text. They follow the
+   time on an agent's head and come before your name on yours, and showing them moves nothing.
+   The head's own end space, which the line spans, meets them, so the pointer reaches them
+   without leaving the message. A head stops 12.5rem short of the column's far edge, room for
+   the widest set of actions also at the smallest text size, so a long head wraps instead of
+   pushing them off the screen. A column narrower than 28rem has no such room: there, as on a
+   phone, every action is in ⋮ at the end of the head. The query is the one in chatMessage.css. */
+@media (hover: hover) and (pointer: fine) {
+  @container messages (width >= 28rem) {
+    :root[data-ui-style="lcd"] .lcd-row:has(.message-actions-menu) .lcd-row-head {
+      align-items: baseline;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row-head {
+      position: relative;
+      width: fit-content;
+      max-width: calc(100cqi - 12.5rem);
+      padding-right: 1ch;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row[data-lcd-user] .lcd-row-head {
+      margin-left: auto;
+      padding-right: 0;
+      padding-left: 1ch;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row .lcd-row-head > [data-message-actions-inline] {
+      position: absolute;
+      top: 50%;
+      left: 100%;
+      width: max-content;
+      translate: 0 -50%;
+    }
+
+    :root[data-ui-style="lcd"]
+      .lcd-row[data-lcd-user]
+      .lcd-row-head
+      > [data-message-actions-inline] {
+      right: 100%;
+      left: auto;
+    }
+
+    /* In a filtered view Show in chat follows the time and the bar keeps its usual keys
+       within their 12.5rem, unless the column can spare the 19rem that the bar needs with
+       Show in chat leading it: then the bar carries it and its heads keep that room free.
+       One query decides both places, so exactly one of them shows at any width. */
+    :root[data-ui-style="lcd"] .lcd-row [data-message-actions-inline] > [data-show-in-chat] {
+      display: none;
+    }
+
+    :root[data-ui-style="lcd"]
+      .lcd-row
+      [data-message-actions-inline]
+      > [data-show-in-chat]
+      + button {
+      border-left: 0;
+    }
+  }
+
+  @container messages (width >= 36rem) {
+    :root[data-ui-style="lcd"] .lcd-row[data-lcd-show-in-chat] .lcd-row-head {
+      max-width: calc(100cqi - 19rem);
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row-jump {
+      display: none;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row [data-message-actions-inline] > [data-show-in-chat] {
+      display: inline-flex;
+    }
+
+    :root[data-ui-style="lcd"]
+      .lcd-row
+      [data-message-actions-inline]
+      > [data-show-in-chat]
+      + button {
+      border-left: 1px solid var(--lcd-rule-strong);
+    }
   }
 }
 
@@ -974,11 +1045,8 @@
 }
 
 /* Message actions are one strip of keys: without colour, a frame is what says
-   "press me", and the key under the pointer is set in reverse. The strip keeps its own
-   width (chatMessage.css), so under a short message its keys stay on one line. Keys are
-   1.25rem tall and their icons 0.875rem, so at any text size the strip with its frame fits
-   the space between continued messages (0.5rem under the row and their 0.875rem gap) and
-   covers nothing of the next head. */
+   "press me", and the key under the pointer is set in reverse. Keys are 1.5rem tall, within
+   the head line, and their icons follow the text size like their labels. */
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-message-actions-inline] {
   justify-content: flex-start;
   gap: 0;
@@ -987,7 +1055,7 @@
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-message-actions-inline] > button {
-  min-height: 1.25rem;
+  min-height: 1.5rem;
   padding: 0 1ch;
   border-radius: 0;
   color: var(--lcd-ink);

@@ -339,7 +339,7 @@ cccc doctor                  # Check configuration
 
 A working group is like an IM group chat with execution capabilities. It includes:
 - An append-only ledger (message history)
-- One or more agents (agents)
+- One or more agents
 - Optional scopes (project directories)
 
 ### What is the Ledger?

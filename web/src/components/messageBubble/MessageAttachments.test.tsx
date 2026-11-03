@@ -112,6 +112,32 @@ describe("MessageAttachments download contract", () => {
       "/api/v1/groups/g1/blobs/stored-hash?filename=clip.mp4&amp;download=true",
     );
   });
+
+  it("previews a confirmed image you sent from its stored blob, so it shows again later", () => {
+    // Shown again after its local copy is revoked (a filter change, a long list), an image
+    // previewed from that copy would fail until the page was reloaded.
+    const markup = renderToStaticMarkup(
+      <MessageAttachments
+        attachments={[
+          {
+            kind: "image",
+            path: "state/blobs/stored-hash",
+            title: "shot.png",
+            mime_type: "image/png",
+            local_preview_url: "blob:revoked-soon",
+          },
+        ]}
+        blobGroupId="g1"
+        isUserMessage
+        isDark={false}
+        attachmentKeyPrefix="event-5"
+        downloadTitle={(name) => `Download ${name}`}
+      />,
+    );
+
+    expect(markup).not.toContain("blob:revoked-soon");
+    expect(markup).toContain('src="/api/v1/groups/g1/blobs/stored-hash?filename=shot.png"');
+  });
 });
 
 describe("MessageAttachments image layout", () => {

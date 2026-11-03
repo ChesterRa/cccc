@@ -854,8 +854,8 @@ export const MessageBubble = memo(
               <span className="sr-only">{t("pins.pinnedMark")}</span>
             </span>
           ) : null}
-          {/* Touch has no bar under the message: a filtered view shows its way into the
-              whole conversation after the time, and ⋮ ends the head (lcd.css). */}
+          {/* Where messages have no hover bar to carry it, or no room on it (lcd.css), a
+              filtered view shows its way into the whole conversation here, after the time. */}
           {showInConversation ? (
             <button
               type="button"
@@ -865,6 +865,7 @@ export const MessageBubble = memo(
               {t("showInConversation")}
             </button>
           ) : null}
+          <MessageActions part="bar" {...messageActionProps} />
           <MessageActions part="menu" {...messageActionProps} />
         </div>
         {agentStateTooltip}
@@ -873,7 +874,6 @@ export const MessageBubble = memo(
             {bubbleContent}
           </div>
           {messageFooter}
-          <MessageActions part="bar" {...messageActionProps} />
         </div>
       </div>
     );

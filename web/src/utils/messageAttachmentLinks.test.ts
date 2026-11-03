@@ -43,23 +43,20 @@ describe("message attachment links", () => {
     expect(links.downloadName).toBe("draft.png");
   });
 
-  it("uses the stored blob once the upload is confirmed", () => {
-    // The local URL is revoked about a minute after confirmation.
-    const confirmed = {
+  it.each(["shot.png", "clip.mp4"])("uses the stored blob once %s is confirmed", (title) => {
+    // The local URL is revoked about a minute after confirmation, and a message can be shown
+    // again much later, so an image previewed from it would turn into the failure notice.
+    const links = buildMessageAttachmentLinks({
       groupId: "g1",
       path: "state/blobs/stored-hash",
-      title: "clip.mp4",
+      title,
       localPreviewUrl: "blob:preview",
-      fallbackLabel: "video",
-    };
-    const shown = buildMessageAttachmentLinks(confirmed);
-    expect(shown.previewHref).toBe("blob:preview");
-    expect(shown.downloadHref).toContain("/api/v1/groups/g1/blobs/stored-hash?");
-    expect(shown.downloadHref).toContain("download=true");
-
-    const onDemand = buildMessageAttachmentLinks({ ...confirmed, preferStoredPreview: true });
-    expect(onDemand.previewHref).toContain("/api/v1/groups/g1/blobs/stored-hash?");
-    expect(onDemand.previewHref).not.toContain("download=true");
+      fallbackLabel: "file",
+    });
+    expect(links.previewHref).toContain("/api/v1/groups/g1/blobs/stored-hash?");
+    expect(links.previewHref).not.toContain("download=true");
+    expect(links.downloadHref).toContain("/api/v1/groups/g1/blobs/stored-hash?");
+    expect(links.downloadHref).toContain("download=true");
   });
 
   it("removes path and header control characters from suggested names", () => {

@@ -12,11 +12,11 @@ Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can al
 |---------|------------|----------------------|-----------|
 | Claude Code | `claude` | CCCC-managed Agent View session + native TUI | Injected into each managed session |
 | Cline CLI | `cline` | `cline` | Auto |
-| Codex CLI | `codex` | CCCC-managed app-server + native TUI | agent-scoped MCP injected into the managed session |
+| Codex CLI | `codex` | CCCC-managed app-server + native TUI | Agent-scoped MCP injected into the managed session |
 | DeepSeek Harness | `deepseek` | CCCC-managed `dsh-acp-demo` (structured ACP, no native terminal) | Automatic on first start; explicit setup remains available |
-| GitHub Copilot CLI | `copilot` | `copilot` | Auto |
-| Cursor CLI | `cursor` | `cursor-agent` | Prompt-assisted |
-| Devin CLI | `devin` | `devin` | Auto |
+| GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Auto for TUI; injected per ACP session |
+| Cursor CLI | `cursor` | Native `cursor-agent` TUI or official ACP | Prompt-assisted for TUI; injected per ACP session |
+| Devin CLI | `devin` | Native `devin` TUI or official ACP | Auto for TUI; injected per ACP session |
 | Kiro CLI | `kiro` | Native TUI or official V3 ACP | Native registration for TUI; injected per ACP session |
 | Kilo Code CLI | `kilo` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
 | Antigravity CLI | `antigravity` | Native `agy` TUI or official ACP | Native registration for TUI; injected into each ACP session |
@@ -249,16 +249,20 @@ Starting or restarting an idle agent does not submit a bootstrap prompt or run
 the model. An empty thread can be stopped and resumed without first sending a
 message.
 
-Direct Claude Code agents require Claude Code 2.1.259 or newer. Before first use,
-accept Claude's bypass-mode disclaimer interactively with
-`claude --dangerously-skip-permissions` under the same Claude configuration.
-Use the Claude executable selected by the agent or Chet's Runtime Profile and
-the effective `CLAUDE_CONFIG_DIR` shown in the launch error. A confirmation under
-another profile's configuration does not satisfy this prerequisite. After accepting
-the disclaimer, exit the interactive session and start the agent or Chet again.
-If it has not been accepted, the managed launch returns Claude's actionable
-error before opening an agent terminal; CCCC does not write workspace trust or
-disclaimer acceptance into the user's global configuration.
+Direct Claude Code agents require Claude Code 2.1.259 or newer. When Claude asks
+you to trust a workspace or to accept its bypass-mode disclaimer, a managed agent
+opens Claude's own prompt in its terminal and waits for your choice; see
+[Claude workspace trust](./web-ui#claude-workspace-trust). CCCC does not answer
+the prompt for you and does not write workspace trust or disclaimer acceptance
+into the user's global configuration.
+
+A refused Chet launch does not open this confirmation terminal. When Chet's launch
+reports that Claude still needs workspace trust or the bypass-mode disclaimer,
+follow the error: open the Claude executable it names interactively in the
+workspace it names, using the settings directory it shows (set `CLAUDE_CONFIG_DIR`
+to that directory if it is not your default), add `--dangerously-skip-permissions`
+for the disclaimer, make your choice, exit, and start Chet again. A confirmation
+made under another configuration does not count.
 
 CCCC owns one
 Agent View background session, launches `claude attach` against that exact

@@ -5,7 +5,7 @@ The `grok_web_model` runtime connects an existing Grok Bot to a CCCC agent throu
 ## Setup
 
 1. Expose CCCC through a public HTTPS address using Web Access settings or your reverse proxy. Grok must be able to reach the MCP connector.
-2. Open **Settings → Global → Web Model → Grok Bot**. Create the connector and copy its full MCP URL. Add it once at [Grok Connectors](https://grok.com/connectors). The private URL is available only when created or rotated; do not publish it. Grok and ChatGPT connector credentials are separate.
+2. Open **Settings → This instance → Web Models → Grok Bot**. Create the connector and copy its full MCP URL. Add it once at [Grok Connectors](https://grok.com/connectors). The private URL is available only when created or rotated; do not publish it. Grok and ChatGPT connector credentials are separate.
 3. Create and save a **Grok Bot Web Model** agent. In its **Grok Bot** connection settings, enter an existing `https://grok.com/bot/<UUID>` URL and use the agent editor's bottom **Save** button. Each agent needs a different Bot URL. CCCC does not create Bots.
 4. Choose **Get Routine setup instructions** and paste them into that Bot with the CCCC connector enabled. Let it create or update one native Webhook Routine named CCCC. Verify the saved handler; a chat confirmation alone is insufficient. No literal credentials belong in the handler. Setup does not claim queued work.
 5. Open that Routine in the **Grok desktop app** and find **POST to** and **Key**. If Details/Routines navigation fails, open the Routine chip on its creation message. The webpage does not expose these credentials.

@@ -91,7 +91,6 @@ export function MessageAttachments({
               title: attachment.title,
               localPreviewUrl: attachment.local_preview_url,
               fallbackLabel: "video",
-              preferStoredPreview: true,
             });
             return (
               <VideoPreview

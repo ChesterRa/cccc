@@ -62,15 +62,16 @@ async function render(
   );
 }
 
-it("puts the pointer's actions under the message and touch's ⋮ at the end of its head", async () => {
+it("keeps the pointer's actions and touch's ⋮ in the message's head", async () => {
   await render();
   const bar = host.querySelectorAll("[data-message-actions-inline]");
   expect(bar).toHaveLength(1);
-  expect(bar[0].closest(".lcd-row-body")).not.toBeNull();
-  expect(bar[0].closest(".lcd-row-head")).toBeNull();
+  expect(bar[0].parentElement?.classList.contains("lcd-row-head")).toBe(true);
+  expect(host.querySelector(".lcd-row-body [data-message-actions-inline]")).toBeNull();
   const menu = host.querySelectorAll(".message-actions-menu");
   expect(menu).toHaveLength(1);
   expect(menu[0].parentElement?.classList.contains("lcd-row-head")).toBe(true);
+  expect(menu[0].previousElementSibling).toBe(bar[0]);
   expect(menu[0].nextElementSibling).toBeNull();
 });
 
@@ -79,33 +80,38 @@ const lcdCss = () =>
 const chatMessageCss = () =>
   readFileSync(fileURLToPath(new NodeURL("../styles/chatMessage.css", import.meta.url)), "utf8");
 
-it("lays the pointer's actions over the space under a message, reserving none", () => {
-  const pointer = chatMessageCss().match(
-    /@media \(hover: hover\) and \(pointer: fine\) \{([\s\S]*?)\n\}/,
-  )?.[1];
-  expect(pointer).toMatch(/\.message-actions-menu \{\s*display: none;/);
-  expect(pointer).toMatch(
-    /\.message-actions-inline \{\s*position: absolute;\s*top: 100%;[^}]*opacity: 0;/,
+it("shows the pointer's actions beside the head, reserving nothing for them", () => {
+  // One query decides where the bar shows, so at any width exactly one of the bar or ⋮ offers
+  // the actions: a pointer, and a column with room for the bar beside a head.
+  const where =
+    "@media (hover: hover) and (pointer: fine) {\n  @container messages (width >= 28rem) {";
+  expect(chatMessageCss()).toContain(
+    `${where}\n    .message-actions-menu {\n      display: none;\n    }\n    .message-actions-inline {\n      display: flex;\n      opacity: 0;`,
   );
-  // Nothing under a message holds their place: no reserved height or margin anywhere.
-  expect(chatMessageCss()).not.toMatch(/min-height: 1\.75rem|message-footer-row/);
-  // The row in use comes forward over the next, and the last keeps room inside the list.
-  expect(pointer).toMatch(
-    /\[data-message-row\]:hover,\s*\[data-message-row\]:focus-within \{\s*z-index: 1;/,
+  const lcd = lcdCss().split(where);
+  expect(lcd).toHaveLength(2);
+  const placed = lcd[1];
+  // A head is as wide as its text and stops short of the column's far edge; the bar sits in
+  // the free space after it, centred on the head line, so showing it moves nothing.
+  expect(placed).toMatch(
+    /\.lcd-row-head \{\s*position: relative;\s*width: fit-content;\s*max-width: calc\(100cqi - 12\.5rem\);/,
   );
-  expect(pointer).toMatch(/\[data-message-row\]\[data-last-message\] \{\s*padding-bottom: 2rem;/);
-  // The bar keeps its own width, so under a short message its keys stay on one line.
-  expect(pointer).toMatch(/\.message-actions-inline \{[^}]*width: max-content;/);
-  const keys = lcdCss().match(
-    /\[data-lcd-scope\] \[data-message-actions-inline\] \{([^}]*)\}/,
-  )?.[1];
-  expect(keys).toBeDefined();
-  expect(keys).not.toMatch(/\bwidth:/);
-  // Keys and their icons follow the text size, so the strip fits the gap at any size.
-  expect(lcdCss()).toMatch(
-    /\[data-message-actions-inline\] > button svg \{\s*width: 0\.875rem;\s*height: 0\.875rem;/,
+  expect(placed).toMatch(
+    /\.lcd-row \.lcd-row-head > \[data-message-actions-inline\] \{\s*position: absolute;\s*top: 50%;\s*left: 100%;\s*width: max-content;\s*translate: 0 -50%;/,
   );
-  // Without the bar, ⋮ ends the head line and a filtered view's Show in chat follows the time.
+  // On your own messages it comes before your name.
+  expect(placed).toMatch(
+    /\.lcd-row\[data-lcd-user\]\s*\.lcd-row-head\s*> \[data-message-actions-inline\] \{\s*right: 100%;\s*left: auto;/,
+  );
+  // Nothing under a message holds or covers its place.
+  expect(chatMessageCss()).not.toMatch(/data-last-message|top: 100%|message-footer-row/);
+  // A filtered view's Show in chat leads the bar only where the column spares 19rem beside a
+  // head; otherwise it follows the time, and the key after the time hides only there.
+  expect(placed).toMatch(
+    /@container messages \(width >= 36rem\) \{\s*:root\[data-ui-style="lcd"\] \.lcd-row\[data-lcd-show-in-chat\] \.lcd-row-head \{\s*max-width: calc\(100cqi - 19rem\);\s*\}\s*:root\[data-ui-style="lcd"\] \.lcd-row-jump \{\s*display: none;/,
+  );
+  expect(lcdCss().match(/\.lcd-row-jump \{\s*display: none;/g)).toHaveLength(1);
+  // Without the bar, ⋮ ends the head line.
   expect(lcdCss()).toMatch(
     /\n:root\[data-ui-style="lcd"\] \.lcd-row \.message-actions-menu \{\s*margin-left: auto;/,
   );
@@ -114,16 +120,6 @@ it("lays the pointer's actions over the space under a message, reserving none", 
     /\.lcd-row \.message-actions-menu > button \{\s*justify-content: flex-end;\s*padding-right: 0;/,
   );
   expect(lcdCss()).not.toMatch(/message-actions-menu \{[^}]*margin:[^;]*-/);
-  // One query decides where the bar shows, so at any width exactly one of the bar, or ⋮ with
-  // the key after the time, offers the actions: a pointer and a column with room for the bar.
-  const where =
-    "@media (hover: hover) and (pointer: fine) {\n  @container messages (width >= 22rem) {";
-  expect(pointer).toBeDefined();
-  expect(chatMessageCss()).toContain(`${where}\n    .message-actions-menu {\n      display: none;`);
-  expect(lcdCss().split(where)).toHaveLength(2);
-  expect(lcdCss().split(where)[1]).toMatch(
-    /^[^@]*:root\[data-ui-style="lcd"\] \.lcd-row-jump \{\s*display: none;/,
-  );
 });
 
 it("outlines a jump target on the message box its row draws", async () => {

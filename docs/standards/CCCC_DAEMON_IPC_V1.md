@@ -3649,8 +3649,9 @@ Result:
 
 #### `group_start`
 
-Resume the Group and run every actor whose desired `enabled` state is true.
-Actors explicitly disabled through `actor_stop` remain disabled.
+Resume the Group and attempt to start actors whose desired `enabled` state is
+true. Actors explicitly disabled through `actor_stop` remain disabled; an
+automatic start skips an actor whose runtime confirmation is paused.
 
 Args:
 ```ts
@@ -3659,8 +3660,12 @@ Args:
 
 Result:
 ```ts
-{ group_id: string; started: string[]; event: CCCSEventV1 }
+{ group: Record<string, unknown>; running: true; runtimes: Array<Record<string, unknown>> }
 ```
+
+`runtimes` contains the lifecycle status records returned by the underlying
+runtime operations; it is not an exhaustive list of the Group's actors. The
+`group.start` event is appended to the ledger, not returned in this result.
 
 #### `group_stop`
 
@@ -3674,8 +3679,12 @@ Args:
 
 Result:
 ```ts
-{ group_id: string; stopped: string[]; event: CCCSEventV1 }
+{ group: Record<string, unknown>; running: false; runtimes: Array<Record<string, unknown>> }
 ```
+
+`runtimes` contains the lifecycle status records returned by the underlying
+runtime operations; it is not an exhaustive list of the Group's actors. The
+`group.stop` event is appended to the ledger, not returned in this result.
 
 ### 8.4 Actors
 
@@ -3910,7 +3919,7 @@ Notes:
 - Completion of a temporary Actor restore worker or retirement of an IPC request worker MUST NOT terminate an otherwise healthy managed provider session. Providers that bind their lifetime to the spawning OS thread MUST be launched by daemon-lifetime workers. Explicit stop, failed-start rollback, and daemon shutdown retain ownership of process cleanup.
 - If managed Claude startup reports an untrusted workspace, the Actor terminal MAY present the configured Claude command for the operator to approve trust. CCCC MUST NOT write the trust decision. Configuration observation MUST begin before opening that prompt; approval recorded before the watcher starts MUST remain observable. Task delivery stays pending until the managed session is attached. Recovery MUST acquire the runtime-start permit before the Actor start guard and revalidate cancellation and the same live terminal before attachment. Actor and Group stop MUST cancel pending recovery, including prompts without a managed session, and clean up a cancelled launch instead of attaching it.
 - Claude confirmation recovery MAY continue waiting for a verified workspace-trust refusal or a verified bypass-permissions disclaimer refusal. Other launch errors MUST end that watcher and retire its own temporary confirmation terminal. Changes to watched provider confirmation files MAY trigger a managed retry; the change itself MUST NOT be treated as approval, and unrelated configuration changes MUST NOT establish readiness. The temporary terminal is not a managed task-delivery surface.
-- The successful `actor_update`, `actor_start`, `actor_stop` and `actor_restart` results include the same `runtime_confirmation_required` observation both at the top level and in `actor`. A failed rollback MUST NOT claim the former managed owner was restored merely because a confirmation terminal remains open; its existing `rollback_failed` result reports an incomplete restoration. A confirmation ending without a managed session MAY append `headless.session.exited` with reason `interactive_confirmation_ended`; the reason is not proof of consent or denial.
+- The successful `actor_update`, `actor_start`, `actor_stop`, `actor_restart` and `actor_new_session` results include the same `runtime_confirmation_required` observation both at the top level and in `actor`. A failed rollback MUST NOT claim the former managed owner was restored merely because a confirmation terminal remains open; its existing `rollback_failed` result reports an incomplete restoration. A confirmation ending without a managed session MAY append `headless.session.exited` with reason `interactive_confirmation_ended`; the reason is not proof of consent or denial.
 - During the current daemon process, closing or declining a managed Claude confirmation pauses automatic restarts for that Actor. A queued delivery that has not entered the provider MUST remain retryable, and the pause MUST NOT prevent other enabled Actors from starting with the Group. An explicit authorized Actor or Group start/restart MAY retry it. This pause is in-memory: normal daemon restart restoration MAY attempt that Actor again, without treating restart as approval.
 - A failed Claude resume MUST retain the original provider session ID, record a bounded safe diagnostic and failure count, and fence that outcome to the exact resume attempt. Provider stderr and credential values MUST NOT be persisted in this record. Known temporary startup/control failures MAY remain retryable. Copied session IDs, unavailable durable history after the bounded discovery wait, invalid identity/protocol/credential evidence and other unverifiable resume failures MUST pause automatic startup with `runtime_session_status="resume_failed"`, `runtime_session_resume_eligible=false` and `runtime_session_last_resume_error`. Paused startup returns `claude_resume_failed`; it MUST NOT silently start a fresh session. Undelivered messages remain pending and their handoff claims become retryable `runtime.delivery=failed`, leaving the automatic worker retry lane. An authorized explicit `actor_start` or `actor_restart` MAY retry the same saved conversation and redispatch those messages. Only explicit `actor_new_session` (or configured resume disablement / changed launch identity) selects a fresh conversation; provider history remains intact. Successful resume clears the failure diagnostic and count. Process absence alone is not a resume failure.
 - Codex, Grok, OpenCode and Kilo Actor startup with a validated saved conversation MUST NOT replace that conversation after a resume failure. CCCC MUST retain the provider identity, safe diagnostic and attempt-fenced failure count, project `runtime_session_status="resume_failed"` / `runtime_session_resume_eligible=false`, and leave undelivered messages pending outside the automatic startup retry lane. Paused startup returns `runtime_resume_failed`. Explicit `actor_start` / `actor_restart` MAY retry the same identity; only New session, disabled resume or a changed validated launch identity selects fresh work. Successful resume clears the diagnostic. An unresolved process-cleanup error MUST preserve its ownership and remain distinct from an ordinary paused resume.
@@ -4123,7 +4132,7 @@ Args:
 
 Result:
 ```ts
-{ actor: Record<string, unknown>; event: CCCSEventV1; new_session: true }
+{ actor: Record<string, unknown>; event: CCCSEventV1; runtime_confirmation_required: boolean; runtime: Record<string, unknown> | null }
 ```
 
 Notes:
