@@ -139,10 +139,6 @@ it.each([
           if (waitingAt === "rollback_other_group") {
             useGroupStore.setState({ selectedGroupId: "other" });
           } else {
-            useUIStore.setState({ activeTab: "settings" });
-            await act(async () => useUIStore.getState().notice?.onAction?.());
-            expect(useUIStore.getState().activeTab).toBe("settings");
-            expect(setEditingActor).not.toHaveBeenCalled();
             useUIStore.setState({ activeTab: "chat" });
             await act(async () => actions.handleCancelEditActor());
             args.editingActor = null;

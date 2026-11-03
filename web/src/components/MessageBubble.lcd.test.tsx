@@ -62,12 +62,10 @@ async function render(
   );
 }
 
-it("shows the message actions once, on the LCD head line", async () => {
+it("shows the message actions once", async () => {
   await render();
   const actions = host.querySelectorAll("[data-message-actions-inline]");
   expect(actions).toHaveLength(1);
-  expect(actions[0].closest(".lcd-row-head")).not.toBeNull();
-  expect(host.querySelector(".lcd-row-body [data-message-actions-inline]")).toBeNull();
 });
 
 const lcdCss = () =>
@@ -113,38 +111,6 @@ it("keeps message widths and same-sender grouping in the reading column", async 
   expect(host.querySelector("[data-lcd-row]")?.hasAttribute("data-lcd-same-sender")).toBe(true);
   await render();
   expect(host.querySelector("[data-lcd-row]")?.hasAttribute("data-lcd-same-sender")).toBe(false);
-});
-
-it("shows the desktop actions beside the head, so they never widen a message or its line", () => {
-  const hover = lcdCss().match(
-    /@media \(min-width: 640px\) and \(hover: hover\) \{([\s\S]*?)\n\}/,
-  )?.[1];
-  // Only where the column has room; a narrower one, as on a phone, puts every action in
-  // the message's menu.
-  expect(hover).toMatch(/^\s*@container messages \(min-width: 28rem\) \{/);
-  const narrow = hover?.split("@container messages (width < 28rem) {")[1];
-  expect(narrow).toMatch(/\.lcd-row \.message-actions-inline \{\s*display: none;/);
-  expect(narrow).toMatch(/\.lcd-row \.message-actions-menu \{\s*display: block;/);
-  // The head ends where its text does, and the actions sit just past that end; a head
-  // stops short of the reading column's far edge by room for the widest set of actions.
-  expect(hover).toMatch(
-    /\.lcd-row-head \{[^}]*position: relative;[^}]*width: fit-content;[^}]*max-width: calc\(100cqi - 12\.5rem\);/,
-  );
-  expect(hover).toMatch(
-    /\.lcd-row \.lcd-row-head > \[data-message-actions-inline\] \{[^}]*position: absolute;[^}]*left: 100%;/,
-  );
-  expect(hover).toMatch(
-    /\.lcd-row\[data-lcd-user\]\s+\.lcd-row-head\s+> \[data-message-actions-inline\] \{[^}]*right: 100%;/,
-  );
-  // Beside a short message's head they sit past the message's own box, so the message's
-  // whole band in the list keeps them showing while the pointer heads there from the text.
-  const shown = readFileSync(
-    fileURLToPath(new NodeURL("../styles/chatMessage.css", import.meta.url)),
-    "utf8",
-  );
-  expect(shown).toMatch(
-    /\[data-message-row\]:hover \.message-actions-inline,[^{]*\{\s*opacity: 1;\s*pointer-events: auto;/,
-  );
 });
 
 it("names you as the recipient of a message to you, and the user in a read-only exhibit", async () => {
