@@ -69,7 +69,7 @@ const FRAMES: Record<Grid, ReturnType<typeof frames>> = { 16: frames(16), 32: fr
  * Chet's face adds character; the status text, the alert mark and the call controls
  * remain the record of state. Idle, it blinks now and then; while Chet works, its eyes
  * glance left and right. The frames swap in whole steps (lcdMotion.css) and hold still
- * when motion is off.
+ * when motion is off. Their paths inherit the screen's ink from the root's CSS fill.
  */
 export function ChetHead({
   size,
@@ -89,11 +89,12 @@ export function ChetHead({
       aria-hidden="true"
       focusable="false"
       className={classNames("chet-head flex-none", className)}
+      style={{ fill: "var(--lcd-ink)" }}
       data-chet-head={working ? "working" : "idle"}
     >
       {FRAMES[size].map((frame) => (
         <g key={frame.name} data-frame={frame.name}>
-          <path d={frame.d} fill="var(--lcd-ink)" />
+          <path d={frame.d} />
         </g>
       ))}
     </svg>

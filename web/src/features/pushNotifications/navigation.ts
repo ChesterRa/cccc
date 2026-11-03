@@ -5,11 +5,13 @@ export const PUSH_OPEN_MESSAGE = "cccc:push:open";
 export const PUSH_WORKER_PATH = "/ui/push/sw.js";
 
 /**
- * How long after the worker's own deadline the page still acts on a click.
- * A frozen background tab can receive it late, and the worker never acts on
- * a click again once it has handed it to a page.
+ * How long after the worker's own deadline the page still acts on a click
+ * (the worker keeps the same limit, LATE_CLICK_MS in public/push/sw.js). A page
+ * or browser that responds slowly after the click, or a frozen background tab,
+ * can receive it tens of seconds late, and the worker never acts on a click
+ * again once it has handed it to a page.
  */
-export const LATE_CLICK_MS = 10_000;
+export const LATE_CLICK_MS = 60_000;
 
 export type PushMessageTarget = { groupId: string; eventId: string; deadline: number };
 

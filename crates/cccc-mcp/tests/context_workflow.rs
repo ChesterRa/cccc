@@ -649,6 +649,55 @@ async fn task_rows_filter_page_and_keep_the_task_version_through_the_daemon() {
         assert_eq!(first["tasks_version"], version);
         assert_eq!(second["tasks_version"], version);
 
+        // Some clients send unused optional fields as null or blank. These still
+        // mean a filtered list, not an exact lookup that drops daemon filters.
+        for task_id in [Value::Null, json!(""), json!("  \t")] {
+            let response = tool(
+                &home,
+                id,
+                "lead",
+                "cccc_task",
+                json!({"action":"list","task_id":task_id,"query":"parser"}),
+            )
+            .await;
+            let mut found = row_ids(&payload(&response)["tasks"]);
+            found.sort_unstable();
+            assert_eq!(found, ["T001", "T004", "T006"]);
+
+            let response = tool(
+                &home,
+                id,
+                "lead",
+                "cccc_task",
+                json!({"action":"list","task_id":task_id,"attention":"blocked"}),
+            )
+            .await;
+            assert_eq!(row_ids(&payload(&response)["tasks"]), ["T004"]);
+
+            let response = tool(
+                &home,
+                id,
+                "lead",
+                "cccc_task",
+                json!({"action":"list","task_id":task_id,"assignee":"no-such-member"}),
+            )
+            .await;
+            assert!(row_ids(&payload(&response)["tasks"]).is_empty());
+        }
+        let invalid_id = tool(
+            &home,
+            id,
+            "lead",
+            "cccc_task",
+            json!({"action":"list","task_id":123,"query":"parser"}),
+        )
+        .await;
+        assert_eq!(invalid_id["result"]["isError"], true, "{invalid_id}");
+        assert_eq!(
+            invalid_id["result"]["structuredContent"]["error"]["code"],
+            "invalid_args"
+        );
+
         for (attention, expected) in [("blocked", "T004"), ("waiting_user", "T002")] {
             let response = tool(
                 &home,

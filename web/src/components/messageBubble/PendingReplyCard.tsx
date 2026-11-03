@@ -173,9 +173,12 @@ export function PendingReplyCard({
     : selectedId !== null && options.some((option) => option.id === selectedId)
       ? { kind: "option", id: selectedId }
       : null;
+  const send = () => {
+    if (answer && !locked && !checking) onSubmit(answer);
+  };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (answer && !locked && !checking) onSubmit(answer);
+    send();
   };
 
   const sendLabel = t(sending ? "pendingReply.sending" : "pendingReply.send");
@@ -307,6 +310,15 @@ export function PendingReplyCard({
       }}
       onBlur={releaseEditor}
       onChange={(event) => onDraftChange({ ...draft, text: event.target.value })}
+      onKeyDown={(event) => {
+        // Ctrl+Enter, or ⌘+Enter on a Mac, sends the answer as it sends a message from the
+        // composer. While an input method is composing, its Enter stays with it.
+        const native = event.nativeEvent as KeyboardEvent & { keyCode?: number };
+        if (native.isComposing || native.keyCode === 229) return;
+        if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey)) return;
+        event.preventDefault();
+        send();
+      }}
       placeholder={t("pendingReply.placeholder")}
     />
   );

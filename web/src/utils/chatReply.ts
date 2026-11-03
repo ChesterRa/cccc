@@ -111,6 +111,7 @@ export function buildReplyComposerState(
       eventId: replyEventId,
       by: replyBy,
       text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
+      ...(by === CHET_PRINCIPAL ? { toChet: true } : {}),
       ...(remoteDstGroupId
         ? {
             remoteDstGroupId,

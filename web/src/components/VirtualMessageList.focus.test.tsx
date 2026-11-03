@@ -229,6 +229,25 @@ it("saves no place for a view that was only looked at, and saves its view once a
   expect(onScrollSnapshot.mock.calls[0][1]).toBe("g1");
 });
 
+it("saves no place for a message window, even one the reader scrolled in", async () => {
+  // Leaving the window, as with Back to filtered conversation, returns to the place the
+  // conversation had before the window opened; the window's own place must not replace it.
+  const onScrollSnapshot = vi.fn();
+  await act(async () =>
+    root.render(
+      <VirtualMessageList
+        {...props()}
+        contextWindow
+        viewKey="g1:window:m1"
+        onScrollSnapshot={onScrollSnapshot}
+      />,
+    ),
+  );
+  host.querySelector('[role="log"]')!.dispatchEvent(new Event("wheel"));
+  await act(async () => root.render(<div />));
+  expect(onScrollSnapshot).not.toHaveBeenCalled();
+});
+
 it("tells the page when a view opens away from the latest messages, and only then", async () => {
   // The restore hook is mocked out here, as a scroll event can cancel it in a browser.
   const onScrollChange = vi.fn();

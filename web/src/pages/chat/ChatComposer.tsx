@@ -857,15 +857,16 @@ export function ChatComposer({
     { key: "request_reply", label: t("modeSendReply"), description: t("modeSendReplyDesc") },
     { key: "mail", label: t("modeMail"), description: t("modeMailDesc") },
   ];
+  const toChet = toTokens.includes(CHET_SELECTOR) || !!replyTarget?.toChet;
   const modeOptions = allModeOptions.filter(
     (option) =>
-      !(replyTarget && option.key === "request_reply") &&
-      !(toTokens.includes(CHET_SELECTOR) && option.key === "mail"),
+      !(replyTarget && option.key === "request_reply") && !(toChet && option.key === "mail"),
   );
 
   const effectiveMessageMode: ComposerMessageMode = messageModeForRecipients(
     replyTarget ? normalizeReplyMessageMode(messageMode) : messageMode,
     toTokens,
+    !!replyTarget?.toChet,
   );
   const requestReplyRecipientsReady = hasConcreteReplyRecipients(toTokens);
   const canSend = getComposerCanSend({

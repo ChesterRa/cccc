@@ -77,7 +77,7 @@ import {
 import { prepareComposerMessage } from "./chat/prepareComposerMessage";
 import { useChatMessageActions } from "./chat/useChatMessageActions";
 import { useChatMessageView } from "./chat/useChatMessageView";
-import { matchesChatFilters } from "./chat/chatMessageFilters";
+import { matchesChatFilters, shownChatFilter } from "./chat/chatMessageFilters";
 import { useTaskReferenceIndex } from "./chat/useTaskReferenceIndex";
 import { useShallow } from "zustand/react/shallow";
 interface UseChatTabOptions {
@@ -197,11 +197,10 @@ export function useChatTab({
   const pendingContext = useContext(PendingSummaryContext);
   const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
   // A persisted Waiting for you filter must not hide messages where its tab is not shown:
-  // in exhibit mode, or while the user has turned those prompts off.
-  const chatFilter =
-    storedChatFilter === "pending_user" && (!pendingContext || !showPendingPrompts)
-      ? "all"
-      : storedChatFilter;
+  // in exhibit mode, or while the user has turned those prompts off. Checks that read the
+  // session again apply the same rule to it.
+  const waitingTabOffered = !!pendingContext;
+  const chatFilter = shownChatFilter(storedChatFilter, waitingTabOffered && showPendingPrompts);
   const senders = chatSenderFilter;
 
   const {
@@ -689,7 +688,7 @@ export function useChatTab({
       bucket.chatWindow !== chatWindow ||
       !bucket.isChatWindowLoading ||
       !bucket.hasLoadedTail ||
-      session.chatFilter !== "all" ||
+      shownChatFilter(session.chatFilter, waitingTabOffered && ui.showPendingPrompts) !== "all" ||
       session.chatSenderFilter.length ||
       !bucket.events.some((event) => event.id === chatWindow.centerEventId) ||
       (params.get("group") && params.get("group") !== selectedGroupId) ||
@@ -712,6 +711,7 @@ export function useChatTab({
     isChatWindowLoading,
     selectedGroupId,
     senders.length,
+    waitingTabOffered,
   ]);
 
   const handleContextReady = useCallback(() => {
@@ -735,7 +735,7 @@ export function useChatTab({
       bucket.chatWindow !== chatWindow ||
       bucket.isChatWindowLoading ||
       !bucket.hasLoadedTail ||
-      session.chatFilter !== "all" ||
+      shownChatFilter(session.chatFilter, waitingTabOffered && ui.showPendingPrompts) !== "all" ||
       session.chatSenderFilter.length ||
       !bucket.events.some((event) => event.id === chatWindow.centerEventId) ||
       (params.get("group") && params.get("group") !== selectedGroupId) ||
@@ -757,7 +757,14 @@ export function useChatTab({
           scrollRef?.current?.focus({ preventScroll: true });
         }
       });
-  }, [chatWindow, contextCenterInLive, exitChatWindow, scrollRef, selectedGroupId]);
+  }, [
+    chatWindow,
+    contextCenterInLive,
+    exitChatWindow,
+    scrollRef,
+    selectedGroupId,
+    waitingTabOffered,
+  ]);
   const onContextReady =
     inChatWindow &&
     !isChatWindowLoading &&
@@ -851,7 +858,7 @@ export function useChatTab({
       if (
         !atBottom ||
         !bucket.hasLoadedTail ||
-        session.chatFilter !== "all" ||
+        shownChatFilter(session.chatFilter, waitingTabOffered && ui.showPendingPrompts) !== "all" ||
         session.chatSenderFilter.length ||
         !contextTailInLive ||
         !bucket.events.some((event) => event.id === contextTailId)
@@ -891,6 +898,7 @@ export function useChatTab({
       loadMoreChatWindowAfter,
       scrollRef,
       selectedGroupId,
+      waitingTabOffered,
     ],
   );
   const onReachedContextEnd =
@@ -995,6 +1003,7 @@ export function useChatTab({
         ? normalizeReplyMessageMode(composerStateSnapshot.messageMode)
         : composerStateSnapshot.messageMode,
       localToTokensSnapshot,
+      !!replyTargetSnapshot?.toChet,
     );
     const groupMentionTokensSnapshot = composerGroupMentionTokens;
     const agentMentionTokensSnapshot = composerAgentMentionTokens;
@@ -1173,12 +1182,16 @@ export function useChatTab({
           setChatUnreadCount(selectedGroupId, 0);
         setChatMobileSurface(selectedGroupId, "messages");
       }
-      const currentSession = getChatSession(selectedGroupId, useUIStore.getState().chatSessions);
-      const currentSenders = currentSession.chatSenderFilter;
+      const ui = useUIStore.getState();
+      const currentSession = getChatSession(selectedGroupId, ui.chatSessions);
+      const currentFilter = shownChatFilter(
+        currentSession.chatFilter,
+        waitingTabOffered && ui.showPendingPrompts,
+      );
       if (
         sourceEvent?.id &&
         useGroupStore.getState().selectedGroupId === selectedGroupId &&
-        !matchesChatFilters(sourceEvent, currentSession.chatFilter, currentSenders)
+        !matchesChatFilters(sourceEvent, currentFilter, currentSession.chatSenderFilter)
       ) {
         const eventId = sourceEvent.id;
         showNotice({
@@ -1243,6 +1256,7 @@ export function useChatTab({
     composerRouteGroups,
     chatAtBottomRef,
     chatViewKey,
+    waitingTabOffered,
   ]);
 
   // ============ Return ============

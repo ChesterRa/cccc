@@ -4747,6 +4747,10 @@ Result:
 }
 ```
 
+When `dst_group_id` is validated, null or a blank string counts as absent;
+another non-string value fails with `invalid_args`. An already accepted ordinary
+send can be returned by its `client_id` lookup before this validation.
+
 With `question`, the message MUST use `message_mode="request_reply"`, address
 `user` alone after recipient normalization, come from a sender other than
 `user`, and have no destination Group, so that it is always one the user's
@@ -4913,7 +4917,9 @@ daemon-owned upload boundary for SDK clients; callers MUST NOT write directly
 to `state/blobs/` or manufacture attachment records.
 With `dst_group_id`, send those files to another Group on this instance through
 the existing `send_cross_group` path. CCCC Connect uses `connect_send_files`
-instead; `dst_instance_id` is not a selector for this operation.
+instead; `dst_instance_id` is not a selector for this operation. Null or blank
+`dst_group_id` is treated as absent; validation and duplicate handling follow
+the rules for `send` above.
 
 Args:
 ```ts
@@ -6117,6 +6123,8 @@ Notes:
   `assignee` and `attention`. `limit` (rows, default 50, 1..100) and `offset`
   (default 0) apply after the status filter; a caller paging on restarts from offset 0
   when `tasks_version` changes.
+- For MCP task lists, a null or blank `task_id` counts as omitted and list filters
+  remain in effect; a non-string, non-null value fails with `invalid_args`.
 - Filters are applied before pagination. Planned tasks sort newest-created first;
   other columns sort most-recently-updated first, with numeric task id as a stable
   tie-breaker.

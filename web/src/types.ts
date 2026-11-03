@@ -632,6 +632,8 @@ export type ReplyTarget = {
   eventId: string;
   by: string;
   text: string;
+  /** A reply to a message Chet wrote goes back to Chet, which has no Mail. */
+  toChet?: boolean;
   connectInstanceId?: string;
   remoteDstGroupId?: string;
   remoteDstTo?: string[];

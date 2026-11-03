@@ -2,6 +2,14 @@ import type { ChatFilter } from "../../stores/useUIStore";
 import type { ChatMessageData, LedgerEvent } from "../../types";
 import { projectMessageMode } from "../../utils/crossGroupRecipients";
 
+/**
+ * The filter a Group's messages show under. A stored Waiting for you filter shows every
+ * message where its tab is not offered: in a read-only exhibit, or while those prompts are off.
+ */
+export function shownChatFilter(stored: ChatFilter, waitingTabShown: boolean): ChatFilter {
+  return stored === "pending_user" && !waitingTabShown ? "all" : stored;
+}
+
 export function matchesChatFilters(
   event: LedgerEvent,
   kind: ChatFilter,

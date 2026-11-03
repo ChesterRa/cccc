@@ -116,6 +116,17 @@ it("moves a loaded target to live chat at its reading top and keeps new events v
   expect(chat.chatMessages.map((event) => event.id)).toContain("4");
 });
 
+it("moves a loaded target to live chat under a stored Waiting for you filter it does not show", async () => {
+  // No Waiting for you tab is offered here, as in an exhibit or with those prompts off, so the
+  // stored filter shows every message and the opened target joins the live list as usual.
+  await act(async () => useUIStore.getState().setChatFilter("a", "pending_user"));
+  expect(chat.chatFilter).toBe("all");
+  expect(chat.onContextReady).toBeTypeOf("function");
+  await act(async () => chat.onContextReady?.());
+  expect(chat.inChatWindow).toBe(false);
+  expect(chat.chatInitialScrollAnchorId).toBe("2");
+});
+
 it("does not turn an older target absent from the live tail into a jump", async () => {
   await act(async () =>
     useGroupStore.setState((state) => ({

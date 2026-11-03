@@ -1328,6 +1328,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   useLayoutEffect(() => {
     onScrollSnapshotRef.current = onScrollSnapshot;
   }, [onScrollSnapshot]);
+  const contextWindowRef = useRef(!!contextWindow);
+  useLayoutEffect(() => {
+    contextWindowRef.current = !!contextWindow;
+  }, [contextWindow]);
 
   useLayoutEffect(() => {
     return () => {
@@ -1346,7 +1350,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         snapshotFlushTimerRef.current = null;
       }
       const snapshot = captureScrollSnapshotRef.current() || latestSnapshotRef.current;
-      if (snapshot && engagedRef.current) {
+      // A message window's place is not the Group's: leaving it returns to the place the
+      // conversation had before it opened, or to the newest message.
+      if (snapshot && engagedRef.current && !contextWindowRef.current) {
         const currentGroupId = resetKey.split(":")[0];
         if (currentGroupId) {
           onScrollSnapshotRef.current?.(snapshot, currentGroupId);

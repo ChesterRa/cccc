@@ -5,6 +5,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { useComposerStore } from "../../stores/useComposerStore";
 import { useGroupStore } from "../../stores";
 import { useUIStore } from "../../stores/useUIStore";
+import type { ReplyTarget } from "../../types";
 import { ChatComposer } from "./ChatComposer";
 
 const voice = vi.hoisted(() => vi.fn());
@@ -16,9 +17,11 @@ vi.mock("./LazyVoiceSecretaryComposerControl", () => ({
 function Harness({
   mode = "send",
   initialTokens = [],
+  replyTarget = null,
 }: {
   mode?: "send" | "request_reply" | "mail";
   initialTokens?: string[];
+  replyTarget?: ReplyTarget;
 }) {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -34,7 +37,7 @@ function Harness({
       setDestGroupId={noop}
       composerGroupSettled
       busy=""
-      replyTarget={null}
+      replyTarget={replyTarget}
       onCancelReply={noop}
       quotedPresentationRef={null}
       onClearQuotedPresentationRef={noop}
@@ -179,6 +182,40 @@ it("says under the recipients why Send + Reply cannot go to @all, and clears it 
   } finally {
     await act(async () => root.unmount());
     useComposerStore.setState({ composerText: "" });
+    useGroupStore.setState({ refreshSettings: originalRefreshSettings });
+    host.remove();
+  }
+});
+
+it("answers Chet's message with Send when Mail is the saved preference", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useComposerStore.setState({ composerText: "hello" });
+  useUIStore.setState({ isWebAdmin: true });
+  const originalRefreshSettings = useGroupStore.getState().refreshSettings;
+  useGroupStore.setState({ refreshSettings: async () => {} });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    // A reply to Chet names no recipient; Chet has no Mail, so Mail is neither used nor offered.
+    await act(async () =>
+      root.render(
+        <Harness
+          mode="mail"
+          replyTarget={{ eventId: "chet-event", by: "Chet", text: "Done?", toChet: true }}
+        />,
+      ),
+    );
+    expect(host.querySelector("[data-composer-send-primary]")?.getAttribute("aria-label")).toBe(
+      "sendMessage",
+    );
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>("[data-composer-send-options]")?.click(),
+    );
+    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain("modeMail");
+  } finally {
+    await act(async () => root.unmount());
+    useUIStore.setState({ isWebAdmin: null });
     useGroupStore.setState({ refreshSettings: originalRefreshSettings });
     host.remove();
   }

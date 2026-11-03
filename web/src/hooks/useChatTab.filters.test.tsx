@@ -362,6 +362,18 @@ it("drops a stored Waiting for you filter while those prompts are off", async ()
   expect(chat.chatFilter).toBe("all");
   expect(getChatSession("a", useUIStore.getState().chatSessions).chatFilter).toBe("pending_user");
 
+  // Nor what the user sends: no notice that the sent message is hidden by the filter.
+  vi.mocked(api.sendMessage).mockResolvedValue({
+    ok: true,
+    result: { event: message("3", "user") },
+  });
+  await act(async () => useComposerStore.getState().setComposerText("hello"));
+  await act(async () => {
+    await chat.sendMessage();
+  });
+  expect(api.sendMessage).toHaveBeenCalledOnce();
+  expect(useUIStore.getState().notice?.message).not.toBe("sentOutsideChatFilter");
+
   await act(async () => useUIStore.getState().setShowPendingPrompts(true));
   expect(chat.chatFilter).toBe("pending_user");
   localStorage.removeItem("cccc-pending-prompts");

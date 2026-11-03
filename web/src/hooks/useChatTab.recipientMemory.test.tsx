@@ -104,6 +104,25 @@ describe("composer recipient isolation through actual send callbacks", () => {
     expect(useComposerStore.getState().preferredMessageMode).toBe("mail");
   });
 
+  it("answers Chet's message with Send while Mail stays the saved preference", async () => {
+    vi.mocked(api.replyMessage).mockResolvedValue({ ok: true, result: {} });
+    await act(async () => useComposerStore.getState().setMessageMode("mail"));
+    // A reply to Chet names no recipient; the daemon returns it to Chet, which has no Mail.
+    // Starting a reply selects Send; Mail chosen for it afterwards must not reach the daemon.
+    await act(async () => {
+      useComposerStore.getState().setToText("");
+      useComposerStore
+        .getState()
+        .setReplyTarget({ eventId: "chet-1", by: "Chet", text: "Done?", toChet: true });
+      useComposerStore.getState().setMessageMode("mail");
+    });
+    await act(async () => chat.sendMessage());
+    const call = vi.mocked(api.replyMessage).mock.calls[0];
+    expect(call.slice(0, 4)).toEqual(["g-a", "first message", [], "chet-1"]);
+    expect(call[8]).toBe("send");
+    expect(useComposerStore.getState().preferredMessageMode).toBe("mail");
+  });
+
   it("keeps a rejected Chet selector and shows the host's ambiguity error", async () => {
     vi.mocked(api.sendMessage).mockResolvedValue({
       ok: false,

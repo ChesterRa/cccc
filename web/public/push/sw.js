@@ -2,6 +2,9 @@
 const OPEN_MESSAGE = "cccc:push:open";
 // Some browsers only permit opening a window briefly after a notification click.
 const CLICK_TIMEOUT_MS = 650;
+// How long after that an open page still acts on the click (LATE_CLICK_MS in the page's
+// pushNotifications/navigation.ts). A slow window lookup is awaited until then.
+const LATE_CLICK_MS = 60_000;
 
 function identifier(value) {
   if (typeof value !== "string") return "";
@@ -101,29 +104,39 @@ function askClient(client, target, deadline) {
   });
 }
 
+// Focusing first helps resume a backgrounded mobile page before we send it the target. The
+// target goes to the page even once the click's time has passed, as long as the page would
+// still act on it: a page or browser slow to respond after the click reads it when it can.
+// The clock is checked each time because a timer can run late in a paused worker.
+async function showInPage(client, target, deadline) {
+  const current = () => Date.now() <= deadline + LATE_CLICK_MS;
+  if (!current()) return;
+  try {
+    await untilDeadline(client.focus(), Math.min(deadline, Date.now() + 200));
+  } catch {
+    // We can still message an already-open page if focusing is denied.
+  }
+  if (target && current()) await askClient(client, target, deadline);
+}
+
 async function openTarget(target) {
   const deadline = Date.now() + CLICK_TIMEOUT_MS;
-  const windows = await untilDeadline(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }),
-    deadline - 100,
-  );
-  // A failed or unfinished lookup does not prove that there is no existing
-  // app window; openWindow might reuse one and discard unsaved work.
-  if (!windows) return;
-  // matchAll orders windows by most recent focus. Focusing the first helps
-  // resume a backgrounded mobile page before we send it the target.
-  const client = windows.find(canReceiveNavigation);
-  if (client) {
-    try {
-      await untilDeadline(client.focus(), Math.min(deadline, Date.now() + 200));
-    } catch {
-      // We can still message an already-open page if focusing is denied.
-    }
-    if (target && Date.now() < deadline && (await askClient(client, target, deadline))) return;
-    // Even if focusing fails, openWindow can reuse this page and discard its
-    // unsaved work. The user can open the app and find the request there.
+  const lookup = self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  const windows = await untilDeadline(lookup, deadline - 100);
+  if (!windows) {
+    // A failed or unfinished lookup does not prove that there is no existing
+    // app window; openWindow might reuse one and discard unsaved work. A page
+    // the lookup finds later still gets the target.
+    const late = await untilDeadline(lookup, deadline + LATE_CLICK_MS);
+    const client = late?.find(canReceiveNavigation);
+    if (client) await showInPage(client, target, deadline);
     return;
   }
+  // matchAll orders windows by most recent focus. An open page never falls back to
+  // openWindow, even if focusing it fails: openWindow can reuse that page and discard
+  // its unsaved work.
+  const client = windows.find(canReceiveNavigation);
+  if (client) return showInPage(client, target, deadline);
   await self.clients.openWindow(targetUrl(target));
 }
 

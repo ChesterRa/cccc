@@ -200,8 +200,14 @@ fn task_action(
         if let Some(value) = group_id {
             request.insert("group_id".into(), value);
         }
-        if let Some(value) = args.remove("task_id") {
-            request.insert("task_id".into(), value);
+        let task_id = match args.remove("task_id") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) if value.trim().is_empty() => None,
+            Some(Value::String(value)) => Some(value),
+            Some(_) => return Err("invalid_args: task_id must be a string".into()),
+        };
+        if let Some(task_id) = task_id {
+            request.insert("task_id".into(), Value::String(task_id));
         } else {
             // Status, paging and the counts are applied to the summary rows (task_summary.rs);
             // the daemon filters by text, assignee and attention.

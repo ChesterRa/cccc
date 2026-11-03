@@ -598,7 +598,7 @@ it("reports a link whose Group list cannot be read without mentioning notificati
   expect(error).toHaveBeenCalledExactlyOnceWith("notifications.groupsUnavailableForLink");
 });
 
-it("acts on a click that reaches a waking page late, but not on a stale or older one", async () => {
+it("acts on a click that reaches the page late, but not on a stale or older one", async () => {
   const container = new EventTarget();
   Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: container });
   const groups = [{ group_id: "a" }, { group_id: "b" }, { group_id: "c" }] as GroupMeta[];
@@ -627,13 +627,14 @@ it("acts on a click that reaches a waking page late, but not on a stale or older
         deadline,
       ),
     );
-  // Past the worker's own deadline, as a frozen tab wakes: still taken.
-  await open("b", Date.now() - 3000);
+  // Half a minute past the worker's own deadline, as when the page or browser was slow to
+  // respond after the click: still taken.
+  await open("b", Date.now() - 30000);
   expect(message).toHaveBeenLastCalledWith("b", "in-b");
-  // Long past it: ignored.
-  await open("c", Date.now() - 60000);
+  // Over a minute past it: ignored.
+  await open("c", Date.now() - 61000);
   // Older than the click already taken: ignored.
-  await open("c", Date.now() - 5000);
+  await open("c", Date.now() - 35000);
   expect(message).toHaveBeenCalledOnce();
 });
 

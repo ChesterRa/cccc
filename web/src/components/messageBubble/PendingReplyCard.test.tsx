@@ -112,6 +112,32 @@ it("supports a plain request and refuses a blank answer", async () => {
   expect(onSubmit).toHaveBeenCalledExactlyOnceWith({ kind: "other", text: "Reply" });
 });
 
+it("sends the Other answer with Ctrl+Enter or ⌘+Enter, not while an input method composes", async () => {
+  const onSubmit = vi.fn();
+  await render({ question, state: "pending", onSubmit });
+  await act(async () => radios()[2]!.click());
+  const press = (init: KeyboardEventInit) =>
+    act(async () => {
+      host
+        .querySelector("textarea")!
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }),
+        );
+    });
+  await press({ ctrlKey: true });
+  expect(onSubmit).not.toHaveBeenCalled();
+  await changeText("見送り");
+  await press({});
+  await press({ ctrlKey: true, isComposing: true });
+  // Safari can report an input method's confirming Enter by keyCode 229 alone.
+  await press({ ctrlKey: true, keyCode: 229 } as KeyboardEventInit);
+  expect(onSubmit).not.toHaveBeenCalled();
+  await press({ ctrlKey: true });
+  expect(onSubmit).toHaveBeenCalledExactlyOnceWith({ kind: "other", text: "見送り" });
+  await press({ metaKey: true });
+  expect(onSubmit).toHaveBeenCalledTimes(2);
+});
+
 it("counts Unicode scalars without truncating an answer that exceeds the limit", async () => {
   const onSubmit = vi.fn();
   await render({ state: "pending", onSubmit });

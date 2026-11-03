@@ -518,8 +518,9 @@ A Group message to Chet appears in Chet's conversation with its sender, Group an
 **Open in Group** opens it there. Its text is read from the Group when the conversation loads: a
 long message is shortened and attachments stay in the Group. If the Group or the message was
 removed, or the Group was re-created, the entry says the message is no longer available. Group
-messages that Chet can take up are queued as turns of their own, and Chet is instructed to reply
-in the Group each came from; your typed or spoken requests go ahead of Group messages still
+messages that Chet can take up are queued as turns of their own, and Chet is instructed to answer
+questions and requests in the Group each came from, while an acknowledgement alone needs no reply;
+your typed or spoken requests go ahead of Group messages still
 waiting, and a Group turn already running is not interrupted. Once Chet has finished, the entry
 links the reply it finds in the Group, which **View reply** opens, or says that no reply is seen
 yet; a reply in the Group does not show that the sender has read it. A Group message whose

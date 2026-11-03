@@ -111,11 +111,20 @@ it("leaves a reply to Chet without recipients, naming Chet only for this Group's
     );
   expect(reply("gen-2")).toMatchObject({
     toText: "",
-    replyTarget: { eventId: "chet-event", by: "Chet" },
+    replyTarget: { eventId: "chet-event", by: "Chet", toChet: true },
   });
   // A copied or stale message keeps its bare principal, and still falls back to no one.
   expect(reply("gen-1")).toMatchObject({
     toText: "",
-    replyTarget: { eventId: "chet-event", by: "svc:chet" },
+    replyTarget: { eventId: "chet-event", by: "svc:chet", toChet: true },
   });
+  // A reply to anyone else can still go as Mail.
+  const other = buildReplyComposerState(
+    { id: "m1", kind: "chat.message", by: "peer", data: { text: "hi", to: ["user"] } },
+    "g_local",
+    [{ id: "peer" }] as never,
+    { default_send_to: "foreman" } as never,
+    "gen-2",
+  );
+  expect(other?.replyTarget.toChet).toBeUndefined();
 });

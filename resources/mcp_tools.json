@@ -613,7 +613,7 @@
         },
         "rel_path": {
           "type": "string",
-          "description": "Path for read/blob_path/info: a file relative to your effective workspace or a delivered attachment path such as state/blobs/<hash>. Images, PDF and PPTX files are detected from file content, including extensionless blobs."
+          "description": "Path for read/blob_path/info: a file relative to your effective workspace, an absolute path inside it, or a delivered attachment path such as state/blobs/<hash>. Images, PDF and PPTX files are detected from file content, including extensionless blobs."
         },
         "max_bytes": {
           "type": "integer",
@@ -2391,7 +2391,7 @@
   },
   {
     "name": "cccc_coordination",
-    "description": "Shared control-plane tool: action=get|update_brief|add_decision|add_handoff. get returns the brief, decisions, handoffs and task counts, with the tasks needing attention as summary rows, at most 10 per list; a longer list adds <list>_total, and cccc_task with attention lists them all.",
+    "description": "Shared control-plane tool: action=get|update_brief|add_decision|add_handoff. get returns the brief, decisions, handoffs and task counts, with the tasks needing attention as summary rows, at most 10 per list; a longer list adds <list>_total. For blocked, waiting_user or pending_handoffs, use cccc_task with attention=blocked, waiting_user or handoff respectively and page through the results.",
     "inputSchema": {
       "type": "object",
       "properties": {

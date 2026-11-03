@@ -241,8 +241,122 @@ describe("push-only service worker", () => {
         group_id: "g-1",
         event_id: "event-1",
       });
-      await vi.advanceTimersByTimeAsync(651);
+      // The lookup is awaited only as long as a page would still act on the click.
+      await vi.advanceTimersByTimeAsync(650 + 60_000);
       await completion;
+      expect(w.openWindow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands the target to an open page after focusing used up the click's time", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = worker();
+      const focus = vi.fn(() => new Promise(() => {}));
+      const postMessage = vi.fn();
+      w.matchAll.mockReturnValue(
+        new Promise((resolve) =>
+          setTimeout(() => resolve([{ url: "https://cccc.example/ui/", focus, postMessage }]), 500),
+        ),
+      );
+      const completion = click(w.handlers.get("notificationclick")!, {
+        group_id: "g-1",
+        event_id: "event-1",
+      });
+      await vi.advanceTimersByTimeAsync(800);
+      await completion;
+      expect(focus).toHaveBeenCalledOnce();
+      expect(postMessage).toHaveBeenCalledOnce();
+      expect(postMessage.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ type: "cccc:push:open", group_id: "g-1", event_id: "event-1" }),
+      );
+      expect(w.openWindow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hands the target to an open page that a slow lookup finds late", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = worker();
+      const focus = vi.fn().mockRejectedValue(new Error("focus denied"));
+      const postMessage = vi.fn();
+      w.matchAll.mockReturnValue(
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve([{ url: "https://cccc.example/ui/", focus, postMessage }]),
+            20_000,
+          ),
+        ),
+      );
+      const completion = click(w.handlers.get("notificationclick")!, {
+        group_id: "g-1",
+        event_id: "event-1",
+      });
+      await vi.advanceTimersByTimeAsync(20_001);
+      await completion;
+      expect(focus).toHaveBeenCalledOnce();
+      expect(postMessage).toHaveBeenCalledOnce();
+      expect(postMessage.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ type: "cccc:push:open", group_id: "g-1", event_id: "event-1" }),
+      );
+      expect(w.openWindow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves the page alone when the lookup ends after a page would act on the click", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = worker();
+      const focus = vi.fn().mockResolvedValue({});
+      const postMessage = vi.fn();
+      w.matchAll.mockReturnValue(
+        new Promise((resolve) =>
+          setTimeout(
+            () => resolve([{ url: "https://cccc.example/ui/", focus, postMessage }]),
+            650 + 60_000 + 1,
+          ),
+        ),
+      );
+      const completion = click(w.handlers.get("notificationclick")!, {
+        group_id: "g-1",
+        event_id: "event-1",
+      });
+      await vi.advanceTimersByTimeAsync(650 + 60_000 + 2);
+      await completion;
+      expect(focus).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalled();
+      expect(w.openWindow).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves the page alone when the clock passes the limit before a late lookup's timer runs", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = worker();
+      const focus = vi.fn().mockResolvedValue({});
+      const postMessage = vi.fn();
+      let finishLookup!: (clients: unknown[]) => void;
+      w.matchAll.mockReturnValue(new Promise((resolve) => (finishLookup = resolve)));
+      const completion = click(w.handlers.get("notificationclick")!, {
+        group_id: "g-1",
+        event_id: "event-1",
+      });
+      await vi.advanceTimersByTimeAsync(551);
+      // A paused worker resumes with the clock past the limit and its timer not yet run.
+      vi.setSystemTime(Date.now() + 61_000);
+      finishLookup([{ url: "https://cccc.example/ui/", focus, postMessage }]);
+      await vi.advanceTimersByTimeAsync(61_000);
+      await completion;
+      expect(focus).not.toHaveBeenCalled();
+      expect(postMessage).not.toHaveBeenCalled();
       expect(w.openWindow).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
