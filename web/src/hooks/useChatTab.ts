@@ -25,7 +25,6 @@ import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
 import { useConnectMentionGroups } from "./useConnectMentionGroups";
 import {
-  resolveControlledComposerMentionContext,
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
 } from "./composerGroupMentions";
@@ -38,6 +37,7 @@ import {
   buildComposerMentionSuggestions,
   type ComposerMentionKind,
 } from "../pages/chat/chatMentionSuggestions";
+import { useRemoteComposerMention } from "./useRemoteComposerMention";
 import {
   completeCanonicalOutboxReconciliation,
   reconcileCanonicalOutboxEvent,
@@ -82,6 +82,7 @@ interface UseChatTabOptions {
   mentionFilter?: string;
   mentionKind?: ComposerMentionKind;
   mentionActorScope?: "selected" | "destination";
+  mentionTriggerIndex?: number | null;
   /** Callback for when message is sent */
   onMessageSent?: () => void;
   /** Refs for composer interactions */
@@ -102,6 +103,7 @@ export function useChatTab({
   mentionFilter = "",
   mentionKind = "agent",
   mentionActorScope = "selected",
+  mentionTriggerIndex,
   onMessageSent,
   composerRef,
   fileInputRef,
@@ -371,18 +373,10 @@ export function useChatTab({
   );
   // Subscribe to the referenced target, not every composer keystroke. The
   // resolved snapshot is stable until the user changes mention context.
-  const remoteMention = useComposerStore(
-    useCallback(
-      (state) =>
-        mentionKind === "agent" && mentionActorScope === "destination"
-          ? resolveControlledComposerMentionContext({
-              text: state.composerText,
-              atIndex: state.composerText.lastIndexOf("@"),
-              tokens: state.composerGroupMentionTokens,
-            }).remote
-          : undefined,
-      [mentionKind, mentionActorScope],
-    ),
+  const remoteMention = useRemoteComposerMention(
+    mentionKind,
+    mentionActorScope,
+    mentionTriggerIndex,
   );
 
   // Message-body mentions are text helpers: @ autocompletes names/references, # adds delegation hints.

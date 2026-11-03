@@ -1,7 +1,19 @@
 import { classNames } from "../../utils/classNames";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
+import { MessageMentionText } from "./MessageMentionText";
+import { MarkdownMessageContent } from "./MarkdownMessageContent";
 
-function PlainMessageText({ text, className }: { text: string; className?: string }) {
+function PlainMessageText({
+  text,
+  className,
+  knownTokens,
+  animate,
+}: {
+  text: string;
+  className?: string;
+  knownTokens: string[];
+  animate: boolean;
+}) {
   return (
     <div
       className={classNames(
@@ -9,7 +21,7 @@ function PlainMessageText({ text, className }: { text: string; className?: strin
         className,
       )}
     >
-      {text}
+      <MessageMentionText text={text} knownTokens={knownTokens} animate={animate} />
     </div>
   );
 }
@@ -18,18 +30,53 @@ export function MessageContent(props: {
   fallbackText: string;
   shouldRenderMarkdown: boolean;
   isDark: boolean;
+  knownTokens: string[];
+  animateMentions: boolean;
 }) {
   if (!props.shouldRenderMarkdown) {
-    return <PlainMessageText text={props.fallbackText} className="max-w-full" />;
+    return (
+      <PlainMessageText
+        text={props.fallbackText}
+        className="max-w-full"
+        knownTokens={props.knownTokens}
+        animate={props.animateMentions}
+      />
+    );
+  }
+  if (!/[@#]/u.test(props.fallbackText)) {
+    return (
+      <LazyMarkdownRenderer
+        content={props.fallbackText}
+        isDark={props.isDark}
+        invertText={false}
+        enableMermaid
+        className="max-w-full break-words text-[var(--color-text-primary)] [overflow-wrap:anywhere]"
+        fallback={
+          <PlainMessageText
+            text={props.fallbackText}
+            className="max-w-full"
+            knownTokens={props.knownTokens}
+            animate={props.animateMentions}
+          />
+        }
+      />
+    );
   }
   return (
-    <LazyMarkdownRenderer
-      content={props.fallbackText}
+    <MarkdownMessageContent
+      text={props.fallbackText}
       isDark={props.isDark}
-      invertText={false}
+      knownTokens={props.knownTokens}
+      animate={props.animateMentions}
       enableMermaid
-      className="max-w-full break-words text-[var(--color-text-primary)] [overflow-wrap:anywhere]"
-      fallback={<PlainMessageText text={props.fallbackText} className="max-w-full" />}
+      fallback={
+        <PlainMessageText
+          text={props.fallbackText}
+          className="max-w-full"
+          knownTokens={props.knownTokens}
+          animate={props.animateMentions}
+        />
+      }
     />
   );
 }

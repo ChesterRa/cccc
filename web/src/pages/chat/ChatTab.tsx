@@ -229,6 +229,7 @@ export function ChatTab({
 }: ChatTabProps) {
   const shortTouchViewport = useShortTouchViewport();
   const [composerInputFocused, setComposerInputFocused] = useState(false);
+  const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);
   const [inlineReplyEditor, setInlineReplyEditor] = useState<string | null>(null);
   const updateInlineReplyFocus = useCallback((editorId: string, focused: boolean) => {
     setInlineReplyEditor((current) => (focused ? editorId : current === editorId ? null : current));
@@ -360,6 +361,7 @@ export function ChatTab({
     mentionFilter,
     mentionKind,
     mentionActorScope,
+    mentionTriggerIndex,
     composerRef,
     fileInputRef,
     chatAtBottomRef,
@@ -1391,6 +1393,7 @@ export function ChatTab({
                       setMentionKind={setMentionKind}
                       setMentionActorScope={setMentionActorScope}
                       setMentionTargetGroupId={setMentionTargetGroupId}
+                      setMentionTriggerIndex={setMentionTriggerIndex}
                       slashCommands={slashCommands}
                     />
                   ) : null}

@@ -200,7 +200,8 @@ async fn free_port() -> u16 {
 }
 
 async fn wait_for_port(port: u16) {
-    for _ in 0..200 {
+    // Debug builds can take several seconds to start under load.
+    for _ in 0..2_000 {
         if tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .is_ok()

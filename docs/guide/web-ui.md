@@ -1109,12 +1109,18 @@ small diagrams expand to the available canvas while large diagrams remain scroll
 
 ### @Mentions
 
-Type `@` to trigger autocomplete:
+Type `@` for an Actor or `#` for a Group at the cursor, including in the middle of a message.
+Choosing a suggestion keeps the text after the cursor. Selected references are highlighted in the
+composer and in displayed messages; links, email addresses, and code keep their normal formatting.
+Message-body references provide context rather than changing the recipient controls. A `#` Group
+reference is a delegation hint, not a direct cross-Group send.
 
-- `@all` - Broadcast to all agents; use for announcements or urgent shared constraints, not default task dispatch
-- `@foreman` - Ask the coordinator to plan, route, or summarize work
-- `@peers` - Send to all peers
-- `@<actor_id>` - Send to a specific agent for targeted work
+Available Actor references include:
+
+- `@all` - Reference all agents; reserve broadcasts for announcements or urgent shared constraints
+- `@foreman` - Reference the coordinator for planning, routing, or a summary
+- `@peers` - Reference all peers
+- `@<actor_id>` - Reference a specific agent for targeted work
 
 For concrete delegated work that needs an owner, done criterion, evidence, handoff, or acceptance trail, use task-backed delegation. In chat it appears as a linked task chip; ordinary messages remain the right path for quick questions and discussion.
 
