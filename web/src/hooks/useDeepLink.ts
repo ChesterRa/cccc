@@ -6,6 +6,7 @@ import { useRef, useEffect, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { GroupMeta } from "../types";
 import { apiJson } from "../services/api/base";
+import { useUIStore } from "../stores/useUIStore";
 import {
   isPushWorker,
   parsePushMessageTarget,
@@ -133,6 +134,8 @@ export function useDeepLink({
   const navigateToMessage = useCallback(
     (gid: string, eid: string) => {
       lookupVersionRef.current += 1;
+      // On a phone the Group list is a drawer over the chat, which the message must not hide.
+      useUIStore.getState().setSidebarOpen(false);
       // Update URL
       const url = new URL(window.location.href);
       url.searchParams.set("group", gid);

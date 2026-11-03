@@ -14,21 +14,31 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, sep } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
+import type { ReactElement } from "react";
+import * as Icons from "./Icons";
 import {
-  ArrowDownIcon,
   ConnectMonitorIcon,
   GroupArchiveIcon,
   GroupArchiveRestoreIcon,
   GroupDeleteIcon,
   LcdIcon,
   LocalSessionsIcon,
-  ScrollLatestIcon,
   SearchIcon,
   WorkGridIcon,
   WorkMessagesIcon,
 } from "./Icons";
+
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return sourceFiles(path);
+    return entry.name.endsWith(".tsx") && !entry.name.endsWith(".test.tsx") ? [path] : [];
+  });
+}
 
 function svg(markup: string) {
   const host = document.createElement("div");
@@ -117,13 +127,34 @@ describe("LCD icon adaptation", () => {
     expect(adapted.outerHTML).toBe(original.outerHTML);
   });
 
-  it("adds a pixel arrow to the latest-message action without changing the classic icon", () => {
-    const adapted = svg(renderToStaticMarkup(<ScrollLatestIcon aria-hidden="true" />));
-    expect(adapted.querySelectorAll(":scope > [data-lcd-glyph]")).toHaveLength(1);
-    adapted.querySelector(":scope > [data-lcd-glyph]")?.remove();
-    adapted.removeAttribute("data-lcd-icon");
-    const existing = svg(renderToStaticMarkup(<ArrowDownIcon aria-hidden="true" />));
-    expect(adapted.outerHTML).toBe(existing.outerHTML);
+  it("gives every exported icon a pixel glyph", () => {
+    const missing = Object.entries(Icons).flatMap(([name, Icon]) => {
+      if (name === "LcdIcon") return [];
+      const Component = Icon as (props: object) => ReactElement;
+      const adapted = svg(renderToStaticMarkup(<Component />));
+      return adapted.querySelectorAll(":scope > [data-lcd-glyph]").length === 1 ? [] : [name];
+    });
+    expect(missing).toEqual([]);
+  });
+
+  it("renders no Lucide icon directly, so each one keeps its pixel glyph", () => {
+    const src = join(process.cwd(), "src");
+    const direct = sourceFiles(src).flatMap((file) => {
+      if (file.endsWith(`components${sep}Icons.tsx`)) return [];
+      const text = readFileSync(file, "utf8");
+      return [...text.matchAll(/import \{([^}]*)\} from "lucide-react"/g)]
+        .flatMap(([, names]) => names.split(","))
+        .map(
+          (name) =>
+            name
+              .trim()
+              .split(/\s+as\s+/)
+              .pop() ?? "",
+        )
+        .filter((name) => /^[A-Z]\w*$/.test(name) && new RegExp(`<${name}[\\s/>]`).test(text))
+        .map((name) => `${file.slice(src.length)}: <${name}>`);
+    });
+    expect(direct).toEqual([]);
   });
 
   it("preserves the compact view switch's original SVG attributes", () => {

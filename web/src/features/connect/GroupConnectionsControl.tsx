@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../../com
 import type { GroupMeta } from "../../types";
 import { AccountGroupConnectionsPanel } from "./AccountGroupConnectionsPanel";
 import { Cable, Globe2 } from "lucide-react";
+import { LcdIcon } from "../../components/Icons";
 
 export function GroupConnectionsControl({
   enabled,
@@ -168,9 +169,19 @@ export function GroupConnectionsPanel(props: {
               onClick={() => setMode(option)}
             >
               {option === "account" ? (
-                <Globe2 aria-hidden="true" className="h-4 w-4 shrink-0" />
+                <LcdIcon
+                  icon={Globe2}
+                  glyph="globe"
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0"
+                />
               ) : (
-                <Cable aria-hidden="true" className="h-4 w-4 shrink-0" />
+                <LcdIcon
+                  icon={Cable}
+                  glyph="link"
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0"
+                />
               )}
               <span className="min-w-0 space-y-1 [overflow-wrap:anywhere]">
                 <span className="block">

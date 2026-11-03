@@ -1,6 +1,6 @@
 import { useState, type ComponentProps } from "react";
 import { FolderPlus } from "lucide-react";
-import { GroupArchiveIcon } from "../../../components/Icons";
+import { GroupArchiveIcon, LcdIcon } from "../../../components/Icons";
 import { Button } from "../../../components/ui/button";
 import { IconButton } from "../../../components/ui/icon-button";
 import type { AssistantVoiceDocument } from "../../../types";
@@ -65,7 +65,7 @@ function Library(props: Props) {
             disabled={busy}
             onClick={() => setDialog({ kind: "create" })}
           >
-            <FolderPlus size={16} />
+            <LcdIcon icon={FolderPlus} glyph="folder-plus" size={16} />
           </IconButton>
         }
         navigation={

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Check } from "lucide-react";
 import { classNames } from "../../utils/classNames";
 import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover";
+import { LcdIcon } from "../Icons";
 
 export type WorkspaceMenuItem = {
   key: string;
@@ -110,7 +111,14 @@ export function WorkspaceEntryMenu({ x, y, anchor, label, items, isDark, onClose
               className={className}
             >
               <span className="flex-1">{item.label}</span>
-              {item.checked && <Check aria-hidden="true" className="h-4 w-4 shrink-0" />}
+              {item.checked && (
+                <LcdIcon
+                  icon={Check}
+                  glyph="check"
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0"
+                />
+              )}
             </button>
           );
         })}

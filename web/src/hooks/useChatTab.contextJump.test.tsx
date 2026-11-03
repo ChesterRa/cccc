@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { useGroupStore, useUIStore } from "../stores";
+import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION } from "../stores/useUIStore";
 import { EMPTY_CHAT_BUCKET } from "../stores/groupStoreCore";
 import type { Actor, GroupMeta, LedgerEvent } from "../types";
 import { useChatTab } from "./useChatTab";
@@ -99,12 +100,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-it("moves a loaded target to live chat at the same height and keeps new events visible", async () => {
+it("moves a loaded target to live chat at its reading top and keeps new events visible", async () => {
   expect(chat.onContextReady).toBeTypeOf("function");
   await act(async () => chat.onContextReady?.());
   expect(chat.inChatWindow).toBe(false);
   expect(chat.chatInitialScrollAnchorId).toBe("2");
-  expect(chat.chatInitialScrollAnchorOffsetPx).toBe(-140);
+  // Not the context's own height: on a phone the live list starts under the chrome.
+  expect(chat.chatInitialScrollAnchorOffsetPx).toBeUndefined();
   expect(chat.chatInitialScrollHighlight).toBe(true);
   expect(new URLSearchParams(location.search).has("event")).toBe(false);
   await act(async () => useGroupStore.getState().appendEvent(message("4"), "a"));
@@ -166,6 +168,36 @@ it("opens an already loaded message without waiting for a context fetch", async 
   expect(chat.inChatWindow).toBe(false);
   expect(chat.chatInitialScrollAnchorId).toBe("2");
   expect(useGroupStore.getState().chatByGroup.a.isChatWindowLoading).toBe(false);
+});
+
+it("opens a loaded message at the reading top, not at another place the chat saved", async () => {
+  await act(async () =>
+    useUIStore
+      .getState()
+      .setChatScrollSnapshot("a", {
+        coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+        mode: "detached",
+        anchorId: "1",
+        offsetPx: 55,
+        scrollTop: 400,
+        updatedAt: Date.now(),
+      }),
+  );
+  await act(async () =>
+    useGroupStore.setState((state) => ({
+      chatByGroup: {
+        ...state.chatByGroup,
+        a: {
+          ...state.chatByGroup.a,
+          chatWindow: { ...groupWindow(), events: [] },
+          isChatWindowLoading: true,
+        },
+      },
+    })),
+  );
+  expect(chat.chatInitialScrollAnchorId).toBe("2");
+  // No height of its own: the list opens it at the reading top, below any chrome over it.
+  expect(chat.chatInitialScrollAnchorOffsetPx).toBeUndefined();
 });
 
 it("returns from an older context without acknowledging unread messages until live bottom", async () => {

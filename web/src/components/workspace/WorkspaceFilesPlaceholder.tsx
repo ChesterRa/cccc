@@ -2,6 +2,7 @@ import { FolderOpen } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../ui/button";
 import { LcdSpinner } from "../LcdSpinner";
+import { LcdIcon } from "../Icons";
 
 type Props = { loading: boolean; showIgnored: boolean; onShowIgnored: () => void };
 
@@ -21,7 +22,9 @@ export function WorkspaceFilesPlaceholder({ loading, showIgnored, onShowIgnored 
         </>
       ) : (
         <>
-          <FolderOpen
+          <LcdIcon
+            icon={FolderOpen}
+            glyph="folder"
             aria-hidden="true"
             className="mb-3 h-7 w-7 text-[var(--color-text-tertiary)]"
           />

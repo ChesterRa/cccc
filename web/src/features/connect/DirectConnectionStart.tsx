@@ -1,6 +1,7 @@
 import { Cable } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
+import { LcdIcon } from "../../components/Icons";
 
 export function DirectConnectionStart({
   empty,
@@ -37,7 +38,7 @@ export function DirectConnectionStart({
         aria-hidden="true"
         className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
       >
-        <Cable className="h-6 w-6" />
+        <LcdIcon icon={Cable} glyph="link" className="h-6 w-6" />
       </div>
       <div className="space-y-1.5">
         <h3 className="text-base font-semibold">{t("direct.startTitle")}</h3>

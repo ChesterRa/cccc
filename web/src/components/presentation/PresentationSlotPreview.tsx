@@ -2,6 +2,7 @@ import { useState } from "react";
 import { File, FileText, Globe, Image, Table } from "lucide-react";
 import type { PresentationSlot } from "../../types";
 import { getPresentationReferenceHref } from "./presentationAssets";
+import { LcdIcon } from "../Icons";
 
 /** Overview previews never mount a live browser, PDF viewer or rich document renderer. */
 export function PresentationSlotPreview({
@@ -14,16 +15,16 @@ export function PresentationSlotPreview({
   const [imageFailed, setImageFailed] = useState(false);
   const card = slot.card;
   if (!card) return null;
-  const Icon =
+  const [Icon, glyph] =
     card.card_type === "image"
-      ? Image
+      ? ([Image, "image"] as const)
       : card.card_type === "markdown"
-        ? FileText
+        ? ([FileText, "file-text"] as const)
         : card.card_type === "table"
-          ? Table
+          ? ([Table, "grid-3x3"] as const)
           : card.card_type === "web_preview"
-            ? Globe
-            : File;
+            ? ([Globe, "globe"] as const)
+            : ([File, "file"] as const);
   if (card.card_type === "image" && groupId && !imageFailed) {
     return (
       <img
@@ -36,5 +37,7 @@ export function PresentationSlotPreview({
       />
     );
   }
-  return <Icon className="h-5 w-5 text-[var(--color-text-secondary)]" />;
+  return (
+    <LcdIcon icon={Icon} glyph={glyph} className="h-5 w-5 text-[var(--color-text-secondary)]" />
+  );
 }

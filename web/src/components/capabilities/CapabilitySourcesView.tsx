@@ -9,6 +9,7 @@ import {
 } from "./capabilityCenterModel";
 import { CapabilitySourceInstances } from "./CapabilitySourceInstances";
 import { HoverTooltip } from "../HoverTooltip";
+import { LcdIcon } from "../Icons";
 
 function SourceStatusBadge({ enabled }: { enabled: boolean }) {
   const { t } = useTranslation("settings");
@@ -110,7 +111,12 @@ export function SourcesView(props: {
                         onClick={() => props.onToggle(sourceId, !enabled)}
                         data-lcd-key
                       >
-                        <ToggleIcon size={14} aria-hidden="true" />
+                        <LcdIcon
+                          icon={ToggleIcon}
+                          glyph={enabled ? "power-off" : "power"}
+                          size={14}
+                          aria-hidden="true"
+                        />
                       </button>
                     </span>
                   )}
@@ -131,7 +137,7 @@ export function SourcesView(props: {
                           onClick={() => props.onDelete(source)}
                           data-status-tone="error"
                         >
-                          <Trash2 size={14} aria-hidden="true" />
+                          <LcdIcon icon={Trash2} glyph="trash" size={14} aria-hidden="true" />
                         </button>
                       </span>
                     )}

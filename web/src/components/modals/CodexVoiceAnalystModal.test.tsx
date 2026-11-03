@@ -131,6 +131,23 @@ describe("CodexVoiceAnalystModal", () => {
     expect(dot).not.toContain("animate-pulse");
   });
 
+  it("shows Chet's head in the title, moving while Chet works as in the dock", () => {
+    const markup = (working: boolean, analystWorking: boolean) =>
+      renderToStaticMarkup(
+        <CodexVoiceAnalystModal
+          chet={chetConversationStub({ working })}
+          isOpen
+          isDark={false}
+          isSmallScreen={false}
+          controller={controller({ analystWorking })}
+          onClose={vi.fn()}
+        />,
+      );
+    expect(markup(false, false)).toContain('data-chet-head="idle"');
+    expect(markup(true, false)).toContain('data-chet-head="working"');
+    expect(markup(false, true)).toContain('data-chet-head="working"');
+  });
+
   it.each([
     { provider: "grok" as const, voice: "eve", name: "Eve" },
     { provider: "codex" as const, voice: "himari", name: "Himari" },

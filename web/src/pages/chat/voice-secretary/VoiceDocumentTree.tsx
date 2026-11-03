@@ -29,6 +29,7 @@ import {
   type DragItem,
   type RootItem,
 } from "./voiceDocumentTreeModel";
+import { LcdIcon } from "../../../components/Icons";
 
 type Props = {
   ctx: VoiceDocumentRowContext;
@@ -180,9 +181,21 @@ export function VoiceDocumentTree(props: Props) {
             )}
           >
             {"folder" in dragging ? (
-              <Folder size={15} aria-hidden="true" className="shrink-0 opacity-70" />
+              <LcdIcon
+                icon={Folder}
+                glyph="folder"
+                size={15}
+                aria-hidden="true"
+                className="shrink-0 opacity-70"
+              />
             ) : (
-              <FileText size={15} aria-hidden="true" className="shrink-0 opacity-60" />
+              <LcdIcon
+                icon={FileText}
+                glyph="file-text"
+                size={15}
+                aria-hidden="true"
+                className="shrink-0 opacity-60"
+              />
             )}
             <span className="truncate">
               {"folder" in dragging

@@ -11,6 +11,7 @@ import {
   setWorkspaceDirty,
   useWorkspaceNavigation,
 } from "../stores/workspaceNavigation";
+import { useUIStore } from "../stores/useUIStore";
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const translate = vi.hoisted(
   () => (key: string, values?: { groupId?: string }) =>
@@ -191,6 +192,7 @@ it("opens a worker notification without discarding unsaved work", async () => {
   root = createRoot(document.createElement("div"));
   await act(async () => root.render(<Probe />));
   setWorkspaceDirty(owner, true);
+  useUIStore.getState().setSidebarOpen(true);
   const data = { type: "cccc:push:open", v: 1, group_id: "a", event_id: "message-1" };
   let ack!: ReturnType<typeof vi.fn>;
   await act(async () => {
@@ -200,14 +202,46 @@ it("opens a worker notification without discarding unsaved work", async () => {
   expect(message).not.toHaveBeenCalled();
   expect(location.search).toBe("?group=a");
   expect(useWorkspaceNavigation.getState().pending).not.toBeNull();
+  // Nothing moves until the reader lets the unsaved work go: the phone's Group list stays open.
+  expect(useUIStore.getState().sidebarOpen).toBe(true);
   await act(async () => finishWorkspaceNavigation(false));
   expect(message).not.toHaveBeenCalled();
+  expect(useUIStore.getState().sidebarOpen).toBe(true);
 
   await act(async () => pushMessage(container, data));
   await act(async () => finishWorkspaceNavigation(true));
   expect(message).toHaveBeenCalledExactlyOnceWith("a", "message-1");
+  expect(useUIStore.getState().sidebarOpen).toBe(false);
   expect(new URLSearchParams(location.search).get("event")).toBe("message-1");
   expect(error).not.toHaveBeenCalled();
+});
+
+it("closes the phone's Group list when a notification opens a message in an open page", async () => {
+  const container = new EventTarget();
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: container });
+  window.history.replaceState({}, "", "/?group=a");
+  useUIStore.getState().setSidebarOpen(true);
+  const message = vi.fn().mockResolvedValue(undefined);
+  function Probe() {
+    const [id, setId] = useState("a");
+    useDeepLink({
+      groups: [{ group_id: "a" }, { group_id: "b" }] as GroupMeta[],
+      groupsLoaded: true,
+      selectedGroupId: id,
+      setSelectedGroupId: setId,
+      setActiveTab: vi.fn(),
+      openChatWindow: message,
+      showError: vi.fn(),
+    });
+    return null;
+  }
+  root = createRoot(document.createElement("div"));
+  await act(async () => root.render(<Probe />));
+  await act(async () =>
+    pushMessage(container, { type: "cccc:push:open", v: 1, group_id: "a", event_id: "m-1" }),
+  );
+  expect(message).toHaveBeenCalledExactlyOnceWith("a", "m-1");
+  expect(useUIStore.getState().sidebarOpen).toBe(false);
 });
 
 it("accepts only the dedicated worker and rechecks Group access before navigation", async () => {

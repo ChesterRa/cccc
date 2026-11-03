@@ -137,7 +137,8 @@ function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRaw
     const status =
       normalizeText(data.status).toLowerCase() || eventType.replace("headless.activity.", "");
     live = status !== "completed";
-    tone = status === "completed" ? "success" : "info";
+    // Activity completion says the call ended, not whether it succeeded.
+    tone = status === "completed" ? "neutral" : "info";
   } else if (eventType.startsWith("headless.turn.") || eventType.startsWith("headless.control.")) {
     const isFailed = eventType.endsWith(".failed");
     const isWaiting =

@@ -2,6 +2,7 @@ import { ExternalLink, Link2, RefreshCw, TriangleAlert } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { useAccountGroupConnections } from "./useAccountGroupConnections";
+import { LcdIcon } from "../../components/Icons";
 
 /** One status area and one primary action, shared by the dialog and settings. */
 export function AccountGroupConnectionsPanel({
@@ -40,7 +41,12 @@ export function AccountGroupConnectionsPanel({
   ) : (
     <Button disabled={!canSelect} onClick={() => void select()} className="w-full sm:w-auto">
       {t(invitation ? "groupConnections.accept" : "groupConnections.invite")}
-      <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+      <LcdIcon
+        icon={ExternalLink}
+        glyph="external-link"
+        aria-hidden="true"
+        className="h-3.5 w-3.5"
+      />
     </Button>
   );
   return (
@@ -60,7 +66,11 @@ export function AccountGroupConnectionsPanel({
               aria-hidden="true"
               className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
             >
-              {failed ? <TriangleAlert className="h-6 w-6" /> : <Link2 className="h-6 w-6" />}
+              {failed ? (
+                <LcdIcon icon={TriangleAlert} glyph="warning-diamond" className="h-6 w-6" />
+              ) : (
+                <LcdIcon icon={Link2} glyph="link" className="h-6 w-6" />
+              )}
             </div>
             <div className="min-w-0 w-full max-w-sm space-y-4">
               <div
@@ -171,7 +181,7 @@ export function AccountGroupConnectionsPanel({
             disabled={busy}
             onClick={refresh}
           >
-            <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
+            <LcdIcon icon={RefreshCw} glyph="reload" aria-hidden="true" className="h-3.5 w-3.5" />
             {t("groupConnections.refresh")}
           </Button>
           {value?.checked_at && (
@@ -190,7 +200,12 @@ export function AccountGroupConnectionsPanel({
             rel="noopener noreferrer"
           >
             {t("groupConnections.manage")}
-            <ExternalLink aria-hidden="true" className="h-3 w-3" />
+            <LcdIcon
+              icon={ExternalLink}
+              glyph="external-link"
+              aria-hidden="true"
+              className="h-3 w-3"
+            />
           </a>
         )}
       </div>

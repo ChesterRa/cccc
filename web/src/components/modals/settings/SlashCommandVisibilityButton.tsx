@@ -1,6 +1,7 @@
 import { Eye, EyeOff } from "lucide-react";
 
 import { secondaryButtonClass } from "./types";
+import { LcdIcon } from "../../Icons";
 
 export function SlashCommandVisibilityButton(props: {
   hidden: boolean;
@@ -30,7 +31,7 @@ export function SlashCommandVisibilityButton(props: {
       aria-label={actionLabel}
       onClick={() => onToggle(hidden)}
     >
-      <Icon size={14} aria-hidden="true" />
+      <LcdIcon icon={Icon} glyph={hidden ? "eye-off" : "eye"} size={14} aria-hidden="true" />
       <span>{label}</span>
     </button>
   );

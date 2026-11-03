@@ -1,9 +1,11 @@
 import { FolderIcon, LinkIcon, UploadIcon } from "lucide-react";
 import { classNames } from "../../utils/classNames";
+import { LcdIcon } from "../Icons";
 
 export type PresentationPinSource = "url" | "workspace" | "upload";
 
 const SOURCE_ICONS = { url: LinkIcon, workspace: FolderIcon, upload: UploadIcon };
+const SOURCE_GLYPHS = { url: "link", workspace: "folder", upload: "upload" } as const;
 
 /** Radio cards for where a pinned card comes from: stacked on phones, a row on wider screens. */
 export function PresentationPinSourcePicker({
@@ -53,7 +55,7 @@ export function PresentationPinSourcePicker({
                 )}
                 aria-hidden="true"
               >
-                <Icon className="h-4 w-4" />
+                <LcdIcon icon={Icon} glyph={SOURCE_GLYPHS[source]} className="h-4 w-4" />
               </span>
               <span
                 className={classNames(

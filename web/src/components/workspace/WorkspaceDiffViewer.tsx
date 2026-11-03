@@ -6,6 +6,7 @@ import "./workspaceDiff.css";
 import { SidePanelButton, SidePanelHeader } from "../layout/SidePanelHeader";
 import { RefreshCw, File } from "lucide-react";
 import type { WorkspaceFilesController } from "./useWorkspaceFiles";
+import { LcdIcon } from "../Icons";
 
 export function WorkspaceDiffViewer({ files }: { files: WorkspaceFilesController }) {
   const { t } = useTranslation("chat");
@@ -48,7 +49,7 @@ export function WorkspaceDiffViewer({ files }: { files: WorkspaceFilesController
               void files.locatePath(selection.path);
             }}
           >
-            <File />
+            <LcdIcon icon={File} glyph="file" />
           </SidePanelButton>
         )}
         <SidePanelButton
@@ -56,7 +57,7 @@ export function WorkspaceDiffViewer({ files }: { files: WorkspaceFilesController
           onClick={files.refresh}
           disabled={changes.patchLoading}
         >
-          <RefreshCw />
+          <LcdIcon icon={RefreshCw} glyph="reload" />
         </SidePanelButton>
       </SidePanelHeader>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--glass-border-subtle)] px-3 py-2 text-xs">

@@ -18,6 +18,7 @@ import {
   EditIcon,
   ExpandIcon,
   ImageIcon,
+  LcdIcon,
   MessageSquareIcon,
   MessageSquareTextIcon,
   MoreHorizontalIcon,
@@ -1390,7 +1391,7 @@ function PresentationViewer({
           ) : null}
           {onCollapse && (
             <SidePanelButton title={t("presentationCompactSlots")} onClick={onCollapse}>
-              <PanelRightClose />
+              <LcdIcon icon={PanelRightClose} glyph="square-chevron-right" />
             </SidePanelButton>
           )}
           {onOpenWindow && (

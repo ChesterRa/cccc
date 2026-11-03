@@ -484,3 +484,75 @@
 :root[data-ui-style="lcd"][data-lcd-motion="off"] [data-lcd-scope] .animate-pulse {
   animation: none;
 }
+
+/* ---- Chet's head (features/chet/ChetHead.tsx) ----
+   Four frames stacked in one SVG, one shown at a time. Idle: the rest face, which blinks
+   for 150 ms every 6 s. Working: the eyes glance left, then right, 0.8 s each.
+   Still form: the face of the current state, without the blink or the glance. */
+:root[data-ui-style="lcd"] .chet-head > g:not([data-frame="rest"]),
+:root[data-ui-style="lcd"] .chet-head[data-chet-head="working"] > [data-frame="rest"] {
+  opacity: 0;
+}
+
+:root[data-ui-style="lcd"] .chet-head[data-chet-head="idle"] > [data-frame="rest"] {
+  animation: chet-head-awake 6s steps(1, end) infinite;
+}
+
+:root[data-ui-style="lcd"] .chet-head[data-chet-head="idle"] > [data-frame="blink"] {
+  animation: chet-head-blink 6s steps(1, end) infinite;
+}
+
+:root[data-ui-style="lcd"] .chet-head[data-chet-head="working"] > [data-frame="work"] {
+  opacity: 1;
+  animation: chet-head-first-half 1.6s steps(1, end) infinite;
+}
+
+:root[data-ui-style="lcd"] .chet-head[data-chet-head="working"] > [data-frame="glance"] {
+  animation: chet-head-second-half 1.6s steps(1, end) infinite;
+}
+
+@keyframes chet-head-awake {
+  0% {
+    opacity: 1;
+  }
+
+  97.5% {
+    opacity: 0;
+  }
+}
+
+@keyframes chet-head-blink {
+  0% {
+    opacity: 0;
+  }
+
+  97.5% {
+    opacity: 1;
+  }
+}
+
+@keyframes chet-head-first-half {
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes chet-head-second-half {
+  0% {
+    opacity: 0;
+  }
+
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Outranks each frame's animation above: the same state attribute, plus the motion switch
+   and the element. */
+:root[data-ui-style="lcd"][data-lcd-motion="off"] .chet-head[data-chet-head] > g {
+  animation: none;
+}

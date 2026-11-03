@@ -70,21 +70,26 @@ describe("shouldAcceptLateScrollRestoration", () => {
 });
 
 describe("useInitialMessageScroll", () => {
-  async function open(engaged: () => boolean) {
+  async function open(
+    engaged: () => boolean,
+    place: { targetId?: string; anchorId?: string } = { anchorId: "m1" },
+    canHold: (anchor: { anchorId: string }) => boolean = () => true,
+  ) {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     const frames: Array<() => void> = [];
-    const begin = vi.fn(() => true);
+    const begin = vi.fn(canHold);
     const options = {
-      messages: [{ id: "m1", kind: "chat.message", by: "agent", data: { text: "m1" } }],
+      messages: [
+        { id: "m1", kind: "chat.message", by: "agent", data: { text: "m1" } },
+        { id: "m2", kind: "chat.message", by: "agent", data: { text: "m2" } },
+      ],
       didInitialScrollRef: { current: false },
       requestRef: { current: "" },
       reentryDeadlineRef: { current: Date.now() + 1_500 },
-      anchorId: "m1",
+      ...place,
       anchorOffsetPx: 40,
-      shouldVirtualize: false,
+      targetOffsetPx: -101,
       scheduleScroll: (action: () => void) => frames.push(action),
-      scrollToIndex: vi.fn(),
-      scrollToMessageAnchor: vi.fn(() => true),
       beginAnchorRestoration: begin,
       setAtBottom: vi.fn(),
       setFollowMode: vi.fn(),
@@ -105,6 +110,24 @@ describe("useInitialMessageScroll", () => {
   it("opens on the saved place a frame later", async () => {
     const { begin } = await open(() => false);
     expect(begin).toHaveBeenCalledExactlyOnceWith({ anchorId: "m1", offsetPx: 40 });
+  });
+
+  it("holds a message it was sent to at the reading top while the view settles", async () => {
+    const { begin } = await open(() => false, { targetId: "m2", anchorId: "m1" });
+    // The target, not the saved place, and held rather than scrolled to once.
+    expect(begin).toHaveBeenCalledExactlyOnceWith({ anchorId: "m2", offsetPx: -101 });
+  });
+
+  it("opens on the saved place when its target is not in the list", async () => {
+    const { begin } = await open(
+      () => false,
+      { targetId: "gone", anchorId: "m1" },
+      (anchor) => anchor.anchorId !== "gone",
+    );
+    expect(begin.mock.calls).toEqual([
+      [{ anchorId: "gone", offsetPx: -101 }],
+      [{ anchorId: "m1", offsetPx: 40 }],
+    ]);
   });
 
   it("leaves the view alone when the reader acts before that frame", async () => {

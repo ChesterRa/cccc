@@ -1,4 +1,5 @@
 import type { ReactNode, Ref } from "react";
+import { CloseIcon } from "../Icons";
 import { getModalOverlayStyle } from "./modalOverlayStyle";
 
 interface ModalFrameProps {
@@ -56,18 +57,7 @@ export function ModalFrame({
       aria-label={closeAriaLabel}
       data-modal-close
     >
-      {closeIcon || (
-        <svg
-          className="h-4 w-4"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2.5}
-          aria-hidden="true"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      )}
+      {closeIcon || <CloseIcon className="h-4 w-4" aria-hidden="true" />}
     </button>
   );
 

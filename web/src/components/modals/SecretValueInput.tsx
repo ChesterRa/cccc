@@ -1,6 +1,7 @@
 import { Eye, EyeOff } from "lucide-react";
 
 import { Input } from "../ui/input";
+import { LcdIcon } from "../Icons";
 
 interface SecretValueInputProps {
   id: string;
@@ -50,7 +51,12 @@ export function SecretValueInput({
         onClick={onToggleVisibility}
         className="absolute inset-y-0 right-1 my-auto grid h-9 w-9 place-items-center rounded-lg text-[var(--color-text-muted)] transition-colors hover:bg-[var(--glass-tab-bg)] hover:text-[var(--color-text-primary)] disabled:opacity-50"
       >
-        <VisibilityIcon size={16} aria-hidden="true" />
+        <LcdIcon
+          icon={VisibilityIcon}
+          glyph={visible ? "eye-off" : "eye"}
+          size={16}
+          aria-hidden="true"
+        />
       </button>
     </div>
   );

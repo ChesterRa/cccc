@@ -5,6 +5,7 @@ import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { readDirectInvitation } from "./directConnectionModel";
 import "./directInvitationInput.css";
+import { LcdIcon } from "../../components/Icons";
 
 export function DirectJoinForm({
   groupTitle,
@@ -70,7 +71,9 @@ export function DirectJoinForm({
                 {groupTitle}
               </p>
             </div>
-            <ArrowRight
+            <LcdIcon
+              icon={ArrowRight}
+              glyph="arrow-right"
               aria-hidden="true"
               className="h-4 w-4 rotate-90 text-[var(--color-text-tertiary)] sm:rotate-0"
             />
@@ -88,7 +91,12 @@ export function DirectJoinForm({
           </div>
           <div className="space-y-2 border-t border-[var(--glass-border-subtle)] px-4 py-3 text-xs text-[var(--color-text-secondary)]">
             <p className="flex min-w-0 items-start gap-2">
-              <Network aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <LcdIcon
+                icon={Network}
+                glyph="server"
+                aria-hidden="true"
+                className="mt-0.5 h-3.5 w-3.5 shrink-0"
+              />
               <span className="min-w-0 break-all font-mono">{preview.address}</span>
             </p>
             <p
@@ -96,7 +104,12 @@ export function DirectJoinForm({
               role={expired ? "alert" : undefined}
               className={`flex items-start gap-2 ${expired ? "text-[var(--color-danger)]" : ""}`}
             >
-              <Clock3 aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <LcdIcon
+                icon={Clock3}
+                glyph="clock"
+                aria-hidden="true"
+                className="mt-0.5 h-3.5 w-3.5 shrink-0"
+              />
               <span>
                 {expired
                   ? t("direct.expiredHint")
@@ -119,7 +132,7 @@ export function DirectJoinForm({
           disabled={busy || !preview || !!expired}
         >
           {t(busy ? "direct.requesting" : "direct.request")}
-          <ArrowRight aria-hidden="true" className="h-4 w-4" />
+          <LcdIcon icon={ArrowRight} glyph="arrow-right" aria-hidden="true" className="h-4 w-4" />
         </Button>
       </div>
     </form>

@@ -32,7 +32,7 @@ type ChatEmptyState = "ready" | "hydrating" | "business_empty" | "filtered_empty
 
 export function useChatMessageView(input: {
   selectedGroupId: string;
-  liveJump: { groupId: string; eventId: string; offsetPx: number; requestId: number } | null;
+  liveJump: { groupId: string; eventId: string; requestId: number } | null;
   events: LedgerEvent[];
   streamingEvents: LedgerEvent[];
   outboxEntries: Pick<OutboxEntry, "localId" | "event">[];
@@ -220,7 +220,8 @@ export function useChatMessageView(input: {
     chatMessages: displayedMessages,
     hasAnyChatMessages,
     chatInitialScrollAnchorId: liveJump?.eventId || initialScroll.anchorId,
-    chatInitialScrollAnchorOffsetPx: liveJump?.offsetPx ?? initialScroll.anchorOffsetPx,
+    // A jump opens at the reading top, never at another view's saved place.
+    chatInitialScrollAnchorOffsetPx: liveJump ? undefined : initialScroll.anchorOffsetPx,
     chatInitialScrollOffsetPx: initialScroll.scrollOffsetPx,
     chatInitialScrollHighlight: !!liveJump || initialScroll.highlight === true,
     liveJumpActive: !!liveJump,

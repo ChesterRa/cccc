@@ -211,16 +211,20 @@ function WorkspaceTreeRows({
                     : undefined
                 }
               >
-                {entry.is_symlink ? (
-                  <Icon aria-hidden="true" className="h-3.5 w-3.5" />
-                ) : (
-                  <LcdIcon
-                    icon={Icon}
-                    glyph={entry.is_dir ? "folder" : "file"}
-                    aria-hidden="true"
-                    className="h-3.5 w-3.5"
-                  />
-                )}
+                <LcdIcon
+                  icon={Icon}
+                  glyph={
+                    entry.is_symlink
+                      ? entry.is_dir
+                        ? "folder-link"
+                        : "file-link"
+                      : entry.is_dir
+                        ? "folder"
+                        : "file"
+                  }
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5"
+                />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{entry.name}</span>

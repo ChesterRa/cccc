@@ -3,7 +3,12 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Folder, FolderOpen } from "lucide-react";
-import { ChevronRightIcon, SecretClearIcon, SecretEditIcon } from "../../../components/Icons";
+import {
+  ChevronRightIcon,
+  LcdIcon,
+  SecretClearIcon,
+  SecretEditIcon,
+} from "../../../components/Icons";
 import { IconButton } from "../../../components/ui/icon-button";
 import type { VoiceFolder } from "../../../services/api/voiceDocumentLibrary";
 import type { AssistantVoiceDocument } from "../../../types";
@@ -142,7 +147,13 @@ export function SortableFolder({
             aria-hidden="true"
             className={classNames("shrink-0 opacity-50 transition-transform", open && "rotate-90")}
           />
-          <FolderIcon size={15} aria-hidden="true" className="shrink-0 opacity-70" />
+          <LcdIcon
+            icon={FolderIcon}
+            glyph="folder"
+            size={15}
+            aria-hidden="true"
+            className="shrink-0 opacity-70"
+          />
           <span className="min-w-0 flex-1 truncate pl-0.5">{folder.name}</span>
           <span className="shrink-0 px-1 text-xs font-normal text-[var(--color-text-muted)]">
             {count}

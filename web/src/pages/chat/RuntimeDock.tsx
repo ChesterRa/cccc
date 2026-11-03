@@ -15,7 +15,7 @@ import { Hourglass, Mail } from "lucide-react";
 import { ActorAvatar } from "../../components/ActorAvatar";
 import { HoverTooltip } from "../../components/HoverTooltip";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
-import { PlusIcon } from "../../components/Icons";
+import { LcdIcon, PlusIcon } from "../../components/Icons";
 import { useActorDisplayState } from "../../hooks/useActorDisplayState";
 import { useGroupStore } from "../../stores";
 import type { Actor, HeadlessStreamEvent } from "../../types";
@@ -449,7 +449,9 @@ function RuntimeDockActorButtonView({
             title={mailLabel}
             data-dock-badge="mail"
           >
-            <Mail
+            <LcdIcon
+              icon={Mail}
+              glyph="mail"
               className={isSmallScreen ? "h-[9px] w-[9px]" : "h-[10px] w-[10px]"}
               strokeWidth={2}
             />
@@ -865,10 +867,22 @@ function RuntimeDockMemberRow({
             >
               +{hiddenItems.length}
               {hiddenWithMail > 0 ? (
-                <Mail className="h-[10px] w-[10px]" strokeWidth={2} aria-hidden="true" />
+                <LcdIcon
+                  icon={Mail}
+                  glyph="mail"
+                  className="h-[10px] w-[10px]"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
               ) : null}
               {hiddenWithQueued > 0 ? (
-                <Hourglass className="h-[10px] w-[10px]" strokeWidth={2} aria-hidden="true" />
+                <LcdIcon
+                  icon={Hourglass}
+                  glyph="hourglass"
+                  className="h-[10px] w-[10px]"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
               ) : null}
             </button>
           </PopoverTrigger>

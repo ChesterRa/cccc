@@ -76,31 +76,28 @@ describe("CodexVoiceDock", () => {
   );
 
   it.each(["sidebar", "mobile", "collapsed"] as const)(
-    "animates only verified local voice activity in the %s dock",
+    "shows Chet's head in the %s dock, moving only while Chet itself works",
     (surface) => {
-      const markup = (overrides: Partial<CodexVoiceSessionController>) =>
+      const markup = (overrides: Partial<CodexVoiceSessionController>, chetWorking = false) =>
         renderToStaticMarkup(
           <CodexVoiceDock
-            controller={controller({
-              phase: "listening",
-              owned: true,
-              isEngaged: true,
-              ...overrides,
-            })}
+            controller={controller(overrides)}
+            chetWorking={chetWorking}
             variant={surface === "mobile" ? "mobile" : "sidebar"}
             collapsed={surface === "collapsed"}
             onOpen={vi.fn()}
             onStart={vi.fn()}
           />,
         );
-      expect(markup({})).toContain('data-status-motion="working"');
-      expect(markup({ microphoneMuted: true })).not.toContain('data-status-motion="working"');
-      expect(markup({ externalCall: true })).not.toContain('data-status-motion="working"');
-      expect(markup({ phase: "connecting" })).not.toContain('data-status-motion="working"');
-      expect(markup({ error: "Needs attention" })).not.toContain('data-status-motion="working"');
-      expect(markup({ phase: "speaking", playbackBlocked: true })).not.toContain(
-        'data-status-motion="working"',
+      expect(markup({})).toContain('data-chet-head="idle"');
+      expect(markup({}, true)).toContain('data-chet-head="working"');
+      expect(markup({ analystWorking: true })).toContain('data-chet-head="working"');
+      // A live call is not Chet's work: the call controls show it and the head stays idle.
+      expect(markup({ phase: "listening", owned: true, isEngaged: true })).toContain(
+        'data-chet-head="idle"',
       );
+      // Something that needs a look takes the head's place with the alert mark.
+      expect(markup({ error: "Needs attention" })).not.toContain("data-chet-head");
     },
   );
 
@@ -215,7 +212,7 @@ describe("CodexVoiceDock", () => {
       <CodexVoiceDock controller={controller()} chetWorking onOpen={vi.fn()} onStart={vi.fn()} />,
     );
     expect(html).toContain("modals:chet.state.working");
-    expect(html).toContain('data-status-motion="working"');
+    expect(html).toContain('data-chet-head="working"');
   });
 
   it("keeps two stable global actions: open console and start voice", () => {

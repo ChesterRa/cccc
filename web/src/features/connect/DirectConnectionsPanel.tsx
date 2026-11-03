@@ -15,6 +15,7 @@ import {
 
 import { useDirectStatus } from "./useDirectStatus";
 import { prepareDirectInvitation } from "./prepareDirectInvitation";
+import { LcdIcon } from "../../components/Icons";
 
 export function DirectConnectionsPanel({
   groupId,
@@ -220,7 +221,12 @@ export function DirectConnectionsPanel({
               disabled={busy}
               onClick={closeTask}
             >
-              <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+              <LcdIcon
+                icon={ChevronLeft}
+                glyph="chevron-left"
+                className="h-4 w-4"
+                aria-hidden="true"
+              />
               {t("direct.back")}
             </Button>
             <h3 ref={taskHeading} tabIndex={-1} className="text-base font-semibold outline-none">

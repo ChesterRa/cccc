@@ -289,12 +289,13 @@ its surrounding conversation; returning to the conversation restores the filters
 
 Opening a message from a notification, a link or search shows it in the live conversation when it
 is already loaded and no filter is on; new messages keep arriving as usual. Otherwise **Viewing a
-message** shows it with the messages around it. Scrolling down past the end, or **Load newer
-messages**, loads the messages that follow, and scrolling on from the newest returns to the live
-conversation when no filter is on. Earlier messages cannot be loaded in that view. **Return to
-latest** at the top leaves it at any time, and the floating **Back to latest** button, when shown,
-also leaves it. With a filter on, the top button reads **Back to filtered conversation**, and both
-return to the filtered conversation.
+message** shows it with the messages around it. Either way it opens just below the header and is
+held there briefly as the view settles, unless you scroll first; on a phone the Group list stays
+closed. Scrolling down past the end, or **Load newer messages**, loads the messages that follow,
+and scrolling on from the newest returns to the live conversation when no filter is on. Earlier
+messages cannot be loaded in that view. **Return to latest** at the top leaves it at any time, and
+the floating **Back to latest** button, when shown, also leaves it. With a filter on, the top
+button reads **Back to filtered conversation**, and both return to the filtered conversation.
 
 Message search shows the current Group name and Actor display names. Enter or **Search** submits the keywords; changing a filter reruns the submitted query. Typing new keywords does not change existing highlights or pagination until you submit again. Initial guidance, loading, no matches and failed requests are separate states. **Open** returns to the message context; reply and copying the event ID remain available.
 
@@ -472,7 +473,10 @@ refresh timer.
 ### Chet global assistant (Experimental)
 
 The **Chet** control below the Group list opens the global assistant, which is not a Group roster
-item. You can write a message without starting a voice call. Chet uses its configured, signed-in
+item. It shows Chet's pixel head, or an alert mark when something needs a look. The head blinks
+now and then and moves while Chet has work being sent, queued or carried out; with **Motion** off
+under Appearance, or the system's reduced-motion setting, it holds still. You can write a message
+without starting a voice call. Chet uses its configured, signed-in
 Runtime; if a Group is selected when you send, it is included as context, not as a permission boundary.
 The adjacent microphone/square control starts or stops live audio. Minimizing Chet does not stop its
 work or an active call. Sending text does not start a call. If a native Runtime combines that text

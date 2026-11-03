@@ -73,6 +73,24 @@ size smaller than the keys beside them and labels looked thin.
   the tile: the busy ring of pixel dots, the double line for needs attention, and the
   open line under the key (`lcdMotion.css`).
 
+## Icons
+
+Every icon is a pixel glyph from `components/LcdGlyph.tsx`: Pixelarticons 2.4.2, plus the
+few original glyphs that file names. Runtime logos, Chet's head (`features/chet/ChetHead.tsx`)
+and `LcdSpinner` are drawn on their own. Use an export from `components/Icons.tsx`, or
+`LcdIcon` with a glyph around a Lucide component; never render a Lucide icon directly. Don't
+give an icon children of its own: it then keeps its Lucide drawing, without a glyph.
+
+- When code picks an icon at run time (a condition or a table), pick its glyph by the same
+  condition, so that states such as shown/hidden or file/link stay distinct.
+- Take a missing glyph from the Pixelarticons package before drawing one. Check a new glyph
+  at the sizes where it appears, often 14px, not only enlarged: on the 2px grid a short
+  arrowhead reads as a plus.
+- `Icons.lcd.test.tsx` checks two common slips: an `Icons.tsx` export without a glyph, and a
+  component that renders a Lucide icon it imports by name directly as JSX. It does not see an
+  icon picked through a variable or a table, an icon given children, or other inline SVG;
+  check those where they are written and on the page.
+
 ## Motion
 
 Motion moves in whole steps (`lcdMotion.css`): loops for work that runs now, which stop
@@ -93,6 +111,9 @@ rather than relying on the `index.css` reduce rule.
 - Reconnecting: `.lcd-reconnect-dots`.
 - The composer's typing hint: `data-composer-caret="typing|hold"`
   (ComposerTypingPlaceholder); with motion off the hint does not type.
+- Chet's head (`features/chet/ChetHead.tsx`): its frames are stacked in one SVG and swap in
+  whole steps by `data-chet-head="idle|working"`; the still form shows the face of the
+  current state. A still rule must outrank each frame's animation, not just follow it.
 
 ## A surface built from many palette classes
 
@@ -115,3 +136,5 @@ keeps the logo's white ground.
 - Open it in light and dark, at desktop and phone widths, and confirm no colour falls
   outside the `--lcd-*` tokens, apart from the content listed above. Include the states a
   first look misses: errors, loading, hover, focus and disabled.
+- Confirm every visible icon is a pixel glyph (`svg[data-lcd-icon]`), apart from the
+  exceptions named under Icons.

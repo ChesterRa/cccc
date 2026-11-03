@@ -117,10 +117,10 @@ export function useChatTab({
 }: UseChatTabOptions) {
   const { t } = useTranslation(["chat", "common"]);
   const [sendScrollRequest, setSendScrollRequest] = useState<ChatSendScrollRequest | null>(null);
+  // A jump opens its message at the reading top of the live list, below any chrome laid over it.
   const [liveJump, setLiveJump] = useState<{
     groupId: string;
     eventId: string;
-    offsetPx: number;
     requestId: number;
   } | null>(null);
   const nextLiveJumpIdRef = useRef(0);
@@ -699,7 +699,6 @@ export function useChatTab({
     setLiveJump({
       groupId: selectedGroupId,
       eventId: chatWindow.centerEventId,
-      offsetPx: 0,
       requestId: ++nextLiveJumpIdRef.current,
     });
     exitChatWindow();
@@ -743,15 +742,11 @@ export function useChatTab({
       (params.get("event") && params.get("event") !== chatWindow.centerEventId)
     )
       return;
-    const offsetPx = el.getBoundingClientRect().top - row.getBoundingClientRect().top;
+    // The reader has not acted here, so the target is at the context's reading top; the live list
+    // opens it at its own, which on a phone lies below the chrome laid over the list.
     const eventId = chatWindow.centerEventId;
     const restoreFocus = el.contains(document.activeElement);
-    setLiveJump({
-      groupId: selectedGroupId,
-      eventId,
-      offsetPx,
-      requestId: ++nextLiveJumpIdRef.current,
-    });
+    setLiveJump({ groupId: selectedGroupId, eventId, requestId: ++nextLiveJumpIdRef.current });
     exitChatWindow();
     if (restoreFocus)
       requestAnimationFrame(() => {

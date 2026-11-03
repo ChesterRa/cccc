@@ -218,6 +218,17 @@ export function getSidebarWidthCssValue(value: number): string {
   return `clamp(${SIDEBAR_MIN_WIDTH}px, ${preferred}px, min(${SIDEBAR_MAX_WIDTH}px, ${SIDEBAR_MAX_VIEWPORT_PERCENT}vw))`;
 }
 
+// On a phone the Group list is a drawer over the chat. A visit without a Group opens it; a page
+// opened on a Group or one of its messages, as from a notification or a reload, shows that
+// conversation instead.
+function loadSidebarOpen(): boolean {
+  try {
+    return !new URLSearchParams(window.location.search).get("group")?.trim();
+  } catch {
+    return true;
+  }
+}
+
 function loadSidebarCollapsed(): boolean {
   try {
     return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
@@ -419,7 +430,7 @@ export const useUIStore = create<UIState>((set) => ({
   errorMsg: "",
   notice: null,
   isTransitioning: false,
-  sidebarOpen: true,
+  sidebarOpen: loadSidebarOpen(),
   sidebarCollapsed: loadSidebarCollapsed(),
   sidebarWidth: loadSidebarWidth(),
   showPendingPrompts: loadPendingPrompts(),

@@ -377,6 +377,12 @@
   background: var(--lcd-dim);
 }
 
+/* Chet's head fills its tile, so its unread mark sits over the drawing; a ring of the
+   sidebar ground keeps the mark apart from the head's pixels. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-chet-mark] [data-status-dot] {
+  box-shadow: 0 0 0 2px var(--lcd-bg);
+}
+
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-search-match] {
   background: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);

@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { LcdSpinner } from "../LcdSpinner";
 import {
+  LcdIcon,
   SecretAddIcon,
   SecretClearIcon,
   SecretDeleteIcon,
@@ -84,10 +85,10 @@ export function ActorSecretManager({
     >
       {loading ? (
         <LcdSpinner className="h-3.5 w-3.5">
-          <RefreshCw size={14} aria-hidden="true" />
+          <LcdIcon icon={RefreshCw} glyph="reload" size={14} aria-hidden="true" />
         </LcdSpinner>
       ) : (
-        <RefreshCw size={14} aria-hidden="true" />
+        <LcdIcon icon={RefreshCw} glyph="reload" size={14} aria-hidden="true" />
       )}
     </Button>
   );
@@ -110,7 +111,13 @@ export function ActorSecretManager({
           className="flex items-start gap-3 rounded-xl border border-rose-500/25 bg-rose-500/10 p-3 text-rose-700 dark:text-rose-300"
           data-status-tone="error"
         >
-          <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <LcdIcon
+            icon={AlertTriangle}
+            glyph="warning-diamond"
+            size={18}
+            className="mt-0.5 shrink-0"
+            aria-hidden="true"
+          />
           <div className="min-w-0 flex-1">
             <div className="text-xs font-semibold">{t("secretManager.clearAllTitle")}</div>
             <div className="mt-1 text-[11px] leading-relaxed">

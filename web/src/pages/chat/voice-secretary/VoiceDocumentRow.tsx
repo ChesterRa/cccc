@@ -4,6 +4,7 @@ import { FileText } from "lucide-react";
 import { VoiceDocumentRowMenu } from "./VoiceDocumentRowMenu";
 import type { AssistantVoiceDocument } from "../../../types";
 import { classNames } from "../../../utils/classNames";
+import { LcdIcon } from "../../../components/Icons";
 
 /** Panel-level state and callbacks every document row reads. */
 export type VoiceDocumentRowContext = {
@@ -89,7 +90,13 @@ export function VoiceDocumentRow({
                 : "text-gray-700 hover:bg-black/[0.04] focus-visible:ring-black/25",
           )}
         >
-          <FileText size={15} aria-hidden="true" className="shrink-0 opacity-60" />
+          <LcdIcon
+            icon={FileText}
+            glyph="file-text"
+            size={15}
+            aria-hidden="true"
+            className="shrink-0 opacity-60"
+          />
           <span title={title} className="min-w-0 flex-1 truncate">
             {title}
           </span>

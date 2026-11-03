@@ -8,6 +8,7 @@ import { runtimeDetectionKey } from "../../utils/runtimeDetection";
 import { SelectCombobox } from "../SelectCombobox";
 import { Button } from "../ui/button";
 import { LcdSpinner } from "../LcdSpinner";
+import { LcdIcon } from "../Icons";
 
 export function RuntimeSelector({
   value,
@@ -106,10 +107,10 @@ export function RuntimeSelector({
         >
           {checking ? (
             <LcdSpinner className="h-[13px] w-[13px]">
-              <RefreshCw size={13} aria-hidden="true" />
+              <LcdIcon icon={RefreshCw} glyph="reload" size={13} aria-hidden="true" />
             </LcdSpinner>
           ) : (
-            <RefreshCw size={13} aria-hidden="true" />
+            <LcdIcon icon={RefreshCw} glyph="reload" size={13} aria-hidden="true" />
           )}
           {t("runtimeDetection.recheck")}
         </Button>

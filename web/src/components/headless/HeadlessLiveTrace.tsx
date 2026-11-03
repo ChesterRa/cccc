@@ -379,6 +379,12 @@ function ActivityRow({
   const error = isErrorActivity(entry.activity);
   const trailingMeta = density === "expanded" ? narrative.metaLines[0] || "" : "";
   const showDetails = density === "expanded" && narrative.detailRows.length > 0;
+  const summary = normalizeInlineText(entry.activity.summary);
+  const toolName = normalizeInlineText(entry.activity.tool_name);
+  const compactSummary =
+    density === "compact" && summary !== narrative.primaryTitle && summary !== toolName
+      ? summary
+      : "";
 
   return (
     <div
@@ -437,6 +443,11 @@ function ActivityRow({
           </div>
         ) : null}
       </div>
+      {compactSummary ? (
+        <div className="mt-1 break-words text-[10.5px] leading-4 text-[var(--color-text-secondary)]">
+          {compactSummary}
+        </div>
+      ) : null}
       {showDetails ? (
         <div
           className={classNames(

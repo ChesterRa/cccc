@@ -1,11 +1,10 @@
 import { useTranslation } from "react-i18next";
-import { VoiceStatusDot } from "../../features/codexVoice/CodexVoiceStatus";
-import { voicePhaseHasLocalActivity } from "../../features/codexVoice/codexVoicePhase";
 import {
   codexVoiceCallStatus,
   codexVoiceDisplayIdentity,
 } from "../../features/codexVoice/codexVoiceControllerText";
 import { classNames } from "../../utils/classNames";
+import { ChetHead } from "../../features/chet/ChetHead";
 import { AlertIcon, StopIcon, VoiceWaveformIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import type { CodexVoiceDockProps } from "./codexVoiceDockTypes";
@@ -50,13 +49,6 @@ export function CodexVoiceDock({
   const unreadLabel = chetUnread ? t("modals:chet.unread") : "";
   const identityTitle = ["Chet", statusLabel, unreadLabel].filter(Boolean).join(" · ");
   const openLabel = [t("modals:chet.open"), unreadLabel].filter(Boolean).join(" · ");
-  const active =
-    working ||
-    voicePhaseHasLocalActivity(controller.phase, {
-      microphoneMuted: controller.microphoneMuted,
-      externalCall: controller.externalCall,
-      playbackBlocked: controller.playbackBlocked,
-    });
 
   const callControl = controller.isEngaged ? (
     <IconButton
@@ -91,9 +83,8 @@ export function CodexVoiceDock({
       <div className="relative z-10 flex min-h-12 items-center gap-2 border-b border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2 md:hidden">
         <ConsoleButton
           onOpen={onOpen}
-          attention={attention || (controller.isEngaged && callStatus.blocked)}
-          active={controller.isEngaged || working}
-          working={active}
+          attention={attention}
+          working={working}
           unread={chetUnread}
           title={identityTitle}
           status={statusLabel}
@@ -118,16 +109,10 @@ export function CodexVoiceDock({
           onClick={onOpen}
           label={openLabel}
           title={identityTitle}
+          data-chet-mark
         >
-          {attention ? <AlertIcon size={18} /> : <ChetMark />}
-          {chetUnread ? <UnreadMark className="right-1.5 top-1.5" /> : null}
-          <span className="absolute bottom-1.5 right-1.5">
-            <VoiceStatusDot
-              active={controller.isEngaged || working}
-              attention={attention || (controller.isEngaged && callStatus.blocked)}
-              working={active}
-            />
-          </span>
+          {attention ? <AlertIcon size={18} /> : <ChetHead size={32} working={working} />}
+          {chetUnread ? <UnreadMark className="left-1.5 top-1.5" /> : null}
         </IconButton>
         {callControl}
       </div>
@@ -139,9 +124,8 @@ export function CodexVoiceDock({
       <div className="flex items-center gap-2">
         <ConsoleButton
           onOpen={onOpen}
-          attention={attention || (controller.isEngaged && callStatus.blocked)}
-          active={controller.isEngaged || working}
-          working={active}
+          attention={attention}
+          working={working}
           unread={chetUnread}
           title={identityTitle}
           status={statusLabel}
@@ -168,19 +152,9 @@ function UnreadMark({ className }: { className: string }) {
   );
 }
 
-/** Chet's mark: its initial, as in the sidebar entry of the design. */
-function ChetMark() {
-  return (
-    <span aria-hidden="true" className="text-sm font-semibold leading-none">
-      C
-    </span>
-  );
-}
-
 function ConsoleButton({
   onOpen,
   attention,
-  active,
   working,
   unread,
   title,
@@ -189,7 +163,7 @@ function ConsoleButton({
 }: {
   onOpen: () => void;
   attention: boolean;
-  active: boolean;
+  /** Chet's own work, not a call's: the head moves only for that. */
   working: boolean;
   unread: boolean;
   title: string;
@@ -204,12 +178,12 @@ function ConsoleButton({
       aria-label={label}
       title={title}
     >
-      <span className="relative flex h-8 w-8 flex-none items-center justify-center rounded-xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-        {attention ? <AlertIcon size={17} /> : <ChetMark />}
-        {unread ? <UnreadMark className="right-0.5 top-0.5" /> : null}
-        <span className="absolute bottom-0.5 right-0.5">
-          <VoiceStatusDot active={active} attention={attention} working={working} />
-        </span>
+      <span
+        className="relative flex h-8 min-h-[32px] w-8 min-w-[32px] flex-none items-center justify-center rounded-xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
+        data-chet-mark
+      >
+        {attention ? <AlertIcon size={17} /> : <ChetHead size={32} working={working} />}
+        {unread ? <UnreadMark className="left-0.5 top-0.5" /> : null}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold text-[var(--color-text-primary)]">

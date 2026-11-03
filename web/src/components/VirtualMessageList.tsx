@@ -1,7 +1,7 @@
 import { memo, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useState } from "react";
 import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
-import { ScrollLatestIcon } from "./Icons";
+import { ArrowDownIcon } from "./Icons";
 import { LcdSpinner } from "./LcdSpinner";
 import { getChatTailMutationSnapshot, getChatTailSnapshot } from "../utils/chatAutoFollow";
 import {
@@ -46,6 +46,7 @@ import {
 } from "./virtualMessageList/virtualOffset";
 import {
   getMessageAnchorOffset,
+  getReadingTopAnchorOffset,
   getScrollOffsetForMessageAnchor,
 } from "./virtualMessageListAnchorRestore";
 import { useSendScrollRequestLifecycle } from "./virtualMessageList/useSendScrollRequestLifecycle";
@@ -1106,10 +1107,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     targetId: initialScrollTargetId,
     anchorId: initialScrollAnchorId,
     anchorOffsetPx: initialScrollAnchorOffsetPx,
-    shouldVirtualize,
+    targetOffsetPx: getReadingTopAnchorOffset(topInset),
     scheduleScroll: scheduleInitialScroll,
-    scrollToIndex: scrollToIndexStable,
-    scrollToMessageAnchor,
     beginAnchorRestoration: anchorRestoration.begin,
     setAtBottom,
     setFollowMode,
@@ -1574,7 +1573,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           aria-label={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}
           title={unreadLabel ? `${scrollLatestLabel} · ${unreadLabel}` : scrollLatestLabel}
         >
-          <ScrollLatestIcon className="h-5 w-5" aria-hidden="true" />
+          <ArrowDownIcon className="h-5 w-5" aria-hidden="true" />
           {unreadLabel ? (
             <span data-scroll-latest-count title={unreadLabel} aria-hidden="true">
               {unreadDisplayCount}

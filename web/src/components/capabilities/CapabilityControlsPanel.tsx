@@ -1,6 +1,8 @@
 import type React from "react";
 import { Eye, EyeOff, Power, PowerOff, Shield, Trash2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { LcdIcon } from "../Icons";
+import type { LcdGlyphName } from "../LcdGlyph";
 import { useTranslation } from "react-i18next";
 
 import type { CapabilityOverviewItem } from "../../types";
@@ -62,6 +64,7 @@ export function CapabilityControlsPanel({
       <div className="mt-3 grid gap-2">
         <ControlButton
           icon={enabled ? PowerOff : Power}
+          glyph={enabled ? "power-off" : "power"}
           label={
             enabled ? t("capabilityCenter.enable.disable") : t("capabilityCenter.enable.enable")
           }
@@ -76,6 +79,7 @@ export function CapabilityControlsPanel({
         {canShowSlashToggle ? (
           <ControlButton
             icon={hidden ? Eye : EyeOff}
+            glyph={hidden ? "eye" : "eye-off"}
             label={
               hidden
                 ? t("capabilityCenter.showInSlashCommands")
@@ -92,6 +96,7 @@ export function CapabilityControlsPanel({
         ) : null}
         <ControlButton
           icon={Shield}
+          glyph="shield"
           label={blocked ? t("capabilityCenter.block.unblock") : t("capabilityCenter.block.block")}
           meta={
             blocked
@@ -105,6 +110,7 @@ export function CapabilityControlsPanel({
         {canRemove ? (
           <ControlButton
             icon={Trash2}
+            glyph="trash"
             label={t(`capabilityCenter.remove.label.${removalAction}`)}
             meta={t(`capabilityCenter.remove.title.${removalAction}`, {
               name: capabilityCenterDisplayName(row),
@@ -126,6 +132,7 @@ export function CapabilityControlsPanel({
 
 function ControlButton({
   icon: Icon,
+  glyph,
   label,
   meta,
   tone = "neutral",
@@ -133,6 +140,7 @@ function ControlButton({
   onClick,
 }: {
   icon: LucideIcon;
+  glyph: LcdGlyphName;
   label: string;
   meta: string;
   tone?: "neutral" | "warn" | "danger";
@@ -160,7 +168,7 @@ function ControlButton({
         className="flex h-8 w-8 items-center justify-center rounded-md bg-black/5 dark:bg-white/8"
         data-control-icon
       >
-        <Icon size={15} aria-hidden="true" />
+        <LcdIcon icon={Icon} glyph={glyph} size={15} aria-hidden="true" />
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-medium">{label}</span>

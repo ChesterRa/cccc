@@ -7,6 +7,14 @@ export function getMessageAnchorOffset(scrollTop: number, itemStart: number): nu
   return (Number(scrollTop) || 0) - (Number(itemStart) || 0);
 }
 
+const READING_TOP_GAP_PX = 8;
+
+/** The anchor offset that opens a message at the reading top: just below any chrome laid over
+ * the list, with a small gap, so its sender line shows. */
+export function getReadingTopAnchorOffset(topInset: number): number {
+  return getMessageAnchorOffset(0, Math.max(0, Number(topInset) || 0) + READING_TOP_GAP_PX);
+}
+
 export function getScrollOffsetForMessageAnchor(itemStart: number, offsetPx: number): number {
   return Math.max(0, (Number(itemStart) || 0) + (Number(offsetPx) || 0));
 }

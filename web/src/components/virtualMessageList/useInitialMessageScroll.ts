@@ -16,10 +16,9 @@ type InitialMessageScrollOptions = {
   targetId?: string;
   anchorId?: string;
   anchorOffsetPx?: number;
-  shouldVirtualize: boolean;
+  /** Where a target opens: the reading top, below any chrome laid over the list. */
+  targetOffsetPx: number;
   scheduleScroll: (action: () => void) => void;
-  scrollToIndex: (index: number) => void;
-  scrollToMessageAnchor: (eventId: string, offsetPx?: number) => boolean;
   beginAnchorRestoration: (anchor: { anchorId: string; offsetPx: number }) => boolean;
   setAtBottom: (value: boolean) => void;
   setFollowMode: (mode: ChatFollowMode) => void;
@@ -57,10 +56,8 @@ export function useInitialMessageScroll({
   targetId,
   anchorId,
   anchorOffsetPx,
-  shouldVirtualize,
+  targetOffsetPx,
   scheduleScroll,
-  scrollToIndex,
-  scrollToMessageAnchor,
   beginAnchorRestoration,
   setAtBottom,
   setFollowMode,
@@ -101,20 +98,14 @@ export function useInitialMessageScroll({
         setFollowMode("detached");
         onRestoreAwayFromBottom?.();
       };
-      if (targetId) {
-        if (shouldVirtualize) {
-          const index = messages.findIndex(
-            (message) => String(message?.id || "") === String(targetId),
-          );
-          if (index >= 0) {
-            markRestoredAwayFromBottom();
-            scrollToIndex(index);
-            return;
-          }
-        } else if (scrollToMessageAnchor(String(targetId), 0)) {
-          markRestoredAwayFromBottom();
-          return;
-        }
+      // Rows above a target can still change height after it opens, as text and attachments
+      // settle, so it is held at the reading top rather than scrolled to once.
+      if (
+        targetId &&
+        beginAnchorRestoration({ anchorId: String(targetId), offsetPx: targetOffsetPx })
+      ) {
+        markRestoredAwayFromBottom();
+        return;
       }
       if (anchorId) {
         if (
@@ -154,11 +145,9 @@ export function useInitialMessageScroll({
     requestRef,
     scheduleForceStickToBottom,
     scheduleScroll,
-    scrollToIndex,
-    scrollToMessageAnchor,
     setAtBottom,
     setFollowMode,
-    shouldVirtualize,
     targetId,
+    targetOffsetPx,
   ]);
 }

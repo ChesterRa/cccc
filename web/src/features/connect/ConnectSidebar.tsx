@@ -3,7 +3,7 @@ import { Button } from "../../components/ui/button";
 import { GroupConnectionBadge } from "./GroupConnectionBadge";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, ChevronDown } from "lucide-react";
-import { ConnectLockIcon, ConnectMonitorIcon } from "../../components/Icons";
+import { ConnectLockIcon, ConnectMonitorIcon, LcdIcon } from "../../components/Icons";
 import { instanceListing } from "./useConnectWorkbench";
 import type { ConnectWorkbench } from "./useConnectWorkbench";
 import { GroupItemMenuTrigger } from "../../components/layout/GroupItemMenuTrigger";
@@ -42,7 +42,12 @@ export function ConnectSidebar({
           <span>
             CCCC Connect <span className="ml-1 font-normal">{workbench.instances.length}</span>
           </span>
-          <ChevronDown size={14} className={open ? "rotate-180" : ""} />
+          <LcdIcon
+            icon={ChevronDown}
+            glyph="chevron-down"
+            size={14}
+            className={open ? "rotate-180" : ""}
+          />
         </Button>
       )}
       <div
@@ -110,7 +115,12 @@ export function ConnectSidebar({
                     onClick={() => workbench.toggleExpanded(instance.instance_id)}
                     className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--color-text-secondary)] hover:bg-[var(--glass-panel-bg)]"
                   >
-                    <ChevronRight size={15} className={expanded ? "rotate-90" : ""} />
+                    <LcdIcon
+                      icon={ChevronRight}
+                      glyph="chevron-right"
+                      size={15}
+                      className={expanded ? "rotate-90" : ""}
+                    />
                   </button>
                 ) : null}
               </div>

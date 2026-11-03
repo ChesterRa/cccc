@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { RefreshCw, MousePointer2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
-import { ExpandIcon, PlayIcon, VoiceMoreIcon } from "../Icons";
+import { ExpandIcon, LcdIcon, PlayIcon, VoiceMoreIcon } from "../Icons";
 
 export function ActorQuickControls({
   actorTitle,
@@ -101,7 +101,7 @@ export function ActorQuickControls({
             title={t("reconnect")}
             aria-label={t("reconnect")}
           >
-            <RefreshCw size={14} />
+            <LcdIcon icon={RefreshCw} glyph="reload" size={14} />
           </button>
         ) : connected && !writable ? (
           <button
@@ -111,7 +111,7 @@ export function ActorQuickControls({
             title={t("takeControl")}
             aria-label={t("takeControl")}
           >
-            <MousePointer2 size={14} />
+            <LcdIcon icon={MousePointer2} glyph="pointer" size={14} />
             <span className="hidden @min-[480px]/actor-view:inline">{t("takeControl")}</span>
           </button>
         ) : (

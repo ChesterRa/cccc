@@ -70,7 +70,7 @@ export function PresentationRail({
             ref={toggleRef}
             onClick={toggleCompact}
           >
-            <PanelRightOpen />
+            <LcdIcon icon={PanelRightOpen} glyph="square-chevron-left" />
           </SidePanelButton>
         </div>
       ) : (
@@ -86,7 +86,7 @@ export function PresentationRail({
               ref={toggleRef}
               onClick={toggleCompact}
             >
-              <PanelRightClose />
+              <LcdIcon icon={PanelRightClose} glyph="square-chevron-right" />
             </SidePanelButton>
           )}
         </SidePanelHeader>

@@ -18,6 +18,7 @@ import {
   codexVoiceDisplayIdentity,
 } from "../../features/codexVoice/codexVoiceControllerText";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
+import { ChetHead } from "../../features/chet/ChetHead";
 import { ChetConversationPane, ChetStopWorkButton } from "../../features/chet/ChetConversationPane";
 import type { ChetConversation } from "../../features/chet/useChetConversation";
 import type { ProcessRecoveryOwner } from "../../services/api/processRecovery";
@@ -273,6 +274,11 @@ export function CodexVoiceAnalystModal({
       modalRef={modalRef}
       title={
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+          <ChetHead
+            size={16}
+            working={chet.working || controller.analystWorking}
+            className="self-center"
+          />
           <h2 className="text-sm font-semibold text-[var(--color-text-primary)]">Chet</h2>
           <span className="truncate text-xs text-[var(--color-text-muted)]">
             {t("chet.subtitle")}
