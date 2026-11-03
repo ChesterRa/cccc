@@ -85,31 +85,21 @@ it("outlines a jump target on the message box its row draws", async () => {
   expect(host.querySelector(".lcd-row-content.lcd-row-highlighted")).toBeNull();
 });
 
-it("separates messages with a line, without a ground or a hover tone", () => {
+it("keeps message surfaces without a ground or a hover tone", () => {
   const css = lcdCss();
   const box = css.match(/:root\[data-ui-style="lcd"\] \.lcd-row::before \{([^}]*)\}/);
   expect(box?.[1]).toBeDefined();
   expect(box?.[1]).not.toMatch(/background/);
-  const line = css.match(
-    /:root\[data-ui-style="lcd"\] \.lcd-row:not\(\[data-lcd-same-sender\]\)::after \{([^}]*)\}/,
-  );
-  expect(line?.[1]).toContain("border-top: 1px solid var(--lcd-sep)");
   // A tone change over a whole message read as a jump.
   expect(css).not.toMatch(/\.lcd-row:is\(:hover[^{]*::before/);
   expect(css).not.toMatch(/\.lcd-row:hover::before/);
 });
 
-it("draws a line where a sender's run starts, never inside one, as wide as the message below it", async () => {
+it("keeps message widths and same-sender grouping in the reading column", async () => {
   const css = lcdCss();
-  // The line spans the row, and every row, yours included, is as wide as its text.
+  // Every row, yours included, is as wide as its text.
   const row = css.match(/:root\[data-ui-style="lcd"\] \.lcd-row \{([^}]*)\}/)?.[1];
   expect(row).toContain("width: fit-content");
-  const line = css.match(/\.lcd-row:not\(\[data-lcd-same-sender\]\)::after \{([^}]*)\}/)?.[1];
-  expect(line).toMatch(/left: 0;\s*right: 0;/);
-  // No other rule draws, moves or hides a line, for your messages or a continued one.
-  expect(css.match(/\.lcd-row[^{},]*::after/g)).toEqual([
-    ".lcd-row:not([data-lcd-same-sender])::after",
-  ]);
   // A question keeps room to be answered in, however short its text.
   expect(css).toMatch(/form\[data-pending-reply\] \{[^}]*width: 82ch;\s*max-width: 100%;/);
   // In a column wide enough, both sides keep the same room from the far edge; the

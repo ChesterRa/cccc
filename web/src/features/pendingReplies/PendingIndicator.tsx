@@ -1,7 +1,7 @@
 import { useContext } from "react";
+import { useVisiblePendingSummary } from "./useVisiblePendingSummary";
 import { useTranslation } from "react-i18next";
-import { useUIStore } from "../../stores/useUIStore";
-import { PendingReplyNavigationContext, PendingSummaryContext } from "./context";
+import { PendingReplyNavigationContext } from "./context";
 import { pendingIndicator, type PendingIndicator as Indicator } from "./indicator";
 
 export function PendingIndicatorText({ indicator }: { indicator: Indicator }) {
@@ -36,11 +36,10 @@ export function GroupPendingIndicator({
   groupName?: string;
   collapsed?: boolean;
 }) {
-  const context = useContext(PendingSummaryContext);
+  const context = useVisiblePendingSummary();
   const open = useContext(PendingReplyNavigationContext);
   const { t } = useTranslation("layout");
-  const shown = useUIStore((state) => state.showPendingPrompts);
-  if (!context || !shown) return null;
+  if (!context) return null;
   const indicator = pendingIndicator(context.summaries[groupId]);
   if (!indicator) return null;
   if (collapsed || !open)

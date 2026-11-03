@@ -4,9 +4,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { ChetGroupContext } from "../../services/api/chet";
 import { ChetComposer } from "./ChetComposer";
+import { ChetConversationPane } from "./ChetConversationPane";
 import type { VoiceConversationTurn } from "../codexVoice/codexVoiceProtocol";
+import type { CodexVoiceSessionController } from "../codexVoice/useCodexVoiceSessionController";
+import { buildChetTimeline } from "./chetTimeline";
 import type { ChetRequestItem, ChetTimelineItem, ChetTranscriptItem } from "./chetTimeline";
-import { ChetTimeline, type ChetRequestActions } from "./ChetTimeline";
+import { ChetTimeline, type ChetRequestActions } from "./ChetTimelineView";
+import type { ChetConversation } from "./useChetConversation";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -108,6 +112,78 @@ function request(overrides: Partial<ChetRequestItem>): ChetRequestItem {
     ...overrides,
   };
 }
+
+it("renders saved requests and answers in the conversation pane", () => {
+  const items = buildChetTimeline(
+    [
+      {
+        kind: "input",
+        id: "request-1",
+        created_at: "2026-11-01T10:00:00Z",
+        request: { text: "Question from history", context: null },
+      },
+      {
+        kind: "result",
+        id: "result-1",
+        created_at: "2026-11-01T10:01:00Z",
+        input_ids: ["request-1"],
+        outcome: {
+          generation: "g1",
+          turn_id: "turn-1",
+          status: "completed",
+          text: "Answer from history",
+          error: "",
+        },
+      },
+    ],
+    { status: null, assumedLive: new Set(), settledLive: new Set() },
+  );
+  const chet = {
+    items,
+    status: null,
+    historyError: null,
+    loaded: true,
+    hasOlder: false,
+    loadingOlder: false,
+    loadOlder: vi.fn(),
+    skipped: 0,
+    problems: new Map(),
+    storageAvailable: true,
+    resentIds: new Set(),
+    sendAgain: vi.fn(),
+    retry: vi.fn(),
+    putBack: vi.fn(),
+    dismiss: vi.fn(),
+    draft: "",
+    composerProblem: null,
+    duplicateRisk: false,
+    setText: vi.fn(),
+    send: vi.fn(),
+    clearComposerProblem: vi.fn(),
+  } as unknown as ChetConversation;
+  const controller = {
+    conversation: [],
+    call: null,
+    analystWorking: false,
+  } as unknown as CodexVoiceSessionController;
+
+  act(() =>
+    root.render(
+      <ChetConversationPane
+        controller={controller}
+        chet={chet}
+        isDark={false}
+        visible
+        analystExpanded={false}
+        onToggleAnalyst={vi.fn()}
+        onReviewRecovery={vi.fn()}
+      />,
+    ),
+  );
+  expect(host.textContent).toContain("Question from history");
+  expect(host.textContent).toContain("Answer from history");
+  expect(host.querySelector("textarea")).not.toBeNull();
+});
 
 function timeline(
   items: ChetTimelineItem[],

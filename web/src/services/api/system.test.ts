@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { createDirectory, fetchRuntimes } from "./system";
+import { createDirectory, fetchDirContents, fetchRuntimes } from "./system";
 
 describe("Runtime detection API", () => {
   afterEach(() => {
@@ -64,6 +64,17 @@ describe("filesystem API", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("retains an unreadable directory in a successful list response", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const result = { path: "/projects/private", parent: "/projects", items: [], readable: false };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    expect(await fetchDirContents(result.path)).toEqual({ ok: true, result });
   });
 
   it("creates a child directory with a JSON request", async () => {

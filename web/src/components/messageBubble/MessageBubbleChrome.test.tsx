@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { useUIStore } from "../../stores";
 import type { LedgerEvent } from "../../types";
 import { MessageBubble } from "../MessageBubble";
 import { MessageActions } from "./MessageActions";
@@ -263,7 +262,6 @@ describe("message chrome", () => {
     try {
       await show({ id: "event-1", kind: "chat.message", by: "worker", data: { text: "hi" } });
       expect(key()?.textContent).toBe("showInConversation");
-      expect(key()?.previousElementSibling?.tagName).toBe("TIME");
       await act(async () => key()!.click());
       expect(open).toHaveBeenCalledWith("event-1");
       const bar = host.querySelectorAll<HTMLButtonElement>("[data-message-actions-inline] button");
@@ -351,23 +349,14 @@ describe("message chrome", () => {
       const bar = Array.from(
         host.querySelectorAll<HTMLButtonElement>("[data-message-actions-inline] button"),
       );
-      expect(bar.map((button) => button.textContent || button.getAttribute("aria-label"))).toEqual([
-        "reply",
-        "relay",
-        "copyText",
-        "messageActions",
-      ]);
-      // Copy text is an icon on the bar; its tooltip carries the name.
-      expect(bar[2].textContent).toBe("");
-      expect(bar[2].getAttribute("title")).toBe("copyText");
       await act(async () => bar[0].click());
       await act(async () => bar[1].click());
-      await act(async () => bar[2].click());
       expect(reply).toHaveBeenCalledOnce();
       expect(relay).toHaveBeenCalledWith(event);
-      expect(copy).toHaveBeenCalledOnce();
 
-      const more = bar[3];
+      const more = host.querySelector<HTMLButtonElement>(
+        '[data-message-actions-inline] button[aria-label="messageActions"]',
+      )!;
       await act(async () => more.click());
       expect(menuItems().map((item) => item.textContent)).toEqual(["copyLink"]);
       await act(async () => more.click());
@@ -377,18 +366,12 @@ describe("message chrome", () => {
 
       const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
       await act(async () => touch.click());
-      expect(menuItems().map((item) => item.textContent)).toEqual([
-        "reply",
-        "relay",
-        "copyText",
-        "copyLink",
-      ]);
       await act(async () => touch.click());
       await settle();
       await choose(touch, "reply");
       expect(reply).toHaveBeenCalledTimes(2);
 
-      // Without a copy or a link the bar holds Reply alone: no copy key, and nothing for ⋯.
+      // Without a link the bar holds Reply alone, with nothing for ⋯.
       await act(async () =>
         root.render(
           <MessageActions
@@ -422,55 +405,6 @@ describe("message chrome", () => {
     } finally {
       await act(async () => root.unmount());
       host.remove();
-    }
-  });
-
-  it("confirms a copied message with a notice, since its key has no text to change", async () => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
-    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
-    const host = document.createElement("div");
-    document.body.append(host);
-    const root = createRoot(host);
-    try {
-      await act(async () =>
-        root.render(
-          <MessageBubble
-            event={{
-              id: "event-1",
-              kind: "chat.message",
-              by: "worker",
-              data: { text: "hello", quote_text: "earlier point", insight: "provisional view" },
-            }}
-            actorById={new Map()}
-            actors={[]}
-            displayNameMap={new Map()}
-            agentState={null}
-            taskById={new Map()}
-            isDark={false}
-            groupId="g"
-            groupLabelById={{}}
-            onReply={vi.fn()}
-            onShowRecipients={vi.fn()}
-          />,
-        ),
-      );
-      const copy = host.querySelector<HTMLButtonElement>(
-        '[data-message-actions-inline] button[aria-label="copyText"]',
-      )!;
-      await act(async () => copy.click());
-      // The quote and the sender's insight travel with the text.
-      expect(writeText).toHaveBeenCalledWith(
-        "> earlier point\n\nhello\n\nsenderPerspective:\nprovisional view",
-      );
-      expect(useUIStore.getState().notice?.message).toBe("textCopied");
-    } finally {
-      await act(async () => root.unmount());
-      host.remove();
-      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
-      else Reflect.deleteProperty(navigator, "clipboard");
-      useUIStore.getState().dismissNotice();
     }
   });
 

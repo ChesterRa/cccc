@@ -83,6 +83,15 @@ impl Session {
         history_config: Option<HistoryConfig>,
         history_cursor_floor: u64,
     ) -> Result<Self, RuntimeError> {
+        Self::start_with_environment(spec, history_config, history_cursor_floor, false)
+    }
+
+    pub(crate) fn start_with_environment(
+        spec: LaunchSpec,
+        history_config: Option<HistoryConfig>,
+        history_cursor_floor: u64,
+        clear_environment: bool,
+    ) -> Result<Self, RuntimeError> {
         let cwd = spec.cwd.canonicalize()?;
         let scope_key = spec.env.get("CCCC_SCOPE_KEY").cloned().unwrap_or_default();
         let actor_generation = spec
@@ -109,6 +118,9 @@ impl Session {
             })
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let mut command = CommandBuilder::new(program);
+        if clear_environment {
+            command.env_clear();
+        }
         command.args(args);
         command.cwd(working_directory);
         for (key, value) in spec.env {

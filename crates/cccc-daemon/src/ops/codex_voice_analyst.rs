@@ -58,6 +58,10 @@ pub(crate) fn managed_runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
+pub(crate) fn claude_confirmation_launch(error: &io::Error) -> Option<&claude::ConfirmationLaunch> {
+    claude::confirmation_launch(error)
+}
+
 /// The workspace Claude Code refused to launch in because its trust prompt was never accepted.
 pub(crate) fn untrusted_claude_workspace(error: &io::Error) -> Option<&std::path::Path> {
     claude::untrusted_workspace(error)

@@ -1,5 +1,5 @@
 import { useUIStore } from "../../stores/useUIStore";
-import { useContext, type Ref } from "react";
+import { type Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { GROUP_STATUS_LABEL_KEYS, getGroupStatusFromSource } from "../../utils/groupStatus";
 import { GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
@@ -11,7 +11,7 @@ import { groupRunMenuActions } from "./groupRunMenuActions";
 import { useGroupMenu } from "./useGroupMenu";
 import type { GroupControl } from "../../utils/groupControls";
 import { AppSettingsMenu } from "./AppSettingsMenu";
-import { PendingSummaryContext } from "../../features/pendingReplies/context";
+import { useVisiblePendingSummary } from "../../features/pendingReplies/useVisiblePendingSummary";
 import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
 import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
 
@@ -70,12 +70,10 @@ export function AppHeader({
   mobileReadingOverlay = false,
 }: AppHeaderProps) {
   const { t } = useTranslation("layout");
-  const pending = useContext(PendingSummaryContext);
-  const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
-  const totalPending =
-    pending && showPendingPrompts
-      ? aggregatePendingIndicator(pending.summaries, Object.keys(pending.summaries))
-      : null;
+  const pending = useVisiblePendingSummary();
+  const totalPending = pending
+    ? aggregatePendingIndicator(pending.summaries, Object.keys(pending.summaries))
+    : null;
   const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
   const isSmallScreen = useUIStore((state) => state.isSmallScreen);
   const groupTitle = groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"));

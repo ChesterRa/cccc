@@ -1,32 +1,58 @@
-/* Keep hover controls out of the reading path, with keyboard and touch access. */
-.message-actions-inline {
+/* Every message reserves its footer before hover, so revealing actions moves nothing. */
+.message-footer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.message-footer-row:empty {
   display: none;
 }
 
-/* Put each touch menu beside its message instead of reserving a row below it. */
-@supports selector(.message-row:has(.message-actions-menu)) {
-  @media (pointer: coarse) and (max-width: 767px),
-    (pointer: coarse) and (max-width: 1023px) and (max-height: 480px) {
-    .message-row:has(.message-actions-menu) {
-      min-height: 44px;
-    }
-    .message-actions-menu {
-      position: absolute;
-      z-index: 1;
-      bottom: 0;
-    }
-    .message-actions-menu > button {
-      width: 44px;
-      height: 44px;
-      padding: 0;
-    }
-    .message-actions-label {
-      display: none;
-    }
+.message-footer-row[data-message-footer-align="end"] {
+  flex-direction: row-reverse;
+}
+
+.message-delivery-footer {
+  flex: 1 1 auto;
+}
+
+.message-actions-footer {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-height: 1.75rem;
+  max-width: 100%;
+}
+
+.message-actions-footer[data-message-actions-align="end"] {
+  justify-content: flex-end;
+}
+
+.message-actions-inline {
+  display: none;
+  max-width: 100%;
+}
+
+.message-actions-touch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+@media (pointer: coarse) {
+  .message-actions-touch > button,
+  .message-actions-menu > button {
+    min-width: 44px;
+    min-height: 44px;
   }
 }
-@media (min-width: 640px) and (hover: hover) {
-  .message-actions-menu {
+
+@media (hover: hover) and (pointer: fine) {
+  .message-actions-touch {
     display: none;
   }
   .message-actions-inline {
@@ -35,16 +61,15 @@
     pointer-events: none;
     transition: opacity 140ms ease-out;
   }
-  /* A message's whole band in the list keeps its actions showing, not only the message
-     itself: they can sit beside a short message's head, past the message's own box, and
-     a pointer heading there from the text must not leave it on the way. */
   .message-row:hover .message-actions-inline,
   [data-message-row]:hover .message-actions-inline,
-  .message-row:focus-within .message-actions-inline {
+  .message-row:focus-within .message-actions-inline,
+  .message-actions-inline:has([aria-expanded="true"]) {
     opacity: 1;
     pointer-events: auto;
   }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .message-actions-inline {
     transition: none;

@@ -58,6 +58,12 @@ export function ActorWorkingDirectory({
       setPathDraft(null);
     }
   };
+  const retryCreated = async () => {
+    const seq = requestSeq.current;
+    if ((await picker.retryCreatedDirectory()) && seq === requestSeq.current) {
+      setPathDraft(null);
+    }
+  };
   const cancel = () => {
     requestSeq.current += 1;
     picker.close();
@@ -67,7 +73,8 @@ export function ActorWorkingDirectory({
     setNotice(t(attaching ? "workingDirectoryAddStopped" : "workingDirectoryAddCanceled"));
   };
   const attach = async () => {
-    if (!groupId || !onScopeAttached || !path.trim() || attaching || disabled) return;
+    if (!groupId || !onScopeAttached || !path.trim() || attaching || disabled || picker.error)
+      return;
     const seq = ++requestSeq.current;
     setAttaching(true);
     onBusyChange(true);
@@ -177,6 +184,7 @@ export function ActorWorkingDirectory({
                 onChange={(event) => {
                   setPathDraft(event.target.value);
                   setError("");
+                  picker.clearListingError();
                 }}
                 disabled={picker.busy}
                 placeholder={t("workingDirectoryPath")}
@@ -197,6 +205,9 @@ export function ActorWorkingDirectory({
               parentDir={picker.parentDir}
               driveLocations={driveSuggestions(picker.locations)}
               error={picker.error}
+              createError={picker.createError}
+              onClearCreateError={picker.clearCreateError}
+              onRetry={picker.retryPath ? () => void retryCreated() : undefined}
               creatingDirectory={picker.busy}
               onSelect={(directory) => setPathDraft(directory)}
               onFetch={(directory) => void browse(directory)}
@@ -220,7 +231,9 @@ export function ActorWorkingDirectory({
             <Button
               type="button"
               size="sm"
-              disabled={disabled || attaching || picker.busy || !path.trim()}
+              disabled={
+                disabled || attaching || picker.busy || Boolean(picker.error) || !path.trim()
+              }
               onClick={() => void attach()}
             >
               {t(attaching ? "workingDirectoryAdding" : "workingDirectoryUse")}

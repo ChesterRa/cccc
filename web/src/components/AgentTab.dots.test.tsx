@@ -163,6 +163,35 @@ async function render(
   );
 }
 
+it("keeps confirmation visible after Actor refresh without adding read-only controls", async () => {
+  const waiting: Actor = {
+    id: "claude",
+    title: "Claude",
+    runtime: "claude",
+    runner_effective: "pty",
+    running: true,
+    runtime_state_source: "terminal",
+    runtime_confirmation_required: true,
+  };
+  // The existing transport mock keeps this a component contract, not a real PTY test.
+  await render(true, waiting, "g_confirmation", true, false);
+  const notice = host.querySelector("[data-runtime-confirmation]")!;
+  expect(notice.getAttribute("role")).toBe("status");
+  expect(notice.textContent).toContain("runtimeConfirmationPending");
+  expect(notice.textContent).toContain("runtimeConfirmationRequired");
+  expect(notice.querySelector("button,input")).toBeNull();
+  expect(mocks.launch).not.toHaveBeenCalled();
+  expect(mocks.pause).not.toHaveBeenCalled();
+  await render(
+    true,
+    { ...waiting, runtime_confirmation_required: false },
+    "g_confirmation",
+    true,
+    false,
+  );
+  expect(host.querySelector("[data-runtime-confirmation]")).toBeNull();
+});
+
 it("keeps distinct LCD status shapes and their accessible Actor labels", async () => {
   const managed: Actor = {
     id: "managed",

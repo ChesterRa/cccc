@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import type { DirItem, DirSuggestion } from "../../../types";
+import { directoryCreationErrorKey } from "../createGroupDirectoryModel";
 
 export function useWorkspaceDirectoryPicker() {
   const { t } = useTranslation("settings");
@@ -11,6 +12,8 @@ export function useWorkspaceDirectoryPicker() {
   const [parentDir, setParentDir] = useState<string | null>(null);
   const [locations, setLocations] = useState<DirSuggestion[]>([]);
   const [error, setError] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [retryPath, setRetryPath] = useState("");
   const [busy, setBusy] = useState(false);
   const requestSeq = useRef(0);
   useEffect(
@@ -23,6 +26,8 @@ export function useWorkspaceDirectoryPicker() {
   const begin = () => {
     setBusy(true);
     setError("");
+    setCreateError("");
+    setRetryPath("");
     return ++requestSeq.current;
   };
   const load = async (path: string, seq: number) => {
@@ -31,6 +36,10 @@ export function useWorkspaceDirectoryPicker() {
       if (seq !== requestSeq.current) return false;
       if (!response.ok) {
         setError(response.error?.message || t("copyGroups.failedToListWorkspace"));
+        return false;
+      }
+      if (response.result.readable === false) {
+        setError(t("copyGroups.failedToListWorkspace"));
         return false;
       }
       setItems(response.result.items);
@@ -84,13 +93,40 @@ export function useWorkspaceDirectoryPicker() {
       const response = await api.createDirectory(parent, name);
       if (seq !== requestSeq.current) return false;
       if (!response.ok) {
-        setError(response.error?.message || t("copyGroups.failedToCreateWorkspace"));
+        const key = directoryCreationErrorKey(response.error?.code);
+        setCreateError(
+          key ? t(key) : response.error?.message || t("copyGroups.failedToCreateWorkspace"),
+        );
         return false;
       }
-      return await load(response.result.path, seq);
-    } catch {
-      if (seq === requestSeq.current) setError(t("copyGroups.failedToCreateWorkspace"));
+      const path = response.result.path;
+      if (await load(path, seq)) return true;
+      if (seq === requestSeq.current) {
+        setItems([]);
+        setCurrentDir(path);
+        setParentDir(parent);
+        setError(t("copyGroups.createdFolderUnreadable", { path }));
+        setRetryPath(path);
+      }
       return false;
+    } catch {
+      if (seq === requestSeq.current) setCreateError(t("copyGroups.failedToCreateWorkspace"));
+      return false;
+    } finally {
+      finish(seq);
+    }
+  };
+  const retryCreatedDirectory = async () => {
+    const path = retryPath;
+    if (!path) return false;
+    const seq = begin();
+    try {
+      const loaded = await load(path, seq);
+      if (!loaded && seq === requestSeq.current) {
+        setError(t("copyGroups.createdFolderUnreadable", { path }));
+        setRetryPath(path);
+      }
+      return loaded;
     } finally {
       finish(seq);
     }
@@ -99,6 +135,17 @@ export function useWorkspaceDirectoryPicker() {
     requestSeq.current += 1;
     setOpen(false);
     setBusy(false);
+    setCreateError("");
+    setRetryPath("");
+  };
+  const clearListingError = () => {
+    if (!error) return;
+    setError("");
+    setCreateError("");
+    setRetryPath("");
+    setItems([]);
+    setCurrentDir("");
+    setParentDir(null);
   };
   return {
     open,
@@ -107,6 +154,11 @@ export function useWorkspaceDirectoryPicker() {
     parentDir,
     locations,
     error,
+    clearListingError,
+    createError,
+    clearCreateError: () => setCreateError(""),
+    retryPath,
+    retryCreatedDirectory,
     busy,
     show,
     close,

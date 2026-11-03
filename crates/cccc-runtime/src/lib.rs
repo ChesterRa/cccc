@@ -67,8 +67,10 @@ pub use history_access::{
     history_since, last_output, retained_history, retained_history_tail,
 };
 pub use manager::{
-    reap, resize, start, start_with_history, status, stop, stop_all, stop_if_started_at, submit,
-    submit_interruptible, submit_sequence_interruptible, wait_for_input_ready, write,
+    reap, resize, start, start_with_history, start_with_history_isolated_environment, status, stop,
+    stop_all, stop_if_started_at, submit, submit_interruptible,
+    submit_sequence_for_session_interruptible, submit_sequence_interruptible, wait_for_input_ready,
+    write,
 };
 pub use output::HistoryPage;
 pub use path_form::compatible_path;

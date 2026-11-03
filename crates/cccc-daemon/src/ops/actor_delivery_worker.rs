@@ -124,6 +124,7 @@ pub fn process_batch(
             if !submit_text(
                 &current_group.group_id,
                 &current_actor,
+                &status,
                 &super::actor_delivery_preamble::render(&job.home, &current_group, &current_actor),
                 cancelled,
             ) {
@@ -156,7 +157,13 @@ pub fn process_batch(
             "[CCCC] If this conversation has not completed CCCC initialization, call cccc_bootstrap before handling this task. Otherwise continue without repeating bootstrap.\n\n{payload}"
         );
     }
-    if submit_text(&current_group.group_id, &current_actor, &payload, cancelled) {
+    if submit_text(
+        &current_group.group_id,
+        &current_actor,
+        &status,
+        &payload,
+        cancelled,
+    ) {
         preamble_session.clone_from(&status.started_at);
         finish_jobs(jobs);
         return BatchOutcome::Delivered;
@@ -516,8 +523,19 @@ fn ensure_running(
     Ok(Some(status))
 }
 
-fn submit_text(group_id: &str, actor: &Actor, text: &str, cancelled: &AtomicBool) -> bool {
-    super::actor_delivery::submit_terminal_text(group_id, actor, text, cancelled)
+fn submit_text(
+    group_id: &str,
+    actor: &Actor,
+    expected: &cccc_runtime::SessionStatus,
+    text: &str,
+    cancelled: &AtomicBool,
+) -> bool {
+    // Configuration and terminal ownership can change while this batch is waiting.
+    // Reclassify before each preamble/payload, then pin the observed PTY at the writer.
+    if super::local_headless::uses_managed_delivery(group_id, actor) {
+        return false;
+    }
+    super::actor_delivery::submit_terminal_text_for_session(expected, actor, text, cancelled)
 }
 
 #[cfg(test)]

@@ -1,14 +1,6 @@
 import { groupMessagesVisible } from "../stores/useUIStore";
-import {
-  useMemo,
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
-import { PendingSummaryContext } from "../features/pendingReplies/context";
+import { useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useVisiblePendingSummary } from "../features/pendingReplies/useVisiblePendingSummary";
 import { useTranslation } from "react-i18next";
 import {
   useGroupStore,
@@ -194,11 +186,8 @@ export function useChatTab({
     chatUnreadCount,
     scrollSnapshot,
   } = chatSession;
-  const pendingContext = useContext(PendingSummaryContext);
+  const pendingContext = useVisiblePendingSummary();
   const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
-  // A persisted Waiting for you filter must not hide messages where its tab is not shown:
-  // in exhibit mode, or while the user has turned those prompts off. Checks that read the
-  // session again apply the same rule to it.
   const waitingTabOffered = !!pendingContext;
   const chatFilter = shownChatFilter(storedChatFilter, waitingTabOffered && showPendingPrompts);
   const senders = chatSenderFilter;
@@ -688,7 +677,10 @@ export function useChatTab({
       bucket.chatWindow !== chatWindow ||
       !bucket.isChatWindowLoading ||
       !bucket.hasLoadedTail ||
-      shownChatFilter(session.chatFilter, waitingTabOffered && ui.showPendingPrompts) !== "all" ||
+      shownChatFilter(
+        session.chatFilter,
+        waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+      ) !== "all" ||
       session.chatSenderFilter.length ||
       !bucket.events.some((event) => event.id === chatWindow.centerEventId) ||
       (params.get("group") && params.get("group") !== selectedGroupId) ||
@@ -735,7 +727,10 @@ export function useChatTab({
       bucket.chatWindow !== chatWindow ||
       bucket.isChatWindowLoading ||
       !bucket.hasLoadedTail ||
-      shownChatFilter(session.chatFilter, waitingTabOffered && ui.showPendingPrompts) !== "all" ||
+      shownChatFilter(
+        session.chatFilter,
+        waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+      ) !== "all" ||
       session.chatSenderFilter.length ||
       !bucket.events.some((event) => event.id === chatWindow.centerEventId) ||
       (params.get("group") && params.get("group") !== selectedGroupId) ||
@@ -858,7 +853,10 @@ export function useChatTab({
       if (
         !atBottom ||
         !bucket.hasLoadedTail ||
-        shownChatFilter(session.chatFilter, waitingTabOffered && ui.showPendingPrompts) !== "all" ||
+        shownChatFilter(
+          session.chatFilter,
+          waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+        ) !== "all" ||
         session.chatSenderFilter.length ||
         !contextTailInLive ||
         !bucket.events.some((event) => event.id === contextTailId)
@@ -1186,7 +1184,7 @@ export function useChatTab({
       const currentSession = getChatSession(selectedGroupId, ui.chatSessions);
       const currentFilter = shownChatFilter(
         currentSession.chatFilter,
-        waitingTabOffered && ui.showPendingPrompts,
+        waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
       );
       if (
         sourceEvent?.id &&

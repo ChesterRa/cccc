@@ -46,6 +46,7 @@
   "createNewGroup": "新しい作業グループを作成",
   "newGroup": "新規",
   "workingGroups": "作業グループ",
+  "workingGroupsShort": "グループ",
   "archivedGroups": "アーカイブ",
   "groupActions": "グループ操作",
   "reorderWithKeyboard": "Alt+↑ または Alt+↓ でこのグループを移動します。",
@@ -293,9 +294,9 @@
   "retryingNow": "再試行中",
   "localSessions": {
     "connect": "既存セッションを接続",
-    "connectShort": "セッション接続",
+    "connectShort": "セッション",
     "title": "既存セッションを接続",
-    "hint": "実行中のセッションをグループに接続して協力できます。セッションは元のアプリで実行を続けます。",
+    "hint": "セッションは元のアプリで実行を続けます。",
     "target": "接続先グループ",
     "newConversation": "+ 新しいグループ",
     "targetUnavailable": "このグループは利用できなくなりました。別の接続先を選んでください。",
@@ -312,8 +313,8 @@
     "showTroubleshooting": "トラブルシューティングを見る",
     "selectionUnavailable": "選択したセッションのうち {{count}} 件が受信できません。選択を解除するか、再接続を待ってください。",
     "loadFailed": "ネイティブセッションを更新できません。自動で再試行しています。",
-    "empty": "まだ接続されたセッションはありません。CCCC を実行しているマシンで一度設定すると、そのマシンの Codex、Claude Code、Pi、OpenCode のセッションがここに表示されます。手順は下にあります。",
-    "setup": "接続の設定と確認",
+    "empty": "接続できるセッションはまだありません。",
+    "setup": "セッション接続の設定",
     "setupHint": "ターミナルで実行中の Codex、Claude Code、Pi、OpenCode V2 のセッション同士がメッセージを送り合い、グループに参加できるようにします。試験的な機能です。",
     "setupHost": "それ以外の場合は、CCCC を実行しているマシンで、同じ OS ユーザーと同じ CCCC_HOME を使い、アプリごとに次のコマンドを一度実行してください：",
     "setupReload": "ネイティブの MCP/プラグイン連携を再読み込みします。Codex と Claude Code は一度プロンプトを送信すると登録され、Pi は拡張の起動時、OpenCode はネイティブセッションを開いた時に登録されます。",
@@ -325,7 +326,7 @@
     "setupConversationHint": "ディレクトリ、ランタイム、タスクは適宜置き換えてください。CCCC が両セッションの通常のグループを作成または再利用するため、事前の手動作成は不要です。",
     "setupGuide": "設定とトラブルシューティングの完全ガイド",
     "setupTerminal": "ターミナルで cccc を実行して CCCC を起動した場合は、そのターミナルで /setup と入力してください。各アプリを確認し、選んだアプリを接続して、それぞれに必要な次の手順を表示します。",
-    "setupNext": "その後、各アプリで：",
+    "setupNext": "続いて、選択したアプリで：",
     "troubleshooting": "トラブルシューティング",
     "troubleshootCodex": "Codex セッションが受信できないままの場合は、共有 app-server が必要です。Codex の config.toml の [features] で daemon_auto_start = true を設定してください。",
     "troubleshootClaude": "Claude Code は Plugin Monitor への対応が必要です。Monitor が有効か確認してください。",
@@ -336,6 +337,11 @@
     "originHint": "セッションの作成元：{{origin}}",
     "foremanDirectoryHint": "フォアマンの作業ディレクトリをグループの既定に使います。",
     "setupPi": "Pi：/reload を実行するか、Pi を起動します。現在のターンを中断せず、Pi の follow-up キューで受信します。",
-    "setupOpencode": "OpenCode V2：元のセッションを開き直してください。空の新規セッションは、最初のメッセージ送信でセッション ID が作成されます。"
+    "setupOpencode": "OpenCode V2：元のセッションを開き直してください。空の新規セッションは、最初のメッセージ送信でセッション ID が作成されます。",
+    "sessionsHeading": "セッションを選択",
+    "emptyHint": "CCCC を実行しているマシンでアプリの接続を設定すると、セッションがここに表示されます。",
+    "setupAction": "接続手順を見る",
+    "setupRuntime": "接続するアプリ",
+    "setupExampleHeading": "元のセッションから連携を開始"
   }
 }

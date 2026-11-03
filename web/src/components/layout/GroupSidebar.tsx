@@ -1,6 +1,6 @@
 import { useUIStore } from "../../stores/useUIStore";
 import { groupConnectionCount } from "../../features/connect/protocol";
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { instanceName } from "../../features/connect/instanceName";
 import { useTranslation } from "react-i18next";
 import { GroupMeta } from "../../types";
@@ -34,7 +34,7 @@ import { ConnectSidebar } from "../../features/connect/ConnectSidebar";
 import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 
 import { LocalSessionsButton } from "../../features/localSessions/LocalSessionsButton";
-import { PendingSummaryContext } from "../../features/pendingReplies/context";
+import { useVisiblePendingSummary } from "../../features/pendingReplies/useVisiblePendingSummary";
 import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
 import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
 
@@ -92,8 +92,7 @@ export function GroupSidebar({
   onDeleteGroup,
 }: GroupSidebarProps) {
   const { t } = useTranslation("layout");
-  const pending = useContext(PendingSummaryContext);
-  const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
+  const pending = useVisiblePendingSummary();
   const controlsBusy = useUIStore((state) => state.busy.startsWith("group-"));
   const branding = useBrandingStore((s) => s.branding);
   const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
@@ -109,20 +108,18 @@ export function GroupSidebar({
     () => orderedGroups.filter((g) => archivedSet.has(String(g.group_id || "").trim())),
     [archivedSet, orderedGroups],
   );
-  const archivedPending =
-    pending && showPendingPrompts
-      ? aggregatePendingIndicator(
-          pending.summaries,
-          archivedGroups.map((group) => group.group_id),
-        )
-      : null;
-  const totalPending =
-    pending && showPendingPrompts
-      ? aggregatePendingIndicator(
-          pending.summaries,
-          orderedGroups.map((group) => group.group_id),
-        )
-      : null;
+  const archivedPending = pending
+    ? aggregatePendingIndicator(
+        pending.summaries,
+        archivedGroups.map((group) => group.group_id),
+      )
+    : null;
+  const totalPending = pending
+    ? aggregatePendingIndicator(
+        pending.summaries,
+        orderedGroups.map((group) => group.group_id),
+      )
+    : null;
   const collapsedGroups = useMemo(() => {
     if (!isCollapsed) return workingGroups;
     const selectedArchived = archivedGroups.find(

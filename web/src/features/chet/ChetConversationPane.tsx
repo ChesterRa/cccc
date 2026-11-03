@@ -5,7 +5,7 @@ import { Button } from "../../components/ui/button";
 import type { ProcessRecoveryOwner } from "../../services/api/processRecovery";
 import type { CodexVoiceSessionController } from "../codexVoice/useCodexVoiceSessionController";
 import { ChetComposer } from "./ChetComposer";
-import { ChetTimeline } from "./ChetTimeline";
+import { ChetTimeline } from "./ChetTimelineView";
 import { unsavedLiveTurns } from "./chetTimeline";
 import type { ChetConversation } from "./useChetConversation";
 

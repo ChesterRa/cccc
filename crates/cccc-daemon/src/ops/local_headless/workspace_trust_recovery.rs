@@ -5,34 +5,70 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{
     Arc, Mutex, OnceLock,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicU8, Ordering},
 };
 
-fn pending() -> &'static Mutex<HashMap<Key, Arc<AtomicBool>>> {
-    static PENDING: OnceLock<Mutex<HashMap<Key, Arc<AtomicBool>>>> = OnceLock::new();
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
+
+const ACTIVE: u8 = 0;
+const CANCELLED: u8 = 1;
+const FAILED: u8 = 2;
+
+fn pending() -> &'static Mutex<HashMap<Key, Arc<AtomicU8>>> {
+    static PENDING: OnceLock<Mutex<HashMap<Key, Arc<AtomicU8>>>> = OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub(super) struct Recovery {
     key: Key,
-    cancelled: Arc<AtomicBool>,
+    cancelled: Arc<AtomicU8>,
 }
 
 impl Recovery {
     pub(super) fn register(key: Key) -> io::Result<Self> {
-        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled = Arc::new(AtomicU8::new(ACTIVE));
         if let Some(previous) = pending()
             .lock()
             .map_err(|_| super::poisoned())?
             .insert(key.clone(), Arc::clone(&cancelled))
         {
-            previous.store(true, Ordering::Release);
+            previous.store(CANCELLED, Ordering::Release);
         }
         Ok(Self { key, cancelled })
     }
 
     pub(super) fn cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
+        self.cancelled.load(Ordering::Acquire) == CANCELLED
+    }
+
+    /// Stop blocking automatic start before a genuine failure closes the temporary PTY.
+    pub(super) fn retire_failed_start(&self) {
+        let _ =
+            self.cancelled
+                .compare_exchange(ACTIVE, FAILED, Ordering::AcqRel, Ordering::Acquire);
+    }
+
+    /// Publish refusal only while this exact recovery still owns the Actor.
+    #[cfg(test)]
+    pub(super) fn pause_if_current(&self) -> io::Result<bool> {
+        self.finish_if_current(true)
+    }
+
+    /// Keep the same owner fence for an exit event without changing failure retry policy.
+    pub(super) fn finish_if_current(&self, pause: bool) -> io::Result<bool> {
+        let items = pending().lock().map_err(|_| super::poisoned())?;
+        if self.cancelled()
+            || !items
+                .get(&self.key)
+                .is_some_and(|current| Arc::ptr_eq(current, &self.cancelled))
+        {
+            return Ok(false);
+        }
+        if pause {
+            super::pause_confirmation(&self.key.0, &self.key.1)?;
+        }
+        Ok(true)
     }
 }
 
@@ -51,7 +87,7 @@ impl Drop for Recovery {
 
 pub(super) fn cancel(key: &Key) -> io::Result<()> {
     if let Some(cancelled) = pending().lock().map_err(|_| super::poisoned())?.get(key) {
-        cancelled.store(true, Ordering::Release);
+        cancelled.store(CANCELLED, Ordering::Release);
     }
     Ok(())
 }
@@ -70,6 +106,14 @@ pub(super) fn registered(key: &Key) -> io::Result<bool> {
         .lock()
         .map_err(|_| super::poisoned())?
         .contains_key(key))
+}
+
+pub(super) fn active(key: &Key) -> io::Result<bool> {
+    Ok(pending()
+        .lock()
+        .map_err(|_| super::poisoned())?
+        .get(key)
+        .is_some_and(|cancelled| cancelled.load(Ordering::Acquire) == ACTIVE))
 }
 
 /// External provider operations are callbacks; locking and cancellation always use the
@@ -94,7 +138,7 @@ pub(super) fn recover<T>(
     let app = match launch() {
         Ok(app) => app,
         Err(error) => {
-            if super::super::codex_voice_analyst::untrusted_claude_workspace(&error).is_none() {
+            if super::super::codex_voice_analyst::claude_confirmation_launch(&error).is_none() {
                 return Err(error);
             }
             tracing::debug!(%error, group_id = %recovery.key.0, actor_id = %recovery.key.1,

@@ -106,6 +106,16 @@ it("uses refreshed unread counts instead of stale loaded read markers", async ()
   expect(badge()).toBeNull();
 });
 
+it("shows confirmation from refreshed Actors and keeps the existing terminal entry", async () => {
+  await render({ runtime_confirmation_required: true });
+  expect(host.textContent).toContain("actors:runtimeConfirmationPending");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
+  await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+  expect(mocks.open).toHaveBeenCalledExactlyOnceWith("alpha");
+  await render({ runtime_confirmation_required: false });
+  expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
+});
+
 it("moves the ring only while work is in progress", async () => {
   for (const state of ["working", "idle", "stuck", "stopped", "working"] as const) {
     await render({ effective_working_state: state, running: state !== "stopped" });

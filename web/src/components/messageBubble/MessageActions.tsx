@@ -25,11 +25,8 @@ export interface MessageActionsProps {
 export type MessageAction = { key: string; label: string; run: () => void };
 type MenuSection = { key: string; label?: string; actions: MessageAction[] };
 
-// Reply, Forward and Copy text stay on the hover bar, Copy text as an icon named by its
-// tooltip; quick replies and Copy link wait in its overflow menu. Touch screens list every
-// action in one menu. A filtered view puts Show in chat first on the bar; where there is no
-// bar, or no room on it (lcd.css), the message head shows it instead (MessageBubble), so no
-// menu holds it.
+// Every message owns a footer: Reply, Forward and Copy on its hover bar, with quick
+// replies and Copy link in More. Touch keeps a visible menu and Show in chat shortcut.
 export function MessageActions(props: MessageActionsProps) {
   const { t } = useTranslation(["chat", "common"]);
   if (props.readOnly) return null;
@@ -45,9 +42,8 @@ export function MessageActions(props: MessageActionsProps) {
   if (props.canReply) primary.push({ key: "reply", label: t("reply"), run: props.onReply });
   if (props.eventId && props.onRelay)
     primary.push({ key: "relay", label: t("relay"), run: () => props.onRelay?.(props.event) });
-  const copy: MessageAction | null = props.copyableMessageText
-    ? { key: "copy", label: t("copyText"), run: props.onCopyMessageText }
-    : null;
+  if (props.copyableMessageText)
+    primary.push({ key: "copy", label: t("copyText"), run: props.onCopyMessageText });
   const overflow: MessageAction[] = [];
   if (props.eventId && props.onCopyLink)
     overflow.push({
@@ -61,15 +57,13 @@ export function MessageActions(props: MessageActionsProps) {
   const more: MenuSection[] = overflow.length ? [{ key: "more", actions: overflow }] : [];
   const bar = show ? [show, ...primary] : primary;
   const barMenu = [...quick, ...more];
-  const touchMenu = [
-    { key: "main", actions: [...primary, ...(copy ? [copy] : [])] },
-    ...quick,
-    ...more,
-  ].filter((section) => section.actions.length > 0);
+  const touchMenu = [{ key: "main", actions: primary }, ...quick, ...more].filter(
+    (section) => section.actions.length > 0,
+  );
   if (!touchMenu.length && !bar.length) return null;
   const align = props.event.by === "user" ? "end" : "start";
   return (
-    <>
+    <div className="message-actions-footer" data-message-actions-align={align}>
       <div
         className={`message-actions-inline flex-wrap items-center gap-0.5 ${props.event.by === "user" ? "justify-end" : "justify-start"}`}
         data-message-actions-inline
@@ -81,23 +75,13 @@ export function MessageActions(props: MessageActionsProps) {
             size="sm"
             className="min-h-7 rounded-lg px-2 py-1 text-xs duration-150"
             data-show-in-chat={action === show || undefined}
+            aria-label={action.key === "copy" ? action.label : undefined}
+            title={action.key === "copy" ? action.label : undefined}
             onClick={action.run}
           >
-            {action.label}
+            {action.key === "copy" ? <CopyIcon size={14} aria-hidden="true" /> : action.label}
           </Button>
         ))}
-        {copy ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="min-h-7 rounded-lg px-2 py-1 text-xs duration-150"
-            aria-label={copy.label}
-            title={copy.label}
-            onClick={copy.run}
-          >
-            <CopyIcon size={14} aria-hidden="true" />
-          </Button>
-        ) : null}
         {barMenu.length ? (
           <MessageActionMenu sections={barMenu} align={align} label={t("messageActions")}>
             <Button
@@ -112,22 +96,35 @@ export function MessageActions(props: MessageActionsProps) {
           </MessageActionMenu>
         ) : null}
       </div>
-      {touchMenu.length ? (
-        <div className="message-actions-menu">
-          <MessageActionMenu sections={touchMenu} align={align} label={t("messageActions")}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="gap-1 rounded-lg px-2 text-xs"
-              aria-label={t("messageActions")}
-            >
-              <MoreIcon size={14} aria-hidden="true" />
-              <span className="message-actions-label">{t("messageActions")}</span>
-            </Button>
-          </MessageActionMenu>
-        </div>
-      ) : null}
-    </>
+      <div className="message-actions-touch">
+        {show ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="lcd-row-jump rounded-lg px-2 text-xs"
+            data-show-in-chat
+            onClick={show.run}
+          >
+            {show.label}
+          </Button>
+        ) : null}
+        {touchMenu.length ? (
+          <div className="message-actions-menu">
+            <MessageActionMenu sections={touchMenu} align={align} label={t("messageActions")}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1 rounded-lg px-2 text-xs"
+                aria-label={t("messageActions")}
+              >
+                <MoreIcon size={14} aria-hidden="true" />
+                <span className="message-actions-label">{t("messageActions")}</span>
+              </Button>
+            </MessageActionMenu>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

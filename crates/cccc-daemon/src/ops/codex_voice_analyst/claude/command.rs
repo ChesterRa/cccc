@@ -57,7 +57,8 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     // Task grants use its per-job private settings env, then expire with the job.
     merge_environment(&mut settings, environment)?;
     network_environment::inherit(&mut settings, std::env::vars())?;
-    let config_dir = config_dir(environment)?;
+    let mut launch_environment = launcher_environment(environment);
+    let config_dir = config_dir(&launch_environment)?;
     let settings_root = home.daemon_dir().join("claude-managed");
     std::fs::create_dir_all(&settings_root)?;
     set_private_directory(&settings_root)?;
@@ -65,7 +66,6 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     // Actor/Analyst owners are stable for resume; task owners are per-job and
     // disposable after cleanup.
     let settings_path = settings_path(home, settings_owner);
-    let mut launch_environment = launcher_environment(environment);
     network_environment::extend_launcher(&mut launch_environment, &settings);
     cccc_core::fs::write_secret_json(&settings_path, &Value::Object(settings))?;
 

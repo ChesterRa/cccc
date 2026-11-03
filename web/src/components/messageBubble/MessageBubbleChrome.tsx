@@ -106,7 +106,7 @@ export function MessageFooter({
   return (
     <div
       className={classNames(
-        "mt-1 flex w-full min-w-0 flex-wrap items-center gap-2 px-1 text-xs",
+        "message-delivery-footer flex min-w-0 flex-wrap items-center gap-2 px-1 text-xs",
         event.by === "user" ? "flex-row-reverse" : "justify-start",
         "text-[var(--color-text-tertiary)]",
       )}

@@ -10,7 +10,7 @@ import {
   supportsAcpMode,
 } from "../../types";
 import * as api from "../../services/api";
-import { useGroupStore, useUIStore } from "../../stores";
+import { useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/actorProfiles";
 import { normalizeCapabilityIdList, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
 import { parseHelpMarkdown, updateActorHelpNote } from "../../utils/helpMarkdown";
@@ -22,6 +22,7 @@ import type { EditActorSavePayload, SaveActorProfileResult } from "./ActorConfig
 import { resolveNewActorId } from "./actorCreateModel";
 import type { ActorSecretSaveChanges } from "./actorSecretManagerModel";
 import { formatRuntimeCommand } from "./runtimeProfileControlsModel";
+import { revealRuntimeConfirmation } from "../../hooks/runtimeConfirmation";
 
 export function useAppModalActorActions(args: {
   selectedGroupId: string;
@@ -342,13 +343,16 @@ export function useAppModalActorActions(args: {
     }
 
     const targetGroupId = selectedGroupId;
+    const expectedTab = useUIStore.getState().activeTab;
     const visit = ++editActorVisitRef.current;
+    const confirmationVisit = useModalStore.getState().actorEditorVisit;
     const isCurrentEdit = () =>
       editActorVisitRef.current === visit &&
       useGroupStore.getState().selectedGroupId === targetGroupId;
     setBusy("actor-update");
     try {
       let actorSnapshot: Record<string, unknown> = savedActor as unknown as Record<string, unknown>;
+      let confirmationResult: unknown;
 
       // Runtime conversion still requires stopping the old backend. An existing
       // native Grok Actor applies its route under the daemon's admission lock.
@@ -375,6 +379,7 @@ export function useAppModalActorActions(args: {
         if (!convertResp.ok) {
           throw new Error(`${convertResp.error.code}: ${convertResp.error.message}`);
         }
+        confirmationResult = convertResp.result;
         const updated =
           convertResp.result && typeof convertResp.result === "object"
             ? (convertResp.result as { actor?: Record<string, unknown> }).actor
@@ -405,6 +410,7 @@ export function useAppModalActorActions(args: {
           if (!profileResp.ok) {
             throw new Error(`${profileResp.error.code}: ${profileResp.error.message}`);
           }
+          confirmationResult = profileResp.result;
           const updated =
             profileResp.result && typeof profileResp.result === "object"
               ? (profileResp.result as { actor?: Record<string, unknown> }).actor
@@ -445,6 +451,7 @@ export function useAppModalActorActions(args: {
           if (!customResp.ok) {
             throw new Error(`${customResp.error.code}: ${customResp.error.message}`);
           }
+          confirmationResult = customResp.result;
           const updated =
             customResp.result && typeof customResp.result === "object"
               ? (customResp.result as { actor?: Record<string, unknown> }).actor
@@ -496,6 +503,7 @@ export function useAppModalActorActions(args: {
         if (!restartResp.ok) {
           throw new Error(`${restartResp.error.code}: ${restartResp.error.message}`);
         }
+        confirmationResult = restartResp.result;
       }
 
       await refreshActors(targetGroupId);
@@ -503,6 +511,7 @@ export function useAppModalActorActions(args: {
       // Saving the Bot is the first connection step; keep Routine setup reachable.
       if (grokBotUrl === undefined) setEditingActor(null);
 
+      let restartNotice = "";
       if (!options.restart && grokBotUrl === undefined) {
         const isRunning = Boolean(editingActor.running ?? editingActor.enabled ?? false);
         const restartRequired =
@@ -514,9 +523,28 @@ export function useAppModalActorActions(args: {
             scopeChanged ||
             convertToCustom);
         if (restartRequired) {
-          showNotice({ message: t("savedRestartRequired", { label }) });
+          restartNotice = t("savedRestartRequired", { label });
         }
       }
+      const awaitingConfirmation = revealRuntimeConfirmation(
+        targetGroupId,
+        actorId,
+        expectedTab,
+        confirmationResult,
+        { noticePrefix: restartNotice },
+      );
+      if (!awaitingConfirmation && restartNotice) showNotice({ message: restartNotice });
+    } catch (error) {
+      await refreshActors(targetGroupId);
+      if (isCurrentEdit()) {
+        revealRuntimeConfirmation(targetGroupId, actorId, expectedTab, undefined, {
+          autoOpen: false,
+          // The modal layer unmounts on close; a later editor visit still invalidates this action.
+          canNavigate: () => useModalStore.getState().actorEditorVisit === confirmationVisit,
+          beforeNavigate: () => setEditingActor(null),
+        });
+      }
+      throw error;
     } finally {
       if (useUIStore.getState().busy === "actor-update") setBusy("");
     }

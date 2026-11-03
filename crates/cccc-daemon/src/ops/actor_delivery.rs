@@ -10,8 +10,10 @@ use crate::ops::actor_delivery_worker;
 
 mod drain;
 mod lifecycle;
+mod terminal;
 pub(crate) use drain::{drain_group, pending_group_ids};
 pub use lifecycle::{shutdown_actor, shutdown_all, shutdown_group};
+pub(super) use terminal::{submit_terminal_text, submit_terminal_text_for_session};
 
 const QUEUE_CAPACITY: usize = 256;
 const COMPLETION_CAPACITY: usize = 4096;
@@ -24,57 +26,6 @@ const TERMINAL_SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_mil
 const TERMINAL_REPEAT_SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
 
 type Key = (String, String);
-
-/// Deliver text to the Runtime's native terminal. A successful return means
-/// the payload and submit keys were written to that terminal; whether the
-/// Runtime steers the active turn or queues the input remains its own policy.
-pub(super) fn submit_terminal_text(
-    group_id: &str,
-    actor: &Actor,
-    text: &str,
-    cancelled: &AtomicBool,
-) -> bool {
-    let raw = text.trim_end_matches(['\r', '\n']);
-    if raw.is_empty() {
-        return false;
-    }
-    if super::local_headless::running(group_id, &actor.id)
-        && !cccc_runtime::wait_for_input_ready(
-            group_id,
-            &actor.id,
-            std::time::Duration::from_secs(15),
-            cancelled,
-        )
-        .unwrap_or(false)
-    {
-        return false;
-    }
-    let bracketed = raw.contains(['\r', '\n'])
-        && cccc_runtime::bracketed_paste_enabled(group_id, &actor.id).unwrap_or(false);
-    let payload = if bracketed {
-        format!("\u{1b}[200~{raw}\u{1b}[201~")
-    } else if raw.contains(['\r', '\n']) {
-        raw.lines().collect::<Vec<_>>().join(" ")
-    } else {
-        raw.to_owned()
-    };
-    let submits = terminal_submit_sequence(actor);
-    let delay = if submits.is_empty() {
-        std::time::Duration::ZERO
-    } else {
-        TERMINAL_SUBMIT_DELAY
-    };
-    cccc_runtime::submit_sequence_interruptible(
-        group_id,
-        &actor.id,
-        payload.as_bytes(),
-        submits,
-        delay,
-        TERMINAL_REPEAT_SUBMIT_DELAY,
-        cancelled,
-    )
-    .unwrap_or(false)
-}
 
 pub(super) fn terminal_submit_sequence(actor: &Actor) -> &'static [&'static [u8]] {
     match actor.submit {

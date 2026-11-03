@@ -8,6 +8,7 @@ export function getRuntimeRingTone(
   isRunning: boolean,
   workingState: string,
 ): RuntimeRingTone {
+  if (item.actor.runtime_confirmation_required) return "attention";
   const actorState = String(workingState || "")
     .trim()
     .toLowerCase();

@@ -240,6 +240,12 @@ fn start_session(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Resu
     if lookup(&key).is_some_and(|item| item.running()) {
         return Ok(());
     }
+    if actor.runtime == ActorRuntime::Claude {
+        super::confirmation_pause::ensure_allowed(&key)?;
+    } else {
+        // A prior Claude confirmation does not govern another provider's next launch.
+        super::confirmation_pause::retry(&key)?;
+    }
     stop_locked(&key)?;
 
     start_managed_agent(home, group, actor, key)

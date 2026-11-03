@@ -969,7 +969,11 @@
     "foremanOnly": "仅发送给 Foreman",
     "broadcastAll": "广播给所有已启用的 Agent",
     "tip": "提示：使用明确的收件人以确保路由准确。",
-    "saveMessaging": "保存消息路由设置"
+    "saveMessaging": "保存消息路由设置",
+    "displayPreferences": "显示偏好",
+    "showPendingReplyReminders": "展示待答复提醒",
+    "pendingReplyRemindersScope": "适用于当前浏览器的所有工作组，立即生效，无需保存。",
+    "pendingReplyRemindersHelp": "关闭后仅隐藏侧栏数量和“待你答复”入口，不改变行内回复、待答复状态或消息投递。可随时重新开启；外观设置中的“待你答复提示”若已关闭，仍保持关闭。"
   },
   "imBridge": {
     "title": "IM 桥接",
@@ -1180,10 +1184,11 @@
     "sourceId": "源工作组：{{groupId}}",
     "workspaceRoot": "工作区根目录",
     "workspacePlaceholder": "选择或粘贴工作区路径",
-    "chooseFolder": "选择文件夹",
+    "chooseFolder": "选择或新建文件夹",
     "useFolder": "使用此文件夹",
     "failedToListWorkspace": "无法读取文件夹",
     "failedToCreateWorkspace": "无法创建文件夹",
+    "createdFolderUnreadable": "文件夹已创建于 {{path}}，但无法打开。请重试或选择其他文件夹。",
     "groupTitle": "工作组标题",
     "workspaceNote": "复制包不包含仓库文件。请为此工作组提供本地克隆或项目文件夹。",
     "actors": "Actor：{{count}}",

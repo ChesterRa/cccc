@@ -26,7 +26,7 @@ import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { getReadingTopAnchorOffset } from "../../components/virtualMessageListAnchorRestore";
 import { PendingReplyEditingContext } from "../../components/messageBubble/PendingReplyEditingContext";
 import { LivePendingStatusContext } from "../../features/pendingReplies/liveStatusContext";
-import { useWaitingFilterIndicator } from "../../features/pendingReplies/useWaitingFilterIndicator";
+import { usePendingReplyIndicators } from "../../features/pendingReplies/useVisiblePendingSummary";
 import { useLivePendingStatuses } from "../../features/pendingReplies/useLivePendingStatuses";
 import { NotificationPrompt } from "../../features/pushNotifications/NotificationPrompt";
 import { useNotificationPromptOffer } from "../../features/pushNotifications/useNotificationPromptOffer";
@@ -720,7 +720,7 @@ export function ChatTab({
     ],
   );
 
-  const waitingIndicator = useWaitingFilterIndicator(
+  const { waitingIndicator, hasPendingReplies } = usePendingReplyIndicators(
     selectedGroupId,
     chatFilter === "pending_user",
   );
@@ -734,7 +734,7 @@ export function ChatTab({
     (needsScope || needsActors) &&
     chatMessages.length > 0 &&
     !(inlineReplyEditor !== null && hideDockForKeyboard);
-  const notificationOffer = useNotificationPromptOffer((waitingIndicator?.count ?? 0) > 0);
+  const notificationOffer = useNotificationPromptOffer(hasPendingReplies);
   const messageFiltersRef = useRef<HTMLDivElement | null>(null);
   const focusActiveFilter = useCallback(() => {
     messageFiltersRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus();
@@ -1114,12 +1114,8 @@ export function ChatTab({
                           liveJumpActive={liveJumpActive}
                           contextWindow={!!chatWindowProps}
                           className={
-                            !chatWindowProps &&
-                            runtimeActors.length > 0 &&
-                            !hideDockForKeyboard &&
-                            !reading.hidden &&
-                            isSmallScreen
-                              ? "pb-1"
+                            !chatWindowProps && runtimeActors.length > 0
+                              ? "pb-[max(5rem,72px)] [scroll-padding-bottom:max(5rem,72px)]"
                               : undefined
                           }
                           scrollRef={scrollRef}
@@ -1181,11 +1177,11 @@ export function ChatTab({
 
                   {!chatWindowProps && runtimeActors.length > 0 ? (
                     !isSmallScreen && workView === "messages" ? (
-                      // Members in one centred row above the composer, in the reading
-                      // column, in the page flow so they never cover a message.
+                      // Only the member controls catch input. The list keeps its full
+                      // viewport and can scroll its final message above this overlay.
                       <div
                         className={classNames(
-                          "shrink-0 px-2 sm:px-4",
+                          "pointer-events-none absolute inset-x-0 bottom-2 z-20 px-2 sm:px-4",
                           // A touch screen's keyboard leaves little height; the input needs it.
                           hideDockForKeyboard && "hidden",
                         )}
@@ -1210,8 +1206,7 @@ export function ChatTab({
                     ) : (
                       <div
                         className={classNames(
-                          "pointer-events-none z-20",
-                          isSmallScreen ? "shrink-0" : "absolute inset-x-0 bottom-2",
+                          "pointer-events-none absolute inset-x-0 bottom-2 z-20",
                           (hideDockForKeyboard || reading.hidden) && "hidden",
                         )}
                         data-runtime-dock-keyboard-hidden={hideDockForKeyboard || undefined}

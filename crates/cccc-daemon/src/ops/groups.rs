@@ -586,6 +586,8 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let deleted = store(home)?.delete(&group.group_id).map_err(OpError::io)?;
     if deleted {
+        super::local_headless::clear_group_confirmation_pauses(&group.group_id)
+            .map_err(OpError::io)?;
         super::actor_secrets::remove_group(home, &group.group_id)?;
         super::voice_secretary::purge_deleted_group(home, &group.group_id).map_err(OpError::io)?;
     }
@@ -658,6 +660,16 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
             .map_err(OpError::io)?;
     }
     let runtimes = if value {
+        // Scheduler requests also use by=user, so their source marker must retain
+        // confirmation pauses. User controls may retry an Active or Stopped Group.
+        if actor_runtime::user_confirmation_retry(request) {
+            for actor in group.actors.iter().filter(|actor| actor.enabled) {
+                if !actor_runtime::actor_is_running(&group, actor) {
+                    super::local_headless::retry_confirmation(&group.group_id, &actor.id)
+                        .map_err(OpError::io)?;
+                }
+            }
+        }
         actor_runtime::start_group(home, &group)?
     } else {
         if group.actors.iter().any(|a| a.runtime.is_web_model()) {

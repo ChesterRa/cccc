@@ -47,6 +47,8 @@ mod group_space;
 mod groups;
 mod hermes_runtime;
 mod im;
+#[cfg(test)]
+mod isolated_test;
 pub(crate) mod local_headless;
 pub(crate) mod local_sessions;
 mod maintenance;

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../services/api";
 import { useFormStore } from "../../stores";
-import { directoryNameFromPath } from "./createGroupDirectoryModel";
+import { directoryCreationErrorKey, directoryNameFromPath } from "./createGroupDirectoryModel";
 
 export function useCreateGroupDirectoryBrowser() {
   const { t } = useTranslation("modals");
   const [error, setError] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [retryPath, setRetryPath] = useState("");
   const [creating, setCreating] = useState(false);
   const requestSeq = useRef(0);
   useEffect(
@@ -27,16 +29,27 @@ export function useCreateGroupDirectoryBrowser() {
       const seq = ++requestSeq.current;
       setShowDirBrowser(true);
       setError("");
-      const response = await api.fetchDirContents(path);
-      if (seq !== requestSeq.current) return false;
-      if (!response.ok) {
-        setError(response.error?.message || t("createGroup.failedToListDirectory"));
+      setCreateError("");
+      setRetryPath("");
+      try {
+        const response = await api.fetchDirContents(path);
+        if (seq !== requestSeq.current) return false;
+        if (!response.ok) {
+          setError(response.error?.message || t("createGroup.failedToListDirectory"));
+          return false;
+        }
+        if (response.result.readable === false) {
+          setError(t("createGroup.failedToListDirectory"));
+          return false;
+        }
+        setDirItems(response.result.items || []);
+        setCurrentDir(response.result.path || path);
+        setParentDir(response.result.parent || null);
+        return true;
+      } catch {
+        if (seq === requestSeq.current) setError(t("createGroup.failedToListDirectory"));
         return false;
       }
-      setDirItems(response.result.items || []);
-      setCurrentDir(response.result.path || path);
-      setParentDir(response.result.parent || null);
-      return true;
     },
     [setCurrentDir, setDirItems, setParentDir, setShowDirBrowser, t],
   );
@@ -45,16 +58,31 @@ export function useCreateGroupDirectoryBrowser() {
     async (parent: string, name: string) => {
       setCreating(true);
       setError("");
+      setCreateError("");
+      setRetryPath("");
+      const seq = ++requestSeq.current;
       try {
         const response = await api.createDirectory(parent, name);
+        if (seq !== requestSeq.current) return false;
         if (!response.ok) {
-          setError(response.error?.message || t("createGroup.failedToCreateDirectory"));
+          const key = directoryCreationErrorKey(response.error?.code);
+          setCreateError(
+            key ? t(key) : response.error?.message || t("createGroup.failedToCreateDirectory"),
+          );
           return false;
         }
         const path = response.result.path;
         setCreateGroupPath(path);
         setCreateGroupName(directoryNameFromPath(path));
-        return await fetchContents(path);
+        const loaded = await fetchContents(path);
+        if (!loaded && requestSeq.current === seq + 1) {
+          setError(t("createGroup.createdFolderUnreadable", { path }));
+          setRetryPath(path);
+        }
+        return loaded;
+      } catch {
+        if (seq === requestSeq.current) setCreateError(t("createGroup.failedToCreateDirectory"));
+        return false;
       } finally {
         setCreating(false);
       }
@@ -62,5 +90,27 @@ export function useCreateGroupDirectoryBrowser() {
     [fetchContents, setCreateGroupName, setCreateGroupPath, t],
   );
 
-  return { error, setError, creating, fetchContents, createDirectory };
+  const retryCreatedDirectory = async () => {
+    const path = retryPath;
+    if (!path) return false;
+    const seq = requestSeq.current + 1;
+    const loaded = await fetchContents(path);
+    if (!loaded && requestSeq.current === seq) {
+      setError(t("createGroup.createdFolderUnreadable", { path }));
+      setRetryPath(path);
+    }
+    return loaded;
+  };
+
+  return {
+    error,
+    setError,
+    createError,
+    clearCreateError: () => setCreateError(""),
+    retryPath,
+    retryCreatedDirectory,
+    creating,
+    fetchContents,
+    createDirectory,
+  };
 }

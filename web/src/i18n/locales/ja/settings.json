@@ -972,7 +972,11 @@
     "foremanOnly": "Foreman にのみ送信",
     "broadcastAll": "有効なすべてのエージェントにブロードキャストする",
     "tip": "ヒント： 明確なルーティングには、明示的な受信者を使用します。",
-    "saveMessaging": "メッセージルーティング設定を保存"
+    "saveMessaging": "メッセージルーティング設定を保存",
+    "displayPreferences": "表示設定",
+    "showPendingReplyReminders": "回答待ちのリマインダーを表示",
+    "pendingReplyRemindersScope": "このブラウザーのすべてのグループにすぐに反映されます。保存操作は不要です。",
+    "pendingReplyRemindersHelp": "オフにすると、サイドバーの件数と「あなたの回答待ち」の入口だけを非表示にします。メッセージ内の回答欄、回答待ちの状態やメッセージ配信は変わりません。いつでもオンに戻せますが、外観設定で「あなたの回答待ち」の表示をオフにしている場合は、その設定が優先されます。"
   },
   "imBridge": {
     "title": "IMブリッジ",
@@ -1183,10 +1187,11 @@
     "sourceId": "元グループ: {{groupId}}",
     "workspaceRoot": "ワークスペースルート",
     "workspacePlaceholder": "ワークスペースパスを選択または貼り付け",
-    "chooseFolder": "フォルダーを選択",
+    "chooseFolder": "フォルダーを選択または新規作成",
     "useFolder": "このフォルダーを使う",
     "failedToListWorkspace": "フォルダーを読み取れません",
     "failedToCreateWorkspace": "フォルダーを作成できません",
+    "createdFolderUnreadable": "フォルダーを {{path}} に作成しましたが、開けませんでした。再試行するか、別のフォルダーを選択してください。",
     "groupTitle": "グループタイトル",
     "workspaceNote": "コピー package にはリポジトリファイルは含まれません。このグループ用のローカル clone またはプロジェクトフォルダを指定してください。",
     "actors": "Actor: {{count}}",

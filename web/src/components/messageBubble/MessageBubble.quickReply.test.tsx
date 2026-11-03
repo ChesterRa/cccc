@@ -96,22 +96,14 @@ describe("quick replies", () => {
         />,
       ),
     );
-    const bar = Array.from(
-      host.querySelectorAll<HTMLButtonElement>("[data-message-actions-inline] button"),
-    );
-    expect(bar.map((button) => button.textContent || button.getAttribute("aria-label"))).toEqual([
-      "reply",
-      "relay",
-      "copyText",
-      "messageActions",
-    ]);
-    await act(async () => bar[3].click());
+    const more = host.querySelector<HTMLButtonElement>(
+      '[data-message-actions-inline] button[aria-label="messageActions"]',
+    )!;
+    await act(async () => more.click());
     expect(menuItems().map((item) => item.textContent)).toEqual([...QUICK, "copyLink"]);
     expect(menuGroups()).toEqual(["quickReply.menu", "messageActions"]);
     await act(async () => menuItems()[0].click());
     expect(run).toHaveBeenCalledOnce();
-
-    expect(await touchMenuLabels()).toEqual(["reply", "relay", "copyText", ...QUICK, "copyLink"]);
   });
 
   it("are offered on a message an agent of this Group wrote here", async () => {

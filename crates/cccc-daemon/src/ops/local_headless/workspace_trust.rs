@@ -1,11 +1,11 @@
-//! Claude Code refuses a detached `--bg` launch in a workspace whose trust prompt was never
-//! accepted. Instead of failing the start, show Claude's own trust prompt in the Actor's
-//! terminal, and start the managed session once Claude accepts the workspace.
+//! A detached Claude launch can require workspace trust or a bypass disclaimer.
+//! Keep Claude's own confirmation in the Actor terminal until a managed retry succeeds.
 
 use super::supervisor::{Key, attach_managed, launch_managed};
 use super::workspace_trust_recovery::{self, Recovery};
 use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 use cccc_core::{GroupDoc, HomeLayout};
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
@@ -15,11 +15,10 @@ const POLL: Duration = Duration::from_secs(1);
 
 pub(super) fn refused(actor: &Actor, error: &io::Error) -> bool {
     actor.runtime == ActorRuntime::Claude
-        && super::super::codex_voice_analyst::untrusted_claude_workspace(error).is_some()
+        && super::super::codex_voice_analyst::claude_confirmation_launch(error).is_some()
 }
 
-/// Opens the configured Claude command interactively in the Actor's terminal, where Claude
-/// asks the operator to trust the workspace. Only Claude records that decision.
+/// Opens the configured Claude command interactively. Only Claude records the user's decision.
 pub(super) fn prompt(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -31,7 +30,7 @@ pub(super) fn prompt(
     let unavailable = |error: &dyn std::fmt::Display| {
         io::Error::new(
             refusal.kind(),
-            format!("{refusal} The trust prompt could not be opened: {error}"),
+            format!("{refusal} The confirmation prompt could not be opened: {error}"),
         )
     };
     let history =
@@ -39,25 +38,45 @@ pub(super) fn prompt(
             .map_err(|error| unavailable(&error))?;
     let recovery = Recovery::register(key.clone()).map_err(|error| unavailable(&error))?;
     // Capture before the prompt can record approval, even if the watcher starts late.
-    let records = trust_records(&actor.env);
+    let launch = super::super::codex_voice_analyst::claude_confirmation_launch(&refusal);
+    let (command, environment, records) = if let Some(launch) = launch {
+        let mut records = trust_records(&launch.environment);
+        records.push(launch.config_dir.join("settings.json"));
+        records.push(launch.config_dir.join(".config.json"));
+        let mut command = vec![launch.executable.clone()];
+        command.extend(launch.arguments.clone());
+        command.push("--dangerously-skip-permissions".into());
+        (command, launch.environment.clone(), records)
+    } else {
+        // Existing isolated trust fixtures without a provider refusal retain their own command.
+        (
+            cccc_runtime::resolve_command_executable(
+                &super::provider_cli::base_command(actor),
+                &actor.env,
+            ),
+            actor.env.clone(),
+            trust_records(&actor.env),
+        )
+    };
     let seen = signature(&records);
-    let terminal = cccc_runtime::start_with_history(
+    let terminal = cccc_runtime::start_with_history_isolated_environment(
         cccc_runtime::LaunchSpec {
             group_id: group.group_id.clone(),
             actor_id: actor.id.clone(),
             runner: RunnerKind::Pty,
-            command: cccc_runtime::resolve_command_executable(
-                &super::provider_cli::base_command(actor),
-                &actor.env,
-            ),
+            command,
             cwd: cwd.clone(),
-            env: actor.env.clone(),
+            env: environment,
             cols: 120,
             rows: 40,
         },
         history,
     )
     .map_err(|error| unavailable(&error))?;
+    if let Err(error) = super::confirmation_terminal::protect(&terminal) {
+        let _ = cccc_runtime::stop(&group.group_id, &actor.id);
+        return Err(unavailable(&error));
+    }
     let watch = Watch {
         home: home.clone(),
         group: group.clone(),
@@ -68,6 +87,7 @@ pub(super) fn prompt(
         records,
         seen,
         recovery,
+        failed: Cell::new(false),
     };
     if let Err(error) = std::thread::Builder::new()
         .name("claude-workspace-trust".into())
@@ -89,6 +109,7 @@ struct Watch {
     records: Vec<PathBuf>,
     seen: Vec<Option<(SystemTime, u64)>>,
     recovery: Recovery,
+    failed: Cell<bool>,
 }
 
 impl Watch {
@@ -100,6 +121,26 @@ impl Watch {
             || self.prompt_open(),
             || self.launch(),
         );
+        // The confirmation terminal may have exited, or a genuine retry failed.
+        // Publish only while this recovery still owns the generation; never reinterpret
+        // an exit code or changed file as consent, and never publish opaque CLI stderr.
+        if !super::supervisor::running(&self.key.0, &self.key.1)
+            && self
+                .recovery
+                .finish_if_current(!self.failed.get())
+                .unwrap_or(false)
+        {
+            let _ = super::events::append(
+                &self.home,
+                &self.key.0,
+                &self.key.1,
+                "headless.session.exited",
+                serde_json::Map::from_iter([(
+                    "reason".into(),
+                    serde_json::json!("interactive_confirmation_ended"),
+                )]),
+            );
+        }
     }
 
     /// Declining the prompt exits Claude; stopping or replacing the Actor replaces this PTY.
@@ -120,14 +161,17 @@ impl Watch {
                 if result
                     .as_ref()
                     .is_err_and(|error| !refused(&self.actor, error))
-                    && self.prompt_open()
                 {
+                    self.failed.set(true);
+                    self.recovery.retire_failed_start();
                     // The start guard still owns this exact prompt. Other launch
                     // failures are not trust decisions; retire the temporary PTY
                     // so status/UI expose the failed managed startup.
-                    cccc_runtime::stop(&self.key.0, &self.key.1).map_err(|_| {
-                        io::Error::other("Could not close the failed Claude trust prompt")
-                    })?;
+                    if self.prompt_open() {
+                        cccc_runtime::stop(&self.key.0, &self.key.1).map_err(|_| {
+                            io::Error::other("Could not close the failed Claude trust prompt")
+                        })?;
+                    }
                 }
                 result
             },
@@ -147,8 +191,12 @@ impl Watch {
             |app| super::block_on_managed(app.stop(app.generation())),
         )
         .unwrap_or_else(|error| {
+            // A real startup/resume failure keeps its existing retry/receipt policy.
+            // It is not the operator declining or closing an interactive confirmation.
+            self.failed.set(true);
+            self.recovery.retire_failed_start();
             tracing::warn!(%error, group_id = %self.key.0, actor_id = %self.key.1,
-                "managed Claude trust recovery failed");
+                "managed Claude confirmation recovery failed");
             true
         })
     }
@@ -187,14 +235,17 @@ fn trust_records_with(
 ) -> Vec<PathBuf> {
     let mut records = Vec::new();
     for (value, file) in [
-        (env.get("CLAUDE_CONFIG_DIR").cloned(), ".claude.json"),
-        (process("CLAUDE_CONFIG_DIR"), ".claude.json"),
         (
-            env.get("HOME").or_else(|| env.get("USERPROFILE")).cloned(),
+            env.get("CLAUDE_CONFIG_DIR")
+                .cloned()
+                .or_else(|| process("CLAUDE_CONFIG_DIR")),
             ".claude.json",
         ),
         (
-            process("HOME").or_else(|| process("USERPROFILE")),
+            env.get("HOME")
+                .or_else(|| env.get("USERPROFILE"))
+                .cloned()
+                .or_else(|| process("HOME").or_else(|| process("USERPROFILE"))),
             ".claude.json",
         ),
     ] {

@@ -11,8 +11,17 @@ use std::{
 };
 
 const SAVED: &str = "52b41c61-e23c-4b7c-8b60-809c347451b5";
+const PRIVATE_AUTH: &str = "synthetic-private-confirmation-token-3598";
+const PRIVATE_ROUTE: &str = "https://synthetic-provider.invalid/v1";
+
+#[path = "claude_confirmation_tests.rs"]
+mod confirmation;
 
 fn isolated(test: &str) -> bool {
+    isolated_with_config_dir(test, true)
+}
+
+fn isolated_with_config_dir(test: &str, configured: bool) -> bool {
     use std::os::unix::fs::PermissionsExt;
     const CHILD: &str = "CCCC_TEST_CLAUDE_RESUME";
     if std::env::var(CHILD).ok().as_deref() == Some(test) {
@@ -25,7 +34,8 @@ fn isolated(test: &str) -> bool {
     std::fs::write(&launcher, "#!/bin/sh\nexit 0\n").expect("fixture CCCC launcher");
     std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755))
         .expect("launcher permissions");
-    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+    let mut command = std::process::Command::new(std::env::current_exe().expect("test executable"));
+    command
         .args([
             &format!("ops::local_headless::claude_resume_tests::{test}"),
             "--exact",
@@ -35,15 +45,14 @@ fn isolated(test: &str) -> bool {
         .env("CCCC_LAUNCHER_PATH", &launcher)
         .env("CCCC_HOME", temp.path().join("home"))
         .env("CODEX_HOME", temp.path().join("codex"))
-        .env("CLAUDE_CONFIG_DIR", temp.path().join("claude"))
-        .output()
-        .expect("isolated fixture test");
-    assert!(
-        output.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+        .env("CLAUDE_CODE_CUSTOM_OAUTH_URL", "https://synthetic.invalid");
+    if configured {
+        command.env("CLAUDE_CONFIG_DIR", temp.path().join("claude"));
+    } else {
+        command.env_remove("CLAUDE_CONFIG_DIR");
+    }
+    let output = command.output().expect("isolated fixture test");
+    crate::ops::isolated_test::assert_one_passed(output, test);
     true
 }
 
@@ -59,12 +68,20 @@ struct Fixture {
 
 impl Fixture {
     fn new(mode: &str) -> Self {
+        Self::with_config_dir(mode, true)
+    }
+
+    fn with_config_dir(mode: &str, configured: bool) -> Self {
         use sha2::{Digest, Sha256};
         use std::os::unix::{fs::MetadataExt, fs::PermissionsExt};
         let temp = tempfile::tempdir().expect("fixture");
-        let config = temp.path().join("claude-config");
+        let config = temp.path().join(if configured {
+            "claude-config"
+        } else {
+            "provider-home/.claude"
+        });
         let workspace = temp.path().join("workspace");
-        std::fs::create_dir(&config).expect("isolated provider config");
+        std::fs::create_dir_all(&config).expect("isolated provider config");
         std::fs::create_dir(&workspace).expect("workspace");
         let executable = temp.path().join("claude");
         std::fs::write(&executable, include_str!("../fixtures/claude_resume.py"))
@@ -94,10 +111,6 @@ impl Fixture {
         actor.command = vec![executable.to_string_lossy().into_owned()];
         actor.env = BTreeMap::from([
             (
-                "CLAUDE_CONFIG_DIR".into(),
-                config.to_string_lossy().into_owned(),
-            ),
-            (
                 "HOME".into(),
                 temp.path()
                     .join("provider-home")
@@ -106,10 +119,23 @@ impl Fixture {
             ),
             ("PATH".into(), std::env::var("PATH").unwrap_or_default()),
         ]);
+        if configured {
+            actor.env.insert(
+                "CLAUDE_CONFIG_DIR".into(),
+                config.to_string_lossy().into_owned(),
+            );
+        }
         group.actors.push(actor.clone());
         group.running = true;
         store.save(&group).expect("save group");
+        let private = BTreeMap::from([
+            ("ANTHROPIC_AUTH_TOKEN".into(), PRIVATE_AUTH.into()),
+            ("ANTHROPIC_BASE_URL".into(), PRIVATE_ROUTE.into()),
+        ]);
+        super::super::actor_secrets::replace(&home, &group.group_id, &actor.id, private.clone())
+            .expect("isolated private provider environment");
         let mut environment = actor.env.clone();
+        environment.extend(private);
         super::super::codex_mcp::configure_actor_cli(&mut environment);
         environment.insert(
             "CCCC_HOME".into(),
@@ -160,21 +186,117 @@ impl Fixture {
         fixture
     }
 
+    #[track_caller]
     fn wait(&self, mut ready: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(15);
         while !ready() {
-            assert!(Instant::now() < deadline, "fixture deadline elapsed");
+            assert!(
+                Instant::now() < deadline,
+                "fixture deadline elapsed: mode={:?}, prompt={:?}, launches={}, managed={}, waiting={:?}, terminal={:?}, contexts={:?}",
+                std::fs::read_to_string(self.config.join("mode")),
+                std::fs::read_to_string(self.config.join("prompt_stage")),
+                self.launches(),
+                super::running(&self.group.group_id, &self.actor.id),
+                super::waiting_for_workspace_trust(&self.group.group_id, &self.actor.id),
+                cccc_runtime::status(&self.group.group_id, &self.actor.id),
+                std::fs::read_to_string(self.config.join("launch_contexts"))
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
 
     fn receipt(&self) -> Value {
-        let path = self
-            .home
+        cccc_core::fs::read_json(&self.receipt_path()).expect("receipt")
+    }
+
+    fn receipt_path(&self) -> PathBuf {
+        self.home
             .groups_dir()
             .join(&self.group.group_id)
-            .join("state/runtime_sessions/claude-1.json");
-        cccc_core::fs::read_json(&path).expect("receipt")
+            .join("state/runtime_sessions/claude-1.json")
+    }
+
+    fn assert_launch_contexts_match(&self) {
+        let prompt: Value =
+            cccc_core::fs::read_json(&self.config.join("prompt_launch.json")).unwrap();
+        self.assert_private_settings(&prompt);
+        assert!(
+            prompt["host_oauth_url"].is_null(),
+            "confirmation inherited the synthetic host OAuth override"
+        );
+        for line in std::fs::read_to_string(self.config.join("launch_contexts"))
+            .unwrap()
+            .lines()
+        {
+            let background: Value = serde_json::from_str(line).unwrap();
+            if background["settings_arg"] == true {
+                self.assert_private_settings(&background);
+            }
+            assert!(
+                background["host_oauth_url"].is_null(),
+                "background inherited the synthetic host OAuth override"
+            );
+            for key in [
+                "executable",
+                "cwd",
+                "config_dir",
+                "config_dir_env",
+                "home",
+                "userprofile",
+            ] {
+                assert_eq!(
+                    background[key], prompt[key],
+                    "background and PTY differ at {key}"
+                );
+            }
+        }
+    }
+
+    fn delivery_state(&self, event_id: &str) -> Option<String> {
+        super::super::runtime_delivery::latest_state(
+            &self.home,
+            &self.group.group_id,
+            &self.actor.id,
+            event_id,
+        )
+        .expect("delivery projection")
+        .map(|(state, _)| state)
+    }
+
+    fn assert_private_settings(&self, context: &Value) {
+        use sha2::Digest;
+        assert_eq!(context["settings_arg"], true);
+        assert_eq!(context["private_settings"], true);
+        for (key, value) in [
+            ("auth_digest", PRIVATE_AUTH),
+            ("routing_digest", PRIVATE_ROUTE),
+        ] {
+            let digest = format!("{:x}", sha2::Sha256::digest(value.as_bytes()));
+            assert_eq!(
+                context[key].as_str(),
+                Some(digest.as_str()),
+                "private {key} did not reach the provider"
+            );
+        }
+    }
+
+    fn assert_no_private_output(&self, response: &cccc_contracts::DaemonResponse) {
+        let listing = self.lifecycle("actor_list");
+        assert!(listing.ok, "actor_list failed");
+        let store = GroupStore::new(self.home.clone()).expect("store");
+        let events = ledger::read_all(&store.ledger_path(&self.group.group_id).unwrap()).unwrap();
+        for (surface, text) in [
+            ("response", serde_json::to_string(response).unwrap()),
+            ("actor_list", serde_json::to_string(&listing).unwrap()),
+            ("ledger", serde_json::to_string(&events).unwrap()),
+        ] {
+            for secret in [PRIVATE_AUTH, PRIVATE_ROUTE] {
+                assert!(
+                    !text.contains(secret),
+                    "private fixture environment leaked through {surface}"
+                );
+            }
+        }
     }
 
     fn lifecycle(&self, op: &str) -> cccc_contracts::DaemonResponse {
@@ -595,6 +717,28 @@ fn new_claude_session_retires_pending_trust_recovery_before_removing_the_receipt
     let started = f.lifecycle("actor_start");
     assert!(started.ok, "{:?}", started.error);
     f.wait(|| f.config.join("terminal_ready").exists());
+    let prompt_pid = cccc_runtime::status(&f.group.group_id, &f.actor.id)
+        .unwrap()
+        .pid;
+    let receipt_path = f.receipt_path();
+    let receipt = std::fs::read(&receipt_path).expect("saved receipt");
+    std::fs::remove_file(&receipt_path).expect("replace synthetic receipt");
+    std::fs::create_dir(&receipt_path).expect("make snapshot unreadable");
+    let rejected = f.lifecycle("actor_new_session");
+    assert!(!rejected.ok, "snapshot failure must reject the new session");
+    assert!(
+        super::confirmation_pending_active(&f.group.group_id, &f.actor.id).unwrap(),
+        "failed preparation must not cancel the live confirmation owner"
+    );
+    assert_eq!(
+        cccc_runtime::status(&f.group.group_id, &f.actor.id)
+            .unwrap()
+            .pid,
+        prompt_pid
+    );
+    assert_eq!(f.launches(), 1);
+    std::fs::remove_dir(&receipt_path).expect("remove synthetic snapshot failure");
+    std::fs::write(&receipt_path, receipt).expect("restore original receipt");
     std::fs::write(f.config.join("mode"), "delayed_resume").expect("pending resume");
     std::fs::write(f.config.join(".claude.json"), "fixture trust approval").expect("trust changed");
     f.wait(|| f.config.join("resume_pending").exists());

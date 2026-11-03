@@ -4,10 +4,12 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { GroupCopyPreview } from "../../../services/api/groups";
 import enSettings from "../../../i18n/locales/en/settings.json";
+import enModals from "../../../i18n/locales/en/modals.json";
 const api = vi.hoisted(() => ({
   previewGroupCopy: vi.fn(),
   fetchDirSuggestions: vi.fn(),
   fetchDirContents: vi.fn(),
+  createDirectory: vi.fn(),
   cleanupGroupCopyUpload: vi.fn(),
   exportGroupCopy: vi.fn(),
   importGroupCopy: vi.fn(),
@@ -27,10 +29,27 @@ vi.mock("../../../stores/useGroupStore", () => ({
 }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string) =>
-      key === "copyGroups.reconnectNativeSessions"
-        ? enSettings.copyGroups.reconnectNativeSessions
-        : key,
+    t: (key: string, values?: { path?: string }) => {
+      switch (key) {
+        case "copyGroups.chooseFolder":
+          return enSettings.copyGroups.chooseFolder;
+        case "copyGroups.createdFolderUnreadable":
+          return enSettings.copyGroups.createdFolderUnreadable.replace(
+            "{{path}}",
+            values?.path || "",
+          );
+        case "copyGroups.reconnectNativeSessions":
+          return enSettings.copyGroups.reconnectNativeSessions;
+        case "modals:createGroup.folderAlreadyExists":
+          return enModals.createGroup.folderAlreadyExists;
+        case "modals:createGroup.folderInvalidName":
+          return enModals.createGroup.folderInvalidName;
+        case "modals:createGroup.folderPermissionDenied":
+          return enModals.createGroup.folderPermissionDenied;
+        default:
+          return key;
+      }
+    },
   }),
 }));
 import { CopyGroupsTab } from "./CopyGroupsTab";
@@ -81,7 +100,7 @@ it("keeps the last chosen directory when earlier navigation finishes late", asyn
       Object.defineProperty(input, "files", { value: [new File(["fixture"], "test.zip")] });
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await act(async () => button("copyGroups.chooseFolder").click());
+    await act(async () => button(enSettings.copyGroups.chooseFolder).click());
     await act(async () => button("A").click());
     await act(async () => button("B").click());
     expect(button("copyGroups.useFolder").disabled).toBe(true);
@@ -147,6 +166,187 @@ async function choosePackage(
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
+
+it("keeps folder creation errors editable and uses the new directory after retry", async () => {
+  const { host, button, unmount } = await mountTab("g1");
+  const contents = (path: string) => ({
+    ok: true,
+    result: {
+      path,
+      parent: path === "/src" ? "/" : "/src",
+      items: path === "/src" ? [{ name: "existing", path: "/src/existing", is_dir: true }] : [],
+    },
+  });
+  api.fetchDirSuggestions.mockResolvedValue({ ok: true, result: { suggestions: [] } });
+  api.fetchDirContents.mockImplementation(async (path: string) => contents(path));
+  api.createDirectory
+    .mockResolvedValueOnce({
+      ok: false,
+      error: { code: "ALREADY_EXISTS", message: "Path already exists" },
+    })
+    .mockResolvedValueOnce({ ok: true, result: { path: "/src/fresh" } });
+  const enterName = async (value: string) => {
+    const input = host.querySelector<HTMLInputElement>(
+      'input[aria-label="createGroup.folderName"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+  try {
+    await choosePackage(host, new File(["zip"], "pack.zip"));
+    expect(button("Choose or create folder")).toBeTruthy();
+    await act(async () => button("Choose or create folder")!.click());
+    await act(async () => button("createGroup.newFolder")!.click());
+    await enterName("existing");
+    await act(async () => button("createGroup.createFolder")!.click());
+
+    expect(api.createDirectory).toHaveBeenLastCalledWith("/src", "existing");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      "A file or folder with this name already exists.",
+    );
+    expect(
+      host.querySelector<HTMLInputElement>('input[aria-label="createGroup.folderName"]')?.value,
+    ).toBe("existing");
+    expect(button("existing")).toBeTruthy();
+
+    await enterName("fresh");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => button("createGroup.createFolder")!.click());
+    expect(api.createDirectory).toHaveBeenLastCalledWith("/src", "fresh");
+    await act(async () => button("copyGroups.useFolder")!.click());
+    expect(host.querySelector<HTMLInputElement>('input[placeholder="/src"]')!.value).toBe(
+      "/src/fresh",
+    );
+  } finally {
+    await unmount();
+  }
+});
+
+it("reports a created folder when reading it fails and retries that folder", async () => {
+  const { host, button, unmount } = await mountTab("g1");
+  let newFolderLoads = 0;
+  api.fetchDirSuggestions.mockResolvedValue({ ok: true, result: { suggestions: [] } });
+  api.fetchDirContents.mockImplementation(async (path: string) => {
+    if (path === "/src/fresh" && ++newFolderLoads <= 2) {
+      return { ok: false, error: { message: "Permission denied" } };
+    }
+    return { ok: true, result: { path, parent: "/src", items: [] } };
+  });
+  api.createDirectory.mockResolvedValue({ ok: true, result: { path: "/src/fresh" } });
+  try {
+    await choosePackage(host, new File(["zip"], "pack.zip"));
+    await act(async () => button("Choose or create folder")!.click());
+    await act(async () => button("createGroup.newFolder")!.click());
+    const input = host.querySelector<HTMLInputElement>(
+      'input[aria-label="createGroup.folderName"]',
+    )!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+        input,
+        "fresh",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => button("createGroup.createFolder")!.click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      "Folder created at /src/fresh, but it could not be opened. Retry or choose another folder.",
+    );
+    expect(button("copyGroups.useFolder")!.disabled).toBe(true);
+    await act(async () => button("common:retry")!.click());
+    expect(api.createDirectory).toHaveBeenCalledTimes(1);
+    expect(api.fetchDirContents).toHaveBeenLastCalledWith("/src/fresh");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+      "Folder created at /src/fresh, but it could not be opened. Retry or choose another folder.",
+    );
+    expect(button("copyGroups.useFolder")!.disabled).toBe(true);
+    await act(async () => button("common:retry")!.click());
+    expect(button("copyGroups.useFolder")!.disabled).toBe(false);
+    await act(async () => button("copyGroups.useFolder")!.click());
+    expect(host.querySelector<HTMLInputElement>('input[placeholder="/src"]')!.value).toBe(
+      "/src/fresh",
+    );
+  } finally {
+    await unmount();
+  }
+});
+
+it.each([
+  ["PERMISSION", "Permission denied", enModals.createGroup.folderPermissionDenied],
+  [
+    "INVALID_NAME",
+    "Invalid name",
+    "Enter a valid folder name without path separators; . and .. are not allowed.",
+  ],
+  ["OTHER", "Disk unavailable", "Disk unavailable"],
+])(
+  "allows cancelling creation after %s without changing the selected folder",
+  async (code, message, expected) => {
+    const { host, button, unmount } = await mountTab("g1");
+    api.fetchDirSuggestions.mockResolvedValue({ ok: true, result: { suggestions: [] } });
+    api.fetchDirContents.mockResolvedValue({
+      ok: true,
+      result: { path: "/src", parent: "/", items: [] },
+    });
+    api.createDirectory.mockResolvedValue({ ok: false, error: { code, message } });
+    try {
+      await choosePackage(host, new File(["zip"], "pack.zip"));
+      await act(async () => button("Choose or create folder")!.click());
+      await act(async () => button("createGroup.newFolder")!.click());
+      const input = host.querySelector<HTMLInputElement>(
+        'input[aria-label="createGroup.folderName"]',
+      )!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+          input,
+          "new",
+        );
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => button("createGroup.createFolder")!.click());
+      expect(host.querySelector('[role="alert"]')?.textContent).toBe(expected);
+      await act(async () =>
+        host.querySelector<HTMLButtonElement>('form button[type="button"]')!.click(),
+      );
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(host.querySelector('input[aria-label="createGroup.folderName"]')).toBeNull();
+      await act(async () => button("copyGroups.useFolder")!.click());
+      expect(host.querySelector<HTMLInputElement>('input[placeholder="/src"]')!.value).toBe("/src");
+      expect(api.createDirectory).toHaveBeenCalledTimes(1);
+    } finally {
+      await unmount();
+    }
+  },
+);
+
+it("does not offer a misleading retry of the previous folder after navigation fails", async () => {
+  const { host, button, unmount } = await mountTab("g1");
+  api.fetchDirSuggestions.mockResolvedValue({ ok: true, result: { suggestions: [] } });
+  api.fetchDirContents.mockImplementation(async (path: string) =>
+    path === "/src"
+      ? {
+          ok: true,
+          result: {
+            path,
+            parent: "/",
+            items: [{ name: "denied", path: "/src/denied", is_dir: true }],
+          },
+        }
+      : { ok: false, error: { message: "Permission denied" } },
+  );
+  try {
+    await choosePackage(host, new File(["zip"], "pack.zip"));
+    await act(async () => button("Choose or create folder")!.click());
+    await act(async () => button("denied")!.click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe("Permission denied");
+    expect(button("common:retry")).toBeUndefined();
+    expect(button("copyGroups.useFolder")!.disabled).toBe(true);
+    expect(api.fetchDirContents).toHaveBeenLastCalledWith("/src/denied");
+  } finally {
+    await unmount();
+  }
+});
 
 it.each([
   { name: "native Actor", nativeSession: true, requiresReconnect: false, visible: true },

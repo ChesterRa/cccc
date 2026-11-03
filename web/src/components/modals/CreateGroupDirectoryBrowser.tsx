@@ -12,6 +12,9 @@ interface CreateGroupDirectoryBrowserProps {
   parentDir: string | null;
   driveLocations: DirSuggestion[];
   error?: string;
+  createError?: string;
+  onClearCreateError?: () => void;
+  onRetry?: () => void;
   creatingDirectory: boolean;
   onSelect: (path: string, name: string) => void;
   onFetch: (path: string) => void;
@@ -24,6 +27,9 @@ export function CreateGroupDirectoryBrowser({
   parentDir,
   driveLocations,
   error,
+  createError,
+  onClearCreateError,
+  onRetry,
   creatingDirectory,
   onSelect,
   onFetch,
@@ -83,11 +89,19 @@ export function CreateGroupDirectoryBrowser({
         </div>
       )}
       {error && (
-        <div
-          role="alert"
-          className="border-b px-3 py-3 text-sm text-rose-600 dark:text-rose-400 border-rose-500/30"
-        >
-          {error}
+        <div className="space-y-2 border-b px-3 py-3 text-sm break-words text-rose-600 dark:text-rose-400 border-rose-500/30">
+          <p role="alert">{error}</p>
+          {onRetry && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={creatingDirectory}
+              onClick={onRetry}
+            >
+              {t("common:retry")}
+            </Button>
+          )}
         </div>
       )}
       {!error && (
@@ -105,7 +119,10 @@ export function CreateGroupDirectoryBrowser({
                 variant="ghost"
                 data-lcd-key
                 className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-                onClick={() => setShowCreateForm(true)}
+                onClick={() => {
+                  onClearCreateError?.();
+                  setShowCreateForm(true);
+                }}
                 disabled={creatingDirectory}
               >
                 <PlusIcon size={15} />
@@ -115,41 +132,52 @@ export function CreateGroupDirectoryBrowser({
           )}
           {showCreateForm && (
             <form
-              className="flex flex-col gap-2 border-b p-3 sm:flex-row border-[var(--glass-border-subtle)]"
+              className="space-y-2 border-b p-3 border-[var(--glass-border-subtle)]"
               onSubmit={submit}
             >
-              <Input
-                ref={inputRef}
-                value={directoryName}
-                onChange={(event) => setDirectoryName(event.target.value)}
-                placeholder={t("createGroup.folderNamePlaceholder")}
-                aria-label={t("createGroup.folderName")}
-                disabled={creatingDirectory}
-              />
-              <div className="flex shrink-0 gap-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  data-lcd-key
-                  className="flex-1 sm:flex-none"
-                  onClick={() => {
-                    setDirectoryName("");
-                    setShowCreateForm(false);
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Input
+                  ref={inputRef}
+                  value={directoryName}
+                  onChange={(event) => {
+                    setDirectoryName(event.target.value);
+                    onClearCreateError?.();
                   }}
+                  placeholder={t("createGroup.folderNamePlaceholder")}
+                  aria-label={t("createGroup.folderName")}
                   disabled={creatingDirectory}
-                >
-                  {t("common:cancel")}
-                </Button>
-                <Button
-                  type="submit"
-                  className="flex-1 sm:flex-none"
-                  disabled={!directoryName.trim() || creatingDirectory}
-                >
-                  {creatingDirectory
-                    ? t("createGroup.creatingFolder")
-                    : t("createGroup.createFolder")}
-                </Button>
+                />
+                <div className="flex shrink-0 gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    data-lcd-key
+                    className="flex-1 sm:flex-none"
+                    onClick={() => {
+                      setDirectoryName("");
+                      setShowCreateForm(false);
+                      onClearCreateError?.();
+                    }}
+                    disabled={creatingDirectory}
+                  >
+                    {t("common:cancel")}
+                  </Button>
+                  <Button
+                    type="submit"
+                    className="flex-1 sm:flex-none"
+                    disabled={!directoryName.trim() || creatingDirectory}
+                  >
+                    {creatingDirectory
+                      ? t("createGroup.creatingFolder")
+                      : t("createGroup.createFolder")}
+                  </Button>
+                </div>
               </div>
+              {createError && (
+                <p role="alert" className="break-words text-sm text-rose-600 dark:text-rose-400">
+                  {createError}
+                </p>
+              )}
             </form>
           )}
           {parentDir && (
@@ -165,7 +193,7 @@ export function CreateGroupDirectoryBrowser({
               <span className="text-sm text-[var(--color-text-muted)]">..</span>
             </Button>
           )}
-          {directories.length === 0 && (
+          {currentDir && directories.length === 0 && (
             <div className="px-3 py-4 text-center text-sm text-[var(--color-text-muted)]">
               {t("createGroup.noSubdirectories")}
             </div>

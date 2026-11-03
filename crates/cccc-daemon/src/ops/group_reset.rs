@@ -61,6 +61,8 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let old_delete_error = settle_old_delete(&store, &old, store.delete(&old.group_id));
     if old_delete_error.is_none() {
+        super::local_headless::clear_group_confirmation_pauses(&old.group_id)
+            .map_err(OpError::io)?;
         super::actor_secrets::remove_group(home, &old.group_id)?;
         super::voice_secretary::purge_deleted_group(home, &old.group_id).map_err(OpError::io)?;
     }

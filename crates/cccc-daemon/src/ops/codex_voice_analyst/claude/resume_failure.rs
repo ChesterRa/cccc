@@ -50,7 +50,7 @@ impl std::error::Error for CleanupFailure {
 pub(in crate::ops::codex_voice_analyst) fn diagnostic(
     error: &io::Error,
 ) -> Option<(&'static str, bool)> {
-    if super::untrusted_workspace(error).is_some() {
+    if super::confirmation_launch(error).is_some() {
         return None;
     }
     if error

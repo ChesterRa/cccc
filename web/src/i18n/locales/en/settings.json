@@ -972,7 +972,11 @@
     "foremanOnly": "Send to foreman only",
     "broadcastAll": "Broadcast to all enabled agents",
     "tip": "Tip: Use explicit recipients for unambiguous routing.",
-    "saveMessaging": "Save Messaging Settings"
+    "saveMessaging": "Save Messaging Settings",
+    "displayPreferences": "Display preferences",
+    "showPendingReplyReminders": "Show pending reply reminders",
+    "pendingReplyRemindersScope": "Applies to all groups in this browser, immediately. No save is needed.",
+    "pendingReplyRemindersHelp": "Turning this off only hides sidebar counts and the “Waiting for you” entry. Inline replies, pending reply status and message delivery stay unchanged. You can turn it back on at any time; an Off choice for “Waiting for you” indicators under Appearance still applies."
   },
   "imBridge": {
     "title": "IM Bridge",
@@ -1183,10 +1187,11 @@
     "sourceId": "Source group: {{groupId}}",
     "workspaceRoot": "Workspace root",
     "workspacePlaceholder": "Choose or paste a workspace path",
-    "chooseFolder": "Choose folder",
+    "chooseFolder": "Choose or create folder",
     "useFolder": "Use this folder",
     "failedToListWorkspace": "Unable to read folder",
     "failedToCreateWorkspace": "Unable to create folder",
+    "createdFolderUnreadable": "Folder created at {{path}}, but it could not be opened. Retry or choose another folder.",
     "groupTitle": "Group title",
     "workspaceNote": "The copy package does not include repository files. Provide a local clone or project folder for this group.",
     "actors": "Actors: {{count}}",

@@ -334,10 +334,12 @@ fn complete_rule(home: &HomeLayout, group_id: &str, rule_id: &str, fired_at: i64
 }
 
 fn call(home: &HomeLayout, op: &str, value: serde_json::Value) -> bool {
+    let mut args = value.as_object().cloned().unwrap_or_default();
+    args.insert(actor_runtime::AUTOMATIC_LIFECYCLE.into(), json!(true));
     let request = DaemonRequest {
         v: 1,
         op: op.into(),
-        args: value.as_object().cloned().unwrap_or_default(),
+        args,
     };
     let response = dispatch(home, &request);
     if !response.ok {

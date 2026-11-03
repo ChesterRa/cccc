@@ -31,6 +31,21 @@ only the Web can leave the old daemon running. If services are managed separatel
 use their service manager to restart them as appropriate; remote users should ask
 the administrator. Stopping the daemon can interrupt work still in progress.
 
+To reduce visual reminders, open **Settings → Current Group → Message routing**
+and turn off **Show pending reply reminders** in the browser display preferences.
+This takes effect immediately for all Groups in this browser and synchronizes
+across its tabs. Sidebar counts (including unknown counts) and **Waiting for you**
+are hidden; saved waiting-reply filters return to **All**. Turn it back on here to
+restore the indicators without reselecting that filter. This does not change
+pending requests, inline replies, message delivery, system notifications, or an
+unsaved default-recipient setting. If browser storage is unavailable, the preference
+lasts for the current page only.
+
+This preference is separate from **‘Waiting for you’ indicators** under Appearance.
+Both must be enabled to show sidebar counts and the waiting filter. Turning off
+only the message-routing reminder preference keeps inline replies and the
+notification invitation available under their existing Appearance settings.
+
 ## Interface Overview
 
 The Web UI has these main areas:
@@ -83,13 +98,15 @@ insight follows both. Messages have no background, and pointing at one changes o
 Sender, recipients, Mail mode and time share a compact header; delivery failures and reply/read
 status stay visible.
 A reply shows up to two lines of the message it answers; clicking or tapping that
-quote, or pressing Enter on it, opens the original message. On hover-capable desktop
-screens, **Reply**, **Forward** and a copy icon appear beside the message header on hover or
-keyboard focus, in the free space next to it, so nothing shifts; a long header wraps to leave
-them room. The icon copies the message content as the menu item did before. **Quick reply**,
-**Copy link** and other actions are in the **More** menu.
-Touch screens, narrow screens and reading columns too narrow for the actions beside the
-header list every action, including copying, in one **More** menu.
+quote, or pressing Enter on it, opens the original message. Each message keeps its
+**Reply**, **Forward**, copy and **More** controls together below its content.
+Actions and receipt status share one vertically aligned row when space permits,
+and wrap on narrower messages; receipt status stays visible while actions are hidden.
+On hover-capable desktop screens they appear on hover or keyboard focus without
+moving the message. The copy icon copies the same complete message text. **Quick reply**,
+**Copy link** and other actions remain in **More**.
+Touch screens keep a visible **More** entry at the bottom of each message, listing
+every available action, including copying.
 Read-only views retain status information without exposing these actions. The composer groups recipients, text and tools into one surface.
 
 On phones, the chat keeps as much of the screen as possible for messages. An empty
@@ -115,7 +132,7 @@ Reordering or archiving Groups does not move an existing selection.
 
 ### Group message and terminal views
 
-Use **Connect sessions**, above the Group list in the sidebar, to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
+Use **Sessions**, beside the **Working Groups** heading (shown as **Groups** in a compact sidebar), to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups
@@ -142,7 +159,9 @@ the choice is saved in this browser.
 screens 768px and wider: **Medium** keeps a centered reading column, **Wide** gives tables and
 code more room and **Full** uses the whole chat area. The choice is saved in this browser. It
 does not appear on narrower screens, where the conversation already has no width limit.
-The members' status sits in one centered row above the composer on desktop.
+The members' status floats in a compact centered row above the composer. Messages
+remain visible and interactive on either side; the scrollable tail lets the final
+message move fully above the member controls.
 Activity and feedback move in whole steps: a busy member's ring of pixel dots, three blinks when
 the page sees a member start needing attention, a pixel spinner for waits longer than a quarter of
 a second, and a block cursor that can follow a headless agent's live text, though not after code
@@ -991,12 +1010,23 @@ semantics; use the action's explanation before discarding a session.
 
 ### Claude workspace trust
 
-If managed Claude startup requires workspace trust, the Actor terminal opens
-Claude's own interactive prompt. Only Claude records the approval. Once its
-configuration changes, CCCC can retry the managed launch. Stopping, removing, or
-restarting the Actor cancels the pending recovery; an in-flight launch is cleaned
-up instead of attaching after stop. Group shutdown also includes pending trust
-prompts that do not yet have a managed session.
+On first launch, managed Claude may ask you to trust its workspace or acknowledge
+its bypass-permissions disclaimer. The existing Actor terminal stays available,
+and Actor details show a persistent **Awaiting your confirmation in the terminal**
+notice. Make the choice yourself in that terminal and keep it open. CCCC does not
+answer the prompt or grant approval for you.
+
+CCCC treats changes to Claude's confirmation files as a reason to retry the managed
+Agent View launch. It reconnects and resumes message delivery only after that
+retry succeeds; the waiting notice clears when the updated runtime state arrives.
+If you decline or exit the prompt, the Actor stays stopped. Use **Launch** or
+**Relaunch** to retry explicitly.
+Stopping the Group and then starting it again also retries its stopped Actors;
+scheduled wake-ups do not reopen a declined confirmation.
+
+Stopping, removing, or restarting the Actor cancels the pending recovery; an
+in-flight launch is cleaned up instead of attaching after stop. Group shutdown
+also includes pending confirmation prompts that do not yet have a managed session.
 
 Trust-record monitoring uses the configured Claude directory and the home
 directory, falling back from `HOME` to `USERPROFILE` on Windows in both Actor
@@ -1235,7 +1265,7 @@ from this page.
 Use **Copy Groups** when you need to duplicate, migrate, or back up a working group.
 
 - **Export group copy** downloads a zip containing durable CCCC group state: ledger history, actors, memory, attachments, automation, and group settings.
-- The copy package does **not** include the workspace repository/project files. Copy or clone the workspace separately, then choose the workspace root during import.
+- The copy package does **not** include the workspace repository/project files. Copy or clone the workspace separately, then choose the workspace root during import. The folder chooser can also create an empty directory if needed.
 - System credentials, browser sessions, provider auth, and live runtime state are excluded. The package still contains user content such as ledger history, memory, and attachments; treat it as sensitive. Imported actors are stopped and the imported group starts idle.
 - If a group id already exists, import creates a new copy instead of replacing the existing group.
 

@@ -1,4 +1,5 @@
 import { NativeSessionPanel } from "../features/localSessions/NativeSessionPanel";
+import { ActorRuntimeConfirmationNotice } from "./agentTerminal/ActorRuntimeConfirmationNotice";
 import { isWebModelRuntime } from "../types";
 import { useTerminalTitlePaging } from "./agentTerminal/useTerminalTitlePaging";
 import {
@@ -425,6 +426,7 @@ export function AgentTab({
         : workingState,
   });
   const runtimeStatusText = (() => {
+    if (actor.runtime_confirmation_required) return t("runtimeConfirmationPending");
     if (isNativeSession) return t(nativeStatusKey);
     if (isEventActor)
       return t(
@@ -751,7 +753,7 @@ export function AgentTab({
   const titlePaging = useTerminalTitlePaging(isVisible && compact ? onPage : undefined);
 
   const compactStatusText =
-    isNativeSession || isEventActor
+    actor.runtime_confirmation_required || isNativeSession || isEventActor
       ? runtimeStatusText
       : !isRunning
         ? runtimeStatusText
@@ -1015,6 +1017,8 @@ export function AgentTab({
           </div>
         </div>
       </div>
+
+      <ActorRuntimeConfirmationNotice actor={actor} />
 
       {/* Terminal or Status Area */}
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}

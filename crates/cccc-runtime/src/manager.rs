@@ -1,5 +1,5 @@
 use crate::RuntimeError;
-use crate::cancellation::{lock_interruptibly, wait_interruptibly};
+use crate::cancellation::wait_interruptibly;
 use crate::registry::{
     Key, SharedSession, completed_history, discard_completed, lookup, remember_history, sessions,
     with_session,
@@ -10,6 +10,9 @@ use crate::transcript_archive::HistoryConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+mod submission;
+pub use submission::{submit_sequence_for_session_interruptible, submit_sequence_interruptible};
 
 type ReapCandidate = (Key, Arc<Mutex<Session>>, SessionHistory, SessionStatus);
 
@@ -28,13 +31,33 @@ fn start_inner(
     spec: LaunchSpec,
     history: Option<HistoryConfig>,
 ) -> Result<SessionStatus, RuntimeError> {
+    start_inner_environment(spec, history, false)
+}
+
+/// Launch a PTY with exactly the supplied environment, apart from terminal attribution.
+pub fn start_with_history_isolated_environment(
+    spec: LaunchSpec,
+    history: HistoryConfig,
+) -> Result<SessionStatus, RuntimeError> {
+    start_inner_environment(spec, Some(history), true)
+}
+
+fn start_inner_environment(
+    spec: LaunchSpec,
+    history: Option<HistoryConfig>,
+    clear_environment: bool,
+) -> Result<SessionStatus, RuntimeError> {
     let key = (spec.group_id.clone(), spec.actor_id.clone());
     remove_exited_before_start(&key)?;
     let history_cursor_floor = match completed_history(&key.0, &key.1)? {
         Some(history) => history.end_cursor()?,
         None => 0,
     };
-    let mut session = Session::start_with_history(spec, history, history_cursor_floor)?;
+    let mut session = if clear_environment {
+        Session::start_with_environment(spec, history, history_cursor_floor, true)?
+    } else {
+        Session::start_with_history(spec, history, history_cursor_floor)?
+    };
     let status = session.status();
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry.contains_key(&key) {
@@ -157,7 +180,7 @@ pub fn write(group_id: &str, actor_id: &str, data: &[u8]) -> Result<(), RuntimeE
         .map_err(|_| RuntimeError::Poisoned)?
         .input_gate();
     let _guard = gate.lock().map_err(|_| RuntimeError::Poisoned)?;
-    write_locked(&session, data, None).map(|_| ())
+    write_locked(&session, data, None, None).map(|_| ())
 }
 
 pub fn submit(
@@ -189,52 +212,6 @@ pub fn submit_interruptible(
         Duration::ZERO,
         cancelled,
     )
-}
-
-pub fn submit_sequence_interruptible(
-    group_id: &str,
-    actor_id: &str,
-    payload: &[u8],
-    submits: &[&[u8]],
-    initial_delay: Duration,
-    repeat_delay: Duration,
-    cancelled: &AtomicBool,
-) -> Result<bool, RuntimeError> {
-    if cancelled.load(Ordering::Acquire) {
-        return Ok(false);
-    }
-    let session = lookup(group_id, actor_id)?;
-    let gate = session
-        .lock()
-        .map_err(|_| RuntimeError::Poisoned)?
-        .input_gate();
-    let Some(_guard) = lock_interruptibly(&gate, &|| cancelled.load(Ordering::Acquire))? else {
-        return Ok(false);
-    };
-    if cancelled.load(Ordering::Acquire) {
-        return Ok(false);
-    }
-    if !write_locked(&session, payload, Some(cancelled))? {
-        return Ok(false);
-    }
-    for (index, submit) in submits
-        .iter()
-        .filter(|submit| !submit.is_empty())
-        .enumerate()
-    {
-        let delay = if index == 0 {
-            initial_delay
-        } else {
-            repeat_delay
-        };
-        if !wait_interruptibly(delay, cancelled) {
-            return Ok(false);
-        }
-        if !write_locked(&session, submit, Some(cancelled))? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 /// Wait for the native TUI to advertise its input mode, not for a turn to finish.
@@ -270,11 +247,18 @@ fn write_locked(
     session: &SharedSession,
     data: &[u8],
     cancelled: Option<&AtomicBool>,
+    expected: Option<&SessionStatus>,
 ) -> Result<bool, RuntimeError> {
-    let writer = session
-        .lock()
-        .map_err(|_| RuntimeError::Poisoned)?
-        .input_writer()?;
+    let writer = {
+        let mut current = session.lock().map_err(|_| RuntimeError::Poisoned)?;
+        if let Some(expected) = expected {
+            let actual = current.status();
+            if actual.pid != expected.pid || actual.started_at != expected.started_at {
+                return Ok(false);
+            }
+        }
+        current.input_writer()?
+    };
     // The input gate preserves ordering; blocking IO must not hold the Session
     // lock required by status, stop and process cleanup. Pin this generation.
     match cancelled {

@@ -13,6 +13,8 @@ import {
 export type ProfileView = "global" | "my" | "all" | "accessible";
 export type ProfileScope = "global" | "user";
 
+export type ActorRuntimeActionResult = { actor?: Actor; runtime_confirmation_required?: boolean };
+
 type ProfileLookupOptions = { scope?: ProfileScope; ownerId?: string };
 
 type ProfileDeleteOptions = ProfileLookupOptions & { forceDetach?: boolean };
@@ -145,7 +147,7 @@ export async function updateActor(
   if (Array.isArray(opts?.capabilityHidden)) body.capability_hidden = opts.capabilityHidden;
   if (opts?.defaultScopeKey !== undefined) body.default_scope_key = opts.defaultScopeKey;
   try {
-    return await apiJson(
+    return await apiJson<ActorRuntimeActionResult>(
       `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
       { method: "POST", body: JSON.stringify(body) },
     );
@@ -233,7 +235,7 @@ export async function removeActor(groupId: string, actorId: string) {
 export async function startActor(groupId: string, actorId: string) {
   invalidateGroupActorsReads(groupId);
   try {
-    return await apiJson(
+    return await apiJson<ActorRuntimeActionResult>(
       `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/start`,
       { method: "POST" },
     );
@@ -257,7 +259,7 @@ export async function stopActor(groupId: string, actorId: string) {
 export async function restartActor(groupId: string, actorId: string) {
   invalidateGroupActorsReads(groupId);
   try {
-    return await apiJson(
+    return await apiJson<ActorRuntimeActionResult>(
       `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/restart?by=user`,
       { method: "POST" },
     );
@@ -269,7 +271,7 @@ export async function restartActor(groupId: string, actorId: string) {
 export async function newActorSession(groupId: string, actorId: string) {
   invalidateGroupActorsReads(groupId);
   try {
-    return await apiJson(
+    return await apiJson<ActorRuntimeActionResult>(
       `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/new_session?by=user`,
       { method: "POST" },
     );

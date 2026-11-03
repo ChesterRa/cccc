@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 mod command;
+mod confirmation;
 mod control;
 mod resume_failure;
 mod transcript;
@@ -26,12 +27,23 @@ mod transcript_path;
 mod workspace_trust;
 
 pub(super) use command::prepare;
+pub(crate) use confirmation::ConfirmationLaunch;
+pub(super) use confirmation::launch as confirmation_launch;
 pub(super) use resume_failure::diagnostic as resume_diagnostic;
 pub(super) use workspace_trust::untrusted_workspace;
 
 #[cfg(test)]
 pub(super) fn workspace_refusal(detail: &str, workspace: &Path) -> Option<io::Error> {
-    workspace_trust::WorkspaceUntrusted::from_refusal(detail, workspace, "claude", workspace)
+    workspace_trust::WorkspaceUntrusted::from_refusal(
+        detail,
+        workspace,
+        ConfirmationLaunch {
+            executable: "claude".into(),
+            config_dir: workspace.to_owned(),
+            environment: BTreeMap::new(),
+            arguments: Vec::new(),
+        },
+    )
 }
 
 pub(super) fn remove_actor_settings(
@@ -198,26 +210,15 @@ async fn launch_inner(
         if let Some(error) = workspace_trust::WorkspaceUntrusted::from_refusal(
             detail,
             cwd,
-            &prepared.executable,
-            &prepared.config_dir,
+            ConfirmationLaunch::from_prepared(&prepared),
         ) {
             return Err(error);
         }
-        let guidance = if detail
-            .contains("--bg with bypassPermissions requires accepting the disclaimer first")
-        {
-            format!(
-                " For this session, run the configured executable '{}' interactively with \
-                 --dangerously-skip-permissions and CLAUDE_CONFIG_DIR set to '{}'. \
-                 After accepting the disclaimer, exit that session and retry in CCCC.",
-                prepared.executable,
-                prepared.config_dir.display(),
-            )
-        } else {
-            String::new()
-        };
+        if let Some(error) = confirmation::refusal(detail, cwd, &prepared) {
+            return Err(error);
+        }
         return Err(io::Error::other(format!(
-            "Claude Agent View launch failed: {detail}{guidance}"
+            "Claude Agent View launch failed: {detail}"
         )));
     }
     let short = parse_short_id(&stdout)

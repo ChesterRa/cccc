@@ -7,6 +7,7 @@ use crate::dispatch::OpError;
 use crate::ops::actor_profile_runtime;
 
 mod attributed_reap;
+mod confirmation;
 mod environment;
 mod persistence;
 mod reconcile;
@@ -15,6 +16,11 @@ pub(crate) mod terminal_history;
 mod untrusted_workspace_tests;
 mod workspace;
 pub(crate) use attributed_reap::reap_group;
+pub(super) use confirmation::{
+    AUTOMATIC_LIFECYCLE, actor_response, restore_runtime, user_confirmation_retry,
+};
+#[cfg(test)]
+pub(super) use confirmation::{confirmation_required, require_restored_managed_actor};
 pub use persistence::persist_lifecycle;
 pub(crate) use reconcile::record_process_exit;
 pub use reconcile::{reap_exited, reconcile_exited};
@@ -95,6 +101,15 @@ pub(super) fn apply_resolved(
                 status(&group.group_id, actor_id).filter(|status| status.running)
             },
         );
+    }
+    // A closed confirmation PTY can still belong to its watcher until the next poll.
+    // Do not let an automatic delivery cancel that owner and reopen the prompt first.
+    if kind == "actor.start"
+        && !super::local_headless::running(&group.group_id, actor_id)
+        && super::local_headless::confirmation_pending_active(&group.group_id, actor_id)
+            .map_err(OpError::io)?
+    {
+        return Ok(None);
     }
     // Also retire a disconnected registration whose previous cleanup failed.
     stop_registered(group, actor_id)?;

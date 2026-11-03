@@ -248,8 +248,9 @@ function RuntimeDockActorButtonView({
   }, [item.actorId, onToneChange, ringTone]);
   useLayoutEffect(() => () => onToneChange?.(item.actorId, null), [item.actorId, onToneChange]);
   const useRuntimeStatus = hasManagedRuntimeOutput(item.actor) || workingState === "error";
-  const statusLabel =
-    item.liveWorkCard && !useRuntimeStatus
+  const statusLabel = item.actor.runtime_confirmation_required
+    ? t("actors:runtimeConfirmationPending")
+    : item.liveWorkCard && !useRuntimeStatus
       ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
       : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
           t(key === "error" ? "common:error" : `actors:${key}`, options),
@@ -314,7 +315,7 @@ function RuntimeDockActorButtonView({
             <button
               ref={setReference}
               type="button"
-              className="lcd-member"
+              className="lcd-member pointer-events-auto"
               data-active={isInspectorOpen || undefined}
               data-tone={ringTone}
               data-listed={showName || undefined}
@@ -397,7 +398,7 @@ function RuntimeDockActorButtonView({
         type="button"
         onClick={handleOpenInspector}
         className={classNames(
-          "group relative flex h-[50px] shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/40 focus-visible:ring-offset-0",
+          "group pointer-events-auto relative flex h-[50px] shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/40 focus-visible:ring-offset-0",
           "w-[50px] bg-transparent",
           isInspectorOpen
             ? classNames("scale-[1.04] shadow-[0_18px_40px_-28px_rgba(62,80,103,0.32)]")
@@ -566,7 +567,7 @@ export function RuntimeDock({
         type="button"
         onClick={onAddAgent}
         className={classNames(
-          "group/add-agent relative flex h-[50px] w-[50px] flex-shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35 active:scale-[0.97]",
+          "group/add-agent pointer-events-auto relative flex h-[50px] w-[50px] flex-shrink-0 items-center justify-center rounded-full shadow-[0_14px_34px_-30px_rgba(15,23,42,0.52)] transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(143,163,187)]/35 active:scale-[0.97]",
           "bg-transparent hover:scale-[1.02]",
           isSmallScreen && "mb-1",
         )}
@@ -595,7 +596,7 @@ export function RuntimeDock({
       <div className="mx-auto flex w-full max-w-[1400px] justify-center">
         <div
           className={classNames(
-            "group/runtime-dock pointer-events-auto relative flex justify-center",
+            "group/runtime-dock pointer-events-none relative flex justify-center",
             isSmallScreen ? "w-full max-w-[calc(100vw-2.5rem)] flex-col items-center" : "",
           )}
         >
@@ -608,7 +609,7 @@ export function RuntimeDock({
           <div className="flex min-w-0 max-w-full items-end gap-2">
             <div
               className={classNames(
-                "flex min-w-0 items-end gap-2",
+                "pointer-events-auto flex min-w-0 items-end gap-2",
                 isSmallScreen ? "overflow-x-auto px-2 py-1 scrollbar-hide" : "",
               )}
               data-runtime-dock-strip
@@ -833,7 +834,11 @@ function RuntimeDockMemberRow({
     .join(" · ");
 
   return (
-    <div className="lcd-members" role="group" aria-label={t("runtimeDockMembers")}>
+    <div
+      className="lcd-members pointer-events-none"
+      role="group"
+      aria-label={t("runtimeDockMembers")}
+    >
       <div ref={rowRef} className="lcd-members-row">
         {items.map((item) => (
           <RuntimeDockActorButton
@@ -859,7 +864,7 @@ function RuntimeDockMemberRow({
             <button
               ref={moreRef}
               type="button"
-              className="lcd-member lcd-member-more"
+              className="lcd-member lcd-member-more pointer-events-auto"
               data-tone={hiddenWithAttention > 0 ? "attention" : undefined}
               data-attention-flash={moreAttentionFlash || undefined}
               aria-label={moreLabel}
@@ -925,7 +930,7 @@ function RuntimeDockMemberRow({
         <button
           type="button"
           onClick={onAddAgent}
-          className="lcd-member lcd-member-add"
+          className="lcd-member lcd-member-add pointer-events-auto"
           aria-label={t("addAgent", { defaultValue: "Add an agent" })}
           title={t("addAgent", { defaultValue: "Add an agent" })}
         >

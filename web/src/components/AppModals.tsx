@@ -1574,6 +1574,13 @@ export function AppModals({
         createGroupName={createGroupName}
         setCreateGroupName={setCreateGroupName}
         dirBrowseError={directoryBrowser.error}
+        dirCreateError={directoryBrowser.createError}
+        onClearDirCreateError={directoryBrowser.clearCreateError}
+        onRetryDir={
+          directoryBrowser.retryPath
+            ? () => void directoryBrowser.retryCreatedDirectory()
+            : undefined
+        }
         creatingDirectory={directoryBrowser.creating}
         onFetchDirContents={directoryBrowser.fetchContents}
         onCreateDirectory={directoryBrowser.createDirectory}
@@ -1583,6 +1590,7 @@ export function AppModals({
           closeModal("createGroup");
           resetCreateGroupForm();
           directoryBrowser.setError("");
+          directoryBrowser.clearCreateError();
         }}
       />
 

@@ -8,6 +8,7 @@ import { beginActorAction, endActorAction } from "./actorActionInFlight";
 import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
 import { useShallow } from "zustand/react/shallow";
 import i18n from "../i18n";
+import { revealRuntimeConfirmation } from "./runtimeConfirmation";
 
 function latestActorHasResumeFailure(groupId: string, actorId: string): boolean {
   if (useGroupStore.getState().selectedGroupId !== groupId) return false;
@@ -57,6 +58,7 @@ export function useActorActions(groupId: string) {
       const isRunning = resolveActorLifecycleRunning(actor, runningOverride);
       const actionKey = JSON.stringify([groupId, actor.id]);
       if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
+      const expectedTab = useUIStore.getState().activeTab;
       changeActorBusy(groupId, actor.id, 1);
       try {
         const resp = isRunning
@@ -66,13 +68,19 @@ export function useActorActions(groupId: string) {
             : await api.startActor(groupId, actor.id);
         if (!resp.ok) {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
-          if (isRunning || !latestActorHasResumeFailure(groupId, actor.id)) {
+          const awaitingConfirmation = revealRuntimeConfirmation(groupId, actor.id, expectedTab);
+          if (
+            awaitingConfirmation ||
+            isRunning ||
+            !latestActorHasResumeFailure(groupId, actor.id)
+          ) {
             showError(`${resp.error.code}: ${resp.error.message}`);
           }
           return;
         }
         clearStreamingEventsForActor(actor.id, groupId);
         await Promise.all([refreshActors(groupId), refreshGroups()]);
+        if (!isRunning) revealRuntimeConfirmation(groupId, actor.id, expectedTab, resp.result);
       } finally {
         endActorAction(actorActionInFlightRef, actionKey);
         changeActorBusy(groupId, actor.id, -1);
@@ -94,16 +102,19 @@ export function useActorActions(groupId: string) {
       if (!groupId || !actor) return;
       const actionKey = JSON.stringify([groupId, actor.id]);
       if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
+      const expectedTab = useUIStore.getState().activeTab;
       changeActorBusy(groupId, actor.id, 1);
       try {
         const resp = await api.restartActor(groupId, actor.id);
         if (!resp.ok) {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
-          if (!latestActorHasResumeFailure(groupId, actor.id)) {
+          const awaitingConfirmation = revealRuntimeConfirmation(groupId, actor.id, expectedTab);
+          if (awaitingConfirmation || !latestActorHasResumeFailure(groupId, actor.id)) {
             showError(`${resp.error.code}: ${resp.error.message}`);
           }
         } else {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
+          revealRuntimeConfirmation(groupId, actor.id, expectedTab, resp.result);
         }
         setTermEpochByActor((prev) => ({ ...prev, [actionKey]: (prev[actionKey] || 0) + 1 }));
       } finally {
@@ -120,15 +131,18 @@ export function useActorActions(groupId: string) {
       if (!groupId || !actor) return;
       const actionKey = JSON.stringify([groupId, actor.id]);
       if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
+      const expectedTab = useUIStore.getState().activeTab;
       changeActorBusy(groupId, actor.id, 1);
       try {
         const resp = await api.newActorSession(groupId, actor.id);
         if (!resp.ok) {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
+          revealRuntimeConfirmation(groupId, actor.id, expectedTab);
           showError(`${resp.error.code}: ${resp.error.message}`);
         } else {
           clearStreamingEventsForActor(actor.id, groupId);
           await Promise.all([refreshActors(groupId), refreshGroups()]);
+          revealRuntimeConfirmation(groupId, actor.id, expectedTab, resp.result);
         }
         setTermEpochByActor((prev) => ({ ...prev, [actionKey]: (prev[actionKey] || 0) + 1 }));
       } finally {

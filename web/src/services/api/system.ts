@@ -77,7 +77,14 @@ export async function fetchDirSuggestions() {
   return { ok: true as const, result: { suggestions } };
 }
 
-export async function fetchDirContents(path: string) {
+type DirectoryContents = {
+  path: string;
+  parent: string | null;
+  items: DirItem[];
+  readable?: boolean;
+};
+
+export async function fetchDirContents(path: string): Promise<ApiResponse<DirectoryContents>> {
   const response = await apiJson<unknown>(`/api/v1/fs/list?path=${encodeURIComponent(path)}`);
   if (!response.ok) return response;
   const result = asRecord(response.result);
@@ -86,15 +93,19 @@ export async function fetchDirContents(path: string) {
     typeof result.path !== "string" ||
     !(result.parent === null || typeof result.parent === "string") ||
     !Array.isArray(result.items) ||
-    !result.items.every(isDirItem)
+    !result.items.every(isDirItem) ||
+    (result.readable !== undefined && typeof result.readable !== "boolean")
   ) {
-    return invalidResponse<{ path: string; parent: string | null; items: DirItem[] }>(
-      "Invalid filesystem list response",
-    );
+    return invalidResponse<DirectoryContents>("Invalid filesystem list response");
   }
   return {
     ok: true as const,
-    result: { path: result.path, parent: result.parent, items: result.items },
+    result: {
+      path: result.path,
+      parent: result.parent,
+      items: result.items,
+      ...(typeof result.readable === "boolean" ? { readable: result.readable } : {}),
+    },
   };
 }
 

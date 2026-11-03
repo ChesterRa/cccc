@@ -820,37 +820,31 @@ export const MessageBubble = memo(
           >
             {messageTimestamp}
           </time>
-          {/* Where messages have no hover bar to carry it, or no room on it (lcd.css), a
-              filtered view shows its way into the whole conversation here, after the time. */}
-          {showInConversation ? (
-            <button
-              type="button"
-              className="lcd-row-jump"
-              onClick={() => showInConversation(String(ev.id))}
-            >
-              {t("showInConversation")}
-            </button>
-          ) : null}
-          <MessageActions
-            readOnly={readOnly}
-            copyableMessageText={copyableMessageText}
-            onCopyMessageText={() => void handleCopyMessageText()}
-            onShowInConversation={showInConversation}
-            onCopyLink={onCopyLink}
-            onRelay={onRelay}
-            onReply={onReply}
-            canReply={canReply}
-            eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
-            event={ev}
-            quickReplies={quickReplies}
-          />
         </div>
         {agentStateTooltip}
         <div className="lcd-row-body">
           <div className={classNames("lcd-row-content", isStreaming ? "lcd-row-streaming" : "")}>
             {bubbleContent}
           </div>
-          {messageFooter}
+          <div
+            className="message-footer-row"
+            data-message-footer-align={fromReader ? "end" : undefined}
+          >
+            <MessageActions
+              readOnly={readOnly}
+              copyableMessageText={copyableMessageText}
+              onCopyMessageText={() => void handleCopyMessageText()}
+              onShowInConversation={showInConversation}
+              onCopyLink={onCopyLink}
+              onRelay={onRelay}
+              onReply={onReply}
+              canReply={canReply}
+              eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
+              event={ev}
+              quickReplies={quickReplies}
+            />
+            {messageFooter}
+          </div>
         </div>
       </div>
     );
