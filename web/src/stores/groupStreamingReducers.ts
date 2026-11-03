@@ -666,6 +666,7 @@ export function reconcileStreamingMessagePatch(
     pendingEventId?: string;
     streamId: string;
     ts: string;
+    firstTextTs?: string;
     fullText: string;
     eventText: string;
     activities: StreamingActivity[];
@@ -720,6 +721,7 @@ export function reconcileStreamingMessagePatch(
             transient_stream?: unknown;
             stream_phase?: unknown;
             stream_id?: unknown;
+            _headless_text_started_at?: unknown;
           })
         : {};
     previousStreamId = String(data.stream_id || "").trim();
@@ -742,6 +744,12 @@ export function reconcileStreamingMessagePatch(
         activities: normalizedActivities,
         transient_stream: args.transientStream,
         stream_phase: args.phase || undefined,
+        _headless_text_started_at:
+          previousStreamId === targetStreamId &&
+          String(data.stream_phase || "") === String(args.phase || "")
+            ? String(data._headless_text_started_at || "") ||
+              (String(data.text || "").trim() ? undefined : args.firstTextTs)
+            : args.firstTextTs,
       },
     };
   } else {
@@ -761,6 +769,7 @@ export function reconcileStreamingMessagePatch(
         activities: normalizedActivities,
         transient_stream: args.transientStream,
         stream_phase: args.phase || undefined,
+        _headless_text_started_at: args.firstTextTs,
       },
     });
   }

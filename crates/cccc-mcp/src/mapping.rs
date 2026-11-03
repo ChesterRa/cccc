@@ -202,6 +202,14 @@ fn task_action(
         }
         if let Some(value) = args.remove("task_id") {
             request.insert("task_id".into(), value);
+        } else {
+            // Status, paging and the counts are applied to the summary rows (task_summary.rs);
+            // the daemon filters by text, assignee and attention.
+            for key in ["query", "assignee", "attention"] {
+                if let Some(value) = args.remove(key) {
+                    request.insert(key.into(), value);
+                }
+            }
         }
         return Ok(("task_list".into(), request));
     }

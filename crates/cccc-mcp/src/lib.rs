@@ -13,7 +13,9 @@ mod mapping;
 mod native_session;
 mod repo;
 mod repo_inspect;
+mod response_projection;
 mod router;
+mod task_summary;
 mod tools;
 
 #[cfg(test)]

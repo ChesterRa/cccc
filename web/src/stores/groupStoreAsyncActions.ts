@@ -681,7 +681,7 @@ export function createGroupStoreAsyncActions(
     openChatWindow: async (groupId: string, centerEventId: string) => {
       const gid = String(groupId || "").trim();
       const eid = String(centerEventId || "").trim();
-      if (!gid || !eid) return;
+      if (!gid || !eid) return false;
       useUIStore.getState().setGroupWorkView(gid, "messages");
       const epoch = beginGroupRequestEpoch(chatWindowRequestEpochByGroup, gid);
 
@@ -701,10 +701,11 @@ export function createGroupStoreAsyncActions(
       );
       try {
         const resp = await api.fetchMessageWindow(gid, eid, { before: 30, after: 30 });
-        if (!isLatestGroupRequestEpoch(chatWindowRequestEpochByGroup, gid, epoch)) return;
+        // A newer request took over; what it shows is not this one's failure.
+        if (!isLatestGroupRequestEpoch(chatWindowRequestEpochByGroup, gid, epoch)) return true;
         if (!resp.ok) {
           set((state) => buildChatBucketPatch(state, gid, { chatWindow: null }) ?? state);
-          return;
+          return false;
         }
 
         const events = projectFetchedChatEvents(resp.result.events || []);
@@ -721,6 +722,7 @@ export function createGroupStoreAsyncActions(
               },
             }) ?? state,
         );
+        return true;
       } finally {
         if (isLatestGroupRequestEpoch(chatWindowRequestEpochByGroup, gid, epoch)) {
           set((state) => buildChatBucketPatch(state, gid, { isChatWindowLoading: false }) ?? state);

@@ -155,6 +155,17 @@ function MessageBubbleBody({
         isDark={isDark}
       />
 
+      {/* Attachments are part of the message: they follow its text with no rule between
+          them, and the sender's insight about the whole message follows them. */}
+      <MessageAttachments
+        attachments={blobAttachments}
+        blobGroupId={blobGroupId}
+        isUserMessage={isUserMessage}
+        isDark={isDark}
+        attachmentKeyPrefix={stableMessageAttachmentKey}
+        downloadTitle={(name) => t("download", { name })}
+      />
+
       {insight ? (
         <div className={supportingSectionClass} data-message-insight>
           <div className="mb-1.5 text-xs font-semibold uppercase text-[var(--color-text-tertiary)]">
@@ -165,16 +176,6 @@ function MessageBubbleBody({
           </div>
         </div>
       ) : null}
-
-      <MessageAttachments
-        attachments={blobAttachments}
-        blobGroupId={blobGroupId}
-        isUserMessage={isUserMessage}
-        isDark={isDark}
-        attachmentKeyPrefix={stableMessageAttachmentKey}
-        downloadTitle={(name) => t("download", { name })}
-        sectionClassName={supportingSectionClass}
-      />
     </>
   );
 }
@@ -237,6 +238,17 @@ export const MessageBubble = memo(
     const isUserMessage = ev.by === "user";
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
     const isStreaming = !!ev._streaming;
+    // A filtered view's way into the whole conversation; a message still being sent or
+    // written has no place there yet.
+    const showInConversation =
+      onViewContext &&
+      !readOnly &&
+      typeof ev.id === "string" &&
+      ev.id &&
+      !isOptimistic &&
+      !isStreaming
+        ? onViewContext
+        : undefined;
     const canReply = !!getReplyEventId(ev);
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
     const pendingStore = useContext(PendingReplyStoreContext);
@@ -759,6 +771,7 @@ export const MessageBubble = memo(
         data-lcd-user={fromReader || undefined}
         data-lcd-continued={collapseHeader || undefined}
         data-lcd-same-sender={sameSender || undefined}
+        data-lcd-show-in-chat={showInConversation ? true : undefined}
         data-lcd-accent={isUserMessage ? undefined : getActorAccentIndex(String(ev.by || ""))}
       >
         {/* One head line, so names never truncate and the text keeps the full width. */}
@@ -807,11 +820,22 @@ export const MessageBubble = memo(
           >
             {messageTimestamp}
           </time>
+          {/* Where messages have no hover bar to carry it, or no room on it (lcd.css), a
+              filtered view shows its way into the whole conversation here, after the time. */}
+          {showInConversation ? (
+            <button
+              type="button"
+              className="lcd-row-jump"
+              onClick={() => showInConversation(String(ev.id))}
+            >
+              {t("showInConversation")}
+            </button>
+          ) : null}
           <MessageActions
             readOnly={readOnly}
             copyableMessageText={copyableMessageText}
             onCopyMessageText={() => void handleCopyMessageText()}
-            onViewContext={onViewContext}
+            onShowInConversation={showInConversation}
             onCopyLink={onCopyLink}
             onRelay={onRelay}
             onReply={onReply}

@@ -12,6 +12,7 @@ import type { HeadlessStreamEvent, GroupContext, LedgerEvent, StreamingActivity 
 import { runReconnectCatchup, scheduleContextOverviewCatchup } from "./sseCatchup";
 import { getRecipientActorIdsForEvent, shouldIncrementUnread } from "../utils/ledgerEventHandlers";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
+import { parseHeadlessActivity } from "../utils/headlessActivity";
 import { hasManagedRuntimeOutput } from "../utils/headlessRuntimeSupport";
 import { createSseConnectionRegistry } from "./sseConnectionRegistry";
 import {
@@ -109,6 +110,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         streamId: string;
         pendingEventId: string;
         ts: string;
+        firstTextTs?: string;
         explicitText: string | null;
         deltaText: string;
         completed: boolean;
@@ -321,13 +323,37 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       const previousText = shouldResetTextForPhaseTransition
         ? ""
         : previousStreamText || previousEventText;
-      const previousActivities = (() => {
+      let previousActivities = (() => {
         const source = existing ?? placeholder;
         if (!source?.data || typeof source.data !== "object") return [];
         const activities = (source.data as { activities?: unknown }).activities;
         return Array.isArray(activities) ? activities : [];
       })();
       const fullText = entry.explicitText ?? `${previousText}${entry.deltaText}`;
+      // Recover retained activities when the first text creates this stream row.
+      // Tool-only turns continue to use the raw trace and create no new row.
+      if (
+        !entry.pendingEventId &&
+        !previousStreamText.trim() &&
+        !previousEventText.trim() &&
+        fullText.trim()
+      ) {
+        const raw = bucket?.rawHeadlessEventsByActorId[entry.actorId] || [];
+        const recovered = new Map<string, StreamingActivity>();
+        for (const event of raw) {
+          if (
+            event.actor_id !== entry.actorId ||
+            (event.group_id && event.group_id !== entry.groupId)
+          )
+            continue;
+          if (String(event.data?.stream_id || "").trim() !== entry.streamId) continue;
+          const activity = parseHeadlessActivity(event);
+          if (!activity) continue;
+          const merged = mergeStreamingActivity(recovered.get(activity.id), activity);
+          if (merged) recovered.set(activity.id, merged);
+        }
+        previousActivities = [...previousActivities, ...recovered.values()];
+      }
       const nextPlaceholderState = !fullText.trim() && previousActivities.length <= 0;
       const nextEventText = fullText
         ? fullText
@@ -350,6 +376,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           pendingEventId: entry.pendingEventId,
           streamId: entry.streamId,
           ts: entry.ts,
+          firstTextTs: entry.firstTextTs,
           fullText,
           eventText: nextEventText,
           activities: previousActivities,
@@ -856,29 +883,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         eventType === "headless.activity.updated" ||
         eventType === "headless.activity.completed"
       ) {
-        const activityId = typeof data.activity_id === "string" ? data.activity_id.trim() : "";
-        const summary = typeof data.summary === "string" ? data.summary.trim() : "";
-        if (!activityId || !summary) return;
-        const activityTs = typeof ev.ts === "string" ? ev.ts : new Date().toISOString();
-        const activity: StreamingActivity = {
-          id: activityId,
-          kind: typeof data.kind === "string" ? data.kind.trim() : "thinking",
-          status: eventType.replace("headless.activity.", ""),
-          summary,
-          detail: typeof data.detail === "string" ? data.detail.trim() : undefined,
-          ts: activityTs,
-          raw_item_type:
-            typeof data.raw_item_type === "string" ? data.raw_item_type.trim() : undefined,
-          tool_name: typeof data.tool_name === "string" ? data.tool_name.trim() : undefined,
-          server_name: typeof data.server_name === "string" ? data.server_name.trim() : undefined,
-          command: typeof data.command === "string" ? data.command.trim() : undefined,
-          cwd: typeof data.cwd === "string" ? data.cwd.trim() : undefined,
-          file_paths: Array.isArray(data.file_paths)
-            ? data.file_paths.map((item) => String(item || "").trim()).filter((item) => item)
-            : undefined,
-          query: typeof data.query === "string" ? data.query.trim() : undefined,
-        };
-        queueHeadlessActivity(activity);
+        const activity = parseHeadlessActivity(ev);
+        if (activity) queueHeadlessActivity(activity);
         return;
       }
 
@@ -902,10 +908,14 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         }
         const messageKey = `${groupId}:${streamId}`;
         const existingMessageBatch = pendingHeadlessMessagesRef.current.get(messageKey);
+        const eventTs = typeof ev.ts === "string" ? ev.ts : new Date().toISOString();
+        const hasIncomingText = explicitText != null ? explicitText.length > 0 : delta.length > 0;
         if (existingMessageBatch) {
           existingMessageBatch.pendingEventId =
             pendingEventId || existingMessageBatch.pendingEventId;
           existingMessageBatch.ts = typeof ev.ts === "string" ? ev.ts : existingMessageBatch.ts;
+          if (!existingMessageBatch.firstTextTs && hasIncomingText)
+            existingMessageBatch.firstTextTs = eventTs;
           existingMessageBatch.transientStream = transientStream;
           existingMessageBatch.phase = phase || existingMessageBatch.phase;
           if (explicitText != null) {
@@ -926,7 +936,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
             actorId,
             streamId,
             pendingEventId,
-            ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
+            ts: eventTs,
+            firstTextTs: hasIncomingText ? eventTs : undefined,
             explicitText,
             deltaText: explicitText == null ? delta : "",
             completed: eventType === "headless.message.completed",

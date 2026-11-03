@@ -284,3 +284,19 @@ it("keeps selectors busy until the current Group read finishes even if an older 
   });
   expect(notebookSelectors().every((element) => !element.disabled)).toBe(true);
 });
+
+it.each([
+  ["idle", "Authentication browser is idle.", false],
+  ["running", "Checking the saved Google session...", true],
+])(
+  "shows the sign-in status line only once a sign-in has started (%s)",
+  async (state, message, shown) => {
+    mockConnection(false);
+    api.controlGroupSpaceProviderAuth.mockResolvedValue({
+      ok: true,
+      result: { auth: { state, message } },
+    });
+    await mount();
+    expect(host.textContent?.includes(message)).toBe(shown);
+  },
+);

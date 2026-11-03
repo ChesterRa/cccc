@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { useUIStore } from "../../stores";
+import type { LedgerEvent } from "../../types";
 import { MessageBubble } from "../MessageBubble";
 import { MessageActions } from "./MessageActions";
 
@@ -39,6 +40,54 @@ describe("message chrome", () => {
       expect(markup.includes('data-status-motion="working"')).toBe(state === "submitting");
     },
   );
+
+  it("keeps attachments with the message's text, before the sender's insight", () => {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      <MessageBubble
+        event={{
+          id: "e",
+          kind: "chat.message",
+          by: "worker",
+          data: {
+            text: "Here is the settings page.",
+            to: ["user"],
+            insight: "The event subscription is still missing.",
+            attachments: [
+              {
+                kind: "image",
+                path: "state/blobs/a_page.png",
+                title: "page.png",
+                mime_type: "image/png",
+              },
+            ],
+          },
+        }}
+        actorById={new Map()}
+        actors={[]}
+        displayNameMap={new Map()}
+        agentState={null}
+        taskById={new Map()}
+        isDark={false}
+        groupId="g"
+        groupLabelById={{}}
+        onReply={vi.fn()}
+        onShowRecipients={vi.fn()}
+      />,
+    );
+    const text = [...host.querySelectorAll("p, div")].find(
+      (node) => node.textContent === "Here is the settings page.",
+    );
+    const attachments = host.querySelector("[data-message-attachments]");
+    const insight = host.querySelector("[data-message-insight]");
+    const follows = (a: Node, b: Node) =>
+      Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(text && attachments && insight).toBeTruthy();
+    expect(follows(text!, attachments!)).toBe(true);
+    expect(follows(attachments!, insight!)).toBe(true);
+    // No rule parts the image from the text it was sent with.
+    expect(attachments!.className).not.toMatch(/border-t|pt-3/);
+  });
 
   it("shows one reply-request label and preserves recipient progress", () => {
     const props = {
@@ -183,6 +232,82 @@ describe("message chrome", () => {
     expect(host.textContent?.includes("→")).toBe(true);
   });
 
+  // A filtered view gives each message a key into the whole conversation: first on the hover
+  // bar, and after the time for screens without the bar (lcd.css shows one or the other), never
+  // in a menu. A message still being sent or written has no place there yet.
+  it("puts a filtered message's way into the conversation on its bar and after its time", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const open = vi.fn();
+    const show = (event: LedgerEvent, filtered = true) =>
+      act(async () =>
+        root.render(
+          <MessageBubble
+            event={event}
+            actorById={new Map()}
+            actors={[]}
+            displayNameMap={new Map()}
+            agentState={null}
+            taskById={new Map()}
+            isDark={false}
+            groupId="g"
+            groupLabelById={{}}
+            onReply={vi.fn()}
+            onShowRecipients={vi.fn()}
+            onViewContext={filtered ? open : undefined}
+          />,
+        ),
+      );
+    const key = () => host.querySelector<HTMLButtonElement>(".lcd-row-jump");
+    try {
+      await show({ id: "event-1", kind: "chat.message", by: "worker", data: { text: "hi" } });
+      expect(key()?.textContent).toBe("showInConversation");
+      expect(key()?.previousElementSibling?.tagName).toBe("TIME");
+      await act(async () => key()!.click());
+      expect(open).toHaveBeenCalledWith("event-1");
+      const bar = host.querySelectorAll<HTMLButtonElement>("[data-message-actions-inline] button");
+      expect(bar[0]?.textContent).toBe("showInConversation");
+      // lcd.css hides one of the two by the column's width, through these marks.
+      expect(bar[0].hasAttribute("data-show-in-chat")).toBe(true);
+      expect(host.querySelector("[data-lcd-show-in-chat]")).not.toBeNull();
+      await act(async () => bar[0].click());
+      expect(open).toHaveBeenCalledTimes(2);
+      const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+      await act(async () => touch.click());
+      expect(
+        Array.from(document.querySelectorAll('[role="dialog"] button')).map(
+          (item) => item.textContent,
+        ),
+      ).not.toContain("showInConversation");
+      await act(async () => touch.click());
+
+      await show(
+        { id: "event-1", kind: "chat.message", by: "worker", data: { text: "hi" } },
+        false,
+      );
+      expect(key()).toBeNull();
+      await show({
+        id: "local-1",
+        kind: "chat.message",
+        by: "user",
+        data: { text: "hi", _optimistic: true },
+      });
+      expect(key()).toBeNull();
+      await show({
+        id: "stream-1",
+        kind: "chat.message",
+        by: "worker",
+        _streaming: true,
+        data: { text: "hi" },
+      });
+      expect(key()).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  });
+
   it("keeps Reply and Forward on the bar, the rest in its menu, and all in the touch menu", async () => {
     const host = document.createElement("div");
     document.body.append(host);
@@ -190,7 +315,6 @@ describe("message chrome", () => {
     const event = { id: "event-1", kind: "chat.message", by: "user", data: {} };
     const copy = vi.fn(),
       link = vi.fn(),
-      context = vi.fn(),
       relay = vi.fn(),
       reply = vi.fn();
     const menuItems = () =>
@@ -216,7 +340,6 @@ describe("message chrome", () => {
             copyableMessageText="text"
             onCopyMessageText={copy}
             onCopyLink={link}
-            onViewContext={context}
             onRelay={relay}
             onReply={reply}
             canReply
@@ -246,16 +369,11 @@ describe("message chrome", () => {
 
       const more = bar[3];
       await act(async () => more.click());
-      expect(menuItems().map((item) => item.textContent)).toEqual([
-        "copyLink",
-        "viewMessageContext",
-      ]);
+      expect(menuItems().map((item) => item.textContent)).toEqual(["copyLink"]);
       await act(async () => more.click());
       await settle();
       await choose(more, "copyLink");
-      await choose(more, "viewMessageContext");
       expect(link).toHaveBeenCalledWith("event-1");
-      expect(context).toHaveBeenCalledWith("event-1");
 
       const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
       await act(async () => touch.click());
@@ -264,7 +382,6 @@ describe("message chrome", () => {
         "relay",
         "copyText",
         "copyLink",
-        "viewMessageContext",
       ]);
       await act(async () => touch.click());
       await settle();

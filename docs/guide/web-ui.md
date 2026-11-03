@@ -78,8 +78,10 @@ wide reading column, agents' messages and yours keep the same room from the oppo
 narrow one, as on a phone, beside the files panel or at a large text size, agents' messages may
 use the full width. Space inside a message is reduced so that it reads apart from the space
 between messages, and a Markdown rule inside a message is a short mark in the text column.
-Messages have no background, and pointing at one changes only its actions. Sender, recipients,
-Mail mode and time share a compact header; delivery failures and reply/read status stay visible.
+Images and files sent with a message follow its text with no rule between them, and the sender's
+insight follows both. Messages have no background, and pointing at one changes only its actions.
+Sender, recipients, Mail mode and time share a compact header; delivery failures and reply/read
+status stay visible.
 A reply shows up to two lines of the message it answers; clicking or tapping that
 quote, or pressing Enter on it, opens the original message. On hover-capable desktop
 screens, **Reply**, **Forward** and a copy icon appear beside the message header on hover or
@@ -284,8 +286,10 @@ not loaded, such as mail older than the loaded history, cannot be kept. A place 
 
 Sending keeps the filters. If they hide the sent message, a confirmation offers
 **View message**, including cross-Group sends; the action returns to the originating
-Group even if you have switched Groups. **View context**, in a filtered message's **⋯** menu, opens
-its surrounding conversation; returning to the conversation restores the filters.
+Group even if you have switched Groups. In a filtered view, **Show in chat** opens a message with the
+messages around it in the whole conversation. It leads the bar shown over the message, or follows
+the message's time on touch screens and in a column too narrow for the bar. **Back to filtered
+conversation** restores the filters and returns to the place you were reading.
 
 Opening a message from a notification, a link or search shows it in the live conversation when it
 is already loaded and no filter is on; new messages keep arriving as usual. Otherwise **Viewing a

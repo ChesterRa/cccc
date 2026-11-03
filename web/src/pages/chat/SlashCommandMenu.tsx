@@ -1,6 +1,8 @@
 import { useLayoutEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { useComposerMenuHeight } from "./useComposerMenuHeight";
 import { classNames } from "../../utils/classNames";
+import { BUILTIN_SLASH_DESCRIPTION_KEYS } from "../../utils/builtinSlashCommands";
 import { slashCommandDisplayKind, type SlashCommandItem } from "../../utils/slashCommands";
 
 export function SlashCommandMenu(props: {
@@ -23,6 +25,7 @@ export function SlashCommandMenu(props: {
     onHover,
     onLoadMore,
   } = props;
+  const { t } = useTranslation("chat");
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const menuRef = useRef<HTMLDivElement | null>(null);
   useComposerMenuHeight(menuRef, suggestions.length > 0);
@@ -55,6 +58,11 @@ export function SlashCommandMenu(props: {
       {suggestions.map((item, idx) => {
         const displayKind = slashCommandDisplayKind(item);
         const isSelected = idx === selectedIndex;
+        const descriptionKey = BUILTIN_SLASH_DESCRIPTION_KEYS.get(item.capabilityId || "");
+        const description =
+          descriptionKey && item.description === t(descriptionKey, { lng: "en" })
+            ? t(descriptionKey)
+            : item.description;
         return (
           <button
             key={`${item.sourceType}:${item.command}`}
@@ -85,7 +93,7 @@ export function SlashCommandMenu(props: {
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="truncate font-medium">{item.command}</div>
-                {item.description ? (
+                {description ? (
                   <div
                     className={classNames(
                       "truncate text-xs",
@@ -99,7 +107,7 @@ export function SlashCommandMenu(props: {
                     )}
                     data-lcd-hint
                   >
-                    {item.description}
+                    {description}
                   </div>
                 ) : null}
               </div>

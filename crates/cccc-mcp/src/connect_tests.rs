@@ -194,6 +194,12 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
     assert_eq!(sent["structuredContent"]["accepted"], true);
     assert_eq!(sent["structuredContent"]["queued"], true);
     let event = &sent["structuredContent"]["source_event"];
+    assert!(event["data"].get("text").is_none());
+    assert!(event["data"].get("insight").is_none());
+    assert_eq!(
+        sent["structuredContent"]["mcp_omitted_fields"]["source_event"],
+        json!(["text", "insight"])
+    );
     assert_eq!(
         event["by"], "worker",
         "context overrides caller impersonation"
@@ -213,6 +219,15 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
         .await
         .expect("file send");
     assert_eq!(file_sent["structuredContent"]["accepted"], true);
+    assert!(
+        file_sent["structuredContent"]["result"]["source_event"]["data"]
+            .get("insight")
+            .is_none()
+    );
+    assert_eq!(
+        file_sent["structuredContent"]["mcp_omitted_fields"]["result.source_event"],
+        json!(["insight"])
+    );
     assert!(
         file_sent["structuredContent"]["result"]["delivery_id"]
             .as_str()

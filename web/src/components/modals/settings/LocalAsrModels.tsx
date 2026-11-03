@@ -24,6 +24,14 @@ function shortHash(value: string | undefined): string {
   return raw.length > 16 ? `${raw.slice(0, 12)}...${raw.slice(-6)}` : raw;
 }
 
+/** A component's status in words; a status this version does not know is shown as reported. */
+function componentStatusLabel(
+  status: string,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
+  return t(`assistants.componentStatus.${status}`, { defaultValue: status });
+}
+
 function serviceModelStatusLabel(
   status: string,
   model: AssistantServiceModel | null | undefined,
@@ -34,14 +42,10 @@ function serviceModelStatusLabel(
     Number(model?.progress_percent || 0) >= 100 &&
     model?.installed !== true
   ) {
-    return t("assistants.componentStatusShort", {
-      status: "installing",
-      defaultValue: "{{status}}",
-    });
+    return componentStatusLabel("installing", t);
   }
-  if (status !== "downloading")
-    return t("assistants.componentStatusShort", { status, defaultValue: "{{status}}" });
-  return `${t("assistants.componentStatusShort", { status, defaultValue: "{{status}}" })} ${Math.round(Number(model?.progress_percent || 0))}%`;
+  if (status !== "downloading") return componentStatusLabel(status, t);
+  return `${componentStatusLabel(status, t)} ${Math.round(Number(model?.progress_percent || 0))}%`;
 }
 
 function StatusPill({
@@ -579,10 +583,7 @@ export function LocalAsrModels({
                       : "info"
                 }
               >
-                {t("assistants.componentStatusShort", {
-                  status: streamingRuntimeStatus,
-                  defaultValue: "{{status}}",
-                })}
+                {componentStatusLabel(streamingRuntimeStatus, t)}
               </StatusPill>
             </div>
             <p className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">

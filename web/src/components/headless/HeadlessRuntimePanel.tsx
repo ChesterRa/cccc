@@ -1,10 +1,19 @@
-import type { HeadlessPreviewSession, HeadlessStreamEvent, StreamingActivity } from "../../types";
+import { useMemo } from "react";
+import type {
+  HeadlessPreviewSession,
+  HeadlessStreamEvent,
+  LedgerEvent,
+  StreamingActivity,
+} from "../../types";
 import { classNames } from "../../utils/classNames";
 import { HeadlessLiveTrace } from "./HeadlessLiveTrace";
 import { HeadlessRawTrace } from "./HeadlessRawTrace";
+import { projectUnboundTrace } from "./unboundTraceProjection";
 
 type HeadlessRuntimePanelProps = {
   actorId: string;
+  groupId: string;
+  streamingEvents: LedgerEvent[];
   previewSessions: HeadlessPreviewSession[];
   fallbackText: string;
   fallbackActivities: StreamingActivity[];
@@ -16,6 +25,8 @@ type HeadlessRuntimePanelProps = {
 
 export function HeadlessRuntimePanel({
   actorId,
+  groupId,
+  streamingEvents,
   previewSessions,
   fallbackText,
   fallbackActivities,
@@ -25,10 +36,17 @@ export function HeadlessRuntimePanel({
   compact = false,
 }: HeadlessRuntimePanelProps) {
   const minHeight = compact ? "min-h-0" : "min-h-[420px]";
-  const latestPreview =
-    previewSessions.length > 0 ? previewSessions[previewSessions.length - 1] : null;
+  const unbound = useMemo(
+    () => projectUnboundTrace(groupId, actorId, streamingEvents, previewSessions),
+    [groupId, actorId, streamingEvents, previewSessions],
+  );
+  const panelSessions = useMemo(() => {
+    if (!unbound) return previewSessions;
+    return [...previewSessions, unbound].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  }, [previewSessions, unbound]);
+  const latestPreview = panelSessions.length ? panelSessions[panelSessions.length - 1] : null;
   const hasLiveTrace =
-    previewSessions.length > 0 ||
+    panelSessions.length > 0 ||
     String(fallbackText || "").trim().length > 0 ||
     fallbackActivities.length > 0;
 
@@ -48,7 +66,7 @@ export function HeadlessRuntimePanel({
 
   const liveTrace = (
     <HeadlessLiveTrace
-      previewSessions={previewSessions}
+      previewSessions={panelSessions}
       fallbackText={fallbackText}
       fallbackActivities={fallbackActivities}
       fallbackUpdatedAt={String(latestPreview?.updatedAt || "").trim()}

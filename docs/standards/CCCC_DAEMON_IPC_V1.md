@@ -4828,6 +4828,21 @@ guidance belongs in the configured runtime instructions, not operation receipts.
 A peer-insight validation error MUST retain `delivery_state="not_sent"` and
 `new_side_effects=false`, with a concise explanation of the missing field.
 
+For MCP results from `cccc_message_send`, `cccc_message_reply`,
+`cccc_tracked_send` and `cccc_file_send`, including composite partial-failure
+receipts, the MCP port MAY project message events by omitting
+only `data.text` or `data.insight` whose complete string exactly equals the
+corresponding field explicitly supplied in this call. A value MUST remain if the
+input is absent or non-string, or if the stored value differs, including when
+the daemon expands or normalizes it. The port
+MUST list each omitted field in `mcp_omitted_fields`, an object mapping the
+event's result path (for example `event` or `result.source_event`) to an array
+of field names (`text`, `insight`). Only the documented message event locations
+are projected; this does not recursively alter errors, task details, questions,
+attachments, receipts or other data. `content` and `structuredContent` MUST
+describe the same projection. This is an MCP response projection only: the
+daemon result, ledger and delivery remain complete and unchanged.
+
 The MCP file surface separates read permission from message delivery:
 `cccc_file(action="read"|"info"|"blob_path", rel_path=...)` is read-only and
 MUST reject `action="send"` without writing blobs, messages or delivery work.
@@ -5709,13 +5724,15 @@ Notes:
   `outcome`, `notes`, and `checklist`, so a summary refresh cannot erase a
   client's editable draft.
 - `detail="full"` returns the complete task objects and board projections.
-- MCP convenience tools MUST preserve their focused response contracts instead
-  of exposing this complete snapshot: `cccc_coordination(action="get")` returns
-  only `version`, `coordination`, `attention`, `board`, and `tasks_summary`, while
+- MCP convenience tools MUST preserve their focused response contracts instead of
+  exposing this complete snapshot: `cccc_coordination(action="get")` returns only
+  `version`, `coordination` (brief and recent decisions and handoffs, without the task
+  list), `attention` (each list as at most 10 of the `cccc_task` summary rows, see
+  `task_list`, plus `<list>_total` when the list is longer) and `tasks_summary`, while
   `cccc_agent_state(action="get")` returns only `version` plus the selected
   `agent_state` (or `agent_states` when no actor is selected). `include_warm=false`
-  keeps only `id`, `hot`, and `updated_at`; archived tasks remain hidden from
-  coordination unless `include_archived=true`.
+  keeps only `id`, `hot`, and `updated_at`. Coordination attention lists only open
+  tasks, and `tasks_summary` counts every status, archived included.
 
 #### `context_sync`
 
@@ -6074,7 +6091,7 @@ Result:
 }
 
 // Compatibility listing when task_id, task_ids, statuses, and limit are absent:
-{ tasks: Array<Record<string, unknown>> }
+{ tasks: Array<Record<string, unknown>>; tasks_version: string }
 ```
 
 Notes:
@@ -6085,6 +6102,21 @@ Notes:
 - `include_index=true` adds an unfiltered, non-archived, lightweight task index.
   It is intended for relationship selectors; it is not a substitute for exact
   task detail.
+- The MCP `cccc_task` tool (`action="list"` without `task_id`) reads the compatibility
+  listing with only `query`, `assignee` and `attention`, and returns one page of
+  summary rows from that snapshot: `{ tasks, statuses, counts, total, offset, limit,
+  has_more, tasks_version, note }`. A row keeps `id`, `title` (longer than 120
+  characters it is cut and ends in `...`), `status`, `rev`, `updated_at`, checklist
+  progress as `"done/total"`, and `assignee`, `priority`, `task_type`, `parent_id`,
+  `handoff_to`, `blocked_by` (at most 10 ids, with `blocked_by_total` when there are
+  more) and `waiting_on` when set; notes, outcome and checklist text are read with
+  `task_id`. Without `status`, rows are planned and active tasks, with `query` also
+  done ones, and `include_archived=true` adds archived tasks; an explicit `status`
+  lists that status only. Rows keep the compatibility listing's order, most recently
+  updated first. `counts` covers every status of the tasks that matched `query`,
+  `assignee` and `attention`. `limit` (rows, default 50, 1..100) and `offset`
+  (default 0) apply after the status filter; a caller paging on restarts from offset 0
+  when `tasks_version` changes.
 - Filters are applied before pagination. Planned tasks sort newest-created first;
   other columns sort most-recently-updated first, with numeric task id as a stable
   tie-breaker.

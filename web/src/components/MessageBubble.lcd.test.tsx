@@ -138,7 +138,7 @@ it("shows the desktop actions beside the head, so they never widen a message or 
   // The head ends where its text does, and the actions sit just past that end; a head
   // stops short of the reading column's far edge by room for the widest set of actions.
   expect(hover).toMatch(
-    /\.lcd-row-head \{[^}]*position: relative;[^}]*width: fit-content;[^}]*max-width: calc\(100cqi - 12rem\);/,
+    /\.lcd-row-head \{[^}]*position: relative;[^}]*width: fit-content;[^}]*max-width: calc\(100cqi - 12\.5rem\);/,
   );
   expect(hover).toMatch(
     /\.lcd-row \.lcd-row-head > \[data-message-actions-inline\] \{[^}]*position: absolute;[^}]*left: 100%;/,

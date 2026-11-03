@@ -1,5 +1,6 @@
 {
   "save": "保存",
+  "saved": "已保存。",
   "cancel": "取消",
   "delete": "删除",
   "close": "关闭",
@@ -40,5 +41,7 @@
   "chinese": "中文",
   "japanese": "日语",
   "chooseFile": "选择文件",
-  "noFileChosen": "未选择文件"
+  "noFileChosen": "未选择文件",
+  "help": "帮助",
+  "noResults": "无匹配结果"
 }

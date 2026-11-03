@@ -567,6 +567,7 @@ export function HeadlessLiveTrace({
     : "";
   const latestPendingEventId = String(
     latestTimelineGroup?.pendingEventId ||
+      (latestPreview && !latestPreview.pendingEventId ? latestPreview.currentStreamId : "") ||
       fallbackPendingEventId ||
       previewSessions?.[previewSessions.length - 1]?.pendingEventId ||
       "",

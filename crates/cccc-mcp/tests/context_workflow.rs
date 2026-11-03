@@ -504,3 +504,228 @@ async fn context_get_pages_a_captured_board_within_its_byte_bound() {
     let _ = daemon_task.await;
     outcome.expect("bounded context assertions");
 }
+
+/// The ids of a list of task rows, in order.
+fn row_ids(rows: &Value) -> Vec<&str> {
+    rows.as_array()
+        .expect("rows")
+        .iter()
+        .map(|row| row["id"].as_str().expect("id"))
+        .collect()
+}
+
+/// Task rows through the real daemon: it filters by text and attention and returns its task
+/// version with the unpaged list, the MCP pages the rows, and `task_id` reads a task in full.
+#[tokio::test]
+async fn task_rows_filter_page_and_keep_the_task_version_through_the_daemon() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let mut group = groups.create("task rows", "").expect("group");
+    cccc_core::actors::add(&mut group, cccc_contracts::Actor::new("lead")).expect("actor");
+    groups.save(&group).expect("save group");
+    let daemon_home = home.clone();
+    let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = cccc_client::DaemonClient::new(home.clone());
+    for _ in 0..100 {
+        let ping = cccc_contracts::DaemonRequest {
+            v: 1,
+            op: "ping".into(),
+            args: Default::default(),
+        };
+        if client.call(&ping).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let outcome = tokio::spawn(async move {
+        let id = group.group_id.as_str();
+        // T001 to T006: title, further fields, and the status each moves to.
+        let board = [
+            (
+                "parser: ship v1",
+                json!({"notes":"Full notes stay behind task_id."}),
+                Some("done"),
+            ),
+            ("guide: first draft", json!({"waiting_on":"user"}), None),
+            ("cache: tune eviction", json!({}), Some("active")),
+            (
+                "parser: review",
+                json!({"blocked_by":["T003"],"notes":"Review after the cache work."}),
+                None,
+            ),
+            ("parser: old idea", json!({}), Some("archived")),
+            (
+                "parser: fix the crash",
+                json!({"checklist":[{"text":"reproduce","status":"done"},{"text":"patch"}]}),
+                Some("active"),
+            ),
+        ];
+        for (index, (title, fields, status)) in board.into_iter().enumerate() {
+            let task_id = format!("T{:03}", index + 1);
+            let mut create = json!({"action":"create","title":title});
+            create
+                .as_object_mut()
+                .expect("create")
+                .extend(fields.as_object().expect("fields").clone());
+            let created = tool(&home, id, "lead", "cccc_task", create).await;
+            assert_eq!(payload(&created)["changes"][0]["task_id"], task_id);
+            if let Some(status) = status {
+                payload(
+                    &tool(
+                        &home,
+                        id,
+                        "lead",
+                        "cccc_task",
+                        json!({"action":"move","task_id":task_id,"status":status}),
+                    )
+                    .await,
+                );
+            }
+        }
+
+        // By default: open tasks as rows, every status counted.
+        let list = tool(&home, id, "lead", "cccc_task", json!({"action":"list"})).await;
+        let list = payload(&list).clone();
+        let mut open = row_ids(&list["tasks"]);
+        open.sort_unstable();
+        assert_eq!(open, ["T002", "T003", "T004", "T006"]);
+        assert_eq!(list["statuses"], json!(["planned", "active"]));
+        assert_eq!(
+            list["counts"],
+            json!({"planned":2,"active":2,"done":1,"archived":1})
+        );
+        assert_eq!(list["has_more"], false);
+        let version = list["tasks_version"]
+            .as_str()
+            .expect("tasks_version")
+            .to_owned();
+        let rows = list["tasks"].as_array().expect("rows");
+        assert!(rows.iter().all(|row| row.get("notes").is_none()), "{list}");
+        let row = |task_id: &str| {
+            rows.iter()
+                .find(|row| row["id"] == task_id)
+                .expect("row")
+                .clone()
+        };
+        assert_eq!(row("T002")["waiting_on"], "user");
+        assert_eq!(row("T004")["blocked_by"], json!(["T003"]));
+        assert_eq!(row("T006")["checklist"], "1/2");
+
+        // A query reaches the daemon and also finds done work; archived work is only counted.
+        // The MCP pages what the daemon matched.
+        let first = tool(
+            &home,
+            id,
+            "lead",
+            "cccc_task",
+            json!({"action":"list","query":"parser","limit":2}),
+        )
+        .await;
+        let first = payload(&first).clone();
+        let second = tool(
+            &home,
+            id,
+            "lead",
+            "cccc_task",
+            json!({"action":"list","query":"parser","limit":2,"offset":2}),
+        )
+        .await;
+        let second = payload(&second).clone();
+        assert_eq!(first["statuses"], json!(["planned", "active", "done"]));
+        assert_eq!(
+            first["counts"],
+            json!({"planned":1,"active":1,"done":1,"archived":1})
+        );
+        assert_eq!(
+            (&first["total"], &first["has_more"]),
+            (&json!(3), &json!(true))
+        );
+        assert_eq!(second["has_more"], false);
+        let mut found = row_ids(&first["tasks"]);
+        found.extend(row_ids(&second["tasks"]));
+        found.sort_unstable();
+        assert_eq!(found, ["T001", "T004", "T006"]);
+        assert_eq!(first["tasks_version"], version);
+        assert_eq!(second["tasks_version"], version);
+
+        for (attention, expected) in [("blocked", "T004"), ("waiting_user", "T002")] {
+            let response = tool(
+                &home,
+                id,
+                "lead",
+                "cccc_task",
+                json!({"action":"list","attention":attention}),
+            )
+            .await;
+            assert_eq!(
+                row_ids(&payload(&response)["tasks"]),
+                [expected],
+                "{attention}"
+            );
+        }
+
+        // Coordination names the same tasks as short rows and carries no task list.
+        let coordination = tool(
+            &home,
+            id,
+            "lead",
+            "cccc_coordination",
+            json!({"action":"get"}),
+        )
+        .await;
+        let coordination = payload(&coordination);
+        assert!(coordination["coordination"].get("tasks").is_none());
+        assert_eq!(row_ids(&coordination["attention"]["blocked"]), ["T004"]);
+        assert!(
+            coordination["attention"]["blocked"][0]
+                .get("notes")
+                .is_none()
+        );
+        // Its total leaves out archived work, which has its own count.
+        assert_eq!(coordination["tasks_summary"]["total"], 5);
+        assert_eq!(coordination["tasks_summary"]["archived"], 1);
+
+        // A write changes the version; task_id reads the whole task.
+        payload(
+            &tool(
+                &home,
+                id,
+                "lead",
+                "cccc_task",
+                json!({"action":"update","task_id":"T003","notes":"Evict by size."}),
+            )
+            .await,
+        );
+        let after = tool(&home, id, "lead", "cccc_task", json!({"action":"list"})).await;
+        let after = payload(&after)["tasks_version"]
+            .as_str()
+            .expect("tasks_version");
+        assert_ne!(after, version);
+        let full = tool(
+            &home,
+            id,
+            "lead",
+            "cccc_task",
+            json!({"action":"list","task_id":"T001"}),
+        )
+        .await;
+        assert_eq!(
+            payload(&full)["task"]["notes"],
+            "Full notes stay behind task_id."
+        );
+        let full = tool(
+            &home,
+            id,
+            "lead",
+            "cccc_task",
+            json!({"action":"list","task_id":"T006"}),
+        )
+        .await;
+        assert_eq!(payload(&full)["task"]["checklist"][1]["text"], "patch");
+    })
+    .await;
+    daemon_task.abort();
+    let _ = daemon_task.await;
+    outcome.expect("task row assertions");
+}

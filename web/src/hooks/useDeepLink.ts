@@ -29,7 +29,7 @@ interface UseDeepLinkOptions {
   /** Set active tab */
   setActiveTab: (tab: string) => void;
   /** Open chat window for an event */
-  openChatWindow: (groupId: string, eventId: string) => Promise<void>;
+  openChatWindow: (groupId: string, eventId: string) => Promise<unknown>;
   /** Show error message */
   showError: (msg: string) => void;
 }

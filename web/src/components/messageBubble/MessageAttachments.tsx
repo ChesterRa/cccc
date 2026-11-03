@@ -18,7 +18,6 @@ export function MessageAttachments({
   isDark,
   attachmentKeyPrefix,
   downloadTitle,
-  sectionClassName,
 }: {
   attachments: MessageAttachment[];
   blobGroupId: string;
@@ -26,7 +25,6 @@ export function MessageAttachments({
   isDark: boolean;
   attachmentKeyPrefix: string;
   downloadTitle: (name: string) => string;
-  sectionClassName?: string;
 }) {
   const imageAttachments = attachments.filter((attachment) => isImageAttachment(attachment));
   const videoAttachments = attachments.filter((attachment) => isVideoAttachment(attachment));
@@ -38,7 +36,7 @@ export function MessageAttachments({
   if (attachments.length <= 0 || !blobGroupId) return null;
 
   return (
-    <div className={sectionClassName || "mt-3"}>
+    <div className="mt-3" data-message-attachments>
       {imageAttachments.length > 0 && (
         <div
           className={classNames(

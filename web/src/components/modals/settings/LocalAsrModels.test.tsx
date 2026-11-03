@@ -68,9 +68,10 @@ describe("global ASR model readiness", () => {
           (node) => node.textContent === summary,
         );
         expect(summaryPill?.getAttribute("data-status-tone")).toBe(tone);
+        // The failed engine is named in words, not by its reported status value.
         expect(
           [...host.querySelectorAll('[data-status-tone="error"]')].some(
-            (node) => node.textContent === "failed",
+            (node) => node.textContent === "assistants.componentStatus.failed",
           ),
         ).toBe(true);
       } finally {

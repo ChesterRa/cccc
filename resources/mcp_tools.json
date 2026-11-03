@@ -2391,7 +2391,7 @@
   },
   {
     "name": "cccc_coordination",
-    "description": "Shared control-plane tool: action=get|update_brief|add_decision|add_handoff.",
+    "description": "Shared control-plane tool: action=get|update_brief|add_decision|add_handoff. get returns the brief, decisions, handoffs and task counts, with the tasks needing attention as summary rows, at most 10 per list; a longer list adds <list>_total, and cccc_task with attention lists them all.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2413,10 +2413,6 @@
           ],
           "default": "get"
         },
-        "include_archived": {
-          "type": "boolean",
-          "default": false
-        },
         "objective": {
           "type": "string"
         },
@@ -2425,6 +2421,7 @@
         },
         "constraints": {
           "type": "array",
+          "description": "update_brief replaces the whole list with the one you send; include every constraint to keep.",
           "items": {
             "type": "string"
           }
@@ -2453,7 +2450,7 @@
   },
   {
     "name": "cccc_task",
-    "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore|delete. Use for multi-actor, long-horizon, or user-tracked work. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move.",
+    "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore|delete. Use for multi-actor, long-horizon, or user-tracked work. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move. list returns planned and active tasks as one summary row each, with counts per status; pass task_id to read one task in full.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2487,7 +2484,35 @@
         },
         "include_archived": {
           "type": "boolean",
-          "default": false
+          "default": false,
+          "description": "With action=list, also lists archived tasks; reading an archived task by task_id needs it too."
+        },
+        "query": {
+          "type": "string",
+          "description": "List only: text to find in task ids, titles, notes and outcomes; the rows then include done tasks."
+        },
+        "attention": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "waiting_user",
+            "handoff",
+            "unassigned"
+          ],
+          "description": "List only: tasks that are blocked, waiting on the user, handed off, or unassigned."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50,
+          "description": "List only: most rows in one page."
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "List only: rows to skip; continue while has_more is true. If tasks_version changes between pages, start again from offset 0."
         },
         "title": {
           "type": "string"
@@ -2512,7 +2537,7 @@
             "done",
             "archived"
           ],
-          "description": "Lifecycle status. Required for action=move. If passed with action=update, the wrapper also applies the corresponding lifecycle transition. Use action=update when the same call must also change outcome, notes, checklist, or type."
+          "description": "Lifecycle status. Required for action=move. If passed with action=update, the wrapper also applies the corresponding lifecycle transition. Use action=update when the same call must also change outcome, notes, checklist, or type. With action=list, lists only tasks in this status."
         },
         "parent_id": {
           "type": "string"
@@ -2526,7 +2551,8 @@
           "description": "Create only, instead of parent_id: the client_request_id of a task you created."
         },
         "assignee": {
-          "type": "string"
+          "type": "string",
+          "description": "With action=list, lists only this actor's tasks."
         },
         "priority": {
           "type": "string"
@@ -2558,10 +2584,11 @@
         },
         "notes": {
           "type": "string",
-          "description": "Freeform task notes. Keep them compact; use structured sections only when the workflow genuinely needs them."
+          "description": "Freeform task notes. On update, the text you send replaces all existing notes; to add to them, list the task first and send the combined text with if_task_rev. Keep them compact; use structured sections only when the workflow genuinely needs them."
         },
         "checklist": {
           "type": "array",
+          "description": "On update, this replaces the entire checklist. List the task first, then send the complete updated list, unchanged items included, with if_task_rev.",
           "items": {
             "type": "object",
             "properties": {

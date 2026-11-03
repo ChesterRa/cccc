@@ -102,7 +102,7 @@ Rules:
 Permission: `foreman` or `user`.
 
 Notes:
-- Partial patch: only provided fields are updated.
+- Partial patch: only provided fields are updated. A provided `constraints` replaces the whole list.
 - Daemon sets `updated_by` and `updated_at` automatically.
 
 #### `coordination.note.add`
@@ -250,7 +250,7 @@ Rules:
 Permission: assignee / handoff target / foreman / user.
 
 Rules:
-- Partial patch.
+- Partial patch: omitted editable fields stay unchanged, and each provided field replaces its stored value whole. `notes` is not appended to, and `checklist` is not merged item by item.
 - If `parent_id` changes, the daemon MUST reject cycles.
 - `task.update` does not change lifecycle status.
 - If `task_type` is provided, it MUST be one of the allowed task-type ids above.

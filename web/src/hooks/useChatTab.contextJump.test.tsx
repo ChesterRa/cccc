@@ -3,7 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { useGroupStore, useUIStore } from "../stores";
-import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION } from "../stores/useUIStore";
+import {
+  CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+  type ChatScrollSnapshot,
+} from "../stores/useUIStore";
 import { EMPTY_CHAT_BUCKET } from "../stores/groupStoreCore";
 import type { Actor, GroupMeta, LedgerEvent } from "../types";
 import { useChatTab } from "./useChatTab";
@@ -234,6 +237,30 @@ it("does not return a stale window after the selected Group changes", async () =
   });
   expect(useGroupStore.getState().chatByGroup.a.chatWindow?.centerEventId).toBe("2");
   expect(new URLSearchParams(location.search).get("event")).toBe("2");
+});
+
+// A message opened from a filtered view is read and left again; the filtered view reopens at
+// the place it was read, while Return to latest still opens the newest message.
+it("returns to a filtered conversation at the place it was read", async () => {
+  const place: ChatScrollSnapshot = {
+    coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+    mode: "detached",
+    anchorId: "1",
+    offsetPx: 12,
+    updatedAt: Date.now(),
+  };
+  await act(async () => {
+    useUIStore.getState().setChatFilter("a", "mail");
+    useUIStore.getState().setChatScrollSnapshot("a", place);
+  });
+  await act(async () => chat.returnToLatest(false, true));
+  expect(chat.inChatWindow).toBe(false);
+  expect(useUIStore.getState().chatSessions.a.scrollSnapshot).toMatchObject({
+    mode: "detached",
+    anchorId: "1",
+    offsetPx: 12,
+  });
+  expect(new URLSearchParams(location.search).has("event")).toBe(false);
 });
 
 it("returns to the same filter without acknowledging unread messages early", async () => {

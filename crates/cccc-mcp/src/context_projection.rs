@@ -18,25 +18,49 @@ pub(crate) fn apply(
         "cccc_context_get" if !bool_argument(arguments, "include_archived", false) => {
             hide_archived_tasks(result);
         }
-        "cccc_coordination" => project_coordination(result, arguments),
+        "cccc_coordination" => project_coordination(result),
         "cccc_agent_state" => project_agent_state(result, arguments),
         _ => {}
     }
 }
 
-fn project_coordination(result: &mut Map<String, Value>, arguments: &Map<String, Value>) {
+/// Rows kept in each attention list. A longer list adds `<list>_total`; `cccc_task` with
+/// `attention` lists every such task.
+const ATTENTION_ROWS: usize = 10;
+
+/// The brief, recent decisions and handoffs, the open tasks that need attention and the task
+/// counts for every status. Tasks themselves are listed by `cccc_task`, so this view carries no
+/// task list or board.
+fn project_coordination(result: &mut Map<String, Value>) {
     let mut snapshot = std::mem::take(result);
-    if !bool_argument(arguments, "include_archived", false) {
-        hide_archived_tasks(&mut snapshot);
+    let mut coordination = take_object(&mut snapshot, "coordination");
+    if let Some(coordination) = coordination.as_object_mut() {
+        coordination.remove("tasks");
+    }
+    // The daemon lists only open tasks here; each list becomes at most ATTENTION_ROWS summary rows.
+    let mut attention = take_object(&mut snapshot, "attention");
+    if let Some(lists) = attention.as_object_mut() {
+        let mut totals = Vec::new();
+        for (name, tasks) in lists.iter_mut() {
+            let Some(tasks) = tasks.as_array_mut() else {
+                continue;
+            };
+            if tasks.len() > ATTENTION_ROWS {
+                totals.push((format!("{name}_total"), json!(tasks.len())));
+            }
+            *tasks = tasks
+                .iter()
+                .filter_map(Value::as_object)
+                .take(ATTENTION_ROWS)
+                .map(crate::task_summary::summary_row)
+                .collect();
+        }
+        lists.extend(totals);
     }
     *result = Map::from_iter([
         ("version".into(), take_value(&mut snapshot, "version")),
-        (
-            "coordination".into(),
-            take_object(&mut snapshot, "coordination"),
-        ),
-        ("attention".into(), take_object(&mut snapshot, "attention")),
-        ("board".into(), take_object(&mut snapshot, "board")),
+        ("coordination".into(), coordination),
+        ("attention".into(), attention),
         (
             "tasks_summary".into(),
             take_object(&mut snapshot, "tasks_summary"),
@@ -186,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn coordination_projection_drops_unrelated_context_and_hides_archived_tasks() {
+    fn coordination_projection_drops_the_task_list_and_unrelated_context() {
         let mut result = object(json!({
             "version": "v1",
             "coordination": {"tasks": [
@@ -195,7 +219,7 @@ mod tests {
             ]},
             "attention": {"needs_attention": []},
             "board": {"planned": [], "archived": [{"id": "old"}]},
-            "tasks_summary": {"planned": 1, "active": 2, "done": 3, "archived": 4, "total": 10},
+            "tasks_summary": {"planned": 1, "active": 2, "done": 3, "archived": 4, "total": 6},
             "agent_states": [{"id": "peer", "warm": "very large"}],
             "actors_runtime": {"peer": {"history": "very large"}},
             "meta": {"unrelated": "very large"}
@@ -203,48 +227,51 @@ mod tests {
 
         apply("cccc_coordination", &mut result, &Map::new());
 
-        assert_eq!(result.len(), 5);
+        assert_eq!(result.len(), 4);
+        assert!(result["coordination"].get("tasks").is_none());
+        assert!(!result.contains_key("board"));
+        // The counts pass through: every status, archived included; the total leaves archived out.
         assert_eq!(
-            result["coordination"]["tasks"]
-                .as_array()
-                .expect("tasks")
-                .len(),
-            1
+            result["tasks_summary"],
+            json!({"planned": 1, "active": 2, "done": 3, "archived": 4, "total": 6})
         );
-        assert_eq!(result["board"]["archived"], json!([]));
-        assert_eq!(result["tasks_summary"]["total"], json!(6));
         assert!(!result.contains_key("agent_states"));
         assert!(!result.contains_key("actors_runtime"));
         assert!(!result.contains_key("meta"));
     }
 
     #[test]
-    fn coordination_projection_can_include_archived_tasks() {
+    fn coordination_attention_lists_short_summary_rows() {
+        let blocked = (1..=12)
+            .map(|n| {
+                json!({"id": format!("T{n}"), "title": "Blocked", "status": "active",
+                            "notes": "long", "blocked_by": ["T99"], "rev": n})
+            })
+            .collect::<Vec<_>>();
         let mut result = object(json!({
             "version": "v1",
-            "coordination": {"tasks": [{"id": "old", "status": "archived"}]},
-            "board": {"archived": [{"id": "old"}]},
-            "tasks_summary": {"archived": 1, "total": 1}
+            "coordination": {"brief": {"objective": "ship"}, "tasks": [{"id": "T1"}]},
+            "attention": {
+                "blocked": blocked,
+                "waiting_user": [{"id": "T20", "title": "Ask", "status": "planned", "waiting_on": "user"}],
+                "pending_handoffs": []
+            },
+            "board": {"active": [{"id": "T1"}]},
+            "tasks_summary": {"active": 12, "planned": 1, "total": 13}
         }));
-        let arguments = object(json!({"include_archived": true}));
+        apply("cccc_coordination", &mut result, &Map::new());
 
-        apply("cccc_coordination", &mut result, &arguments);
-
+        assert_eq!(result["coordination"]["brief"]["objective"], "ship");
+        let rows = result["attention"]["blocked"].as_array().expect("rows");
+        assert_eq!(rows.len(), ATTENTION_ROWS);
         assert_eq!(
-            result["coordination"]["tasks"]
-                .as_array()
-                .expect("tasks")
-                .len(),
-            1
+            rows[0],
+            json!({"id": "T1", "title": "Blocked", "status": "active", "blocked_by": ["T99"], "rev": 1})
         );
-        assert_eq!(
-            result["board"]["archived"]
-                .as_array()
-                .expect("archived")
-                .len(),
-            1
-        );
-        assert_eq!(result["tasks_summary"]["total"], json!(1));
+        assert_eq!(result["attention"]["blocked_total"], 12);
+        assert_eq!(result["attention"]["waiting_user"][0]["waiting_on"], "user");
+        assert!(result["attention"].get("waiting_user_total").is_none());
+        assert_eq!(result["attention"]["pending_handoffs"], json!([]));
     }
 
     #[test]

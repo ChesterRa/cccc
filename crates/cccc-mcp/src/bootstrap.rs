@@ -129,7 +129,8 @@ fn assemble_payload(
         "memory_recall_gate": memory_recall_gate,
         "next_calls": {
             "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
-            "context_get": "cccc_context_get()",
+            "context_get": "cccc_context_get(detail=\"overview\")  # brief, recent decisions and handoffs, agent states",
+            "tasks": "cccc_task()  # open tasks, one row each; pass task_id to read one in full",
             "connect": "cccc_connect()  # discover accessible remote Groups/Actors; use both instance_id and target_group_id for an external_groups entry",
             "inbox_read": "cccc_inbox_read()",
             "memory_search": "cccc_capability_use(tool_name=\"cccc_memory\", tool_arguments={\"action\":\"search\",\"query\":\"...\"})",
@@ -1267,6 +1268,25 @@ mod tests {
         assert!(payload.get("group").is_none());
         assert!(payload.get("context").is_none());
     }
+
+    #[test]
+    fn next_calls_point_at_the_compact_context_and_task_reads() {
+        let payload = assemble_payload(json!({}), json!({}), json!({}), json!({}), json!({}));
+        let calls = &payload["next_calls"];
+        assert!(
+            calls["context_get"]
+                .as_str()
+                .expect("context_get")
+                .starts_with("cccc_context_get(detail=\"overview\")")
+        );
+        assert!(
+            calls["tasks"]
+                .as_str()
+                .expect("tasks")
+                .starts_with("cccc_task()")
+        );
+    }
+
     #[test]
     fn bootstrap_task_preview_keeps_the_recorded_task_revision() {
         let temp = tempfile::tempdir().expect("tempdir");

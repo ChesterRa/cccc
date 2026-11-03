@@ -739,6 +739,19 @@ export function ChatTab({
   const focusActiveFilter = useCallback(() => {
     messageFiltersRef.current?.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus();
   }, []);
+  // The key that opened a message from a filtered view leaves with its row. Focus goes to
+  // the opened view's way back, not into the message list, where it would end the brief
+  // hold that keeps the message in place.
+  const windowReturnKeyRef = useRef<HTMLButtonElement | null>(null);
+  const showInConversation = useCallback(
+    (eventId: string) => {
+      viewMessageContext(eventId);
+      requestAnimationFrame(() => {
+        if (document.activeElement === document.body) windowReturnKeyRef.current?.focus();
+      });
+    },
+    [viewMessageContext],
+  );
   // Keep the scroll viewport fixed beneath the mobile header and filters, so
   // showing or hiding those controls cannot move the reader's anchor. The
   // overlay reserves a fixed height, so extra rows under the filters keep the
@@ -855,6 +868,7 @@ export function ChatTab({
                             </div>
                           </div>
                           <button
+                            ref={windowReturnKeyRef}
                             type="button"
                             className={buttonVariants({ variant: "ghost", size: "sm" })}
                             data-lcd-key
@@ -862,6 +876,7 @@ export function ChatTab({
                               returnToLatest(
                                 event.detail === 0 ||
                                   document.activeElement === event.currentTarget,
+                                hasChatFilter,
                               )
                             }
                           >
@@ -1112,7 +1127,7 @@ export function ChatTab({
                           onShowRecipients={showRecipients}
                           onCopyLink={copyMessageLink}
                           onViewContext={
-                            hasChatFilter && !chatWindowProps ? viewMessageContext : undefined
+                            hasChatFilter && !chatWindowProps ? showInConversation : undefined
                           }
                           onRelay={relayMessage}
                           onOpenSource={openSourceMessage}

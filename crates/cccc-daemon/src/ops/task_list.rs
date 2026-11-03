@@ -83,7 +83,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         })
         .collect::<Vec<_>>();
     sort_tasks(&mut tasks, status.as_deref());
-    object(json!({"tasks":tasks}))
+    object(json!({"tasks":tasks,"tasks_version":version}))
 }
 
 fn one(tasks: &[Map<String, Value>], task_id: &str, version: String) -> OpResult {

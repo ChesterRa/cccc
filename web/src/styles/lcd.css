@@ -612,6 +612,23 @@
   white-space: nowrap;
 }
 
+/* Where messages have no hover bar, as on touch screens or in a narrow column, a filtered
+   view gives every message it lists a way into the whole conversation: a short underlined
+   key after the time, in ink so it reads as something to press, and set in reverse under
+   the pointer like the other keys. */
+:root[data-ui-style="lcd"] .lcd-row-jump {
+  color: var(--lcd-ink);
+  font-size: 0.8125rem;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+  white-space: nowrap;
+}
+
+:root[data-ui-style="lcd"] .lcd-row-jump:hover {
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
 /* The name gives the head its baseline, so author, route and time sit on one line;
    the avatar centres on it. */
 :root[data-ui-style="lcd"] .lcd-row-who {
@@ -713,9 +730,10 @@
    keeping a place in it, so a short message, and its line, stay as wide as its text.
    They follow the time on an agent's head and come before your name on yours, and
    showing them moves nothing. The head's own end space, which the line spans, meets
-   them, so the pointer reaches them without leaving the message. A head stops 12rem
-   short of the reading column's far edge, room for the widest set of actions, so a
-   long head wraps instead of pushing them off the screen. A column narrower than
+   them, so the pointer reaches them without leaving the message. A head stops 12.5rem
+   short of the reading column's far edge, room for the widest set of actions also at
+   the smallest text size, where their fixed-size icons and rules take a larger share,
+   so a long head wraps instead of pushing them off the screen. A column narrower than
    28rem, beside a side panel or at a large text size, has no such room: there, as on
    a phone, every action is in the message's menu (⋮), which ends its head. */
 @media (min-width: 640px) and (hover: hover) {
@@ -723,7 +741,7 @@
     :root[data-ui-style="lcd"] .lcd-row-head {
       position: relative;
       width: fit-content;
-      max-width: calc(100cqi - 12rem);
+      max-width: calc(100cqi - 12.5rem);
       padding-right: 1ch;
     }
 
@@ -766,6 +784,46 @@
 
     :root[data-ui-style="lcd"] .lcd-row .message-actions-label {
       display: none;
+    }
+  }
+
+  /* In a filtered view Show in chat follows the time and the bar keeps its usual keys
+     within their 12.5rem, unless the column can spare the 19rem that the bar needs
+     with Show in chat leading it: then the bar carries it and its heads keep that room
+     free. One query decides both places, so exactly one of them shows at any width. */
+  @container messages (min-width: 28rem) {
+    :root[data-ui-style="lcd"] .lcd-row [data-message-actions-inline] > [data-show-in-chat] {
+      display: none;
+    }
+
+    :root[data-ui-style="lcd"]
+      .lcd-row
+      [data-message-actions-inline]
+      > [data-show-in-chat]
+      + button {
+      border-left: 0;
+    }
+  }
+
+  @container messages (min-width: 36rem) {
+    :root[data-ui-style="lcd"] .lcd-row[data-lcd-show-in-chat] .lcd-row-head {
+      max-width: calc(100cqi - 19rem);
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row-jump {
+      display: none;
+    }
+
+    :root[data-ui-style="lcd"] .lcd-row [data-message-actions-inline] > [data-show-in-chat] {
+      display: inline-flex;
+    }
+
+    :root[data-ui-style="lcd"]
+      .lcd-row
+      [data-message-actions-inline]
+      > [data-show-in-chat]
+      + button {
+      border-left: 1px solid var(--lcd-rule-strong);
     }
   }
 }
@@ -1823,6 +1881,10 @@
     (pointer: coarse) and (max-width: 1023px) and (max-height: 480px) {
     :root[data-ui-style="lcd"] .lcd-row:has(.message-actions-menu) .lcd-row-head {
       align-items: center;
+    }
+    :root[data-ui-style="lcd"] .lcd-row-jump {
+      min-height: 44px;
+      padding-inline: 0.5ch;
     }
     :root[data-ui-style="lcd"] .lcd-row .message-actions-menu {
       position: static;

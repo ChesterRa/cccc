@@ -770,9 +770,11 @@ export function useChatTab({
 
   // Both return controls use this path; automatic target-preserving handoff
   // still uses exitChatWindow directly. Do not acknowledge unread messages
-  // until the live list actually reports that its bottom is visible.
+  // until the live list actually reports that its bottom is visible. With keepPlace,
+  // as on the way back to a filtered conversation, that view reopens where it was read;
+  // otherwise the conversation opens at its newest message.
   const returnToLatest = useCallback(
-    (requestFocus = false) => {
+    (requestFocus = false, keepPlace = false) => {
       if (!inChatWindow || !chatWindow || !selectedGroupId) return false;
       const state = useGroupStore.getState();
       const ui = useUIStore.getState();
@@ -788,13 +790,16 @@ export function useChatTab({
         return false;
       const restoreFocus = requestFocus || !!scrollRef?.current?.contains(document.activeElement);
       setLiveJump(null);
-      setChatScrollSnapshot(selectedGroupId, {
-        coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
-        mode: "follow",
-        anchorId: "",
-        offsetPx: 0,
-        updatedAt: Date.now(),
-      });
+      // The place saved before the window opened is still the view's own: the window
+      // saves none of its scrolling.
+      if (!keepPlace)
+        setChatScrollSnapshot(selectedGroupId, {
+          coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+          mode: "follow",
+          anchorId: "",
+          offsetPx: 0,
+          updatedAt: Date.now(),
+        });
       exitChatWindow();
       if (restoreFocus)
         requestAnimationFrame(() => {

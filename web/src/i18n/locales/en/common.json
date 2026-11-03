@@ -1,5 +1,6 @@
 {
   "save": "Save",
+  "saved": "Saved.",
   "cancel": "Cancel",
   "delete": "Delete",
   "close": "Close",
@@ -40,5 +41,7 @@
   "chinese": "Chinese",
   "japanese": "Japanese",
   "chooseFile": "Choose File",
-  "noFileChosen": "No file chosen"
+  "noFileChosen": "No file chosen",
+  "help": "Help",
+  "noResults": "No matching results"
 }

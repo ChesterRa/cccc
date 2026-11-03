@@ -13,11 +13,13 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import {
   Actor,
   AgentState,
   HeadlessPreviewSession,
   HeadlessStreamEvent,
+  LedgerEvent,
   StreamingActivity,
   RUNTIME_INFO,
 } from "../types";
@@ -74,6 +76,7 @@ import { ActorAvatar } from "./ActorAvatar";
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_HEADLESS_PREVIEW_SESSIONS: HeadlessPreviewSession[] = [];
 const EMPTY_HEADLESS_RAW_EVENTS: HeadlessStreamEvent[] = [];
+const EMPTY_STREAMING_EVENTS: LedgerEvent[] = [];
 const STOPPED_TAIL_FETCH_DELAY_MS = 350;
 const STOPPED_ACTOR_STATUS_REFRESH_MS = 3000;
 
@@ -250,6 +253,14 @@ export function AgentTab({
     const events = bucket.rawHeadlessEventsByActorId?.[actorId];
     return Array.isArray(events) ? events : EMPTY_HEADLESS_RAW_EVENTS;
   });
+  const actorStreamingEvents = useGroupStore(
+    useShallow((state) => {
+      if (!isHeadless || isWebModel || isNativeSession) return EMPTY_STREAMING_EVENTS;
+      const events =
+        state.chatByGroup[String(groupId || "").trim()]?.streamingEvents || EMPTY_STREAMING_EVENTS;
+      return events.filter((event) => event.by === actor.id);
+    }),
+  );
   const observabilityLoaded = useObservabilityStore((s) => s.loaded);
   const loadObservability = useObservabilityStore((s) => s.load);
   const terminalScrollbackLines = useObservabilityStore((s) => s.terminalScrollbackLines);
@@ -1123,6 +1134,8 @@ export function AgentTab({
                     </div>
                   ) : (
                     <HeadlessRuntimePanel
+                      groupId={groupId}
+                      streamingEvents={actorStreamingEvents}
                       actorId={actor.id}
                       previewSessions={headlessPreviewSessions}
                       fallbackText={latestHeadlessText}

@@ -261,6 +261,20 @@ async fn native_http_claim_reply_complete_and_next_wake_use_scoped_authority() {
         )
         .await;
     assert_ne!(reply["result"]["isError"], true, "{reply}");
+    assert_eq!(
+        reply["result"]["structuredContent"]["mcp_omitted_fields"]["event"],
+        json!(["text", "insight"])
+    );
+    assert!(
+        reply["result"]["structuredContent"]["event"]["data"]
+            .get("text")
+            .is_none()
+    );
+    assert!(
+        reply["result"]["structuredContent"]["event"]["data"]
+            .get("insight")
+            .is_none()
+    );
     assert!(
         reply["result"]["structuredContent"]["event"]["data"]
             .get("_cccc_web_binding")

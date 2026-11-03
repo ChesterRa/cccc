@@ -1,6 +1,6 @@
 import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 // AppModals renders all modal components in one place.
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LcdSpinner } from "./LcdSpinner";
 import { SearchModal } from "./SearchModal";
@@ -23,6 +23,7 @@ import { findPresentationSlot } from "../utils/presentation";
 import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
 import { appendQuotedOriginalPerspective, getMessageInsight } from "../utils/messagePerspective";
+import { installedRuntimeFor } from "../utils/installedRuntime";
 import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
 import { CHET_NAME, CHET_PRINCIPAL } from "../utils/chetIdentity";
 import {
@@ -42,6 +43,7 @@ import {
   GroupSettings,
   ChatMessageData,
   PresentationMessageRef,
+  type SupportedRuntime,
   TextScale,
   Theme,
 } from "../types";
@@ -438,6 +440,43 @@ export function AppModals({
     resetAddActorForm,
     t,
   });
+
+  // The form opens on Codex. When Codex is not installed but another command-line runtime is, as
+  // for someone with only Claude Code, show that one instead of a disabled Add. Detection can finish
+  // after the reader has started, so leave the runtime alone once they have picked one themselves
+  // (the same one included), or while they use their own command or a Runtime Profile.
+  const newActorRuntimePickedRef = useRef(false);
+  useEffect(() => {
+    if (modals.addActor) newActorRuntimePickedRef.current = false;
+  }, [modals.addActor]);
+  useEffect(() => {
+    if (!modals.addActor || runtimeDetectionStatus !== "ready") return;
+    if (newActorRuntimePickedRef.current || !newActorUseDefaultCommand || newActorUseProfile)
+      return;
+    const installed = installedRuntimeFor(newActorRuntime, runtimes);
+    if (!installed || installed === newActorRuntime) return;
+    // As when the reader switches: a command typed for the old runtime must not come back with it.
+    setNewActorRuntime(installed);
+    setNewActorCommand(
+      String(runtimes.find((item) => item.name === installed)?.recommended_command || "").trim(),
+    );
+  }, [
+    modals.addActor,
+    newActorRuntime,
+    newActorUseDefaultCommand,
+    newActorUseProfile,
+    runtimeDetectionStatus,
+    runtimes,
+    setNewActorCommand,
+    setNewActorRuntime,
+  ]);
+  const pickNewActorRuntime = useCallback(
+    (runtime: SupportedRuntime) => {
+      newActorRuntimePickedRef.current = true;
+      setNewActorRuntime(runtime);
+    },
+    [setNewActorRuntime],
+  );
 
   const rememberPresentationViewerSlot = useCallback((groupId: string, slotId: string) => {
     const normalizedGroupId = String(groupId || "").trim();
@@ -1576,7 +1615,7 @@ export function AppModals({
         actorProfilesBusy={actorProfilesBusy}
         onRequestActorProfiles={loadActorProfiles}
         runtime={newActorRuntime}
-        onChangeRuntime={setNewActorRuntime}
+        onChangeRuntime={pickNewActorRuntime}
         command={newActorCommand}
         onChangeCommand={setNewActorCommand}
         useDefaultCommand={newActorUseDefaultCommand}

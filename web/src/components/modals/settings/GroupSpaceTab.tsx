@@ -148,6 +148,8 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
   const connectionConnected = isProviderConnectionVerified(authConfigured, writeReady);
   const connectionNeedsReconnect = authConfigured && !connectionConnected;
   const providerUsable = connectionConnected;
+  // Before any sign-in, the flow's status line ("browser is idle") says nothing, so it is not shown.
+  const authFlowMessage = connectionState === "idle" ? "" : String(authFlow?.message || "").trim();
   const connectionWarning =
     String(authFlow?.error?.message || "").trim() || String(providerState?.last_error || "").trim();
 
@@ -744,12 +746,10 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
             </>
           )}
         </SettingsRow>
-        {authFlow?.message || authFlow?.error?.message || projectedAuthActive ? (
+        {authFlowMessage || authFlow?.error?.message || projectedAuthActive ? (
           <div className="flex flex-col gap-2 px-5 py-4">
-            {authFlow?.message ? (
-              <div className="text-xs text-[var(--color-text-tertiary)]">
-                {String(authFlow.message)}
-              </div>
+            {authFlowMessage ? (
+              <div className="text-xs text-[var(--color-text-tertiary)]">{authFlowMessage}</div>
             ) : null}
             {authFlow?.error?.message ? (
               <div

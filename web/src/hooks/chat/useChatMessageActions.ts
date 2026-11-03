@@ -13,6 +13,14 @@ import { copyTextToClipboard } from "../../utils/copy";
 import { canOpenSourceMessageLocally } from "./chatTabBasics";
 import { isLiveChatBottom } from "./chatScrollFocus";
 
+/** Take the opened message out of the address, as leaving its view does. */
+function clearOpenedMessageFromUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("event");
+  url.searchParams.delete("tab");
+  window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
+}
+
 export function useChatMessageActions(input: {
   selectedGroupId: string;
   actors: Actor[];
@@ -111,7 +119,18 @@ export function useChatMessageActions(input: {
         const store = useGroupStore.getState();
         if (store.selectedGroupId !== groupId) store.setSelectedGroupId(groupId);
         useUIStore.getState().setActiveTab("chat");
-        void input.openChatWindow(groupId, eventId);
+        void input.openChatWindow(groupId, eventId).then((opened) => {
+          // Only for the message still awaited, not after the reader moved to another Group
+          // or message: the view stayed where it was, so say so and clear it from the address.
+          if (
+            opened !== false ||
+            useGroupStore.getState().selectedGroupId !== groupId ||
+            new URL(window.location.href).searchParams.get("event") !== eventId
+          )
+            return;
+          clearOpenedMessageFromUrl();
+          input.showError(input.t("chat:messageWindowFailed"));
+        });
       };
       if (useGroupStore.getState().selectedGroupId === groupId) navigate();
       else requestWorkspaceNavigation(navigate);
@@ -121,10 +140,7 @@ export function useChatMessageActions(input: {
 
   const exitChatWindow = useCallback(() => {
     input.closeChatWindow(input.selectedGroupId);
-    const url = new URL(window.location.href);
-    url.searchParams.delete("event");
-    url.searchParams.delete("tab");
-    window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
+    clearOpenedMessageFromUrl();
   }, [input]);
 
   const handleScrollButtonClick = useCallback(() => {

@@ -387,7 +387,7 @@ async fn file_read_and_send_keep_distinct_effects_and_bound_identity() {
     let sent = f
         .call(
             "cccc_file_send",
-            json!({"path":"sample.txt","to":"user","mode":"send","actor_id":"beta","by":"user"}),
+            json!({"path":"sample.txt","to":"user","mode":"send","text":"Attached for review.","actor_id":"beta","by":"user"}),
             meta("chat-a"),
         )
         .await;
@@ -396,6 +396,11 @@ async fn file_read_and_send_keep_distinct_effects_and_bound_identity() {
     assert_eq!(event["by"], "alpha");
     assert_eq!(event["group_id"], f.group);
     assert_eq!(event["data"]["to"], json!(["user"]));
+    assert!(event["data"].get("text").is_none());
+    assert_eq!(
+        sent["result"]["structuredContent"]["mcp_omitted_fields"]["result.event"],
+        json!(["text"])
+    );
     assert_eq!(
         event["data"]["attachments"]
             .as_array()

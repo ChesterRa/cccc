@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { GroupCombobox, type GroupComboboxItem } from "./GroupCombobox";
 
@@ -25,11 +26,12 @@ export function SelectCombobox({
   className,
   contentClassName,
   disabled = false,
-  emptyText = "No matching results",
+  emptyText,
   placeholder = ariaLabel,
   searchable = false,
   searchPlaceholder = ariaLabel,
 }: SelectComboboxProps) {
+  const { t } = useTranslation("common");
   return (
     <GroupCombobox
       items={items}
@@ -38,7 +40,7 @@ export function SelectCombobox({
       disabled={disabled}
       placeholder={placeholder}
       searchPlaceholder={searchPlaceholder}
-      emptyText={emptyText}
+      emptyText={emptyText ?? t("noResults")}
       ariaLabel={ariaLabel}
       triggerClassName={cn(className, "cursor-pointer")}
       contentClassName={cn("p-0", contentClassName)}
