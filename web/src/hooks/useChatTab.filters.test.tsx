@@ -127,18 +127,18 @@ it("keeps sender history separate, then restores complete raw history on clear",
   expect(chat.hasMoreHistory).toBe(true);
 });
 
-it("clears only the sender with its close button and keeps Mail selected", async () => {
+it("clears only the sender with its close button and keeps the message type selected", async () => {
   await act(async () => {
-    chat.setChatFilter("mail");
+    chat.setChatFilter("user");
     chat.setChatSenderFilter(["leader"]);
   });
   const clear = host.querySelector<HTMLButtonElement>('button[aria-label="clearSenderFilter"]');
   expect(clear).not.toBeNull();
   await act(async () => clear!.click());
-  expect(chat).toMatchObject({ chatSenderFilter: [], chatFilter: "mail" });
+  expect(chat).toMatchObject({ chatSenderFilter: [], chatFilter: "user" });
   expect(getChatSession("a", useUIStore.getState().chatSessions)).toMatchObject({
     chatSenderFilter: [],
-    chatFilter: "mail",
+    chatFilter: "user",
   });
   expect(host.querySelector('button[aria-label="clearSenderFilter"]')).toBeNull();
   expect(document.activeElement).toBe(host.querySelector('button[aria-haspopup="dialog"]'));

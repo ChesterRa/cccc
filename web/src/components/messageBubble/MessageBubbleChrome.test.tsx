@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { useUIStore } from "../../stores";
 import type { LedgerEvent } from "../../types";
 import { MessageBubble } from "../MessageBubble";
 import { MessageActions } from "./MessageActions";
@@ -405,6 +406,119 @@ describe("message chrome", () => {
     } finally {
       await act(async () => root.unmount());
       host.remove();
+    }
+  });
+
+  it("offers Pin or Unpin in the menu, before Copy link, only where pins are offered", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const event = { id: "event-1", kind: "chat.message", by: "worker", data: {} };
+    const toggle = vi.fn();
+    const menuItems = () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'));
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const render = (pinned: boolean, onTogglePin?: () => void) =>
+      act(async () =>
+        root.render(
+          <MessageActions
+            copyableMessageText="text"
+            onCopyMessageText={vi.fn()}
+            onCopyLink={vi.fn()}
+            onReply={vi.fn()}
+            canReply
+            eventId={event.id}
+            event={event}
+            pinned={pinned}
+            onTogglePin={onTogglePin}
+          />,
+        ),
+      );
+    const more = () =>
+      host.querySelector<HTMLButtonElement>(
+        '[data-message-actions-inline] button[title="messageActions"]',
+      )!;
+    try {
+      await render(false, toggle);
+      await act(async () => more().click());
+      expect(menuItems().map((item) => item.textContent)).toEqual(["pins.pin", "copyLink"]);
+      await act(async () => menuItems()[0].click());
+      expect(toggle).toHaveBeenCalledOnce();
+      await settle();
+
+      await render(true, toggle);
+      await act(async () => more().click());
+      expect(menuItems().map((item) => item.textContent)).toEqual(["pins.unpin", "copyLink"]);
+      await act(async () => more().click());
+      await settle();
+
+      // The touch menu lists it with the rest.
+      const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+      await act(async () => touch.click());
+      expect(menuItems().map((item) => item.textContent)).toEqual([
+        "reply",
+        "copyText",
+        "pins.unpin",
+        "copyLink",
+      ]);
+      await act(async () => touch.click());
+      await settle();
+
+      await render(false);
+      await act(async () => more().click());
+      expect(menuItems().map((item) => item.textContent)).toEqual(["copyLink"]);
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  });
+
+  it("confirms a copied message with a notice, since its key has no text to change", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    try {
+      await act(async () =>
+        root.render(
+          <MessageBubble
+            event={{
+              id: "event-1",
+              kind: "chat.message",
+              by: "worker",
+              data: { text: "hello", quote_text: "earlier point", insight: "provisional view" },
+            }}
+            actorById={new Map()}
+            actors={[]}
+            displayNameMap={new Map()}
+            agentState={null}
+            taskById={new Map()}
+            isDark={false}
+            groupId="g"
+            groupLabelById={{}}
+            onReply={vi.fn()}
+            onShowRecipients={vi.fn()}
+          />,
+        ),
+      );
+      const copy = host.querySelector<HTMLButtonElement>(
+        '[data-message-actions-inline] button[aria-label="copyText"]',
+      )!;
+      await act(async () => copy.click());
+      // The quote and the sender's insight travel with the text.
+      expect(writeText).toHaveBeenCalledWith(
+        "> earlier point\n\nhello\n\nsenderPerspective:\nprovisional view",
+      );
+      expect(useUIStore.getState().notice?.message).toBe("textCopied");
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+      useUIStore.getState().dismissNotice();
     }
   });
 

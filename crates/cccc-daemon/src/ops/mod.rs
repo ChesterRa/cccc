@@ -61,6 +61,7 @@ mod membership_cloudflared;
 mod memory;
 mod message_idempotency;
 mod message_metadata;
+mod message_pins;
 mod messaging;
 pub(crate) use messaging::reply_crosses_groups;
 mod messaging_inbox;
@@ -111,6 +112,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         capabilities::resolve_operation,
         chet_history::resolve_operation,
         messaging::resolve_operation,
+        message_pins::resolve_operation,
         presentation::resolve_operation,
         profiles::resolve_operation,
         diagnostics::resolve_operation,

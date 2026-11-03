@@ -20,13 +20,16 @@ export interface MessageActionsProps {
   event: LedgerEvent;
   /** Ready replies sent to the message's author in one choice; none where they do not apply. */
   quickReplies?: MessageAction[];
+  /** Whether the message is pinned, with the way to change it; absent where pins are not offered. */
+  pinned?: boolean;
+  onTogglePin?: () => void;
 }
 
-export type MessageAction = { key: string; label: string; run: () => void };
+export type MessageAction = { key: string; label: string; emoji?: string; run: () => void };
 type MenuSection = { key: string; label?: string; actions: MessageAction[] };
 
 // Every message owns a footer: Reply, Forward and Copy on its hover bar, with quick
-// replies and Copy link in More. Touch keeps a visible menu and Show in chat shortcut.
+// replies, Pin and Copy link in More. Touch keeps a visible menu and Show in chat shortcut.
 export function MessageActions(props: MessageActionsProps) {
   const { t } = useTranslation(["chat", "common"]);
   if (props.readOnly) return null;
@@ -45,6 +48,12 @@ export function MessageActions(props: MessageActionsProps) {
   if (props.copyableMessageText)
     primary.push({ key: "copy", label: t("copyText"), run: props.onCopyMessageText });
   const overflow: MessageAction[] = [];
+  if (props.eventId && props.onTogglePin)
+    overflow.push({
+      key: "pin",
+      label: t(props.pinned ? "pins.unpin" : "pins.pin"),
+      run: props.onTogglePin,
+    });
   if (props.eventId && props.onCopyLink)
     overflow.push({
       key: "link",
@@ -167,8 +176,10 @@ function MessageActionMenu({
             aria-label={section.label || label}
           >
             {section.label ? (
+              // A caption for the actions below it, set smaller than they are so it does not
+              // read as one of them, and kept legible at the smallest text size.
               <div
-                className="px-3 pb-0.5 pt-1 text-xs text-[var(--color-text-muted)]"
+                className="px-3 pt-1 text-[length:max(0.6875rem,9px)] leading-4 text-[var(--color-text-muted)]"
                 aria-hidden="true"
               >
                 {section.label}
@@ -186,6 +197,11 @@ function MessageActionMenu({
                   action.run();
                 }}
               >
+                {action.emoji ? (
+                  <span className="shrink-0" aria-hidden="true" data-action-emoji>
+                    {action.emoji}
+                  </span>
+                ) : null}
                 {action.label}
               </Button>
             ))}

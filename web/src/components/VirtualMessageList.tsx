@@ -36,6 +36,7 @@ import { useVirtualScrollState } from "./virtualMessageList/useVirtualScrollStat
 import { useScrollAnchorRestoration as useAnchorRestoration } from "./virtualMessageList/useScrollAnchorRestoration";
 import { useInitialMessageScroll } from "./virtualMessageList/useInitialMessageScroll";
 import { getReadingFocus, useReadingEngagement } from "./virtualMessageList/useReadingEngagement";
+import { useMarginWheel } from "./virtualMessageList/useMarginWheel";
 import { useMessageTailAutoFollow } from "./virtualMessageList/useMessageTailAutoFollow";
 import { usePendingReplyFollow } from "./virtualMessageList/usePendingReplyFollow";
 import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
@@ -61,6 +62,9 @@ import { VirtualMessageListEmptyState } from "./virtualMessageList/VirtualMessag
 export type { VirtualMessageListProps } from "./virtualMessageList/types";
 
 type VirtualMessageListInnerProps = VirtualMessageListProps & { resetKey: string };
+
+const HISTORY_TOP_TRIGGER_PX = 80;
+const HISTORY_TOP_REARM_PX = 240;
 
 const VirtualMessageListInner = function VirtualMessageListInner({
   messages,
@@ -88,6 +92,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onReply,
   onShowRecipients,
   onCopyLink,
+  onTogglePin,
   onViewContext,
   onRelay,
   onOpenSource,
@@ -107,6 +112,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   onSendScrollRequestConsumed,
   isLoadingHistory = false,
   hasMoreHistory = true,
+  hasActiveFilters = false,
   isFilteredEmpty = false,
   emptyMessage,
   onLoadMore,
@@ -203,6 +209,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     scrollIntentStartTopRef,
     scrollIntentIdRef,
   } = useReadingEngagement(parentRef);
+  useMarginWheel(parentRef);
   const consumedContextScrollIntentRef = useRef(0);
   const awaitingLiveEndRef = useRef(false);
   const onReachedContextEndRef = useRef(onReachedContextEnd);
@@ -243,6 +250,29 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const el = parentRef.current;
     setUnscrollable(!!el && !shouldVirtualize && el.scrollHeight - el.clientHeight < 8);
   }, [displayMessages, shouldVirtualize]);
+
+  // Short lists cannot scroll far enough to rearm the top-load gate after a page
+  // with no visible results. Observe both the viewport and the message content:
+  // resizing the window or expanding an attachment can change that distance.
+  const [shortForHistory, setShortForHistory] = useState(false);
+  useLayoutEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const measure = () => {
+      setShortForHistory(
+        el.clientHeight > 0 && el.scrollHeight - el.clientHeight <= HISTORY_TOP_REARM_PX,
+      );
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    if (contentRef.current) observer.observe(contentRef.current);
+    return () => observer.disconnect();
+  }, [displayMessages.length, shouldVirtualize, topInset]);
   // A stand-in for a message the reader did not see here is marked once the view opens on it,
   // as long as a reply jump's mark.
   const [arrivalHighlightId, setArrivalHighlightId] = useState("");
@@ -901,8 +931,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       const el = parentRef.current;
       if (!el) return;
 
-      const topTriggerPx = 80;
-      const topRearmPx = 240;
+      const topTriggerPx = HISTORY_TOP_TRIGGER_PX;
+      const topRearmPx = HISTORY_TOP_REARM_PX;
       const curTop = el.scrollTop;
       const previousTop = lastScrollTopRef.current;
       const atBottom = checkIsAtBottom();
@@ -1371,7 +1401,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   }, [displayMessages, isLoadingHistory, isLoadingNewerContext, topHistoryLoad]);
 
   const effectiveHighlightEventId = replyJumpHighlightId || arrivalHighlightId || highlightEventId;
-  const showHistoryStatus = isLoadingHistory || (!contextWindow && !hasMoreHistory);
+  const showManualHistory =
+    !contextWindow && !!onLoadMore && hasMoreHistory && (hasActiveFilters || shortForHistory);
+  const showHistoryStatus =
+    showManualHistory || isLoadingHistory || (!contextWindow && !hasMoreHistory);
   const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset });
   const scrollLatestLabel = t("scrollToBottom");
   const unreadDisplayCount = chatUnreadCount > 99 ? "99+" : String(chatUnreadCount);
@@ -1387,7 +1420,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           parentRef.current = el;
           if (scrollRef) scrollRef.current = el;
         }}
-        className={classNames("flex-1 min-h-0 overflow-auto px-4 py-4 relative", className)}
+        className={classNames(
+          "chat-reading-scroller flex-1 min-h-0 overflow-auto px-4 py-4 relative",
+          className,
+        )}
         style={{
           overflowAnchor: "none",
           scrollbarGutter: "stable both-edges",
@@ -1457,7 +1493,36 @@ const VirtualMessageListInner = function VirtualMessageListInner({
                 className="pointer-events-none absolute inset-x-0 z-10 flex justify-center py-3"
                 style={{ top: topInset }}
               >
-                {isLoadingHistory ? (
+                {showManualHistory ? (
+                  <button
+                    type="button"
+                    data-load-older-history
+                    aria-disabled={isLoadingHistory}
+                    className="pointer-events-auto glass-panel flex min-h-9 items-center gap-2 rounded-full px-3 py-1.5 text-xs text-[var(--color-text-secondary)] shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45"
+                    onClick={(event) => {
+                      if (isLoadingHistory) return;
+                      // The button can disappear when the last page arrives. Keep keyboard
+                      // focus in the list instead of letting it fall back to the document.
+                      if (event.detail === 0 && document.activeElement === event.currentTarget)
+                        parentRef.current?.focus({ preventScroll: true });
+                      markEngaged();
+                      topHistoryLoad.requestTopHistoryLoad({
+                        scrollTop: parentRef.current?.scrollTop ?? 0,
+                        hasMoreHistory,
+                        isLoadingHistory,
+                      });
+                    }}
+                  >
+                    {isLoadingHistory ? (
+                      <>
+                        <LcdSpinner className="h-4 w-4" />
+                        {t("loadingHistory", { defaultValue: "Loading..." })}
+                      </>
+                    ) : (
+                      t("loadOlderResults")
+                    )}
+                  </button>
+                ) : isLoadingHistory ? (
                   <div className="glass-panel flex items-center gap-2 rounded-full px-3 py-1.5 text-[var(--color-text-secondary)] shadow-md">
                     <LcdSpinner className="h-4 w-4" />
                     <span className="text-xs">
@@ -1506,6 +1571,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               onShowRecipients={onShowRecipients}
               onViewContext={onViewContext}
               onCopyLink={onCopyLink}
+              onTogglePin={onTogglePin}
               onRelay={onRelay}
               onOpenSource={onOpenSource}
               onOpenPresentationRef={onOpenPresentationRef}

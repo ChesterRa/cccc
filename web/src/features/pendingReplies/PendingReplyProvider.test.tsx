@@ -61,6 +61,7 @@ it("hides entry points across groups without removing reply data or drafts", asy
           isSmallScreen={false}
           onChange={(value) => useUIStore.getState().setChatFilter("a", value)}
           waiting={waitingIndicator}
+          pinned={null}
         />
       </>
     );

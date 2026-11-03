@@ -246,6 +246,18 @@ export function MarkdownRenderer({
             : renderer.renderToken(tokens, index, options);
         };
       }
+    } else {
+      // A web address (http:, https: or //) opens in a new tab rather than replacing
+      // CCCC, even one on CCCC's own origin. Relative paths, anchors and other schemes
+      // such as mailto: keep the browser's own handling.
+      instance.renderer.rules.link_open = (tokens, index, options, _env, renderer) => {
+        const token = tokens[index];
+        if (/^(?:https?:)?\/\//i.test(token.attrGet("href") || "")) {
+          token.attrSet("target", "_blank");
+          token.attrSet("rel", "noopener noreferrer");
+        }
+        return renderer.renderToken(tokens, index, options);
+      };
     }
     const escapedTableScrollRegion = instance.utils.escapeHtml(labels.tableScrollRegion);
     instance.renderer.rules.table_open = (tokens, idx, options, _env, self) =>

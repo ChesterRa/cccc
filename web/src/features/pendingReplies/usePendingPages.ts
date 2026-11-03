@@ -112,7 +112,7 @@ export function usePendingPages(groupId: string, enabled: boolean) {
   const currentKey = useRef(key);
   currentKey.current = key;
   const readRef = useRef<
-    (visit: Visit, direction: "head" | "older", reset?: boolean) => Promise<void>
+    (visit: Visit, direction: "head" | "older", reset?: boolean) => Promise<void | false>
   >(async () => {});
 
   const read = useCallback(async (visit: Visit, direction: "head" | "older", reset = false) => {
@@ -120,12 +120,12 @@ export function usePendingPages(groupId: string, enabled: boolean) {
       visitRef.current === visit &&
       currentKey.current === visit.groupId &&
       !visit.controller.signal.aborted;
-    if (!isCurrent()) return;
+    if (!isCurrent()) return false;
     if (visit.pending) {
       if (direction === "head") visit.refreshQueued = true;
-      return;
+      return false;
     }
-    if (direction === "older" && (!visit.state.hasMore || !visit.state.before)) return;
+    if (direction === "older" && (!visit.state.hasMore || !visit.state.before)) return false;
     visit.pending = true;
     visit.state = { ...visit.state, loading: true, error: false, daemonUnsupported: false };
     setState(visit.state);
@@ -261,7 +261,7 @@ export function usePendingPages(groupId: string, enabled: boolean) {
 
   const loadMore = useCallback(() => {
     const visit = visitRef.current;
-    if (visit) void readRef.current(visit, "older");
+    return visit ? readRef.current(visit, "older") : false;
   }, []);
   const refresh = useCallback(() => {
     const visit = visitRef.current;

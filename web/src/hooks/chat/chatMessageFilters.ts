@@ -1,13 +1,19 @@
+import { usePinStore } from "../../features/pins/pinStore";
 import type { ChatFilter } from "../../stores/useUIStore";
 import type { ChatMessageData, LedgerEvent } from "../../types";
-import { projectMessageMode } from "../../utils/crossGroupRecipients";
+
+/** Which optional filter tabs this view offers. */
+export type OfferedChatFilters = { waiting: boolean; pinned: boolean };
 
 /**
- * The filter a Group's messages show under. A stored Waiting for you filter shows every
- * message where its tab is not offered: in a read-only exhibit, or while those prompts are off.
+ * The filter a Group's messages show under. A stored filter whose tab is not offered shows
+ * every message: Waiting for you in a read-only exhibit or while its prompts are off, and
+ * Pinned in an exhibit or where the daemon keeps no pins.
  */
-export function shownChatFilter(stored: ChatFilter, waitingTabShown: boolean): ChatFilter {
-  return stored === "pending_user" && !waitingTabShown ? "all" : stored;
+export function shownChatFilter(stored: ChatFilter, offered: OfferedChatFilters): ChatFilter {
+  if (stored === "pending_user" && !offered.waiting) return "all";
+  if (stored === "pinned" && !offered.pinned) return "all";
+  return stored;
 }
 
 export function matchesChatFilters(
@@ -26,11 +32,25 @@ export function matchesChatFilters(
       obligation.cancelled === false
     );
   }
-  if (kind === "mail" || kind === "request_reply") return projectMessageMode(data) === kind;
+  if (kind === "pinned") {
+    const groupId = String(event.group_id || "");
+    return !!event.id && !!usePinStore.getState().groups[groupId]?.pinned[event.id];
+  }
   if (kind === "user") {
     if (String(data?.dst_group_id || "").trim()) return false;
     const to = Array.isArray(data?.to) ? data.to : [];
     return event.by === "user" || to.includes("user") || to.includes("@user");
   }
   return true;
+}
+
+/**
+ * What the Pinned view says when it lists nothing. "No pinned messages" is only for a Group
+ * known to have none: pins that the sender filter hides, pins that can no longer be read
+ * (reported above the list), or a count not yet known get the general "No results" instead
+ * (undefined here).
+ */
+export function pinnedEmptyKey(error: boolean, count: number | null): string | undefined {
+  if (error) return "pins.loadFailed";
+  return count === 0 ? "pins.empty" : undefined;
 }

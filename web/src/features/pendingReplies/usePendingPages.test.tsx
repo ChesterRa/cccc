@@ -80,6 +80,7 @@ it("uses the full paged projection, retains a newly closed row, and rebases an i
     mocks.page.mockResolvedValueOnce(page(["old"], null));
     await act(async () => latest.loadMore());
     expect(latest.events.map((event) => event.id)).toEqual(["old", "new"]);
+    expect(await latest.loadMore()).toBe(false);
 
     mocks.page.mockResolvedValueOnce(page(["newer"], "cursor-2"));
     mocks.statuses.mockResolvedValueOnce({

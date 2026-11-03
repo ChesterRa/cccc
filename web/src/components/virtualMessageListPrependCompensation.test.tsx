@@ -22,11 +22,13 @@ function Probe({
   scrollToMessageAnchor,
   revealMessageAnchor,
   onAnchorVerified,
+  onLoadMore = () => {},
   onReady,
 }: {
   scrollToMessageAnchor: (eventId: string, offsetPx?: number) => boolean;
   revealMessageAnchor?: (eventId: string) => void;
   onAnchorVerified?: () => void;
+  onLoadMore?: () => void | false | Promise<void | false>;
   onReady: (
     coordinator: Coordinator,
     scrollEl: HTMLDivElement | null,
@@ -58,7 +60,7 @@ function Probe({
     cancelPendingBottomScroll: () => {},
     detachFollowMode: () => {},
     markAwayFromBottom: () => {},
-    onLoadMore: () => {},
+    onLoadMore,
   });
   return (
     <div
@@ -86,6 +88,162 @@ describe("useTopHistoryLoadCoordinator", () => {
     await act(async () => root.unmount());
     host.remove();
     vi.useRealTimers();
+  });
+
+  it("lets a manual request pass the top-scroll gate while keeping one anchor and one request", async () => {
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+    const loadMore = vi.fn();
+    const scrollToMessageAnchor = vi.fn(() => true);
+    let coordinator: Coordinator | null = null;
+    await act(async () =>
+      root.render(
+        <Probe
+          scrollToMessageAnchor={scrollToMessageAnchor}
+          onLoadMore={loadMore}
+          onReady={(next) => {
+            coordinator = next;
+          }}
+        />,
+      ),
+    );
+
+    expect(
+      coordinator!.requestTopHistoryLoad({
+        scrollTop: 0,
+        hasMoreHistory: false,
+        isLoadingHistory: false,
+      }),
+    ).toBe(false);
+    expect(
+      coordinator!.requestTopHistoryLoad({
+        scrollTop: 0,
+        hasMoreHistory: true,
+        isLoadingHistory: true,
+      }),
+    ).toBe(false);
+    expect(loadMore).not.toHaveBeenCalled();
+
+    view.offsetPx = 20;
+    expect(
+      coordinator!.handleTopHistoryScroll({
+        ...SCROLL_PARAMS,
+        scrollTop: 0,
+        isLoadingHistory: false,
+      }),
+    ).toBe(true);
+    // A button press before the loading state is rendered cannot start a second request.
+    expect(
+      coordinator!.requestTopHistoryLoad({
+        scrollTop: 0,
+        hasMoreHistory: true,
+        isLoadingHistory: false,
+      }),
+    ).toBe(false);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    expect(coordinator!.applyPendingPrependCompensation({ isLoadingHistory: false })).toBe(true);
+    expect(scrollToMessageAnchor).toHaveBeenCalledWith(ANCHOR_ID, 20);
+    vi.advanceTimersToNextFrame();
+    vi.advanceTimersToNextFrame();
+
+    // The auto gate is still disarmed, but the explicit action can fetch another page.
+    view.offsetPx = 35;
+    expect(
+      coordinator!.requestTopHistoryLoad({
+        scrollTop: 0,
+        hasMoreHistory: true,
+        isLoadingHistory: false,
+      }),
+    ).toBe(true);
+    expect(loadMore).toHaveBeenCalledTimes(2);
+    expect(coordinator!.applyPendingPrependCompensation({ isLoadingHistory: false })).toBe(true);
+    expect(scrollToMessageAnchor).toHaveBeenLastCalledWith(ANCHOR_ID, 35);
+  });
+
+  it("releases its gate when the loader says it did not start", async () => {
+    const onLoadMore = vi
+      .fn()
+      .mockReturnValueOnce(false)
+      .mockResolvedValueOnce(false)
+      .mockReturnValue(new Promise<void>(() => {}));
+    let coordinator: Coordinator | null = null;
+    await act(async () =>
+      root.render(
+        <Probe
+          scrollToMessageAnchor={() => true}
+          onLoadMore={onLoadMore}
+          onReady={(next) => (coordinator = next)}
+        />,
+      ),
+    );
+    const params = { scrollTop: 0, hasMoreHistory: true, isLoadingHistory: false };
+    expect(coordinator!.requestTopHistoryLoad(params)).toBe(false);
+    expect(coordinator!.requestTopHistoryLoad(params)).toBe(true);
+    expect(coordinator!.requestTopHistoryLoad(params)).toBe(false);
+    await act(async () => Promise.resolve());
+    expect(
+      coordinator!.handleTopHistoryScroll({
+        ...SCROLL_PARAMS,
+        scrollTop: 0,
+        isLoadingHistory: false,
+      }),
+    ).toBe(true);
+    expect(onLoadMore).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not let a late no-op clear a newer request", async () => {
+    let resolveFirst!: (result: false) => void;
+    const first = new Promise<false>((resolve) => (resolveFirst = resolve));
+    const onLoadMore = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValue(new Promise<void>(() => {}));
+    let coordinator: Coordinator | null = null;
+    let compensation: Compensation | null = null;
+    await act(async () =>
+      root.render(
+        <Probe
+          scrollToMessageAnchor={() => true}
+          onLoadMore={onLoadMore}
+          onReady={(next, _el, controller) => {
+            coordinator = next;
+            compensation = controller;
+          }}
+        />,
+      ),
+    );
+    const params = { scrollTop: 0, hasMoreHistory: true, isLoadingHistory: false };
+    expect(coordinator!.requestTopHistoryLoad(params)).toBe(true);
+    coordinator!.reset();
+    expect(coordinator!.requestTopHistoryLoad(params)).toBe(true);
+    await act(async () => resolveFirst(false));
+    expect(compensation!.pendingRef.current).not.toBeNull();
+    expect(coordinator!.requestTopHistoryLoad(params)).toBe(false);
+    expect(onLoadMore).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases its gate if the loader rejects before reporting a result", async () => {
+    const logError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const onLoadMore = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("fixture"))
+      .mockReturnValue(new Promise<void>(() => {}));
+    let coordinator: Coordinator | null = null;
+    await act(async () =>
+      root.render(
+        <Probe
+          scrollToMessageAnchor={() => true}
+          onLoadMore={onLoadMore}
+          onReady={(next) => (coordinator = next)}
+        />,
+      ),
+    );
+    const params = { scrollTop: 0, hasMoreHistory: true, isLoadingHistory: false };
+    expect(coordinator!.requestTopHistoryLoad(params)).toBe(true);
+    await act(async () => Promise.resolve());
+    expect(coordinator!.requestTopHistoryLoad(params)).toBe(true);
+    expect(onLoadMore).toHaveBeenCalledTimes(2);
+    expect(logError).toHaveBeenCalledOnce();
+    logError.mockRestore();
   });
 
   it("keeps an appended page's offset when its anchor cannot be rendered", async () => {

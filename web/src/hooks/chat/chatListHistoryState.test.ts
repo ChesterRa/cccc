@@ -17,7 +17,7 @@ const base = {
 describe("resolveChatListHistoryState", () => {
   it("keeps older history reachable from an empty filtered tail", () => {
     expect(
-      resolveChatListHistoryState({ ...base, chatFilter: "mail", hasAnyChatMessages: true }),
+      resolveChatListHistoryState({ ...base, chatFilter: "user", hasAnyChatMessages: true }),
     ).toEqual({ isLoadingHistory: false, hasMoreHistory: true, isFilteredEmpty: true });
   });
 
@@ -25,7 +25,7 @@ describe("resolveChatListHistoryState", () => {
     expect(
       resolveChatListHistoryState({
         ...base,
-        chatFilter: "mail",
+        chatFilter: "user",
         hasAnyChatMessages: true,
         hasLoadedTail: false,
         isLoadingHistory: true,
@@ -43,7 +43,7 @@ describe("resolveChatListHistoryState", () => {
     expect(
       resolveChatListHistoryState({
         ...base,
-        chatFilter: "request_reply",
+        chatFilter: "user",
         hasAnyChatMessages: true,
         hasMoreHistory: false,
       }),

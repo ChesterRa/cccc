@@ -144,8 +144,8 @@ it("keeps a single read in flight even when another history load is requested", 
   );
   await render();
   await act(async () => {
-    await history.loadMore();
-    await history.loadMore();
+    expect(await history.loadMore()).toBe(false);
+    expect(await history.loadMore()).toBe(false);
   });
   expect(searchChatMessages).toHaveBeenCalledTimes(1);
   await act(async () => {
@@ -418,7 +418,7 @@ it("does not regress receipt state when an older page response arrives late", as
         }),
     );
   await render();
-  let pending!: Promise<void>;
+  let pending!: Promise<void | false>;
   await act(async () => {
     pending = history.loadMore();
   });
@@ -536,7 +536,7 @@ it("refreshes newly loaded older Mail after a read watermark arrives during pagi
     result: { statuses: { "10": { read_status: { worker: true } } } },
   });
   await render();
-  let pending!: Promise<void>;
+  let pending!: Promise<void | false>;
   await act(async () => {
     pending = history.loadMore();
   });
@@ -720,7 +720,7 @@ it("retries only failed receipt hydration after accepting an older page", async 
       result: { statuses: { "10": { read_status: { worker: true } } } },
     });
   await render();
-  let pending!: Promise<void>;
+  let pending!: Promise<void | false>;
   await act(async () => {
     pending = history.loadMore();
   });
@@ -766,7 +766,7 @@ it.each(["unrelated", "connect"])(
         }),
     );
     await render();
-    let pending!: Promise<void>;
+    let pending!: Promise<void | false>;
     await act(async () => {
       pending = history.loadMore();
     });

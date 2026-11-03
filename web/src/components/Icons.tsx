@@ -46,6 +46,7 @@ import {
   Paperclip,
   Pause,
   Pencil,
+  Pin,
   Play,
   Plus,
   RefreshCw,
@@ -155,6 +156,7 @@ export const FolderIcon = createIcon(Folder, 1.5, "folder");
 export const DownloadIcon = createIcon(Download, 1.5, "download");
 export const TerminalIcon = createIcon(SquareTerminal, 1.5, "terminal");
 export const BookmarkIcon = createIcon(Bookmark, 1.9, "bookmark");
+export const PinIcon = createIcon(Pin, 1.5, "pin");
 export const InboxIcon = createIcon(Inbox, 1.5, "inbox");
 export const RefreshIcon = createIcon(RefreshCw, 1.5, "reload");
 export const TrashIcon = createIcon(Trash2, 1.5, "trash");

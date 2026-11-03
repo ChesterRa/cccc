@@ -258,3 +258,50 @@ describe("MarkdownRenderer table contract", () => {
     );
   });
 });
+
+describe("MarkdownRenderer link contract", () => {
+  it("opens web addresses in a new tab, and leaves paths, anchors and mailto alone", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer
+        content={
+          "See https://example.com/a?b=1, [the docs](HTTP://example.org/docs) and [a mirror](//example.net/x).\n\n[Write](mailto:team@example.com), [jump](#notes) or [open](/ui/push)."
+        }
+      />,
+    );
+    const anchors = [...new DOMParser().parseFromString(html, "text/html").querySelectorAll("a")];
+
+    expect(anchors.map((anchor) => anchor.getAttribute("href"))).toEqual([
+      "https://example.com/a?b=1",
+      "HTTP://example.org/docs",
+      "//example.net/x",
+      "mailto:team@example.com",
+      "#notes",
+      "/ui/push",
+    ]);
+    expect(anchors.map((anchor) => anchor.getAttribute("target"))).toEqual([
+      "_blank",
+      "_blank",
+      "_blank",
+      null,
+      null,
+      null,
+    ]);
+    expect(anchors.map((anchor) => anchor.getAttribute("rel"))).toEqual([
+      "noopener noreferrer",
+      "noopener noreferrer",
+      "noopener noreferrer",
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it("leaves link handling to a document preview that maps its own URLs", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer content="[Site](https://example.com)" resolveUrl={(url) => url} />,
+    );
+
+    expect(html).toContain('href="https://example.com"');
+    expect(html).not.toContain("target=");
+  });
+});

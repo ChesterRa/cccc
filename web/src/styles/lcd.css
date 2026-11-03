@@ -569,6 +569,34 @@
   :root[data-ui-style="lcd"][data-lcd-width="wide"] .chat-reading-width {
     max-width: 80rem;
   }
+
+  /* The conversation scrolls in a box only as wide as the column with its side padding and
+     24px set aside for the two scrollbar gutters (10px each in Chromium on Linux), so the
+     scrollbar sits beside the messages rather than at the window's edge. A wheel over the
+     margins still scrolls it (useMarginWheel). The key back to the latest message keeps to
+     the box's lower right, clear of its scrollbar, whose gutter does not shrink with the
+     text. */
+  :root[data-ui-style="lcd"]:not([data-lcd-width="full"]) .chat-reading-scroller {
+    width: 100%;
+    max-width: calc(56rem + 2rem + 24px);
+    margin-inline: auto;
+  }
+
+  :root[data-ui-style="lcd"][data-lcd-width="wide"] .chat-reading-scroller {
+    max-width: calc(80rem + 2rem + 24px);
+  }
+
+  :root[data-ui-style="lcd"][data-lcd-width="full"] [data-lcd-scope] [data-scroll-latest] {
+    right: max(0.75rem, 12px);
+  }
+
+  :root[data-ui-style="lcd"]:not([data-lcd-width="full"]) [data-lcd-scope] [data-scroll-latest] {
+    right: calc(max(0px, (100% - 56rem - 2rem - 24px) / 2) + max(0.75rem, 12px));
+  }
+
+  :root[data-ui-style="lcd"][data-lcd-width="wide"] [data-lcd-scope] [data-scroll-latest] {
+    right: calc(max(0px, (100% - 80rem - 2rem - 24px) / 2) + max(0.75rem, 12px));
+  }
 }
 
 /* A pixel font is crisp only at its design size: RoundPix is drawn on 16px. */
@@ -597,6 +625,13 @@
   font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* A pinned message keeps a small pin after its time; the tip names it. */
+:root[data-ui-style="lcd"] .lcd-row-pin {
+  display: inline-flex;
+  align-self: center;
+  color: var(--lcd-muted);
 }
 
 /* Touch keeps the filtered view’s Show in chat shortcut beside the footer menu. */

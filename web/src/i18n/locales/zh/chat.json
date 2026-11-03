@@ -80,9 +80,9 @@
   "scrollToBottomUnread_one": "{{displayCount}} 条新消息",
   "scrollToBottomUnread_other": "{{displayCount}} 条新消息",
   "filterUser": "用户相关",
-  "filterMail": "邮件",
+  "filterPinned": "已固定",
   "filterWaitingForYou": "待你答复",
-  "filterNeedReply": "请求",
+  "filterWaitingForYouShort": "待你答复",
   "pendingReply": {
     "loadFailed": "无法刷新待你答复的请求，当前状态未知。",
     "daemonUnsupported": "运行中的 CCCC daemon 不支持待你答复，版本可能不同。请先完成当前工作，在运行 CCCC 的机器上对同一 CCCC_HOME 执行 cccc daemon stop，再启动 CCCC；远程用户请联系管理员。",
@@ -110,6 +110,19 @@
     "unknown": "暂时无法确认请求状态。",
     "unsupported": "这条请求来自其他组或设备，请核实请求者后在聊天中回复。",
     "openComposer": "在聊天中回复"
+  },
+  "pins": {
+    "pin": "固定",
+    "unpin": "取消固定",
+    "pinnedMark": "已固定",
+    "empty": "还没有固定的消息。在消息的操作菜单里选「固定」，它就会留在这里。",
+    "loadFailed": "固定的消息读取失败。",
+    "unavailable_one": "有 {{count}} 条固定的消息已无法读取。",
+    "unavailable_other": "有 {{count}} 条固定的消息已无法读取。",
+    "removeUnavailable": "移除",
+    "limitReached": "每个组最多固定 100 条消息，请先取消一些。",
+    "pinFailed": "固定失败：{{error}}",
+    "unpinFailed": "取消固定失败：{{error}}"
   },
   "notificationPrompt": {
     "text": "<0>开启系统通知</0>，页面关闭时也能收到发给你的新消息。",
@@ -558,7 +571,7 @@
   "linkCopied": "已复制链接",
   "relay": "转发",
   "quickReply": {
-    "menu": "快速回复",
+    "menu": "快速回复 · 点选即发送",
     "proceed": "同意，继续",
     "proceedText": "同意，按这个推进。",
     "why": "说说为什么",

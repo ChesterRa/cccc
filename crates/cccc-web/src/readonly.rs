@@ -95,9 +95,9 @@ fn is_mutating_get(path: &str) -> bool {
             })
 }
 
-/// The user's open reply requests and notification subscriptions. An
-/// exhibit's viewers are spectators, not the Group's user, so these reads are
-/// refused there, not only the changes.
+/// The user's open reply requests, message pins and notification subscriptions.
+/// An exhibit's viewers are spectators, not the Group's user, so these reads
+/// are refused there, not only the changes.
 fn is_user_obligation_get(path: &str) -> bool {
     path.starts_with("/api/v1/process-recovery/")
         || path.starts_with("/api/v1/chet/")
@@ -107,7 +107,7 @@ fn is_user_obligation_get(path: &str) -> bool {
             .strip_prefix("/api/v1/groups/")
             .and_then(|rest| rest.split_once('/'))
             .is_some_and(|(group_id, tail)| {
-                !group_id.is_empty() && tail == "reply-requests/pending"
+                !group_id.is_empty() && matches!(tail, "reply-requests/pending" | "pins")
             })
 }
 
@@ -189,6 +189,13 @@ mod tests {
             &Method::GET,
             "/api/v1/groups/g_1/ledger/tail"
         ));
+    }
+
+    #[test]
+    fn read_only_refuses_message_pins_for_reads_and_writes() {
+        for method in [Method::GET, Method::HEAD, Method::POST] {
+            assert!(!is_read_only_safe(&method, "/api/v1/groups/g_1/pins"));
+        }
     }
 
     #[test]

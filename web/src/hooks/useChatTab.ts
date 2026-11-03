@@ -70,6 +70,7 @@ import { prepareComposerMessage } from "./chat/prepareComposerMessage";
 import { useChatMessageActions } from "./chat/useChatMessageActions";
 import { useChatMessageView } from "./chat/useChatMessageView";
 import { matchesChatFilters, shownChatFilter } from "./chat/chatMessageFilters";
+import { setPinned, usePinStore } from "../features/pins/pinStore";
 import { useTaskReferenceIndex } from "./chat/useTaskReferenceIndex";
 import { useShallow } from "zustand/react/shallow";
 interface UseChatTabOptions {
@@ -189,7 +190,14 @@ export function useChatTab({
   const pendingContext = useVisiblePendingSummary();
   const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
   const waitingTabOffered = !!pendingContext;
-  const chatFilter = shownChatFilter(storedChatFilter, waitingTabOffered && showPendingPrompts);
+  // Pinned is the user's: an exhibit never reads or offers it. ChatTab reads the pins.
+  const webReadOnly = useUIStore((state) => state.webReadOnly);
+  const pinsUnsupported = usePinStore((state) => !!state.groups[selectedGroupId]?.unsupported);
+  const pinnedTabOffered = !webReadOnly && !pinsUnsupported;
+  const chatFilter = shownChatFilter(storedChatFilter, {
+    waiting: waitingTabOffered && showPendingPrompts,
+    pinned: pinnedTabOffered,
+  });
   const senders = chatSenderFilter;
 
   const {
@@ -475,6 +483,10 @@ export function useChatTab({
     loadPendingPage,
     retryPendingPage,
     pendingActive,
+    pinnedActive,
+    pinnedError,
+    pinnedUnavailable,
+    retryPinned,
   } = useChatMessageView({
     selectedGroupId,
     liveJump,
@@ -525,6 +537,19 @@ export function useChatTab({
       if (selectedGroupId) setChatSenderFilter(selectedGroupId, value);
     },
     [selectedGroupId, setChatSenderFilter],
+  );
+  const toggleMessagePin = useCallback(
+    async (eventId: string, pinned: boolean) => {
+      if (!selectedGroupId) return;
+      const result = await setPinned(selectedGroupId, eventId, pinned);
+      if (result.ok) return;
+      showError(
+        result.code === "pin_limit_reached"
+          ? t("pins.limitReached")
+          : t(pinned ? "pins.pinFailed" : "pins.unpinFailed", { error: result.message }),
+      );
+    },
+    [selectedGroupId, showError, t],
   );
 
   // Agent state snapshot
@@ -677,10 +702,10 @@ export function useChatTab({
       bucket.chatWindow !== chatWindow ||
       !bucket.isChatWindowLoading ||
       !bucket.hasLoadedTail ||
-      shownChatFilter(
-        session.chatFilter,
-        waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
-      ) !== "all" ||
+      shownChatFilter(session.chatFilter, {
+        waiting: waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+        pinned: pinnedTabOffered,
+      }) !== "all" ||
       session.chatSenderFilter.length ||
       !bucket.events.some((event) => event.id === chatWindow.centerEventId) ||
       (params.get("group") && params.get("group") !== selectedGroupId) ||
@@ -703,6 +728,7 @@ export function useChatTab({
     isChatWindowLoading,
     selectedGroupId,
     senders.length,
+    pinnedTabOffered,
     waitingTabOffered,
   ]);
 
@@ -727,10 +753,10 @@ export function useChatTab({
       bucket.chatWindow !== chatWindow ||
       bucket.isChatWindowLoading ||
       !bucket.hasLoadedTail ||
-      shownChatFilter(
-        session.chatFilter,
-        waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
-      ) !== "all" ||
+      shownChatFilter(session.chatFilter, {
+        waiting: waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+        pinned: pinnedTabOffered,
+      }) !== "all" ||
       session.chatSenderFilter.length ||
       !bucket.events.some((event) => event.id === chatWindow.centerEventId) ||
       (params.get("group") && params.get("group") !== selectedGroupId) ||
@@ -758,6 +784,7 @@ export function useChatTab({
     exitChatWindow,
     scrollRef,
     selectedGroupId,
+    pinnedTabOffered,
     waitingTabOffered,
   ]);
   const onContextReady =
@@ -853,10 +880,10 @@ export function useChatTab({
       if (
         !atBottom ||
         !bucket.hasLoadedTail ||
-        shownChatFilter(
-          session.chatFilter,
-          waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
-        ) !== "all" ||
+        shownChatFilter(session.chatFilter, {
+          waiting: waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+          pinned: pinnedTabOffered,
+        }) !== "all" ||
         session.chatSenderFilter.length ||
         !contextTailInLive ||
         !bucket.events.some((event) => event.id === contextTailId)
@@ -896,6 +923,7 @@ export function useChatTab({
       loadMoreChatWindowAfter,
       scrollRef,
       selectedGroupId,
+      pinnedTabOffered,
       waitingTabOffered,
     ],
   );
@@ -1182,10 +1210,10 @@ export function useChatTab({
       }
       const ui = useUIStore.getState();
       const currentSession = getChatSession(selectedGroupId, ui.chatSessions);
-      const currentFilter = shownChatFilter(
-        currentSession.chatFilter,
-        waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
-      );
+      const currentFilter = shownChatFilter(currentSession.chatFilter, {
+        waiting: waitingTabOffered && ui.showPendingPrompts && ui.showPendingReplyReminders,
+        pinned: pinnedTabOffered,
+      });
       if (
         sourceEvent?.id &&
         useGroupStore.getState().selectedGroupId === selectedGroupId &&
@@ -1254,6 +1282,7 @@ export function useChatTab({
     composerRouteGroups,
     chatAtBottomRef,
     chatViewKey,
+    pinnedTabOffered,
     waitingTabOffered,
   ]);
 
@@ -1275,6 +1304,12 @@ export function useChatTab({
     pendingDaemonUnsupported,
     retryPendingPage,
     pendingActive,
+    pinnedActive,
+    pinnedError,
+    pinnedUnavailable,
+    retryPinned,
+    pinnedTabOffered,
+    toggleMessagePin: pinnedTabOffered ? toggleMessagePin : undefined,
     viewMessageContext: (eventId: string) => openSourceMessage(selectedGroupId, eventId),
     chatViewKey,
     chatWindowProps,
@@ -1290,7 +1325,7 @@ export function useChatTab({
     hasMoreHistory: effectiveHasMoreHistory,
     loadMoreHistory: pendingActive
       ? loadPendingPage
-      : inChatWindow
+      : inChatWindow || pinnedActive
         ? undefined
         : senders.length > 0
           ? loadSenderHistory

@@ -25,8 +25,10 @@ import { resolveInitialChatScroll } from "./chatScrollFocus";
 import { matchesChatFilters } from "./chatMessageFilters";
 import { useChatSenderHistory } from "./useChatSenderHistory";
 import { usePendingPages } from "../../features/pendingReplies/usePendingPages";
+import { usePinnedMessages } from "../../features/pins/usePinnedMessages";
 
 const EMPTY_SENDERS: readonly string[] = [];
+const EMPTY_IDS: readonly string[] = [];
 
 type ChatEmptyState = "ready" | "hydrating" | "business_empty" | "filtered_empty";
 
@@ -58,9 +60,15 @@ export function useChatMessageView(input: {
     input.selectedGroupId,
     input.chatFilter === "pending_user" && !inChatWindow,
   );
+  const pinned = usePinnedMessages(
+    input.selectedGroupId,
+    input.chatFilter === "pinned" && !inChatWindow,
+  );
+  // Waiting for you and Pinned are server projections; they filter by sender themselves.
+  const projection = pending.active || pinned.active;
   const senderHistory = useChatSenderHistory(
     input.selectedGroupId,
-    pending.active ? EMPTY_SENDERS : senders,
+    projection ? EMPTY_SENDERS : senders,
   );
   const conversationEvents = senders.length === 0 ? input.events : senderHistory.events;
   const liveJump =
@@ -129,15 +137,14 @@ export function useChatMessageView(input: {
       .filter(shouldShowInConversation)
       .map(toVisibleConversationEvent);
   }, [inChatWindow, input.chatWindow, liveChatMessages]);
-  // Pending requests are a server projection over the complete ledger, not the
-  // locally loaded tail. Keep closed rows until the user leaves this view.
-  const displayedMessages = useMemo(
-    () =>
-      pending.active
-        ? pending.events.filter((event) => !senders.length || senders.includes(event.by ?? ""))
-        : chatMessages,
-    [pending.active, pending.events, senders, chatMessages],
-  );
+  // Pending requests and pins are server projections over the complete ledger, not the
+  // locally loaded tail. Keep closed or unpinned rows until the user leaves the view.
+  const displayedMessages = useMemo(() => {
+    const projected = pending.active ? pending.events : pinned.active ? pinned.events : null;
+    return projected
+      ? projected.filter((event) => !senders.length || senders.includes(event.by ?? ""))
+      : chatMessages;
+  }, [pending.active, pending.events, pinned.active, pinned.events, senders, chatMessages]);
 
   const hasAnyChatMessages = useMemo(
     () =>
@@ -158,13 +165,13 @@ export function useChatMessageView(input: {
         viewKey,
         conversation: unfilteredLiveChatMessages,
         view: displayedMessages,
-        exactOnly: pending.active,
+        exactOnly: projection,
       }),
     [
       displayedMessages,
       inChatWindow,
       input.scrollSnapshot,
-      pending.active,
+      projection,
       unfilteredLiveChatMessages,
       viewKey,
     ],
@@ -183,8 +190,15 @@ export function useChatMessageView(input: {
   });
   const effectiveIsLoadingHistory = pending.active
     ? pending.loading
-    : historyState.isLoadingHistory;
-  const effectiveHasMoreHistory = pending.active ? pending.hasMore : historyState.hasMoreHistory;
+    : pinned.active
+      ? pinned.loading
+      : historyState.isLoadingHistory;
+  // All pins arrive in one read.
+  const effectiveHasMoreHistory = pending.active
+    ? pending.hasMore
+    : pinned.active
+      ? false
+      : historyState.hasMoreHistory;
   const hydratedDoc =
     !!input.groupDoc &&
     input.groupDoc.group_id === input.selectedGroupId &&
@@ -200,16 +214,20 @@ export function useChatMessageView(input: {
         ? !pending.loaded && !pending.error
           ? "hydrating"
           : "filtered_empty"
-        : !input.selectedGroupId
-          ? "business_empty"
-          : historyState.isFilteredEmpty
-            ? "filtered_empty"
-            : effectiveIsLoadingHistory ||
-                effectiveHasMoreHistory ||
-                !hydratedDoc ||
-                (input.needsActors && !settledActors)
-              ? "hydrating"
-              : "business_empty";
+        : pinned.active
+          ? !pinned.loaded && !pinned.error
+            ? "hydrating"
+            : "filtered_empty"
+          : !input.selectedGroupId
+            ? "business_empty"
+            : historyState.isFilteredEmpty
+              ? "filtered_empty"
+              : effectiveIsLoadingHistory ||
+                  effectiveHasMoreHistory ||
+                  !hydratedDoc ||
+                  (input.needsActors && !settledActors)
+                ? "hydrating"
+                : "business_empty";
 
   const centerEventId = inChatWindow ? input.chatWindow?.centerEventId : undefined;
   return {
@@ -243,6 +261,10 @@ export function useChatMessageView(input: {
     senderHistoryError: senders.length === 0 ? "" : senderHistory.error,
     loadSenderHistory: senderHistory.loadMore,
     pendingActive: pending.active,
+    pinnedActive: pinned.active,
+    pinnedError: pinned.active && pinned.error,
+    pinnedUnavailable: pinned.active ? pinned.unavailable : EMPTY_IDS,
+    retryPinned: pinned.refresh,
     pendingPageError: pending.active && pending.error,
     pendingDaemonUnsupported: pending.active && pending.error && pending.daemonUnsupported,
     loadPendingPage: pending.loadMore,

@@ -149,7 +149,7 @@ pub async fn authorize(
         );
     }
     if let Some(group_id) = group_from_path(request.uri().path())
-        && !principal.allows(group_id)
+        && !principal.allows(&group_id)
     {
         return failure_text(
             StatusCode::FORBIDDEN,
@@ -318,9 +318,11 @@ fn group_from_query(request: &Request) -> Option<String> {
         .filter(|group_id| !group_id.is_empty())
 }
 
-fn group_from_path(path: &str) -> Option<&str> {
+fn group_from_path(path: &str) -> Option<String> {
     let tail = path.strip_prefix("/api/v1/groups/")?;
-    let group_id = tail.split('/').next()?;
+    // Axum decodes captured route parameters before the handler sees them.
+    // Authorization must compare the same Group identity with the principal.
+    let group_id = decode_token(tail.split('/').next()?);
     group_id.starts_with("g_").then_some(group_id)
 }
 

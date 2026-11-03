@@ -27,7 +27,7 @@ interface UINotice {
   onAction?: () => void;
 }
 
-export type ChatFilter = "all" | "user" | "mail" | "request_reply" | "pending_user";
+export type ChatFilter = "all" | "user" | "pinned" | "pending_user";
 /** Empty means unrestricted; entries are concrete event.by identities. */
 export type ChatSenderFilter = string[];
 
@@ -345,10 +345,10 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
       voiceRecognitionLanguage: voiceRecognitionLanguage(session.voiceRecognitionLanguage),
       workView: session.workView === "terminals" ? "terminals" : "messages",
       terminalPage: sanitizeTerminalPage(session.terminalPage),
+      // Filters this version no longer offers, such as Mail, open as All.
       chatFilter:
         session.chatFilter === "user" ||
-        session.chatFilter === "mail" ||
-        session.chatFilter === "request_reply" ||
+        session.chatFilter === "pinned" ||
         session.chatFilter === "pending_user"
           ? session.chatFilter
           : "all",

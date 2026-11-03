@@ -52,7 +52,7 @@ export function useChatMessageActions(input: {
   setChatScrollSnapshot: (groupId: string, snapshot: ChatScrollSnapshot) => void;
   setNewActorRole: (role: "foreman" | "peer") => void;
   openModal: (name: "addActor") => void;
-  loadMoreHistory: (groupId: string) => Promise<unknown>;
+  loadMoreHistory: (groupId: string) => Promise<void | false>;
 }) {
   const { inChatWindow, selectedGroupId, setChatScrollSnapshot } = input;
   const copyMessageLink = useCallback(
@@ -198,6 +198,8 @@ export function useChatMessageActions(input: {
       input.openModal("addActor");
     },
     loadCurrentGroupHistory: () =>
-      input.selectedGroupId ? input.loadMoreHistory(input.selectedGroupId) : Promise.resolve(),
+      input.selectedGroupId
+        ? input.loadMoreHistory(input.selectedGroupId)
+        : Promise.resolve<false>(false),
   };
 }

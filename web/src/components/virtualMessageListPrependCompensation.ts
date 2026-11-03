@@ -247,7 +247,7 @@ export function useTopHistoryLoadCoordinator(input: {
   cancelPendingBottomScroll: () => void;
   detachFollowMode: () => void;
   markAwayFromBottom: () => void;
-  onLoadMore?: () => void;
+  onLoadMore?: () => void | false | Promise<void | false>;
 }) {
   const {
     compensation,
@@ -262,8 +262,10 @@ export function useTopHistoryLoadCoordinator(input: {
     onLoadMore,
   } = input;
   const topLoadArmedRef = useRef(true);
+  const loadSequenceRef = useRef(0);
 
   const reset = useCallback(() => {
+    loadSequenceRef.current += 1;
     topLoadArmedRef.current = true;
     compensation.clear();
   }, [compensation]);
@@ -280,6 +282,64 @@ export function useTopHistoryLoadCoordinator(input: {
       };
     },
     [getAnchorSnapshot, getAnchorTop, getCurrentContentSize],
+  );
+
+  // A manual request and a top-scroll request share one anchor and one in-flight gate.
+  const beginTopHistoryLoad = useCallback(
+    (scrollTop: number) => {
+      if (!onLoadMore || compensation.pendingRef.current || compensation.isCompensatingRef.current)
+        return false;
+      topLoadArmedRef.current = false;
+      detachFollowMode();
+      markAwayFromBottom();
+      cancelPendingBottomScroll();
+      compensation.begin(capturePendingCompensation(scrollTop));
+      const sequence = ++loadSequenceRef.current;
+      const releaseUnstarted = () => {
+        if (loadSequenceRef.current !== sequence) return false;
+        compensation.clear();
+        topLoadArmedRef.current = true;
+        return true;
+      };
+      let result: ReturnType<NonNullable<typeof onLoadMore>>;
+      try {
+        result = onLoadMore();
+      } catch (error) {
+        releaseUnstarted();
+        throw error;
+      }
+      if (result === false) {
+        releaseUnstarted();
+        return false;
+      }
+      if (result) {
+        void result.then(
+          (started) => {
+            if (started === false) releaseUnstarted();
+          },
+          (error: unknown) => {
+            if (releaseUnstarted()) console.error("Failed to load older messages:", error);
+          },
+        );
+      }
+      return true;
+    },
+    [
+      cancelPendingBottomScroll,
+      capturePendingCompensation,
+      compensation,
+      detachFollowMode,
+      markAwayFromBottom,
+      onLoadMore,
+    ],
+  );
+
+  const requestTopHistoryLoad = useCallback(
+    (params: { scrollTop: number; hasMoreHistory: boolean; isLoadingHistory: boolean }) => {
+      if (!params.hasMoreHistory || params.isLoadingHistory) return false;
+      return beginTopHistoryLoad(params.scrollTop);
+    },
+    [beginTopHistoryLoad],
   );
 
   const handleTopHistoryScroll = useCallback(
@@ -309,24 +369,9 @@ export function useTopHistoryLoadCoordinator(input: {
       });
       topLoadArmedRef.current = decision.topLoadArmed;
       if (!decision.shouldLoad) return false;
-
-      detachFollowMode();
-      markAwayFromBottom();
-      cancelPendingBottomScroll();
-
-      compensation.begin(capturePendingCompensation(params.scrollTop));
-
-      onLoadMore?.();
-      return true;
+      return beginTopHistoryLoad(params.scrollTop);
     },
-    [
-      cancelPendingBottomScroll,
-      capturePendingCompensation,
-      compensation,
-      detachFollowMode,
-      markAwayFromBottom,
-      onLoadMore,
-    ],
+    [beginTopHistoryLoad, capturePendingCompensation, compensation, onLoadMore],
   );
 
   const applyPendingPrependCompensation = useCallback(
@@ -335,6 +380,7 @@ export function useTopHistoryLoadCoordinator(input: {
       const pending = compensation.pendingRef.current;
       if (!pending) return false;
 
+      loadSequenceRef.current += 1;
       compensation.takePending();
 
       if (pending.anchorId && scrollToMessageAnchor(pending.anchorId, pending.anchorOffsetPx)) {
@@ -368,7 +414,12 @@ export function useTopHistoryLoadCoordinator(input: {
   );
 
   return useMemo(
-    () => ({ handleTopHistoryScroll, applyPendingPrependCompensation, reset }),
-    [applyPendingPrependCompensation, handleTopHistoryScroll, reset],
+    () => ({
+      handleTopHistoryScroll,
+      requestTopHistoryLoad,
+      applyPendingPrependCompensation,
+      reset,
+    }),
+    [applyPendingPrependCompensation, handleTopHistoryScroll, requestTopHistoryLoad, reset],
   );
 }

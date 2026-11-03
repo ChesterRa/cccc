@@ -29,6 +29,12 @@ let host: HTMLDivElement;
 let root: Root;
 const menuItems = () =>
   Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'));
+// An item's words, without the emoji that some lead with.
+const labelOf = (item: Element) =>
+  Array.from(item.childNodes)
+    .filter((node) => !(node instanceof Element && node.hasAttribute("data-action-emoji")))
+    .map((node) => node.textContent)
+    .join("");
 const menuGroups = () =>
   Array.from(document.querySelectorAll('[role="dialog"] [role="group"]')).map((group) =>
     group.getAttribute("aria-label"),
@@ -59,7 +65,7 @@ async function touchMenuLabels() {
   const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button");
   if (!touch) return [];
   await act(async () => touch.click());
-  const labels = menuItems().map((item) => item.textContent);
+  const labels = menuItems().map(labelOf);
   await act(async () => touch.click());
   return labels;
 }
@@ -106,9 +112,18 @@ describe("quick replies", () => {
     expect(run).toHaveBeenCalledOnce();
   });
 
-  it("are offered on a message an agent of this Group wrote here", async () => {
+  it("are offered on a message an agent of this Group wrote here, each led by its emoji", async () => {
     await renderBubble(agentMessage);
     expect(await touchMenuLabels()).toEqual(expect.arrayContaining(QUICK));
+    const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+    await act(async () => touch.click());
+    const quick = menuItems().filter((item) => QUICK.includes(labelOf(item)));
+    const emoji = quick.map((item) => item.querySelector("[data-action-emoji]"));
+    expect(emoji.map((mark) => mark?.textContent)).toEqual(["👍", "🤔", "🔄", "☑️"]);
+    // Screen readers read the words and the group's name, which says a choice sends at once.
+    for (const mark of emoji) expect(mark?.getAttribute("aria-hidden")).toBe("true");
+    // Only the quick replies carry one.
+    expect(menuItems().filter((item) => item.querySelector("[data-action-emoji]"))).toEqual(quick);
   });
 
   it.each([
@@ -166,7 +181,7 @@ describe("quick replies", () => {
     await act(async () => touch.click());
     await act(async () =>
       menuItems()
-        .find((item) => item.textContent === "quickReply.proceed")!
+        .find((item) => labelOf(item) === "quickReply.proceed")!
         .click(),
     );
     expect(replyMessage).toHaveBeenCalledWith(
@@ -195,7 +210,7 @@ describe("quick replies", () => {
     await act(async () => touch.click());
     await act(async () =>
       menuItems()
-        .find((item) => item.textContent === "quickReply.why")!
+        .find((item) => labelOf(item) === "quickReply.why")!
         .click(),
     );
     const notice = showNotice.mock.calls[0][0];

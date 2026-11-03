@@ -76,6 +76,7 @@ vi.mock("./virtualMessageList/useInitialMessageScroll", () => ({
 vi.mock("./virtualMessageList/useMessageTailAutoFollow", () => ({
   useMessageTailAutoFollow: () => {},
 }));
+vi.mock("./virtualMessageList/useMarginWheel", () => ({ useMarginWheel: () => {} }));
 vi.mock("./virtualMessageList/useViewChangeAutoFollow", () => ({
   useViewChangeAutoFollow: () => {},
 }));
@@ -91,8 +92,18 @@ vi.mock("./virtualMessageList/useReplyTargetNavigation", () => ({
 }));
 
 class FakeResizeObserver {
-  observe() {}
+  static instances: FakeResizeObserver[] = [];
+  readonly observed = new Set<Element>();
+  constructor(private readonly callback: ResizeObserverCallback) {
+    FakeResizeObserver.instances.push(this);
+  }
+  observe(target: Element) {
+    this.observed.add(target);
+  }
   disconnect() {}
+  notify() {
+    this.callback([], this as unknown as ResizeObserver);
+  }
 }
 let host: HTMLDivElement;
 let root: Root;
@@ -113,6 +124,7 @@ const props = (): VirtualMessageListProps => ({
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  FakeResizeObserver.instances = [];
   vi.stubGlobal("ResizeObserver", FakeResizeObserver);
   mocks.state.forced = true;
   mocks.cancel.mockClear();
@@ -140,6 +152,96 @@ function logHeights(scrollHeight: number, clientHeight = 400) {
     () => client.mockRestore(),
   );
 }
+
+it("offers older results in a scrollable filtered view and keeps keyboard focus in the log", async () => {
+  logHeights(1000);
+  const onLoadMore = vi.fn();
+  await act(async () =>
+    root.render(
+      <VirtualMessageList {...props()} hasActiveFilters hasMoreHistory onLoadMore={onLoadMore} />,
+    ),
+  );
+  const button = host.querySelector<HTMLButtonElement>("[data-load-older-history]")!;
+  expect(button.textContent).toBe("loadOlderResults");
+  await act(async () => {
+    button.focus();
+    button.click();
+    button.click();
+  });
+  expect(onLoadMore).toHaveBeenCalledOnce();
+  expect(document.activeElement).toBe(host.querySelector('[role="log"]'));
+});
+
+it("offers older results in an ordinary list only when it is too short to rearm on scroll", async () => {
+  let scrollHeight = 900;
+  const scroll = vi
+    .spyOn(Element.prototype, "scrollHeight", "get")
+    .mockImplementation(() => scrollHeight);
+  const client = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(400);
+  heightRestores.push(
+    () => scroll.mockRestore(),
+    () => client.mockRestore(),
+  );
+  const onLoadMore = vi.fn();
+  await act(async () =>
+    root.render(<VirtualMessageList {...props()} hasMoreHistory onLoadMore={onLoadMore} />),
+  );
+  expect(host.querySelector("[data-load-older-history]")).toBeNull();
+  const log = host.querySelector('[role="log"]')!;
+  const observer = FakeResizeObserver.instances.find((item) => item.observed.has(log))!;
+
+  scrollHeight = 640; // The 240px rearm threshold requires scrolling strictly farther than this.
+  await act(async () => observer.notify());
+  expect(host.querySelector("[data-load-older-history]")).not.toBeNull();
+  scrollHeight = 900;
+  await act(async () => observer.notify());
+  expect(host.querySelector("[data-load-older-history]")).toBeNull();
+});
+
+it("does not offer a request during loading, after exhaustion or in a message window", async () => {
+  logHeights(400);
+  const onLoadMore = vi.fn();
+  const input = props();
+  await act(async () =>
+    root.render(
+      <VirtualMessageList
+        {...input}
+        hasActiveFilters
+        hasMoreHistory
+        isLoadingHistory
+        onLoadMore={onLoadMore}
+      />,
+    ),
+  );
+  const button = host.querySelector<HTMLButtonElement>("[data-load-older-history]")!;
+  expect(button.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => button.click());
+  expect(onLoadMore).not.toHaveBeenCalled();
+
+  await act(async () =>
+    root.render(
+      <VirtualMessageList
+        {...input}
+        hasActiveFilters
+        hasMoreHistory={false}
+        onLoadMore={onLoadMore}
+      />,
+    ),
+  );
+  expect(host.querySelector("[data-load-older-history]")).toBeNull();
+  await act(async () =>
+    root.render(
+      <VirtualMessageList
+        {...input}
+        hasActiveFilters
+        hasMoreHistory
+        contextWindow
+        onLoadMore={onLoadMore}
+      />,
+    ),
+  );
+  expect(host.querySelector("[data-load-older-history]")).toBeNull();
+});
 
 it("cancels forced bottom follow when keyboard focus enters a message", async () => {
   await act(async () => root.render(<VirtualMessageList {...props()} />));

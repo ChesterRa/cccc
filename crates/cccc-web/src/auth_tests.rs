@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn group_authorization_uses_the_decoded_route_identity() {
+    let id = "g_one";
+    let encoded = percent_encoding::utf8_percent_encode(id, percent_encoding::NON_ALPHANUMERIC);
+    let path = format!("/api/v1/groups/{encoded}/pins");
+    let resolved = group_from_path(&path).expect("Group identity");
+    assert_eq!(resolved, id);
+    let principal = Principal {
+        user_id: "fixture".into(),
+        allowed_groups: vec![id.into()],
+        is_admin: false,
+        raw_token: String::new(),
+    };
+    assert!(principal.allows(&resolved));
+    let other = group_from_path("/api/v1/groups/g_other/pins").expect("other Group identity");
+    assert!(!principal.allows(&other));
+    assert!(requires_admin(&Method::DELETE, &path));
+    assert_eq!(group_from_path("/api/v1/groups/copy/preview_import"), None);
+}
+
+#[test]
 fn direct_connection_management_never_becomes_a_public_peer_endpoint() {
     for method in [Method::GET, Method::POST] {
         assert!(requires_admin(&method, "/api/v1/connect/direct"));

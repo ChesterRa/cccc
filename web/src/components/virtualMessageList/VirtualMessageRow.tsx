@@ -31,6 +31,7 @@ type VirtualMessageRowProps = {
   onReply: (event: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
+  onTogglePin?: (eventId: string, pinned: boolean) => void;
   onRelay?: (event: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;

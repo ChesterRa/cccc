@@ -592,6 +592,10 @@ fn excluded(relative: &str, _is_dir: bool) -> bool {
     parts.iter().any(|part| sensitive.contains(part))
         || name.ends_with('~')
         || name.ends_with(".tmp")
+        // Atomic writes of group.yaml and Group state use .tmp-prefixed files.
+        // They can contain unredacted credentials while a copy is collected.
+        || (parts.len() == 1 || parts.len() == 2 && parts[0] == "state")
+            && name.starts_with(".tmp")
         || parts.iter().any(|part| part.starts_with(".deleting-"))
         || [
             ".db", ".db-shm", ".db-wal", ".lock", ".pid", ".sock", ".sqlite", ".sqlite3",
@@ -602,7 +606,10 @@ fn excluded(relative: &str, _is_dir: bool) -> bool {
         || parts.len() >= 2
             && parts[0] == "state"
             && (runtime.contains(&parts[1])
-                || matches!(parts[1], "group_space" | "notebooklm" | "notebooklm_auth")
+                || matches!(
+                    parts[1],
+                    "group_space" | "message_pins" | "notebooklm" | "notebooklm_auth"
+                )
                 || parts[1] == "ledger"
                     && parts.len() >= 3
                     && matches!(
@@ -616,7 +623,11 @@ fn excluded(relative: &str, _is_dir: bool) -> bool {
         || lower == "state/preamble_sent.json"
         || lower == "state/unread_index.json"
         || lower == "state/assistants.json"
+        || lower == "state/actor-secrets.json"
         || lower == "state/env_private.json"
+        || lower == "state/im_dingtalk_sessions.json"
+        || lower == "state/im_pending_keys.json"
+        || lower == "state/im_weixin_credentials.json"
         || lower == "state/im_weixin_context_tokens.json"
 }
 
@@ -1357,12 +1368,112 @@ mod tests {
         for name in [
             "state/env_private.jſon",
             "state/im_weixin_context_tokenſ.json",
+            "state/im_weixin_credentialſ.json",
+            "state/actor-ſecrets.json",
+            "state/message_pinſ/pins.json",
             "state/paẞword/note.txt",
             "state/KIRO/session.txt",
         ] {
             assert!(excluded(name, false), "private alias {name}");
         }
         assert!(!excluded("state/memory/日本語.md", false));
+    }
+
+    #[test]
+    fn group_copy_excludes_message_pins_on_export_and_import() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let state = store.state_dir(&group.group_id).expect("state");
+        fs::create_dir_all(&state).expect("state directory");
+        let pin_dir = state.join("message_pins");
+        fs::create_dir_all(&pin_dir).expect("pin directory");
+        let pins =
+            br#"{"v":1,"pins":[{"event_id":"message-1","pinned_at":"2026-01-01T00:00:00Z"}]}"#;
+        fs::write(pin_dir.join("pins.json"), pins).expect("pins");
+        // Simulates the temporary file present while an atomic write is in flight.
+        fs::write(pin_dir.join(".tmp-fixture"), pins).expect("temporary pin state");
+        fs::write(state.join("notes.txt"), "ordinary content").expect("content");
+
+        let (bytes, _, _) = export(&store, &group.group_id).expect("export");
+        let package = read_package(&bytes).expect("package");
+        assert!(
+            !package
+                .files
+                .keys()
+                .any(|path| path.starts_with("state/message_pins/"))
+        );
+        assert!(package.files.contains_key("state/notes.txt"));
+
+        // Even an archive supplied from elsewhere cannot introduce pin state.
+        for relative in [
+            "state/message_pins/pins.json",
+            "state/message_pins/.tmp-fixture",
+            "state/message_pinſ/pins.json",
+        ] {
+            let bytes = package_with_extra_file(&store, &group.group_id, relative, pins);
+            let imported = import(&store, &bytes, "", "").expect("import");
+            let imported_dir = store.group_dir(&imported.group_id).expect("imported group");
+            assert!(!imported_dir.join(relative).exists());
+            assert!(imported_dir.join("state/notes.txt").exists());
+        }
+        assert_eq!(
+            fs::read(pin_dir.join("pins.json"))
+                .expect("original pins")
+                .as_slice(),
+            pins
+        );
+    }
+
+    #[test]
+    fn group_copy_excludes_credentials_and_in_flight_atomic_writes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let source = store.group_dir(&group.group_id).expect("group dir");
+        fs::create_dir_all(source.join("state")).expect("state");
+        fs::create_dir_all(source.join("state/memory")).expect("memory");
+        fs::create_dir_all(source.join("prompts")).expect("prompts");
+        let excluded_paths = [
+            "state/im_weixin_credentials.json",
+            "state/im_dingtalk_sessions.json",
+            "state/im_pending_keys.json",
+            "state/actor-secrets.json",
+            "state/.tmp-state-fixture",
+            ".tmp-group-fixture",
+        ];
+        let fixture = b"synthetic private state";
+        for relative in excluded_paths {
+            fs::write(source.join(relative), fixture).expect("private fixture");
+        }
+        // Unrelated user files outside the Group root and state are not removed.
+        fs::write(source.join("prompts/.tmp-notes"), b"ordinary content").expect("user content");
+        fs::write(source.join("state/memory/.tmp-notes"), b"memory").expect("memory content");
+
+        let (bytes, manifest, _) = export(&store, &group.group_id).expect("export");
+        assert!(!manifest.contains_secrets);
+        let package = read_package(&bytes).expect("package");
+        for relative in excluded_paths {
+            assert!(!package.files.contains_key(relative), "exported {relative}");
+        }
+        assert!(package.files.contains_key("prompts/.tmp-notes"));
+        assert!(package.files.contains_key("state/memory/.tmp-notes"));
+        for relative in excluded_paths {
+            let bytes = package_with_extra_file(&store, &group.group_id, relative, fixture);
+            let imported = import(&store, &bytes, "", "").expect("import");
+            let imported_dir = store.group_dir(&imported.group_id).expect("imported group");
+            assert!(!imported_dir.join(relative).exists(), "imported {relative}");
+            assert!(imported_dir.join("prompts/.tmp-notes").exists());
+            assert!(imported_dir.join("state/memory/.tmp-notes").exists());
+            assert_eq!(
+                fs::read(source.join(relative))
+                    .expect("original")
+                    .as_slice(),
+                fixture
+            );
+        }
     }
 
     #[test]

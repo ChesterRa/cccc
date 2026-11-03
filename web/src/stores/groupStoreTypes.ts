@@ -141,7 +141,7 @@ export interface GroupState {
   refreshPresentation: (groupId?: string) => Promise<void>;
   loadGroup: (groupId: string) => Promise<void>;
   warmGroup: (groupId: string) => Promise<void>;
-  loadMoreHistory: (groupId?: string) => Promise<void>;
+  loadMoreHistory: (groupId?: string) => Promise<void | false>;
   /** Resolves to false when the message and its neighbours could not be loaded. */
   openChatWindow: (groupId: string, centerEventId: string) => Promise<boolean>;
   loadMoreChatWindowAfter: (groupId: string) => Promise<void>;

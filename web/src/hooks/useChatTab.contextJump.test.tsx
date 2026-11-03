@@ -150,7 +150,7 @@ it("does not close a context after its Group changes", async () => {
 it("does not close a context if a filter is enabled before the callback runs", async () => {
   const ready = chat.onContextReady!;
   await act(async () => {
-    useUIStore.getState().setChatFilter("a", "mail");
+    useUIStore.getState().setChatFilter("a", "user");
     ready();
   });
   expect(useGroupStore.getState().chatByGroup.a.chatWindow?.centerEventId).toBe("2");
@@ -261,7 +261,7 @@ it("returns to a filtered conversation at the place it was read", async () => {
     updatedAt: Date.now(),
   };
   await act(async () => {
-    useUIStore.getState().setChatFilter("a", "mail");
+    useUIStore.getState().setChatFilter("a", "user");
     useUIStore.getState().setChatScrollSnapshot("a", place);
   });
   await act(async () => chat.returnToLatest(false, true));
@@ -276,11 +276,11 @@ it("returns to a filtered conversation at the place it was read", async () => {
 
 it("returns to the same filter without acknowledging unread messages early", async () => {
   await act(async () => {
-    useUIStore.getState().setChatFilter("a", "mail");
+    useUIStore.getState().setChatFilter("a", "user");
     useUIStore.getState().setChatUnreadCount("a", 2);
   });
   await act(async () => chat.returnToLatest());
   expect(chat.inChatWindow).toBe(false);
-  expect(chat.chatFilter).toBe("mail");
+  expect(chat.chatFilter).toBe("user");
   expect(useUIStore.getState().chatSessions.a.chatUnreadCount).toBe(2);
 });

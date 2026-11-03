@@ -1,5 +1,5 @@
 // Selected Pixelarticons 2.4.2 paths, MIT, Copyright (c) 2019 Gerrit Halfmann.
-// See /ui/licenses/logos/Pixelarticons-MIT.txt. The maximize and minimize glyphs, the
+// See /ui/licenses/logos/Pixelarticons-MIT.txt. The maximize, minimize and pin glyphs, the
 // upward arrow on archive-restore and the arrows on file-link and folder-link are original.
 const paths = {
   search: [
@@ -235,6 +235,10 @@ const paths = {
   "folder-link": [
     "M4 4h6v2H4zm0 14h16v2H4zM20 8h2v10h-2zM2 6h2v12H2zm8 0h10v2H10z",
     "M6 12h10v2H6zm8-2h2v2h-2zm-2-2h2v2h-2zm2 6h2v2h-2zm-2 2h2v2h-2z",
+  ],
+  // A push pin: cap, waist, flared base and needle.
+  pin: [
+    "M6 2h12v2H6zm0 2h2v2H6zm10 0h2v2h-2zM8 6h2v6H8zm6 0h2v6h-2zm-8 6h2v2H6zm10 0h2v2h-2zM4 14h2v2H4zm14 0h2v2h-2zM4 16h16v2H4zm7 2h2v4h-2z",
   ],
 } as const;
 

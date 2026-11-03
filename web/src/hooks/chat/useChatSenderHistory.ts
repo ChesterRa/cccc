@@ -83,8 +83,8 @@ export function useChatSenderHistory(groupId: string, senders: readonly string[]
   currentKey.current = key;
 
   const read = useCallback(async (visit: Visit, direction: Direction = "older") => {
-    if (!visit.groupId || !visit.senders.length || visit.pending) return;
-    if (direction === "older" && !visit.page.hasMore) return;
+    if (!visit.groupId || !visit.senders.length || visit.pending) return false;
+    if (direction === "older" && !visit.page.hasMore) return false;
     const active = () =>
       current.current === visit &&
       currentKey.current === visit.key &&
@@ -94,7 +94,7 @@ export function useChatSenderHistory(groupId: string, senders: readonly string[]
       return active() && value?.key === visit.key ? value : null;
     };
     const initial = projection();
-    if (!initial) return;
+    if (!initial) return false;
     visit.pending = true;
     visit.retry = null;
     visit.page = { ...visit.page, loading: direction !== "forward", error: "" };
@@ -254,7 +254,8 @@ export function useChatSenderHistory(groupId: string, senders: readonly string[]
 
   const loadMore = useCallback(async () => {
     const visit = current.current;
-    if (visit?.key === key) await read(visit, visit.retry ?? "older");
+    if (visit?.key !== key) return false;
+    return read(visit, visit.retry ?? "older");
   }, [key, read]);
 
   return {

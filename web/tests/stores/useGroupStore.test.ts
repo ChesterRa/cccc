@@ -1622,6 +1622,8 @@ describe("useGroupStore actors fetch policy", () => {
     expect(api.fetchOlderMessages).toHaveBeenCalledWith("g-demo", "msg-2", 50);
     expect(bucket?.isLoadingHistory).toBe(false);
     expect(bucket?.hasMoreHistory).toBe(false);
+    expect(await useGroupStore.getState().loadMoreHistory("g-demo")).toBe(false);
+    expect(api.fetchOlderMessages).toHaveBeenCalledTimes(1);
   });
 
   it("loadMoreHistory closes history pagination when the older page only contains duplicates", async () => {

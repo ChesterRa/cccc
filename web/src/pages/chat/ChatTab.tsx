@@ -34,9 +34,11 @@ import { classNames } from "../../utils/classNames";
 import { buttonVariants } from "../../components/ui/button-variants";
 import { ChatComposer } from "./ChatComposer";
 import { ChatFilterTabs } from "./ChatFilterTabs";
+import { usePinnedIds } from "../../features/pins/pinStore";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
 import { RuntimeDock } from "./RuntimeDock";
 import { ChatSenderFilter } from "./ChatSenderFilter";
+import { pinnedEmptyKey } from "../../hooks/chat/chatMessageFilters";
 import { useChatTab } from "../../hooks/useChatTab";
 import { useTranslation } from "react-i18next";
 import { useShallow } from "zustand/react/shallow";
@@ -267,6 +269,12 @@ export function ChatTab({
     pendingDaemonUnsupported,
     retryPendingPage,
     pendingActive,
+    pinnedActive,
+    pinnedError,
+    pinnedUnavailable,
+    retryPinned,
+    pinnedTabOffered,
+    toggleMessagePin,
     viewMessageContext,
     chatViewKey,
     chatWindowProps,
@@ -457,6 +465,12 @@ export function ChatTab({
   );
   const isBusinessEmptyState = chatMessages.length === 0 && chatEmptyState === "business_empty";
   const isFilteredEmptyState = chatMessages.length === 0 && chatEmptyState === "filtered_empty";
+  // Waiting for you and Pinned are read from the server rather than the loaded conversation.
+  const projectionActive = pendingActive || pinnedActive;
+  // The open Group's pins, read when it opens and again when the page becomes visible.
+  const groupPins = usePinnedIds(selectedGroupId, pinnedTabOffered);
+  const pinnedCount = groupPins?.loaded ? groupPins.ids.length : null;
+  const pinnedEmpty = pinnedEmptyKey(pinnedError, pinnedCount);
   const listIsLoadingHistory = isLoadingHistory || isHydratingEmptyState;
   const listHasMoreHistory = hasMoreHistory || isHydratingEmptyState;
   const liveWorkCards = useRuntimeDockWorkCards({
@@ -984,6 +998,7 @@ export function ChatTab({
                           filter={chatFilter}
                           onChange={setChatFilter}
                           waiting={waitingIndicator}
+                          pinned={pinnedTabOffered ? { count: pinnedCount } : null}
                           isSmallScreen={isSmallScreen}
                         />
                         <ChatSenderFilter
@@ -1004,6 +1019,34 @@ export function ChatTab({
                             onClick={() => void retrySenderHistory()}
                           >
                             {t("common:retry")}
+                          </button>
+                        </div>
+                      ) : null}
+                      {pinnedError ? (
+                        <div
+                          role="status"
+                          className="chat-reading-width flex items-center gap-2 pb-2 text-xs text-[var(--color-text-secondary)]"
+                        >
+                          <span>{t("pins.loadFailed")}</span>
+                          <button type="button" className="min-h-9 underline" onClick={retryPinned}>
+                            {t("common:retry")}
+                          </button>
+                        </div>
+                      ) : null}
+                      {pinnedUnavailable.length && toggleMessagePin ? (
+                        <div
+                          role="status"
+                          className="chat-reading-width flex items-center gap-2 pb-2 text-xs text-[var(--color-text-secondary)]"
+                        >
+                          <span>{t("pins.unavailable", { count: pinnedUnavailable.length })}</span>
+                          <button
+                            type="button"
+                            className="min-h-9 underline"
+                            onClick={() => {
+                              for (const id of pinnedUnavailable) void toggleMessagePin(id, false);
+                            }}
+                          >
+                            {t("pins.removeUnavailable")}
                           </button>
                         </div>
                       ) : null}
@@ -1091,14 +1134,14 @@ export function ChatTab({
                           webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
                           viewKey={chatViewKey}
                           topInsetPx={overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0}
-                          followOnViewChangeKey={pendingActive ? undefined : chatViewKey}
+                          followOnViewChangeKey={projectionActive ? undefined : chatViewKey}
                           initialScrollTargetId={
-                            pendingActive ? undefined : chatInitialScrollTargetId
+                            projectionActive ? undefined : chatInitialScrollTargetId
                           }
-                          // Waiting for you opens at its newest request unless it is given a
-                          // message to keep. A message given no height starts at the reading top.
+                          // Waiting for you and Pinned open at their newest message unless given
+                          // a message to keep. A message given no height starts at the reading top.
                           initialScrollAnchorId={
-                            pendingActive
+                            projectionActive
                               ? chatInitialScrollAnchorId || chatMessages.at(-1)?.id
                               : chatInitialScrollAnchorId
                           }
@@ -1122,6 +1165,7 @@ export function ChatTab({
                           onReply={startReply}
                           onShowRecipients={showRecipients}
                           onCopyLink={copyMessageLink}
+                          onTogglePin={toggleMessagePin}
                           onViewContext={
                             hasChatFilter && !chatWindowProps ? showInConversation : undefined
                           }
@@ -1149,6 +1193,7 @@ export function ChatTab({
                           onScrollSnapshot={handleScrollSnapshot}
                           isLoadingHistory={listIsLoadingHistory}
                           hasMoreHistory={listHasMoreHistory}
+                          hasActiveFilters={hasChatFilter && !chatWindowProps}
                           isFilteredEmpty={isFilteredEmptyState}
                           emptyMessage={
                             !selectedGroupId
@@ -1167,7 +1212,9 @@ export function ChatTab({
                                         ? "pendingReply.loadFailed"
                                         : "pendingReply.empty",
                                   )
-                                : undefined
+                                : pinnedActive && pinnedEmpty
+                                  ? t(pinnedEmpty)
+                                  : undefined
                           }
                           onLoadMore={loadMoreHistory}
                         />

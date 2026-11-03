@@ -27,6 +27,7 @@ mod im;
 mod im_authorization;
 mod local_sessions;
 mod membership;
+mod message_pins;
 mod messaging;
 mod messaging_cross_group;
 mod nomcp;
@@ -104,6 +105,7 @@ pub fn router() -> Router<AppState> {
         .merge(headless::routes())
         .merge(im::routes())
         .merge(messaging::routes())
+        .merge(message_pins::routes())
         .merge(messaging_cross_group::routes())
         .merge(presentation::routes())
         .merge(presentation_browser::routes())

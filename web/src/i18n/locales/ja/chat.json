@@ -76,9 +76,9 @@
   "scrollToBottomUnread_one": "新着メッセージ {{displayCount}} 件",
   "scrollToBottomUnread_other": "新着メッセージ {{displayCount}} 件",
   "filterUser": "ユーザー関連",
-  "filterMail": "メール",
+  "filterPinned": "ピン留め",
   "filterWaitingForYou": "あなたの回答待ち",
-  "filterNeedReply": "リクエスト",
+  "filterWaitingForYouShort": "回答待ち",
   "pendingReply": {
     "loadFailed": "回答待ちを更新できません。現在の状態は不明です。",
     "daemonUnsupported": "実行中の CCCC daemon は回答待ちに対応していません。バージョンが異なる可能性があります。作業を終え、CCCC を実行しているマシンで同じ CCCC_HOME を使って cccc daemon stop を実行し、CCCC を再起動してください。リモートユーザーは管理者に連絡してください。",
@@ -106,6 +106,19 @@
     "unknown": "リクエストの状態を確認できません。",
     "unsupported": "この依頼は別のグループまたは端末から届きました。依頼者を確認してから会話で返信してください。",
     "openComposer": "会話で返信"
+  },
+  "pins": {
+    "pin": "ピン留め",
+    "unpin": "ピン留めを外す",
+    "pinnedMark": "ピン留め中",
+    "empty": "ピン留めしたメッセージはまだありません。メッセージのメニューで「ピン留め」を選ぶと、ここに残ります。",
+    "loadFailed": "ピン留めしたメッセージを読み込めませんでした。",
+    "unavailable_one": "ピン留めしたメッセージ {{count}} 件を読み込めなくなりました。",
+    "unavailable_other": "ピン留めしたメッセージ {{count}} 件を読み込めなくなりました。",
+    "removeUnavailable": "削除",
+    "limitReached": "1 つのグループでピン留めできるのは 100 件までです。先にいくつか外してください。",
+    "pinFailed": "ピン留めできませんでした：{{error}}",
+    "unpinFailed": "ピン留めを外せませんでした：{{error}}"
   },
   "notificationPrompt": {
     "text": "<0>通知をオン</0>。ページを閉じても自分宛ての新着メッセージを受け取れます。",
@@ -558,7 +571,7 @@
   "linkCopied": "リンクをコピーしました",
   "relay": "転送",
   "quickReply": {
-    "menu": "クイック返信",
+    "menu": "クイック返信 · 選ぶとすぐ送信",
     "proceed": "同意、進めて",
     "proceedText": "同意します。この方針で進めてください。",
     "why": "理由を聞く",

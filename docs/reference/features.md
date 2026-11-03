@@ -104,8 +104,7 @@ an option or writes their own answer in place, under the message.
   re-enables a disabled Actor.
 - In the Web UI, while requests to the user are open in a Group, a Waiting
   for you filter appears first on its messages page with their number and
-  lists all of them; it stays while it is being viewed. The Requests filter
-  lists every request, answered or not, between any members. The sidebar
+  lists all of them; it stays while it is being viewed. The sidebar
   shows each Group's count, including stopped and archived Groups. A browser
   can turn the counts and the Waiting for you filter off under Appearance →
   ‘Waiting for you’ indicators; the requests then read as ordinary messages,
@@ -117,6 +116,21 @@ an option or writes their own answer in place, under the message.
   mode. When the running daemon does not support Waiting for you, as one
   still running from an earlier version may not, the Web says so and asks
   for CCCC to be restarted; the counts stay unknown.
+
+### Pinned Messages
+
+In the Web UI a message can be pinned from its menu, and the Group's **Pinned**
+tab lists its pinned messages in full, in ledger order, with a way to each one
+in the whole conversation.
+
+- Pins belong to the Group, not to one browser or person: the daemon keeps them
+  under `groups/<group_id>/state/message_pins/`, outside the ledger, and every Web
+  user with access to the Group shares them. A page reads them again when the
+  Group opens and when the page becomes visible.
+- A read-only exhibit neither reads nor changes them, and agents do not receive
+  them in messages or tools. They are not part of Copy Groups packages.
+- A Group keeps up to 100 pins. A pin whose message can no longer be read is
+  listed as such and can still be removed.
 
 ### System Notifications
 
@@ -471,7 +485,7 @@ CCCC Web supports Copy Groups export/import for durable group copy, migration, a
 
 - Export creates a zip package with durable CCCC group state: ledger history, actors, context, blobs, memory, assistants, automation, and settings.
 - Workspace repository/project files are not included. Users provide or remap the workspace root during import.
-- System credentials, browser profiles, provider auth, live runtime state, locks, and rebuildable caches are excluded. Copy packages still contain user content such as ledger history, memory, and attachments, so they should be handled as sensitive data.
+- System credentials, browser profiles, provider auth, live runtime state, locks, rebuildable caches and pins are excluded. Copy packages still contain user content such as ledger history, memory, and attachments, so they should be handled as sensitive data.
 - Imported groups start idle with actors stopped. If the packaged group id already exists, import creates a new copy and does not steal the existing workspace default mapping. An id still registered, as while a Group is being deleted, counts as existing.
 - When the copy gets a new Group id or active scope, the source Group's events in its history take the copied Group's id, and its active scope where they carried the source's active scope; event ids stay the same. The current ledger and history compacted into ledger segments follow the same rule. In each decoded history line, only those two values change; the other bytes are kept. Compressed segments are recompressed when their history needs rewriting. Events of other Groups and records whose Group id cannot be read stay as they were, and damaged records stay unreadable, so Waiting for you can fail on them in the copy just as in the source. History whose identity does not change is copied byte for byte. The decompressed size of each compressed segment's first gzip member, the part the ledger reads, counts toward the import's 2 GiB limit. An import fails before the new Group is published when the first gzip member of a compressed segment cannot be decompressed or exceeds that limit, or when history it must rewrite has a line over 64 MiB or data after the first gzip member of a compressed segment. Ledger snapshot metadata keeps describing the source history, and Groups imported earlier are not changed.
 - Before publishing a new Group, import rejects file entries whose expanded size differs from their declared size, paths with `.` components or repeated separators, and files that would overwrite another staged file. On Windows, names ending in a period or space, or containing characters that Windows does not allow in file names, are also rejected. A package can therefore contain a filename that is valid on its source system but cannot be imported on Windows.

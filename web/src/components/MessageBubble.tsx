@@ -32,6 +32,7 @@ import {
 import { MessageAttachments } from "./messageBubble/MessageAttachments";
 import { MessageActions } from "./messageBubble/MessageActions";
 import {
+  QUICK_REPLY_EMOJI,
   QUICK_REPLY_KINDS,
   sendQuickReply,
   type QuickReplyKind,
@@ -56,6 +57,8 @@ import { MessageReplyQuote } from "./messageBubble/MessageReplyQuote";
 import { MessageReferenceSections } from "./messageBubble/MessageReferenceSections";
 import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
 import { PendingReplyStoreContext } from "../features/pendingReplies/store";
+import { useMessagePinned } from "../features/pins/pinStore";
+import { PinIcon } from "./Icons";
 import { useGroupStore, useUIStore } from "../stores";
 import { CHET_NAME, CHET_PRINCIPAL, chetGeneration, isChetMessage } from "../utils/chetIdentity";
 import {
@@ -200,6 +203,8 @@ export interface MessageBubbleProps {
   onReply: () => void;
   onShowRecipients: () => void;
   onCopyLink?: (eventId: string) => void;
+  /** Pin or unpin this message; absent where pins are not offered. */
+  onTogglePin?: (eventId: string, pinned: boolean) => void;
   onViewContext?: (eventId: string) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -228,6 +233,7 @@ export const MessageBubble = memo(
     onReply,
     onShowRecipients,
     onCopyLink,
+    onTogglePin,
     onViewContext,
     onRelay,
     onOpenSource,
@@ -250,6 +256,12 @@ export const MessageBubble = memo(
         ? onViewContext
         : undefined;
     const canReply = !!getReplyEventId(ev);
+    // Only a message already in the ledger can be pinned.
+    const pinnableId =
+      !readOnly && typeof ev.id === "string" && ev.id && !isOptimistic && !isStreaming
+        ? ev.id
+        : undefined;
+    const pinned = useMessagePinned(groupId, pinnableId);
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
     const pendingStore = useContext(PendingReplyStoreContext);
     const liveStatuses = useContext(LivePendingStatusContext);
@@ -661,6 +673,7 @@ export const MessageBubble = memo(
       return QUICK_REPLY_KINDS.map((kind) => ({
         key: `quick-${kind}`,
         label: t(`quickReply.${kind}`),
+        emoji: QUICK_REPLY_EMOJI[kind],
         run: () => void send(kind),
       }));
     }, [quickReplyTarget, senderDisplayName, showNotice, t]);
@@ -820,6 +833,12 @@ export const MessageBubble = memo(
           >
             {messageTimestamp}
           </time>
+          {pinned ? (
+            <span className="lcd-row-pin" title={t("pins.pinnedMark")}>
+              <PinIcon size={12} aria-hidden="true" />
+              <span className="sr-only">{t("pins.pinnedMark")}</span>
+            </span>
+          ) : null}
         </div>
         {agentStateTooltip}
         <div className="lcd-row-body">
@@ -842,6 +861,10 @@ export const MessageBubble = memo(
               eventId={typeof ev.id === "string" ? String(ev.id) : undefined}
               event={ev}
               quickReplies={quickReplies}
+              pinned={pinned}
+              onTogglePin={
+                pinnableId && onTogglePin ? () => onTogglePin(pinnableId, !pinned) : undefined
+              }
             />
             {messageFooter}
           </div>
@@ -865,6 +888,7 @@ export const MessageBubble = memo(
       prevProps.collapseHeader === nextProps.collapseHeader &&
       prevProps.sameSender === nextProps.sameSender &&
       prevProps.onViewContext === nextProps.onViewContext &&
+      prevProps.onTogglePin === nextProps.onTogglePin &&
       prevProps.onRelay === nextProps.onRelay &&
       prevProps.onOpenSource === nextProps.onOpenSource &&
       prevProps.onOpenPresentationRef === nextProps.onOpenPresentationRef &&

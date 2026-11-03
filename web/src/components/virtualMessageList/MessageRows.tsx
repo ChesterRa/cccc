@@ -19,6 +19,7 @@ type MessageRowsProps = Pick<
   | "onShowRecipients"
   | "onViewContext"
   | "onCopyLink"
+  | "onTogglePin"
   | "onRelay"
   | "onOpenSource"
   | "onOpenPresentationRef"
@@ -61,6 +62,7 @@ export function MessageRows({
   onReply,
   onShowRecipients,
   onCopyLink,
+  onTogglePin,
   onViewContext,
   onRelay,
   onOpenSource,
@@ -79,6 +81,7 @@ export function MessageRows({
     groupId,
     groupLabelById,
     onCopyLink,
+    onTogglePin,
     onViewContext,
     onRelay,
     onOpenSource,

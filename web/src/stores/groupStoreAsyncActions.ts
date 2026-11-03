@@ -641,14 +641,14 @@ export function createGroupStoreAsyncActions(
 
     loadMoreHistory: async (groupId?: string) => {
       const gid = String(groupId || get().selectedGroupId || "").trim();
-      if (!gid) return;
+      if (!gid) return false;
 
       const bucket = getGroupChatBucket(get().chatByGroup, gid);
-      if (bucket.isLoadingHistory || !bucket.hasMoreHistory) return;
+      if (bucket.isLoadingHistory || !bucket.hasMoreHistory) return false;
 
       const chatMessages = bucket.events.filter((event) => event.kind === "chat.message");
       const firstEvent = chatMessages[0];
-      if (!firstEvent?.id) return;
+      if (!firstEvent?.id) return false;
 
       set((state) => buildChatBucketPatch(state, gid, { isLoadingHistory: true }) ?? state);
       try {

@@ -5,6 +5,14 @@ import { newClientId } from "../../utils/clientId";
 export const QUICK_REPLY_KINDS = ["proceed", "why", "rethink", "choices"] as const;
 export type QuickReplyKind = (typeof QUICK_REPLY_KINDS)[number];
 
+/** Shown before each label so the replies read as quick responses; the label carries the meaning. */
+export const QUICK_REPLY_EMOJI: Record<QuickReplyKind, string> = {
+  proceed: "👍",
+  why: "🤔",
+  rethink: "🔄",
+  choices: "☑️",
+};
+
 export type QuickReplyTarget = {
   groupId: string;
   replyEventId: string;

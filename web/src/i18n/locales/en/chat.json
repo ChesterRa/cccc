@@ -80,9 +80,9 @@
   "scrollToBottomUnread_one": "{{displayCount}} new message",
   "scrollToBottomUnread_other": "{{displayCount}} new messages",
   "filterUser": "User-related",
-  "filterMail": "Mail",
+  "filterPinned": "Pinned",
   "filterWaitingForYou": "Waiting for you",
-  "filterNeedReply": "Requests",
+  "filterWaitingForYouShort": "Waiting",
   "pendingReply": {
     "loadFailed": "Could not refresh waiting replies. Their status is unknown.",
     "daemonUnsupported": "The running CCCC daemon does not support Waiting for you; the versions may differ. Finish current work, then run cccc daemon stop on the CCCC host with the same CCCC_HOME and start CCCC again. Remote users should contact an administrator.",
@@ -110,6 +110,19 @@
     "unknown": "The request's status is unavailable.",
     "unsupported": "This request came from another Group or device. Check the requester before replying in chat.",
     "openComposer": "Reply in chat"
+  },
+  "pins": {
+    "pin": "Pin message",
+    "unpin": "Unpin message",
+    "pinnedMark": "Pinned",
+    "empty": "No pinned messages yet. Choose Pin message in a message's menu to keep it here.",
+    "loadFailed": "Pinned messages could not be loaded.",
+    "unavailable_one": "{{count}} pinned message can no longer be read.",
+    "unavailable_other": "{{count}} pinned messages can no longer be read.",
+    "removeUnavailable": "Remove",
+    "limitReached": "A Group can keep up to 100 pinned messages. Unpin some first.",
+    "pinFailed": "Could not pin the message: {{error}}",
+    "unpinFailed": "Could not unpin the message: {{error}}"
   },
   "notificationPrompt": {
     "text": "<0>Get notified</0> of new messages for you, even if this page is closed.",
@@ -558,7 +571,7 @@
   "linkCopied": "Link copied",
   "relay": "Forward",
   "quickReply": {
-    "menu": "Quick reply",
+    "menu": "Quick reply · sends immediately",
     "proceed": "Agree, go ahead",
     "proceedText": "Agreed. Go ahead with this.",
     "why": "Explain why",

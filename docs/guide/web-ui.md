@@ -157,7 +157,9 @@ notifications keep their own switch under Settings → Notifications. The indica
 the choice is saved in this browser.
 **Message area width** under Appearance sets how wide the conversation runs on
 screens 768px and wider: **Medium** keeps a centered reading column, **Wide** gives tables and
-code more room and **Full** uses the whole chat area. The choice is saved in this browser. It
+code more room and **Full** uses the whole chat area. With **Medium** or **Wide**, the
+conversation's scrollbar sits beside the column, and the mouse wheel scrolls the conversation
+from the blank space on either side as well. The choice is saved in this browser. It
 does not appear on narrower screens, where the conversation already has no width limit.
 The members' status floats in a compact centered row above the composer. Messages
 remain visible and interactive on either side; the scrollable tail lets the final
@@ -272,11 +274,11 @@ Collapse returns to the compact rail; closing the sidebar only hides it and keep
 
 The conversation's **Sender** menu lets you check one or more senders. Each Actor
 appears once; the current Foreman has a role label. Checked senders are combined
-with OR, and the message-type tabs apply alongside them. **User** matches messages
+with OR, and the tabs above the messages apply alongside them. **User** matches messages
 the user sent; the **User-related** tab also includes messages addressed to the user.
 Selections take effect immediately and the popup stays open for further choices.
 No checked senders means unrestricted. **Show all** and the sender's clear button
-remove only the sender condition; **All** resets only the message type. Each Group
+remove only the sender condition; **All** resets only the tab. Each Group
 remembers the selected Actor identities in this browser, so changing the Foreman
 role does not retarget a selection. Older matching messages share one history
 cursor and remain available through pagination. A removed Actor's selected identity
@@ -286,6 +288,19 @@ Reconnect catch-up also covers messages beyond the bounded raw cache. Live arriv
 are confirmed through a batched cursor read before joining the filtered rows, so
 an older replay cannot appear as the newest message. Failed reads keep a retry
 action; changing the filter or Group discards the departed view's pending reads.
+When a filtered list has earlier pages, **Load older results** above the messages reads another
+page, even if only a few messages are visible or a page has no matches. A short **All** list offers
+the same action when older messages remain.
+
+**Pinned** keeps the messages you need to come back to. Choose **Pin message** in a message's menu
+and a small pin follows its time. The **Pinned** tab shows how many the Group has and lists them in
+full, in conversation order, each with **Show in chat**. A message unpinned there stays listed, so
+you can pin it again, until you leave the tab or come back to the page, when the list is read again.
+Pins belong to the Group and are kept by the daemon: everyone who uses the Group in this CCCC's Web
+UI shares them, on any browser or device, and each page reads them again when the Group opens or the
+page becomes visible. A read-only exhibit neither shows nor changes them, and agents do not receive
+them in messages or tools. A Group keeps up to 100 pins. When a pinned message can no longer be
+read, the tab says so and offers to remove its pin.
 
 Changing a filter keeps your place. If you were reading earlier messages, the message you were
 reading travels with you: the last one you clicked, tapped or reached with Tab while it remains on
@@ -298,9 +313,9 @@ return. If you were following the latest messages, the new view follows them too
 or tapped a message that it contains: that message then keeps its height. A list too short to
 scroll always counts as following, so clicking a message there is what carries it over. A view you
 only look at, without scrolling or interacting with its messages, leaves your place unchanged, so
-switching back returns exactly where you were. **Waiting for you** keeps a message from your screen
-only when it is one of its requests, and otherwise opens at its newest request. Messages that are
-not loaded, such as mail older than the loaded history, cannot be kept. A place is kept for up to
+switching back returns exactly where you were. **Waiting for you** and **Pinned** keep a message
+from your screen only when they list it, and otherwise open at their newest message. Messages that
+are not loaded, such as older ones a filter has not reached yet, cannot be kept. A place is kept for up to
 30 minutes while the page stays open, not across a reload.
 
 Sending keeps the filters. If they hide the sent message, a confirmation offers
@@ -1120,7 +1135,8 @@ Choose **Reply** on a message to quote it and reply in the composer.
 
 **Quick reply**, in the **More** menu of a message from one of the Group's agents, sends a ready
 reply at once without the composer: **Agree, go ahead**, **Explain why**, **Try another way** or
-**Give me choices**. It goes to that agent alone, quotes the message, and a notice confirms it.
+**Give me choices**, each led by an emoji under the caption **Quick reply · sends immediately**.
+It goes to that agent alone, quotes the message, and a notice confirms it.
 Chet's messages, messages from or sent to another Group or CCCC instance and
 questions answered in their own card have no quick replies; reply to them in the composer. When
 CCCC cannot confirm that a quick reply was sent, the notice says so and offers **Retry**; check
@@ -1268,6 +1284,7 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
 - The copy package does **not** include the workspace repository/project files. Copy or clone the workspace separately, then choose the workspace root during import. The folder chooser can also create an empty directory if needed.
 - System credentials, browser sessions, provider auth, and live runtime state are excluded. The package still contains user content such as ledger history, memory, and attachments; treat it as sensitive. Imported actors are stopped and the imported group starts idle.
 - If a group id already exists, import creates a new copy instead of replacing the existing group.
+- Pins are not copied: the copied group starts without any. The pinned messages themselves are in its history.
 
 ### Automation
 

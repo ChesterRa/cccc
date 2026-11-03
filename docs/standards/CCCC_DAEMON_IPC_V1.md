@@ -4706,6 +4706,68 @@ user_request: {
 
 Whether the request is open remains `obligation_status.user`.
 
+#### `message_pins_list`
+
+Return the Group's shared Web message pins without delivering messages or
+changing the ledger. This is a user operation: `by` may be omitted or `user`;
+an Actor or another value is rejected with `permission_denied`.
+
+```ts
+{
+  group_id: string
+  by?: "user"
+  detail?: "ids" | "full" // default full
+}
+```
+
+Result:
+```ts
+{
+  pins: Array<{
+    event_id: string
+    pinned_at: string
+    event?: CCCSEventV1 | null // included for full only
+  }>
+}
+```
+
+Existing messages are ordered by ledger position. Unavailable messages remain
+in the list after the existing ones, in the order they were pinned, with
+`event: null` in full detail. Full events include the same read and obligation
+status decorations as `ledger_search` with both status flags enabled. `ids`
+omits the event and its status fields. Invalid detail returns `invalid_args`;
+an unreadable pin state fails instead of silently resetting the list.
+
+#### `message_pins_set`
+
+Set the desired pin state for a message; this is not a toggle. The same user
+restriction, detail parameter, result shape and ordering as `message_pins_list`
+apply. Pins are stored in Group state, not as ledger events. Authorized Web
+users with access to that Group share the list. Exhibit Web and Actor ports do
+not expose it.
+
+```ts
+{
+  group_id: string
+  event_id: string
+  pinned: boolean
+  by?: "user"
+  detail?: "ids" | "full" // default full
+}
+```
+
+Adding a pin requires a `chat.message` in the same Group; an unavailable or
+non-message target returns `pin_target_not_found`. A Group can hold at most 100
+pins; adding another returns `pin_limit_reached` without removing existing pins.
+Repeating the requested state succeeds without changing `pinned_at`. An
+unavailable target can still be unpinned. Writes are serialized per Group and
+exclude concurrent reads. A failed projection does not change the stored list.
+On the Web, `GET /api/v1/groups/{group_id}/pins` lists pins and `POST` to the
+same path accepts `{ event_id, pinned }`; either accepts `detail=ids` as a query
+parameter.
+Web clients reload the state when entering a Group or returning to a visible
+page, so two continuously visible clients do not promise immediate updates.
+
 
 #### `send`
 
@@ -8352,7 +8414,9 @@ Result:
 
 Notes:
 - Export MUST exclude live runtime state, browser profiles, credentials, connector secrets, lock files, and rebuildable caches.
-- Export and import MUST exclude persisted IM reply credentials, including `state/im_weixin_context_tokens.json`; import MUST apply exclusions even when an older package declares `contains_secrets: false`.
+- Export and import MUST exclude the Group message pin directory (`state/message_pins/`), including transient files. Copied or imported Groups start with an empty pinned-message list; the original messages remain in the copied ledger.
+- Export and import MUST exclude persisted IM credentials and temporary authorization state, including `state/im_weixin_credentials.json`, `state/im_weixin_context_tokens.json`, `state/im_dingtalk_sessions.json`, and `state/im_pending_keys.json`, as well as legacy `state/actor-secrets.json`; import MUST apply exclusions even when an older package declares `contains_secrets: false`.
+- Export and import MUST exclude `.tmp`-prefixed files directly in the Group root or `state/` directory, where atomic writes may temporarily contain unredacted data.
 - Export MUST scrub actor environment secrets from packaged `group.yaml`.
 - `contains_secrets: false` means CCCC-managed live credentials and auth sessions are excluded. The package can still contain user-provided sensitive content such as ledger history, memory, blobs, and attachments.
 - This compatibility operation is intended for small packages. Large packages SHOULD use `group_copy_export_file` and pass the returned `package_path` to preview/import.
