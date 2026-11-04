@@ -100,7 +100,7 @@ pub(in crate::ops) fn require_restored_managed_actor(
         let mut error = OpError::new(
             "runtime_restore_incomplete",
             if pending {
-                "Previous Actor runtime is waiting for confirmation in its terminal"
+                "Previous agent runtime is waiting for confirmation in its terminal"
             } else {
                 "Previous managed Claude runtime did not attach after restart"
             },

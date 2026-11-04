@@ -233,7 +233,7 @@
   "rolePresetCatalog": {
     "coordinator": {
       "name": "协调者",
-      "summary": "通过明确 owner、低噪声路由和干净 handoff 推动多智能体协作前进，但不要表现成第二个 foreman。",
+      "summary": "通过明确 owner、低噪声路由和干净 handoff 推动多智能体协作前进，但不要表现成第二个领班。",
       "useWhen": "适用于工作开始漂移、owner 不清、handoff 混乱，但核心需求仍然是协调而不是最终验收的时候。"
     },
     "planner": {

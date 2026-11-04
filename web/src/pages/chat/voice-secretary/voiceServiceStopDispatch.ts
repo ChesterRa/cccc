@@ -1,3 +1,4 @@
+import type { VoiceCaptureDispatchTarget } from "./voiceDictationRoute";
 import type { VoiceSecretaryCaptureMode } from "./voiceSecretaryTypes";
 
 export type VoiceServiceStopDispatchKind = "" | "prompt" | "instruction";
@@ -56,6 +57,23 @@ export function isMeaningfulVoiceDispatchText(value: string): boolean {
   const text = cleanVoiceDispatchText(value);
   if (!text) return false;
   return hasMeaningfulCjkText(text) || hasMeaningfulLatinText(text);
+}
+
+/**
+ * Whether direct dictation keeps a transcript. It goes into the composer, where the user
+ * reviews it, so anything but whitespace and punctuation counts: short answers such as 好, 嗯,
+ * OK or I, symbols and emoji are kept, and only blank or punctuation-only results are dropped.
+ */
+export function isVoiceDictationText(value: string): boolean {
+  return /[^\s\p{P}]/u.test(cleanVoiceDispatchText(value));
+}
+
+/** Direct dictation keeps short answers; transcripts for an agent or a document keep the stricter filter. */
+export function isUsableVoiceTranscript(
+  target: VoiceCaptureDispatchTarget,
+  value: string,
+): boolean {
+  return target === "composer" ? isVoiceDictationText(value) : isMeaningfulVoiceDispatchText(value);
 }
 
 export function voiceServiceStopDispatchKind(params: {

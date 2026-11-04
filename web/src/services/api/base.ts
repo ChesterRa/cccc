@@ -19,7 +19,11 @@ import { frameResourceUrl } from "../../features/connect/protocol";
 
 export type ApiResponse<T> =
   | { ok: true; result: T; error?: null }
-  | { ok: false; result?: unknown; error: { code: string; message: string; details?: unknown } };
+  | {
+      ok: false;
+      result?: unknown;
+      error: { code: string; message: string; details?: unknown; httpStatus?: number };
+    };
 
 export type FetchContextOptions = {
   fresh?: boolean;
@@ -173,8 +177,11 @@ export function refreshAuthTokenInUrl(url: string): string {
   }
 }
 
-function makeErrorResponse<T>(code: string, message: string): ApiResponse<T> {
-  return { ok: false, error: { code, message } };
+function makeErrorResponse<T>(code: string, message: string, httpStatus?: number): ApiResponse<T> {
+  return {
+    ok: false,
+    error: { code, message, ...(httpStatus === undefined ? {} : { httpStatus }) },
+  };
 }
 
 export function reuseSharedReadRequest<T>(
@@ -820,13 +827,18 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
     return makeErrorResponse(
       "NETWORK_ERROR",
       error instanceof Error ? error.message : "Network response was interrupted",
+      resp.status,
     );
   }
   if (!text) {
     if (resp.ok) {
       return { ok: true, result: {} as T };
     }
-    return makeErrorResponse("EMPTY_RESPONSE", `Server returned ${resp.status} with empty body`);
+    return makeErrorResponse(
+      "EMPTY_RESPONSE",
+      `Server returned ${resp.status} with empty body`,
+      resp.status,
+    );
   }
 
   try {
@@ -834,16 +846,22 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
     if (!data.ok && resp.status === 401 && isAuthRequiredErrorCode(data.error?.code)) {
       authRequiredHandler?.();
     }
-    return normalizeApiResponse<T>(data);
+    const result = normalizeApiResponse<T>(data);
+    return result.ok ? result : { ...result, error: { ...result.error, httpStatus: resp.status } };
   } catch {
     if (!resp.ok) {
       const statusText = resp.statusText ? ` ${resp.statusText}` : "";
       return makeErrorResponse(
         "HTTP_ERROR",
         `Server returned ${resp.status}${statusText}: ${text.slice(0, 100)}`,
+        resp.status,
       );
     }
-    return makeErrorResponse("PARSE_ERROR", `Invalid JSON response: ${text.slice(0, 100)}`);
+    return makeErrorResponse(
+      "PARSE_ERROR",
+      `Invalid JSON response: ${text.slice(0, 100)}`,
+      resp.status,
+    );
   }
 }
 

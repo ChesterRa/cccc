@@ -125,6 +125,57 @@ describe("voice composer draft routing", () => {
     expect(useComposerStore.getState().drafts["old-group"]?.composerText).toBe("voice");
   });
 
+  it.each([
+    { mode: "append" as const, text: "voice", expected: "original\n\nvoice" },
+    { mode: "replace" as const, text: "original", expected: "original" },
+  ])(
+    "preserves the background draft's destination but retires its retry identity on $mode",
+    ({ mode, text, expected }) => {
+      const attachment = new File(["attachment"], "example.txt");
+      const replyTarget = {
+        eventId: "event-1",
+        by: "peer-1",
+        text: "question",
+        remoteDstGroupId: "destination",
+        remoteDstTo: ["peer-2"],
+      };
+      useComposerStore.setState({ activeGroupId: "old-group", composerText: "" });
+      const store = useComposerStore.getState();
+      store.enqueueFailedSend({
+        id: "send-1",
+        originGroupId: "old-group",
+        destGroupId: "destination",
+        retryKey: "original-request",
+        composerText: "original",
+        composerFiles: [attachment],
+        toText: "peer-2",
+        replyTarget,
+        quotedPresentationRef: null,
+        quotedVoiceDocumentRef: null,
+        messageMode: "send",
+      });
+      expect(store.restoreFailedSend("old-group", "send-1")).toBe(true);
+      store.switchGroup("old-group", "new-group");
+      expect(useComposerStore.getState().drafts["old-group"].retryCandidate?.id).toBe("send-1");
+
+      expect(routeVoiceTextToComposerGroup({ groupId: "old-group", text, mode })).toBe("draft");
+      const draft = useComposerStore.getState().drafts["old-group"];
+      expect(draft.composerText).toBe(expected);
+      expect(draft.destGroupId).toBe("destination");
+      expect(draft.replyTarget).toEqual(replyTarget);
+      expect(draft.toText).toBe("peer-2");
+      expect(draft.composerFiles).toEqual([attachment]);
+      expect(draft.composerFiles[0]).toBe(attachment);
+      expect(draft.retryCandidate).toBeNull();
+      expect(useComposerStore.getState().composerText).toBe("");
+
+      store.switchGroup("new-group", "old-group");
+      const restored = useComposerStore.getState();
+      expect(restored.destGroupId).toBe("destination");
+      expect(restored.retryCandidate).toBeNull();
+    },
+  );
+
   it("supports replacement without duplicating shared merge logic", () => {
     expect(mergeVoiceComposerDraftText("old", "new", "replace")).toBe("new");
   });

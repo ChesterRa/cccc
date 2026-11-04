@@ -106,6 +106,23 @@ fn register_file(
         json!([[[filename]], notebook_id, crate::template_block()]),
         &format!("/notebook/{notebook_id}"),
     );
+    settle_registration(result, filename, baseline, || {
+        client.list_sources(notebook_id)
+    })
+}
+
+/// Settles a file registration. An explicit rejection fails at once; an
+/// ambiguous outcome is identified as the one new source with this filename.
+fn settle_registration(
+    result: Result<Value>,
+    filename: &str,
+    baseline: Option<&std::collections::HashSet<String>>,
+    list_sources: impl FnOnce() -> Result<Vec<Source>>,
+) -> Result<String> {
+    let result = match result {
+        Err(error) if !error.may_have_committed() => return Err(error),
+        result => result,
+    };
     if let Ok(value) = &result
         && let Some(source_id) = extract_source_id(value, filename)
         && baseline.is_none_or(|ids| !ids.contains(&source_id))
@@ -117,8 +134,7 @@ fn register_file(
             "file source {filename:?} may have registered, but the pre-create baseline was unavailable; inspect the source list before retrying"
         )));
     };
-    let candidates = client
-        .list_sources(notebook_id)
+    let candidates = list_sources()
         .map_err(|error| {
             Error::Unresolved(format!(
                 "file source {filename:?} may have registered, but the recovery probe failed: {error}"
@@ -131,14 +147,22 @@ fn register_file(
         .collect::<Vec<_>>();
     match candidates.as_slice() {
         [source] => Ok(source.id.clone()),
-        [] => result.and_then(|value| {
-            extract_source_id(&value, filename).ok_or_else(|| {
-                Error::drift(
-                    "file source registration",
-                    "response did not contain a trustworthy source id",
-                )
-            })
-        }),
+        [] => {
+            let source_id = result.and_then(|value| {
+                extract_source_id(&value, filename).ok_or_else(|| {
+                    Error::drift(
+                        "file source registration",
+                        "response did not contain a trustworthy source id",
+                    )
+                })
+            })?;
+            if baseline.contains(&source_id) {
+                return Err(Error::Unresolved(format!(
+                    "file source {filename:?} registration answered with existing source {source_id} and no new matching source appeared; inspect the source list before retrying"
+                )));
+            }
+            Ok(source_id)
+        }
         _ => Err(Error::Unresolved(format!(
             "file source {filename:?} registration is ambiguous: {} new matching sources exist",
             candidates.len()
@@ -553,5 +577,78 @@ mod tests {
     #[test]
     fn markdown_content_type_is_host_independent() {
         assert_eq!(content_type(Path::new("notes.md")), "text/markdown");
+    }
+
+    fn listed(id: &str) -> Source {
+        Source {
+            id: id.into(),
+            title: Some("notes.md".into()),
+            kind: "markdown".into(),
+            status: "ready".into(),
+            url: None,
+            drive_document_id: None,
+        }
+    }
+
+    #[test]
+    fn registration_recovery_never_adopts_existing_or_rejected_sources() {
+        let baseline = std::collections::HashSet::from(["source_old".to_owned()]);
+        let settle = |result: Result<Value>, visible: Vec<Source>| {
+            settle_registration(result, "notes.md", Some(&baseline), || Ok(visible))
+        };
+        // The response names a source that existed before the call.
+        assert!(matches!(
+            settle(Ok(json!([["source_old"]])), vec![listed("source_old")]),
+            Err(Error::Unresolved(_))
+        ));
+        // An explicit rejection is not turned into a same-name newcomer.
+        assert!(matches!(
+            settle(
+                Err(Error::RateLimited("HTTP 429".into())),
+                vec![listed("source_new")]
+            ),
+            Err(Error::RateLimited(_))
+        ));
+        // A genuinely unclear outcome still recovers the single new match.
+        assert_eq!(
+            settle(
+                Err(Error::Timeout("slow".into())),
+                vec![listed("source_old"), listed("source_new")]
+            )
+            .expect("recovered"),
+            "source_new"
+        );
+        assert_eq!(
+            settle(Ok(json!([["source_123"]])), Vec::new()).expect("trusted id"),
+            "source_123"
+        );
+        // A refusal decoded from a text-null frame is not adopted either.
+        let refused = rpc::decode(
+            &json!([["wrb.fr", rpc::ADD_SOURCE_FILE, "null", null, null, [3]]]).to_string(),
+            rpc::ADD_SOURCE_FILE,
+            rpc::NullResult::Reject,
+        );
+        assert!(matches!(
+            settle(refused, vec![listed("source_new")]),
+            Err(Error::Refused(_))
+        ));
+        // A permission error frame is not adopted either.
+        let denied = rpc::decode(
+            &json!([["er", rpc::ADD_SOURCE_FILE, 403]]).to_string(),
+            rpc::ADD_SOURCE_FILE,
+            rpc::NullResult::Reject,
+        );
+        assert!(matches!(
+            settle(denied, vec![listed("source_new")]),
+            Err(Error::Authentication)
+        ));
+        // An HTTP 400 is a rejection: no probe, even without a baseline.
+        let bad_request = Error::Transport(crate::error::test_support::http_status_error(400));
+        assert!(matches!(
+            settle_registration(Err(bad_request), "notes.md", None, || {
+                panic!("a rejected registration must not be probed")
+            }),
+            Err(Error::Transport(_))
+        ));
     }
 }

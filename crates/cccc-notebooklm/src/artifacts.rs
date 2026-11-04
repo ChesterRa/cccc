@@ -33,7 +33,7 @@ pub struct ArtifactGeneration {
 
 impl Client {
     pub fn list_artifacts(&self, notebook_id: &str) -> Result<Vec<Artifact>> {
-        let result = self.rpc_allow_null(
+        let result = self.rpc_with(
             rpc::LIST_ARTIFACTS,
             json!([
                 [2],
@@ -41,9 +41,9 @@ impl Client {
                 "NOT artifact.status = \"ARTIFACT_STATUS_SUGGESTED\""
             ]),
             &format!("/notebook/{notebook_id}"),
+            rpc::NullResult::AllowUnlessRejected,
         )?;
-        let rows = unwrap_rows(&result);
-        Ok(rows.iter().filter_map(parse_artifact).collect())
+        parse_artifact_list(&result)
     }
 
     pub fn generate_artifact(
@@ -68,28 +68,13 @@ impl Client {
             ));
         }
         let params = generation_params(notebook_id, &source_ids, kind, language, instructions)?;
-        let result = self.rpc_allow_null(
+        let result = self.rpc_with(
             rpc::CREATE_ARTIFACT,
             params,
             &format!("/notebook/{notebook_id}"),
+            rpc::NullResult::AllowUnlessRejected,
         )?;
-        let row = result
-            .get(0)
-            .and_then(Value::as_array)
-            .ok_or_else(|| Error::drift("artifact.generate", "missing artifact row"))?;
-        let artifact_id = row
-            .first()
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| Error::drift("artifact.generate", "missing artifact id"))?
-            .to_owned();
-        let status = artifact_status(row.get(4).and_then(Value::as_i64));
-        Ok(ArtifactGeneration {
-            artifact_id,
-            kind: normalize_kind(kind)?.into(),
-            status: status.into(),
-            raw: result,
-        })
+        parse_generation(normalize_kind(kind)?, result)
     }
 
     pub fn wait_for_artifact(
@@ -100,30 +85,13 @@ impl Client {
         initial_interval: Duration,
         max_interval: Duration,
     ) -> Result<Artifact> {
-        let deadline = Instant::now() + timeout;
-        let mut interval = initial_interval.min(max_interval);
-        loop {
-            if let Some(artifact) = self
-                .list_artifacts(notebook_id)?
-                .into_iter()
-                .find(|artifact| artifact.id == artifact_id)
-            {
-                match artifact.status.as_str() {
-                    "completed" if artifact_ready(&artifact) => return Ok(artifact),
-                    "failed" => return Ok(artifact),
-                    _ => {}
-                }
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                return Err(Error::Timeout(format!(
-                    "artifact {artifact_id} did not complete within {} seconds",
-                    timeout.as_secs_f64()
-                )));
-            }
-            std::thread::sleep(interval.min(deadline.saturating_duration_since(now)));
-            interval = interval.saturating_mul(2).min(max_interval);
-        }
+        poll_artifact(
+            || self.list_artifacts(notebook_id),
+            artifact_id,
+            timeout,
+            initial_interval,
+            max_interval,
+        )
     }
 
     pub fn download_artifact(
@@ -164,7 +132,9 @@ impl Client {
             request = crate::auth::attach_cookie(request, &cookie_header);
         }
         let response = request.send()?;
-        if crate::transport::is_auth_redirect(&response) {
+        if crate::transport::is_auth_redirect(&response)
+            || matches!(response.status().as_u16(), 401 | 403)
+        {
             return Err(Error::Authentication);
         }
         let bytes = response.error_for_status()?.bytes()?.to_vec();
@@ -174,6 +144,52 @@ impl Client {
             ));
         }
         Ok(bytes)
+    }
+}
+
+/// Consecutive transient listing failures tolerated while waiting, so a
+/// brief outage does not end a long wait.
+const POLL_TRANSIENT_RETRIES: u32 = 3;
+
+fn poll_artifact(
+    mut list_artifacts: impl FnMut() -> Result<Vec<Artifact>>,
+    artifact_id: &str,
+    timeout: Duration,
+    initial_interval: Duration,
+    max_interval: Duration,
+) -> Result<Artifact> {
+    let deadline = Instant::now() + timeout;
+    let mut interval = initial_interval.min(max_interval);
+    let mut transient_failures = 0;
+    loop {
+        match list_artifacts() {
+            Ok(artifacts) => {
+                transient_failures = 0;
+                if let Some(artifact) = artifacts
+                    .into_iter()
+                    .find(|artifact| artifact.id == artifact_id)
+                {
+                    match artifact.status.as_str() {
+                        "completed" if artifact_ready(&artifact) => return Ok(artifact),
+                        "failed" => return Ok(artifact),
+                        _ => {}
+                    }
+                }
+            }
+            Err(error) if error.is_transient() && transient_failures < POLL_TRANSIENT_RETRIES => {
+                transient_failures += 1
+            }
+            Err(error) => return Err(error),
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(Error::Timeout(format!(
+                "artifact {artifact_id} did not complete within {} seconds",
+                timeout.as_secs_f64()
+            )));
+        }
+        std::thread::sleep(interval.min(deadline.saturating_duration_since(now)));
+        interval = interval.saturating_mul(2).min(max_interval);
     }
 }
 
@@ -435,6 +451,48 @@ fn normalize_kind(kind: &str) -> Result<&'static str> {
     }
 }
 
+fn parse_generation(kind: &'static str, result: Value) -> Result<ArtifactGeneration> {
+    // A null result or a null id without a status is how NotebookLM answers
+    // when a feature is gated for this notebook or account, but it does not
+    // prove that no task started.
+    let unavailable = || {
+        Error::Unresolved(format!(
+            "NotebookLM returned no {kind} artifact ID; the type may be unavailable for this notebook or account, or the generation may have started; check the artifact list before retrying"
+        ))
+    };
+    if result.is_null() {
+        return Err(unavailable());
+    }
+    let row = result
+        .get(0)
+        .and_then(Value::as_array)
+        .ok_or_else(|| Error::drift("artifact.generate", "missing artifact row"))?;
+    let artifact_id = match row.first() {
+        Some(Value::String(id)) if !id.is_empty() => id.clone(),
+        Some(Value::Null) => return Err(unavailable()),
+        _ => return Err(Error::drift("artifact.generate", "missing artifact id")),
+    };
+    let status = artifact_status(row.get(4).and_then(Value::as_i64));
+    Ok(ArtifactGeneration {
+        artifact_id,
+        kind: kind.into(),
+        status: status.into(),
+        raw: result,
+    })
+}
+
+/// A null listing is an empty notebook; any other non-list payload means the
+/// wire format changed, not that the notebook has no artifacts.
+fn parse_artifact_list(result: &Value) -> Result<Vec<Artifact>> {
+    if !result.is_null() && !result.is_array() {
+        return Err(Error::drift("artifact list", "payload was not a list"));
+    }
+    Ok(unwrap_rows(result)
+        .iter()
+        .filter_map(parse_artifact)
+        .collect())
+}
+
 fn unwrap_rows(value: &Value) -> &[Value] {
     let Some(rows) = value.as_array() else {
         return &[];
@@ -491,6 +549,7 @@ fn artifact_status(code: Option<i64>) -> &'static str {
         4 => "failed",
         5 => "suggested",
         6 => "pending_review",
+        7 => "scheduled",
         _ => "unknown",
     }
 }
@@ -609,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn artifact_status_matches_the_v081_backend_enum() {
+    fn artifact_status_matches_the_backend_enum() {
         assert_eq!(artifact_status(Some(0)), "unknown");
         assert_eq!(artifact_status(Some(1)), "pending");
         assert_eq!(artifact_status(Some(2)), "in_progress");
@@ -617,8 +676,108 @@ mod tests {
         assert_eq!(artifact_status(Some(4)), "failed");
         assert_eq!(artifact_status(Some(5)), "suggested");
         assert_eq!(artifact_status(Some(6)), "pending_review");
+        assert_eq!(artifact_status(Some(7)), "scheduled");
         assert_eq!(artifact_status(Some(99)), "unknown");
         assert_eq!(artifact_status(None), "unknown");
+    }
+
+    #[test]
+    fn a_generation_without_an_artifact_id_is_unresolved() {
+        for result in [Value::Null, json!([[null, "Audio"]])] {
+            assert!(
+                matches!(
+                    parse_generation("audio", result.clone()),
+                    Err(Error::Unresolved(message)) if message.contains("check the artifact list")
+                ),
+                "{result}"
+            );
+        }
+        for result in [json!([]), json!([[42]]), json!([[""]])] {
+            assert!(
+                matches!(
+                    parse_generation("audio", result.clone()),
+                    Err(Error::SchemaDrift { .. })
+                ),
+                "{result}"
+            );
+        }
+        let started = parse_generation("audio", json!([["artifact-1", "Audio", 1, null, 1]]))
+            .expect("started");
+        assert_eq!(started.artifact_id, "artifact-1");
+        assert_eq!(started.status, "pending");
+    }
+
+    #[test]
+    fn a_listing_that_is_not_a_list_is_drift_not_an_empty_notebook() {
+        assert!(parse_artifact_list(&Value::Null).expect("empty").is_empty());
+        assert!(parse_artifact_list(&json!([[]])).expect("empty").is_empty());
+        for payload in [json!({"artifacts": []}), json!("none"), json!(3)] {
+            assert!(
+                matches!(
+                    parse_artifact_list(&payload),
+                    Err(Error::SchemaDrift { .. })
+                ),
+                "{payload}"
+            );
+        }
+    }
+
+    #[test]
+    fn waiting_rides_out_brief_listing_failures_but_not_refusals() {
+        let done = Artifact {
+            id: "artifact-1".into(),
+            title: "Report".into(),
+            kind: "report".into(),
+            status: "completed".into(),
+            variant: None,
+            download_url: None,
+            content: Some("text".into()),
+            raw: Value::Null,
+        };
+        let poll = |mut replies: Vec<Result<Vec<Artifact>>>| {
+            replies.reverse();
+            poll_artifact(
+                move || replies.pop().unwrap_or_else(|| Ok(Vec::new())),
+                "artifact-1",
+                Duration::from_secs(5),
+                Duration::ZERO,
+                Duration::ZERO,
+            )
+        };
+        let unavailable = || {
+            Err(Error::Rpc {
+                rpc_id: rpc::LIST_ARTIFACTS.into(),
+                message: "status 14".into(),
+            })
+        };
+        let recovered = poll(vec![
+            unavailable(),
+            Err(Error::RateLimited("status 8".into())),
+            Ok(vec![done.clone()]),
+        ]);
+        assert_eq!(recovered.expect("completed").id, "artifact-1");
+        assert!(matches!(
+            poll(vec![
+                unavailable(),
+                unavailable(),
+                unavailable(),
+                unavailable()
+            ]),
+            Err(Error::Rpc { .. })
+        ));
+        assert!(matches!(
+            poll(vec![
+                Err(Error::Refused("status 7".into())),
+                Ok(vec![done.clone()])
+            ]),
+            Err(Error::Refused(_))
+        ));
+        // An HTTP 400 rejected the listing; it is not retried.
+        let bad_request = Error::Transport(crate::error::test_support::http_status_error(400));
+        assert!(matches!(
+            poll(vec![Err(bad_request), Ok(vec![done])]),
+            Err(Error::Transport(_))
+        ));
     }
 
     #[test]

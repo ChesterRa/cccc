@@ -842,11 +842,13 @@ fn format_response(
         _ => "Script completed".into(),
     };
     let recommended_action = if status == "failed" {
-        "Read error_text, fix the JS or nested tool call, then rerun a smaller cccc_code_exec cell."
+        "Read error_text and check the outcomes of earlier nested calls. They may have changed state or started work that is still running; verify before repeating any operation."
     } else if running {
         "Call cccc_code_wait with this cell_id to collect more output or final status."
     } else if output_truncated {
-        "Output was truncated; rerun with narrower commands/line ranges or increase max_output_tokens up to 50000."
+        "Output was truncated; earlier calls may have changed state. Check their outcomes before repeating anything. For more detail, run only necessary read-only steps with narrower ranges, or raise max_output_tokens for subsequent output (up to 50000)."
+    } else if status == "terminated" {
+        "Execution was terminated; earlier calls may already have taken effect. Check their outcomes before repeating any steps."
     } else {
         ""
     };
@@ -875,7 +877,7 @@ fn missing_response(cell_id: &str) -> Value {
         "items":[],
         "output_truncated":false,
         "error_text":format!("exec cell {cell_id} not found"),
-        "recommended_action":"Check the cell_id from the latest cccc_code_exec result; if the cell expired or belonged to another actor, start a new cccc_code_exec cell.",
+        "recommended_action":"Check the cell_id from the latest cccc_code_exec result. If the cell is unavailable, earlier calls may already have taken effect; inspect their outcomes before repeating any steps.",
     })
 }
 

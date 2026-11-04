@@ -18,6 +18,14 @@ import { useComposerStore } from "../../stores/useComposerStore";
 import { useModalStore } from "../../stores/useModalStore";
 import { acceptsFrameMessage, CONNECT_CHANNEL, readFrameProof, type FrameProof } from "./protocol";
 
+const FRAME_CHECK_INTERVAL_MS = 15000;
+
+function isTransientFrameCheckFailure(error: { code: string; httpStatus?: number }): boolean {
+  const status = error.httpStatus;
+  if (status !== undefined && status >= 400 && status < 500) return false;
+  return error.code === "NETWORK_ERROR" || (status !== undefined && status >= 500);
+}
+
 type EmbeddedSelection = { groupId: string; revision: number; action?: "connections" };
 
 export function ConnectEmbeddedApp() {
@@ -140,6 +148,7 @@ function AdmittedWorkbench({
   send: (message: Record<string, unknown>) => void;
   expire: () => void;
 }) {
+  const { t } = useTranslation("layout");
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groups = useGroupStore((state) => state.groups);
   const lastSummary = useRef<GroupConnectionSummary | null>(null);
@@ -180,6 +189,12 @@ function AdmittedWorkbench({
       });
       if (cancelled) return;
       if (!frame.ok) {
+        if (isTransientFrameCheckFailure(frame.error)) {
+          // A transient transport failure does not revoke the proof. Its own
+          // deadline still closes this workbench if revalidation never succeeds.
+          timer = window.setTimeout(() => void refresh(), FRAME_CHECK_INTERVAL_MS);
+          return;
+        }
         send({ type: "expired" });
         expireRef.current();
         return;
@@ -205,7 +220,7 @@ function AdmittedWorkbench({
             connection: groupConnectionCount(lastSummary.current, g.group_id),
           })),
         });
-      timer = window.setTimeout(() => void refresh(), 15000);
+      timer = window.setTimeout(() => void refresh(), FRAME_CHECK_INTERVAL_MS);
     };
     void refresh();
     return () => {
@@ -230,5 +245,9 @@ function AdmittedWorkbench({
       embeddedAccountLabel={accountLabel}
       onOpenParentSidebar={() => send({ type: "sidebar" })}
     />
-  ) : null;
+  ) : (
+    <div role="status" className="flex h-dvh items-center justify-center p-6 text-center text-sm">
+      {t("connecting")}
+    </div>
+  );
 }

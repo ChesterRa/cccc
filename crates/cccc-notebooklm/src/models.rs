@@ -31,11 +31,18 @@ impl Notebook {
             ));
         }
         let sources_count = row.get(1).and_then(Value::as_array).map_or(0, Vec::len);
-        let is_owner = row
+        // meta[0] is the caller's role (1 owner, 2 editor, 3 viewer); meta[1]
+        // only says whether the notebook is shared. A row without a known
+        // role keeps the owner default.
+        let is_owner = match row
             .get(5)
             .and_then(Value::as_array)
-            .and_then(|meta| meta.get(1))
-            .is_none_or(|value| value == &Value::Bool(false));
+            .and_then(|meta| meta.first())
+            .and_then(Value::as_i64)
+        {
+            Some(role @ 1..=3) => role == 1,
+            _ => true,
+        };
         Ok(Self {
             id,
             title,
@@ -169,23 +176,34 @@ fn source_mime(metadata: &[Value]) -> Option<&str> {
 }
 
 fn source_kind(code: Option<i64>, mime: Option<&str>) -> &'static str {
-    if code == Some(14) && mime == Some("application/pdf") {
-        return "pdf";
-    }
+    // Code 14 is any Drive-hosted file; its MIME tells a PDF or a native
+    // Sheet apart from other Drive files.
+    let code = match (code, mime) {
+        (Some(14), Some("application/pdf")) => Some(3),
+        (Some(14), Some("application/vnd.google-apps.spreadsheet")) => Some(7),
+        _ => code,
+    };
     match code {
         Some(1) => "google_docs",
         Some(2) => "google_slides",
         Some(3) => "pdf",
         Some(4) => "pasted_text",
         Some(5) => "web_page",
+        Some(6) => "powerpoint",
+        Some(7) => "google_spreadsheet",
         Some(8) => "markdown",
         Some(9) => "youtube",
         Some(10) => "media",
         Some(11) => "docx",
+        Some(12) => "excel",
         Some(13) => "image",
-        Some(14) => "google_spreadsheet",
+        Some(14) => "google_drive",
+        Some(15) => "gmail",
         Some(16) => "csv",
         Some(17) => "epub",
+        Some(18) => "gemini_chat",
+        Some(19) => "ai_mode_chat",
+        Some(20) => "expert_intelligence",
         _ => "unknown",
     }
 }
@@ -268,6 +286,28 @@ mod tests {
         let sheet = Source::parse_entry(&json!([["sheet-1"], "Sheet", sheet_metadata, [null, 2]]))
             .expect("sheet");
         assert_eq!(sheet.kind, "google_spreadsheet");
+
+        let mut docx_metadata = vec![Value::Null; 20];
+        docx_metadata[4] = json!(14);
+        docx_metadata[19] =
+            json!("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        let docx =
+            Source::parse_entry(&json!([["docx-1"], "Drive DOCX", docx_metadata, [null, 2]]))
+                .expect("drive docx");
+        assert_eq!(docx.kind, "google_drive");
+        assert_eq!(source_kind(Some(6), None), "powerpoint");
+        assert_eq!(source_kind(Some(7), None), "google_spreadsheet");
+    }
+
+    #[test]
+    fn notebook_ownership_comes_from_the_role_slot() {
+        let row = |meta: Value| json!(["Demo", [], "n1", null, null, meta]);
+        let owned_and_shared = Notebook::parse(&row(json!([1, true]))).expect("owner");
+        assert!(owned_and_shared.is_owner);
+        let viewer = Notebook::parse(&row(json!([3, false]))).expect("viewer");
+        assert!(!viewer.is_owner);
+        let editor = Notebook::parse(&row(json!([2, true]))).expect("editor");
+        assert!(!editor.is_owner);
     }
 
     #[test]

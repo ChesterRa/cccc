@@ -441,6 +441,16 @@ and retains at most 200,000 bytes per output stream; `max_output_bytes` can rais
 that limit to 1,000,000. Check the exit code and truncation flags before relying
 on command output.
 
+`cccc_exec_command` runs the program in a PTY, so output may contain color escape
+sequences and CRLF line endings. On Unix, this command session defaults `PAGER`,
+`GIT_PAGER`, `GH_PAGER`, and `MANPAGER` to `cat`, overriding inherited values.
+On Windows, only `GIT_PAGER` and `GH_PAGER` default to `cat`; `PAGER` and
+`MANPAGER` remain inherited. Git and GitHub CLI interpret `cat` as disabling the
+pager. Set a value in this call's `env` to use a different pager. An explicit
+`PAGER` also supplies the defaults for the other three unless that call supplies
+their specific variables. For Git, `GIT_PAGER` takes priority over `core.pager`.
+Programs that use other settings may still paginate.
+
 `cccc_exec_command` returns initial output and a `session_id`. `yield_time_ms`
 (default 1,000; 0–30,000) waits for new output or exit without delaying other
 sessions. `cccc_write_stdin` returns only output not previously consumed by that
@@ -539,6 +549,11 @@ tool calls. A slow nested tool keeps running in its cell and its result is
 collected by `cccc_code_wait`; a poll deadline does not cancel or replay it.
 Explicit cell termination, expiry, and host shutdown cancel outstanding nested
 calls. Changes already made are not rolled back.
+
+Failed cells, truncated output, or a missing cell do not establish that earlier
+nested calls had no effect. Check their outcomes before repeating operations; use
+narrower read-only steps to inspect state. Raising the output budget affects later
+output, not text already discarded.
 
 ### Unverified browser delivery and unsent drafts
 

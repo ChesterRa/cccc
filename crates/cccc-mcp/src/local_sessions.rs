@@ -2,7 +2,7 @@ use cccc_contracts::RunnerKind;
 use cccc_core::HomeLayout;
 use cccc_runtime::CommandSession;
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -46,7 +46,7 @@ pub async fn start(
         runner: RunnerKind::Headless,
         command: super::local_tools::command(args)?,
         cwd: super::local_tools::command_cwd(root, args)?,
-        env: super::local_tools::command_env(args)?,
+        env: with_pager_defaults(super::local_tools::command_env(args)?, cfg!(windows)),
         cols: 120,
         rows: 40,
     };
@@ -83,6 +83,114 @@ pub async fn start(
         session
     };
     poll(&session_id, session, wait, limit, None, false, (home, args)).await
+}
+
+/// Prevent common pagers from blocking a model command. Explicit per-call values
+/// win. On Windows, leave generic pagers inherited unless explicitly supplied:
+/// programs other than Git and gh may need an external cat.exe to run them.
+fn with_pager_defaults(
+    mut env: BTreeMap<String, String>,
+    windows: bool,
+) -> BTreeMap<String, String> {
+    let matches = |left: &str, right: &str| {
+        if windows {
+            left.eq_ignore_ascii_case(right)
+        } else {
+            left == right
+        }
+    };
+    // CommandBuilder applies entries in BTreeMap order. For case-insensitive
+    // Windows keys, the last matching explicit entry determines the value.
+    let explicit_generic = env
+        .iter()
+        .rev()
+        .find(|(key, _)| matches(key, "PAGER"))
+        .map(|(_, value)| value.clone());
+    let generic = explicit_generic.clone().unwrap_or_else(|| "cat".into());
+    if !windows && explicit_generic.is_none() {
+        env.insert("PAGER".into(), generic.clone());
+    }
+    for name in ["GIT_PAGER", "GH_PAGER", "MANPAGER"] {
+        if windows && explicit_generic.is_none() && name == "MANPAGER" {
+            continue;
+        }
+        if !env.keys().any(|key| matches(key, name)) {
+            env.insert(name.into(), generic.clone());
+        }
+    }
+    env
+}
+
+#[cfg(test)]
+mod pager_default_tests {
+    use super::with_pager_defaults;
+    use std::collections::BTreeMap;
+
+    fn env(pairs: &[(&str, &str)], windows: bool) -> BTreeMap<String, String> {
+        with_pager_defaults(
+            pairs
+                .iter()
+                .map(|(k, v)| ((*k).into(), (*v).into()))
+                .collect(),
+            windows,
+        )
+    }
+
+    #[test]
+    fn default_pagers_disable_inherited_interactive_paging() {
+        let result = env(&[("EXAMPLE", "preserved")], false);
+        for name in ["PAGER", "GIT_PAGER", "GH_PAGER", "MANPAGER"] {
+            assert_eq!(result[name], "cat", "{name}");
+        }
+        assert_eq!(result["EXAMPLE"], "preserved");
+    }
+
+    #[test]
+    fn per_call_generic_is_used_unless_a_specific_pager_is_explicit() {
+        let result = env(&[("PAGER", "custom"), ("GIT_PAGER", "git-custom")], false);
+        assert_eq!(result["PAGER"], "custom");
+        assert_eq!(result["GIT_PAGER"], "git-custom");
+        assert_eq!(result["GH_PAGER"], "custom");
+        assert_eq!(result["MANPAGER"], "custom");
+        let empty = env(&[("PAGER", "")], false);
+        assert_eq!(empty["GIT_PAGER"], "");
+    }
+
+    #[test]
+    fn windows_does_not_override_inherited_generic_pagers() {
+        let result = env(
+            &[("git_pager", "custom-git"), ("ManPager", "custom-man")],
+            true,
+        );
+        assert!(!result.contains_key("PAGER"));
+        assert!(!result.contains_key("MANPAGER"));
+        assert_eq!(result["git_pager"], "custom-git");
+        assert_eq!(result["ManPager"], "custom-man");
+        assert_eq!(result["GH_PAGER"], "cat");
+
+        let empty = env(&[], true);
+        assert!(!empty.contains_key("PAGER"));
+        assert!(!empty.contains_key("MANPAGER"));
+        assert_eq!(empty["GIT_PAGER"], "cat");
+        assert_eq!(empty["GH_PAGER"], "cat");
+    }
+
+    #[test]
+    fn pager_key_matching_follows_platform_case_rules() {
+        let input = [("PAGER", "first"), ("pager", "last"), ("git_pager", "git")];
+        let windows = env(&input, true);
+        // CommandBuilder applies the BTreeMap in key order on Windows.
+        assert_eq!(windows["GH_PAGER"], "last");
+        assert_eq!(windows["MANPAGER"], "last");
+        assert_eq!(windows["git_pager"], "git");
+        assert!(!windows.contains_key("GIT_PAGER"));
+
+        let unix = env(&input, false);
+        assert_eq!(unix["PAGER"], "first");
+        assert_eq!(unix["GIT_PAGER"], "first");
+        assert_eq!(unix["pager"], "last");
+        assert_eq!(unix["git_pager"], "git");
+    }
 }
 
 pub async fn write(home: &HomeLayout, args: &Map<String, Value>) -> Result<Value, String> {

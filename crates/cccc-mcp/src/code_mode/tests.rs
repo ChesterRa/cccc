@@ -9,6 +9,66 @@ use std::time::Duration;
 static CODE_CELL_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
+fn recovery_advice_checks_prior_effects_before_repeating_a_cell() {
+    use std::time::Instant;
+
+    let failed = super::format_response(
+        "failed",
+        "fixture",
+        super::OutputBuffer::new(100),
+        Instant::now(),
+        "fixture error",
+    );
+    let advice = failed["recommended_action"].as_str().expect("advice");
+    assert!(advice.contains("error_text"));
+    assert!(advice.contains("changed state"));
+    assert!(advice.contains("before repeating"));
+    assert!(!advice.contains("rerun"));
+
+    for status in ["completed", "terminated"] {
+        let mut buffer = super::OutputBuffer::new(1);
+        buffer.push(serde_json::json!({"type":"text","text":"12345"}));
+        let result = super::format_response(status, "fixture", buffer, Instant::now(), "");
+        assert_eq!(result["output_truncated"], true, "{status}");
+        let advice = result["recommended_action"].as_str().expect("advice");
+        assert!(advice.contains("before repeating"), "{status}");
+        assert!(advice.contains("read-only"), "{status}");
+        assert!(!advice.contains("cell finished"), "{status}");
+    }
+
+    let terminated = super::format_response(
+        "terminated",
+        "fixture",
+        super::OutputBuffer::new(100),
+        Instant::now(),
+        "",
+    );
+    assert_eq!(terminated["output_truncated"], false);
+    let advice = terminated["recommended_action"].as_str().expect("advice");
+    assert!(advice.contains("may already have taken effect"));
+    assert!(advice.contains("before repeating"));
+
+    let missing = super::missing_response("fixture");
+    let advice = missing["recommended_action"].as_str().expect("advice");
+    assert!(advice.contains("may already have taken effect"));
+    assert!(advice.contains("before repeating"));
+
+    let running = super::format_response(
+        "running",
+        "fixture",
+        super::OutputBuffer::new(100),
+        Instant::now(),
+        "",
+    );
+    assert!(
+        running["recommended_action"]
+            .as_str()
+            .expect("running advice")
+            .contains("cccc_code_wait")
+    );
+}
+
+#[test]
 fn original_document_resources_bypass_js_and_the_text_budget() {
     use serde_json::json;
     for (mime, suffix) in [

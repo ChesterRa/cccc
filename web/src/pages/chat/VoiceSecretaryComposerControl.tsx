@@ -172,6 +172,7 @@ import {
 } from "./voice-secretary/voiceReplyBubbleModel";
 import {
   isMeaningfulVoiceDispatchText,
+  isUsableVoiceTranscript,
   voiceServiceStopDispatchKind,
 } from "./voice-secretary/voiceServiceStopDispatch";
 import {
@@ -4004,7 +4005,7 @@ export function VoiceSecretaryComposerControl({
               }
               if (type === "partial") {
                 const text = String(payload.text || "").trim();
-                if (text && isMeaningfulVoiceDispatchText(text)) {
+                if (text && isUsableVoiceTranscript(captureDispatchTarget, text)) {
                   serviceLatestPartialTranscriptRef.current = text;
                   updateLiveTranscriptPreview(text, "interim", {
                     startMs: serviceCommittedEndMsRef.current,
@@ -4015,7 +4016,7 @@ export function VoiceSecretaryComposerControl({
               }
               if (type === "final") {
                 const finalText = String(payload.text || "").trim();
-                if (isMeaningfulVoiceDispatchText(finalText)) {
+                if (isUsableVoiceTranscript(captureDispatchTarget, finalText)) {
                   await handleServiceStreamingFinal(finalText);
                 }
                 return;
@@ -4044,7 +4045,7 @@ export function VoiceSecretaryComposerControl({
                     }
                   }
                   const finalText = String(payload.text || "").trim();
-                  if (isMeaningfulVoiceDispatchText(finalText)) {
+                  if (isUsableVoiceTranscript(captureDispatchTarget, finalText)) {
                     if (captureDispatchTarget === "document") {
                       if (documentDisposition === "retry_persistence") {
                         serviceFinalTranscriptRef.current = mergeTranscriptChunks(

@@ -102,7 +102,10 @@ it("preserves a failed recovery read without replacing it with an exit state", a
   };
   const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(expected), { status: 500 }));
   vi.stubGlobal("fetch", fetch);
-  expect(await fetchLocalSessionRecovery("g_original", "native")).toEqual(expected);
+  expect(await fetchLocalSessionRecovery("g_original", "native")).toEqual({
+    ...expected,
+    error: { ...expected.error, httpStatus: 500 },
+  });
   expect(fetch).toHaveBeenCalledOnce();
 });
 

@@ -152,8 +152,10 @@ fn extract_wiz(html: &str, key: &'static str) -> Result<String> {
             return serde_json::from_str(&quoted).or(Ok(raw));
         }
     }
+    // A signed-out session gets the public landing page, which has no session
+    // tokens; a changed page format would look the same from here.
     Err(Error::InvalidCredential(format!(
-        "authenticated NotebookLM page did not contain {key}"
+        "the NotebookLM page had no {key}; sign in again, or the page format may have changed"
     )))
 }
 

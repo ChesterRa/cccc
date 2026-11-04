@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isMeaningfulVoiceDispatchText,
+  isUsableVoiceTranscript,
+  isVoiceDictationText,
   voiceServiceStopDispatchKind,
 } from "../../../src/pages/chat/voice-secretary/voiceServiceStopDispatch";
 
@@ -51,6 +53,41 @@ describe("voice service stop dispatch", () => {
     expect(
       voiceServiceStopDispatchKind({ mode: "document", transcriptText: "meeting notes" }),
     ).toBe("");
+  });
+
+  it("keeps every short answer for direct dictation", () => {
+    for (const answer of [
+      "好。",
+      "对",
+      "嗯",
+      "哦",
+      "OK.",
+      "I.",
+      "No.",
+      "はい",
+      "네",
+      "да",
+      "à",
+      "é",
+      "Sí",
+      "3",
+      "+",
+      "×",
+      "😊",
+    ]) {
+      expect(isVoiceDictationText(answer), answer).toBe(true);
+    }
+    for (const blank of ["", "   ", "。", "...", "?!", "、"]) {
+      expect(isVoiceDictationText(blank), blank).toBe(false);
+    }
+  });
+
+  it("applies the dictation rule only to the composer", () => {
+    expect(isUsableVoiceTranscript("composer", "嗯")).toBe(true);
+    for (const target of ["prompt", "instruction", "document"] as const) {
+      expect(isUsableVoiceTranscript(target, "好"), target).toBe(false);
+      expect(isUsableVoiceTranscript(target, "帮我查天气"), target).toBe(true);
+    }
   });
 
   it("does not dispatch prompt or instruction for ASR noise", () => {

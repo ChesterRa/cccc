@@ -33,7 +33,30 @@ describe("apiJson", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
     expect(await apiJson("/api/v1/connect")).toMatchObject({
       ok: false,
-      error: { code: "NETWORK_ERROR" },
+      error: { code: "NETWORK_ERROR", httpStatus: 200 },
+    });
+  });
+
+  it.each([
+    [502, "<html>Bad Gateway</html>", "HTTP_ERROR"],
+    [503, "", "EMPTY_RESPONSE"],
+    [504, JSON.stringify({ message: "Gateway Timeout" }), "PARSE_ERROR"],
+    [
+      503,
+      JSON.stringify({ ok: false, error: { code: "upstream_unavailable", message: "busy" } }),
+      "upstream_unavailable",
+    ],
+    [
+      403,
+      JSON.stringify({ ok: false, error: { code: "connect_frame_expired", message: "denied" } }),
+      "connect_frame_expired",
+    ],
+  ])("preserves HTTP %i on an error response", async (status, body, code) => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(body, { status }));
+    expect(await apiJson("/api/v1/connect/frame?frame_id=fixture")).toMatchObject({
+      ok: false,
+      error: { code, httpStatus: status },
     });
   });
 

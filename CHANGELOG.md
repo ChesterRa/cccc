@@ -22,6 +22,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   `runtime_confirmation_paused`. The pause itself is unchanged: an explicit retry or a CCCC
   restart clears it.
 
+### Changed
+
+- Chinese and Japanese interface text now uses the names from the published READMEs. Chinese says
+  语音秘书 instead of 小秘书, and 领班 where the English foreman remained. Japanese calls the
+  foreman and peers フォアマン and ピア instead of the English names or リーダー, and says
+  グループを起動 instead of グループを開始. A runtime confirmation message says "agent" instead of
+  "Actor".
+
 ### Fixed
 
 - Sending again after a send whose result was unknown, for example when the connection dropped
@@ -55,6 +63,51 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   contains an image now leaves out `structuredContent` and keeps the same metadata as text; structured
   error results are left as they are. Other clients receive results as before; Codex hosts that
   identify themselves differently are not covered.
+
+- A Connect remote workspace no longer closes when one of its periodic access checks fails with a
+  network error or a server error (HTTP 5xx), for example from a reverse proxy or tunnel. It keeps
+  the page that is already shown and checks again at the usual interval. The current access proof's
+  deadline still applies, and renewing the proof moves it as before; a refusal (HTTP 4xx) still
+  closes the workspace. Until the workspace is ready, the frame says it is connecting instead of
+  staying blank.
+- Commands a Web model runs with `cccc_exec_command` now have the common pagers turned off by
+  default, so `git log` and similar commands no longer wait in a pager for a key press. On Unix the
+  session sets `PAGER`, `GIT_PAGER`, `GH_PAGER` and `MANPAGER` to `cat`, overriding inherited
+  values; on Windows only `GIT_PAGER` and `GH_PAGER`, leaving `PAGER` and `MANPAGER` inherited. A
+  pager set in the call's `env` still applies. The tool description now says the command runs in a
+  PTY.
+- `cccc_code_exec` no longer advises rerunning a cell that failed, had its output cut short, was
+  terminated or can no longer be found. Earlier calls in the cell may already have taken effect, so
+  the advice is to check their outcomes before repeating any of them.
+
+- Voice dictation into the composer with the local or cloud recognizer keeps short answers the
+  recognizer returns, such as 好, 嗯, OK, yes or no, instead of discarding them as noise; only blank
+  or punctuation-only text is left out. Prompt refinement and Ask keep the existing speech-noise
+  filter.
+- When NotebookLM refuses a source refresh, rename or delete, or an artifact listing, with a status
+  CCCC recognizes, the operation now fails with that reason instead of reporting success or an empty
+  list. A status CCCC cannot read is reported as a changed response format rather than success.
+  Recognized refusals that are rate limits, timeouts or authentication failures are reported as
+  such, and waiting for an artifact rides out up to three brief listing failures in a row.
+- A recognized refusal of an artifact generation is reported as such. When NotebookLM answers a
+  generation with no result or a null artifact ID, CCCC says the artifact type may be unavailable to
+  the notebook or account and asks you to check the artifact list before retrying, instead of
+  reporting a changed response format.
+- A NotebookLM query whose response holds only stream bookkeeping and an end-of-stream frame, with
+  no answer or heartbeat frame, the form NotebookLM is reported to use when the chat quota runs out,
+  now fails as rate limited and says the quota may be exhausted, instead of reporting a changed
+  response format. Among the chunks NotebookLM marks as
+  answers, the one marked final is used rather than a longer earlier draft; without a final mark the
+  previous choice applies. An answer payload or answer row that is not a list is reported as a
+  format change instead of an empty answer.
+- When adding a NotebookLM URL, Drive or file source has an unclear result, CCCC no longer reports a
+  source that existed before the request as the one it created, and a recognized refusal is no
+  longer turned into success because a new source with the same name or address appeared. These
+  cases now report the refusal or an unresolved outcome to check in the notebook.
+- NotebookLM artifacts scheduled for later show as `scheduled` instead of `unknown`; source types
+  follow NotebookLM's current codes, so Drive files, native Sheets and PowerPoint files are named
+  correctly; notebooks you own and have shared are reported as yours; and an artifact download
+  refused with HTTP 401 or 403 asks you to sign in again instead of reporting an upstream error.
 
 ## [0.4.47]
 

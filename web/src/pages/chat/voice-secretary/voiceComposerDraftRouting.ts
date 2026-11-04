@@ -55,6 +55,9 @@ export function routeVoiceTextToComposerGroup(input: {
     }
     const composerText = mergeVoiceComposerDraftText(draft?.composerText || "", text, input.mode);
     return {
+      ...draft,
+      // Applying speech is a new edit, even if a replacement happens to match.
+      retryCandidate: null,
       composerText,
       composerGroupMentionTokens: pruneComposerGroupMentionTokens({
         text: composerText,

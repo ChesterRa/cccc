@@ -85,9 +85,9 @@
   "foremanExists": "（追加済み）",
   "foremanAlreadyConfigured": "フォアマンは設定済みです",
   "peerRole": "ピア",
-  "needForemanFirst": "（先に Foreman が必要）",
-  "foremanLeads": "Foreman がチームを率います。Peer は作業エージェントです。",
-  "firstAgentForeman": "最初のエージェントは Foreman（チームリーダー）にしてください。",
+  "needForemanFirst": "（先にフォアマンが必要）",
+  "foremanLeads": "フォアマンがチームを率います。ピアは作業エージェントです。",
+  "firstAgentForeman": "最初のエージェントはフォアマン（チームリーダー）にしてください。",
   "autoloadCapabilities": "自動ロード capabilities",
   "autoloadCapabilitiesHint": "1 行につき 1 capability_id（カンマ区切りも可）。エージェント起動時に自動有効化されます。",
   "advancedOptions": "詳細オプション",
@@ -233,7 +233,7 @@
   "rolePresetCatalog": {
     "coordinator": {
       "name": "コーディネーター",
-      "summary": "明確な owner、低ノイズなルーティング、きれいな handoff で複数エージェントの作業を前に進めるが、第二の foreman のようには振る舞わない。",
+      "summary": "明確な owner、低ノイズなルーティング、きれいな handoff で複数エージェントの作業を前に進めるが、第二のフォアマンのようには振る舞わない。",
       "useWhen": "作業が漂い始め、owner が曖昧で handoff が乱れているが、主なニーズが最終判断ではなく調整であるときに使います。"
     },
     "planner": {

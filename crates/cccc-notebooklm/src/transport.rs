@@ -2,28 +2,20 @@ use reqwest::header::{ORIGIN, REFERER};
 use serde_json::Value;
 
 use crate::error::{Error, Result};
+use crate::rpc::NullResult;
 use crate::{BASE_URL, BATCHEXECUTE_URL, Client, DEFAULT_BL, auth, cookies, rpc};
 
 impl Client {
     pub(crate) fn rpc(&self, rpc_id: &str, params: Value, source_path: &str) -> Result<Value> {
-        self.rpc_with_null(rpc_id, params, source_path, false)
+        self.rpc_with(rpc_id, params, source_path, NullResult::Reject)
     }
 
-    pub(crate) fn rpc_allow_null(
+    pub(crate) fn rpc_with(
         &self,
         rpc_id: &str,
         params: Value,
         source_path: &str,
-    ) -> Result<Value> {
-        self.rpc_with_null(rpc_id, params, source_path, true)
-    }
-
-    fn rpc_with_null(
-        &self,
-        rpc_id: &str,
-        params: Value,
-        source_path: &str,
-        allow_null: bool,
+        null_result: NullResult,
     ) -> Result<Value> {
         let f_req = rpc::encode(rpc_id, params)?;
         let authuser = self.auth.authuser.to_string();
@@ -58,7 +50,7 @@ impl Client {
             return Err(Error::RateLimited("HTTP 429".into()));
         }
         let raw = response.error_for_status()?.text()?;
-        rpc::decode(&raw, rpc_id, allow_null)
+        rpc::decode(&raw, rpc_id, null_result)
     }
 
     pub(crate) fn cookie_header_for(

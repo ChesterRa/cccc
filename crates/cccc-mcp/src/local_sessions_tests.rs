@@ -50,6 +50,92 @@ impl Drop for Fixture {
 }
 
 #[tokio::test]
+async fn model_pty_ignores_git_configured_pager_but_honors_per_call_override() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
+    let fixture = Fixture::new();
+    let root = fixture.temp.path();
+    let path = std::env::var_os("PATH").expect("PATH for git fixture");
+    let git = |args: &[&str]| {
+        let result = Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .env_clear()
+            .env("PATH", &path)
+            .env("HOME", root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_AUTHOR_NAME", "Fixture")
+            .env("GIT_AUTHOR_EMAIL", "fixture@example.invalid")
+            .env("GIT_COMMITTER_NAME", "Fixture")
+            .env("GIT_COMMITTER_EMAIL", "fixture@example.invalid")
+            .output()
+            .expect("git fixture command");
+        assert!(result.status.success(), "git fixture command failed");
+    };
+    git(&["init", "-q"]);
+    for _ in 0..65 {
+        git(&[
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ]);
+    }
+
+    let pager = root.join("fixture-pager");
+    std::fs::write(&pager, "#!/bin/sh\nprintf 'fixture-pager-used\\n'\ncat\n").expect("pager");
+    std::fs::set_permissions(&pager, std::fs::Permissions::from_mode(0o755)).expect("pager mode");
+    let configured = format!("core.pager={}", pager.display());
+    let script = format!("git -c {} log --oneline", shell_words::quote(&configured));
+    let home = root.to_string_lossy().to_string();
+    let pager = pager.to_string_lossy().to_string();
+    let cases = [
+        (
+            json!({"HOME":home, "GIT_CONFIG_NOSYSTEM":"1", "GIT_CONFIG_GLOBAL":"/dev/null"}),
+            false,
+        ),
+        (
+            json!({"HOME":home, "GIT_CONFIG_NOSYSTEM":"1", "GIT_CONFIG_GLOBAL":"/dev/null", "PAGER":pager}),
+            true,
+        ),
+        (
+            json!({"HOME":home, "GIT_CONFIG_NOSYSTEM":"1", "GIT_CONFIG_GLOBAL":"/dev/null", "PAGER":"cat", "GIT_PAGER":pager}),
+            true,
+        ),
+    ];
+    for (env, should_use_pager) in cases {
+        let mut result = fixture.start(&script, json!({"env":env})).await;
+        let id = result["session_id"].as_str().expect("session").to_owned();
+        let mut output = String::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                output.push_str(result["output"].as_str().expect("output"));
+                if result["closed"] == true {
+                    assert_eq!(result["status"]["exit_code"], 0);
+                    break;
+                }
+                result = fixture.poll(&id, json!({"yield_time_ms":100})).await;
+            }
+        })
+        .await
+        .expect("git log should not block on a pager");
+        assert_eq!(output.contains("fixture-pager-used"), should_use_pager);
+        assert_eq!(
+            output
+                .lines()
+                .filter(|line| line.ends_with(" fixture"))
+                .count(),
+            65
+        );
+    }
+}
+
+#[tokio::test]
 async fn dots_command_sessions_cannot_be_reused_by_another_task() {
     let fixture = crate::local_tools::authority_tests::Fixture::new();
     let _owned = OwnedCommands(fixture.home.clone());

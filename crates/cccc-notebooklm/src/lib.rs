@@ -29,6 +29,9 @@ use serde_json::{Value, json};
 use auth::AuthState;
 
 // Wire baseline: notebooklm-py v0.8.1 (tag commit 01c419a0474e0191b88e94c572d605b4899a9c2b).
+// Refusal and chat-quota classification, chat answer selection, and the artifact
+// status, source type and notebook role mappings follow notebooklm-py
+// v0.8.6-8-g9e611cd5 (2026-11-03).
 pub(crate) const BASE_URL: &str = "https://notebook.google.com";
 const BASE_HOST: &str = "notebook.google.com";
 const LEGACY_BASE_HOST: &str = "notebooklm.google.com";
@@ -155,9 +158,7 @@ impl Client {
         ]);
         match self.rpc(rpc::ADD_SOURCE, params, &format!("/notebook/{notebook_id}")) {
             Ok(value) => Source::parse_unknown(&value),
-            Err(error @ (Error::Authentication | Error::InvalidCredential(_)))
-            | Err(error @ Error::RateLimited(_))
-            | Err(error @ Error::Refused(_)) => Err(error),
+            Err(error) if !error.may_have_committed() => Err(error),
             Err(error) => Err(Error::Unresolved(format!(
                 "text source create may have committed but cannot be identified safely: {error}; inspect the NotebookLM source list before retrying"
             ))),
@@ -228,28 +229,31 @@ impl Client {
     }
 
     pub fn delete_source(&self, notebook_id: &str, source_id: &str) -> Result<()> {
-        self.rpc_allow_null(
+        self.rpc_with(
             rpc::DELETE_SOURCE,
             json!([[[source_id]]]),
             &format!("/notebook/{notebook_id}"),
+            rpc::NullResult::AllowUnlessRejected,
         )?;
         Ok(())
     }
 
     pub fn refresh_source(&self, notebook_id: &str, source_id: &str) -> Result<()> {
-        self.rpc_allow_null(
+        self.rpc_with(
             rpc::REFRESH_SOURCE,
             refresh_source_params(source_id),
             &format!("/notebook/{notebook_id}"),
+            rpc::NullResult::AllowUnlessRejected,
         )?;
         Ok(())
     }
 
     pub fn rename_source(&self, notebook_id: &str, source_id: &str, title: &str) -> Result<()> {
-        self.rpc_allow_null(
+        self.rpc_with(
             rpc::UPDATE_SOURCE,
             json!([null, [source_id], [[[title]]]]),
             &format!("/notebook/{notebook_id}"),
+            rpc::NullResult::AllowUnlessRejected,
         )?;
         Ok(())
     }
@@ -342,67 +346,7 @@ impl Client {
         matches: impl Fn(&Source) -> bool,
         create: impl FnOnce() -> Result<Value>,
     ) -> Result<Source> {
-        let baseline = self
-            .list_sources(notebook_id)
-            .ok()
-            .map(|sources| sources.into_iter().map(|source| source.id).collect());
-        let created = create();
-        if let Ok(value) = &created
-            && let Ok(source) = Source::parse_unknown(value)
-            && baseline
-                .as_ref()
-                .is_none_or(|ids: &std::collections::HashSet<String>| !ids.contains(&source.id))
-        {
-            return Ok(source);
-        }
-        if let Err(error) = &created
-            && !matches!(
-                error,
-                Error::Transport(_)
-                    | Error::Rpc { .. }
-                    | Error::SchemaDrift { .. }
-                    | Error::Timeout(_)
-                    | Error::Unresolved(_)
-            )
-        {
-            return created.and_then(|value| Source::parse_unknown(&value));
-        }
-        match self.recover_created_source(notebook_id, baseline.as_ref(), matches) {
-            Ok(Some(source)) => Ok(source),
-            Ok(None) => created.and_then(|value| Source::parse_unknown(&value)),
-            Err(error) => Err(error),
-        }
-    }
-
-    fn recover_created_source(
-        &self,
-        notebook_id: &str,
-        baseline: Option<&std::collections::HashSet<String>>,
-        matches: impl Fn(&Source) -> bool,
-    ) -> Result<Option<Source>> {
-        let Some(baseline) = baseline else {
-            return Err(Error::Unresolved(
-                "source create may have committed, but the pre-create baseline was unavailable; inspect the NotebookLM source list before retrying".into(),
-            ));
-        };
-        let candidates = self
-            .list_sources(notebook_id)
-            .map_err(|error| {
-                Error::Unresolved(format!(
-                    "source create may have committed, but the recovery probe failed: {error}; inspect the NotebookLM source list before retrying"
-                ))
-            })?
-            .into_iter()
-            .filter(|source| !baseline.contains(&source.id) && matches(source))
-            .collect::<Vec<_>>();
-        match candidates.as_slice() {
-            [] => Ok(None),
-            [source] => Ok(Some(source.clone())),
-            _ => Err(Error::Unresolved(format!(
-                "source create may have committed ambiguously: recovery found {} new matching sources; inspect the NotebookLM source list before retrying",
-                candidates.len()
-            ))),
-        }
+        create_with_recovery(|| self.list_sources(notebook_id), matches, create)
     }
 
     fn honor_requested_title(
@@ -599,9 +543,167 @@ fn refresh_source_params(source_id: &str) -> Value {
     json!([null, [source_id], [2]])
 }
 
+/// Creates a source and, when the response is ambiguous, identifies it as the
+/// one new matching source that appeared since the pre-create baseline.
+fn create_with_recovery(
+    list_sources: impl Fn() -> Result<Vec<Source>>,
+    matches: impl Fn(&Source) -> bool,
+    create: impl FnOnce() -> Result<Value>,
+) -> Result<Source> {
+    let baseline = list_sources()
+        .ok()
+        .map(|sources| sources.into_iter().map(|source| source.id).collect());
+    let created = create();
+    if let Ok(value) = &created
+        && let Ok(source) = Source::parse_unknown(value)
+        && baseline
+            .as_ref()
+            .is_none_or(|ids: &std::collections::HashSet<String>| !ids.contains(&source.id))
+    {
+        return Ok(source);
+    }
+    if let Err(error) = &created
+        && !error.may_have_committed()
+    {
+        return created.and_then(|value| Source::parse_unknown(&value));
+    }
+    let Some(baseline) = baseline else {
+        return Err(Error::Unresolved(
+            "source create may have committed, but the pre-create baseline was unavailable; inspect the NotebookLM source list before retrying".into(),
+        ));
+    };
+    let candidates = list_sources()
+        .map_err(|error| {
+            Error::Unresolved(format!(
+                "source create may have committed, but the recovery probe failed: {error}; inspect the NotebookLM source list before retrying"
+            ))
+        })?
+        .into_iter()
+        .filter(|source| !baseline.contains(&source.id) && matches(source))
+        .collect::<Vec<_>>();
+    match candidates.as_slice() {
+        [source] => Ok(source.clone()),
+        [] => {
+            let source = created.and_then(|value| Source::parse_unknown(&value))?;
+            if baseline.contains(&source.id) {
+                return Err(Error::Unresolved(format!(
+                    "source create answered with existing source {} and no new matching source appeared; inspect the NotebookLM source list before retrying",
+                    source.id
+                )));
+            }
+            Ok(source)
+        }
+        _ => Err(Error::Unresolved(format!(
+            "source create may have committed ambiguously: recovery found {} new matching sources; inspect the NotebookLM source list before retrying",
+            candidates.len()
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn web_source(id: &str) -> Source {
+        Source {
+            id: id.into(),
+            title: Some("Article".into()),
+            kind: "web_page".into(),
+            status: "ready".into(),
+            url: Some("https://example.test/article".into()),
+            drive_document_id: None,
+        }
+    }
+
+    fn created(id: &str) -> Value {
+        json!([[[
+            [id],
+            "Article",
+            [
+                null,
+                1,
+                null,
+                null,
+                5,
+                null,
+                1,
+                ["https://example.test/article"]
+            ],
+            [null, 2]
+        ]]])
+    }
+
+    #[test]
+    fn create_recovery_never_adopts_existing_or_rejected_sources() {
+        let recover = |before: Vec<Source>, after: Vec<Source>, result: Result<Value>| {
+            let listings = std::cell::RefCell::new(vec![after, before]);
+            create_with_recovery(
+                || Ok(listings.borrow_mut().pop().unwrap_or_default()),
+                |source| source.url.as_deref() == Some("https://example.test/article"),
+                || result,
+            )
+        };
+        let old = || vec![web_source("source_old")];
+        // The response names a source that existed before the call.
+        assert!(matches!(
+            recover(old(), old(), Ok(created("source_old"))),
+            Err(Error::Unresolved(_))
+        ));
+        // An explicit rejection is not turned into a matching newcomer.
+        assert!(matches!(
+            recover(
+                old(),
+                vec![web_source("source_old"), web_source("source_new")],
+                Err(Error::Refused("status 3".into()))
+            ),
+            Err(Error::Refused(_))
+        ));
+        // A genuinely unclear outcome still recovers the single new match.
+        let recovered = recover(
+            old(),
+            vec![web_source("source_old"), web_source("source_new")],
+            Err(Error::Timeout("slow".into())),
+        )
+        .expect("recovered");
+        assert_eq!(recovered.id, "source_new");
+        assert_eq!(
+            recover(old(), old(), Ok(created("source_123")))
+                .expect("new id")
+                .id,
+            "source_123"
+        );
+        // An HTTP 400 is a rejection: the baseline listing is the only one.
+        let listings = std::cell::Cell::new(0);
+        let bad_request = Error::Transport(crate::error::test_support::http_status_error(400));
+        let rejected = create_with_recovery(
+            || {
+                listings.set(listings.get() + 1);
+                Ok(vec![web_source("source_old"), web_source("source_new")])
+            },
+            |_| true,
+            || Err(bad_request),
+        );
+        assert!(matches!(rejected, Err(Error::Transport(_))));
+        assert_eq!(listings.get(), 1);
+        // So is a permission error frame.
+        listings.set(0);
+        let denied = create_with_recovery(
+            || {
+                listings.set(listings.get() + 1);
+                Ok(vec![web_source("source_old"), web_source("source_new")])
+            },
+            |_| true,
+            || {
+                rpc::decode(
+                    &json!([["er", rpc::ADD_SOURCE, 403]]).to_string(),
+                    rpc::ADD_SOURCE,
+                    rpc::NullResult::Reject,
+                )
+            },
+        );
+        assert!(matches!(denied, Err(Error::Authentication)));
+        assert_eq!(listings.get(), 1);
+    }
 
     #[test]
     fn refresh_source_uses_v080_wire_contract() {

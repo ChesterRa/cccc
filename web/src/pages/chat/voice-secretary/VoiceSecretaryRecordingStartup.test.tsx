@@ -222,4 +222,39 @@ describe("Voice Secretary recording startup ownership", () => {
     expect(useComposerStore.getState().composerText).toBe("Private B draft");
     expect(useComposerStore.getState().drafts.A?.composerText).toBe("Unsent A draft");
   });
+
+  it.each([
+    ["final", "嗯"],
+    ["final_asr_text", "I."],
+  ])("puts a short service %s answer in the composer without sending it", async (type, text) => {
+    api.workspace.mockImplementation(async (group: string) => ({
+      ok: true,
+      result: state(group, "assistant_service_local_asr"),
+    }));
+    api.status.mockImplementation(async (group: string) => ({
+      ok: true,
+      result: state(group, "assistant_service_local_asr"),
+    }));
+    useUIStore.getState().setChatVoicePreferences("A", { voicePromptAutoRefine: false });
+    const onPromptDraft = vi.fn();
+    await act(async () =>
+      root.render(
+        <VoiceSecretaryComposerControl
+          selectedGroupId="A"
+          isDark={false}
+          busy=""
+          variant="assistantRow"
+          captureMode="prompt"
+          onPromptDraft={onPromptDraft}
+        />,
+      ),
+    );
+    await act(async () => recordButton().click());
+    expect(recordButton().getAttribute("aria-pressed")).toBe("true");
+    await act(async () => Socket.latest.onmessage?.({ data: JSON.stringify({ type, text }) }));
+    await act(async () => recordButton().click());
+    await act(async () => Socket.latest.onmessage?.({ data: JSON.stringify({ type: "closed" }) }));
+    expect(onPromptDraft).toHaveBeenCalledExactlyOnceWith(text, { mode: "append" });
+    expect(api.append).not.toHaveBeenCalled();
+  });
 });

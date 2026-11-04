@@ -70,7 +70,7 @@ describe("task revision guards", () => {
       ],
     });
     expect(JSON.parse(String(request.body)).ops[1]).not.toHaveProperty("if_task_rev");
-    expect(response).toEqual(conflict);
+    expect(response).toEqual({ ...conflict, error: { ...conflict.error, httpStatus: 409 } });
   });
 
   it("sends only the fields explicitly changed, and only a guarded move for status alone", async () => {
