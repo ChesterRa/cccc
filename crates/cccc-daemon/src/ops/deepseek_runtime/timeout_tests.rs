@@ -225,8 +225,8 @@ fn turn_that_keeps_streaming_outlives_the_silence_window() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
     let mut group = store.create("deepseek long turn", "").expect("group");
-    // Eight updates 150 ms apart, then end_turn: about 1.2 s of work, each
-    // gap well inside the 500 ms window, the whole turn well beyond it.
+    // Sixteen updates 150 ms apart, then end_turn: about 2.4 s of work, each
+    // gap well inside the 1 s window, the whole turn well beyond it.
     let script = r#"while IFS= read -r line; do
 if printf '%s' "$line" | grep -q '"method":"initialize"'; then
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
@@ -234,7 +234,7 @@ elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
 else
   rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  for _ in 1 2 3 4 5 6 7 8; do
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
     sleep 0.15
     printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-session","updateOrdinal":0,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"."}}}}'
   done
@@ -262,11 +262,11 @@ done"#;
             &actor,
             &event,
             &AtomicBool::new(false),
-            Duration::from_millis(500),
+            Duration::from_secs(1),
         ),
         TurnDelivery::Completed
     );
-    assert!(started.elapsed() > Duration::from_millis(500));
+    assert!(started.elapsed() > Duration::from_secs(1));
 
     let events = std::fs::read_to_string(
         store

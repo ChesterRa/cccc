@@ -13,6 +13,9 @@ use cccc_core::{GroupDoc, GroupStore, HomeLayout, connect_catalog, connect_deliv
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+pub(crate) const DELIVERY_WINDOW_ENDED: &str = "delivery window ended";
+pub(crate) const EXTERNAL_GROUP_DISCONNECTED: &str = "external Group connection was disconnected";
+
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     matches!(request.op.as_str(), "connect_send" | "connect_send_files")
         .then(|| Operation::new(Write, send))
@@ -615,9 +618,9 @@ fn failure_next_step(cancellation: bool, state: &str, reason: &str) -> &'static 
         "The reply request may still be active on the target. This does not stop an Actor or retract delivered work."
     } else if state != "failed" {
         "The target may have received this message. Check with the target before sending again."
-    } else if reason == "delivery window ended" {
+    } else if reason == DELIVERY_WINDOW_ENDED {
         "The delivery window ended before the target received this message. Send it again if it is still needed."
-    } else if reason == "external Group connection was disconnected" {
+    } else if reason == EXTERNAL_GROUP_DISCONNECTED {
         "The connection closed before the target received this message. Reconnect, then send it again if it is still needed."
     } else {
         "The target did not accept this message. Resolve the failure before sending a new message."
@@ -690,14 +693,11 @@ pub(crate) fn notify_delivery_failure(
 
 #[cfg(test)]
 mod failure_next_step_tests {
-    use super::failure_next_step;
+    use super::{DELIVERY_WINDOW_ENDED, EXTERNAL_GROUP_DISCONNECTED, failure_next_step};
 
     #[test]
     fn an_expired_or_disconnected_delivery_is_not_reported_as_refused() {
-        for reason in [
-            "delivery window ended",
-            "external Group connection was disconnected",
-        ] {
+        for reason in [DELIVERY_WINDOW_ENDED, EXTERNAL_GROUP_DISCONNECTED] {
             let next = failure_next_step(false, "failed", reason);
             assert!(!next.contains("did not accept"), "{reason}: {next}");
             assert!(
@@ -709,11 +709,9 @@ mod failure_next_step_tests {
             failure_next_step(false, "failed", "rejected by target").contains("did not accept")
         );
         assert!(
-            failure_next_step(false, "unconfirmed", "delivery window ended")
+            failure_next_step(false, "unconfirmed", DELIVERY_WINDOW_ENDED)
                 .contains("may have received")
         );
-        assert!(
-            failure_next_step(true, "failed", "delivery window ended").contains("reply request")
-        );
+        assert!(failure_next_step(true, "failed", DELIVERY_WINDOW_ENDED).contains("reply request"));
     }
 }

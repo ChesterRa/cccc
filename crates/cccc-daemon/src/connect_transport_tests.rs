@@ -1589,3 +1589,119 @@ async fn connect_cancellation_deadline_reports_truthful_failure_and_retires_acti
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn expired_message_advice_respects_receipt_uncertainty() {
+    use cccc_contracts::connect_message::{
+        ConnectDeliveryProgress, ConnectOutboxEntry, ConnectWork,
+    };
+
+    let (_temp, state, peer, server) = setup().await;
+    let store = GroupStore::new(state.source.clone()).expect("source store");
+    let source = store.create("Source", "").expect("source");
+    let target = GroupStore::new(state.target.clone())
+        .expect("target store")
+        .create("Target", "")
+        .expect("target");
+    let client = client();
+    refresh_catalog(&state.source, &client, &peer)
+        .await
+        .expect("catalog");
+    let accepted = crate::dispatch::dispatch(
+        &state.source,
+        &send_request(
+            &source.group_id,
+            &target.group_id,
+            &peer,
+            json!(["user"]),
+            "expired-template",
+        ),
+    );
+    assert!(accepted.ok, "{accepted:?}");
+    let template_id = accepted.result["delivery_id"]
+        .as_str()
+        .expect("delivery ID");
+    let template = cccc_core::connect_delivery::load(&state.source, &peer, template_id)
+        .expect("load template")
+        .expect("template");
+    let locks = crate::dispatch_concurrency::DispatchLocks::default();
+    let path = store.ledger_path(&source.group_id).expect("ledger");
+
+    for (uncertain, expected) in [(false, "failed"), (true, "unconfirmed")] {
+        // Restore a valid accepted work item whose delivery window has elapsed.
+        let mut source_event = cccc_contracts::Event::new("chat.message", &source.group_id);
+        source_event.by = "user".into();
+        let mut message = message(&template).clone();
+        message.delivery_id = uuid::Uuid::new_v4().to_string();
+        message.source_event_id = source_event.id.clone();
+        let now = Utc::now();
+        message.created_at = (now - ChronoDuration::seconds(901)).to_rfc3339();
+        message.deliver_before = (now - ChronoDuration::seconds(1)).to_rfc3339();
+        message.reply_before = (now + ChronoDuration::days(1)).to_rfc3339();
+        source_event.data = json!({
+            "text": message.text,
+            "to": ["user"],
+            "message_mode": "send",
+            "connect_message": message,
+        })
+        .as_object()
+        .expect("source data")
+        .clone();
+        let id = message.delivery_id.clone();
+        let entry = ConnectOutboxEntry {
+            work: ConnectWork::Message(Box::new(message)),
+            source_event,
+            progress: ConnectDeliveryProgress {
+                needs_receipt: uncertain,
+                ..Default::default()
+            },
+        };
+        cccc_core::connect_delivery::reserve(&state.source, &entry).expect("reserve expired work");
+        delivery::process(&state.source, &client, &locks, &peer, &id)
+            .await
+            .expect("finalize expired work");
+        assert!(
+            cccc_core::connect_delivery::load(&state.source, &peer, &id)
+                .expect("load")
+                .is_none()
+        );
+
+        let events = cccc_core::ledger::read_all(&path).expect("events");
+        let receipt = events
+            .iter()
+            .find(|event| {
+                event.kind == "chat.cross_group_receipt" && event.data["delivery_id"] == id
+            })
+            .expect("final receipt");
+        assert_eq!(receipt.data["status"], expected);
+        assert_eq!(receipt.data["error"], "delivery window ended");
+        let notice = events
+            .iter()
+            .find(|event| {
+                event.kind == "system.notify" && event.data["context"]["delivery_id"] == id
+            })
+            .expect("failure notice");
+        let text = notice.data["message"].as_str().expect("notice text");
+        if uncertain {
+            assert!(
+                text.contains("The target may have received this message"),
+                "{text}"
+            );
+            assert!(
+                !text.contains("Send it again if it is still needed"),
+                "{text}"
+            );
+        } else {
+            assert!(
+                text.contains("Send it again if it is still needed"),
+                "{text}"
+            );
+            assert!(
+                !text.contains("The target did not accept this message"),
+                "{text}"
+            );
+        }
+    }
+    assert_eq!(state.deliveries.load(Ordering::Acquire), 0);
+    server.abort();
+}

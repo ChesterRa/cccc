@@ -147,6 +147,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   deadline still applies, and renewing the proof moves it as before; a refusal (HTTP 4xx) still
   closes the workspace. Until the workspace is ready, the frame says it is connecting instead of
   staying blank.
+- A Connect delivery whose window ended, or whose connection was disconnected, before the target
+  received it no longer tells the sender that the target did not accept it. The notice now says the
+  message did not arrive and can be sent again, after reconnecting when the connection was
+  disconnected. A delivery the target may have received keeps its warning to check first. Thanks to
+  [@chriscoveries](https://github.com/chriscoveries) for [#188](https://github.com/ChesterRa/cccc/pull/188).
+- A DeepSeek turn whose provider keeps sending valid ACP updates or permission requests is no
+  longer cut off after 300 seconds and sent again from the start. The timeout now counts only
+  silence: each validated update and each answered permission request restarts it, so a turn still
+  times out when the provider sends neither for 300 seconds.
+  Thanks to [@chriscoveries](https://github.com/chriscoveries) for [#184](https://github.com/ChesterRa/cccc/pull/184).
 - Commands a Web model runs with `cccc_exec_command` now have the common pagers turned off by
   default, so `git log` and similar commands no longer wait in a pager for a key press. On Unix the
   session sets `PAGER`, `GIT_PAGER`, `GH_PAGER` and `MANPAGER` to `cat`, overriding inherited

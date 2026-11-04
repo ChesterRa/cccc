@@ -147,9 +147,9 @@ pub(crate) async fn process(
             status,
             None,
             Some(if retired {
-                "external Group connection was disconnected"
+                connect_outbound::EXTERNAL_GROUP_DISCONNECTED
             } else {
-                "delivery window ended"
+                connect_outbound::DELIVERY_WINDOW_ENDED
             }),
         )
         .await?;
