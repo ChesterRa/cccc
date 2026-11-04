@@ -187,11 +187,33 @@ fn details(frame: &mut Frame, app: &App, theme: Theme, now: Instant, area: Rect)
         ));
     }
     lines.push(Line::default());
-    lines.push(Line::styled(" Members", theme.bold()));
+    lines.push(Line::styled(
+        text::fit(&members_title(app), width),
+        theme.bold(),
+    ));
     let room = rows.saturating_sub(lines.len());
     lines.extend(members(app, group, theme, now, width, room));
     lines.truncate(rows);
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn members_title(app: &App) -> String {
+    let Some(list) = app.selected_members().filter(|list| list.last_ok.is_some()) else {
+        return " Members".into();
+    };
+    let confirmations = list
+        .members
+        .iter()
+        .filter(|member| member.state.needs_confirmation())
+        .count();
+    if confirmations == 0 {
+        return " Members".into();
+    }
+    let stale = if list.error.is_some() { "; stale" } else { "" };
+    format!(
+        " Members ({} to resolve{stale})",
+        count(confirmations, "confirmation")
+    )
 }
 
 fn freshness(app: &App, theme: Theme, now: Instant, width: usize) -> Option<Line<'static>> {
@@ -380,7 +402,8 @@ fn member_row(member: &Member, theme: Theme, width: usize) -> Line<'static> {
     let role = text::fit(&text::one_line(&member.role), ROLE_COLUMN - 1);
     let state_style = match member.state {
         MemberState::Running | MemberState::Ready => theme.ok(),
-        MemberState::ConfirmationPaused => theme.error(),
+        MemberState::ConfirmationRequired | MemberState::ConfirmationPaused => theme.error(),
+        MemberState::WebAccessEnabled => Style::new(),
         MemberState::Stopped
         | MemberState::Off
         | MemberState::NotReceiving

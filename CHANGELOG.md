@@ -27,6 +27,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   interface shows `confirm retry`. Actor rows and lifecycle results report this as
   `runtime_confirmation_paused`. The pause itself is unchanged: an explicit retry or a CCCC
   restart clears it.
+- Mail can now tell its sender when a named recipient cannot act on it yet. The result of a new
+  local Mail may list, as `mail_recipient_advisories`, explicitly addressed agents that are
+  disabled, in a paused or stopped Group, or reported by the daemon as not running, with a note that
+  writing Mail starts no agent and resumes no Group, and that Send, or delivering this Mail, can
+  request delivery to an enabled agent in an active Group. The check only reads state; Mail itself
+  is unchanged. A result without the list does not mean every recipient will read the Mail:
+  broadcasts, whether a native session or Web Model is running, cross-Group and Connect Mail, and
+  retries are not checked.
 
 ### Changed
 
@@ -96,6 +104,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   so a set of screenshots arrives as one message instead of one per file. Every path is checked
   first; if any is outside the workspace or missing, nothing is sent. A single path works as
   before.
+- The terminal interface now shows a managed agent waiting for its startup confirmation as
+  `confirm Web`, and the Members heading counts the agents marked `confirm Web` or `confirm retry`,
+  apart from messages waiting for your reply. Web Model agents show `access on` or `access paused`,
+  since CCCC access being on does not show whether a browser is connected.
+- **Waiting for you** no longer reopens empty. When it would open with nothing to show and its
+  count is known to be zero, for example when you come back to the Group after answering, the chat
+  shows **All** and keeps it, so a request that arrives later shows its count on the tab without
+  switching the view. Requests answered or withdrawn while you are in the view stay listed until
+  you leave, with any unsent answer, and a count or page that cannot be confirmed keeps the filter.
+  After you send from **Waiting for you**, its count is checked again at once, and a notice that
+  your message is hidden by the filters closes once the view shows it.
 
 ### Fixed
 

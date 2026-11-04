@@ -38,7 +38,7 @@ export function ConnectRemotePanel({
   const origin = instance?.public_origin;
   const epoch = workbench.selected?.epoch;
   useEffect(() => {
-    let cancelled = false;
+    let ended = false;
     let opening = false;
     let timer: number | undefined;
     let deadline: number | undefined;
@@ -59,6 +59,7 @@ export function ConnectRemotePanel({
       if (forget && target) latest.current.workbench.remember(target, null);
     };
     const fail = (message: string) => {
+      ended = true;
       clear();
       setError(message);
       current = null;
@@ -223,7 +224,7 @@ export function ConnectRemotePanel({
       timer = window.setTimeout(() => void open(), ms);
     };
     const open = async () => {
-      if (opening || cancelled) return;
+      if (opening || ended) return;
       if (!instanceId || !origin) {
         fail(latest.current.t("connect.unavailable"));
         return;
@@ -241,7 +242,7 @@ export function ConnectRemotePanel({
         signal: AbortSignal.timeout(10000),
       });
       opening = false;
-      if (cancelled) return;
+      if (ended) return;
       if (!response.ok) {
         if (!current) fail(response.error.message);
         else schedule(15000);
@@ -291,7 +292,7 @@ export function ConnectRemotePanel({
     window.addEventListener("message", handle);
     void open();
     return () => {
-      cancelled = true;
+      ended = true;
       if (controls.current?.suspend === suspend) controls.current = null;
       setWorkspaceDirty(dirtyOwner, false);
       window.removeEventListener("message", handle);

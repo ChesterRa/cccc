@@ -4864,6 +4864,11 @@ Result:
 {
   event: CCCSEventV1 // kind="chat.message"
   message_mode: "send" | "request_reply" | "mail"
+  mail_recipient_advisories?: {  // new local Mail only; see below
+    actor_id: string
+    reasons: ("disabled" | "group_paused" | "group_stopped" | "not_running")[]
+  }[]
+  mail_advisory?: string         // fixed note, present with mail_recipient_advisories
 }
 ```
 
@@ -4906,6 +4911,20 @@ the message, blobs, delivery claims, or other side effects are written.
 The immediate response confirms ledger acceptance and echoes the canonical mode;
 it is not transport evidence. Per-recipient delivery truth is reported only by
 daemon-authored `runtime.delivery` events and the corresponding status queries.
+
+After a new local `mail` is appended, its result MAY name the explicitly
+addressed recipients that cannot act on it yet, as read at that moment, in
+`mail_recipient_advisories`. Reasons are `disabled`, `group_paused` and
+`group_stopped`; when none applies, `not_running` means the daemon's status
+check reported a recipient whose process CCCC manages as not running.
+`mail_advisory` then states that writing Mail does not start an Actor or resume
+a Group, and that Send, or `message_deliver` for this Mail, can request delivery
+to an enabled Actor in an active Group. The check only reads state; it starts, resumes and delivers
+nothing. A result without these fields does not mean that every recipient will
+read the Mail. These are never reported: Mail to a broadcast selector, whether a
+native session, a Web Model or another runtime without a CCCC-managed process
+is running, cross-Group and Connect Mail, and a replay by `client_id`. A local
+Mail `reply` reports the same way.
 
 Every daemon-rendered `chat.message` handed to an actor runtime MUST expose the
 current ledger identity before the message body:
@@ -5078,8 +5097,12 @@ premature duplicate. The receipt is the `send_cross_group` receipt, whose
 `event`/`dst_event` belongs to the destination Group and `source_event`/`src_event`
 is the source audit record. Without `dst_group_id`, the result below is unchanged.
 The MCP `cccc_file_send` tool takes one `path` or a list of up to 10 and sends
-them as `paths` in one request, after checking that each one resolves inside
-the caller's effective tool workspace. One path outside it sends nothing.
+them as `paths` in one request. The tool checks only each path's form: relative
+to the caller's effective workspace, without `..`, and not a stored blob. For a
+new send, the daemon resolves each path, links included, and rejects a file
+outside that workspace before storing anything; any path that fails either
+check sends nothing. An accepted retry returns its receipt without rereading
+the files.
 
 Result:
 ```ts

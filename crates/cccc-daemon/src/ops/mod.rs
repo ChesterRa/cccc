@@ -58,6 +58,7 @@ mod membership;
 mod owned_process_recovery;
 pub(crate) use membership::ReachRestore;
 pub(crate) use membership::validated_live_web_binding;
+mod mail_advisory;
 mod mcp_identity_notice;
 mod membership_account;
 mod membership_cloudflared;

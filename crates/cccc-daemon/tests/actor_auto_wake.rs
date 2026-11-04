@@ -352,6 +352,10 @@ async fn mail_does_not_wake_an_explicitly_stopped_group() {
     )
     .await;
     assert_eq!(sent.result["message_mode"], "mail");
+    assert_eq!(
+        sent.result.get("mail_recipient_advisories"),
+        Some(&json!([{"actor_id":"peer1","reasons":["group_stopped"]}]))
+    );
     let sent_event_id = sent.result["event"]["id"].as_str().expect("sent event id");
     tokio::time::sleep(Duration::from_millis(300)).await;
     let deliveries = ledger::read_all(&group_ledger_path(&temp, &group_id))
@@ -370,6 +374,152 @@ async fn mail_does_not_wake_an_explicitly_stopped_group() {
     .await;
     assert_eq!(group.result["group"]["state"], "stopped");
     assert_eq!(group.result["group"]["actors"][0]["running"], false);
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn mail_result_names_recipients_that_cannot_act_on_it_yet() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("mail-recipient-advisories", false).await;
+    // peer2 and the DeepSeek agent are enabled but have never been started.
+    call(
+        &client,
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"peer2","runtime":"custom",
+            "submit":"newline","command":["sh","-c","sleep 30"],"by":"user"
+        }),
+    )
+    .await;
+    call(
+        &client,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"deep","runtime":"deepseek","by":"user"}),
+    )
+    .await;
+    let mail = |to: Value, extra: Value| {
+        let mut args = json!({
+            "group_id":group_id,"by":"user","to":to,"text":"handoff","message_mode":"mail"
+        });
+        args.as_object_mut()
+            .expect("args")
+            .extend(extra.as_object().cloned().unwrap_or_default());
+        args
+    };
+    let advisories =
+        |response: &DaemonResponse| response.result.get("mail_recipient_advisories").cloned();
+
+    let running = call(&client, "send", mail(json!(["peer1"]), json!({}))).await;
+    assert_eq!(advisories(&running), None);
+    assert_eq!(running.result.get("mail_advisory"), None);
+
+    let idle = call(&client, "send", mail(json!(["peer2"]), json!({}))).await;
+    assert_eq!(
+        advisories(&idle),
+        Some(json!([{"actor_id":"peer2","reasons":["not_running"]}]))
+    );
+    assert!(
+        idle.result["mail_advisory"]
+            .as_str()
+            .is_some_and(|note| note.contains("Writing Mail does not start an Actor"))
+    );
+    // DeepSeek runs in a process CCCC supervises, so its state is reported too.
+    let deep = call(&client, "send", mail(json!(["deep"]), json!({}))).await;
+    assert_eq!(
+        advisories(&deep),
+        Some(json!([{"actor_id":"deep","reasons":["not_running"]}]))
+    );
+    let both = call(&client, "send", mail(json!(["peer1", "peer2"]), json!({}))).await;
+    assert_eq!(
+        advisories(&both),
+        Some(json!([{"actor_id":"peer2","reasons":["not_running"]}]))
+    );
+    // A broadcast names nobody, so it reports nobody.
+    let broadcast = call(&client, "send", mail(json!(["@all"]), json!({}))).await;
+    assert_eq!(advisories(&broadcast), None);
+
+    // Mail sent as a reply reports the same way.
+    let question = call(
+        &client,
+        "send",
+        json!({"group_id":group_id,"by":"peer1","to":["user"],"text":"who takes this?","message_mode":"send"}),
+    )
+    .await;
+    let reply = call(
+        &client,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"user","reply_to":question.result["event"]["id"],
+            "to":["peer2"],"text":"peer2 does","message_mode":"mail"
+        }),
+    )
+    .await;
+    assert_eq!(
+        advisories(&reply),
+        Some(json!([{"actor_id":"peer2","reasons":["not_running"]}]))
+    );
+
+    // A replayed request returns its original event without a fresh check.
+    let first = call(
+        &client,
+        "send",
+        mail(json!(["peer2"]), json!({"client_id":"mail-1"})),
+    )
+    .await;
+    assert!(advisories(&first).is_some());
+    let replay = call(
+        &client,
+        "send",
+        mail(json!(["peer2"]), json!({"client_id":"mail-1"})),
+    )
+    .await;
+    assert_eq!(replay.result["duplicate"], true);
+    assert_eq!(replay.result["event"]["id"], first.result["event"]["id"]);
+    assert_eq!(advisories(&replay), None);
+
+    call(
+        &client,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"peer2","by":"user"}),
+    )
+    .await;
+    let disabled = call(&client, "send", mail(json!(["peer2"]), json!({}))).await;
+    assert_eq!(
+        advisories(&disabled),
+        Some(json!([{"actor_id":"peer2","reasons":["disabled"]}]))
+    );
+
+    call(
+        &client,
+        "group_set_state",
+        json!({"group_id":group_id,"state":"paused","by":"user"}),
+    )
+    .await;
+    let paused = call(&client, "send", mail(json!(["peer1", "peer2"]), json!({}))).await;
+    assert_eq!(
+        advisories(&paused),
+        Some(json!([
+            {"actor_id":"peer1","reasons":["group_paused"]},
+            {"actor_id":"peer2","reasons":["disabled","group_paused"]}
+        ]))
+    );
+
+    // Reporting changes nothing: no delivery, and the Group stays paused.
+    let events = ledger::read_all(&group_ledger_path(&temp, &group_id)).expect("ledger");
+    assert!(
+        !events
+            .iter()
+            .any(|event| { event.kind == "runtime.delivery" && event.data["actor_id"] == "peer2" })
+    );
+    let group = call(
+        &client,
+        "group_show",
+        json!({"group_id":group_id,"by":"user"}),
+    )
+    .await;
+    assert_eq!(group.result["group"]["state"], "paused");
 
     shutdown(&client, daemon).await;
     drop(temp);

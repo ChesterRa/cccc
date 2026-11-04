@@ -35,6 +35,7 @@ export function useConnectWorkbench(
   const [failed, setFailed] = useState(false);
   const [checkedAt, setCheckedAt] = useState(0);
   const [snapshot, setSnapshot] = useState<ConnectSnapshot | null>(null);
+  const [, recheckDirectoryExpiry] = useState(0);
   const [listings, setListings] = useState<Record<string, RemoteListing>>({});
   const [selected, setSelected] = useState<RemoteSelection | null>(null);
   const [collapsedInstances, setCollapsedInstances] = useState<string[]>([]);
@@ -129,6 +130,30 @@ export function useConnectWorkbench(
       window.clearTimeout(timer);
     };
   }, [enabled, refreshEntryAccess]);
+
+  // Time passing alone does not trigger a render. Recheck when the current
+  // directory expires, and on return from a throttled background tab.
+  const directoryExpiresAt = snapshot?.directory?.expires_at;
+  useEffect(() => {
+    const expiry = Date.parse(directoryExpiresAt || "");
+    if (!enabled || !Number.isFinite(expiry)) return;
+    let timer: number | undefined;
+    const check = () => {
+      window.clearTimeout(timer);
+      const remaining = expiry - Date.now();
+      if (remaining <= 0) recheckDirectoryExpiry((previous) => previous + 1);
+      else timer = window.setTimeout(check, remaining);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    check();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [enabled, directoryExpiresAt]);
 
   const directory =
     enabled && snapshot?.directory && Date.parse(snapshot.directory.expires_at) > Date.now()

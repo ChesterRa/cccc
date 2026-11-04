@@ -12,12 +12,19 @@ import { ChatSenderFilter } from "../pages/chat/ChatSenderFilter";
 import * as composerSendPlan from "./composerSendPlan";
 import { useAppGroupLifecycle } from "./useAppGroupLifecycle";
 import { PendingSummaryContext } from "../features/pendingReplies/context";
+import type { Summary } from "../features/pendingReplies/usePendingSummary";
+import { fetchPendingReplies } from "../services/api/pendingReplies";
 
 vi.mock("../services/api", () => ({
   sendMessage: vi.fn(),
   sendCrossGroupMessage: vi.fn(),
   searchChatMessages: vi.fn(),
   fetchMessageWindow: vi.fn(),
+}));
+// The Waiting for you view reads its own pages; tests give them, without the network.
+vi.mock("../services/api/pendingReplies", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/api/pendingReplies")>()),
+  fetchPendingReplies: vi.fn(),
 }));
 vi.mock("./useSlashCommandState", () => ({
   useSlashCommandState: () => ({ items: [], loading: false }),
@@ -71,6 +78,7 @@ function Harness() {
 }
 beforeEach(async () => {
   vi.resetAllMocks();
+  vi.mocked(fetchPendingReplies).mockReturnValue(new Promise<never>(() => {}));
   useComposerStore.setState({ ...useComposerStore.getInitialState() });
   useGroupStore.setState({
     selectedGroupId: "a",
@@ -377,4 +385,101 @@ it("drops a stored Waiting for you filter while those prompts are off", async ()
   await act(async () => useUIStore.getState().setShowPendingPrompts(true));
   expect(chat.chatFilter).toBe("pending_user");
   localStorage.removeItem("cccc-pending-prompts");
+});
+
+const pendingPage = (events: LedgerEvent[]) =>
+  vi
+    .mocked(fetchPendingReplies)
+    .mockResolvedValue({
+      ok: true,
+      result: { events, statuses: {}, total: events.length, has_more: false },
+    });
+
+it("returns to All when Waiting for you opens empty with nothing waiting", async () => {
+  let summaries: Record<string, Summary> = { a: { state: "fresh", pending: 0 } };
+  const render = () =>
+    act(async () =>
+      root.render(
+        <PendingSummaryContext.Provider value={{ summaries, refresh: noop }}>
+          <Harness />
+        </PendingSummaryContext.Provider>,
+      ),
+    );
+  // A page that failed is not an empty one: the view stays with its retry.
+  vi.mocked(fetchPendingReplies).mockResolvedValue({
+    ok: false,
+    error: { code: "unavailable", message: "failed", httpStatus: 503 },
+  });
+  await act(async () => useUIStore.getState().setChatFilter("a", "pending_user"));
+  await render();
+  expect(chat.chatFilter).toBe("pending_user");
+  expect(chat.pendingPageError).toBe(true);
+
+  // A count that is unknown or may be out of date can still hide a request.
+  pendingPage([]);
+  summaries = { a: { state: "stale", pending: 0 } };
+  await render();
+  await act(async () => useGroupStore.getState().setSelectedGroupId("b"));
+  await act(async () => useGroupStore.getState().setSelectedGroupId("a"));
+  expect(chat.chatFilter).toBe("pending_user");
+  expect(chat.pendingPageError).toBe(false);
+  expect(chat.chatMessages).toEqual([]);
+
+  // Known to be zero with nothing to show: the Group returns to All and remembers it.
+  summaries = { a: { state: "fresh", pending: 0 } };
+  await render();
+  expect(chat.chatFilter).toBe("all");
+  expect(getChatSession("a", useUIStore.getState().chatSessions).chatFilter).toBe("all");
+
+  // A request that arrives later shows its count without switching the view.
+  summaries = { a: { state: "fresh", pending: 1 } };
+  await render();
+  expect(chat.chatFilter).toBe("all");
+});
+
+it("keeps the rows a visit shows, and recounts at once after a send from them", async () => {
+  const refresh = vi.fn();
+  let summaries: Record<string, Summary> = { a: { state: "fresh", pending: 1 } };
+  const render = () =>
+    act(async () =>
+      root.render(
+        <PendingSummaryContext.Provider value={{ summaries, refresh }}>
+          <Harness />
+        </PendingSummaryContext.Provider>,
+      ),
+    );
+  pendingPage([message("4", "leader")]);
+  await act(async () => useUIStore.getState().setChatFilter("a", "pending_user"));
+  await render();
+  expect(chat.chatMessages.map((event) => event.id)).toEqual(["4"]);
+
+  vi.mocked(api.sendMessage).mockResolvedValue({
+    ok: true,
+    result: { event: message("5", "user") },
+  });
+  await act(async () => useComposerStore.getState().setComposerText("answer"));
+  await act(async () => {
+    await chat.sendMessage();
+  });
+  expect(refresh).toHaveBeenCalledOnce();
+  const notice = useUIStore.getState().notice;
+  expect(notice?.message).toBe("sentOutsideChatFilter");
+
+  // That was the last request, but the row it answered stays in the visit, with the notice,
+  // also while a sender filter hides it.
+  await act(async () => chat.setChatSenderFilter(["worker"]));
+  expect(chat.chatMessages).toEqual([]);
+  summaries = { a: { state: "fresh", pending: 0 } };
+  await render();
+  expect(chat.chatFilter).toBe("pending_user");
+  await act(async () => chat.setChatSenderFilter([]));
+  expect(chat.chatMessages.map((event) => event.id)).toEqual(["4"]);
+  expect(useUIStore.getState().notice).toBe(notice);
+
+  // Elsewhere the notice still leads back; once All shows the message, it no longer holds.
+  await act(async () => useGroupStore.getState().setSelectedGroupId("b"));
+  expect(useUIStore.getState().notice).toBe(notice);
+  await act(async () => useGroupStore.getState().setSelectedGroupId("a"));
+  await act(async () => chat.setChatFilter("all"));
+  expect(useUIStore.getState().notice).toBeNull();
 });

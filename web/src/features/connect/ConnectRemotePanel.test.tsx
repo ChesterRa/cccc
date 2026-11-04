@@ -229,6 +229,33 @@ it("keeps the same dirty iframe through directory expiry and confirms recovery o
   expect(useWorkspaceNavigation.getState().owners.size).toBe(1);
 });
 
+it("hides the same iframe when the entry directory expires before the frame proof", async () => {
+  const frame = host.querySelector("iframe")!;
+  const originalRequest = mocks.request.getMockImplementation()!;
+  const expiresAt = new Date(Date.now() + 16000).toISOString();
+  mocks.request.mockImplementation((path: string, options: unknown) => {
+    if (path === "/api/v1/connect")
+      return Promise.resolve({
+        ok: true,
+        result: {
+          connect: {
+            instance_id: "a",
+            directory: { account_id: "owner", expires_at: expiresAt, instances: [instance] },
+          },
+        },
+      });
+    return originalRequest(path, options);
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  expect(state.available).toBe(true);
+  expect(frame.className).not.toContain("invisible");
+  await act(async () => vi.advanceTimersByTimeAsync(1100));
+  expect(state.available).toBe(false);
+  expect(host.querySelector("iframe")).toBe(frame);
+  expect(frame.className).toContain("invisible");
+  expect(frame.hasAttribute("inert")).toBe(true);
+});
+
 it("asks before reopening a frame that reports unsaved work", async () => {
   const frame = host.querySelector("iframe");
   await fromTarget({ type: "workspace_dirty", dirty: true });
@@ -325,3 +352,66 @@ it("closes an older target that cannot confirm an account for recovery", async (
   expect(host.querySelector("iframe")).toBeNull();
   expect(host.textContent).toContain("connect.reopen");
 });
+
+it.each(["success", "failure"])(
+  "ignores a late open %s after the frame ends and permits retry",
+  async (outcome) => {
+    const frame = host.querySelector("iframe")!;
+    const originalRequest = mocks.request.getMockImplementation()!;
+    let completeOpen!: (value: unknown) => void;
+    mocks.request.mockImplementation((path: string, options: unknown) => {
+      if (path === "/api/v1/connect/open")
+        return new Promise((resolve) => {
+          completeOpen = resolve;
+        });
+      return originalRequest(path, options);
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(45000));
+    expect(completeOpen).toBeTypeOf("function");
+    await fromTarget({ type: "identity_changed" });
+    expect(host.querySelector("iframe")).toBeNull();
+    expect(host.textContent).toContain("connect.reopen");
+
+    await act(async () => {
+      completeOpen(
+        outcome === "success"
+          ? {
+              ok: true,
+              result: {
+                origin: instance.public_origin,
+                url: "about:blank",
+                account_id: "owner",
+                proof: {
+                  frame_id: frameId,
+                  target_device_id: instance.device_id,
+                  expires_at: new Date(Date.now() + 120000).toISOString(),
+                  nonce: crypto.randomUUID(),
+                },
+              },
+            }
+          : { ok: false, error: { code: "unavailable", message: "late failure", httpStatus: 503 } },
+      );
+    });
+    expect(host.querySelector("iframe")).toBeNull();
+    expect(host.textContent).toContain("connect.reopen");
+    expect(frame.isConnected).toBe(false);
+
+    const openCount = mocks.request.mock.calls.filter(
+      ([path]) => path === "/api/v1/connect/open",
+    ).length;
+    await act(async () => vi.advanceTimersByTimeAsync(60000));
+    expect(
+      mocks.request.mock.calls.filter(([path]) => path === "/api/v1/connect/open"),
+    ).toHaveLength(openCount);
+    expect(host.textContent).toContain("connect.reopen");
+
+    mocks.request.mockImplementation(originalRequest);
+    const retry = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent === "connect.retry",
+    );
+    expect(retry).toBeDefined();
+    await act(async () => retry!.click());
+    expect(host.querySelector("iframe")).not.toBeNull();
+  },
+);

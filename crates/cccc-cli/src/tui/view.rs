@@ -732,7 +732,11 @@ fn help_screen(frame: &mut Frame, app: &App, theme: Theme) {
             None,
         ),
         (
-            "RUNNING counts managed agents running and native members ready to receive from that group; it is not the number of busy models or total members. Offline means the group is not stopped or paused but no agents are running.",
+            "RUNNING counts the daemon's running managed agents, native members ready to receive, and Web Model agents with CCCC access enabled. Web Model access does not prove a browser is connected or a model is working. Offline means the group is not stopped or paused but no agents are counted as running.",
+            None,
+        ),
+        (
+            "A member marked confirm Web needs startup confirmation in its Web terminal. Confirm retry means the confirmation was paused; use the Web to start that member again. The Members heading counts both separately from messages waiting for your reply.",
             None,
         ),
         (

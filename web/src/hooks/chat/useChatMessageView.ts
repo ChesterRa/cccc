@@ -261,6 +261,8 @@ export function useChatMessageView(input: {
     senderHistoryError: senders.length === 0 ? "" : senderHistory.error,
     loadSenderHistory: senderHistory.loadMore,
     pendingActive: pending.active,
+    // The projection itself read cleanly and holds no rows, whatever the sender filter shows.
+    pendingEmpty: pending.active && pending.loaded && !pending.error && pending.events.length === 0,
     pinnedActive: pinned.active,
     pinnedError: pinned.active && pinned.error,
     pinnedUnavailable: pinned.active ? pinned.unavailable : EMPTY_IDS,

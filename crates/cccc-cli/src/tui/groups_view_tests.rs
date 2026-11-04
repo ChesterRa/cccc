@@ -155,6 +155,86 @@ fn confirmation_pause_is_visible_at_the_minimum_terminal_width() {
 }
 
 #[test]
+fn hidden_confirmations_are_counted_separately_from_reply_requests() {
+    let mut app = app_with(demo());
+    with_members(
+        &mut app,
+        "g_dev",
+        vec![
+            member("one", "Codex", "peer", false, MemberState::Running),
+            member(
+                "two",
+                "Claude Code",
+                "peer",
+                false,
+                MemberState::ConfirmationRequired,
+            ),
+            member(
+                "three",
+                "Claude Code",
+                "peer",
+                false,
+                MemberState::ConfirmationPaused,
+            ),
+            member("four", "Codex", "peer", false, MemberState::Running),
+        ],
+    );
+    app.pending_summary
+        .groups
+        .insert("g_dev".into(), crate::tui::pending::Count::Fresh(1));
+    let rows = draw_rows(&app, 60, 16);
+    assert!(rows.iter().any(|row| row.contains("Waiting for you: 1")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("2 confirmations to resolve"))
+    );
+    assert!(rows.iter().any(|row| row.contains("+2 more")));
+
+    app.members
+        .record("g_dev", Err("offline".into()), Instant::now());
+    let rows = draw_rows(&app, 60, 16);
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("2 confirmations to resolve; stale"))
+    );
+}
+
+#[test]
+fn confirmation_and_web_access_labels_fit_the_smallest_screen() {
+    let mut app = app_with(demo());
+    with_members(
+        &mut app,
+        "g_dev",
+        vec![
+            member(
+                "claude",
+                "Claude Code",
+                "peer",
+                false,
+                MemberState::ConfirmationRequired,
+            ),
+            member(
+                "browser",
+                "ChatGPT Web",
+                "peer",
+                false,
+                MemberState::WebAccessEnabled,
+            ),
+        ],
+    );
+    let rows = draw_rows(&app, 60, 16);
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("claude") && row.contains("confirm Web"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("browser") && row.contains("access on"))
+    );
+    assert!(rows.iter().all(|row| row.len() <= 60));
+}
+
+#[test]
 fn long_group_identity_and_stale_state_remain_visible_on_a_small_screen() {
     let title = "long-group-".repeat(9);
     let mut app = app_with(vec![group(

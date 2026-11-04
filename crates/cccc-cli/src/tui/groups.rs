@@ -131,14 +131,18 @@ fn display_order(left: &GroupSummary, right: &GroupSummary) -> Ordering {
 pub(super) enum MemberState {
     Running,
     Stopped,
+    /// A managed session whose interactive startup is waiting for approval.
+    ConfirmationRequired,
     /// A managed Claude session awaiting an explicit confirmation retry.
     ConfirmationPaused,
     /// A managed actor that is not enabled.
     Off,
+    /// A Web Model actor with CCCC access enabled; its browser may be offline.
+    WebAccessEnabled,
     /// A native member this group can deliver to now.
     Ready,
     NotReceiving,
-    /// A native member whose CCCC access is paused.
+    /// A native or Web Model member whose CCCC access is paused.
     AccessPaused,
 }
 
@@ -147,12 +151,18 @@ impl MemberState {
         match self {
             Self::Running => "running",
             Self::Stopped => "stopped",
+            Self::ConfirmationRequired => "confirm Web",
             Self::ConfirmationPaused => "confirm retry",
             Self::Off => "off",
+            Self::WebAccessEnabled => "access on",
             Self::Ready => "ready",
             Self::NotReceiving => "not receiving",
             Self::AccessPaused => "access paused",
         }
+    }
+
+    pub(super) fn needs_confirmation(self) -> bool {
+        matches!(self, Self::ConfirmationRequired | Self::ConfirmationPaused)
     }
 }
 
@@ -267,15 +277,22 @@ fn member(value: &Value) -> Option<Member> {
     let native = !text("external_session_id").is_empty();
     let enabled = flag("enabled").unwrap_or(true);
     let running = flag("running").unwrap_or(false);
+    let web_model = serde_json::from_value::<ActorRuntime>(Value::String(text("runtime").into()))
+        .is_ok_and(ActorRuntime::is_web_model);
     let state = match (native, enabled, running) {
         (true, false, _) => MemberState::AccessPaused,
         (true, true, true) => MemberState::Ready,
         (true, true, false) => MemberState::NotReceiving,
+        (false, false, _) if web_model => MemberState::AccessPaused,
         (false, false, _) => MemberState::Off,
-        (false, true, true) => MemberState::Running,
-        (false, true, false) if flag("runtime_confirmation_paused") == Some(true) => {
+        (false, true, _) if flag("runtime_confirmation_required") == Some(true) => {
+            MemberState::ConfirmationRequired
+        }
+        (false, true, _) if flag("runtime_confirmation_paused") == Some(true) => {
             MemberState::ConfirmationPaused
         }
+        (false, true, _) if web_model => MemberState::WebAccessEnabled,
+        (false, true, true) => MemberState::Running,
         (false, true, false) => MemberState::Stopped,
     };
     Some(Member {

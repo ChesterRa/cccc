@@ -198,6 +198,10 @@ export function useChatTab({
   const pendingContext = useVisiblePendingSummary();
   const showPendingPrompts = useUIStore((state) => state.showPendingPrompts);
   const waitingTabOffered = !!pendingContext;
+  const waitingSummary = pendingContext?.summaries[selectedGroupId];
+  // Only a fresh zero says nothing waits here; an unknown or stale count may still hide one.
+  const nothingWaiting = waitingSummary?.state === "fresh" && waitingSummary.pending === 0;
+  const refreshPending = pendingContext?.refresh;
   // Pinned is the user's: an exhibit never reads or offers it. ChatTab reads the pins.
   const webReadOnly = useUIStore((state) => state.webReadOnly);
   const pinsUnsupported = usePinStore((state) => !!state.groups[selectedGroupId]?.unsupported);
@@ -207,6 +211,25 @@ export function useChatTab({
     pinned: pinnedTabOffered,
   });
   const senders = chatSenderFilter;
+  // A sent message hidden by the filters raises a notice that stays until dismissed, so it can
+  // lead back from another Group. Once its own Group's view shows the message, for example
+  // after Waiting for you returns to All, the notice no longer holds and is retired.
+  const hiddenSendNotice = useRef<{ notice: unknown; groupId: string; event: LedgerEvent } | null>(
+    null,
+  );
+  useEffect(() => {
+    const hidden = hiddenSendNotice.current;
+    if (!hidden) return;
+    const ui = useUIStore.getState();
+    if (ui.notice !== hidden.notice) hiddenSendNotice.current = null;
+    else if (
+      hidden.groupId === selectedGroupId &&
+      matchesChatFilters(hidden.event, chatFilter, senders)
+    ) {
+      hiddenSendNotice.current = null;
+      ui.dismissNotice();
+    }
+  }, [chatFilter, selectedGroupId, senders]);
 
   const {
     composerGroupMentionTokens,
@@ -507,6 +530,7 @@ export function useChatTab({
     loadPendingPage,
     retryPendingPage,
     pendingActive,
+    pendingEmpty,
     pinnedActive,
     pinnedError,
     pinnedUnavailable,
@@ -531,6 +555,14 @@ export function useChatTab({
     actors,
     needsActors,
   });
+  // Waiting for you opens empty once nothing waits, for example on returning to the Group after
+  // answering. A known zero then returns the Group to All and remembers it, so a later request
+  // shows its count without switching. Rows this visit already holds, answered or withdrawn,
+  // keep the view even when a sender filter hides them, together with any unsent answer in
+  // them, and so does a page that failed.
+  useLayoutEffect(() => {
+    if (selectedGroupId && pendingEmpty && nothingWaiting) setChatFilter(selectedGroupId, "all");
+  }, [nothingWaiting, pendingEmpty, selectedGroupId, setChatFilter]);
 
   const shouldFollowCurrentSend = useCallback(
     () =>
@@ -1276,20 +1308,24 @@ export function useChatTab({
         waiting: waitingTabOffered && ui.showPendingPrompts,
         pinned: pinnedTabOffered,
       });
+      // A reply may have answered the last request, so recount now rather than at the next poll.
+      if (currentFilter === "pending_user") refreshPending?.();
       if (
         sourceEvent?.id &&
         useGroupStore.getState().selectedGroupId === selectedGroupId &&
         !matchesChatFilters(sourceEvent, currentFilter, currentSession.chatSenderFilter)
       ) {
         const eventId = sourceEvent.id;
-        showNotice({
+        const notice = {
           message: t("sentOutsideChatFilter"),
           actionLabel: t("viewSentMessage"),
           onAction: () => {
             useUIStore.getState().dismissNotice();
             openSourceMessage(selectedGroupId, eventId);
           },
-        });
+        };
+        hiddenSendNotice.current = { notice, groupId: selectedGroupId, event: sourceEvent };
+        showNotice(notice);
       }
       onMessageSent?.();
     } catch (error) {
@@ -1338,6 +1374,7 @@ export function useChatTab({
     chatViewKey,
     pinnedTabOffered,
     waitingTabOffered,
+    refreshPending,
   ]);
 
   // ============ Return ============

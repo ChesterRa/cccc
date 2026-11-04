@@ -137,30 +137,46 @@ fn members_are_named_by_state_and_kind() {
 }
 
 #[test]
-fn managed_confirmation_pause_is_visible_without_overriding_other_states() {
-    let actor = |enabled: bool, running: bool, native: bool, paused: Option<bool>| {
+fn managed_confirmation_needs_action_before_running_is_shown() {
+    let actor = |enabled: bool, running: bool, native: bool, required: bool, paused: bool| {
         let mut value = json!({
             "id":"claude", "runtime":"claude", "role":"peer", "enabled":enabled,
             "running":running, "external_session_id":if native { "claude:s" } else { "" }
         });
-        if let Some(paused) = paused {
-            value["runtime_confirmation_paused"] = json!(paused);
-        }
+        value["runtime_confirmation_required"] = json!(required);
+        value["runtime_confirmation_paused"] = json!(paused);
         value
     };
     for (value, label) in [
-        (actor(true, false, false, Some(true)), "confirm retry"),
-        (actor(true, false, false, Some(false)), "stopped"),
-        (actor(true, false, false, None), "stopped"),
-        (actor(false, false, false, Some(true)), "off"),
-        (actor(true, true, false, Some(true)), "running"),
-        (actor(true, false, true, Some(true)), "not receiving"),
+        (actor(true, true, false, true, false), "confirm Web"),
+        (actor(true, true, false, true, true), "confirm Web"),
+        (actor(true, false, false, false, true), "confirm retry"),
+        (actor(true, true, false, false, true), "confirm retry"),
+        (actor(true, false, false, false, false), "stopped"),
+        (actor(false, false, false, true, true), "off"),
+        (actor(true, false, true, true, true), "not receiving"),
     ] {
         assert_eq!(
             member(&value).expect("member").state.label(),
             label,
             "{value}"
         );
+    }
+}
+
+#[test]
+fn web_model_access_does_not_claim_the_browser_is_running() {
+    for runtime in ["web_model", "chatgpt_dots", "grok_web_model"] {
+        for (enabled, running, state) in [
+            (true, true, MemberState::WebAccessEnabled),
+            (true, false, MemberState::WebAccessEnabled),
+            (false, false, MemberState::AccessPaused),
+        ] {
+            let value = json!({
+                "id":"web", "runtime":runtime, "enabled":enabled, "running":running
+            });
+            assert_eq!(member(&value).expect("member").state, state, "{value}");
+        }
     }
 }
 

@@ -179,6 +179,33 @@ async fn file_send_carries_several_files_in_one_message_after_checking_all() {
 }
 
 #[tokio::test]
+async fn files_sent_as_mail_say_which_recipients_cannot_act_on_them_yet() {
+    let fixture = Fixture::new().await;
+    let sent = fixture
+        .send(json!({"path":"shots/phone.png","mode":"mail"}))
+        .await
+        .expect("mail with a file");
+    let receipt = &sent["structuredContent"];
+    assert_eq!(receipt["attachment"]["kind"], "image");
+    assert_eq!(receipt["result"]["message_mode"], "mail");
+    assert_eq!(
+        receipt["result"]["mail_recipient_advisories"],
+        json!([{"actor_id":"lead","reasons":["group_paused"]}])
+    );
+    assert!(
+        receipt["result"]["mail_advisory"]
+            .as_str()
+            .is_some_and(|note| note.contains("Writing Mail does not start an Actor"))
+    );
+    // Some clients read the text form of the result.
+    assert!(
+        sent["content"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("mail_recipient_advisories"))
+    );
+}
+
+#[tokio::test]
 async fn a_file_send_retry_key_returns_the_first_message_even_after_a_source_is_removed() {
     let fixture = Fixture::new().await;
     for (destination, key) in [

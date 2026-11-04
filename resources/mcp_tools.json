@@ -217,7 +217,7 @@
             "request_reply"
           ],
           "default": "mail",
-          "description": "mail stores for agent Inbox without an immediate prompt and cannot target user; send requests best-effort prompt delivery now; request_reply uses the same delivery path and creates a reply obligation for concrete recipients. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
+          "description": "mail stores for agent Inbox without an immediate prompt and cannot target user; a new Mail's result may list named recipients that cannot act on it yet in mail_recipient_advisories, and no list does not mean every recipient will read it; send requests best-effort prompt delivery now; request_reply uses the same delivery path and creates a reply obligation for concrete recipients. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
         },
         "idempotency_key": {
           "type": "string",
@@ -485,7 +485,7 @@
             "mail"
           ],
           "default": "send",
-          "description": "send: prompt the recipient now; mail: agent-only Inbox storage without an immediate prompt. Either fulfills the original reply request. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
+          "description": "send: prompt the recipient now; mail: agent-only Inbox storage without an immediate prompt, whose result may list named recipients that cannot act on it yet in mail_recipient_advisories; no list does not mean every recipient will read it. Either fulfills the original reply request. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
         },
         "refs": {
           "type": "array",

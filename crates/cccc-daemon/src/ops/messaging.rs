@@ -546,10 +546,12 @@ fn send_with_audience_policy(
         }
     }
     let event = append(home, &group.group_id, kind, &by, data)?;
+    let mut advisories = Vec::new();
     if kind == "chat.message"
         && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
     {
         super::automation_runtime::notify_idle_mail_recipients(home, &group, &event);
+        advisories = super::mail_advisory::advisories(home, &group, &event);
     } else {
         let _ = actor_delivery::dispatch(home, &group, &event);
     }
@@ -559,7 +561,12 @@ fn send_with_audience_policy(
             .get("message_mode")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        object(json!({"event": event, "message_mode": message_mode}))
+        let mut result = json!({"event": event, "message_mode": message_mode});
+        if !advisories.is_empty() {
+            result["mail_recipient_advisories"] = json!(advisories);
+            result["mail_advisory"] = json!(super::mail_advisory::NOTE);
+        }
+        object(result)
     } else {
         object(json!({"event": event}))
     }
