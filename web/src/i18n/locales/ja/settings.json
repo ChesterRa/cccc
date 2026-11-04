@@ -1228,7 +1228,7 @@
     "peerRuntime": "エージェントのランタイム",
     "peerRuntimeHint": "標準エージェントのランタイムタブと端末パネルを表示または非表示にします。",
     "assistantRuntime": "内蔵アシスタントのランタイム",
-    "assistantRuntimeHint": "Voice Secretary など、サポート対象の内蔵アシスタントのランタイム面を表示または非表示にします。",
+    "assistantRuntimeHint": "音声秘書など、サポート対象の内蔵アシスタントのランタイム面を表示または非表示にします。",
     "visible": "表示",
     "hidden": "非表示",
     "terminalBuffers": "ターミナルバッファ",

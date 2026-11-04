@@ -507,6 +507,131 @@ fn exact_message_history_is_visible_generation_scoped_and_non_consuming() {
 }
 
 #[test]
+fn short_event_ids_resolve_only_among_events_the_caller_can_read() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group_id = stopped_peer_group(&home, "short ids");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer2","by":"user"}),
+    );
+    let path = GroupStore::new(home.clone())
+        .expect("store")
+        .ledger_path(&group_id)
+        .expect("ledger");
+    // Fixed IDs make shared prefixes deterministic.
+    let append = |id: &str, to: &str, text: &str| {
+        let mut event = Event::new("chat.message", &group_id);
+        event.id = id.into();
+        event.by = "user".into();
+        event.data = json!({"to":[to],"text":text,"message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        ledger::append(&path, &event).expect("fixture event");
+    };
+    let first = format!("abcdef01{}", "a".repeat(24));
+    let second = format!("abcdef01{}", "b".repeat(24));
+    let hidden = format!("abcdef02{}", "c".repeat(24));
+    let shadowed = format!("fedcba98{}", "d".repeat(24));
+    let visible = format!("fedcba98{}", "e".repeat(24));
+    append(&first, "peer1", "first");
+    append(&second, "peer1", "second");
+    append(&hidden, "peer2", "hidden");
+    append(&shadowed, "peer2", "other Actor only");
+    append(&visible, "peer1", "visible");
+    let read = |event_id: &str| {
+        call_raw(
+            &home,
+            "message_history",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","event_id":event_id}),
+        )
+    };
+
+    let unique = read(&first[..9]);
+    assert_eq!(unique.result["messages"][0]["id"], first.as_str());
+    // An event the caller cannot read neither matches nor makes a prefix ambiguous.
+    assert_eq!(
+        read("fedcba98").result["messages"][0]["id"],
+        visible.as_str()
+    );
+    let ambiguous = read("abcdef01").error.expect("two readable matches");
+    assert_eq!(ambiguous.code, "event_id_ambiguous");
+    assert!(ambiguous.message.contains(&first) && ambiguous.message.contains(&second));
+    assert!(!ambiguous.message.contains(&hidden));
+    for denied in [
+        "abcdef02",
+        "abcdef0",
+        "ABCDEF01A",
+        format!("{first}0").as_str(),
+    ] {
+        assert_eq!(
+            read(denied).error.expect("not resolvable").code,
+            "event_not_found",
+            "{denied}"
+        );
+    }
+
+    let before = std::fs::read(&path).expect("ledger before");
+    let rejected = call_raw(
+        &home,
+        "reply",
+        json!({"group_id":group_id,"by":"peer1","reply_to":"abcdef01","text":"which one?"}),
+    );
+    assert_eq!(
+        rejected.error.expect("ambiguous parent").code,
+        "event_id_ambiguous"
+    );
+    assert_eq!(std::fs::read(&path).expect("ledger after"), before);
+    // The user's ports always send full IDs; a short one is not resolved for them.
+    let user_short = call_raw(
+        &home,
+        "reply",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"reply_to":&first[..9],"text":"hi"}),
+    );
+    assert_eq!(
+        user_short.error.expect("user needs the full ID").code,
+        "event_not_found"
+    );
+
+    let reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"peer1","reply_to":&first[..9],
+            "text":"answer","client_id":"short-parent-retry"
+        }),
+    );
+    assert_eq!(reply.result["event"]["data"]["reply_to"], first.as_str());
+    // A retry naming the full parent is the same logical reply.
+    let retry = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"peer1","reply_to":first,
+            "text":"answer","client_id":"short-parent-retry"
+        }),
+    );
+    assert_eq!(retry.result["event"]["id"], reply.result["event"]["id"]);
+
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    assert_eq!(
+        read(&visible[..8]).error.expect("old generation").code,
+        "event_not_found"
+    );
+}
+
+#[test]
 fn message_history_pages_and_filters_without_consuming_mail() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

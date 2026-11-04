@@ -7,9 +7,14 @@ import { RuntimeDock } from "./RuntimeDock";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { getRuntimeRingTone } from "./runtimeDockRingTone";
 
-const mocks = vi.hoisted(() => ({ events: [] as LedgerEvent[], workingState: "", open: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  events: [] as LedgerEvent[],
+  workingState: "",
+  open: vi.fn(),
+  store: {} as object,
+}));
 vi.mock("../../stores", () => ({
-  useGroupStore: (select: (state: object) => unknown) => select({}),
+  useGroupStore: (select: (state: object) => unknown) => select(mocks.store),
   selectChatBucketState: () => ({ events: mocks.events }),
 }));
 vi.mock("../../hooks/useActorDisplayState", () => ({
@@ -68,6 +73,7 @@ beforeEach(() => {
   vi.setSystemTime(now);
   mocks.events = [];
   mocks.workingState = "";
+  mocks.store = {};
   mocks.open.mockReset();
   host = document.createElement("div");
   document.body.append(host);
@@ -114,6 +120,28 @@ it("shows confirmation from refreshed Actors and keeps the existing terminal ent
   expect(mocks.open).toHaveBeenCalledExactlyOnceWith("alpha");
   await render({ runtime_confirmation_required: false });
   expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
+});
+
+it("names a native session by whether it can receive, never as stopped", async () => {
+  const native = {
+    external_session_id: "codex:thread",
+    runner: undefined,
+    runtime_state_source: undefined,
+  };
+  mocks.store = { groupDoc: { group_id: "g1", state: "active" } };
+  await render({ ...native, running: false });
+  expect(host.textContent).toContain("actors:nativeSession.unavailable");
+  expect(host.textContent).not.toContain("Stopped");
+  await render({ ...native, running: true });
+  expect(host.textContent).toContain("actors:nativeSession.available");
+  mocks.store = { groupDoc: { group_id: "g1", state: "paused" } };
+  await render({ ...native, running: false });
+  expect(host.textContent).toContain("actors:nativeSession.groupPaused");
+  // Another Group's snapshot says nothing about this one.
+  mocks.store = { groupDoc: { group_id: "other", state: "active" } };
+  await render({ ...native, running: false });
+  expect(host.textContent).toContain("common:loading");
+  expect(host.textContent).not.toContain("Stopped");
 });
 
 it("names a closed confirmation only when the daemon reports the pause", async () => {

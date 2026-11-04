@@ -261,6 +261,10 @@ fn write_address(
             port,
             pid: std::process::id(),
             version: env!("CARGO_PKG_VERSION").into(),
+            source_id: cccc_core::build_info::current()["source_id"]
+                .as_str()
+                .unwrap_or_default()
+                .into(),
             ts: utc_now(),
         },
     )?;
@@ -397,6 +401,15 @@ mod tests {
     fn assert_address_is_published(home: HomeLayout, _locks: DispatchLocks) {
         let paths = DaemonPaths::new(home);
         assert!(paths.address.exists());
+        let address: DaemonAddress =
+            serde_json::from_slice(&std::fs::read(&paths.address).expect("read daemon address"))
+                .expect("daemon address");
+        assert_eq!(
+            address.source_id,
+            cccc_core::build_info::current()["source_id"]
+                .as_str()
+                .expect("source fingerprint")
+        );
         std::fs::write(paths.daemon_dir.join("restore.started"), b"").expect("mark restore start");
     }
 

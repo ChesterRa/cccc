@@ -180,6 +180,9 @@ async fn run_stdio_loop(
         notice
             .annotate(home, notice_runtime, &request, &mut response)
             .await;
+        if let Some(native) = native.as_mut() {
+            native.annotate_receive(&mut response);
+        }
         write_response(&mut output, &response).await?;
     }
     Ok(())
@@ -597,3 +600,5 @@ async fn write_response(output: &mut tokio::io::Stdout, response: &Value) -> Res
 mod connect_tests;
 #[cfg(test)]
 mod cross_group_file_tests;
+#[cfg(test)]
+mod file_send_tests;

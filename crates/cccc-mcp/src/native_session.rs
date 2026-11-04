@@ -6,6 +6,41 @@ pub(super) struct Context {
     runtime: String,
     host_source_id: Option<String>,
     opencode_server: Option<cccc_core::local_sessions::NativeHost>,
+    /// The verified Codex source of the current call: (source, revision, can receive).
+    receive: Option<(String, String, bool)>,
+    receive_notice: ReceiveNotice,
+}
+
+const RECEIVE_NOTICE_KEY: &str = "cccc_receive_notice";
+const RECEIVE_NOTICE: &str = "CCCC receive notice: CCCC last could not confirm that it can deliver messages into this Codex session. Your tools still work, but new messages may not reach you unless you look. Check your Groups' recent messages for anything you missed, and ask the user to check this member's receive status (Refresh status on its panel); the session may need to be resumed in a Codex connected to the shared app-server. See https://chesterra.github.io/cccc/guide/local-sessions#codex-shared-app-server";
+
+/// One notice per Codex source and lifecycle revision every six hours; a source
+/// that becomes able to receive again is told again if it loses that later.
+#[derive(Default)]
+struct ReceiveNotice(std::collections::HashMap<String, (String, std::time::Instant)>);
+
+impl ReceiveNotice {
+    fn annotate(
+        &mut self,
+        (source, revision, can_receive): (String, String, bool),
+        response: &mut Value,
+        now: std::time::Instant,
+    ) {
+        if can_receive {
+            self.0.remove(&source);
+            return;
+        }
+        if self.0.get(&source).is_some_and(|(noticed, last)| {
+            *noticed == revision
+                && now.saturating_duration_since(*last)
+                    < std::time::Duration::from_secs(6 * 60 * 60)
+        }) {
+            return;
+        }
+        if crate::version_notice::attach_notice(response, RECEIVE_NOTICE_KEY, RECEIVE_NOTICE) {
+            self.0.insert(source, (revision, now));
+        }
+    }
 }
 
 impl Context {
@@ -23,6 +58,8 @@ impl Context {
             } else {
                 None
             },
+            receive: None,
+            receive_notice: ReceiveNotice::default(),
             host_source_id: if !matches!(runtime, "codex" | "opencode") {
                 let host = match host_pid {
                     Some(pid) => cccc_core::local_sessions::NativeHost::capture(pid)?,
@@ -96,6 +133,7 @@ impl Context {
                         );
                     }
                 };
+                self.receive = None;
                 match self.call(home, client, request, name, args).await {
                     Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
                     Err(error) => {
@@ -104,6 +142,15 @@ impl Context {
                 }
             }
             _ => super::handle(home, client, request, None).await,
+        }
+    }
+
+    /// Tells a Codex session, after any version notice, that CCCC last could
+    /// not confirm it can receive pushed messages.
+    pub fn annotate_receive(&mut self, response: &mut Value) {
+        if let Some(receive) = self.receive.take() {
+            self.receive_notice
+                .annotate(receive, response, std::time::Instant::now());
         }
     }
 
@@ -159,6 +206,14 @@ impl Context {
             .map_err(|_| "Native lifecycle identity is unavailable; reload the integration and submit a native prompt")?;
         if session.runtime.as_str() != self.runtime || !session.host.alive() {
             return Err("This native session no longer has a live lifecycle identity".into());
+        }
+        if self.runtime == "codex" {
+            // Read-only: the notice reports the recorded qualification and never changes it.
+            self.receive = Some((
+                source_id.clone(),
+                session.revision.clone(),
+                session.codex_can_receive,
+            ));
         }
         if self.runtime == "opencode"
             && (session.opencode_server.as_ref() != self.opencode_server.as_ref()
@@ -398,6 +453,107 @@ mod action_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receive_notice_repeats_only_after_a_change_a_new_loss_or_six_hours() {
+        use std::time::Duration;
+        let now = std::time::Instant::now();
+        let fresh =
+            || json!({"result":{"content":[{"type":"text","text":"{}"}],"structuredContent":{}}});
+        let state = |revision: &str, ready| ("codex:t".to_owned(), revision.to_owned(), ready);
+        let noticed = |response: &Value| {
+            response["result"]["structuredContent"][RECEIVE_NOTICE_KEY] == RECEIVE_NOTICE
+                && response["result"]["content"][1]["text"] == RECEIVE_NOTICE
+        };
+        let mut notice = ReceiveNotice::default();
+        let steps = [
+            ("r1", false, 0, true),
+            ("r1", false, 60, false),
+            ("r2", false, 61, true),
+            ("r2", true, 62, false),
+            ("r2", false, 63, true),
+            ("r2", false, 63 + 6 * 60 * 60, true),
+        ];
+        for (revision, ready, seconds, expected) in steps {
+            let mut response = fresh();
+            let at = now + Duration::from_secs(seconds);
+            notice.annotate(state(revision, ready), &mut response, at);
+            assert_eq!(noticed(&response), expected, "{revision} {ready} {seconds}");
+            if !expected {
+                assert_eq!(response, fresh());
+            }
+        }
+        // A tool's own field is never replaced; the notice waits for a later result.
+        let mut own =
+            json!({"result":{"content":[],"structuredContent":{RECEIVE_NOTICE_KEY:"tool"}}});
+        notice.annotate(("codex:u".into(), "r".into(), false), &mut own, now);
+        assert_eq!(
+            own["result"]["structuredContent"][RECEIVE_NOTICE_KEY],
+            "tool"
+        );
+        let mut later = fresh();
+        notice.annotate(("codex:u".into(), "r".into(), false), &mut later, now);
+        assert!(noticed(&later));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_codex_call_reports_its_recorded_receive_state_without_changing_it() {
+        use cccc_contracts::local_session::LocalSessionRuntime;
+        use cccc_core::local_sessions::{self as native, NativeHost, NativeSession};
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        native::write(
+            &home,
+            NativeSession {
+                source_id: "codex:thread".into(),
+                runtime: LocalSessionRuntime::Codex,
+                native_session_id: "thread".into(),
+                host: NativeHost::capture(std::process::id()).expect("host"),
+                cwd: temp.path().to_string_lossy().into_owned(),
+                title: "Codex".into(),
+                origin: None,
+                revision: "revision".into(),
+                codex_home: Some(temp.path().join("codex")),
+                codex_can_receive: false,
+                codex_program: None,
+                claude_config_dir: None,
+                pi_agent_dir: None,
+                opencode_config_dir: None,
+                opencode_server: None,
+                retired: None,
+            },
+        )
+        .expect("native lifecycle");
+        let mut context = Context::new("codex", None).expect("context");
+        let client = DaemonClient::new(home.clone());
+        let call = |meta: Value| {
+            json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+                "name":"cccc_message_history","arguments":{"group_id":"g_none"},"_meta":meta}})
+        };
+        let carries = |response: &Value| {
+            response["result"]["content"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|item| item["text"] == RECEIVE_NOTICE))
+        };
+        // No daemon runs here: the membership lookup fails after the session check.
+        let mut response = context
+            .handle(&home, &client, &call(json!({"threadId":"thread"})))
+            .await;
+        context.annotate_receive(&mut response);
+        assert!(carries(&response), "{response}");
+        assert!(
+            !native::read(&home, "codex:thread")
+                .expect("record")
+                .codex_can_receive
+        );
+        // Without the native thread identity there is no verified session to describe.
+        let mut anonymous = context.handle(&home, &client, &call(json!({}))).await;
+        context.annotate_receive(&mut anonymous);
+        assert!(!carries(&anonymous), "{anonymous}");
+    }
+
     #[test]
     fn native_identity_comes_only_from_current_request_metadata() {
         assert_eq!(
@@ -1050,6 +1206,12 @@ mod tests {
             )
             .await;
         assert_ne!(bootstrapped["result"]["isError"], true, "{bootstrapped}");
+        let identity = &bootstrapped["result"]["structuredContent"]["mcp_server"];
+        assert_eq!(identity["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            identity["source_id"],
+            cccc_core::build_info::current()["source_id"]
+        );
         let members = bootstrapped["result"]["structuredContent"]["session"]["members"]
             .as_array()
             .expect("basic collaboration includes its recipients");

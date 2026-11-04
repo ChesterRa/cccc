@@ -18,28 +18,6 @@ export function visibleVoiceDocuments(
     return status !== "archived" && status !== "deleted";
   });
 }
-const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
-  "嗯",
-  "嗯嗯",
-  "啊",
-  "好",
-  "好的",
-  "呃",
-  "额",
-  "那个",
-  "えー",
-  "ええ",
-  "あの",
-  "その",
-  "はい",
-  "うん",
-  "uh",
-  "um",
-  "嗯。",
-  "啊。",
-  "好。",
-  "はい。",
-]);
 
 const VOICE_LANGUAGE_OPTION_VALUES = [
   "mixed",
@@ -293,12 +271,6 @@ export function normalizeBrowserTranscriptChunk(value: string): string {
     .replace(/\s+/g, " ")
     .replace(/\s+([,.!?;:，。！？；：、])/g, "$1")
     .trim();
-}
-
-export function isLowValueBrowserSpeechFragment(value: string): boolean {
-  const text = normalizeBrowserTranscriptChunk(value).toLowerCase();
-  if (!text) return true;
-  return LOW_VALUE_BROWSER_SPEECH_FRAGMENTS.has(text);
 }
 
 function longestTranscriptOverlap(left: string, right: string): number {

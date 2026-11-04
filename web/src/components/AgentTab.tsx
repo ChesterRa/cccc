@@ -56,6 +56,7 @@ import { ActorQuickControls } from "./agentTerminal/ActorQuickControls";
 import { TerminalHistoryPanel } from "./agentTerminal/TerminalHistoryPanel";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
+import { NATIVE_SESSION_AVAILABLE, nativeSessionStatusKey } from "../utils/nativeSessionStatus";
 import {
   getEffectiveActorRunner,
   hasManagedRuntimeControls,
@@ -394,22 +395,10 @@ export function AgentTab({
     overflow: "hidden",
   };
 
-  const nativeStatusKey = (() => {
-    if (actor.enabled === false) return "webAccessPaused";
-    if (groupState === "paused") return "nativeSession.groupPaused";
-    if (groupState === "stopped") return "nativeSession.groupStopped";
-    if (actor.running === true) return "nativeSession.available";
-    if (
-      actor.enabled === true &&
-      actor.running === false &&
-      (groupState === "active" || groupState === "idle")
-    )
-      return "nativeSession.unavailable";
-    return "common:loading";
-  })();
+  const nativeStatusKey = nativeSessionStatusKey(actor, groupState);
   const runtimeIndicator = getRuntimeIndicatorState({
     isRunning: isNativeSession
-      ? nativeStatusKey === "nativeSession.available"
+      ? nativeStatusKey === NATIVE_SESSION_AVAILABLE
       : isEventActor
         ? ["ready", "pending", "delivering", "delivered", "working"].includes(
             eventState?.phase || "",
@@ -966,7 +955,7 @@ export function AgentTab({
                       style={statusClamp2Style}
                       title={
                         agentState?.updated_at
-                          ? `${stateHeadline}\nUpdated: ${formatFullTime(agentState.updated_at)}`
+                          ? `${stateHeadline}\n${t("agentStateUpdated", { time: formatFullTime(agentState.updated_at) })}`
                           : stateHeadline
                       }
                     >

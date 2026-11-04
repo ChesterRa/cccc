@@ -10,6 +10,7 @@
   "custom": "カスタム",
   "noAgentStateYet": "エージェント状態はまだありません",
   "agentState": "エージェント状態",
+  "agentStateUpdated": "更新： {{time}}",
   "taskShort": "タスク {{id}}",
   "blockersShort": "ブロック {{count}}",
   "nextShort": "次: {{value}}",
@@ -396,6 +397,7 @@
       "hints": {
         "connected": "元のアプリを使用してください。必要に応じて CCCC 連携を再読み込みしてください。",
         "disconnected": "元のアプリを確認し、CCCC 連携を再読み込みしてください。プロセスは動作中の可能性があります。",
+        "disconnectedCodex": "CCCC は共有 app-server 経由でのみ Codex にメッセージを届けます。このセッションが共有 app-server に接続した Codex で開かれているか確認し、そうでなければそこで再開してください（daemon_auto_start が無効なら有効にしてください）。その後「状態を更新」を選んでください。",
         "host_exited": "元のプロセスは終了しました。以下のコマンドでセッションを再開できます。",
         "session_ended": "元のアプリがセッションを終了しました。履歴を確認してから再開してください。",
         "integration_disabled": "元のホストで CCCC 連携を有効にし、アプリで再読み込みしてください。",
@@ -413,6 +415,7 @@
       "refreshingConnection": "既存の受信連携を確認中…",
       "refreshConnected": "受信チャネルを利用できます。",
       "refreshUnavailable": "受信チャネルを利用できません。元のアプリを確認し、CCCC 連携を再読み込みしてください。",
+      "refreshUnavailableCodex": "受信チャネルを利用できません。このセッションが共有 app-server に接続した Codex で開かれているか確認し、必要ならそこで再開してから、もう一度更新してください。",
       "refreshFailed": "受信チャネルを確認できませんでした。表示されている情報は現在読み取れるセッション記録です。",
       "runWarning": "CCCC ホストの {{shell}} で元の設定を使って実行してください。再開すると待機中の処理が実行され、モデル利用枠を消費する場合があります。",
       "codexReconnect": "同じ Codex スレッドを再開すると、このエージェントに再接続できます。別のスレッドは新しいエージェントとして参加します。",

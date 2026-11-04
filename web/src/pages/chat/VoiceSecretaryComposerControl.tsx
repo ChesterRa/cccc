@@ -4245,7 +4245,7 @@ export function VoiceSecretaryComposerControl({
               : "voiceSecretaryLocalAsrModelsNotReady",
             {
               defaultValue:
-                "The local ASR models are not ready. Install or repair Local ASR in Settings > Voice > Voice Secretary, or switch to Browser ASR.",
+                "The local ASR models are not ready. Install or repair Local ASR in Settings > This instance > Voice > Voice Secretary, or switch to Browser ASR.",
             },
           ),
         );

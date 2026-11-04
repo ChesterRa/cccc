@@ -227,10 +227,26 @@ it.each([
   mocks.load.mockResolvedValue(recoveryResponse({ state }));
   await render();
   expect(host.querySelector('[role="status"]')?.textContent).toBe("CCCC access paused");
+  const hints = enActors.nativeSession.recovery.hints;
   expect(host.textContent).toContain(enActors.nativeSession.recovery.states[state]);
-  expect(host.textContent).toContain(enActors.nativeSession.recovery.hints[state]);
+  expect(host.textContent).toContain(
+    state === "disconnected" ? hints.disconnectedCodex : hints[state],
+  );
   expect(host.textContent).toContain(enActors.nativeSession.recovery.admissionHint);
   expect(host.querySelector("pre code")?.textContent).toBe(originalCommand);
+});
+
+it("routes a disconnected Codex session back to the shared app-server, other runtimes generically", async () => {
+  const hints = enActors.nativeSession.recovery.hints;
+  mocks.load.mockResolvedValue(recoveryResponse({ state: "disconnected" }));
+  await render();
+  expect(host.textContent).toContain(hints.disconnectedCodex);
+  expect(host.textContent).not.toContain(hints.disconnected);
+  const actor = { ...nativeActor, runtime: "claude", external_session_id: "claude:original-host" };
+  mocks.load.mockResolvedValue(recoveryResponse({ state: "disconnected" }, actor));
+  await render({ actor });
+  expect(host.textContent).toContain(hints.disconnected);
+  expect(host.textContent).not.toContain(hints.disconnectedCodex);
 });
 
 it.each(["CCCC access paused", "Group paused", "Group stopped", "Available to receive"])(
@@ -708,7 +724,8 @@ it("reports a negative refresh without re-enabling access or retrying automatica
   mocks.refresh.mockResolvedValue(recoveryResponse());
   await render();
   await clickButton("Refresh status");
-  expect(host.textContent).toContain(enActors.nativeSession.recovery.refreshUnavailable);
+  expect(host.textContent).toContain(enActors.nativeSession.recovery.refreshUnavailableCodex);
+  expect(host.textContent).not.toContain(enActors.nativeSession.recovery.refreshUnavailable);
   expect(host.querySelector('[role="status"]')?.textContent).toBe("CCCC access paused");
   await advance(60000);
   expect(mocks.refresh).toHaveBeenCalledOnce();

@@ -636,7 +636,7 @@
   },
   {
     "name": "cccc_file_send",
-    "description": "Attach a file from your effective workspace (running managed launch, otherwise Actor default or Group active) to a CCCC message. Choose the human user alone or agent recipients, never both. Send prompts recipients; Mail stores agent Inbox mail without prompting. For a connected instance, provide both dst_instance_id and dst_group_id from cccc_connect. Returns the message/queue receipt; it does not confirm that a recipient has read the file. Use cccc_file to read files without sending them.",
+    "description": "Attach a file, or up to 10 files as one message, from your effective workspace (running managed launch, otherwise Actor default or Group active) to a CCCC message. Choose the human user alone or agent recipients, never both. Send prompts recipients; Mail stores agent Inbox mail without prompting. For a connected instance, provide both dst_instance_id and dst_group_id from cccc_connect. Returns the message/queue receipt; it does not confirm that a recipient has read the file. Use cccc_file to read files without sending them.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -649,8 +649,20 @@
           "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
         },
         "path": {
-          "type": "string",
-          "description": "Relative to your effective tool workspace, or an absolute path under that workspace."
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 10
+            }
+          ],
+          "description": "A file, or a list of up to 10 files sent together as one message with one caption. Each is relative to your effective tool workspace, or an absolute path under that workspace."
         },
         "dst_group_id": {
           "type": "string",

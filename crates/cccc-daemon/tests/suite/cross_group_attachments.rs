@@ -91,6 +91,63 @@ fn cross_group_reply_delivers_its_files_to_both_groups_and_settles_the_obligatio
 }
 
 #[test]
+fn a_cross_group_reply_by_short_id_records_full_parents_once() {
+    let f = fixture();
+    let sent = call(
+        &f.home,
+        "send_cross_group",
+        json!({
+            "group_id":f.origin,"dst_group_id":f.receiver,"by":"user",
+            "to":["receiver"],"text":"question","message_mode":"request_reply"
+        }),
+    );
+    let parent = sent.result["dst_event"]["id"]
+        .as_str()
+        .expect("parent")
+        .to_owned();
+    let origin_parent = sent.result["src_event"]["id"]
+        .as_str()
+        .expect("origin parent")
+        .to_owned();
+    let reply = |reply_to: &str| {
+        call(
+            &f.home,
+            "reply",
+            json!({
+                "group_id":f.receiver,"by":"receiver","reply_to":reply_to,
+                "text":"answer","client_id":"short-cross-group-reply"
+            }),
+        )
+    };
+    let first = reply(&parent[..8]);
+    assert_eq!(first.result["dst_event"]["group_id"], f.origin);
+    assert_eq!(
+        first.result["dst_event"]["data"]["reply_to"],
+        origin_parent.as_str()
+    );
+    assert_eq!(
+        first.result["src_event"]["data"]["reply_to"],
+        parent.as_str()
+    );
+    assert_eq!(
+        first.result["src_event"]["data"]["dst_reply_to"],
+        origin_parent.as_str()
+    );
+    let written = (f.count(&f.origin), f.count(&f.receiver));
+    for retry in [reply(&parent), reply(&parent[..8])] {
+        assert_eq!(
+            retry.result["dst_event"]["id"],
+            first.result["dst_event"]["id"]
+        );
+        assert_eq!(
+            retry.result["src_event"]["id"],
+            first.result["src_event"]["id"]
+        );
+    }
+    assert_eq!((f.count(&f.origin), f.count(&f.receiver)), written);
+}
+
+#[test]
 fn invalid_cross_group_attachments_write_nothing_in_either_group() {
     let f = fixture();
     let own = blobs::store(&f.home, &f.origin, b"origin bytes").expect("own blob");

@@ -10,6 +10,7 @@
   "custom": "自定义",
   "noAgentStateYet": "暂无智能体状态",
   "agentState": "智能体状态",
+  "agentStateUpdated": "更新于 {{time}}",
   "taskShort": "任务 {{id}}",
   "blockersShort": "阻塞 {{count}}",
   "nextShort": "下一步：{{value}}",
@@ -396,6 +397,7 @@
       "hints": {
         "connected": "请使用原应用；需要时重载其 CCCC 集成。",
         "disconnected": "请检查原应用并重载其 CCCC 集成；原进程可能仍在运行。",
+        "disconnectedCodex": "CCCC 只能经共享 app-server 把消息送进 Codex。请确认这个会话开在连着共享 app-server 的 Codex 里；如果不是，再到那里恢复它（如果 daemon_auto_start 没开，先开启）。然后点“刷新状态”。",
         "host_exited": "原进程已退出，可使用下方命令恢复会话。",
         "session_ended": "原应用已结束此会话，请核对历史后再恢复。",
         "integration_disabled": "请在原机器上重新启用 CCCC 集成，再在原应用中重载。",
@@ -413,6 +415,7 @@
       "refreshingConnection": "正在检查既有接收通道…",
       "refreshConnected": "接收通道可用。",
       "refreshUnavailable": "接收通道暂不可用。请检查原应用并重载其 CCCC 集成。",
+      "refreshUnavailableCodex": "接收通道暂不可用。请确认这个会话开在连着共享 app-server 的 Codex 里，需要时到那里恢复它，然后再刷新。",
       "refreshFailed": "暂时无法确认接收通道；下方如有信息，来自当前可读取的会话记录。",
       "runWarning": "在 CCCC 所在机器的 {{shell}} 中使用原配置运行。恢复可能处理排队工作并消耗模型额度。",
       "codexReconnect": "恢复同一个 Codex 线程后可重新连接此智能体；其他线程将作为新智能体接入。",

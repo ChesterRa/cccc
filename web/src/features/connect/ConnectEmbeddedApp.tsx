@@ -17,15 +17,10 @@ import { useGroupStore } from "../../stores";
 import { useComposerStore } from "../../stores/useComposerStore";
 import { usePendingPageWork } from "../../stores/usePendingPageWork";
 import { useModalStore } from "../../stores/useModalStore";
+import { isTransientApiFailure } from "../../utils/transientApiFailure";
 import { acceptsFrameMessage, CONNECT_CHANNEL, readFrameProof, type FrameProof } from "./protocol";
 
 const FRAME_CHECK_INTERVAL_MS = 15000;
-
-function isTransientFrameCheckFailure(error: { code: string; httpStatus?: number }): boolean {
-  const status = error.httpStatus;
-  if (status !== undefined && status >= 400 && status < 500) return false;
-  return error.code === "NETWORK_ERROR" || (status !== undefined && status >= 500);
-}
 
 type EmbeddedSelection = { groupId: string; revision: number; action?: "connections" };
 
@@ -38,6 +33,15 @@ export function ConnectEmbeddedApp() {
   const pendingSends = useComposerStore((state) =>
     Object.values(state.failedSendsByGroup).some((items) => items.length > 0),
   );
+  const composerDraft = useComposerStore((state) => {
+    if (state.composerText.trim() || state.composerFiles.length > 0) return true;
+    // The active Group's saved entry may predate edits or clearing its composer.
+    return Object.entries(state.drafts).some(
+      ([groupId, draft]) =>
+        groupId !== state.activeGroupId &&
+        (draft.composerText.trim().length > 0 || draft.composerFiles.length > 0),
+    );
+  });
   const pendingPageWork = usePendingPageWork((state) => state.owners.size > 0);
   const proofRef = useRef(proof);
   const send = useCallback((message: Record<string, unknown>) => {
@@ -117,8 +121,11 @@ export function ConnectEmbeddedApp() {
   // Keep reporting through the sign-in gate: a send can fail after it unmounts
   // the workbench, and its recovery snapshot is still owned by this page.
   useEffect(() => {
-    send({ type: "workspace_dirty", dirty: workspaceDirty || pendingSends || pendingPageWork });
-  }, [workspaceDirty, pendingSends, pendingPageWork, send]);
+    send({
+      type: "workspace_dirty",
+      dirty: workspaceDirty || pendingSends || pendingPageWork || composerDraft,
+    });
+  }, [workspaceDirty, pendingSends, pendingPageWork, composerDraft, send]);
 
   if (!proof || expired || window.parent === window) {
     return (
@@ -191,7 +198,7 @@ function AdmittedWorkbench({
       });
       if (cancelled) return;
       if (!frame.ok) {
-        if (isTransientFrameCheckFailure(frame.error)) {
+        if (isTransientApiFailure(frame.error)) {
           // A transient transport failure does not revoke the proof. Its own
           // deadline still closes this workbench if revalidation never succeeds.
           timer = window.setTimeout(() => void refresh(), FRAME_CHECK_INTERVAL_MS);

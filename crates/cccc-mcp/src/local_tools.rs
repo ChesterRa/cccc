@@ -332,31 +332,15 @@ async fn file(
     args: &Map<String, Value>,
     action: &str,
 ) -> Result<Value, ToolCallError> {
+    if action == "send" {
+        return send_files(client, root, args).await;
+    }
     let raw = first_non_blank(args, &["path", "rel_path"]).ok_or("path is required")?;
-    let scoped = scope_relative(root, raw);
     if args.contains_key("dst_instance_id") {
-        if action != "send" {
-            return Err(
-                "Connect does not expose remote file tools; use the received local attachment path"
-                    .into(),
-            );
-        }
-        let mut request = args.clone();
-        for key in ["action", "path", "rel_path", "mode"] {
-            request.remove(key);
-        }
-        request.insert(
-            "message_mode".into(),
-            Value::String(file_message_mode(args)?),
+        return Err(
+            "Connect does not expose remote file tools; use the received local attachment path"
+                .into(),
         );
-        request.insert("paths".into(), json!([scoped]));
-        crate::argument_normalization::normalize_message_author(&mut request);
-        crate::argument_normalization::normalize_recipients(&mut request);
-        crate::mapping::connect_destination(&mut request)?;
-        let result = daemon(client, "connect_send_files", request).await?;
-        return Ok(tool_result(
-            json!({"accepted":true,"queued":result.get("queued"),"result":result}),
-        ));
     }
     let path = if raw.starts_with("state/blobs/") {
         let group_id = args
@@ -365,32 +349,8 @@ async fn file(
             .ok_or("group_id is required")?;
         cccc_core::blobs::resolve(home, group_id, raw).map_err(|error| error.to_string())?
     } else {
-        crate::repo::resolve(root, &scoped, false)?
+        crate::repo::resolve(root, &scope_relative(root, raw), false)?
     };
-    if action == "send" {
-        let message_mode = file_message_mode(args)?;
-        if raw.starts_with("state/blobs/") {
-            return Err("send expects a file under the effective tool scope".into());
-        }
-        let mut request = args.clone();
-        request.remove("action");
-        request.remove("path");
-        request.remove("rel_path");
-        request.remove("mode");
-        request.insert("message_mode".into(), Value::String(message_mode));
-        crate::argument_normalization::normalize_message_author(&mut request);
-        crate::argument_normalization::normalize_recipients(&mut request);
-        request.insert("paths".into(), json!([path.to_string_lossy().into_owned()]));
-        let result = daemon(client, "send_files", request).await?;
-        let attachment = result["event"]["data"]["attachments"]
-            .as_array()
-            .and_then(|attachments| attachments.first())
-            .cloned()
-            .unwrap_or(Value::Null);
-        return Ok(tool_result(
-            json!({"sent":true,"attachment":attachment,"result":result}),
-        ));
-    }
     if action == "blob_path" || action == "info" {
         return Ok(tool_result(
             json!({"path":path,"bytes":path.metadata().map(|meta|meta.len()).unwrap_or(0)}),
@@ -405,6 +365,95 @@ async fn file(
     .await
     .map_err(|error| format!("file read task failed: {error}"))?
     .map_err(Into::into)
+}
+
+/// Files one message may carry; IM bridges split larger sets on their own.
+const MAX_FILES_PER_SEND: usize = 10;
+
+/// `cccc_file_send` takes one path, or a list sent together as one message
+/// with one caption, so a set of screenshots arrives as one message. The flag
+/// is whether the caller passed a list, which decides the receipt's shape.
+fn send_paths(args: &Map<String, Value>) -> Result<(Vec<&str>, bool), String> {
+    let Some(Value::Array(values)) = args.get("path") else {
+        return first_non_blank(args, &["path", "rel_path"])
+            .map(|raw| (vec![raw], false))
+            .ok_or_else(|| "path is required".to_owned());
+    };
+    let paths: Vec<&str> = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .collect();
+    if paths.is_empty() || paths.len() != values.len() || paths.len() > MAX_FILES_PER_SEND {
+        return Err(format!(
+            "path must be a file path or a list of 1 to {MAX_FILES_PER_SEND} file paths"
+        ));
+    }
+    Ok((paths, true))
+}
+
+/// A path to send, checked by form only: inside the effective tool workspace
+/// and not a stored blob. The daemon resolves links and reads the file after
+/// its retry lookup, so a retry still gets its receipt after a source file is
+/// removed. Paths stay under this call's workspace root.
+fn send_path(root: &Path, raw: &str) -> Result<String, String> {
+    if raw.starts_with("state/blobs/") {
+        return Err("send expects a file under the effective tool scope".into());
+    }
+    let relative = scope_relative(root, raw);
+    let relative = Path::new(&relative);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err("path must be relative and remain inside the active scope".into());
+    }
+    Ok(root.join(relative).to_string_lossy().into_owned())
+}
+
+async fn send_files(
+    client: &DaemonClient,
+    root: &Path,
+    args: &Map<String, Value>,
+) -> Result<Value, ToolCallError> {
+    let (raws, listed) = send_paths(args)?;
+    let message_mode = file_message_mode(args)?;
+    let mut request = args.clone();
+    for key in ["action", "path", "rel_path", "mode"] {
+        request.remove(key);
+    }
+    request.insert("message_mode".into(), Value::String(message_mode));
+    crate::argument_normalization::normalize_message_author(&mut request);
+    crate::argument_normalization::normalize_recipients(&mut request);
+    if args.contains_key("dst_instance_id") {
+        let scoped: Vec<String> = raws.iter().map(|raw| scope_relative(root, raw)).collect();
+        request.insert("paths".into(), json!(scoped));
+        crate::mapping::connect_destination(&mut request)?;
+        let result = daemon(client, "connect_send_files", request).await?;
+        return Ok(tool_result(
+            json!({"accepted":true,"queued":result.get("queued"),"result":result}),
+        ));
+    }
+    // The retry key names the logical send, as it does for Connect.
+    crate::argument_normalization::alias(&mut request, "idempotency_key", "client_id");
+    // Check every path before sending any: one bad path sends nothing.
+    let paths = raws
+        .iter()
+        .map(|raw| send_path(root, raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    request.insert("paths".into(), json!(paths));
+    let result = daemon(client, "send_files", request).await?;
+    let attachments = result["event"]["data"]["attachments"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    Ok(tool_result(if listed {
+        json!({"sent":true,"attachments":attachments,"result":result})
+    } else {
+        json!({"sent":true,"attachment":attachments.first().cloned().unwrap_or(Value::Null),"result":result})
+    }))
 }
 
 pub(super) fn command(args: &Map<String, Value>) -> Result<Vec<String>, String> {

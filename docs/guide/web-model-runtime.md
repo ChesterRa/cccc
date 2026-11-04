@@ -307,7 +307,8 @@ curl -s "$CONNECTOR_URL" \
 File reads and attachment delivery have separate tools: `cccc_file` is read-only
 (default action: `read`; also `info` and `blob_path`). Use
 `cccc_file_send(path="...", to="user", mode="send")` to deliver a file to the
-human user. Agent Mail uses the existing agent-only audience rules. The old
+human user; a list of up to 10 paths arrives as one message. Agent Mail uses
+the existing agent-only audience rules. The old
 `cccc_file(action="send")` call is rejected; it does not silently send a file.
 
 After upgrading, restart CCCC and **Refresh** the existing CCCC connection in

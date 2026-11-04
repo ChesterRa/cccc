@@ -10,6 +10,7 @@
   "custom": "Custom",
   "noAgentStateYet": "No agent state yet",
   "agentState": "Agent state",
+  "agentStateUpdated": "Updated {{time}}",
   "taskShort": "task {{id}}",
   "blockersShort": "blocked {{count}}",
   "nextShort": "next: {{value}}",
@@ -396,6 +397,7 @@
       "hints": {
         "connected": "Use the original application. Reload its CCCC integration if needed.",
         "disconnected": "Check the original application and reload its CCCC integration; the process may still be running.",
+        "disconnectedCodex": "CCCC reaches Codex only through the shared app-server. Check that this session is open in a Codex connected to it; if it is not, resume it there (turn on daemon_auto_start if it is off). Then choose Refresh status.",
         "host_exited": "The original process has exited. Resume the session using the command below.",
         "session_ended": "The original application ended this session. Check its history before resuming.",
         "integration_disabled": "Re-enable CCCC integration on the original host, then reload it in the application.",
@@ -413,6 +415,7 @@
       "refreshingConnection": "Checking the existing receive integration…",
       "refreshConnected": "The receive channel is available.",
       "refreshUnavailable": "The receive channel is unavailable. Check the original application and reload its CCCC integration.",
+      "refreshUnavailableCodex": "The receive channel is unavailable. Check that this session is open in a Codex connected to the shared app-server, resume it there if needed, then refresh again.",
       "refreshFailed": "Could not confirm the receive channel. Any details shown are the latest available session record.",
       "runWarning": "Run in {{shell}} on the CCCC host with the original configuration. Resuming can process queued work and use model credits.",
       "codexReconnect": "Resuming the same Codex thread can reconnect this agent. A different thread joins as a new agent.",

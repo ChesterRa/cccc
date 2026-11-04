@@ -195,13 +195,22 @@ function RecoveryGuidance({ actor, groupId }: { actor: Actor; groupId: string })
             refreshOutcome === "connected"
               ? "nativeSession.recovery.refreshConnected"
               : refreshOutcome === "unavailable"
-                ? "nativeSession.recovery.refreshUnavailable"
+                ? actor.runtime === "codex"
+                  ? "nativeSession.recovery.refreshUnavailableCodex"
+                  : "nativeSession.recovery.refreshUnavailable"
                 : "nativeSession.recovery.refreshFailed",
           )}
         </p>
       ) : null}
       {recovery && !refreshOutcome ? (
-        <p>{t(`nativeSession.recovery.hints.${recovery.state}`)}</p>
+        <p>
+          {t(
+            // Codex receives only through its shared app-server; say how to get back there.
+            actor.runtime === "codex" && recovery.state === "disconnected"
+              ? "nativeSession.recovery.hints.disconnectedCodex"
+              : `nativeSession.recovery.hints.${recovery.state}`,
+          )}
+        </p>
       ) : null}
       {actor.enabled === false || groupState === "paused" || groupState === "stopped" ? (
         <p className="text-xs">{t("nativeSession.recovery.admissionHint")}</p>

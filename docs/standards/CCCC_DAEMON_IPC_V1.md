@@ -63,6 +63,7 @@ The daemon writes a JSON object with the following fields:
   "port": 0,
   "pid": 12345,
   "version": "0.4.x",
+  "source_id": "<selected-source-fingerprint>",
   "ts": "2026-01-13T12:34:56Z"
 }
 ```
@@ -72,6 +73,9 @@ Rules:
 - `transport` MUST be `"unix"` or `"tcp"`.
 - If `transport == "unix"`, `path` MUST be a non-empty filesystem path.
 - If `transport == "tcp"`, `host` MUST be a connectable host (typically `127.0.0.1`) and `port` MUST be a positive integer.
+- `source_id` is optional diagnostic metadata: the daemon build's fingerprint
+  of selected CCCC source inputs. It does not identify the executable bytes,
+  cached tool declarations, or the process that handled a particular request.
 - Clients MUST treat unknown fields as ignorable metadata (but SHOULD preserve them if re-writing).
 
 ### 3.2 Daemon Runtime Files (Non-normative)
@@ -5073,6 +5077,9 @@ destination copy is missing, it completes that copy rather than returning a
 premature duplicate. The receipt is the `send_cross_group` receipt, whose
 `event`/`dst_event` belongs to the destination Group and `source_event`/`src_event`
 is the source audit record. Without `dst_group_id`, the result below is unchanged.
+The MCP `cccc_file_send` tool takes one `path` or a list of up to 10 and sends
+them as `paths` in one request, after checking that each one resolves inside
+the caller's effective tool workspace. One path outside it sends nothing.
 
 Result:
 ```ts
@@ -5114,6 +5121,13 @@ Args:
   require_peer_insight?: boolean // profile gate; default false
 }
 ```
+
+When `by` is one of the Group's Actors, a `reply_to` that matches no event
+exactly resolves as a short ID with the same rules as an exact read in
+`message_history`, including `event_id_ambiguous`. The daemon replaces it with
+the full ID before any idempotency check, routing decision or ledger write, so
+`reply_to`, `dst_reply_to` and a retry's comparison always use full IDs. Other
+callers must pass the full ID.
 
 `reply`, `send_files`, `send_cross_group` and `connect_send` reject a non-null
 `question` with `invalid_question` and a non-null `answer` with `invalid_args`
@@ -5710,6 +5724,7 @@ Args:
   before_event_id?: string
   event_id?: string // exact visible message/notice; exclusive with filters/pagination
   limit?: number
+  _cccc_mcp_identity?: { version: string; source_id: string } // diagnostic only
 }
 ```
 
@@ -5726,9 +5741,25 @@ With `event_id`, return exactly that visible `chat.message` or targeted
 `system.notify` from the Actor's current generation, with complete rendered
 `delivery_text`. Native Actors also receive their current Preamble in that text.
 Use the same visibility rules as delivery; unknown, invisible and prior-generation
-IDs all return `event_not_found`. Exact reads cannot be combined with `mode`,
+IDs all return `event_not_found`. An `event_id` of 8 to 31 lowercase hexadecimal
+characters that matches no event exactly is a short ID, such as the
+`(reply:<id>)` hint: it resolves to the one event the Actor can read in its
+current generation whose ID starts with it. When several such events match, the
+read fails with `event_id_ambiguous`, naming only those events; events the
+Actor cannot read never match. Exact reads cannot be combined with `mode`,
 `query`, `before_event_id` or `limit`. They remain non-consuming and do not
 acknowledge execution, create a delivery or replay a handoff.
+
+For a successful exact read by a native Actor of its own message, the daemon
+MAY prepend a diagnostic when the client does not report `_cccc_mcp_identity`.
+Missing metadata does not prove that the caller is an MCP server or that its
+tools are old. To limit repetition, this diagnostic is suppressed in memory for
+six hours per Group, Actor generation and native session revision; a lost
+response can consume that interval. This state is not persisted, grants no
+authority and does not change the ledger or Mail cursor. A native MCP sends its
+own version and selected-source fingerprint, replacing a tool caller's value;
+both are self-reported diagnostics, never authentication. The warning does not
+cover agents that never make an exact history read.
 
 The MCP `cccc_message_history` tool presents an exact read as
 `{ delivery_text, message }`, where `message` is the single returned event. From

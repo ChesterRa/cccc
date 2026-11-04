@@ -55,6 +55,11 @@ pub(crate) async fn call_with_context(
     add_runtime_context(home, &mut arguments);
     arguments.remove("_cccc_web_binding");
     arguments.remove("_cccc_native_binding");
+    apply_mcp_identity(
+        name,
+        &mut arguments,
+        context.is_some_and(|context| context.native_binding.is_some()),
+    );
     if name == "cccc_message_send"
         && context.is_some_and(|context| context.native_binding.is_some())
     {
@@ -108,9 +113,11 @@ pub(crate) async fn call_with_context(
             return group_help(client, arguments).await;
         }
         "cccc_bootstrap" => {
-            return Ok(tool_result(
-                crate::bootstrap::build(home, client, arguments).await?,
-            ));
+            let mut payload = crate::bootstrap::build(home, client, arguments).await?;
+            if context.is_none_or(|context| context.native_binding.is_some()) {
+                payload["mcp_server"] = current_mcp_identity();
+            }
+            return Ok(tool_result(payload));
         }
         "cccc_runtime_list" => json!({"runtimes": cccc_runtime::detect_runtimes()
             .into_iter()
@@ -860,6 +867,27 @@ fn is_repo_tool(name: &str) -> bool {
     )
 }
 
+fn current_mcp_identity() -> Value {
+    json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "source_id": cccc_core::build_info::current()["source_id"],
+    })
+}
+
+/// Diagnostic metadata describes this request's native MCP, not Actor authority.
+fn apply_mcp_identity(name: &str, arguments: &mut Map<String, Value>, native: bool) {
+    arguments.remove("_cccc_mcp_identity");
+    if native
+        && name == "cccc_message_history"
+        && arguments
+            .get("event_id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.trim().is_empty())
+    {
+        arguments.insert("_cccc_mcp_identity".into(), current_mcp_identity());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -869,6 +897,25 @@ mod tests {
     };
     use crate::RequestContext;
     use serde_json::json;
+
+    #[test]
+    fn exact_native_history_identifies_this_server_not_the_supplied_value() {
+        let mut args = json!({"event_id":"event", "_cccc_mcp_identity":{"version":"forged"}})
+            .as_object()
+            .expect("arguments")
+            .clone();
+        super::apply_mcp_identity("cccc_message_history", &mut args, true);
+        assert_eq!(args["_cccc_mcp_identity"], super::current_mcp_identity());
+
+        super::apply_mcp_identity("cccc_message_history", &mut args, false);
+        assert!(!args.contains_key("_cccc_mcp_identity"));
+        args.remove("event_id");
+        super::apply_mcp_identity("cccc_message_history", &mut args, true);
+        assert!(!args.contains_key("_cccc_mcp_identity"));
+        args.insert("event_id".into(), json!("event"));
+        super::apply_mcp_identity("cccc_task", &mut args, true);
+        assert!(!args.contains_key("_cccc_mcp_identity"));
+    }
 
     #[test]
     fn an_explicit_empty_runtime_group_never_inherits_the_active_group() {

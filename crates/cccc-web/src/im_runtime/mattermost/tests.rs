@@ -594,6 +594,7 @@ async fn completed_attachments_are_committed_together_with_full_metadata() {
         port: listener.local_addr().expect("address").port(),
         pid: std::process::id(),
         version: "test".into(),
+        source_id: String::new(),
         ts: "test".into(),
     };
     std::fs::write(
@@ -1116,6 +1117,7 @@ async fn daemon_failure_is_private_and_lost_acceptance_is_not_retried() {
             port: listener.local_addr().expect("address").port(),
             pid: std::process::id(),
             version: "test".into(),
+            source_id: String::new(),
             ts: "test".into(),
         };
         std::fs::write(

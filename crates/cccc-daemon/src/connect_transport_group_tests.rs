@@ -221,9 +221,16 @@ async fn external_group_messages_replies_files_and_revocation_share_the_durable_
         .expect("file"),
         bytes
     );
-    let reply=DaemonRequest{v:1,op:"reply".into(),args:json!({"group_id":target.group_id,"by":"worker","reply_to":received.id,"text":"external answer","client_id":"external-answer"}).as_object().expect("args").clone()};
-    let answer = crate::dispatch::dispatch(&state.target, &reply);
+    // The agent names the parent by the short ID its delivery header shows; a
+    // retry with the full ID is the same reply.
+    let reply = |reply_to: &str| {
+        DaemonRequest{v:1,op:"reply".into(),args:json!({"group_id":target.group_id,"by":"worker","reply_to":reply_to,"text":"external answer","client_id":"external-answer"}).as_object().expect("args").clone()}
+    };
+    let answer = crate::dispatch::dispatch(&state.target, &reply(&received.id[..8]));
     assert!(answer.ok, "{answer:?}");
+    let retry = crate::dispatch::dispatch(&state.target, &reply(&received.id));
+    assert!(retry.ok, "{retry:?}");
+    assert_eq!(retry.result["delivery_id"], answer.result["delivery_id"]);
     delivery::process(
         &state.target,
         &client,

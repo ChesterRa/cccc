@@ -21,6 +21,7 @@ import { useGroupStore } from "../../stores";
 import type { Actor, HeadlessStreamEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
+import { nativeSessionStatusKey } from "../../utils/nativeSessionStatus";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { RuntimeDockTicker } from "./RuntimeDockTicker";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
@@ -221,6 +222,9 @@ function RuntimeDockActorButtonView({
     actor: item.actor,
     actorStatusProvisional,
   });
+  const groupState = useGroupStore((state) =>
+    state.groupDoc?.group_id === groupId ? state.groupDoc.state : undefined,
+  );
   const ringTone = getRuntimeRingTone(item, isRunning, workingState);
   // The existing active tone also covers queued tasks. A moving ring must
   // describe work actually in progress, not merely a pending item.
@@ -248,15 +252,22 @@ function RuntimeDockActorButtonView({
   }, [item.actorId, onToneChange, ringTone]);
   useLayoutEffect(() => () => onToneChange?.(item.actorId, null), [item.actorId, onToneChange]);
   const useRuntimeStatus = hasManagedRuntimeOutput(item.actor) || workingState === "error";
+  // A native session runs outside CCCC: name whether it can receive, as the
+  // Actor tab does, never "Stopped".
+  const nativeStatusKey = item.actor.external_session_id
+    ? nativeSessionStatusKey(item.actor, groupState)
+    : null;
   const statusLabel = item.actor.runtime_confirmation_required
     ? t("actors:runtimeConfirmationPending")
     : item.actor.runtime_confirmation_paused === true
       ? t("actors:runtimeConfirmationPaused")
-      : item.liveWorkCard && !useRuntimeStatus
-        ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
-        : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
-            t(key === "error" ? "common:error" : `actors:${key}`, options),
-          );
+      : nativeStatusKey
+        ? t(nativeStatusKey.includes(":") ? nativeStatusKey : `actors:${nativeStatusKey}`)
+        : item.liveWorkCard && !useRuntimeStatus
+          ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
+          : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
+              t(key === "error" ? "common:error" : `actors:${key}`, options),
+            );
   const queuedCount = Math.max(0, Number(item.webModelQueuedCount || 0));
   const queuedLabel =
     queuedCount > 0

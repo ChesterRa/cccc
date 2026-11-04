@@ -425,7 +425,7 @@
   "voiceSecretaryBrowserBackendRequired": "Select Browser ASR in global Voice Secretary settings first.",
   "voiceSecretaryBrowserBackendRequiredShort": "Switch to Browser ASR to dictate.",
   "voiceSecretaryServiceBackendRequired": "Select Local ASR or external ASR in global Voice Secretary settings first.",
-  "voiceSecretaryLocalAsrModelsNotReady": "Local ASR models are not ready. Install or repair them in Settings > Voice > Voice Secretary, or select Browser ASR.",
+  "voiceSecretaryLocalAsrModelsNotReady": "Local ASR models are not ready. Install or repair them in Settings > This instance > Voice > Voice Secretary, or select Browser ASR.",
   "voiceSecretaryAudioEmpty": "No audio was captured.",
   "voiceSecretaryAudioCaptureFailed": "Audio capture failed.",
   "voiceSecretaryLocalAsrConnectionFailed": "The local ASR connection failed. Refresh the page to initialize the authenticated session, and confirm the updated Web backend is running.",
@@ -803,7 +803,7 @@
     "connecting": "Connecting…",
     "switchTo": "Switch to {{view}}"
   },
-  "voiceSecretaryExternalAsrNotReady": "Configure Bailian or Volcengine credentials in Settings > Voice > Voice Secretary first.",
+  "voiceSecretaryExternalAsrNotReady": "Configure Bailian or Volcengine credentials in Settings > This instance > Voice > Voice Secretary first.",
   "voiceSecretaryExternalAsrConnectionFailed": "External ASR connection failed. Check the server network and provider configuration.",
   "voiceSecretaryOpenInstanceForMicrophone": "For microphone capture, open this instance separately.",
   "connectDelivery": {
@@ -872,7 +872,7 @@
   "workspaceEmptyFilteredHint": "Files may be hidden by Git ignore rules.",
   "workspaceUnsaved": {
     "title": "Leave unsaved work?",
-    "description": "Unsaved edits, sends in progress or waiting to be restored, and recordings in progress or being finalized may be lost if you continue.",
+    "description": "Unsaved edits and message drafts, sends in progress or waiting to be restored, and recordings in progress or being finalized may be lost if you continue.",
     "stay": "Stay here",
     "discard": "Discard and continue"
   },

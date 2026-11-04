@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../services/api";
+import { isTransientApiFailure } from "../utils/transientApiFailure";
 import { AuthTokenLoginForm } from "./auth/AuthTokenLoginForm";
 
 type AuthStatus = "checking" | "authenticated" | "login";
@@ -86,6 +87,9 @@ export function AuthGate({
     const timer = window.setInterval(() => {
       void api.fetchWebAccessSession().then((response) => {
         if (cancelled) return;
+        // Preserve an admitted workbench through transient connectivity failures.
+        // Admission and the independent frame-proof deadline still apply.
+        if (!response.ok && isTransientApiFailure(response.error)) return;
         if (
           !response.ok ||
           !response.result?.web_access_session?.is_admin ||

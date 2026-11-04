@@ -82,6 +82,7 @@ async fn completion_fixture() -> (
         port: listener.local_addr().expect("address").port(),
         pid: std::process::id(),
         version: "test".into(),
+        source_id: String::new(),
         ts: "test".into(),
     };
     std::fs::write(

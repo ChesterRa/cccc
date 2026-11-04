@@ -1,24 +1,28 @@
 //! A long-lived MCP server keeps the tools of the executable it started with,
 //! while the daemon can restart on another CCCC version. After each
-//! `tools/call`, the server compares its own version with the one the daemon
-//! address file declares when read, which is not necessarily the process that
-//! handled the call. A difference is reported once, and again whenever the
-//! declared version changes to another one that differs.
+//! `tools/call`, the server compares its own version and selected source
+//! fingerprint with the daemon address file when read. The address file does
+//! not necessarily identify the process that handled the call.
 //! Runtimes such as Claude Code and Codex show the model `structuredContent`
 //! instead of the text items when it is present, so the notice goes into both.
 
-use std::cmp::Ordering;
+use std::{
+    cmp::Ordering,
+    time::{Duration, Instant},
+};
 
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
 
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const NOTICE_KEY: &str = "cccc_version_notice";
+const REPEAT_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Debug, Default)]
 pub(crate) struct VersionNotice {
-    /// The differing declared version already reported; cleared on a match.
-    noticed: Option<String>,
+    /// The last differing declared version and when it was reported.
+    noticed: Option<(String, Instant)>,
+    source_noticed: Option<(String, Instant)>,
 }
 
 impl VersionNotice {
@@ -34,8 +38,18 @@ impl VersionNotice {
         if request.get("method").and_then(Value::as_str) != Some("tools/call") {
             return;
         }
-        if let Some(declared) = declared_daemon_version(home).await {
+        if let Some((declared, source)) = declared_daemon_identity(home).await {
             self.annotate_with(SERVER_VERSION, &declared, runtime, response);
+            if declared != SERVER_VERSION {
+                self.source_noticed = None;
+                return;
+            }
+            if let Some(source) = source {
+                let own = cccc_core::build_info::current();
+                if let Some(own_source) = own["source_id"].as_str() {
+                    self.annotate_source(own_source, &source, runtime, response, Instant::now());
+                }
+            }
         }
     }
 
@@ -46,53 +60,113 @@ impl VersionNotice {
         runtime: Option<&str>,
         response: &mut Value,
     ) {
+        self.annotate_version(server, declared, runtime, response, Instant::now());
+    }
+
+    fn annotate_version(
+        &mut self,
+        server: &str,
+        declared: &str,
+        runtime: Option<&str>,
+        response: &mut Value,
+        now: Instant,
+    ) {
         if declared == server {
             self.noticed = None;
             return;
         }
-        if self.noticed.as_deref() == Some(declared) {
+        if self.noticed.as_ref().is_some_and(|(reported, last)| {
+            reported == declared && now.saturating_duration_since(*last) < REPEAT_INTERVAL
+        }) {
             return;
         }
-        let Some(result) = response.get_mut("result").and_then(Value::as_object_mut) else {
+        if attach_notice(
+            response,
+            NOTICE_KEY,
+            &notice_text(server, declared, runtime),
+        ) {
+            self.noticed = Some((declared.to_owned(), now));
+        }
+    }
+
+    fn annotate_source(
+        &mut self,
+        own_source: &str,
+        declared_source: &str,
+        runtime: Option<&str>,
+        response: &mut Value,
+        now: Instant,
+    ) {
+        if own_source == declared_source {
+            self.source_noticed = None;
             return;
-        };
-        // Never replace a field of the tool's own result; a later result carries the notice.
-        if result
-            .get("structuredContent")
-            .and_then(Value::as_object)
-            .is_some_and(|structured| structured.contains_key(NOTICE_KEY))
+        }
+        if self
+            .source_noticed
+            .as_ref()
+            .is_some_and(|(reported, last)| {
+                reported == declared_source
+                    && now.saturating_duration_since(*last) < REPEAT_INTERVAL
+            })
         {
             return;
         }
-        let text = notice_text(server, declared, runtime);
-        let mut attached = false;
-        if let Some(structured) = result
-            .get_mut("structuredContent")
-            .and_then(Value::as_object_mut)
-        {
-            structured.insert(NOTICE_KEY.into(), Value::String(text.clone()));
-            attached = true;
-        }
-        if let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) {
-            content.push(json!({"type":"text","text":text}));
-            attached = true;
-        }
-        if attached {
-            self.noticed = Some(declared.to_owned());
+        let short = |source: &str| source.chars().take(12).collect::<String>();
+        let text = format!(
+            "CCCC source notice: this cccc MCP server ({SERVER_VERSION}, source {}) and the daemon address file (version {SERVER_VERSION}, source {}) declare different source inputs. Check which build should run and ask the user to reconnect the MCP server or restart CCCC as appropriate: {}. See https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration",
+            short(own_source),
+            short(declared_source),
+            restart_step(runtime)
+        );
+        if attach_notice(response, NOTICE_KEY, &text) {
+            self.source_noticed = Some((declared_source.to_owned(), now));
         }
     }
 }
 
-async fn declared_daemon_version(home: &HomeLayout) -> Option<String> {
+/// Adds `text` under `key` and as a text item; false when nothing could carry it.
+pub(crate) fn attach_notice(response: &mut Value, key: &str, text: &str) -> bool {
+    let Some(result) = response.get_mut("result").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    // Never replace a field of the tool's own result; a later result carries the notice.
+    if result
+        .get("structuredContent")
+        .and_then(Value::as_object)
+        .is_some_and(|structured| structured.contains_key(key))
+    {
+        return false;
+    }
+    let mut attached = false;
+    if let Some(structured) = result
+        .get_mut("structuredContent")
+        .and_then(Value::as_object_mut)
+    {
+        structured.insert(key.into(), Value::String(text.to_owned()));
+        attached = true;
+    }
+    if let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) {
+        content.push(json!({"type":"text","text":text}));
+        attached = true;
+    }
+    attached
+}
+
+async fn declared_daemon_identity(home: &HomeLayout) -> Option<(String, Option<String>)> {
     let raw = tokio::fs::read(cccc_client::address_path(home))
         .await
         .ok()?;
     let address: Value = serde_json::from_slice(&raw).ok()?;
-    address
+    let version = address
         .get("version")?
         .as_str()
-        .filter(|version| !version.is_empty())
-        .map(str::to_owned)
+        .filter(|version| !version.is_empty())?;
+    let source = address
+        .get("source_id")
+        .and_then(Value::as_str)
+        .filter(|source| !source.is_empty())
+        .map(str::to_owned);
+    Some((version.to_owned(), source))
 }
 
 fn notice_text(server: &str, daemon: &str, runtime: Option<&str>) -> String {
@@ -230,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn a_notice_repeats_only_after_the_declared_version_changes() {
+    fn a_notice_repeats_when_the_declared_version_changes() {
         let mut notice = VersionNotice::default();
         let mut noticed = |declared: &str| {
             let mut response = result();
@@ -249,6 +323,27 @@ mod tests {
             observed,
             [true, false, true, true, false, false, true, false]
         );
+    }
+
+    #[test]
+    fn a_version_difference_can_be_reported_again_after_six_hours() {
+        let now = Instant::now();
+        let mut notice = VersionNotice::default();
+        let mut first = result();
+        notice.annotate_version("0.4.47", "0.4.48", None, &mut first, now);
+        assert!(first["result"]["structuredContent"][NOTICE_KEY].is_string());
+        let mut before = result();
+        notice.annotate_version(
+            "0.4.47",
+            "0.4.48",
+            None,
+            &mut before,
+            now + REPEAT_INTERVAL - Duration::from_secs(1),
+        );
+        assert_eq!(before, result());
+        let mut after = result();
+        notice.annotate_version("0.4.47", "0.4.48", None, &mut after, now + REPEAT_INTERVAL);
+        assert!(after["result"]["structuredContent"][NOTICE_KEY].is_string());
     }
 
     #[test]
@@ -325,6 +420,111 @@ mod tests {
                 .as_str()
                 .is_some_and(|text| text.contains("declares 999.0.0"))
         );
+    }
+
+    #[test]
+    fn a_source_difference_is_non_destructive_and_repeats_only_at_the_boundaries() {
+        let now = Instant::now();
+        let mut notice = VersionNotice::default();
+        let mut first = result();
+        notice.annotate_source(
+            "fedcba0987654321",
+            "1234567890abcdef",
+            Some("codex"),
+            &mut first,
+            now,
+        );
+        let text = first["result"]["structuredContent"][NOTICE_KEY]
+            .as_str()
+            .expect("source notice");
+        assert!(
+            text.contains("fedcba098765") && text.contains("1234567890ab"),
+            "{text}"
+        );
+        assert!(
+            text.contains("address file") && text.contains("ask the user"),
+            "{text}"
+        );
+        assert_eq!(first["result"]["content"][1]["text"], text);
+        let mut repeated = result();
+        notice.annotate_source(
+            "fedcba0987654321",
+            "1234567890abcdef",
+            None,
+            &mut repeated,
+            now + Duration::from_secs(5),
+        );
+        assert_eq!(repeated, result());
+        let mut later = result();
+        notice.annotate_source(
+            "fedcba0987654321",
+            "1234567890abcdef",
+            None,
+            &mut later,
+            now + REPEAT_INTERVAL,
+        );
+        assert!(later["result"]["structuredContent"][NOTICE_KEY].is_string());
+        let mut changed = result();
+        notice.annotate_source(
+            "fedcba0987654321",
+            "different",
+            None,
+            &mut changed,
+            now + REPEAT_INTERVAL,
+        );
+        assert!(changed["result"]["structuredContent"][NOTICE_KEY].is_string());
+        let mut matched = result();
+        notice.annotate_source(
+            "fedcba0987654321",
+            "fedcba0987654321",
+            None,
+            &mut matched,
+            now + REPEAT_INTERVAL,
+        );
+        assert_eq!(matched, result());
+        let mut after_match = result();
+        notice.annotate_source(
+            "fedcba0987654321",
+            "1234567890abcdef",
+            None,
+            &mut after_match,
+            now + REPEAT_INTERVAL,
+        );
+        assert!(after_match["result"]["structuredContent"][NOTICE_KEY].is_string());
+    }
+
+    #[tokio::test]
+    async fn source_check_reads_each_address_but_old_addresses_remain_quiet() {
+        let (_temp, home) = home_with(Some(&address(SERVER_VERSION)));
+        let mut notice = VersionNotice::default();
+        let mut old_address = result();
+        notice
+            .annotate(&home, None, &call(), &mut old_address)
+            .await;
+        assert_eq!(old_address, result());
+
+        let mut new_address: Value =
+            serde_json::from_str(&address(SERVER_VERSION)).expect("address");
+        new_address["source_id"] = json!("different-source");
+        std::fs::write(cccc_client::address_path(&home), new_address.to_string()).expect("rewrite");
+        let mut changed = result();
+        notice
+            .annotate(&home, Some("codex"), &call(), &mut changed)
+            .await;
+        assert!(
+            changed["result"]["structuredContent"][NOTICE_KEY]
+                .as_str()
+                .is_some_and(|text| text.contains("different-so"))
+        );
+        let mut repeated = result();
+        notice.annotate(&home, None, &call(), &mut repeated).await;
+        assert_eq!(repeated, result());
+
+        new_address["source_id"] = cccc_core::build_info::current()["source_id"].clone();
+        std::fs::write(cccc_client::address_path(&home), new_address.to_string()).expect("match");
+        let mut matched = result();
+        notice.annotate(&home, None, &call(), &mut matched).await;
+        assert_eq!(matched, result());
     }
 
     #[test]

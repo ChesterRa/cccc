@@ -425,7 +425,7 @@
   "voiceSecretaryBrowserBackendRequired": "请先在全局语音秘书设置中选择浏览器 ASR。",
   "voiceSecretaryBrowserBackendRequiredShort": "切到浏览器 ASR 后可语音转写。",
   "voiceSecretaryServiceBackendRequired": "请先在全局语音秘书设置中选择本地 ASR 或外部 ASR。",
-  "voiceSecretaryLocalAsrModelsNotReady": "本地 ASR 模型未就绪。请在“设置 → 语音 → 语音秘书”中安装或修复，或选择浏览器 ASR。",
+  "voiceSecretaryLocalAsrModelsNotReady": "本地 ASR 模型未就绪。请在“设置 → 整个实例 → 语音 → 语音秘书”中安装或修复，或选择浏览器 ASR。",
   "voiceSecretaryAudioEmpty": "没有采集到音频。",
   "voiceSecretaryAudioCaptureFailed": "音频采集失败。",
   "voiceSecretaryLocalAsrConnectionFailed": "本地 ASR 连接失败。请刷新页面初始化认证会话，并确认更新后的 Web 后端已经运行。",
@@ -803,7 +803,7 @@
     "connecting": "连接中…",
     "switchTo": "切换到{{view}}"
   },
-  "voiceSecretaryExternalAsrNotReady": "请先在“设置 → 语音 → 语音秘书”中配置百炼或火山引擎凭据。",
+  "voiceSecretaryExternalAsrNotReady": "请先在“设置 → 整个实例 → 语音 → 语音秘书”中配置百炼或火山引擎凭据。",
   "voiceSecretaryExternalAsrConnectionFailed": "外部 ASR 连接失败，请检查服务端网络和供应商配置。",
   "voiceSecretaryOpenInstanceForMicrophone": "要使用麦克风，请单独打开此实例。",
   "connectDelivery": {
@@ -872,7 +872,7 @@
   "workspaceEmptyFilteredHint": "文件可能被 Git 忽略规则隐藏。",
   "workspaceUnsaved": {
     "title": "放弃未保存的工作？",
-    "description": "继续操作可能丢失未保存的修改、发送中或待恢复的内容，以及正在录制或整理的录音。",
+    "description": "继续操作可能丢失未保存的修改和消息草稿、发送中或待恢复的内容，以及正在录制或整理的录音。",
     "stay": "留在这里",
     "discard": "放弃并继续"
   },

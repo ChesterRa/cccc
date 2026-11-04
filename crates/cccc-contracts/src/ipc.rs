@@ -77,6 +77,9 @@ pub struct DaemonAddress {
     pub port: u16,
     pub pid: u32,
     pub version: String,
+    /// Build-time fingerprint of selected CCCC source inputs, if advertised.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source_id: String,
     pub ts: String,
 }
 
@@ -98,5 +101,24 @@ mod tests {
     fn response_omits_empty_error() {
         let raw = serde_json::to_value(DaemonResponse::success(Map::new())).expect("serialize");
         assert!(raw.get("error").is_none());
+    }
+
+    #[test]
+    fn address_source_identity_is_optional_and_unknown_metadata_is_ignored() {
+        let old = r#"{"v":1,"transport":"unix","path":"/tmp/sock","pid":1,"version":"1","ts":"now","future":true}"#;
+        let mut address: DaemonAddress = serde_json::from_str(old).expect("old address");
+        assert!(address.source_id.is_empty());
+        assert!(
+            serde_json::to_value(&address)
+                .expect("serialize")
+                .get("source_id")
+                .is_none()
+        );
+        address.source_id = "source-fingerprint".into();
+        let new = serde_json::to_string(&address).expect("serialize");
+        assert_eq!(
+            serde_json::from_str::<DaemonAddress>(&new).expect("new address"),
+            address
+        );
     }
 }

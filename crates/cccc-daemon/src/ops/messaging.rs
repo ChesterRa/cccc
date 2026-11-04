@@ -596,6 +596,8 @@ fn preflight_upload_reply(home: &HomeLayout, request: &DaemonRequest) -> OpResul
             "reply message_mode must be send or mail",
         ));
     }
+    let resolved = super::event_prefix::with_full_reply_target(home, request)?;
+    let request = resolved.as_ref().unwrap_or(request);
     let reply_to = required_arg(request, "reply_to")?;
     let group = load(home, request)?;
     let authority_by = string_arg(request, "by").unwrap_or_else(|| "user".into());
@@ -739,6 +741,9 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "reply message_mode must be send or mail",
         ));
     }
+    // Idempotency, routing and both ledgers compare and record full IDs only.
+    let resolved = super::event_prefix::with_full_reply_target(home, request)?;
+    let request = resolved.as_ref().unwrap_or(request);
     let reply_to = required_arg(request, "reply_to")?;
     let group = load(home, request)?;
     let authority_by = string_arg(request, "by").unwrap_or_else(|| "user".into());
@@ -862,7 +867,11 @@ pub(crate) fn reply_crosses_groups(home: &HomeLayout, request: &DaemonRequest) -
     let Some(reply_to) = request.args.get("reply_to").and_then(Value::as_str) else {
         return false;
     };
-    let Ok(event) = find_event(home, group_id, reply_to) else {
+    // Choose the permit from the same parent the handler will resolve.
+    let full = super::event_prefix::full_reply_target(home, request)
+        .ok()
+        .flatten();
+    let Ok(event) = find_event(home, group_id, full.as_deref().unwrap_or(reply_to)) else {
         return false;
     };
     if event.data.contains_key("connect_message") {

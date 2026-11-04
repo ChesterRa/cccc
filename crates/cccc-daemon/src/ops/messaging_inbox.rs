@@ -1,4 +1,4 @@
-use cccc_contracts::DaemonRequest;
+use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::permissions;
 use cccc_core::{GroupDoc, HomeLayout, inbox, ledger};
 use serde_json::{Value, json};
@@ -77,7 +77,7 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 "event_id cannot be combined with history filters or pagination",
             ));
         }
-        return history_event(home, &group, &actor_id, &event_id);
+        return history_event(home, &group, &actor_id, &event_id, request);
     }
     let mode = string_arg(request, "mode")
         .unwrap_or_else(|| "all".into())
@@ -156,7 +156,13 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"messages":result.0,"has_more":result.1}))
 }
 
-fn history_event(home: &HomeLayout, group: &GroupDoc, actor_id: &str, event_id: &str) -> OpResult {
+fn history_event(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    event_id: &str,
+    request: &DaemonRequest,
+) -> OpResult {
     let path = crate::dispatch::store(home)?
         .ledger_path(&group.group_id)
         .map_err(OpError::io)?;
@@ -166,17 +172,22 @@ fn history_event(home: &HomeLayout, group: &GroupDoc, actor_id: &str, event_id: 
         } else {
             generations.get(actor_id).copied().unwrap_or(0)
         };
-        positions
-            .get(event_id)
-            .filter(|index| **index >= generation)
-            .and_then(|index| events.get(*index))
-            .filter(|event| {
-                (event.kind == "chat.message" && event.by == actor_id)
-                    || super::actor_delivery::event_targets_actor(group, event, actor_id)
-            })
-            .cloned()
+        let readable = |event: &Event| super::event_prefix::readable_by(group, event, actor_id);
+        match positions.get(event_id) {
+            Some(index) => Ok(events
+                .get(*index)
+                .filter(|event| *index >= generation && readable(event))
+                .cloned()),
+            // Only an ID that matches no event exactly is read as the short
+            // `(reply:<id>)` hint the delivery header prints.
+            None if super::event_prefix::is_prefix(event_id) => {
+                super::event_prefix::resolve(events, generation, event_id, readable)
+                    .map(|event| event.cloned())
+            }
+            None => Ok(None),
+        }
     })
-    .map_err(OpError::io)?
+    .map_err(OpError::io)??
     .ok_or_else(|| {
         OpError::new(
             "event_not_found",
@@ -195,8 +206,19 @@ fn history_event(home: &HomeLayout, group: &GroupDoc, actor_id: &str, event_id: 
         .filter(|actor| !actor.external_session_id.is_empty())
         && let Some(text) = delivery_text.as_mut()
     {
+        let notice = (request.args.get("by").and_then(Value::as_str) == Some(actor_id))
+            .then(|| {
+                super::mcp_identity_notice::for_read(
+                    home,
+                    &group.group_id,
+                    actor,
+                    request.args.get("_cccc_mcp_identity"),
+                )
+            })
+            .flatten();
         *text = format!(
-            "{}\n\n{text}",
+            "{}{}\n\n{text}",
+            notice.map_or_else(String::new, |notice| format!("{notice}\n\n")),
             super::actor_delivery_preamble::render(home, group, actor)
         );
     }
@@ -257,8 +279,9 @@ fn require_actor_inbox(actor_id: &str) -> Result<(), OpError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{history_limit, limit};
-    use cccc_contracts::DaemonRequest;
+    use super::{history, history_limit, limit};
+    use cccc_contracts::{Actor, DaemonRequest, Event, local_session::LocalSessionRuntime};
+    use cccc_core::{GroupStore, HomeLayout, actors, inbox, ledger, local_sessions};
     use serde_json::{Map, Value, json};
 
     fn request(value: Value) -> DaemonRequest {
@@ -284,6 +307,101 @@ mod tests {
         assert_eq!(
             history_limit(&request(json!(100))).expect("history limit"),
             100
+        );
+    }
+
+    #[test]
+    fn native_exact_history_reports_unverified_client_without_consuming_delivery() {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("layout");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("history", "").expect("group");
+        let mut actor = Actor::new("peer");
+        actor.external_session_id = "codex:fixture".into();
+        actors::add(&mut group, actor).expect("actor");
+        store.save(&group).expect("save group");
+        local_sessions::write(
+            &home,
+            local_sessions::NativeSession {
+                source_id: "codex:fixture".into(),
+                runtime: LocalSessionRuntime::Codex,
+                native_session_id: "fixture".into(),
+                host: local_sessions::NativeHost::capture(std::process::id()).expect("host"),
+                cwd: temp.path().to_string_lossy().into_owned(),
+                title: "Fixture".into(),
+                origin: None,
+                revision: "revision-one".into(),
+                codex_home: None,
+                codex_can_receive: false,
+                codex_program: None,
+                claude_config_dir: None,
+                pi_agent_dir: None,
+                opencode_config_dir: None,
+                opencode_server: None,
+                retired: None,
+            },
+        )
+        .expect("session");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":["peer"],"text":"fixture message","message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&path, &event).expect("append");
+        let before = std::fs::read(&path).expect("ledger before");
+        let cursor = inbox::cursor_details(&home, &group.group_id, "peer").expect("cursor");
+        let read = |by: &str, identity: Option<Value>| {
+            let mut args =
+                json!({"group_id":group.group_id,"actor_id":"peer","by":by,"event_id":event.id})
+                    .as_object()
+                    .expect("args")
+                    .clone();
+            if let Some(identity) = identity {
+                args.insert("_cccc_mcp_identity".into(), identity);
+            }
+            history(
+                &home,
+                &DaemonRequest {
+                    v: 1,
+                    op: "message_history".into(),
+                    args,
+                },
+            )
+            .expect("history")
+        };
+        let matching = json!({"version":env!("CARGO_PKG_VERSION"),"source_id":cccc_core::build_info::current()["source_id"]});
+        assert!(
+            !read("peer", Some(matching))["delivery_text"]
+                .as_str()
+                .expect("text")
+                .contains("source identity")
+        );
+        assert!(
+            !read("user", None)["delivery_text"]
+                .as_str()
+                .expect("text")
+                .contains("source identity")
+        );
+        let first = read("peer", None);
+        assert!(
+            first["delivery_text"]
+                .as_str()
+                .expect("text")
+                .contains("client did not report")
+        );
+        assert_eq!(first["messages"][0]["id"], event.id);
+        assert!(
+            !read("peer", None)["delivery_text"]
+                .as_str()
+                .expect("text")
+                .contains("client did not report")
+        );
+        assert_eq!(std::fs::read(&path).expect("ledger after"), before);
+        assert_eq!(
+            inbox::cursor_details(&home, &group.group_id, "peer").expect("cursor"),
+            cursor
         );
     }
 }

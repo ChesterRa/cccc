@@ -208,14 +208,18 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary home");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
-        let source = store.create("source", "").expect("source Group");
+        let mut source = store.create("source", "").expect("source Group");
+        cccc_core::actors::add(&mut source, cccc_contracts::Actor::new("worker")).expect("worker");
+        store.save(&source).expect("save source Group");
         let destination = store.create("destination", "").expect("destination Group");
         let mut parent = cccc_contracts::Event::new("chat.message", &source.group_id);
         parent.by = format!("{}::sender", destination.group_id);
-        parent.data = json!({"src_group_id":destination.group_id,"src_event_id":"original"})
-            .as_object()
-            .expect("valid test fixture")
-            .clone();
+        parent.data = json!({
+            "src_group_id":destination.group_id,"src_event_id":"original","to":["worker"]
+        })
+        .as_object()
+        .expect("valid test fixture")
+        .clone();
         ledger::append(
             &store.ledger_path(&source.group_id).expect("ledger path"),
             &parent,
@@ -238,6 +242,26 @@ mod tests {
         let permit = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
             .await
             .expect("valid test fixture");
+        assert!(matches!(permit, DispatchPermit::GlobalWrite { .. }));
+        drop(permit);
+
+        // An agent naming the parent by its short ID gets the same ownership.
+        let short_request = request(
+            "reply",
+            json!({"group_id":source.group_id,"by":"worker","reply_to":&parent.id[..8]}),
+        );
+        let blocked = locks.group_write(&destination.group_id).await;
+        let waiting = locks.acquire_for(&home, &short_request);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut waiting)
+                .await
+                .is_err()
+        );
+        drop(blocked);
+        let permit = tokio::time::timeout(std::time::Duration::from_secs(2), waiting)
+            .await
+            .expect("short parent ID");
         assert!(matches!(permit, DispatchPermit::GlobalWrite { .. }));
         drop(permit);
 

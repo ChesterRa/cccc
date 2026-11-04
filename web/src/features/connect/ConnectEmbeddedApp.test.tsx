@@ -176,6 +176,76 @@ it("reports dirty while either a file edit or a failed send remains", async () =
   );
 });
 
+it("reports active composer text and attachments, but not an empty or whitespace-only draft", async () => {
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  expect(parent.postMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
+  vi.mocked(parent.postMessage).mockClear();
+  await act(async () => useComposerStore.getState().setComposerText("  \n\t"));
+  expect(parent.postMessage).not.toHaveBeenCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+  await act(async () => useComposerStore.getState().setComposerText("Draft"));
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+  await act(async () => useComposerStore.getState().setComposerText(""));
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
+  await act(async () =>
+    useComposerStore.getState().setComposerFiles([new File(["attachment"], "note.txt")]),
+  );
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+  await act(async () => useComposerStore.getState().setComposerFiles([]));
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
+});
+
+it("keeps other Groups' drafts protected and ignores an outdated saved copy of the active draft", async () => {
+  useComposerStore.setState({ activeGroupId: "a" });
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  await act(async () => useComposerStore.getState().setComposerText("Other Group draft"));
+  await act(async () => useComposerStore.getState().switchGroup("a", "b"));
+  expect(useComposerStore.getState().composerText).toBe("");
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+
+  await act(async () => useComposerStore.getState().switchGroup("b", "a"));
+  await act(async () => useComposerStore.getState().setComposerText(""));
+  expect(useComposerStore.getState().drafts.a?.composerText).toBe("Other Group draft");
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
+
+  await act(async () =>
+    useComposerStore.getState().setComposerFiles([new File(["attachment"], "note.txt")]),
+  );
+  await act(async () => useComposerStore.getState().switchGroup("a", "b"));
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+  await act(async () => useComposerStore.getState().clearDraft("a"));
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
+});
+
 it("opens the requested remote Group once and rejects stale, foreign and absent targets", async () => {
   await act(async () => root.render(<ConnectEmbeddedApp />));
   await select(1, "b", "https://wrong.test");

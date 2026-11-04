@@ -27,6 +27,7 @@ async fn test_server(name: &str) -> (PathBuf, HomeLayout, TcpListener) {
         port: listener.local_addr().expect("address").port(),
         pid: std::process::id(),
         version: "test".into(),
+        source_id: String::new(),
         ts: "test".into(),
     };
     tokio::fs::write(

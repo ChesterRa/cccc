@@ -110,6 +110,7 @@ impl Fixture {
                 port: listener.local_addr().expect("listener address").port(),
                 pid: std::process::id(),
                 version: "test".into(),
+                source_id: String::new(),
                 ts: "test".into(),
             })
             .expect("initialize persistence fixture"),
