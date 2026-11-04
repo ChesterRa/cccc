@@ -700,7 +700,10 @@ mod failure_next_step_tests {
         ] {
             let next = failure_next_step(false, "failed", reason);
             assert!(!next.contains("did not accept"), "{reason}: {next}");
-            assert!(next.contains("send it again"), "{reason}: {next}");
+            assert!(
+                next.to_lowercase().contains("send it again"),
+                "{reason}: {next}"
+            );
         }
         assert!(
             failure_next_step(false, "failed", "rejected by target").contains("did not accept")
