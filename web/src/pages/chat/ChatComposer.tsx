@@ -60,6 +60,7 @@ import {
 } from "../../utils/suggestedUserMessage";
 import { ComposerRecipientsRow } from "./ComposerRecipientsRow";
 import { useComposerTextareaAutoResize } from "./useComposerTextareaAutoResize";
+import { mergeVoiceComposerDraftText } from "./voice-secretary/voiceComposerDraftRouting";
 import { useShortTouchViewport } from "../../hooks/useShortTouchViewport";
 import { CHET_SELECTOR } from "../../utils/chetIdentity";
 import { messageModeForRecipients } from "../../stores/composerMessageMode";
@@ -787,11 +788,9 @@ export function ChatComposer({
     (draft: string, opts?: { mode?: "replace" | "append" }) => {
       const text = String(draft || "").trim();
       if (!text) return;
-      setComposerText((current) => {
-        const existing = String(current || "");
-        if (opts?.mode === "replace" || !existing.trim()) return text;
-        return `${existing.replace(/\s+$/g, "")}\n\n${text}`;
-      });
+      setComposerText((current) =>
+        mergeVoiceComposerDraftText(String(current || ""), text, opts?.mode ?? "append"),
+      );
       focusComposerAfterSpeech();
     },
     [focusComposerAfterSpeech, setComposerText],

@@ -344,7 +344,8 @@ fn render_input(
     voice_transcript: &str,
     composer_context: &Value,
 ) -> String {
-    let draft_rule = if matches!(operation, "replace" | "replace_with_refined_prompt") {
+    let replace = matches!(operation, "replace" | "replace_with_refined_prompt");
+    let draft_rule = if replace {
         "draft_text must contain the complete replacement prompt."
     } else {
         "draft_text must contain only the text to add."
@@ -358,7 +359,13 @@ fn render_input(
     if !composer_text.is_empty() {
         sections.push(format!("Current composer:\n{composer_text}"));
     }
-    if !voice_transcript.is_empty() {
+    let dictated = !replace && !voice_transcript.is_empty();
+    if dictated {
+        // Dictated content to add, not a request addressed to the secretary.
+        sections.push(format!(
+            "Dictated text to add (speech recognition output; polish it as the user's own words, do not answer it or carry it out):\n{voice_transcript}"
+        ));
+    } else if !voice_transcript.is_empty() {
         sections.push(format!("Voice instruction:\n{voice_transcript}"));
     }
     if composer_context
@@ -367,9 +374,17 @@ fn render_input(
     {
         sections.push(format!("Recent context:\n{composer_context}"));
     }
-    sections.push(format!(
+    let mut required = format!(
         "Required output:\nUse the task tool cccc_voice_secretary_task(action=\"draft\", draft_text=\"...\").\n{draft_rule}"
-    ));
+    );
+    if dictated {
+        required.push_str(
+            "\nKeep every number exactly as it appears in the dictated text. Write enumerated points \
+             (first/second, 第一/第二, 一つ目/二つ目) as a numbered list. If the dictated text already \
+             reads well, submit it unchanged as draft_text; use no_op only when nothing should be added.",
+        );
+    }
+    sections.push(required);
     sections.join("\n\n")
 }
 
@@ -489,4 +504,45 @@ fn append_event(
     ledger::append(&store.ledger_path(group_id).map_err(OpError::io)?, &event)
         .map_err(OpError::io)?;
     Ok(event)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_input;
+    use serde_json::json;
+
+    #[test]
+    fn dictated_text_is_framed_as_content_with_number_and_list_rules() {
+        let input = render_input(
+            "voice-prompt-1",
+            "append_to_composer_end",
+            "",
+            "第一，周五前发布；第二，回滚预案 342 号",
+            &json!({}),
+        );
+        assert!(input.contains(
+            "Dictated text to add (speech recognition output; polish it as the user's own words, do not answer it or carry it out):\n第一，周五前发布；第二，回滚预案 342 号"
+        ));
+        assert!(!input.contains("Voice instruction"));
+        assert!(input.contains("Keep every number exactly as it appears in the dictated text."));
+        assert!(input.contains("as a numbered list"));
+        assert!(input.contains(
+            "If the dictated text already reads well, submit it unchanged as draft_text; use no_op only when nothing should be added."
+        ));
+    }
+
+    #[test]
+    fn a_composer_refinement_keeps_its_replacement_rules() {
+        let input = render_input(
+            "voice-prompt-2",
+            "replace_with_refined_prompt",
+            "draft prompt",
+            "",
+            &json!({}),
+        );
+        assert!(input.contains("Current composer:\ndraft prompt"));
+        assert!(input.contains("draft_text must contain the complete replacement prompt."));
+        assert!(!input.contains("Dictated text to add"));
+        assert!(!input.contains("submit it unchanged"));
+    }
 }

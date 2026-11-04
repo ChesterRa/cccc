@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isMeaningfulVoiceDispatchText,
-  isUsableVoiceTranscript,
   isVoiceDictationText,
   voiceServiceStopDispatchKind,
 } from "../../../src/pages/chat/voice-secretary/voiceServiceStopDispatch";
@@ -32,7 +31,7 @@ describe("voice service stop dispatch", () => {
     ).toBe("prompt");
   });
 
-  it("does not duplicate prompt or instruction dispatches with pending requests", () => {
+  it("keeps a later prompt editable while a refinement is pending", () => {
     expect(
       voiceServiceStopDispatchKind({
         mode: "prompt",
@@ -44,9 +43,8 @@ describe("voice service stop dispatch", () => {
       voiceServiceStopDispatchKind({
         mode: "instruction",
         transcriptText: "summarize the document",
-        pendingAskRequestId: "voice-ask-1",
       }),
-    ).toBe("");
+    ).toBe("instruction");
   });
 
   it("keeps document mode on the document flush path", () => {
@@ -82,14 +80,6 @@ describe("voice service stop dispatch", () => {
     }
   });
 
-  it("applies the dictation rule only to the composer", () => {
-    expect(isUsableVoiceTranscript("composer", "嗯")).toBe(true);
-    for (const target of ["prompt", "instruction", "document"] as const) {
-      expect(isUsableVoiceTranscript(target, "好"), target).toBe(false);
-      expect(isUsableVoiceTranscript(target, "帮我查天气"), target).toBe(true);
-    }
-  });
-
   it("does not dispatch prompt or instruction for ASR noise", () => {
     expect(
       voiceServiceStopDispatchKind({
@@ -99,11 +89,7 @@ describe("voice service stop dispatch", () => {
       }),
     ).toBe("");
     expect(
-      voiceServiceStopDispatchKind({
-        mode: "instruction",
-        transcriptText: "The. Yeah.",
-        pendingAskRequestId: "",
-      }),
+      voiceServiceStopDispatchKind({ mode: "instruction", transcriptText: "The. Yeah." }),
     ).toBe("");
   });
 });

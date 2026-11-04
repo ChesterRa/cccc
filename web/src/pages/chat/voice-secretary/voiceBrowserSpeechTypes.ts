@@ -43,5 +43,5 @@ export type BrowserMicrophoneSupportIssue =
   | "secure_context"
   | "get_user_media"
   | "embedded_workspace";
-export type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue;
+export type BrowserAudioSupportIssue = BrowserMicrophoneSupportIssue | "audio_worklet";
 export type BrowserSpeechSupportIssue = "" | "unsupported";

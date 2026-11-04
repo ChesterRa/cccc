@@ -152,6 +152,8 @@ enum Reply {
     Status(u16),
     /// Sends the start of a longer body, then nothing more.
     Stall(Vec<u8>),
+    /// Sends the body in pieces with a pause before each.
+    Trickle(Vec<Vec<u8>>, Duration),
 }
 
 /// Serves fixed replies by path on a local port and returns its base URL.
@@ -183,12 +185,21 @@ async fn serve(routes: Vec<(&str, Reply)>) -> String {
                     Reply::Body(body) => (200, body.clone(), body.len()),
                     Reply::Status(status) => (*status, Vec::new(), 0),
                     Reply::Stall(start) => (200, start.clone(), start.len() + 1_000_000),
+                    Reply::Trickle(pieces, _) => {
+                        (200, Vec::new(), pieces.iter().map(Vec::len).sum())
+                    }
                 };
                 let head = format!(
                     "HTTP/1.1 {status} Fixture\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
                 );
                 let _ = socket.write_all(head.as_bytes()).await;
                 let _ = socket.write_all(&body).await;
+                if let Reply::Trickle(pieces, pause) = &reply {
+                    for piece in pieces {
+                        tokio::time::sleep(*pause).await;
+                        let _ = socket.write_all(piece).await;
+                    }
+                }
                 if matches!(reply, Reply::Stall(_)) {
                     std::future::pending::<()>().await;
                 }
@@ -265,6 +276,41 @@ async fn a_first_install_the_server_refuses_fails() {
     assert_eq!(status["installed"], false);
     assert_eq!(status["error"]["code"], "voice_model_download_failed");
     assert_eq!(f.entries(), [INSTALL_STATE]);
+}
+
+#[tokio::test]
+async fn a_download_fails_only_after_data_stops_arriving() {
+    let base = serve(vec![
+        (
+            "/slow.bin",
+            Reply::Trickle(vec![b"ab".to_vec(); 12], Duration::from_millis(50)),
+        ),
+        ("/stalled.bin", Reply::Stall(b"ab".to_vec())),
+    ])
+    .await;
+    let stall = Duration::from_millis(300);
+    let client = download_client(stall).expect("client");
+    // Twelve pieces 50 ms apart take twice the stall limit in total.
+    let started = Instant::now();
+    let body = client
+        .get(format!("{base}/slow.bin"))
+        .send()
+        .await
+        .expect("response")
+        .bytes()
+        .await
+        .expect("a slow download that keeps receiving completes");
+    assert!(started.elapsed() > stall);
+    assert_eq!(body.len(), 24);
+    let error = client
+        .get(format!("{base}/stalled.bin"))
+        .send()
+        .await
+        .expect("response")
+        .bytes()
+        .await
+        .expect_err("a download that stops receiving fails");
+    assert!(error.is_timeout(), "{error}");
 }
 
 #[tokio::test]

@@ -50,10 +50,22 @@ export function getBrowserMicrophoneSupportIssue(): BrowserMicrophoneSupportIssu
 }
 
 export function getBrowserAudioSupportIssue(): BrowserAudioSupportIssue {
-  return getBrowserMicrophoneSupportIssue();
+  const microphoneIssue = getBrowserMicrophoneSupportIssue();
+  if (microphoneIssue) return microphoneIssue;
+  if (typeof window === "undefined") return "audio_worklet";
+  const audioContext =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (
+    !audioContext ||
+    typeof AudioWorkletNode === "undefined" ||
+    !("audioWorklet" in audioContext.prototype)
+  )
+    return "audio_worklet";
+  return "";
 }
 
-export function mediaRecorderSupported(): boolean {
+export function serviceAudioCaptureSupported(): boolean {
   return !getBrowserAudioSupportIssue();
 }
 

@@ -1,4 +1,3 @@
-import type { VoiceCaptureDispatchTarget } from "./voiceDictationRoute";
 import type { VoiceSecretaryCaptureMode } from "./voiceSecretaryTypes";
 
 export type VoiceServiceStopDispatchKind = "" | "prompt" | "instruction";
@@ -68,24 +67,14 @@ export function isVoiceDictationText(value: string): boolean {
   return /[^\s\p{P}]/u.test(cleanVoiceDispatchText(value));
 }
 
-/** Direct dictation keeps short answers; transcripts for an agent or a document keep the stricter filter. */
-export function isUsableVoiceTranscript(
-  target: VoiceCaptureDispatchTarget,
-  value: string,
-): boolean {
-  return target === "composer" ? isVoiceDictationText(value) : isMeaningfulVoiceDispatchText(value);
-}
-
 export function voiceServiceStopDispatchKind(params: {
   mode: VoiceSecretaryCaptureMode;
   transcriptText: string;
   pendingPromptRequestId?: string;
-  pendingAskRequestId?: string;
 }): VoiceServiceStopDispatchKind {
   if (!isMeaningfulVoiceDispatchText(params.transcriptText)) return "";
   if (params.mode === "prompt" && !String(params.pendingPromptRequestId || "").trim())
     return "prompt";
-  if (params.mode === "instruction" && !String(params.pendingAskRequestId || "").trim())
-    return "instruction";
+  if (params.mode === "instruction") return "instruction";
   return "";
 }

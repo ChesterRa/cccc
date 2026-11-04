@@ -2,13 +2,53 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   displayAskFeedbackStatus,
+  joinTranscriptSegments,
+  mergeTranscriptChunks,
   normalizeVoiceRecognitionLanguageForBackend,
   shouldAutoOpenVoiceReplyBubble,
   stripUncertainSpeakerPrefix,
   visibleVoiceDocuments,
   voiceLanguageOptionValues,
+  transcriptSeparator,
   voiceTranscriptItemsFromMeetingSession,
 } from "../../../src/pages/chat/voice-secretary/voiceComposerUtils";
+
+describe("transcript joining", () => {
+  it.each([
+    ["好的。", "然后", ""],
+    ["你好，", "world", ""],
+    ["OK", "，然后", ""],
+    ["先跑测试", "再提交", ""],
+    ["了解です", "次へ", ""],
+    ["使用", "CCCC", " "],
+    ["CCCC", "发布", " "],
+    ["OK.", "Next", " "],
+    ["Hello", ", world", ""],
+    ["Really", "?", ""],
+    ["see (", "the notes", ""],
+    ["안녕하세요", "반갑습니다", " "],
+    ["", "text", ""],
+    ["text ", "next", ""],
+  ])("puts %j between %j and %j", (left, right, separator) => {
+    expect(transcriptSeparator(left, right)).toBe(separator);
+  });
+
+  it("joins mechanical segments without inserting line breaks", () => {
+    expect(joinTranscriptSegments(["第一段说到这里，", "第二段继续。", "", "Then English"])).toBe(
+      "第一段说到这里，第二段继续。Then English",
+    );
+    expect(joinTranscriptSegments(["keep\ninternal lines", "next"])).toBe(
+      "keep\ninternal lines next",
+    );
+  });
+
+  it("does not add a space after full-width punctuation when merging chunks", () => {
+    expect(mergeTranscriptChunks("好的。", "然后")).toBe("好的。然后");
+    expect(mergeTranscriptChunks("好的", "然后")).toBe("好的然后");
+    expect(mergeTranscriptChunks("OK.", "Next step")).toBe("OK. Next step");
+    expect(mergeTranscriptChunks("同じ内容", "同じ内容")).toBe("同じ内容");
+  });
+});
 
 describe("voice composer utils", () => {
   it.each(["pending", "working"])(

@@ -31,6 +31,9 @@ use uuid::Uuid;
 const STAGING_PREFIX: &str = ".install-staging-";
 /// The least time between two progress writes while a file downloads.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
+/// A download fails once no data has arrived for this long. One that keeps receiving may take
+/// as long as it needs: a model package can exceed 1 GB on a slow connection.
+const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A model's install lock: an operating-system file lock held while this value lives, so a
 /// crashed process leaves no stale lock behind.
@@ -317,19 +320,32 @@ fn join_error(error: tokio::task::JoinError) -> VoiceError {
     VoiceError::new("voice_model_install_failed", error.to_string())
 }
 
+/// Builds the download client. It limits the wait for each read, not the whole download.
+fn download_client(stall_timeout: Duration) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(stall_timeout)
+        .build()
+}
+
 /// Downloads every artifact into staging, verifying each, and unpacks the archives there.
 async fn fetch(job: &Arc<Job>) -> Result<(), VoiceError> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(30))
-        .timeout(Duration::from_secs(3600))
-        .build()
+    let client = download_client(DOWNLOAD_STALL_TIMEOUT)
         .map_err(|error| VoiceError::new("voice_model_download_failed", error.to_string()))?;
     let mut downloaded = 0_u64;
     let mut last_progress = Instant::now();
     for (index, artifact) in job.model.artifacts.iter().enumerate() {
         validate_relative(&artifact.path)?;
         let download_error = |error: reqwest::Error| {
-            VoiceError::new("voice_model_download_failed", error.to_string())
+            let message = if error.is_timeout() && !error.is_connect() {
+                format!(
+                    "the download received no data for {} seconds; check the connection and try again",
+                    DOWNLOAD_STALL_TIMEOUT.as_secs()
+                )
+            } else {
+                error.to_string()
+            };
+            VoiceError::new("voice_model_download_failed", message)
                 .detail("url", artifact.url.clone())
         };
         let response = client

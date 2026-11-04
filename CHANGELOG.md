@@ -29,6 +29,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   foreman and peers フォアマン and ピア instead of the English names or リーダー, and says
   グループを起動 instead of グループを開始. A runtime confirmation message says "agent" instead of
   "Actor".
+- Dictation added to the message box continues the text instead of starting a new paragraph.
+  Chinese and Japanese text joins without a space, nothing is inserted next to full-width
+  punctuation or before a comma or full stop, and Latin words get one space. Whatever the draft
+  already ends with, such as a line break or trailing spaces, stays as typed. A polished draft
+  of several lines, such as a numbered list, starts on a new line.
+- When a dictation is polished after recording, the voice secretary is told the text is the
+  user's own words to tidy, not a request to answer or carry out. It is asked to keep numbers as
+  dictated, write spoken enumerations as a numbered list, and return text that already reads well
+  unchanged.
+- Voice secretary recording with the local or external speech recognizer now needs the browser's
+  AudioWorklet support; a page without it says so instead of starting those recognizers. Browser
+  speech recognition does not use it and is unaffected.
+- After you stop a recording, the panel shows that it is being finalized. With the local or
+  external recognizer, stopping releases the microphone at once. If the browser then does not
+  confirm the last captured audio, the page says the result may be incomplete, and for a
+  recording outside a document it leaves any recognized text in the message box for review
+  instead of sending it on. Browser speech recognition is asked to stop. When a manually stopped
+  browser recognition cycle returns no result, or a local or external non-document recording
+  returns an empty result, the page can say that no text was recognized.
+- While a recording outside a document waits for its final transcript, **Stop waiting** appears
+  after 20 seconds. It ends the wait and keeps any recognized text in the message box of the Group
+  where the recording started; audio not yet recognized may be lost. Document recordings do not
+  offer it.
+- When a microphone you selected is no longer available, the error offers **Use system default
+  microphone**. Choosing it changes the microphone choice for voice features in that browser;
+  recording starts again only when you start it.
 
 ### Fixed
 
@@ -80,10 +106,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   terminated or can no longer be found. Earlier calls in the cell may already have taken effect, so
   the advice is to check their outcomes before repeating any of them.
 
-- Voice dictation into the composer with the local or cloud recognizer keeps short answers the
-  recognizer returns, such as 好, 嗯, OK, yes or no, instead of discarding them as noise; only blank
-  or punctuation-only text is left out. Prompt refinement and Ask keep the existing speech-noise
-  filter.
+- Voice dictation into the composer keeps short answers the recognizer returns, such as 好, 嗯,
+  OK, yes or no, instead of discarding them as noise. The local and cloud recognizers still filter
+  out blank or punctuation-only text. For polish or Ask, words blocked by the speech-noise filter,
+  such as 好 or OK, are placed in the message box with a notice instead of being discarded.
 - When NotebookLM refuses a source refresh, rename or delete, or an artifact listing, with a status
   CCCC recognizes, the operation now fails with that reason instead of reporting success or an empty
   list. A status CCCC cannot read is reported as a changed response format rather than success.
@@ -108,6 +134,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   follow NotebookLM's current codes, so Drive files, native Sheets and PowerPoint files are named
   correctly; notebooks you own and have shared are reported as yours; and an artifact download
   refused with HTTP 401 or 403 asks you to sign in again instead of reporting an upstream error.
+- Downloading a local speech model no longer fails after an hour on a slow connection that keeps
+  receiving data. A download is now treated as stalled when no data has arrived for 60 seconds,
+  and the error says so.
+- Transcript pieces merged during recording no longer get a space after full-width punctuation,
+  as in "好的。 然后".
+- Recognized speech from a recording outside a document is kept when the recording does not
+  finish normally. When the connection fails, the final transcript fails or is incomplete, a
+  polish or Ask request fails or its result is not confirmed, or you cancel a polish or it comes
+  back unchanged, any words the recognizer has returned are placed in the message box of the Group
+  where the recording started, with a notice saying what happened. If the page leaves the Group
+  view while recording, that text is saved to the same message box.
+- For document recordings, text that has not reached the document yet is kept the same way: with
+  browser speech recognition, pieces not yet sent; with the local recognizer, a part whose save
+  was still in progress. Other text from a local-recognizer document recording is left to the
+  server, which tries to finish the document after a disconnect.
+- With the local or external recognizer, an Ask dictated while an earlier Ask is still pending in
+  the same Group is submitted as its own request, as with browser recognition, instead of being
+  dropped.
+- If you dictate another polish while a previous one is pending, the new words stay in the message
+  box for review rather than being merged into that request or discarded.
+- Document recordings with the local recognizer no longer write the same text twice when a slow
+  save overlaps the next checkpoint. A save that fails is not retried; its text is placed in the
+  message box, and later text is still written to the document.
 
 ## [0.4.47]
 

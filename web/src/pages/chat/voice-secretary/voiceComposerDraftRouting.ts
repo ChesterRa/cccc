@@ -1,5 +1,5 @@
 import { useComposerStore } from "../../../stores/useComposerStore";
-import { hashComposerSnapshot } from "./voiceComposerUtils";
+import { hashComposerSnapshot, transcriptSeparator } from "./voiceComposerUtils";
 import {
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
@@ -15,8 +15,12 @@ export function mergeVoiceComposerDraftText(
   const text = String(transcript || "").trim();
   if (!text) return String(current || "");
   const existing = String(current || "");
-  if (mode === "replace" || !existing.trim()) return text;
-  return `${existing.replace(/\s+$/g, "")}\n\n${text}`;
+  if (mode === "replace" || existing === "") return text;
+  // Keep every character the user typed. A text of several lines, such as a polished
+  // numbered list, starts on its own line; dictation continues the draft as running text,
+  // directly after a trailing space, tab or line break.
+  if (text.includes("\n") && !/\n[^\S\n]*$/.test(existing)) return `${existing}\n${text}`;
+  return `${existing}${transcriptSeparator(existing, text)}${text}`;
 }
 
 export function routeVoiceTextToComposerGroup(input: {

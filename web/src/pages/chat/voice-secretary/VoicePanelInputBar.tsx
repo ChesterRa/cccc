@@ -19,7 +19,12 @@ export function VoicePanelInputBar({
   recordDisabled,
   recording,
   recordingStarting,
+  recordingFinishing = false,
   recordingTargetLabel,
+  finalizingLabel = "Finalizing recording…",
+  stopWaitingLabel,
+  stopWaitingHint,
+  onStopWaiting,
   stopLabel,
   liveSnippet,
   onToggleRecord,
@@ -36,7 +41,12 @@ export function VoicePanelInputBar({
   recordDisabled: boolean;
   recording: boolean;
   recordingStarting: boolean;
+  recordingFinishing?: boolean;
   recordingTargetLabel: string;
+  finalizingLabel?: string;
+  stopWaitingLabel?: string;
+  stopWaitingHint?: string;
+  onStopWaiting?: () => void;
   stopLabel: string;
   liveSnippet: string;
   onToggleRecord: () => void;
@@ -49,6 +59,7 @@ export function VoicePanelInputBar({
 }) {
   const noticeId = useId();
   const active = recording || recordingStarting;
+  const showCaptureStatus = active || recordingFinishing;
   const primary = actions.find((action) => action.primary && !action.disabled);
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey) || !primary) return;
@@ -57,21 +68,28 @@ export function VoicePanelInputBar({
   };
   return (
     <div data-voice-input-bar className="mt-3 shrink-0">
-      {active ? (
+      {showCaptureStatus ? (
         <div
           data-voice-input-recording
+          role={recordingFinishing ? "status" : undefined}
           className={classNames(
             "mb-2 flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs",
-            isDark ? "bg-rose-500/12 text-rose-100" : "bg-rose-50 text-rose-800",
+            recordingFinishing
+              ? "bg-[var(--color-bg-tertiary)] text-[var(--color-text-secondary)]"
+              : isDark
+                ? "bg-rose-500/12 text-rose-100"
+                : "bg-rose-50 text-rose-800",
           )}
         >
-          <span
-            aria-hidden="true"
-            data-status-dot="active"
-            className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-rose-500"
-          />
+          {active ? (
+            <span
+              aria-hidden="true"
+              data-status-dot="active"
+              className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-rose-500"
+            />
+          ) : null}
           <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">
-            {recordingTargetLabel}
+            {recordingFinishing ? finalizingLabel : recordingTargetLabel}
           </span>
           {liveSnippet ? (
             <span className="min-w-0 flex-1 truncate opacity-80" title={liveSnippet}>
@@ -80,6 +98,19 @@ export function VoicePanelInputBar({
           ) : (
             <span className="flex-1" />
           )}
+        </div>
+      ) : null}
+      {recordingFinishing && onStopWaiting ? (
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+          <span>{stopWaitingHint}</span>
+          <button
+            type="button"
+            data-voice-stop-waiting
+            className="rounded px-1 font-semibold underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+            onClick={onStopWaiting}
+          >
+            {stopWaitingLabel}
+          </button>
         </div>
       ) : null}
       {notice ? (
@@ -112,8 +143,8 @@ export function VoicePanelInputBar({
             data-voice-record
             data-lcd-key
             aria-pressed={active}
-            disabled={recordingStarting || (!active && recordDisabled)}
-            title={recordTitle}
+            disabled={recordingStarting || recordingFinishing || (!active && recordDisabled)}
+            title={recordingFinishing ? finalizingLabel : recordTitle}
             onClick={onToggleRecord}
             className={classNames(
               "inline-flex min-h-9 min-w-0 max-w-full items-center justify-center gap-2 rounded-lg px-3 text-sm font-semibold transition-colors disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
@@ -133,7 +164,7 @@ export function VoicePanelInputBar({
                 className="h-2.5 w-2.5 shrink-0 rounded-full bg-rose-600"
               />
             )}
-            {active ? stopLabel : recordLabel}
+            {recordingFinishing ? finalizingLabel : active ? stopLabel : recordLabel}
           </button>
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             {actions.map((action) => (

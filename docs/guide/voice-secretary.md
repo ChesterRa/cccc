@@ -72,6 +72,9 @@ Browser ASR uses the browser's default microphone. The Secretary does not play a
 the speaker choice applies to audio-producing workflows such as Codex Voice and Grok Voice. Browsers
 without output selection use the system speaker. Missing devices remain selected
 until the user chooses another device; refreshing never requests microphone access.
+If the browser reports the selected microphone as missing or unavailable, the capture error offers an explicit
+switch to the system default. This changes the shared microphone choice for voice
+features in that browser; the user starts recording again after the change.
 If browser storage cannot be written, the editor reports that choices are retained
 only for the current page, without silently restoring a stale device at start.
 
@@ -95,6 +98,20 @@ regions are resolved before recognition starts (for example, `ja` becomes `ja-JP
 explicit regions such as `en-GB` or `zh-TW` remain unchanged. Browser recognition
 support and service availability vary by browser. Recognition errors also appear
 beside the composer controls; reconnection is indicated only while recording is active.
+Local and external ASR require the browser's AudioWorklet support as well as
+microphone access. A page that has microphone access but lacks AudioWorklet shows
+an explanation instead of starting those backends. Browser ASR has its own support
+requirements and does not use this audio-processing path.
+
+For local and external ASR, stopping ends the capture's microphone track before
+the browser flushes audio already processed by the worklet. If the flush is not
+confirmed, the page warns that the result may be incomplete; for non-document
+recordings it keeps any available recognized text for review instead of
+automatically dispatching it. While a non-document recording waits for final
+recognition, **Stop waiting** becomes available after 20 seconds. It ends the
+wait and preserves any available text in the original Group's composer; audio
+that has not been recognized may be lost. Document recordings do not offer this
+action because completion after disconnect cannot be guaranteed.
 
 The gear in either workspace scrolls to the corresponding feature tab;
 **Adjust devices** instead focuses the common audio section. Closing settings

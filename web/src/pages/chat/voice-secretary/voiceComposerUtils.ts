@@ -309,6 +309,36 @@ function longestTranscriptOverlap(left: string, right: string): number {
   return 0;
 }
 
+// Chinese and Japanese text, and the full-width forms and punctuation used with it, are written
+// without spaces. Korean is not: it separates words with spaces.
+const FULL_WIDTH = "\\u3000-\\u303f\\ufe30-\\ufe4f\\uff00-\\uffef";
+const SPACELESS_SCRIPT = "\\p{Script=Han}\\u3040-\\u30ff\\u31f0-\\u31ff";
+const ENDS_FULL_WIDTH = new RegExp(`[${FULL_WIDTH}]$`, "u");
+const STARTS_FULL_WIDTH = new RegExp(`^[${FULL_WIDTH}]`, "u");
+const ENDS_SPACELESS = new RegExp(`[${SPACELESS_SCRIPT}]$`, "u");
+const STARTS_SPACELESS = new RegExp(`^[${SPACELESS_SCRIPT}]`, "u");
+
+/** What goes between two pieces of transcript joined on one line. */
+export function transcriptSeparator(left: string, right: string): "" | " " {
+  if (!left || !right || /\s$/u.test(left) || /^\s/u.test(right)) return "";
+  // Punctuation that attaches to the word before it, or an opening bracket before the next word.
+  if (/^[,.!?;:%)\]}]/u.test(right) || /[([{]$/u.test(left)) return "";
+  if (ENDS_FULL_WIDTH.test(left) || STARTS_FULL_WIDTH.test(right)) return "";
+  if (ENDS_SPACELESS.test(left) && STARTS_SPACELESS.test(right)) return "";
+  return " ";
+}
+
+/** Joins transcript pieces that a recognizer split mechanically, such as fixed-length ranges. */
+export function joinTranscriptSegments(texts: readonly string[]): string {
+  let joined = "";
+  for (const raw of texts) {
+    const text = String(raw || "").trim();
+    if (!text) continue;
+    joined += transcriptSeparator(joined, text) + text;
+  }
+  return joined;
+}
+
 export function mergeTranscriptChunks(previous: string, nextText: string): string {
   const prev = normalizeBrowserTranscriptChunk(previous);
   const next = normalizeBrowserTranscriptChunk(nextText);
@@ -318,9 +348,7 @@ export function mergeTranscriptChunks(previous: string, nextText: string): strin
   if (next.endsWith(prev)) return next;
   const overlap = longestTranscriptOverlap(prev, next);
   if (overlap > 0) return `${prev}${next.slice(overlap)}`;
-  const cjkBoundary =
-    /[\u3040-\u30ff\u3400-\u9fff]$/.test(prev) && /^[\u3040-\u30ff\u3400-\u9fff]/.test(next);
-  return cjkBoundary ? `${prev}${next}` : `${prev} ${next}`;
+  return `${prev}${transcriptSeparator(prev, next)}${next}`;
 }
 
 export function stripUncertainSpeakerPrefix(value: string): string {
