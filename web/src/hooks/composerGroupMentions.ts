@@ -38,7 +38,9 @@ export function isComposerMentionBoundary(ch: string): boolean {
 export function isComposerMentionStartBoundary(ch: string): boolean {
   return (
     isComposerMentionBoundary(ch) ||
-    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(ch)
+    /[\p{Script=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}\p{Script=Hangul}]/u.test(
+      ch,
+    )
   );
 }
 

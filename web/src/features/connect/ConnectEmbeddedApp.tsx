@@ -17,6 +17,7 @@ import { useGroupStore } from "../../stores";
 import { useComposerStore } from "../../stores/useComposerStore";
 import { usePendingPageWork } from "../../stores/usePendingPageWork";
 import { useModalStore } from "../../stores/useModalStore";
+import { hasUnsentComposerWork } from "./composerWork";
 import { isTransientApiFailure } from "../../utils/transientApiFailure";
 import { acceptsFrameMessage, CONNECT_CHANNEL, readFrameProof, type FrameProof } from "./protocol";
 import {
@@ -42,18 +43,7 @@ export function ConnectEmbeddedApp() {
   const [expired, setExpired] = useState(false);
   const [selection, setSelection] = useState<EmbeddedSelection | null>(null);
   const workspaceDirty = useWorkspaceNavigation((state) => state.owners.size > 0);
-  const pendingSends = useComposerStore((state) =>
-    Object.values(state.failedSendsByGroup).some((items) => items.length > 0),
-  );
-  const composerDraft = useComposerStore((state) => {
-    if (state.composerText.trim() || state.composerFiles.length > 0) return true;
-    // The active Group's saved entry may predate edits or clearing its composer.
-    return Object.entries(state.drafts).some(
-      ([groupId, draft]) =>
-        groupId !== state.activeGroupId &&
-        (draft.composerText.trim().length > 0 || draft.composerFiles.length > 0),
-    );
-  });
+  const composerWork = useComposerStore(hasUnsentComposerWork);
   const pendingPageWork = usePendingPageWork((state) => state.owners.size > 0);
   const proofRef = useRef(proof);
   const accountIdRef = useRef("");
@@ -256,11 +246,8 @@ export function ConnectEmbeddedApp() {
   // Keep reporting through the sign-in gate: a send can fail after it unmounts
   // the workbench, and its recovery snapshot is still owned by this page.
   useEffect(() => {
-    send({
-      type: "workspace_dirty",
-      dirty: workspaceDirty || pendingSends || pendingPageWork || composerDraft,
-    });
-  }, [workspaceDirty, pendingSends, pendingPageWork, composerDraft, send]);
+    send({ type: "workspace_dirty", dirty: workspaceDirty || pendingPageWork || composerWork });
+  }, [workspaceDirty, pendingPageWork, composerWork, send]);
 
   if (!proof || expired || window.parent === window) {
     return (

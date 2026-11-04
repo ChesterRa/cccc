@@ -133,6 +133,7 @@ export interface ChatComposerProps {
 
   // Recipients
   toTokens: string[];
+  unavailableRecipients?: string[];
   onToggleRecipient: (token: string) => void;
   onClearRecipients: () => void;
 
@@ -192,6 +193,7 @@ export function ChatComposer({
   onQuoteVoiceDocumentRef,
   onClearQuotedVoiceDocumentRef,
   toTokens,
+  unavailableRecipients = [],
   onToggleRecipient,
   onClearRecipients,
   composerFiles,
@@ -854,9 +856,12 @@ export function ChatComposer({
     effectiveMessageMode === "send" &&
     (!destGroupId || destGroupId === selectedGroupId),
   );
-  const recipientTitles = toTokens.map(
-    (token) => actors.find((actor) => actor.id === token)?.title || token,
-  );
+  const visibleUnavailableRecipients =
+    selectedGroupActorsHydrating || recipientActorsBusy ? [] : unavailableRecipients;
+  const recipientTitles = [
+    ...visibleUnavailableRecipients.map((name) => t("unavailableRecipient", { name })),
+    ...toTokens.map((token) => actors.find((actor) => actor.id === token)?.title || token),
+  ];
   const compactRecipients = recipientTitles.length
     ? `${recipientTitles[0]}${recipientTitles.length > 1 ? ` +${recipientTitles.length - 1}` : ""}`
     : "";
@@ -871,6 +876,7 @@ export function ChatComposer({
     requestAnimationFrame(() => {
       const row = footerRef.current?.querySelector<HTMLElement>("[data-composer-recipient-row]");
       (
+        row?.querySelector<HTMLButtonElement>("[data-unavailable-recipient]") ||
         row?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]') ||
         row?.querySelector<HTMLButtonElement>("button")
       )?.focus();
@@ -1092,6 +1098,7 @@ export function ChatComposer({
               allowChet={isWebAdmin === true && (!destGroupId || destGroupId === selectedGroupId)}
               selectedGroupActorsHydrating={selectedGroupActorsHydrating}
               toTokens={toTokens}
+              unavailableRecipients={visibleUnavailableRecipients}
               onToggleRecipient={onToggleRecipient}
               onClearRecipients={onClearRecipients}
             />

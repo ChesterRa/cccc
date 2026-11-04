@@ -60,6 +60,7 @@ import {
   describeSendFailure,
   restoreFailedSendComposerState,
   shouldRestoreComposerAfterFailedSend,
+  unavailableComposerRecipients,
 } from "./chat/chatComposerState";
 export * from "./chat/chatTabBasics";
 export * from "./chat/chatStreamingProjection";
@@ -389,6 +390,25 @@ export function useChatTab({
     });
   }, [crossGroupValidRecipientSet, sendGroupId, selectedGroupId, toText, validRecipientSet]);
 
+  const unavailableRecipients = useMemo(
+    () =>
+      unavailableComposerRecipients({
+        toText,
+        isCrossGroup: !!sendGroupId && !!selectedGroupId && sendGroupId !== selectedGroupId,
+        replyTarget,
+        validRecipientSet,
+        crossGroupValidRecipientSet,
+      }),
+    [
+      crossGroupValidRecipientSet,
+      replyTarget,
+      selectedGroupId,
+      sendGroupId,
+      toText,
+      validRecipientSet,
+    ],
+  );
+
   const composerRouteGroups = groups;
   const connectMentions = useConnectMentionGroups(
     selectedGroupId,
@@ -623,7 +643,16 @@ export function useChatTab({
     (token: string) => {
       const t = token.trim();
       if (!t) return;
-      const cur = toTokens;
+      // Do not discard an unavailable recipient when another chip is toggled.
+      const cur = [
+        ...new Set(
+          useComposerStore
+            .getState()
+            .toText.split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+        ),
+      ];
       const idx = cur.findIndex((x) => x === t);
       if (idx >= 0) {
         const next = cur.slice(0, idx).concat(cur.slice(idx + 1));
@@ -638,7 +667,7 @@ export function useChatTab({
         setToText(next.join(", "));
       }
     },
-    [toTokens, setToText, setComposerAgentMentionTokens],
+    [setToText, setComposerAgentMentionTokens],
   );
 
   const clearRecipients = useCallback(() => {
@@ -1028,26 +1057,17 @@ export function useChatTab({
       validRecipientSet,
       crossGroupValidRecipientSet,
     });
-    const remoteReplyGroup = String(
-      composerStateSnapshot.replyTarget?.remoteDstGroupId || "",
-    ).trim();
-    const remoteReplyRecipients = composerStateSnapshot.replyTarget?.remoteDstTo || [];
-    const usesSavedRemoteRecipients =
-      !!remoteReplyGroup && remoteReplyRecipients.some((token) => String(token || "").trim());
-    const allowedRecipients =
-      isCrossGroup || remoteReplyGroup ? crossGroupValidRecipientSet : validRecipientSet;
-    const unresolvedRecipients = toTextSnapshot
-      .split(",")
-      .map((token) => token.trim())
-      .filter((token) => token && !allowedRecipients.has(token));
+    const unresolvedRecipients = unavailableComposerRecipients({
+      toText: toTextSnapshot,
+      isCrossGroup,
+      replyTarget: composerStateSnapshot.replyTarget,
+      validRecipientSet,
+      crossGroupValidRecipientSet,
+    });
     // Dropping a formerly valid recipient can route a message to the Group's
     // default audience. Keep the draft instead of silently changing its target.
     const slash = parseSlashCommandInput(composerStateSnapshot.composerText, slashCommands);
-    if (
-      !usesSavedRemoteRecipients &&
-      unresolvedRecipients.length > 0 &&
-      slash?.item.sourceType !== "dynamic_tool"
-    ) {
+    if (unresolvedRecipients.length > 0 && slash?.item.sourceType !== "dynamic_tool") {
       showError(
         t("recipientUnavailable", {
           defaultValue:
@@ -1454,6 +1474,7 @@ export function useChatTab({
     setQuotedVoiceDocumentRef,
     clearQuotedVoiceDocumentRef: () => setQuotedVoiceDocumentRef(null),
     toTokens,
+    unavailableRecipients,
     toggleRecipient,
     clearRecipients,
     messageMode,

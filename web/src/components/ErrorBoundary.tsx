@@ -6,6 +6,8 @@ import { reloadPage } from "../features/connect/reloadPage";
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
+  /** The child renders a modal outside normal page flow. */
+  overlay?: boolean;
 }
 
 interface State {
@@ -44,7 +46,7 @@ export class ErrorBoundary extends Component<Props, State> {
       // Theme tokens and the app's own keys, so the page reads in either theme.
       return (
         <div
-          className="flex h-full flex-col items-center justify-center p-6 text-center text-[var(--color-text-secondary)]"
+          className={`${this.props.overlay ? "fixed inset-0 z-[90] overflow-auto bg-[var(--color-body-bg)]" : "h-full"} flex flex-col items-center justify-center p-6 text-center text-[var(--color-text-secondary)]`}
           role="alert"
         >
           <div className="mb-4 text-5xl" aria-hidden="true">

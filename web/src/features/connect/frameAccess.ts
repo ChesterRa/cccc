@@ -14,7 +14,8 @@ function publish(next: FrameState) {
 }
 
 // This is a lifecycle guard for the embedded page, not an authorization
-// boundary. The server independently checks the fresh frame proof.
+// boundary. Ordinary API access uses the target login; admission and
+// frame-bound resources and streams independently check the frame proof.
 export function beginFrameAccess(expiresAt: string) {
   deadline = Date.parse(expiresAt);
   publish("active");

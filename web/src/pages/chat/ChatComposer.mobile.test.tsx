@@ -18,10 +18,12 @@ function Harness({
   mode = "send",
   initialTokens = [],
   replyTarget = null,
+  unavailableRecipients = [],
 }: {
   mode?: "send" | "request_reply" | "mail";
   initialTokens?: string[];
   replyTarget?: ReplyTarget;
+  unavailableRecipients?: string[];
 }) {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -45,6 +47,7 @@ function Harness({
       onQuoteVoiceDocumentRef={noop}
       onClearQuotedVoiceDocumentRef={noop}
       toTokens={tokens}
+      unavailableRecipients={unavailableRecipients}
       onToggleRecipient={(token) =>
         setTokens((current) => (current.includes(token) ? [] : [token]))
       }
@@ -107,6 +110,27 @@ it("uses the Web principal for Chet and shows Send instead of the saved Mail pre
   } finally {
     await act(async () => root.unmount());
     useUIStore.setState({ isWebAdmin: null });
+    useGroupStore.setState({ refreshSettings: originalRefreshSettings });
+    host.remove();
+  }
+});
+
+it("keeps an unavailable recipient visible when the mobile composer is compact", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useComposerStore.setState({ composerText: "" });
+  const originalRefreshSettings = useGroupStore.getState().refreshSettings;
+  useGroupStore.setState({ refreshSettings: async () => {} });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Harness unavailableRecipients={["departed"]} />));
+    const compactChip = host.querySelector<HTMLButtonElement>(".compact-composer-recipients")!;
+    expect(compactChip.textContent).toContain("unavailableRecipient");
+    await act(async () => compactChip.click());
+    expect(host.querySelector("[data-unavailable-recipient]")).not.toBeNull();
+  } finally {
+    await act(async () => root.unmount());
     useGroupStore.setState({ refreshSettings: originalRefreshSettings });
     host.remove();
   }

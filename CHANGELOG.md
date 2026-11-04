@@ -88,7 +88,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - When CCCC pauses the automatic starts of a managed Claude agent because its confirmation closed,
   an agent or automation that tries to start it is now told that starts are paused and that the
   user can launch the agent again.
-  Chet's errors for Claude's workspace trust and bypass-mode disclaimer now both say whether a
+- Chet's errors for Claude's workspace trust and bypass-mode disclaimer now both say whether a
   manual retry should set `CLAUDE_CONFIG_DIR` to the settings directory they name or leave it unset.
 - `@` and `#` suggestions now open at the cursor, including after common punctuation or Chinese,
   Japanese or Korean text, and choosing one keeps the text after the cursor. Chosen references are
@@ -152,7 +152,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - A draft addressed to another Group now keeps that destination and its recipients when you switch
   Groups and come back. A send naming a recipient who is no longer available stays in the composer
   with a request to check the recipients; it used to go without that recipient, or to the Group's
-  default recipients when none was left.
+  default recipients when none was left. The recipients row shows such a recipient as unavailable
+  until you remove it, and choosing other recipients does not drop it. A reply to a message from an
+  agent that is no longer in the Group is addressed to that agent, shown as unavailable, so you
+  choose who receives it.
 - Images read with `cccc_file`, directly or through `cccc_code_exec`, now reach the model in Codex.
   Codex gives the model only `structuredContent` when a tool result has it, so the image was dropped.
   For Codex's MCP client (`codex-mcp-client`, checked with Codex CLI 0.166.0), a tool result that
@@ -167,19 +170,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - A Connect remote workspace also stays open when its access proof expires, for example after the
   computer slept, when the account directory is briefly unavailable, or when the target's Web
   service restarts. The page is kept as it was, hidden behind a notice with the time of the last
-  connection attempt. Meanwhile it pauses new requests and live updates, disconnects its agent
-  terminals and browser views, ends a voice conversation and stops a Voice Secretary recording,
-  putting recognized words not yet confirmed as saved into the message draft of the recording's
-  Group. The entry keeps trying and shows the page again once both instances confirm the same
-  account, administrator access on each side and a fresh access proof. **Close this page** asks
-  first when the page has reported unsent work. A change of account, or of the target's device or
-  address, or revoked administrator access on the entry still closes the page, as does a refusal
-  from the target during recovery. A change that was being saved when the connection dropped may
-  already have been made; recovery does not automatically resend it. Both instances need this
-  version; with an older one the page closes as before.
+  connection attempt. Meanwhile it pauses new requests and live updates and disconnects its agent
+  terminals and browser views. The entry keeps trying and shows the page again once both instances
+  confirm the same account, administrator access on each side and a fresh access proof. **Close
+  this page** asks first when the page has reported unsent work. A change of account, or of the
+  target's device or address, or revoked administrator access on the entry still closes the page,
+  as does the target refusing access during recovery. A change that was being saved when the
+  connection dropped may already have been made; recovery does not automatically resend it. Both
+  instances need this version; with an older one the page closes as before.
 - A Connect remote page that needs to reload, from its update notice, its error screen or after
   part of its code failed to load, now asks the entry to open it again, and the entry asks first
-  when the page has unsent work. Reloading inside the frame ended the connection.
+  when the page has unsent work. Reloading inside the frame ended the connection. An entry older
+  than this version ignores the request, so reload the entry's page instead.
+- A dialog that fails to open, for example because its code could not be loaded, now shows an
+  error screen over the page with **Try again** and **Refresh**. The whole page used to go blank.
 - A Connect delivery whose window ended, or whose connection was disconnected, before the target
   received it no longer tells the sender that the target did not accept it. The notice now says the
   message did not arrive and can be sent again, after reconnecting when the connection was

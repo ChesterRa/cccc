@@ -575,7 +575,7 @@ export default function App({
       />
 
       {shouldRenderAppModals ? (
-        <ErrorBoundary>
+        <ErrorBoundary overlay>
           <Suspense fallback={null}>
             <AppModals
               codexVoice={codexVoice}

@@ -128,3 +128,19 @@ it("leaves a reply to Chet without recipients, naming Chet only for this Group's
   );
   expect(other?.replyTarget.toChet).toBeUndefined();
 });
+
+it("keeps a departed sender explicit instead of routing a reply to the original human audience", () => {
+  const state = buildReplyComposerState(
+    {
+      id: "old-message",
+      kind: "chat.message",
+      by: "departed",
+      data: { text: "hello", to: ["user"] },
+    },
+    "g_local",
+    [{ id: "current" }] as never,
+    { default_send_to: "foreman" } as never,
+  );
+  expect(state?.toText).toBe("departed");
+  expect(state?.replyTarget.by).toBe("departed");
+});

@@ -1,5 +1,4 @@
 import "./voice-secretary/voiceWorkspaceMobile.css";
-import { frameAccessPaused, subscribeFrameAccess } from "../../features/connect/frameAccess";
 import { isConnectFramePath } from "../../features/connect/protocol";
 import { beginPendingPageWork } from "../../stores/usePendingPageWork";
 import { useVoiceAudioStore, voiceAudioSnapshot } from "../../stores/useVoiceAudioStore";
@@ -881,12 +880,12 @@ export function VoiceSecretaryComposerControl({
   }, [selectedGroupId, getVoiceSession]);
 
   useEffect(() => {
+    // Not on beforeunload: a recording asks before the page is left, and every
+    // beforeunload listener has run before the user can choose to stay.
     const releaseCurrentLock = () => releaseVoiceRecordingGuards();
     window.addEventListener("pagehide", releaseCurrentLock);
-    window.addEventListener("beforeunload", releaseCurrentLock);
     return () => {
       window.removeEventListener("pagehide", releaseCurrentLock);
-      window.removeEventListener("beforeunload", releaseCurrentLock);
       releaseCurrentLock();
     };
   }, [releaseVoiceRecordingGuards]);
@@ -3561,42 +3560,6 @@ export function VoiceSecretaryComposerControl({
     }
     stopBrowserSpeech();
   }, [stopBrowserSpeech, stopServiceAudio]);
-
-  useEffect(
-    () =>
-      subscribeFrameAccess(() => {
-        if (!frameAccessPaused()) return;
-        const run = getVoiceSession();
-        if (!run) return;
-        if (run.config.recognition_backend === "browser_asr") {
-          // Do not dispatch speech captured before suspension as a new request.
-          // The existing cleanup preserves it in the recording's Group first.
-          unmountCleanupRef.current();
-          showError(
-            t("voiceSecretaryRecordingConnectionFailed", {
-              defaultValue:
-                "Could not complete the speech-recognition connection; this recording may not have been fully transcribed.",
-            }),
-          );
-        } else {
-          if (run.scope.dispatchTarget === "document" && !run.service.recovered) {
-            const text = nextUncommittedServiceTranscriptText(
-              serviceTranscriptForRecovery(run),
-              run.service.documentHandled,
-            );
-            if (text.trim()) {
-              run.service.recovered = appendDirectDictationToComposer(
-                text,
-                run.service.documentCheckpointTail ? "unconfirmed" : "interrupted",
-                run.scope.groupId,
-              );
-            }
-          }
-          failServiceConnection(run.id);
-        }
-      }),
-    [appendDirectDictationToComposer, failServiceConnection, getVoiceSession, showError, t],
-  );
 
   const closePanel = useCallback(() => {
     setOpen(false);

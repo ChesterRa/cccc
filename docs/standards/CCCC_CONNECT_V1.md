@@ -261,7 +261,7 @@ online or administrator confirmation. Reopening always authenticates the target
 again before receiving content. When fresh authority is temporarily unavailable,
 implementations that support recovery keep the selected target document in memory
 but hide it, block new requests through the shared API wrappers, and stop the
-workbench's interactive streams and recording. They resume only after the entry
+workbench's interactive streams. They resume only after the entry
 administrator, both account IDs, the target administrator, bindings and a fresh
 proof have been checked. Entry access revocation or an account, device or origin
 replacement ends the old document; older targets that cannot confirm recovery

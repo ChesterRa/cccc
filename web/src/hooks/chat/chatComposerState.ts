@@ -148,3 +148,34 @@ export function buildComposerSendRecipientTokens({
     isCrossGroup ? crossGroupValidRecipientSet : validRecipientSet,
   );
 }
+
+/** Targets the current destination cannot resolve, before any send drops them. */
+export function unavailableComposerRecipients({
+  toText,
+  isCrossGroup,
+  replyTarget,
+  validRecipientSet,
+  crossGroupValidRecipientSet,
+}: {
+  toText: string;
+  isCrossGroup: boolean;
+  replyTarget: ComposerState["replyTarget"];
+  validRecipientSet: Set<string>;
+  crossGroupValidRecipientSet: Set<string>;
+}): string[] {
+  const remoteReplyGroup = String(replyTarget?.remoteDstGroupId || "").trim();
+  if (remoteReplyGroup && replyTarget?.remoteDstTo?.some((token) => String(token || "").trim())) {
+    // Saved remote reply recipients are validated by that destination.
+    return [];
+  }
+  const allowed =
+    isCrossGroup || remoteReplyGroup ? crossGroupValidRecipientSet : validRecipientSet;
+  return [
+    ...new Set(
+      toText
+        .split(",")
+        .map((token) => token.trim())
+        .filter(Boolean),
+    ),
+  ].filter((token) => !allowed.has(token));
+}

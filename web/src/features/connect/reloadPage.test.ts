@@ -39,4 +39,23 @@ it("reports the current unsent draft before asking the trusted entry to reopen",
     expect.objectContaining({ type: "reload", frame_id: "frame" }),
     "https://entry.test",
   );
+  vi.mocked(parent.postMessage).mockClear();
+  useComposerStore.setState({ activeGroupId: "a" });
+  useComposerStore.getState().switchGroup("a", "b");
+  reloadPage();
+  expect(parent.postMessage).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+  vi.mocked(parent.postMessage).mockClear();
+  useComposerStore.getState().switchGroup("b", "a");
+  useComposerStore.getState().setComposerText("");
+  // The saved copy for the active Group can be older than the cleared editor.
+  reloadPage();
+  expect(parent.postMessage).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
 });

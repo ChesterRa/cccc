@@ -1344,7 +1344,7 @@ export function AppModals({
       />
 
       {presentationViewerSlotIds.length > 0 ? (
-        <ErrorBoundary>
+        <ErrorBoundary overlay>
           <Suspense fallback={<LazyModalFallback />}>
             {presentationViewerSlotIds.map((slotId) => {
               const slot = findPresentationSlot(groupPresentation, slotId);
@@ -1421,7 +1421,7 @@ export function AppModals({
       ) : null}
 
       {modals.context ? (
-        <ErrorBoundary>
+        <ErrorBoundary overlay>
           <Suspense fallback={<LazyModalFallback />}>
             <ContextModal
               isOpen={modals.context}
@@ -1440,7 +1440,7 @@ export function AppModals({
       ) : null}
 
       {modals.settings ? (
-        <ErrorBoundary>
+        <ErrorBoundary overlay>
           <Suspense fallback={<LazyModalFallback />}>
             <SettingsModal
               codexVoice={codexVoice}

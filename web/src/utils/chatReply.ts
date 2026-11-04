@@ -74,6 +74,10 @@ export function buildReplyComposerState(
   }
   const authorIsActor =
     by && by !== "user" && actors.some((actor) => String(actor.id || "") === by);
+  // Keep a departed sender as an explicit, unavailable recipient. Falling
+  // back to the original audience could send a reply to someone else.
+  const authorIsUnavailableActor =
+    by && by !== "user" && by !== "system" && !by.startsWith("svc:") && !authorIsActor;
   const originalTo = Array.isArray(data?.to)
     ? data.to.map((token: string) => String(token || "").trim()).filter(Boolean)
     : [];
@@ -92,11 +96,13 @@ export function buildReplyComposerState(
       ? []
       : authorIsActor
         ? [by]
-        : originalTo.length > 0
-          ? originalTo
-          : policy === "foreman"
-            ? ["@foreman"]
-            : [];
+        : authorIsUnavailableActor
+          ? [by]
+          : originalTo.length > 0
+            ? originalTo
+            : policy === "foreman"
+              ? ["@foreman"]
+              : [];
   // Named Chet only where the message row names it; otherwise the bare principal shows.
   const replyBy = isChetMessage(event, groupGeneration)
     ? CHET_NAME

@@ -55,6 +55,7 @@ it("skips email addresses and links", () => {
 it("needs a boundary on both sides of a name", () => {
   expect(marked("@claude-10 x@claude-1 @claude-1x @claude-1/notes")).toEqual([]);
   expect(marked("请@claude-1看一下（@codex-1）。")).toEqual(["agent:@claude-1", "agent:@codex-1"]);
+  expect(marked("请@codex-1看一下README.md")).toEqual(["agent:@codex-1"]);
   expect(marked("@CCCC开发监督 好的，@CCCC开发监督们")).toEqual(["agent:@CCCC开发监督"]);
 });
 

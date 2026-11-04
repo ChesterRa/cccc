@@ -150,7 +150,7 @@ it("keeps the leave warning while an in-flight send outlives its chat component"
   expect(leavingIsBlocked()).toBe(false);
 });
 
-it("T123: restores the original remote destination when a new cross-Group send fails", async () => {
+it("restores the original remote destination when a new cross-Group send fails", async () => {
   vi.mocked(api.sendCrossGroupMessage)
     .mockResolvedValueOnce(failed)
     .mockResolvedValueOnce({ ok: true, result: {} });
@@ -266,6 +266,25 @@ it("does not silently drop an unavailable recipient when retrying a cross-Group 
   });
 });
 
+it("keeps unavailable recipients until the user removes them explicitly", async () => {
+  await act(async () => {
+    useComposerStore.getState().setToText("departed");
+    useComposerStore.getState().setComposerText("private draft");
+  });
+  expect(chat.unavailableRecipients).toEqual(["departed"]);
+  await act(async () => chat.toggleRecipient("peer-1"));
+  expect(useComposerStore.getState().toText).toBe("departed, peer-1");
+  await act(async () => chat.sendMessage());
+  expect(api.sendMessage).not.toHaveBeenCalled();
+  expect(useComposerStore.getState().composerText).toBe("private draft");
+  await act(async () => chat.toggleRecipient("departed"));
+  expect(chat.unavailableRecipients).toEqual([]);
+  expect(useComposerStore.getState().toText).toBe("peer-1");
+  vi.mocked(api.sendMessage).mockResolvedValueOnce({ ok: true, result: {} });
+  await act(async () => chat.sendMessage());
+  expect(api.sendMessage).toHaveBeenCalledOnce();
+});
+
 it("keeps a cross-Group reply's actual destination after recovery and editing", async () => {
   vi.mocked(api.sendCrossGroupMessage)
     .mockResolvedValueOnce(failed)
@@ -308,7 +327,7 @@ it("keeps a cross-Group reply's actual destination after recovery and editing", 
   expect(api.sendMessage).not.toHaveBeenCalled();
 });
 
-it("T123: does not replace a new draft when an earlier ordinary send fails", async () => {
+it("does not replace a new draft when an earlier ordinary send fails", async () => {
   const finish = delayedSend();
   await act(async () => useComposerStore.getState().setComposerText("message A"));
   let pending!: Promise<void>;
@@ -449,7 +468,7 @@ it("captures an ordinary send before the Group changes in the same turn", async 
   expect(useComposerStore.getState().composerText).toBe("draft B");
 });
 
-it("T123: does not replace an origin-Group draft when an earlier send fails after switching", async () => {
+it("does not replace an origin-Group draft when an earlier send fails after switching", async () => {
   const finish = delayedSend();
   await act(async () => useComposerStore.getState().setComposerText("message A"));
   let pending!: Promise<void>;
@@ -519,7 +538,7 @@ it("keeps a late failure after the chat component has unmounted", async () => {
   ).toEqual(["message A"]);
 });
 
-it("T123: does not replace a new draft when a slash send fails", async () => {
+it("does not replace a new draft when a slash send fails", async () => {
   const finish = delayedSend();
   await act(async () => useComposerStore.getState().setComposerText("/install example"));
   let pending!: Promise<void>;
@@ -539,7 +558,7 @@ it("T123: does not replace a new draft when a slash send fails", async () => {
   ).toEqual(["/install example"]);
 });
 
-it("T123: does not clear an origin-Group draft when a slash send succeeds after switching", async () => {
+it("does not clear an origin-Group draft when a slash send succeeds after switching", async () => {
   const finish = delayedSend();
   await act(async () => useComposerStore.getState().setComposerText("/install example"));
   let pending!: Promise<void>;
@@ -580,7 +599,7 @@ it("labels a slash send failure with its origin when it returns after a Group sw
   );
 });
 
-it("T123: does not clear another Group's draft when a dynamic tool succeeds", async () => {
+it("does not clear another Group's draft when a dynamic tool succeeds", async () => {
   let finish!: (value: { ok: true; result: Record<string, unknown> }) => void;
   vi.mocked(api.useGroupCapability).mockReturnValueOnce(
     new Promise((resolve) => {

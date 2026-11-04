@@ -163,6 +163,8 @@
   "failedSendOpen": "打开",
   "failedSendUnavailableHint": "来源工作组不可用时，这条发送无法查看或恢复；若该组重新可用，可以回到那里恢复。丢弃会永久删除本页保存的内容。",
   "recipientUnavailable": "有收件人已不可用。请先检查收件人，再发送。",
+  "unavailableRecipient": "{{name}}（不可用）",
+  "removeUnavailableRecipient": "移除不可用的收件人 {{name}}",
   "clearRecipients": "清除收件人",
   "remoteGroupChipLabel": "远端工作组 {{name}}",
   "remoteGroupAccessHere": "访问当前工作组",

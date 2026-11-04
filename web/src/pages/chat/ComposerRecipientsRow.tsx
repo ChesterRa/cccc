@@ -18,6 +18,7 @@ interface ComposerRecipientsRowProps {
   allowChet?: boolean;
   selectedGroupActorsHydrating?: boolean;
   toTokens: string[];
+  unavailableRecipients?: string[];
   onToggleRecipient: (token: string) => void;
   onClearRecipients: () => void;
 }
@@ -31,6 +32,7 @@ export function ComposerRecipientsRow({
   allowChet = false,
   selectedGroupActorsHydrating,
   toTokens,
+  unavailableRecipients = [],
   onToggleRecipient,
   onClearRecipients,
 }: ComposerRecipientsRowProps) {
@@ -85,6 +87,22 @@ export function ComposerRecipientsRow({
               selectedGroupActorsHydrating ? "opacity-50 pointer-events-none" : "",
             )}
           >
+            {unavailableRecipients.map((token) => (
+              <button
+                key={`unavailable:${token}`}
+                className={`${chipBaseClass} border-[var(--color-danger)] text-[var(--color-danger)]`}
+                onClick={() => onToggleRecipient(token)}
+                disabled={actorChipDisabled}
+                aria-label={t("removeUnavailableRecipient", { name: token })}
+                title={t("removeUnavailableRecipient", { name: token })}
+                data-unavailable-recipient
+              >
+                <span className="max-w-48 truncate">
+                  {t("unavailableRecipient", { name: token })}
+                </span>
+                <CloseIcon size={12} aria-hidden="true" />
+              </button>
+            ))}
             {[
               "@all",
               "@foreman",
@@ -157,7 +175,7 @@ export function ComposerRecipientsRow({
         onHide={popover.hide}
       />
 
-      {toTokens.length > 0 && (
+      {(toTokens.length > 0 || unavailableRecipients.length > 0) && (
         <button
           className={classNames(
             "touch-target-sm flex-shrink-0 h-7 w-7 rounded-md flex items-center justify-center transition-colors opacity-50 hover:opacity-100",

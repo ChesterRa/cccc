@@ -86,6 +86,40 @@ it("labels recipients accessibly without a visible caption and retains selection
   }
 });
 
+it("shows an unavailable recipient and lets the user remove it", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const toggle = vi.fn();
+  try {
+    await act(async () =>
+      root.render(
+        <ComposerRecipientsRow
+          isDark={false}
+          isSmallScreen={false}
+          selectedGroupId="g"
+          busy=""
+          actors={[]}
+          toTokens={[]}
+          unavailableRecipients={["departed"]}
+          onToggleRecipient={toggle}
+          onClearRecipients={vi.fn()}
+        />,
+      ),
+    );
+    const chip = host.querySelector<HTMLButtonElement>("[data-unavailable-recipient]")!;
+    expect(chip.textContent).toContain("unavailableRecipient");
+    expect(chip.getAttribute("aria-label")).toBe("removeUnavailableRecipient");
+    expect(host.querySelector('[aria-label="clearRecipients"]')).not.toBeNull();
+    await act(async () => chip.click());
+    expect(toggle).toHaveBeenCalledWith("departed");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
 it.each([true, false])(
   "dismisses recipient details without relying on a blur (%s)",
   async (isSmallScreen) => {

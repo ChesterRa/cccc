@@ -322,6 +322,7 @@ export function ChatTab({
     setQuotedVoiceDocumentRef,
     clearQuotedVoiceDocumentRef,
     toTokens,
+    unavailableRecipients,
     toggleRecipient,
     clearRecipients,
     messageMode,
@@ -1367,6 +1368,7 @@ export function ChatTab({
                       onQuoteVoiceDocumentRef={handleQuoteVoiceDocumentReference}
                       onClearQuotedVoiceDocumentRef={clearQuotedVoiceDocumentRef}
                       toTokens={toTokens}
+                      unavailableRecipients={unavailableRecipients}
                       onToggleRecipient={toggleRecipient}
                       onClearRecipients={clearRecipients}
                       composerFiles={composerFiles}

@@ -163,6 +163,8 @@
   "failedSendOpen": "Open",
   "failedSendUnavailableHint": "A send whose Group is unavailable cannot be viewed or restored here. If its Group becomes available again, it can be restored there. Discard removes it from this page for good.",
   "recipientUnavailable": "One or more recipients are unavailable. Check the recipients before sending.",
+  "unavailableRecipient": "{{name}} (unavailable)",
+  "removeUnavailableRecipient": "Remove unavailable recipient {{name}}",
   "clearRecipients": "Clear recipients",
   "remoteGroupChipLabel": "Remote group {{name}}",
   "remoteGroupAccessHere": "Access to this group",

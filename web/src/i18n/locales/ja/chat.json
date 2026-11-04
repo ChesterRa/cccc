@@ -159,6 +159,8 @@
   "failedSendOpen": "開く",
   "failedSendUnavailableHint": "送信元のグループが利用できない間は、この送信を表示も復元もできません。グループが再び利用できるようになれば、そこで復元できます。破棄すると、このページに保存された内容は完全に削除されます。",
   "recipientUnavailable": "利用できない宛先があります。送信する前に宛先を確認してください。",
+  "unavailableRecipient": "{{name}}（利用不可）",
+  "removeUnavailableRecipient": "利用できない宛先 {{name}} を削除",
   "clearRecipients": "宛先をクリア",
   "remoteGroupChipLabel": "リモートグループ {{name}}",
   "remoteGroupAccessHere": "このグループへのアクセス",

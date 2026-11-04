@@ -29,11 +29,22 @@ describe("mention trigger boundaries", () => {
     "请#gr",
     "日本語@wo",
     "かな@wo",
+    "サーバー@wo",
     "한@wo",
     "请看，@work",
     "请看（@work",
     "please #group",
   ])("detects a mention after a boundary: %s", (text) => expect(trigger(text)).not.toBeNull());
+  it("opens a mention at the caret before unspaced CJK text and a dotted filename", () => {
+    const text = "请@codex-1看一下README.md";
+    const caret = text.indexOf("看");
+    expect(findComposerMentionAtCaret(text, caret)).toEqual({
+      kind: "agent",
+      start: 1,
+      end: caret,
+      filter: "codex-1",
+    });
+  });
   it("replaces at the caret, keeps the suffix, and relocates an existing suffix token", () => {
     const oldText = "hello @wo and #group";
     const at = oldText.indexOf("@wo");
