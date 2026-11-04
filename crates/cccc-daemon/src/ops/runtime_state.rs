@@ -2,19 +2,84 @@ use super::operation::{
     Operation,
     Policy::{Read, Write},
 };
-use cccc_contracts::{DaemonRequest, Event, RunnerKind, utc_now};
+use cccc_contracts::{Actor, DaemonRequest, Event, RunnerKind, utc_now};
 use cccc_core::integration_state;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_arg, string_arg};
 
 const KEY: &str = "runtime_states";
 const DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
 const MAX_TURN_EVENTS: usize = 20;
+
+type TurnNoticeKey = (PathBuf, String, String);
+type TurnNotice = (String, super::instruction_files::Pending);
+
+fn turn_notices() -> &'static Mutex<HashMap<TurnNoticeKey, TurnNotice>> {
+    static NOTICES: OnceLock<Mutex<HashMap<TurnNoticeKey, TurnNotice>>> = OnceLock::new();
+    NOTICES.get_or_init(Mutex::default)
+}
+
+fn turn_notice_key(home: &HomeLayout, group_id: &str, actor_id: &str) -> TurnNoticeKey {
+    (home.root().to_path_buf(), group_id.into(), actor_id.into())
+}
+
+fn web_instruction_session(root: &Path) -> String {
+    format!("web:{}", root.display())
+}
+
+/// Start monitoring when a structured actor starts; repeated starts of the
+/// same actor and workspace retain the existing observation.
+pub(super) fn record_web_instruction_baseline(home: &HomeLayout, group: &GroupDoc, actor: &Actor) {
+    let Some(scope) = super::actor_runtime::effective_scope(group, Some(actor)) else {
+        return;
+    };
+    let Some(snapshot) = super::instruction_files::Snapshot::read(&scope.path) else {
+        return;
+    };
+    super::instruction_files::record(
+        home,
+        &group.group_id,
+        actor,
+        &web_instruction_session(&scope.path),
+        snapshot,
+    );
+}
+
+fn take_turn_notice(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    turn_id: &str,
+) -> Option<super::instruction_files::Pending> {
+    let mut notices = turn_notices().lock().ok()?;
+    let key = turn_notice_key(home, group_id, actor_id);
+    if notices.get(&key).is_some_and(|(turn, _)| turn == turn_id) {
+        notices.remove(&key).map(|(_, notice)| notice)
+    } else {
+        None
+    }
+}
+
+/// Dots and Grok finish their private claim and create an execution token
+/// after `wait_next_turn`. The notice is committed only if that outer claim
+/// succeeds and can return the payload to the model.
+pub(super) fn confirm_pulled_instruction_notice(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    turn_id: &str,
+) {
+    if let Some(notice) = take_turn_notice(home, group_id, actor_id, turn_id) {
+        notice.delivered();
+    }
+}
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
@@ -402,7 +467,21 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
     let event_ids: Vec<_> = messages.iter().map(|event| event.id.clone()).collect();
     let latest = messages.last().expect("messages is not empty");
     let turn_id = turn_id(&group.group_id, &actor_id, &event_ids);
-    let coalesced_text = coalesced_text(home, &group, &messages, &actor_id);
+    let mut coalesced_text = coalesced_text(home, &group, &messages, &actor_id);
+    let instruction_notice =
+        super::actor_runtime::effective_scope(&group, Some(actor)).and_then(|scope| {
+            super::instruction_files::check(
+                home,
+                &group.group_id,
+                actor,
+                &web_instruction_session(&scope.path),
+                &scope.path,
+            )
+        });
+    if let Some(notice) = &instruction_notice {
+        coalesced_text.push_str("\n\n");
+        coalesced_text.push_str(&notice.delivery_line());
+    }
     let web_model_mode = delivery_preference(&group, &actor_id)["mode"].clone();
     let turn = json!({
         "turn_id":turn_id,
@@ -438,6 +517,16 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
                 &transport,
                 crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
             )?;
+        }
+    }
+    if let Some(notice) = instruction_notice {
+        if transport == "web_model_pull" && request.op == "runtime_wait_next_turn" {
+            notice.delivered();
+        } else if let Ok(mut notices) = turn_notices().lock() {
+            notices.insert(
+                turn_notice_key(home, &group.group_id, &actor_id),
+                (turn_id, notice),
+            );
         }
     }
     object(json!({"status":"work_available","turn":turn}))
@@ -843,6 +932,11 @@ fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResu
                 "web_model_browser",
                 outcome,
             )?;
+        }
+        if let Some(notice) = take_turn_notice(home, &group.group_id, &actor_id, &turn_id)
+            && runtime_state == "accepted"
+        {
+            notice.delivered();
         }
     }
     object(json!({"event":event}))

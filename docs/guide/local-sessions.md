@@ -254,6 +254,8 @@ Failure to start the native queue process is known not to have submitted input a
 
 Pending backlogs larger than an in-memory queue or startup query page continue in bounded batches as delivery capacity becomes available. They do not require another message, repeated status refreshes or a manual agent Start to reach the remaining items. Paused/disabled memberships and paused/stopped Groups remain fenced; enabling an imported native agent restores only that membership, never starts the original application, and does not resume a paused/stopped Group.
 
+After an instruction file such as `AGENTS.md` or `CLAUDE.md` in a connected session's working directory, or a directory above it, changes, the next CCCC message to that session that has room for it carries a one-time line asking it to check the current project instructions; Claude receives a short form in its Monitor notification. CCCC starts comparing when the session joins a Group, when a Claude, Pi or OpenCode receiver attaches for a session that is already a member, or when the daemon starts with it registered; otherwise at its first message. See [When instruction files change](best-practices.md#when-instruction-files-change) for what is not covered.
+
 Receiver presence is ephemeral and reconnects after a daemon restart. Current native identity comes from CCCC-owned lifecycle metadata, including callbacks while the daemon is down. No native conversation database or transcript is scanned. The global directory is restricted to the private Web administrator and is unavailable in Exhibit or through remote model connectors.
 
 ## Disconnect the integration

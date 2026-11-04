@@ -115,6 +115,190 @@ impl Drop for Fixture {
         let _ = store::detach(&self.home, &self.source.source_id, "fixture-receiver");
     }
 }
+
+fn pending_instruction_notice(fixture: &Fixture, group: &GroupDoc, actor: &Actor) -> bool {
+    let (session, root) = instruction_session(&fixture.home, actor).expect("live native session");
+    super::super::instruction_files::check(&fixture.home, &group.group_id, actor, &session, &root)
+        .is_some_and(|pending| pending.delivery_line().contains("AGENTS.md"))
+}
+
+#[test]
+fn instruction_baseline_is_set_at_conversation_creation_and_survives_heartbeat() {
+    let fixture = Fixture::new();
+    let instructions = fixture._temp.path().join("AGENTS.md");
+    std::fs::write(&instructions, "first").expect("original instructions");
+    let group = fixture.conversation();
+    std::fs::write(&instructions, "changed").expect("changed instructions");
+    heartbeat(
+        &fixture.home,
+        &req(
+            "local_session_receiver_heartbeat",
+            json!({"source_id": fixture.source.source_id, "connection_id": "fixture-receiver"}),
+        ),
+    )
+    .expect("heartbeat");
+    assert!(pending_instruction_notice(
+        &fixture,
+        &group,
+        &group.actors[0]
+    ));
+}
+
+#[test]
+fn instruction_baseline_is_set_when_a_native_session_joins() {
+    let fixture = Fixture::new();
+    let group = fixture.conversation();
+    let directory = fixture._temp.path().join("joined-workspace");
+    std::fs::create_dir(&directory).expect("workspace");
+    let instructions = directory.join("AGENTS.md");
+    std::fs::write(&instructions, "first").expect("original instructions");
+    let mut source = fixture.source.clone();
+    source.source_id = "codex:instruction-fixture".into();
+    source.native_session_id = "instruction-fixture".into();
+    source.runtime = LocalSessionRuntime::Codex;
+    source.cwd = directory.to_string_lossy().into_owned();
+    source.codex_can_receive = true;
+    native::write(&fixture.home, source.clone()).expect("native source");
+    fixture.call(
+        "local_session_join",
+        json!({"group_id":group.group_id,"source_ids":[source.source_id]}),
+    );
+    let group = GroupStore::new(fixture.home.clone())
+        .expect("store")
+        .load(&group.group_id)
+        .expect("joined Group");
+    let actor = group
+        .actors
+        .iter()
+        .find(|actor| actor.external_session_id == source.source_id)
+        .expect("joined actor");
+    std::fs::write(instructions, "changed").expect("changed instructions");
+    assert!(pending_instruction_notice(&fixture, &group, actor));
+}
+
+#[test]
+fn instruction_baseline_is_set_before_daemon_ipc_for_live_native_members() {
+    let fixture = Fixture::new();
+    let instructions = fixture._temp.path().join("AGENTS.md");
+    std::fs::write(&instructions, "first").expect("original instructions");
+    let group = fixture.conversation();
+    // A different native revision models the tracker state after a daemon
+    // restart without resetting global state shared by other parallel tests.
+    let mut restarted = fixture.source.clone();
+    restarted.native_session_id = "second-conversation".into();
+    restarted.revision = "second-revision".into();
+    native::write(&fixture.home, restarted).expect("updated native session");
+    super::super::runtime_restore::settle_stranded(&fixture.home).expect("startup sweep");
+    std::fs::write(instructions, "changed after startup").expect("changed instructions");
+    assert!(pending_instruction_notice(
+        &fixture,
+        &group,
+        &group.actors[0]
+    ));
+}
+
+#[test]
+fn instruction_baseline_is_set_on_receiver_attach_for_the_new_native_revision() {
+    let fixture = Fixture::new();
+    let instructions = fixture._temp.path().join("AGENTS.md");
+    std::fs::write(&instructions, "first").expect("original instructions");
+    let group = fixture.conversation();
+    let mut resumed = fixture.source.clone();
+    resumed.native_session_id = "resumed-conversation".into();
+    resumed.revision = "resumed-revision".into();
+    native::write(&fixture.home, resumed).expect("updated native session");
+    attach(
+        &fixture.home,
+        &req(
+            "local_session_receiver_attach",
+            json!({"source_id": fixture.source.source_id, "connection_id": "fixture-receiver"}),
+        ),
+    )
+    .expect("attach receiver");
+    std::fs::write(instructions, "changed after attach").expect("changed instructions");
+    assert!(pending_instruction_notice(
+        &fixture,
+        &group,
+        &group.actors[0]
+    ));
+}
+
+#[test]
+fn native_delivery_reoffers_instruction_notice_after_ambiguous_handoff() {
+    for runtime in [LocalSessionRuntime::Claude, LocalSessionRuntime::Pi] {
+        let fixture = Fixture::with_runtime(runtime);
+        let instructions = fixture._temp.path().join("AGENTS.md");
+        std::fs::write(&instructions, "first").expect("original instructions");
+        let group = fixture.conversation();
+        let actor = &group.actors[0];
+        let receiver = fixture.attach();
+        std::fs::write(instructions, "changed").expect("changed instructions");
+
+        let send = |text| {
+            fixture.call(
+                "message_send",
+                json!({"group_id":group.group_id,"by":"user","to":[actor.id],"message_mode":"send","text":text}),
+            )["event"]["id"]
+                .as_str()
+                .expect("event ID")
+                .to_owned()
+        };
+        let first_id = send("first");
+        let first = offered(&fixture.home, &receiver);
+        assert!(
+            first.text.contains("AGENTS.md changed"),
+            "{runtime:?}: {}",
+            first.text
+        );
+        // Reading message history is not a delivery receipt and must not
+        // acknowledge the notice while the native handoff is still pending.
+        fixture.call(
+            "message_history",
+            json!({"group_id":group.group_id,"actor_id":actor.id,"by":actor.id,"event_id":first_id}),
+        );
+        transport::acknowledge(
+            &fixture.home,
+            &receiver,
+            &first.handoff_id,
+            transport::Outcome::Ambiguous("synthetic unconfirmed handoff".into()),
+        )
+        .expect("ambiguous handoff");
+        fixture.wait_state(&group, &first_id, "ambiguous");
+
+        let second_id = send("second");
+        let second = offered(&fixture.home, &receiver);
+        assert!(
+            second.text.contains("AGENTS.md changed"),
+            "{runtime:?}: {}",
+            second.text
+        );
+        transport::acknowledge(
+            &fixture.home,
+            &receiver,
+            &second.handoff_id,
+            transport::Outcome::Accepted,
+        )
+        .expect("accepted handoff");
+        fixture.wait_state(&group, &second_id, "accepted");
+
+        let third_id = send("third");
+        let third = offered(&fixture.home, &receiver);
+        assert!(
+            !third.text.contains("AGENTS.md changed"),
+            "{runtime:?}: {}",
+            third.text
+        );
+        transport::acknowledge(
+            &fixture.home,
+            &receiver,
+            &third.handoff_id,
+            transport::Outcome::Accepted,
+        )
+        .expect("accepted handoff");
+        fixture.wait_state(&group, &third_id, "accepted");
+    }
+}
+
 #[test]
 fn claude_compact_notification_recovers_full_message_and_instructions_without_redelivery() {
     let fixture = Fixture::new();

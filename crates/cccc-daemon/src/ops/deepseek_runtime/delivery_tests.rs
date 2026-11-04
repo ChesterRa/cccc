@@ -16,6 +16,83 @@ fn deliver(
 
 #[cfg(unix)]
 #[test]
+fn changed_instruction_before_first_turn_is_delivered_once() {
+    let temp = tempfile::tempdir().expect("isolated fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store
+        .create("deepseek instruction notice", "")
+        .expect("group");
+    let mut group = cccc_core::group_scope::attach(
+        &store,
+        &group.group_id,
+        cccc_core::scope::detect(temp.path()).expect("scope"),
+    )
+    .expect("attach scope");
+    let instruction_file = temp.path().join("AGENTS.md");
+    std::fs::write(&instruction_file, "initial instructions").expect("initial instructions");
+    let requests = temp.path().join("requests.jsonl");
+    let script = r#"while IFS= read -r line; do
+printf '%s\n' "$line" >> "$CCCC_TEST_REQUESTS"
+if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
+elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
+else
+  rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "${rid:-3}"
+fi
+done"#;
+    let mut actor = Actor::new("deepseek");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.command = vec!["sh".into(), "-c".into(), script.into()];
+    actor.env.insert(
+        "CCCC_TEST_REQUESTS".into(),
+        requests.to_string_lossy().into_owned(),
+    );
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save actor");
+    start(&home, &group, &actor, temp.path()).expect("start fake ACP");
+    std::fs::write(&instruction_file, "updated instructions").expect("update instructions");
+
+    for text in ["FIRST_MESSAGE", "LATER_MESSAGE"] {
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = serde_json::json!({"to":["deepseek"],"text":text})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &event)
+            .expect("append event");
+        assert!(deliver(
+            &home,
+            &group,
+            &actor,
+            &event,
+            &AtomicBool::new(false)
+        ));
+    }
+
+    let prompts = std::fs::read_to_string(&requests)
+        .expect("captured ACP requests")
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("request"))
+        .filter(|request| request["method"] == "session/prompt")
+        .filter_map(|request| {
+            request["params"]["prompt"][0]["text"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(prompts.len(), 2);
+    assert!(prompts[0].contains("INSTRUCTION FILES CHANGED"));
+    assert!(prompts[0].contains("AGENTS.md"));
+    assert!(!prompts[1].contains("INSTRUCTION FILES CHANGED"));
+    stop(&group.group_id, &actor.id);
+}
+
+#[cfg(unix)]
+#[test]
 fn fake_acp_delivery_persists_update_and_terminal_before_success() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

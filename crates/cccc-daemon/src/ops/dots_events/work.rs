@@ -95,7 +95,20 @@ pub(super) fn claim(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
     })
     .map_err(state_error)??;
-    object(result)
+    let result = object(result)?;
+    if let Some(turn_id) = result
+        .get("turn")
+        .and_then(|turn| turn.get("turn_id"))
+        .and_then(Value::as_str)
+    {
+        super::super::runtime_state::confirm_pulled_instruction_notice(
+            home,
+            &group.group_id,
+            &actor.id,
+            turn_id,
+        );
+    }
+    Ok(result)
 }
 
 pub(in crate::ops) fn record_completed(

@@ -17,12 +17,50 @@ current workspace root. It does not combine ancestor or nested instruction
 files, change runtime settings, or inject the file into prompts. Each runtime
 controls discovery, precedence, and refresh. For example, Claude Code may prefer
 an existing `CLAUDE.md`; configure its native instruction loading when necessary.
-Saving a file does not prove that running sessions have reloaded it. You can
-optionally notify the team in chat after saving.
+Saving a file does not prove that running sessions have reloaded it; see
+[When instruction files change](#when-instruction-files-change).
 
 Web Model and Dots agents can read repository files on demand with the existing
 `cccc_file` tool, for example `cccc_file(path="AGENTS.md")`. Local coding runtimes
 use their own file and instruction-loading facilities.
+
+### When instruction files change
+
+Runtimes such as Claude Code and Codex read their instruction files when a
+session starts and keep that copy. CCCC watches these files for the agents it
+delivers to: `AGENTS.override.md`, `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`
+and `.claude/CLAUDE.md`, in the agent's workspace and each directory above it.
+After one of them changes, appears or is removed, the next CCCC message to each
+agent working in that workspace that has room for it carries one line asking it
+to check the current project instructions. A message that carries its full text
+names the changed files; see below for Claude's shorter notification. The line
+names paths only. CCCC does not reload anything itself, include file contents, or
+change which instructions take precedence.
+
+What this does not cover:
+
+- Watching starts before launch for agents CCCC starts; when a connected
+  session joins a Group, when the workspace an agent works in is switched, or
+  when CCCC's daemon starts; otherwise at the agent's first message. A change
+  made before that, or while the daemon was stopped, is not reported.
+- Other files that these import with `@` are not followed, and instruction
+  files in subdirectories and user-level files outside the workspace's
+  directories are not watched.
+- If a watched file cannot be read, for example because of its permissions, the
+  message goes out without the line, and nothing is compared until the file can
+  be read again.
+- A Web Model agent is watched per agent and workspace. Starting a new
+  conversation in the provider's app does not reset it.
+- The line counts as delivered once the runtime accepts the message carrying
+  it. That does not prove the model read it. After a rejected or uncertain
+  delivery, CCCC keeps its earlier record, so a later message carries the line
+  again if the files still differ from that record.
+
+A connected Claude session receives a short form in its notification, which
+names the file when one file with a short path changed and otherwise gives only
+the number of changed files. When the notification has no room even for that,
+or a Codex message would exceed Codex's command-line limit with it, the message
+goes out without the line and the line waits for a later message.
 
 CCCC no longer gives `PROJECT.md` special behavior, and the dedicated
 `cccc_project_info` tool has been removed. Existing repository documents are left

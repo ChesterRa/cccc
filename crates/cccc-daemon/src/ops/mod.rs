@@ -47,6 +47,7 @@ mod group_space;
 mod groups;
 mod hermes_runtime;
 mod im;
+pub(crate) mod instruction_files;
 #[cfg(test)]
 mod isolated_test;
 pub(crate) mod local_headless;

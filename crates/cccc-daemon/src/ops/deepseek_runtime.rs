@@ -46,6 +46,7 @@ pub fn start(
     cwd: &Path,
 ) -> std::io::Result<()> {
     let cwd = cwd.canonicalize()?;
+    let instruction_snapshot = super::instruction_files::Snapshot::read(&cwd);
     let key = (group.group_id.clone(), actor.id.clone());
     stop(&group.group_id, &actor.id);
     let cancel_flag = Arc::new(AtomicBool::new(false));
@@ -80,6 +81,15 @@ pub fn start(
         return Err(std::io::Error::other(format!(
             "deepseek ACP handshake failed: {error}"
         )));
+    }
+    if let Some(snapshot) = instruction_snapshot {
+        super::instruction_files::record(
+            home,
+            &group.group_id,
+            actor,
+            &format!("deepseek:{generation}"),
+            snapshot,
+        );
     }
     sessions()
         .write()

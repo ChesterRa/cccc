@@ -116,6 +116,7 @@ pub(super) fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                         .any(|a| &a.external_session_id == id && a.enabled)
                 })
             {
+                super::record_group_instruction_baselines(home, &group);
                 return object(
                     json!({"group_id":group.group_id,"group":super::super::group_runtime::group(home, group),"reused":true}),
                 );
@@ -148,9 +149,12 @@ pub(super) fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         string_arg(request, "source_id").as_deref(),
     );
     match result {
-        Ok(group) => object(
-            json!({"group_id":group.group_id,"group":super::super::group_runtime::group(home, group),"reused":false}),
-        ),
+        Ok(group) => {
+            super::record_group_instruction_baselines(home, &group);
+            object(
+                json!({"group_id":group.group_id,"group":super::super::group_runtime::group(home, group),"reused":false}),
+            )
+        }
         Err(mut error) => {
             if let Err(cleanup) = store.delete(&created.group_id) {
                 error
@@ -186,6 +190,7 @@ pub(super) fn join(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         })
         .collect::<Vec<_>>();
     if sources.is_empty() {
+        super::record_group_instruction_baselines(home, &group);
         return object(
             json!({"group_id":group_id,"group":super::super::group_runtime::group(home, group),"reused":true}),
         );
@@ -218,6 +223,7 @@ pub(super) fn join(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         )
         .map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::io)?;
+    super::record_group_instruction_baselines(home, &group);
     object(
         json!({"group_id":group_id,"group":super::super::group_runtime::group(home, group),"reused":false}),
     )

@@ -468,6 +468,114 @@ while True:
     }
 }
 
+#[test]
+fn a_pty_session_hears_once_about_an_instruction_file_changed_after_launch() {
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize home");
+    let work = temp.path().join("work");
+    std::fs::create_dir_all(&work).expect("workspace");
+    std::fs::write(work.join("AGENTS.md"), "commit when asked").expect("instructions");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("instructions", "").expect("group");
+    let mut group = cccc_core::group_scope::attach(
+        &store,
+        &group.group_id,
+        cccc_core::scope::detect(&work).expect("fixture scope"),
+    )
+    .expect("attach scope");
+    let script = temp.path().join("terminal.py");
+    std::fs::write(
+        &script,
+        r#"
+import os,sys,tty,pathlib,json
+root=pathlib.Path(sys.argv[1]);tty.setraw(0)
+(root/'ready').touch()
+buf=b''
+while True:
+ data=os.read(0,65536)
+ if not data:break
+ buf+=data
+ while b'\r' in buf:
+  text,buf=buf.split(b'\r',1)
+  if not text:continue
+  with (root/'received').open('a') as f:f.write(json.dumps(text.decode())+'\n')
+"#,
+    )
+    .expect("write fixture");
+    let mut actor = Actor::new("worker");
+    actor.runtime = ActorRuntime::Custom;
+    actor.command = vec![
+        "python3".into(),
+        script.to_string_lossy().into_owned(),
+        temp.path().to_string_lossy().into_owned(),
+    ];
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save");
+    let response = crate::handle_request(
+        &home,
+        &DaemonRequest {
+            v: 1,
+            op: "actor_start".into(),
+            args: serde_json::json!({"group_id":group.group_id,"actor_id":"worker","by":"user"})
+                .as_object()
+                .expect("start arguments")
+                .clone(),
+        },
+    );
+    assert!(response.ok, "{:?}", response.error);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for(|| temp.path().join("ready").exists());
+        // Edited after the launch recorded what the session started with.
+        std::fs::write(work.join("AGENTS.md"), "commit each milestone").expect("edit");
+        let group = store.load(&group.group_id).expect("group");
+        let actor = group.actors[0].clone();
+        let mut preamble = String::new();
+        let cancelled = AtomicBool::new(false);
+        for text in ["FIRST_TASK", "SECOND_TASK"] {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = "user".into();
+            event.data = serde_json::json!({"to":["worker"],"text":text,"message_mode":"send"})
+                .as_object()
+                .expect("event data")
+                .clone();
+            let job = DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event,
+                claimed: true,
+            };
+            assert!(matches!(
+                process_batch(&mut vec![job], &mut preamble, &cancelled),
+                super::BatchOutcome::Delivered
+            ));
+        }
+        let submitted = |task: &str| {
+            std::fs::read_to_string(temp.path().join("received"))
+                .unwrap_or_default()
+                .lines()
+                .map(|line| serde_json::from_str::<String>(line).expect("input record"))
+                .find(|text| text.contains(task))
+        };
+        wait_for(|| submitted("SECOND_TASK").is_some());
+        let first = submitted("FIRST_TASK").expect("first task");
+        let second = submitted("SECOND_TASK").expect("second task");
+        assert_eq!(
+            first.matches("INSTRUCTION FILES CHANGED").count(),
+            1,
+            "{first}"
+        );
+        assert!(first.contains(": AGENTS.md changed."), "{first}");
+        assert!(!first.contains("milestone"), "no file contents: {first}");
+        assert!(!second.contains("INSTRUCTION FILES CHANGED"), "{second}");
+    }));
+    cccc_runtime::stop(&group.group_id, "worker").expect("stop fixture");
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
+    }
+}
+
 fn wait_for(mut ready: impl FnMut() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     while !ready() {

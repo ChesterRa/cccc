@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Added
 
+- Agents are told when their instruction files change. After `AGENTS.md`, `AGENTS.override.md`,
+  `CLAUDE.md`, `CLAUDE.local.md` or `.claude/CLAUDE.md` in an agent's workspace or a directory
+  above it changes, appears or is removed, the next CCCC message that has room for it carries one
+  line asking the agent to check the current project instructions, naming the files where the
+  message carries its full text. This covers agents CCCC starts, connected native sessions and Web
+  Model agents. The line names paths only, and CCCC reloads nothing itself. Changes made before
+  CCCC began watching a session, or while the daemon was stopped, are not reported.
 - The `cccc` MCP server now says when its CCCC version differs from the version in
   the daemon address file. The next tool result that can carry it includes `cccc_version_notice` with
   both versions and what to restart: the MCP server in that runtime when the server is older, or

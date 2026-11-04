@@ -163,6 +163,8 @@ mod structured_admission {
             let temp = tempfile::tempdir().expect("isolated admission fixture");
             let home = HomeLayout::from_path(temp.path().join("cccc")).expect("home");
             home.initialize().expect("initialize home");
+            std::fs::write(temp.path().join("AGENTS.md"), "initial instructions")
+                .expect("initial instruction file");
             let store = GroupStore::new(home.clone()).expect("store");
             let group = store.create("ACP admission diagnostic", "").expect("group");
             let mut group = cccc_core::group_scope::attach(
@@ -330,6 +332,44 @@ mod structured_admission {
             actor_delivery::dispatch_unread(&fixture.home, &fixture.group, "worker"),
             0
         );
+    }
+    #[test]
+    fn instruction_change_before_first_delivery_is_retried_after_unconfirmed_admission() {
+        let fixture = Fixture::new();
+        std::fs::write(
+            fixture.temp.path().join("AGENTS.md"),
+            "updated instructions",
+        )
+        .expect("update instruction file");
+
+        let uncertain = fixture.send("REJECT_BEFORE_RECEIPT");
+        fixture.wait(|| fixture.outcome(&uncertain).as_deref() == Some("ambiguous"));
+        let accepted = fixture.send("AFTER_UNCONFIRMED_ADMISSION");
+        fixture.wait(|| fixture.outcome(&accepted).as_deref() == Some("accepted"));
+        let later = fixture.send("AFTER_CONFIRMED_ADMISSION");
+        fixture.wait(|| fixture.outcome(&later).as_deref() == Some("accepted"));
+
+        let requests = std::fs::read_to_string(fixture.temp.path().join("v3_requests.jsonl"))
+            .expect("fixture requests");
+        let prompts = requests
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("request"))
+            .filter(|request| request["method"] == "session/prompt")
+            .filter_map(|request| {
+                request["params"]["prompt"][0]["text"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+        let prompt = |needle: &str| {
+            prompts
+                .iter()
+                .find(|text| text.contains(needle))
+                .unwrap_or_else(|| panic!("missing prompt: {needle}"))
+        };
+        assert!(prompt("REJECT_BEFORE_RECEIPT").contains("INSTRUCTION FILES CHANGED"));
+        assert!(prompt("AFTER_UNCONFIRMED_ADMISSION").contains("INSTRUCTION FILES CHANGED"));
+        assert!(!prompt("AFTER_CONFIRMED_ADMISSION").contains("INSTRUCTION FILES CHANGED"));
     }
 }
 

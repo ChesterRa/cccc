@@ -157,6 +157,16 @@ pub fn process_batch(
             "[CCCC] If this conversation has not completed CCCC initialization, call cccc_bootstrap before handling this task. Otherwise continue without repeating bootstrap.\n\n{payload}"
         );
     }
+    let instructions = super::instruction_files::check(
+        &job.home,
+        &current_group.group_id,
+        &current_actor,
+        &actor_runtime::pty_instruction_session(&status),
+        &status.cwd,
+    );
+    if let Some(pending) = &instructions {
+        payload = format!("{payload}\n\n{}", pending.delivery_line());
+    }
     if submit_text(
         &current_group.group_id,
         &current_actor,
@@ -164,6 +174,9 @@ pub fn process_batch(
         &payload,
         cancelled,
     ) {
+        if let Some(pending) = instructions {
+            pending.delivered();
+        }
         preamble_session.clone_from(&status.started_at);
         finish_jobs(jobs);
         return BatchOutcome::Delivered;
@@ -216,14 +229,27 @@ fn process_external_batch(
             return BatchOutcome::Terminal("Native delivery could not be rendered".into());
         };
         let first_delivery = *preamble_session != marker;
+        let mut instructions = super::local_sessions::instruction_session(&job.home, actor)
+            .and_then(|(session, root)| {
+                super::instruction_files::check(&job.home, &group.group_id, actor, &session, &root)
+            });
         if actor.runtime == ActorRuntime::Claude {
-            let Some(notice) =
-                super::actor_delivery_render::claude_notice(&group, actor, &job.event)
-            else {
+            let short = instructions
+                .as_ref()
+                .map(super::instruction_files::Pending::short_line);
+            let Some((notice, included)) = super::actor_delivery_render::claude_notice(
+                &group,
+                actor,
+                &job.event,
+                short.as_deref(),
+            ) else {
                 return BatchOutcome::Terminal(
                     "Native notification routing context exceeds the Claude Monitor budget".into(),
                 );
             };
+            if !included {
+                instructions = None;
+            }
             text = notice;
         } else if first_delivery {
             text = format!(
@@ -246,6 +272,20 @@ fn process_external_batch(
                 }),
             });
             text = format!("[CCCC] Receiving context: {context}\n\n{text}");
+        }
+        if actor.runtime != ActorRuntime::Claude {
+            if let Some(pending) = &instructions {
+                let noticed = format!("{text}\n\n{}", pending.delivery_line());
+                // The notice is never why a message cannot be delivered.
+                if matches!(
+                    super::local_sessions::preflight(&job.home, actor, &noticed),
+                    Err(super::local_sessions::PreflightError::Rejected(_))
+                ) {
+                    instructions = None;
+                } else {
+                    text = noticed;
+                }
+            }
         }
         match super::local_sessions::preflight(&job.home, actor, &text) {
             Ok(()) => {}
@@ -308,6 +348,9 @@ fn process_external_batch(
             DeliveryOutcome::Accepted => {
                 finish_job(job, CompletedDelivery::Accepted);
                 *preamble_session = marker;
+                if let Some(pending) = instructions {
+                    pending.delivered();
+                }
             }
             DeliveryOutcome::Rejected(reason) => finish_job(job, CompletedDelivery::Failed(reason)),
             DeliveryOutcome::Ambiguous(reason) => {

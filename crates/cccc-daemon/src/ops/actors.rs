@@ -441,6 +441,15 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             ));
         }
     };
+    if original_actor.default_scope_key != actor.default_scope_key
+        && actor.enabled
+        && actor.runtime.is_web_model()
+        && updated_group.running
+    {
+        // A Web conversation can read the newly selected workspace in its
+        // current turn, before any further message reaches the Actor.
+        super::runtime_state::record_web_instruction_baseline(home, &updated_group, &actor);
+    }
     if enabling_native {
         actor_delivery::dispatch_unread(home, &updated_group, &actor_id);
     }

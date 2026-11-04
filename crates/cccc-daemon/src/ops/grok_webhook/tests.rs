@@ -139,6 +139,105 @@ impl Fixture {
 }
 
 #[test]
+fn grok_outer_claim_failure_does_not_consume_an_instruction_notice() {
+    let f = Fixture::new();
+    let workspace = f._temp.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("workspace");
+    let instructions = workspace.join("AGENTS.md");
+    std::fs::write(&instructions, "first").expect("original instructions");
+    let groups = GroupStore::new(f.home.clone()).expect("store");
+    cccc_core::group_scope::attach(
+        &groups,
+        &f.group.group_id,
+        cccc_core::scope::detect(&workspace).expect("scope"),
+    )
+    .expect("attach");
+    f.start();
+    std::fs::write(instructions, "changed").expect("changed instructions");
+    let event_id = f.source("first task");
+    let delivery = f.next();
+    let captured = f.capture(&delivery, "cccc_runtime_wait_next_turn");
+    // Make token creation fail after the inner runtime accepted the turn.
+    store::update_connector(&f.home, &f.id, |connector| {
+        connector["routing_key"] = Value::Null
+    })
+    .expect("corrupt isolated fixture key");
+    assert!(
+        !f.response(
+            "grok_work_claim",
+            json!({"by":"bot","_cccc_web_binding":captured})
+        )
+        .ok
+    );
+    let group = groups.load(&f.group.group_id).expect("group");
+    let actor = group
+        .actors
+        .iter()
+        .find(|actor| actor.id == "bot")
+        .expect("actor");
+    let state = super::super::runtime_delivery::latest_state(
+        &f.home,
+        &group.group_id,
+        &actor.id,
+        &event_id,
+    )
+    .expect("delivery state");
+    assert!(
+        state.is_some_and(|(state, _)| state == "accepted"),
+        "the inner claim must have been reached"
+    );
+    let root = workspace.canonicalize().expect("workspace root");
+    assert!(
+        super::super::instruction_files::check(
+            &f.home,
+            &group.group_id,
+            actor,
+            &format!("web:{}", root.display()),
+            &root
+        )
+        .is_some(),
+        "failed outer claim must leave the notice pending"
+    );
+}
+
+#[test]
+fn grok_claim_delivers_instruction_changes_once_after_successful_outer_commit() {
+    let f = Fixture::new();
+    let workspace = f._temp.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("workspace");
+    let instructions = workspace.join("AGENTS.md");
+    std::fs::write(&instructions, "first").expect("original instructions");
+    let groups = GroupStore::new(f.home.clone()).expect("store");
+    cccc_core::group_scope::attach(
+        &groups,
+        &f.group.group_id,
+        cccc_core::scope::detect(&workspace).expect("scope"),
+    )
+    .expect("attach");
+    f.start();
+    std::fs::write(instructions, "changed").expect("changed instructions");
+    f.source("first task");
+    let delivery = f.next();
+    let first = f.claim(&f.capture(&delivery, "cccc_runtime_wait_next_turn"));
+    assert!(
+        first["turn"]["coalesced_text"]
+            .as_str()
+            .expect("text")
+            .contains("AGENTS.md changed")
+    );
+    f.complete(&first);
+    f.source("second task");
+    let next = f.next();
+    let second = f.claim(&f.capture(&next, "cccc_runtime_wait_next_turn"));
+    assert!(
+        !second["turn"]["coalesced_text"]
+            .as_str()
+            .expect("text")
+            .contains("INSTRUCTION FILES CHANGED")
+    );
+}
+
+#[test]
 fn idle_configuration_preserves_access_and_queued_work_and_retires_old_wakes() {
     let f = Fixture::new();
     let args = json!({"url":"https://api2.cursor.sh/automations/webhook/replacement","key":"synthetic-key"});

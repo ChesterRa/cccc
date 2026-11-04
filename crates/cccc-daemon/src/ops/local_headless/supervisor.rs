@@ -105,6 +105,7 @@ pub(super) fn launch_managed(
     actor: &Actor,
     cwd: &std::path::Path,
 ) -> io::Result<AnalystSession> {
+    let instruction_snapshot = super::super::instruction_files::Snapshot::read(cwd);
     let mut env = actor.env.clone();
     env.insert(
         "CCCC_HOME".into(),
@@ -123,13 +124,23 @@ pub(super) fn launch_managed(
         environment: env,
     };
     let launch_home = home.clone();
-    run_managed_launch(
+    let app = run_managed_launch(
         async move { AnalystSession::launch_actor(&launch_home, config).await }.instrument(
             tracing::info_span!(
                 "actor_runtime_start", group_id = %group.group_id, actor_id = %actor.id
             ),
         ),
-    )
+    )?;
+    if let Some(snapshot) = instruction_snapshot {
+        super::super::instruction_files::record(
+            home,
+            &group.group_id,
+            actor,
+            &format!("headless:{}", app.generation()),
+            snapshot,
+        );
+    }
+    Ok(app)
 }
 
 pub(super) fn attach_managed(
@@ -466,7 +477,7 @@ fn submit_admitted(
     cancelled: &AtomicBool,
     item: &Session,
 ) -> BatchSubmission {
-    let Some(delivery) = super::super::actor_delivery_render::render_batch_with_mail_context(
+    let Some(mut delivery) = super::super::actor_delivery_render::render_batch_with_mail_context(
         home,
         group,
         &actor.id,
@@ -474,6 +485,19 @@ fn submit_admitted(
     ) else {
         return BatchSubmission::Deferred;
     };
+    let mut instruction_notice = item.workspace.clone().for_actor(actor).and_then(|scope| {
+        super::super::instruction_files::check(
+            home,
+            &group.group_id,
+            actor,
+            &format!("headless:{}", item.managed.generation()),
+            &scope.path,
+        )
+    });
+    if let Some(notice) = &instruction_notice {
+        delivery.push_str("\n\n");
+        delivery.push_str(&notice.delivery_line());
+    }
     // OpenCode V2's terminal is a view of the owned HTTP session. Admit CCCC
     // input through that session's durable queue, including during TUI startup.
     // Writing the terminal can be acknowledged before its composer is ready.
@@ -549,6 +573,11 @@ fn submit_admitted(
                 }
             }
         });
+        if outcome == BatchSubmission::Accepted
+            && let Some(notice) = instruction_notice.take()
+        {
+            notice.delivered();
+        }
         return outcome;
     }
     if let Err(error) = item.reattach_viewer() {
@@ -569,6 +598,9 @@ fn submit_admitted(
                 cancelled,
             )
         });
+        if accepted && let Some(notice) = instruction_notice.take() {
+            notice.delivered();
+        }
         return if accepted {
             BatchSubmission::Accepted
         } else {

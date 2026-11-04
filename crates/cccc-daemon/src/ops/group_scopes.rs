@@ -66,6 +66,9 @@ fn attach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         group_scope::attach(&store(home)?, &created.group_id, detected.clone())
             .map_err(OpError::io)?
     };
+    if activate {
+        record_web_instruction_baselines(home, &group);
+    }
     append_scope_event(
         home,
         &group,
@@ -90,6 +93,7 @@ fn detach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let scope_key = required_arg(request, "scope_key")?;
     require_scope_authority(home, request, &group_id)?;
     let group = group_scope::detach(&store(home)?, &group_id, &scope_key).map_err(OpError::io)?;
+    record_web_instruction_baselines(home, &group);
     let event = append_scope_event(
         home,
         &group,
@@ -114,6 +118,7 @@ fn use_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 OpError::io(error)
             }
         })?;
+    record_web_instruction_baselines(home, &updated);
     let event = append_scope_event(
         home,
         &updated,
@@ -127,6 +132,22 @@ fn use_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "active_scope_key":updated.active_scope_key,
         "event":event,
     }))
+}
+
+/// Web conversations can read their new effective workspace during an
+/// existing turn, before the next CCCC delivery. Start watching it when the
+/// scope changes; recording an already observed workspace never resets it.
+fn record_web_instruction_baselines(home: &HomeLayout, group: &GroupDoc) {
+    if !group.running {
+        return;
+    }
+    for actor in group
+        .actors
+        .iter()
+        .filter(|actor| actor.enabled && actor.runtime.is_web_model())
+    {
+        super::runtime_state::record_web_instruction_baseline(home, group, actor);
+    }
 }
 
 fn require_scope_authority(

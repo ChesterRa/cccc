@@ -7,7 +7,15 @@ use serde_json::json;
 // leaving room for the newline. The ledger remains the full-content authority.
 const MONITOR_LINE_BYTES: usize = 480;
 
-pub(crate) fn claude_notice(group: &GroupDoc, actor: &Actor, event: &Event) -> Option<String> {
+/// The Monitor notice, and whether it carries `instructions`: a line naming
+/// changed instruction files goes before the preview, which is the part trimmed
+/// to the budget. Without room for it, the notice goes out without it.
+pub(crate) fn claude_notice(
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+    instructions: Option<&str>,
+) -> Option<(String, bool)> {
     let lookup = json!({"group_id":group.group_id,"event_id":event.id});
     let role = match cccc_core::actors::effective_role(group, &actor.id) {
         Some(ActorRole::Foreman) => "foreman",
@@ -23,6 +31,14 @@ pub(crate) fn claude_notice(group: &GroupDoc, actor: &Actor, event: &Event) -> O
     if encoded_len(&text) > MONITOR_LINE_BYTES {
         return None;
     }
+    let mut included = false;
+    if let Some(line) = instructions {
+        let with_line = format!("{text}{line}\n");
+        if encoded_len(&with_line) <= MONITOR_LINE_BYTES {
+            text = with_line;
+            included = true;
+        }
+    }
     let header_len = text.len();
     text.extend(
         event.data["text"]
@@ -34,7 +50,7 @@ pub(crate) fn claude_notice(group: &GroupDoc, actor: &Actor, event: &Event) -> O
     while encoded_len(&text) > MONITOR_LINE_BYTES && text.len() > header_len {
         text.pop();
     }
-    Some(text)
+    Some((text, included))
 }
 
 fn encoded_len(text: &str) -> usize {
@@ -71,7 +87,8 @@ mod tests {
                 .as_object()
                 .expect("data")
                 .clone();
-            let notice = claude_notice(&group, &actor, &event).expect("notice");
+            let (notice, included) = claude_notice(&group, &actor, &event, None).expect("notice");
+            assert!(!included);
             let line = serde_json::to_string(&json!({"message":notice})).expect("JSON");
             assert!(
                 line.len() < 500,
@@ -87,5 +104,36 @@ mod tests {
             assert!(!notice.contains("very/long"));
             assert_eq!(event.data["text"], body, "ledger body stays complete");
         }
+    }
+
+    #[test]
+    fn an_instruction_line_precedes_the_preview_or_waits_when_it_does_not_fit() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let mut group = store.create("g", "").expect("group");
+        let actor = Actor::new("界".repeat(32));
+        group.actors.push(actor.clone());
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"text":"界".repeat(500),"to":[actor.id],"message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        let line = "[CCCC] AGENTS.md changed since CCCC began monitoring it; check current project instructions before acting.";
+        let (notice, included) = claude_notice(&group, &actor, &event, Some(line)).expect("notice");
+        assert!(included);
+        assert!(
+            notice.contains(&format!("mode=send.\n{line}\n界")),
+            "{notice}"
+        );
+        assert!(encoded_len(&notice) <= MONITOR_LINE_BYTES);
+
+        let long = format!("[CCCC] {}", "x".repeat(400));
+        let (notice, included) =
+            claude_notice(&group, &actor, &event, Some(&long)).expect("notice");
+        assert!(!included, "the line waits; the message still goes out");
+        assert!(!notice.contains("xxx"));
+        assert!(notice.contains("mode=send.\n界"), "{notice}");
     }
 }
