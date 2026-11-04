@@ -51,7 +51,7 @@ fn automation_contract_is_versioned_and_frontend_compatible() {
             "previous_version":1,
             "version":2,
             "changed":["rules"],
-            "rule_ids":["reminder"]
+            "rules":{"added":["reminder"],"removed":["standup"],"modified":[]}
         })
     );
     assert_eq!(
@@ -146,13 +146,14 @@ fn automation_manage_applies_batched_actions_and_reset_honors_version() {
     assert_eq!(reset.result["event"]["data"]["previous_version"], 2);
     assert_eq!(reset.result["event"]["data"]["version"], 3);
     assert_eq!(reset.result["event"]["data"]["changed"], json!(["rules"]));
+    assert_eq!(
+        reset.result["event"]["data"]["rules"],
+        json!({"added":[],"removed":["personal"],"modified":[]})
+    );
     assert_eq!(managed.result["event"]["data"]["changed"], json!(["rules"]));
-    assert!(
-        managed.result["event"]["data"]["rule_ids"]
-            .as_array()
-            .expect("rule ids")
-            .iter()
-            .any(|id| id == "personal")
+    assert_eq!(
+        managed.result["event"]["data"]["rules"],
+        json!({"added":["personal"],"removed":[],"modified":[]})
     );
 }
 
@@ -765,6 +766,14 @@ fn a_peer_manages_its_own_reminders_and_nothing_else() {
         }}]),
     );
     assert!(created.ok, "{:?}", created.error);
+    // The event a peer gets back names only the rule it changed, never another
+    // Actor's personal reminder.
+    let event = &created.result["event"];
+    assert_eq!(
+        event["data"]["rules"],
+        json!({"added":["mine"],"removed":[],"modified":[]})
+    );
+    assert!(!event.to_string().contains("peer2-own"));
     let mine = stored_automation(&home, &group_id)["rules"]
         .as_array()
         .expect("rules")

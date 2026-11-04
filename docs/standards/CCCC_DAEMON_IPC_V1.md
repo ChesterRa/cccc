@@ -3512,6 +3512,28 @@ Result:
 { group_id: string; ruleset: Record<string, unknown>; version: number; event: CCCSEventV1 }
 ```
 
+The `group.automation_update` event appended by `group_automation_update`,
+`group_automation_manage` (when it changes something) and
+`group_automation_reset_baseline` records what the write changed:
+
+```ts
+data: {
+  previous_version: number
+  version: number
+  changed: Array<"rules" | "snippets" | "snippet_overrides">
+  rules: { added: string[]; removed: string[]; modified: string[] } // rule ids, sorted
+}
+```
+
+Rules are compared by id, so a rule that only moved because another was
+inserted or deleted is not `modified`. A part never saved compares as the
+default it reads as. Rule bodies and snippet text are not copied into the
+event. Because a caller may change only the rules it is allowed to, a peer's
+write lists only its own reminders. The event is a group ledger event: anyone
+who can read the group's ledger, including the Web ledger tail, which returns
+raw events, sees the ids of every rule a write by `user`, `system` or the
+foreman added, removed or modified, personal reminders included.
+
 #### `group_automation_state`
 
 Get effective automation state for a caller.
