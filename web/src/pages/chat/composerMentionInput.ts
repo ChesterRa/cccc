@@ -1,3 +1,8 @@
+import {
+  isComposerMentionBoundary,
+  isComposerMentionStartBoundary,
+} from "../../hooks/composerGroupMentions";
+import { isEmailAt } from "../../utils/mentionEmail";
 import type { ComposerMentionKind } from "./chatMentionSuggestions";
 
 export type ComposerInputSelection = { text: string; start: number; end: number };
@@ -11,7 +16,12 @@ export function findComposerMentionAtCaret(text: string, caret: number, selectio
   const at = prefix.lastIndexOf("@");
   const hash = prefix.lastIndexOf("#");
   const start = Math.max(at, hash);
-  if (start < 0 || prefix[start - 1] === "\\") return null;
+  if (start < 0) return null;
+  if (!isComposerMentionStartBoundary(prefix[start - 1] || "")) return null;
+  if (isEmailAt(text, start)) return null;
+  let segmentStart = start;
+  while (segmentStart > 0 && !/\s/u.test(prefix[segmentStart - 1])) segmentStart -= 1;
+  if (/(?:https?:\/\/|www\.)/iu.test(prefix.slice(segmentStart, start))) return null;
   const filter = prefix.slice(start + 1);
   if (/\s/u.test(filter)) return null;
   return { kind: (at > hash ? "agent" : "group") as ComposerMentionKind, start, end, filter };
@@ -78,9 +88,8 @@ export function replaceComposerMention(
 ) {
   const before = text.slice(0, trigger.start);
   const after = text.slice(trigger.end);
-  const boundary = /[\s,，。.!?;；:：]/u;
-  const leading = before && !boundary.test(before[before.length - 1]) ? " " : "";
-  const trailing = !after || !boundary.test(after[0]) ? " " : "";
+  const leading = before && !isComposerMentionStartBoundary(before[before.length - 1]) ? " " : "";
+  const trailing = !after || !isComposerMentionBoundary(after[0]) ? " " : "";
   const inserted = `${leading}${token}${trailing}`;
   const start = before.length + leading.length;
   return {

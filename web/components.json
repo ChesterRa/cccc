@@ -16,6 +16,5 @@
     "lib": "@/lib",
     "utils": "@/lib/utils"
   },
-  "iconLibrary": "lucide",
-  "registries": { "@magicui": "https://magicui.design/r/{name}.json" }
+  "iconLibrary": "lucide"
 }

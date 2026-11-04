@@ -4,6 +4,7 @@ import { FloatingPortal } from "@floating-ui/react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import markdownItCjkFriendly from "markdown-it-cjk-friendly";
+import { markdownMentions } from "./markdownMentions";
 import { renderToStaticMarkup } from "react-dom/server";
 import { useTranslation } from "react-i18next";
 import { CheckIcon, CloseIcon, CopyIcon, ExpandIcon } from "./Icons";
@@ -11,6 +12,7 @@ import { classNames } from "../utils/classNames";
 import { copyTextToClipboard } from "../utils/copy";
 import { activateMermaidBlocks, isMermaidFenceLanguage, toggleMermaidView } from "../utils/mermaid";
 import { useModalA11y } from "../hooks/useModalA11y";
+import type { MessageMentionToken } from "../utils/mentionHighlight";
 
 const copyIconMarkup = renderToStaticMarkup(
   <CopyIcon className="w-3.5 h-3.5" strokeWidth={2} aria-hidden="true" />,
@@ -161,6 +163,8 @@ interface MarkdownRendererProps {
   /** Map document-relative image and link URLs; omitted by ordinary message consumers. */
   resolveUrl?: (url: string, kind: "image" | "link") => string;
   onRendered?: () => void;
+  /** References to mark in text, as `getMessageMentionTokens` returns them. */
+  mentionTokens?: readonly MessageMentionToken[];
 }
 
 export function MarkdownRenderer({
@@ -171,6 +175,7 @@ export function MarkdownRenderer({
   enableMermaid = false,
   resolveUrl,
   onRendered,
+  mentionTokens,
 }: MarkdownRendererProps) {
   const { t } = useTranslation(["chat", "common"]);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -215,7 +220,9 @@ export function MarkdownRenderer({
       linkify: true,
       typographer: true,
       breaks: true,
-    }).use(markdownItCjkFriendly);
+    })
+      .use(markdownItCjkFriendly)
+      .use(markdownMentions);
     if (resolveUrl) {
       instance.renderer.rules.heading_open = (tokens, index, options, env, renderer) => {
         const title =
@@ -386,8 +393,8 @@ export function MarkdownRenderer({
   ]);
 
   const htmlContent = useMemo(() => {
-    return md.render(content || "");
-  }, [md, content]);
+    return md.render(content || "", mentionTokens?.length ? { mentionTokens } : {});
+  }, [md, content, mentionTokens]);
   // Mermaid renders into this subtree imperatively. Keep the prop object stable so unrelated parent
   // renders do not make React replace the subtree and reset completed diagrams back to "pending".
   const renderedHtml = useMemo(() => ({ __html: htmlContent }), [htmlContent]);

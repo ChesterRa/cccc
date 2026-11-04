@@ -1,4 +1,5 @@
 import { lazy, Suspense, type ReactNode } from "react";
+import type { MessageMentionToken } from "../utils/mentionHighlight";
 
 const MarkdownRenderer = lazy(() =>
   import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer })),
@@ -13,6 +14,7 @@ type LazyMarkdownRendererProps = {
   fallback?: ReactNode;
   resolveUrl?: (url: string, kind: "image" | "link") => string;
   onRendered?: () => void;
+  mentionTokens?: readonly MessageMentionToken[];
 };
 
 export function LazyMarkdownRenderer({
@@ -24,6 +26,7 @@ export function LazyMarkdownRenderer({
   fallback = null,
   resolveUrl,
   onRendered,
+  mentionTokens,
 }: LazyMarkdownRendererProps) {
   return (
     <Suspense fallback={fallback}>
@@ -35,6 +38,7 @@ export function LazyMarkdownRenderer({
         enableMermaid={enableMermaid}
         resolveUrl={resolveUrl}
         onRendered={onRendered}
+        mentionTokens={mentionTokens}
       />
     </Suspense>
   );

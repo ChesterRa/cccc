@@ -28,7 +28,15 @@ const sent: LedgerEvent = {
   data: { text: "an earlier message" },
 } as LedgerEvent;
 
-function Harness({ mentionMenu = false }: { mentionMenu?: boolean }) {
+function Harness({
+  mentionMenu = false,
+  noMentionSuggestions = false,
+  connectMentionStatus,
+}: {
+  mentionMenu?: boolean;
+  noMentionSuggestions?: boolean;
+  connectMentionStatus?: "loading" | "incomplete";
+}) {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [tokens, setTokens] = useState<string[]>([]);
@@ -65,7 +73,8 @@ function Harness({ mentionMenu = false }: { mentionMenu?: boolean }) {
       onSendMessage={spies.send}
       showMentionMenu={mentionMenu}
       setShowMentionMenu={spies.showMentionMenu}
-      mentionSuggestions={mentionMenu ? [peer] : []}
+      mentionSuggestions={mentionMenu && !noMentionSuggestions ? [peer] : []}
+      connectMentionStatus={connectMentionStatus}
       mentionSelectedIndex={0}
       setMentionSelectedIndex={spies.mentionIndex}
       setMentionFilter={noop}
@@ -110,9 +119,22 @@ afterEach(async () => {
   host.remove();
 });
 
-async function render(text: string, mentionMenu = false) {
+async function render(
+  text: string,
+  mentionMenu = false,
+  noMentionSuggestions = false,
+  connectMentionStatus?: "loading" | "incomplete",
+) {
   useComposerStore.setState({ composerText: text });
-  await act(async () => root.render(<Harness mentionMenu={mentionMenu} />));
+  await act(async () =>
+    root.render(
+      <Harness
+        mentionMenu={mentionMenu}
+        noMentionSuggestions={noMentionSuggestions}
+        connectMentionStatus={connectMentionStatus}
+      />,
+    ),
+  );
   return host.querySelector("textarea")!;
 }
 
@@ -212,3 +234,14 @@ it.each(COMPOSING)("does not recall history while composing ($label)", async (co
   expect(await press(textarea, "ArrowUp")).toBe(true);
   expect(composerText()).toBe("an earlier message");
 });
+
+it.each([undefined, "loading", "incomplete"] as const)(
+  "sends with the shortcut when there are no options (%s)",
+  async (status) => {
+    const textarea = await render("Ask @nobody", true, true, status);
+    expect(await press(textarea, "Enter")).toBe(false);
+    expect(await press(textarea, "Enter", { ctrlKey: true })).toBe(true);
+    expect(await press(textarea, "Enter", { metaKey: true })).toBe(true);
+    expect(spies.send).toHaveBeenCalledTimes(2);
+  },
+);

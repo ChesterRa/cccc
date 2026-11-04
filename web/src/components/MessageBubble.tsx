@@ -23,7 +23,6 @@ import { getVoiceDocumentMessageRefs } from "../utils/voiceDocumentRefs";
 import { getTaskMessageRefs } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
 import { getMessageInsight } from "../utils/messagePerspective";
-import { getMessageMentionTokens } from "../utils/mentionHighlight";
 import { getDelegationDisplayText, isDelegationSourceOutbound } from "./messageBubbleDelegation";
 import { MessageActions } from "./messageBubble/MessageActions";
 import {
@@ -47,6 +46,7 @@ import { formatEventLine, mayContainMarkdown } from "./messageBubble/helpers";
 import { AgentStateTooltip } from "./messageBubble/AgentStateTooltip";
 import { MessageContent } from "./messageBubble/MessageContent";
 import { MessageBubbleBody } from "./messageBubble/MessageBubbleBody";
+import { useMessageMentionTokens } from "./messageBubble/useMessageMentionTokens";
 import { buildMessageCopyText } from "./messageBubble/messageCopyText";
 import { MessageRoutingMetadata } from "./messageBubble/MessageRoutingMetadata";
 import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
@@ -153,10 +153,7 @@ export const MessageBubble = memo(
         : undefined;
     const pinned = useMessagePinned(groupId, pinnableId);
     const messageText = useMemo(() => formatEventLine(ev), [ev]);
-    const mentionTokens = useMemo(
-      () => getMessageMentionTokens(actors, ev.data),
-      [actors, ev.data],
-    );
+    const mentionTokens = useMessageMentionTokens(actors, ev.data);
     const pendingStore = useContext(PendingReplyStoreContext);
     const liveStatuses = useContext(LivePendingStatusContext);
     const liveEntry = ev.id && liveStatuses ? liveStatuses[ev.id] : undefined;
@@ -619,8 +616,7 @@ export const MessageBubble = memo(
               fallbackText={bubbleBodyText}
               shouldRenderMarkdown={shouldRenderMarkdown}
               isDark={isDark}
-              knownTokens={mentionTokens}
-              animateMentions={!isStreaming}
+              mentionTokens={mentionTokens}
             />
           }
           isUserMessage={isUserMessage}

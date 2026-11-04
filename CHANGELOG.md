@@ -75,6 +75,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   user can launch the agent again.
   Chet's errors for Claude's workspace trust and bypass-mode disclaimer now both say whether a
   manual retry should set `CLAUDE_CONFIG_DIR` to the settings directory they name or leave it unset.
+- `@` and `#` suggestions now open at the cursor, including after common punctuation or Chinese,
+  Japanese or Korean text, and choosing one keeps the text after the cursor. Chosen references are
+  highlighted in the composer, and messages highlight references to the Group's agents, in the
+  colour of each agent's name, and to the Groups they refer to; unrecognized names, common email
+  addresses, links and code stay plain text.
 
 ### Fixed
 
@@ -179,6 +184,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   message box, and later text is still written to the document.
 - The status shown for a delegation sent from a Group was always in Chinese; it now follows the
   interface language.
+- Ctrl+Enter (Cmd+Enter on macOS) did not send a message ending in an `@` or `#` mention that matched
+  no suggestion, such as `see #34`; it now sends.
 
 ## [0.4.47]
 

@@ -1110,8 +1110,12 @@ small diagrams expand to the available canvas while large diagrams remain scroll
 ### @Mentions
 
 Type `@` for an Actor or `#` for a Group at the cursor, including in the middle of a message.
-Choosing a suggestion keeps the text after the cursor. Selected references are highlighted in the
-composer and in displayed messages; links, email addresses, and code keep their normal formatting.
+Choosing a suggestion keeps the text after the cursor. Chosen references are highlighted in the
+composer. Displayed messages highlight references to the Group's current agents and selectors and to
+the Groups a message refers to; a removed agent or an old name may no longer be recognized. A
+reference to an agent takes the colour of that agent's name in message headers, a Group the link
+colour, and selectors such as `@all` stay neutral. Links, common email addresses, and code keep their
+normal formatting.
 Message-body references provide context rather than changing the recipient controls. A `#` Group
 reference is a delegation hint, not a direct cross-Group send.
 

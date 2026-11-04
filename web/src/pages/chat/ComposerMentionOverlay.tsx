@@ -1,13 +1,12 @@
 import { useMemo, type ReactNode } from "react";
-import { Highlighter } from "@/components/ui/highlighter";
 import type {
   ComposerAgentMentionToken,
   ComposerGroupMentionToken,
 } from "../../hooks/composerGroupMentions";
+import { getActorAccentIndex } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { messageMentionColor } from "../../utils/mentionHighlight";
-import { useSystemReducedMotion, useUiStylePrefs } from "../../utils/uiStyle";
 
+/** Marks the selected references behind the composer text, which stays in the textarea above. */
 export function ComposerMentionOverlay({
   text,
   groupTokens,
@@ -29,13 +28,15 @@ export function ComposerMentionOverlay({
   fontSize: number;
   lineHeight: number;
 }) {
-  const reducedMotion = useSystemReducedMotion();
-  const { lcdMotion } = useUiStylePrefs();
-  const animate = !reducedMotion && lcdMotion !== "off";
   const content = useMemo(() => {
     const ranges = [
-      ...groupTokens.map((token) => ({ ...token, kind: "group" as const })),
-      ...agentTokens.map((token) => ({ ...token, kind: "agent" as const })),
+      ...groupTokens.map((token) => ({ ...token, kind: "group" as const, accent: undefined })),
+      // Selectors such as @all have no name colour; an agent's tint matches its name.
+      ...agentTokens.map((token) => ({
+        ...token,
+        kind: "agent" as const,
+        accent: token.actorId.startsWith("@") ? undefined : getActorAccentIndex(token.actorId),
+      })),
     ].sort((a, b) => a.start - b.start);
     const parts: ReactNode[] = [];
     let cursor = 0;
@@ -43,24 +44,19 @@ export function ComposerMentionOverlay({
       if (range.start < cursor || range.end > text.length) continue;
       parts.push(text.slice(cursor, range.start));
       parts.push(
-        <Highlighter
-          key={`${range.kind}:${range.start}:${range.end}`}
-          action="highlight"
-          color={messageMentionColor(range.kind)}
-          animationDuration={300}
-          iterations={1}
-          padding={0}
-          animate={animate}
-          className="inline"
+        <span
+          key={range.start}
+          data-composer-mention={range.kind}
+          data-mention-accent={range.accent}
         >
           {text.slice(range.start, range.end)}
-        </Highlighter>,
+        </span>,
       );
       cursor = range.end;
     }
     parts.push(text.slice(cursor));
-    return ranges.length ? parts : null;
-  }, [agentTokens, animate, groupTokens, text]);
+    return cursor ? parts : null;
+  }, [agentTokens, groupTokens, text]);
 
   if (!content) return null;
   return (

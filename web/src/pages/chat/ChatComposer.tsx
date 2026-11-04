@@ -697,7 +697,7 @@ export function ChatComposer({
       }
     }
 
-    if (e.key === "Enter" && !showMentionMenu) {
+    if (e.key === "Enter" && (!showMentionMenu || mentionSuggestions.length === 0)) {
       if (showSlashMenu) return;
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();

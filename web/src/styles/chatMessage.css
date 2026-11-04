@@ -220,3 +220,57 @@
     height: max(2.5rem, 44px);
   }
 }
+
+/* A reference to an agent takes the colour of that agent's name in message headers: the text
+   in it, on a tint of it. A Group takes the link colour; selectors such as @all, which name no
+   one agent, stay in the ink. Behind the composer text, which belongs to the textarea, only the
+   tint shows. */
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-message-mention], [data-composer-mention]) {
+  --mention: var(--lcd-ink);
+  background: color-mix(in oklab, var(--mention) 20%, var(--lcd-bg));
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* The dark screen takes a little more of the colour for the same contrast. */
+:root[data-ui-style="lcd"].dark
+  [data-lcd-scope]
+  :is([data-message-mention], [data-composer-mention]) {
+  background: color-mix(in oklab, var(--mention) 24%, var(--lcd-bg));
+}
+
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-message-mention="group"], [data-composer-mention="group"]) {
+  --mention: var(--lcd-link);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mention-accent="0"] {
+  --mention: var(--lcd-name-0);
+}
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mention-accent="1"] {
+  --mention: var(--lcd-name-1);
+}
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mention-accent="2"] {
+  --mention: var(--lcd-name-2);
+}
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mention-accent="3"] {
+  --mention: var(--lcd-name-3);
+}
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mention-accent="4"] {
+  --mention: var(--lcd-name-4);
+}
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mention-accent="5"] {
+  --mention: var(--lcd-name-5);
+}
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mention-accent="6"] {
+  --mention: var(--lcd-name-6);
+}
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-mention-accent="7"] {
+  --mention: var(--lcd-name-7);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-message-mention] {
+  color: var(--mention);
+  font-weight: 600;
+}
