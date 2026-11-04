@@ -341,7 +341,7 @@ pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
         // A sender naming itself (a caller's own actor_id copied into the
         // notification) is never a recipient; route by `to` when it names one.
         if let Some(target) = direct_target
-            && !(target == event.by && !to.is_empty())
+            && (target != event.by || to.is_empty())
         {
             return target == actor_id;
         }
