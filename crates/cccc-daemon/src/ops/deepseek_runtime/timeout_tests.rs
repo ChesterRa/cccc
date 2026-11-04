@@ -217,3 +217,65 @@ done"#;
     assert!(events.contains("\"code\":\"timeout\""));
     stop(&group.group_id, &actor.id);
 }
+
+#[cfg(unix)]
+#[test]
+fn turn_that_keeps_streaming_outlives_the_silence_window() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("deepseek long turn", "").expect("group");
+    // Eight updates 150 ms apart, then end_turn: about 1.2 s of work, each
+    // gap well inside the 500 ms window, the whole turn well beyond it.
+    let script = r#"while IFS= read -r line; do
+if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
+elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
+else
+  rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  for _ in 1 2 3 4 5 6 7 8; do
+    sleep 0.15
+    printf '%s\n' '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-session","updateOrdinal":0,"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"."}}}}'
+  done
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "${rid:-3}"
+fi
+done"#;
+    let mut actor = Actor::new("deepseek");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.command = vec!["sh".into(), "-c".into(), script.into()];
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save");
+    start(&home, &group, &actor, temp.path()).expect("start");
+    let mut event = Event::new("chat.message", &group.group_id);
+    event.by = "user".into();
+    event.data = serde_json::json!({"to":["deepseek"],"text":"hello"})
+        .as_object()
+        .cloned()
+        .expect("event data");
+
+    let started = Instant::now();
+    assert_eq!(
+        delivery::deliver_with_timeout(
+            &home,
+            &group,
+            &actor,
+            &event,
+            &AtomicBool::new(false),
+            Duration::from_millis(500),
+        ),
+        TurnDelivery::Completed
+    );
+    assert!(started.elapsed() > Duration::from_millis(500));
+
+    let events = std::fs::read_to_string(
+        store
+            .state_dir(&group.group_id)
+            .expect("state")
+            .join("headless/events.jsonl"),
+    )
+    .expect("headless events");
+    assert!(events.contains("headless.turn.completed"));
+    assert!(!events.contains("\"code\":\"timeout\""));
+    stop(&group.group_id, &actor.id);
+}

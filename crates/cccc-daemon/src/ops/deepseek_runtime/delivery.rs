@@ -105,7 +105,8 @@ pub(super) fn deliver_with_timeout(
         Ok(id) if id > 0 => id,
         _ => return TurnDelivery::Incomplete,
     };
-    let turn_deadline = Instant::now() + turn_timeout;
+    // The deadline is a silence window: provider progress below moves it.
+    let mut turn_deadline = Instant::now() + turn_timeout;
     macro_rules! fail {
         ($terminal_seen:expr) => {{
             fail_sent_request(
@@ -244,6 +245,7 @@ pub(super) fn deliver_with_timeout(
             {
                 fail!(false);
             }
+            turn_deadline = Instant::now() + turn_timeout;
             continue;
         }
         if frame.get("method") == Some(&Value::String("session/request_permission".into())) {
@@ -277,6 +279,7 @@ pub(super) fn deliver_with_timeout(
             {
                 fail!(false);
             }
+            turn_deadline = Instant::now() + turn_timeout;
             continue;
         }
         if frame.get("id") == Some(&json!(request_id)) {
