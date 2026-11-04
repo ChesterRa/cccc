@@ -147,13 +147,12 @@ fn automation_manage_applies_batched_actions_and_reset_honors_version() {
     assert_eq!(reset.result["event"]["data"]["version"], 3);
     assert_eq!(reset.result["event"]["data"]["changed"], json!(["rules"]));
     assert_eq!(managed.result["event"]["data"]["changed"], json!(["rules"]));
-    assert_eq!(
+    assert!(
         managed.result["event"]["data"]["rule_ids"]
             .as_array()
             .expect("rule ids")
             .iter()
-            .any(|id| id == "personal"),
-        true
+            .any(|id| id == "personal")
     );
 }
 
