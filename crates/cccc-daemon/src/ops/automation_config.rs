@@ -67,7 +67,13 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .insert("snippet_overrides".into(), Value::Object(overrides));
         doc.automation.insert("version".into(), json!(current + 1));
     })?;
-    let event = append_event(home, &group.group_id, request, "group.automation_update")?;
+    let event = append_event(
+        home,
+        &group.group_id,
+        request,
+        "group.automation_update",
+        change_data(&group.automation, &updated.automation),
+    )?;
     let mut result = payload(home, &updated, &caller(request))?;
     result["event"] = json!(event);
     object(result)
@@ -112,7 +118,13 @@ fn manage(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .insert("snippet_overrides".into(), Value::Object(overrides));
             doc.automation.insert("version".into(), json!(current + 1));
         })?;
-        let event = append_event(home, &group.group_id, request, "group.automation_update")?;
+        let event = append_event(
+            home,
+            &group.group_id,
+            request,
+            "group.automation_update",
+            change_data(&group.automation, &updated.automation),
+        )?;
         (updated, Some(event))
     } else {
         (group, None)
@@ -163,7 +175,13 @@ fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .cloned()
         .unwrap_or_default();
     })?;
-    let event = append_event(home, &group.group_id, request, "group.automation_update")?;
+    let event = append_event(
+        home,
+        &group.group_id,
+        request,
+        "group.automation_update",
+        change_data(&group.automation, &updated.automation),
+    )?;
     let mut result = payload(home, &updated, &caller(request))?;
     result["event"] = json!(event);
     object(result)
@@ -495,14 +513,54 @@ fn caller_role(group: &GroupDoc, by: &str) -> Result<Option<ActorRole>, OpError>
         .ok_or_else(|| OpError::new("permission_denied", format!("unknown actor: {by}")))
 }
 
+/// What a saved change did, for its ledger event: the version step, which
+/// parts of the ruleset changed, and the rule ids now saved. Rule bodies and
+/// snippet text stay in the group document.
+fn change_data(before: &Map<String, Value>, after: &Map<String, Value>) -> Value {
+    let version =
+        |doc: &Map<String, Value>| doc.get("version").and_then(Value::as_u64).unwrap_or(1);
+    // A part never saved reads as its default, as saved_ruleset reads it.
+    let part = |doc: &Map<String, Value>, key: &str| {
+        doc.get(key).cloned().unwrap_or_else(|| {
+            if key == "rules" {
+                Value::Array(baseline_rules())
+            } else {
+                Value::Object(Map::new())
+            }
+        })
+    };
+    let changed = ["rules", "snippets", "snippet_overrides"]
+        .into_iter()
+        .filter(|key| part(before, key) != part(after, key))
+        .collect::<Vec<_>>();
+    let rule_ids = after
+        .get("rules")
+        .and_then(Value::as_array)
+        .map(|rules| {
+            rules
+                .iter()
+                .filter_map(|rule| rule.get("id").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "previous_version": version(before),
+        "version": version(after),
+        "changed": changed,
+        "rule_ids": rule_ids,
+    })
+}
+
 fn append_event(
     home: &HomeLayout,
     group_id: &str,
     request: &DaemonRequest,
     kind: &str,
+    data: Value,
 ) -> Result<Event, OpError> {
     let mut event = Event::new(kind, group_id);
     event.by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    event.data = data.as_object().cloned().unwrap_or_default();
     cccc_core::ledger::append(
         &store(home)?.ledger_path(group_id).map_err(OpError::io)?,
         &event,

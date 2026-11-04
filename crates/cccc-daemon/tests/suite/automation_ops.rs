@@ -46,6 +46,15 @@ fn automation_contract_is_versioned_and_frontend_compatible() {
     assert_eq!(updated.result["ruleset"]["rules"][0]["id"], "reminder");
     assert_eq!(updated.result["event"]["kind"], "group.automation_update");
     assert_eq!(
+        updated.result["event"]["data"],
+        json!({
+            "previous_version":1,
+            "version":2,
+            "changed":["rules"],
+            "rule_ids":["reminder"]
+        })
+    );
+    assert_eq!(
         updated.result["supported_vars"],
         json!([
             "interval_minutes",
@@ -134,6 +143,18 @@ fn automation_manage_applies_batched_actions_and_reset_honors_version() {
     assert_eq!(reset.result["version"], 3);
     assert_eq!(reset.result["ruleset"]["rules"][0]["id"], "standup");
     assert_eq!(reset.result["event"]["kind"], "group.automation_update");
+    assert_eq!(reset.result["event"]["data"]["previous_version"], 2);
+    assert_eq!(reset.result["event"]["data"]["version"], 3);
+    assert_eq!(reset.result["event"]["data"]["changed"], json!(["rules"]));
+    assert_eq!(managed.result["event"]["data"]["changed"], json!(["rules"]));
+    assert_eq!(
+        managed.result["event"]["data"]["rule_ids"]
+            .as_array()
+            .expect("rule ids")
+            .iter()
+            .any(|id| id == "personal"),
+        true
+    );
 }
 
 #[test]
