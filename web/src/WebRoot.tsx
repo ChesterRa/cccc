@@ -1,20 +1,19 @@
 import App from "./App";
 import { AuthGate } from "./components/AuthGate";
-import { FailedSendsUnloadGuard } from "./components/app/FailedSendsUnloadGuard";
+import { PendingPageWorkUnloadGuard } from "./components/app/PendingPageWorkUnloadGuard";
 import { CapabilityCenterStandaloneApp } from "./components/capabilities/CapabilityCenterStandaloneApp";
 import { isCapabilityCenterPath } from "./components/capabilities/capabilityCenterRoute";
 import { ConnectEmbeddedApp } from "./features/connect/ConnectEmbeddedApp";
 import { isConnectFramePath } from "./features/connect/protocol";
 
 /**
- * The document root. Sends waiting to be restored stay in memory for the whole page, while a
- * sign-in prompt or an expired Connect frame unmounts the app, so the leave warning sits here,
- * beside every branch rather than inside one.
+ * The document root outlives workbench branches, so the leave warning also covers work that
+ * settles after a sign-in prompt or an expired Connect frame unmounts the workbench.
  */
 export function WebRoot({ pathname }: { pathname: string }) {
   return (
     <>
-      <FailedSendsUnloadGuard />
+      <PendingPageWorkUnloadGuard />
       {isConnectFramePath(pathname) ? (
         <ConnectEmbeddedApp />
       ) : (

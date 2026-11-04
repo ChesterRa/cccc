@@ -319,6 +319,7 @@
   "voiceSecretaryAudioWorkletUnsupported": "当前浏览器不支持本地或外部语音识别所需的音频处理。",
   "voiceSecretaryAudioWorkletFailed": "无法启动音频处理，请刷新页面后重试。",
   "voiceSecretaryAudioProcessingInterrupted": "音频处理已停止，本次录音可能不完整。",
+  "voiceSecretaryInputSilenceHint": "尚未检测到声音。如果你正在说话，请检查麦克风是否静音或选错。",
   "voiceSecretaryAudioFlushUnconfirmed": "音频处理未确认最后的缓存数据，本次结果可能不完整。",
   "voiceSecretaryBrowserStopUnconfirmed": "浏览器未确认语音识别结束，本次结果可能不完整。",
   "voiceSecretaryStopWaiting": "停止等待",
@@ -568,6 +569,7 @@
   "replyTargetNotLoaded": "原消息未加载。",
   "sentTo": "发送至 {{label}} · {{to}}",
   "relayedTo": "已委派至 {{label}} · {{to}}",
+  "delegationOutboundStatus": "已联系目标工作组，等待对方回复。",
   "updated": "更新于 {{time}}",
   "noAgentStateYet": "暂无智能体状态",
   "taskShort": "任务 {{id}}",
@@ -870,7 +872,7 @@
   "workspaceEmptyFilteredHint": "文件可能被 Git 忽略规则隐藏。",
   "workspaceUnsaved": {
     "title": "放弃未保存的工作？",
-    "description": "继续操作会丢失未保存的修改或待恢复的发送。",
+    "description": "继续操作可能丢失未保存的修改、发送中或待恢复的内容，以及正在录制或整理的录音。",
     "stay": "留在这里",
     "discard": "放弃并继续"
   },

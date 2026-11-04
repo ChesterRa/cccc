@@ -55,6 +55,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - When a microphone you selected is no longer available, the error offers **Use system default
   microphone**. Choosing it changes the microphone choice for voice features in that browser;
   recording starts again only when you start it.
+- While the local or external recognizer is recording, if audio frames stop arriving or all samples
+  are zero for about six seconds, a hint suggests checking the selected microphone and its mute
+  setting. This is a hint rather than a diagnosis; background noise can keep it from appearing.
+- The page asks the browser to warn before a reload or close while a message or slash command is
+  being sent, or a Voice Secretary recording is starting, recording or being finalized. Switching
+  away from a Connect remote workspace asks for confirmation after that workspace reports the work.
+  Browsers may suppress the warning; the warning itself does not save any content.
+- A voice model download that stops partway now continues instead of starting over. A dropped or
+  stalled connection is asked for the rest of the file, and what arrived is kept for the next
+  install. Continuing needs a server that supports range requests, as GitHub release downloads do;
+  every file is still checked against its SHA-256, and against its size when the model definition
+  lists one. A kept file is deleted when it fails that check or when the model is removed, and
+  cleanup deletes kept files that the model definition no longer lists or that nothing has added to
+  for seven days. A server file whose stated size differs from the model definition now fails the
+  install before anything is downloaded.
+- When CCCC pauses the automatic starts of a managed Claude agent because its confirmation closed,
+  an agent or automation that tries to start it is now told that starts are paused and that the
+  user can launch the agent again.
+  Chet's errors for Claude's workspace trust and bypass-mode disclaimer now both say whether a
+  manual retry should set `CLAUDE_CONFIG_DIR` to the settings directory they name or leave it unset.
 
 ### Fixed
 
@@ -157,6 +177,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Document recordings with the local recognizer no longer write the same text twice when a slow
   save overlaps the next checkpoint. A save that fails is not retried; its text is placed in the
   message box, and later text is still written to the document.
+- The status shown for a delegation sent from a Group was always in Chinese; it now follows the
+  interface language.
 
 ## [0.4.47]
 

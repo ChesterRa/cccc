@@ -34,7 +34,7 @@ struct ConfirmationPaused;
 
 impl fmt::Display for ConfirmationPaused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Claude's confirmation ended before the managed session connected; launch the agent again to retry")
+        f.write_str("Claude's confirmation ended before the managed session connected, so this daemon pauses automatic starts and starts requested by agents; ask the user to launch the agent again")
     }
 }
 

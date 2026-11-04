@@ -90,6 +90,7 @@ import {
   useVoiceDocumentReferenceCleanup,
 } from "./voice-secretary/voiceDocumentReferenceLifecycle";
 import { useVoiceAudioLevelMeter } from "./voice-secretary/useVoiceAudioLevelMeter";
+import { useVoiceInputSilenceHint } from "./voice-secretary/useVoiceInputSilenceHint";
 import {
   BrowserSpeechRecoveryBudget,
   isQuietBrowserSpeechError,
@@ -742,6 +743,18 @@ export function VoiceSecretaryComposerControl({
     reset: resetVoiceAudioLevel,
     updateFromSamples: updateVoiceAudioLevelsFromSamples,
   } = useVoiceAudioLevelMeter();
+  const {
+    silent: voiceInputSilent,
+    start: startVoiceInputSilenceHint,
+    observe: observeVoiceInputSamples,
+    stop: stopVoiceInputSilenceHint,
+  } = useVoiceInputSilenceHint();
+  useEffect(() => {
+    const run = getVoiceSession();
+    if (!recording || !run || run.config.recognition_backend === "browser_asr") return;
+    startVoiceInputSilenceHint(run.id);
+    return () => stopVoiceInputSilenceHint(run.id);
+  }, [getVoiceSession, recording, startVoiceInputSilenceHint, stopVoiceInputSilenceHint]);
   const clearRecordingStopReason = useCallback(() => {
     lastRecordingStopReasonRef.current = null;
     setLastRecordingStopReason(null);
@@ -4312,6 +4325,7 @@ export function VoiceSecretaryComposerControl({
                 !(run.phase === "finishing" && run.service.awaitingPcmFlush))
             )
               return;
+            if (run.phase === "recording") observeVoiceInputSamples(runId, input);
             updateVoiceAudioLevelsFromSamples(input);
             const resampler = serviceAudioResamplerRef.current;
             if (!resampler) return;
@@ -4981,6 +4995,7 @@ export function VoiceSecretaryComposerControl({
       t,
       updateLiveTranscriptPreview,
       updateVoiceAudioLevelsFromSamples,
+      observeVoiceInputSamples,
       getVoiceSession,
     ],
   );
@@ -6208,6 +6223,8 @@ export function VoiceSecretaryComposerControl({
     askSummary: pendingAskFeedback && !askNotice.hidden ? pendingAskFeedbackSummaryText : "",
     transcriptSummary: liveTranscriptSummaryText,
   });
+  const voiceInputSilenceHint =
+    recording && voiceInputSilent ? t("voiceSecretaryInputSilenceHint") : "";
   const showStopWaiting =
     recordingFinishing &&
     waitingForFinal &&
@@ -6794,6 +6811,7 @@ export function VoiceSecretaryComposerControl({
                                   recording={recording}
                                   recordingStarting={recordingStarting}
                                   recordingFinishing={recordingFinishing}
+                                  captureHint={voiceInputSilenceHint}
                                   finalizingLabel={t("voiceSecretaryFinalizingRecording")}
                                   stopWaitingLabel={t("voiceSecretaryStopWaiting")}
                                   stopWaitingHint={t("voiceSecretaryStopWaitingHint")}
@@ -6935,6 +6953,7 @@ export function VoiceSecretaryComposerControl({
                           recording={recording}
                           recordingStarting={recordingStarting}
                           recordingFinishing={recordingFinishing}
+                          captureHint={voiceInputSilenceHint}
                           finalizingLabel={t("voiceSecretaryFinalizingRecording")}
                           stopWaitingLabel={t("voiceSecretaryStopWaiting")}
                           stopWaitingHint={t("voiceSecretaryStopWaitingHint")}
@@ -7501,6 +7520,16 @@ export function VoiceSecretaryComposerControl({
                     })}
                   </button>
                 ) : null}
+              </div>
+            ) : null}
+            {!open && voiceInputSilenceHint ? (
+              <div
+                data-voice-input-silence
+                data-status-tone="warning"
+                role="status"
+                className="max-w-[min(34rem,calc(100vw-6rem))] rounded-lg px-2.5 py-1 text-[11px] text-amber-700 dark:text-amber-300"
+              >
+                {voiceInputSilenceHint}
               </div>
             ) : null}
             {composerActivity === "finishing" ? (

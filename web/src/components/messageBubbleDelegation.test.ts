@@ -4,7 +4,6 @@ import {
   destinationChipKey,
   getDelegationDisplayText,
   getDelegationProtocolText,
-  getDelegationSourceOutboundStatus,
   isDelegationSourceOutboundEvent,
   isDelegationRequestText,
   isDelegationSourceOutbound,
@@ -68,14 +67,9 @@ describe("delegation natural body / protocol split", () => {
     expect(destinationChipKey(RAW_REQUEST)).toBe("relayedTo");
   });
 
-  it("source-side outbound delegation is a status, not visible relay prose", () => {
+  it("classifies source-side outbound delegation, which the bubble shows as a status", () => {
     expect(isDelegationSourceOutbound({ rawText: RAW_REQUEST, dstGroupId: "g_dst" })).toBe(true);
     expect(isDelegationSourceOutbound({ rawText: RAW_REQUEST, srcGroupId: "g_src" })).toBe(false);
-    const status = getDelegationSourceOutboundStatus(RAW_REQUEST);
-    expect(status).toContain("已联系目标组");
-    expect(status).not.toContain("用户让我来联系你");
-    expect(status).not.toContain("方便的话，请直接回复我这边");
-    expect(status).not.toContain("[cccc-delegation:v1]");
   });
 
   it("classifies source outbound relay audit events separately from target inbound delegation", () => {

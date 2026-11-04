@@ -1,14 +1,15 @@
-//! Installing a voice model. An install downloads, verifies and unpacks into a staging
-//! directory, renames it to a new version directory, and then switches the install state to
-//! that version in one atomic write. A failure at any point leaves the installed version
+//! Installing a voice model. An install downloads each file into a resume directory, so an
+//! interrupted download continues where it stopped, verifies it, and unpacks it into a staging
+//! directory. It renames staging to a new version directory, and then switches the install
+//! state to that version in one atomic write. A failure at any point leaves the installed version
 //! current. Blocking work runs on Tokio's blocking pool, and every piece of it holds the model's
 //! install lock until it ends, even when the install that started it is cancelled.
 
 use super::payload::{self, PAYLOAD_PREFIX, StateRead, unpinned, version_root};
 use super::{
-    INSTALL_LOCK, INSTALL_STATE, Model, VoiceError, catalog, files_complete, first_non_blank,
-    install_lock_path, model_dir, model_manifest_sha, model_status, state_unusable, total_size,
-    validate_relative, validate_relative_path,
+    Artifact, INSTALL_LOCK, INSTALL_STATE, Model, VoiceError, catalog, files_complete,
+    first_non_blank, install_lock_path, model_dir, model_manifest_sha, model_status,
+    state_unusable, total_size, validate_relative, validate_relative_path,
 };
 use axum::body::Bytes;
 use bzip2::read::BzDecoder;
@@ -16,11 +17,13 @@ use cccc_contracts::utc_now;
 use cccc_core::HomeLayout;
 use flate2::read::GzDecoder;
 use fs2::FileExt;
+use reqwest::StatusCode;
+use reqwest::header::{CONTENT_RANGE, HeaderMap, RANGE};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::future::Future;
-use std::io::{self, BufWriter, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -34,6 +37,22 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(500);
 /// A download fails once no data has arrived for this long. One that keeps receiving may take
 /// as long as it needs: a model package can exceed 1 GB on a slow connection.
 const DOWNLOAD_STALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// Partly downloaded files, kept between attempts and between installs, so a dropped
+/// connection does not start a large model over. Each part is named by the SHA-256 the catalog
+/// expects, so it is only ever continued toward that content; the final hash check decides.
+const RESUME_DIR: &str = ".download-resume";
+/// A part that no install has continued for this long is dropped.
+const RESUME_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// A download gives up after this many requests in a row that receive nothing...
+const IDLE_ATTEMPTS: u32 = 3;
+/// ...or after this many failed requests in all, such as dropped connections.
+const MAX_FAILURES: u32 = 20;
+/// The pause before asking again grows by this much with each request that brought nothing.
+const RETRY_PAUSE: Duration = if cfg!(test) {
+    Duration::from_millis(10)
+} else {
+    Duration::from_millis(500)
+};
 
 /// A model's install lock: an operating-system file lock held while this value lives, so a
 /// crashed process leaves no stale lock behind.
@@ -328,7 +347,9 @@ fn download_client(stall_timeout: Duration) -> reqwest::Result<reqwest::Client> 
         .build()
 }
 
-/// Downloads every artifact into staging, verifying each, and unpacks the archives there.
+/// Downloads every artifact, verifying each, and unpacks the archives into staging. A file
+/// downloads into the model's resume directory first, so what arrived before a dropped
+/// connection, a failed install or a stopped one is continued instead of fetched again.
 async fn fetch(job: &Arc<Job>) -> Result<(), VoiceError> {
     let client = download_client(DOWNLOAD_STALL_TIMEOUT)
         .map_err(|error| VoiceError::new("voice_model_download_failed", error.to_string()))?;
@@ -336,81 +357,45 @@ async fn fetch(job: &Arc<Job>) -> Result<(), VoiceError> {
     let mut last_progress = Instant::now();
     for (index, artifact) in job.model.artifacts.iter().enumerate() {
         validate_relative(&artifact.path)?;
-        let download_error = |error: reqwest::Error| {
-            let message = if error.is_timeout() && !error.is_connect() {
-                format!(
-                    "the download received no data for {} seconds; check the connection and try again",
-                    DOWNLOAD_STALL_TIMEOUT.as_secs()
-                )
-            } else {
-                error.to_string()
-            };
-            VoiceError::new("voice_model_download_failed", message)
-                .detail("url", artifact.url.clone())
+        let part = resume_part(&job.model_root, artifact);
+        let from = {
+            let (part, size) = (part.clone(), artifact.size_bytes);
+            blocking(job, move |_| kept_part(&part, size)).await?
         };
-        let response = client
-            .get(&artifact.url)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)
-            .map_err(download_error)?;
-        let target = job.staging.join(&artifact.path);
-        let part = target.with_extension(format!(
-            "{}part",
-            target.extension().and_then(|v| v.to_str()).unwrap_or("")
-        ));
+        let offset = from.bytes;
         let (sender, receiver) = mpsc::channel::<Chunk<Bytes>>(8);
         let writer = blocking(job, {
             let part = part.clone();
-            move |_| write_artifact(&part, receiver)
+            move |_| write_artifact(&part, from, receiver)
         });
-        let streamed: Result<(), VoiceError> = async {
-            // Owned here, so the writer sees the channel close however this ends.
-            let sender = sender;
-            let mut response = response;
-            let mut received = 0_u64;
-            while let Some(chunk) = response.chunk().await.map_err(download_error)? {
-                received += chunk.len() as u64;
-                if sender.send(Chunk::Data(chunk)).await.is_err() {
-                    // The writer stopped; its own result says why.
-                    return Ok(());
-                }
-                if last_progress.elapsed() >= PROGRESS_INTERVAL {
-                    let state =
-                        progress_state(&job.model, &job.kept, downloaded + received, Some(index));
-                    blocking(job, move |job| write_state(&job.model_root, &state)).await?;
-                    last_progress = Instant::now();
-                }
-            }
-            let _ = sender.send(Chunk::Finish).await;
-            Ok(())
-        }
+        let streamed = download(job, &client, artifact, sender, offset, |received| {
+            (last_progress.elapsed() >= PROGRESS_INTERVAL).then(|| {
+                last_progress = Instant::now();
+                progress_state(&job.model, &job.kept, downloaded + received, Some(index))
+            })
+        })
         .await;
         let written = writer.await;
         streamed?;
         let written = written?;
-        if !written.sha256.eq_ignore_ascii_case(&artifact.sha256) {
-            return Err(VoiceError::new(
-                "voice_model_hash_mismatch",
-                format!("downloaded artifact hash mismatch: {}", artifact.path),
-            )
-            .detail("expected_sha256", artifact.sha256.clone())
-            .detail("actual_sha256", written.sha256));
-        }
-        if artifact
-            .size_bytes
-            .is_some_and(|expected| expected != written.bytes)
-        {
-            return Err(VoiceError::new(
-                "voice_model_size_mismatch",
-                format!("downloaded artifact size mismatch: {}", artifact.path),
-            ));
+        if let Err(error) = verify(artifact, &written) {
+            // A part that does not add up is not continued again.
+            blocking(job, move |_| {
+                remove_logged(&part);
+                Ok(())
+            })
+            .await?;
+            return Err(error);
         }
         downloaded += written.bytes;
         let state = progress_state(&job.model, &job.kept, downloaded, Some(index));
+        let target = job.staging.join(&artifact.path);
         let archive = artifact.archive.clone();
         blocking(job, move |job| {
             write_state(&job.model_root, &state)?;
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)?;
+            }
             fs::rename(&part, &target)?;
             extract_artifact(&target, &archive, &job.staging, &job.model.required_files)
         })
@@ -420,10 +405,290 @@ async fn fetch(job: &Arc<Job>) -> Result<(), VoiceError> {
     Ok(())
 }
 
-/// A downloaded piece of a file, or the end of the file.
+/// Where an artifact downloads before it moves into staging. The part is named by the hash the
+/// catalog expects, which the catalog checks is 64 hex digits, so a part is only ever continued
+/// toward that content.
+fn resume_part(model_root: &Path, artifact: &Artifact) -> PathBuf {
+    model_root.join(RESUME_DIR).join(part_name(artifact))
+}
+
+fn part_name(artifact: &Artifact) -> String {
+    format!("{}.part", artifact.sha256.to_ascii_lowercase())
+}
+
+/// Checks a downloaded file against the catalog.
+fn verify(artifact: &Artifact, written: &Written) -> Result<(), VoiceError> {
+    if !written.sha256.eq_ignore_ascii_case(&artifact.sha256) {
+        return Err(VoiceError::new(
+            "voice_model_hash_mismatch",
+            format!("downloaded artifact hash mismatch: {}", artifact.path),
+        )
+        .detail("expected_sha256", artifact.sha256.clone())
+        .detail("actual_sha256", written.sha256.clone()));
+    }
+    if artifact
+        .size_bytes
+        .is_some_and(|expected| expected != written.bytes)
+    {
+        return Err(VoiceError::new(
+            "voice_model_size_mismatch",
+            format!("downloaded artifact size mismatch: {}", artifact.path),
+        ));
+    }
+    Ok(())
+}
+
+/// Streams one artifact to its writer from `offset`, the bytes the writer already holds. After a
+/// connection that drops or stalls, or a partial response that covers only part of the rest, it
+/// asks again from where it got to. A partial response that brought data is not a failure. The
+/// download gives up after `IDLE_ATTEMPTS` requests in a row that bring nothing, or after
+/// `MAX_FAILURES` failed requests.
+async fn download(
+    job: &Arc<Job>,
+    client: &reqwest::Client,
+    artifact: &Artifact,
+    sender: mpsc::Sender<Chunk<Bytes>>,
+    mut offset: u64,
+    mut progress: impl FnMut(u64) -> Option<Value> + Send,
+) -> Result<(), VoiceError> {
+    let (mut failures, mut idle) = (0, 0);
+    loop {
+        let before = offset;
+        let error =
+            match stream_once(job, client, artifact, &sender, &mut offset, &mut progress).await {
+                Ok(Streamed::Complete) => {
+                    let _ = sender.send(Chunk::Finish).await;
+                    return Ok(());
+                }
+                // The writer stopped; its own result says why.
+                Ok(Streamed::WriterStopped) => return Ok(()),
+                Ok(Streamed::Partial) if offset > before => {
+                    idle = 0;
+                    continue;
+                }
+                Ok(Streamed::Partial) => VoiceError::new(
+                    "voice_model_download_failed",
+                    "the server kept ending the download before the end of the file",
+                )
+                .detail("url", artifact.url.clone()),
+                Err(Attempt::Fatal(error)) => return Err(error),
+                Err(Attempt::Retry(error)) => error,
+            };
+        failures += 1;
+        idle = if offset > before { 0 } else { idle + 1 };
+        if idle >= IDLE_ATTEMPTS || failures >= MAX_FAILURES {
+            return Err(error);
+        }
+        // Straight back after a request that brought data; a growing pause after one that
+        // brought none.
+        tokio::time::sleep(RETRY_PAUSE * idle).await;
+    }
+}
+
+/// How one request for an artifact ended.
+enum Streamed {
+    /// Everything the server had arrived; the writer's hash check decides whether it is right.
+    Complete,
+    /// The response ended cleanly before the end of the file, as a partial response may.
+    Partial,
+    /// The writer stopped, and its own result says why.
+    WriterStopped,
+}
+
+/// Why a request for an artifact failed: worth asking again, or not.
+enum Attempt {
+    Retry(VoiceError),
+    Fatal(VoiceError),
+}
+
+/// Asks for an artifact from `offset` and streams what arrives to the writer, moving `offset`
+/// on as it goes. Only a response that continues exactly at `offset` is added to what the
+/// writer holds, and anything else starts the file over. A file that still changed between two
+/// requests, at the same size, fails the final hash check rather than being installed.
+async fn stream_once(
+    job: &Arc<Job>,
+    client: &reqwest::Client,
+    artifact: &Artifact,
+    sender: &mpsc::Sender<Chunk<Bytes>>,
+    offset: &mut u64,
+    progress: &mut (impl FnMut(u64) -> Option<Value> + Send),
+) -> Result<Streamed, Attempt> {
+    if *offset > 0 && artifact.size_bytes == Some(*offset) {
+        // An earlier attempt kept the whole file.
+        return Ok(Streamed::Complete);
+    }
+    let mut request = client.get(&artifact.url);
+    if *offset > 0 {
+        request = request.header(RANGE, format!("bytes={offset}-"));
+    }
+    let mut response = request.send().await.map_err(|error| {
+        // A bad address or a redirect loop does not get better by asking again.
+        if error.is_builder() || error.is_redirect() {
+            Attempt::Fatal(download_error(error, artifact))
+        } else {
+            Attempt::Retry(download_error(error, artifact))
+        }
+    })?;
+    let status = response.status();
+    // The size of the whole file, as the response states it.
+    let stated = match status {
+        StatusCode::PARTIAL_CONTENT => match content_range(response.headers()) {
+            Some(range) if range.first == *offset => range.size,
+            _ => return start_over(sender, offset, artifact).await,
+        },
+        StatusCode::RANGE_NOT_SATISFIABLE => return start_over(sender, offset, artifact).await,
+        status if status.is_success() => response.content_length(),
+        status => {
+            let error = match response.error_for_status_ref() {
+                Err(error) => download_error(error, artifact),
+                Ok(_) => VoiceError::new(
+                    "voice_model_download_failed",
+                    format!("unexpected response: {status}"),
+                )
+                .detail("url", artifact.url.clone()),
+            };
+            let busy = matches!(
+                status,
+                StatusCode::REQUEST_TIMEOUT | StatusCode::TOO_MANY_REQUESTS
+            );
+            return Err(if busy || status.is_server_error() {
+                Attempt::Retry(error)
+            } else {
+                Attempt::Fatal(error)
+            });
+        }
+    };
+    // Another file than the catalog lists: say so before writing anything, rather than after
+    // the whole download as a failed check.
+    if let Some((expected, stated)) = artifact
+        .size_bytes
+        .zip(stated)
+        .filter(|(expected, stated)| expected != stated)
+    {
+        return Err(Attempt::Fatal(
+            VoiceError::new(
+                "voice_model_download_failed",
+                format!("the server's file is {stated} bytes, but the catalog expects {expected}"),
+            )
+            .detail("url", artifact.url.clone()),
+        ));
+    }
+    if status != StatusCode::PARTIAL_CONTENT && *offset > 0 {
+        // The whole file from its start.
+        if sender.send(Chunk::Restart).await.is_err() {
+            return Ok(Streamed::WriterStopped);
+        }
+        *offset = 0;
+    }
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| Attempt::Retry(download_error(error, artifact)))?
+    {
+        *offset += chunk.len() as u64;
+        if sender.send(Chunk::Data(chunk)).await.is_err() {
+            return Ok(Streamed::WriterStopped);
+        }
+        if let Some(state) = progress(*offset) {
+            blocking(job, move |job| write_state(&job.model_root, &state))
+                .await
+                .map_err(Attempt::Fatal)?;
+        }
+    }
+    // A partial response may cover only part of the rest. Without a known size, a clean end
+    // counts as the end of the file, and the hash check decides.
+    let size = artifact.size_bytes.or(stated);
+    Ok(if size.is_some_and(|size| *offset < size) {
+        Streamed::Partial
+    } else {
+        Streamed::Complete
+    })
+}
+
+/// Drops what the writer holds after a response that does not continue it, so the next request
+/// asks for the whole file.
+async fn start_over(
+    sender: &mpsc::Sender<Chunk<Bytes>>,
+    offset: &mut u64,
+    artifact: &Artifact,
+) -> Result<Streamed, Attempt> {
+    if sender.send(Chunk::Restart).await.is_err() {
+        return Ok(Streamed::WriterStopped);
+    }
+    *offset = 0;
+    Err(Attempt::Retry(
+        VoiceError::new(
+            "voice_model_download_failed",
+            "the server could not continue the download where it stopped",
+        )
+        .detail("url", artifact.url.clone()),
+    ))
+}
+
+/// What a partial response holds, from `Content-Range: bytes <first>-<last>/<size>`.
+struct ContentRange {
+    first: u64,
+    /// The size of the whole file; `*` when the server does not know it.
+    size: Option<u64>,
+}
+
+fn content_range(headers: &HeaderMap) -> Option<ContentRange> {
+    let value = headers.get(CONTENT_RANGE)?.to_str().ok()?;
+    let (range, size) = value.strip_prefix("bytes ")?.split_once('/')?;
+    let (first, last) = range.split_once('-')?;
+    let (first, last): (u64, u64) = (first.trim().parse().ok()?, last.trim().parse().ok()?);
+    let size = match size.trim() {
+        "*" => None,
+        size => Some(size.parse::<u64>().ok()?),
+    };
+    // A range that runs backwards or past the stated size is nothing to build on.
+    (first <= last && size.is_none_or(|size| last < size)).then_some(ContentRange { first, size })
+}
+
+fn download_error(error: reqwest::Error, artifact: &Artifact) -> VoiceError {
+    let message = if error.is_timeout() && !error.is_connect() {
+        format!(
+            "the download received no data for {} seconds; check the connection and try again",
+            DOWNLOAD_STALL_TIMEOUT.as_secs()
+        )
+    } else {
+        error.to_string()
+    };
+    VoiceError::new("voice_model_download_failed", message).detail("url", artifact.url.clone())
+}
+
+/// A downloaded piece of a file; the instruction to drop what was written and start the file
+/// over; or the end of the file.
 enum Chunk<B> {
     Data(B),
+    Restart,
     Finish,
+}
+
+/// Where a download continues: the bytes earlier attempts kept, and their hash so far.
+#[derive(Default)]
+struct Resume {
+    bytes: u64,
+    hasher: Sha256,
+}
+
+/// Reads what earlier attempts kept of a download. A part longer than the file it should
+/// become cannot be its start, and is removed.
+fn kept_part(part: &Path, size: Option<u64>) -> Result<Resume, VoiceError> {
+    let file = match fs::File::open(part) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Resume::default()),
+        Err(error) => return Err(error.into()),
+    };
+    let len = file.metadata()?.len();
+    if size.is_some_and(|size| len > size) {
+        drop(file);
+        fs::remove_file(part)?;
+        return Ok(Resume::default());
+    }
+    let mut hasher = Sha256::new();
+    let bytes = io::copy(&mut file.take(len), &mut hasher)?;
+    Ok(Resume { bytes, hasher })
 }
 
 struct Written {
@@ -431,30 +696,48 @@ struct Written {
     bytes: u64,
 }
 
-/// Writes one download to `part`, hashing it on the way. The file is synced and reported only
-/// after `Finish`; a channel that closes before it means the download stopped, and the part is
-/// removed.
+/// Writes one download to `part` from where `from` left it, hashing on the way. The file is
+/// synced and reported only after `Finish`. A channel that closes before it means the download
+/// stopped: what arrived stays for the next attempt, unless nothing did. A part that could not
+/// be written is removed.
 fn write_artifact<B: AsRef<[u8]>>(
     part: &Path,
+    from: Resume,
     mut chunks: mpsc::Receiver<Chunk<B>>,
 ) -> Result<Written, VoiceError> {
-    let written = write_chunks(part, &mut chunks);
-    if written.is_err() {
-        let _ = fs::remove_file(part);
+    match write_chunks(part, from, &mut chunks) {
+        Ok(Some(written)) => Ok(written),
+        Ok(None) => Err(VoiceError::new(
+            "voice_model_download_failed",
+            "the download stopped before the file was complete",
+        )),
+        Err(error) => {
+            let _ = fs::remove_file(part);
+            Err(error)
+        }
     }
-    written
 }
 
 fn write_chunks<B: AsRef<[u8]>>(
     part: &Path,
+    from: Resume,
     chunks: &mut mpsc::Receiver<Chunk<B>>,
-) -> Result<Written, VoiceError> {
+) -> Result<Option<Written>, VoiceError> {
     if let Some(parent) = part.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut file = BufWriter::new(fs::File::create(part)?);
-    let mut hasher = Sha256::new();
-    let mut bytes = 0_u64;
+    let Resume {
+        mut bytes,
+        mut hasher,
+    } = from;
+    let mut file = if bytes == 0 {
+        fs::File::create(part)?
+    } else {
+        let mut file = OpenOptions::new().write(true).open(part)?;
+        file.set_len(bytes)?;
+        file.seek(SeekFrom::Start(bytes))?;
+        file
+    };
     while let Some(chunk) = chunks.blocking_recv() {
         match chunk {
             Chunk::Data(data) => {
@@ -463,21 +746,25 @@ fn write_chunks<B: AsRef<[u8]>>(
                 file.write_all(data)?;
                 bytes += data.len() as u64;
             }
+            Chunk::Restart => {
+                file.set_len(0)?;
+                file.seek(SeekFrom::Start(0))?;
+                (bytes, hasher) = (0, Sha256::new());
+            }
             Chunk::Finish => {
-                file.into_inner()
-                    .map_err(io::IntoInnerError::into_error)?
-                    .sync_all()?;
-                return Ok(Written {
+                file.sync_all()?;
+                return Ok(Some(Written {
                     sha256: format!("{:x}", hasher.finalize()),
                     bytes,
-                });
+                }));
             }
         }
     }
-    Err(VoiceError::new(
-        "voice_model_download_failed",
-        "the download stopped before the file was complete",
-    ))
+    drop(file);
+    if bytes == 0 {
+        let _ = fs::remove_file(part);
+    }
+    Ok(None)
 }
 
 /// Unpacks a downloaded archive into staging, then removes the archive unless the model requires
@@ -650,6 +937,8 @@ fn sync_file(path: &Path) -> io::Result<()> {
 /// it once the current version is confirmed; this path never deletes a version directory.
 fn finish_failed(job: &Job, error: &VoiceError) -> Result<(), VoiceError> {
     remove_logged(&job.staging);
+    // What the download kept stays for the next install; an empty directory does not.
+    let _ = fs::remove_dir(job.model_root.join(RESUME_DIR));
     let previous_complete = job.kept.complete(&job.model);
     let error = json!({"code":error.code,"message":error.message,"details":error.details});
     let mut state = json!({
@@ -671,10 +960,11 @@ fn write_state_file(path: &Path, state: &Value) -> io::Result<()> {
     cccc_core::fs::write_json(path, state)
 }
 
-/// Removes what no install or reader needs. Leftover staging always goes. When the state names
-/// a complete current version, so does every other version no reader has pinned, including the
-/// legacy layout's files and whatever old installs left. When the current version cannot be
-/// confirmed, everything but staging stays, as any of it may be the only good copy.
+/// Removes what no install or reader needs. Leftover staging always goes, and so do kept
+/// downloads no install will continue (see `prune_resume`). When the state names a complete
+/// current version, so does every other version no reader has pinned, including the legacy
+/// layout's files and whatever old installs left. When the current version cannot be
+/// confirmed, every version stays, as any of them may be the only good copy.
 fn collect_garbage(model_root: &Path, model: &Model, state: &StateRead) {
     let entries = match fs::read_dir(model_root) {
         Ok(entries) => entries,
@@ -694,6 +984,8 @@ fn collect_garbage(model_root: &Path, model: &Model, state: &StateRead) {
             remove_logged(&path);
         } else if name.starts_with(PAYLOAD_PREFIX) {
             versions.push(path);
+        } else if name == RESUME_DIR {
+            prune_resume(&path, model);
         } else if name != INSTALL_STATE && name != INSTALL_LOCK {
             legacy.push(path);
         }
@@ -726,6 +1018,31 @@ fn collect_garbage(model_root: &Path, model: &Model, state: &StateRead) {
             remove_logged(&root);
         }
     }
+}
+
+/// Drops kept downloads that no install will continue: parts the catalog no longer names, and
+/// parts nothing has added to for `RESUME_MAX_AGE`. The directory goes once it is empty.
+fn prune_resume(dir: &Path, model: &Model) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let named = model
+                .artifacts
+                .iter()
+                .any(|artifact| name.to_str() == Some(part_name(artifact).as_str()));
+            let old = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age > RESUME_MAX_AGE);
+            if !named || old {
+                remove_logged(&entry.path());
+            }
+        }
+    }
+    // Removes only an empty directory.
+    let _ = fs::remove_dir(dir);
 }
 
 /// The current version's directory, when the state names one that exists and holds every

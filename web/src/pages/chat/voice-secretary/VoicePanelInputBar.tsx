@@ -20,6 +20,7 @@ export function VoicePanelInputBar({
   recording,
   recordingStarting,
   recordingFinishing = false,
+  captureHint,
   recordingTargetLabel,
   finalizingLabel = "Finalizing recording…",
   stopWaitingLabel,
@@ -42,6 +43,7 @@ export function VoicePanelInputBar({
   recording: boolean;
   recordingStarting: boolean;
   recordingFinishing?: boolean;
+  captureHint?: string;
   recordingTargetLabel: string;
   finalizingLabel?: string;
   stopWaitingLabel?: string;
@@ -99,6 +101,16 @@ export function VoicePanelInputBar({
             <span className="flex-1" />
           )}
         </div>
+      ) : null}
+      {captureHint ? (
+        <p
+          data-voice-input-silence
+          data-status-tone="warning"
+          role="status"
+          className="mb-2 text-xs text-amber-700 dark:text-amber-300"
+        >
+          {captureHint}
+        </p>
       ) : null}
       {recordingFinishing && onStopWaiting ? (
         <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-[var(--color-text-secondary)]">

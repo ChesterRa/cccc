@@ -5,6 +5,7 @@ use crate::routes::assistants::voice_asr::payload::{
 use crate::routes::assistants::voice_asr::status_from;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::SystemTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MODEL: &str = "test_model";
@@ -90,6 +91,18 @@ impl Fixture {
         dir
     }
 
+    /// Leaves `kept` as the start of the file expected to hold `expected`, as an interrupted
+    /// install does.
+    fn keep_part(&self, expected: &[u8], kept: &[u8]) -> PathBuf {
+        let part = self
+            .root
+            .join(RESUME_DIR)
+            .join(format!("{}.part", sha(expected)));
+        fs::create_dir_all(part.parent().expect("resume dir")).expect("resume dir");
+        fs::write(&part, kept).expect("part");
+        part
+    }
+
     fn entries(&self) -> Vec<String> {
         let mut names: Vec<String> = fs::read_dir(&self.root)
             .expect("model dir")
@@ -150,10 +163,82 @@ async fn wait_until(mut done: impl FnMut() -> bool) {
 enum Reply {
     Body(Vec<u8>),
     Status(u16),
-    /// Sends the start of a longer body, then nothing more.
-    Stall(Vec<u8>),
+    /// Sends the start of a body of the given length, then nothing more.
+    Stall(Vec<u8>, usize),
     /// Sends the body in pieces with a pause before each.
     Trickle(Vec<Vec<u8>>, Duration),
+    /// Answers `Range: bytes=<first>-` requests, as release downloads do.
+    Ranged(Ranged),
+    /// Redirects to another path, as release links do.
+    Redirect(&'static str),
+}
+
+#[derive(Clone)]
+struct Ranged {
+    body: Vec<u8>,
+    /// The most bytes one response sends before its connection closes.
+    cut: usize,
+    /// The most bytes one partial response covers, stated in its `Content-Range`, as a server
+    /// may send less than the rest it was asked for.
+    span: usize,
+    /// Answers a range request with the file from its start, marked as partial.
+    misplaced: bool,
+    /// The first byte each request asked for; `None` for the whole file.
+    starts: Arc<Mutex<Vec<Option<u64>>>>,
+}
+
+impl Ranged {
+    fn new(body: &[u8]) -> Self {
+        Self {
+            body: body.to_vec(),
+            cut: usize::MAX,
+            span: usize::MAX,
+            misplaced: false,
+            starts: Arc::default(),
+        }
+    }
+
+    fn starts(&self) -> Vec<Option<u64>> {
+        self.starts.lock().expect("starts").clone()
+    }
+
+    /// The status, extra headers and body for a request that asked for `range`.
+    fn answer(&self, range: Option<u64>) -> (u16, String, Vec<u8>) {
+        self.starts.lock().expect("starts").push(range);
+        let size = self.body.len();
+        match range.map(|first| if self.misplaced { 0 } else { first as usize }) {
+            None => (200, String::new(), self.body.clone()),
+            Some(first) if first >= size => (
+                416,
+                format!("Content-Range: bytes */{size}\r\n"),
+                Vec::new(),
+            ),
+            Some(first) => {
+                let end = size.min(first.saturating_add(self.span));
+                (
+                    206,
+                    format!("Content-Range: bytes {first}-{}/{size}\r\n", end - 1),
+                    self.body[first..end].to_vec(),
+                )
+            }
+        }
+    }
+}
+
+/// The first byte a `Range: bytes=<first>-` header in `request` asks for.
+fn range_start(request: &str) -> Option<u64> {
+    request.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if !name.trim().eq_ignore_ascii_case("range") {
+            return None;
+        }
+        value
+            .trim()
+            .strip_prefix("bytes=")?
+            .strip_suffix('-')?
+            .parse()
+            .ok()
+    })
 }
 
 /// Serves fixed replies by path on a local port and returns its base URL.
@@ -181,26 +266,38 @@ async fn serve(routes: Vec<(&str, Reply)>) -> String {
                 let request = String::from_utf8_lossy(&request).into_owned();
                 let path = request.split_whitespace().nth(1).unwrap_or("");
                 let reply = routes.get(path).cloned().unwrap_or(Reply::Status(404));
+                let mut headers = String::new();
+                let mut cut = usize::MAX;
                 let (status, body, length) = match &reply {
                     Reply::Body(body) => (200, body.clone(), body.len()),
                     Reply::Status(status) => (*status, Vec::new(), 0),
-                    Reply::Stall(start) => (200, start.clone(), start.len() + 1_000_000),
+                    Reply::Stall(start, length) => (200, start.clone(), *length),
                     Reply::Trickle(pieces, _) => {
                         (200, Vec::new(), pieces.iter().map(Vec::len).sum())
                     }
+                    Reply::Ranged(ranged) => {
+                        let (status, range, body) = ranged.answer(range_start(&request));
+                        (headers, cut) = (range, ranged.cut);
+                        let length = body.len();
+                        (status, body, length)
+                    }
+                    Reply::Redirect(to) => {
+                        headers = format!("Location: {to}\r\n");
+                        (302, Vec::new(), 0)
+                    }
                 };
                 let head = format!(
-                    "HTTP/1.1 {status} Fixture\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n"
+                    "HTTP/1.1 {status} Fixture\r\nContent-Length: {length}\r\n{headers}Connection: close\r\n\r\n"
                 );
                 let _ = socket.write_all(head.as_bytes()).await;
-                let _ = socket.write_all(&body).await;
+                let _ = socket.write_all(&body[..body.len().min(cut)]).await;
                 if let Reply::Trickle(pieces, pause) = &reply {
                     for piece in pieces {
                         tokio::time::sleep(*pause).await;
                         let _ = socket.write_all(piece).await;
                     }
                 }
-                if matches!(reply, Reply::Stall(_)) {
+                if matches!(reply, Reply::Stall(..)) {
                     std::future::pending::<()>().await;
                 }
             });
@@ -223,8 +320,8 @@ async fn an_update_that_fails_verification_keeps_the_installed_version() {
     assert_eq!(installed["status"], "ready", "{installed}");
     let dir = PathBuf::from(installed["install_dir"].as_str().expect("install dir"));
     // The update expects a new second file after the first has downloaded and been recorded,
-    // but the server still serves the old one.
-    f.list_artifacts(artifacts(b"second, updated"), &["a.bin", "b.bin"]);
+    // but the server still serves the old one, of the same size.
+    f.list_artifacts(artifacts(b"SECOND"), &["a.bin", "b.bin"]);
     let status = f.run_install().await;
     assert_eq!(status["status"], "ready", "{status}");
     assert_eq!(status["installed_at"], installed["installed_at"]);
@@ -285,7 +382,7 @@ async fn a_download_fails_only_after_data_stops_arriving() {
             "/slow.bin",
             Reply::Trickle(vec![b"ab".to_vec(); 12], Duration::from_millis(50)),
         ),
-        ("/stalled.bin", Reply::Stall(b"ab".to_vec())),
+        ("/stalled.bin", Reply::Stall(b"ab".to_vec(), 1_000_000)),
     ])
     .await;
     let stall = Duration::from_millis(300);
@@ -314,12 +411,15 @@ async fn a_download_fails_only_after_data_stops_arriving() {
 }
 
 #[tokio::test]
-async fn an_interrupted_update_keeps_the_installed_version_ready() {
+async fn an_interrupted_update_keeps_the_installed_version_ready_and_continues_later() {
     let f = fixture();
+    let newer = b"second, updated";
+    let ranged = Ranged::new(newer);
     let base = serve(vec![
         ("/a.bin", Reply::Body(b"first".to_vec())),
         ("/b.bin", Reply::Body(b"second".to_vec())),
-        ("/stalled.bin", Reply::Stall(b"sec".to_vec())),
+        ("/stalled.bin", Reply::Stall(b"sec".to_vec(), newer.len())),
+        ("/ranged.bin", Reply::Ranged(ranged.clone())),
     ])
     .await;
     f.list_artifacts(
@@ -331,17 +431,18 @@ async fn an_interrupted_update_keeps_the_installed_version_ready() {
     );
     let installed = f.run_install().await;
     let dir = PathBuf::from(installed["install_dir"].as_str().expect("install dir"));
-    let mut stalled = plain(&base, "b.bin", b"second, updated");
+    let mut stalled = plain(&base, "b.bin", newer);
     stalled["url"] = json!(format!("{base}/stalled.bin"));
     f.list_artifacts(
-        vec![plain(&base, "a.bin", b"first"), stalled],
+        vec![plain(&base, "a.bin", b"first"), stalled.clone()],
         &["a.bin", "b.bin"],
     );
     let task = tokio::spawn(install(Arc::new(
         start(&f.home, MODEL).expect("start update"),
     )));
     // The first file is recorded; the second starts and then stops arriving.
-    wait_until(|| f.state()["artifact_index"] == 1).await;
+    let part = f.root.join(RESUME_DIR).join(format!("{}.part", sha(newer)));
+    wait_until(|| fs::metadata(&part).is_ok_and(|meta| meta.len() == 3)).await;
     task.abort();
     let _ = task.await;
     let lock = install_lock_path(&f.home, MODEL);
@@ -355,7 +456,181 @@ async fn an_interrupted_update_keeps_the_installed_version_ready() {
     assert_eq!(status["status"], "ready", "{status}");
     assert_eq!(status["install_dir"], installed["install_dir"]);
     collect_all_garbage(&f.home);
+    // What arrived stays for the next install, which asks only for the rest.
+    assert_eq!(
+        f.entries(),
+        [RESUME_DIR, INSTALL_STATE, name(&dir).as_str()]
+    );
+    assert_eq!(fs::read(&part).expect("kept part"), b"sec");
+    stalled["url"] = json!(format!("{base}/ranged.bin"));
+    f.list_artifacts(
+        vec![plain(&base, "a.bin", b"first"), stalled],
+        &["a.bin", "b.bin"],
+    );
+    let updated = f.install_dir_after_install().await;
+    assert_eq!(fs::read(updated.join("b.bin")).expect("new file"), newer);
+    assert_eq!(ranged.starts(), [Some(3)]);
+    assert_eq!(f.entries(), [INSTALL_STATE, name(&updated).as_str()]);
+}
+
+#[tokio::test]
+async fn a_dropped_download_continues_where_it_stopped() {
+    let f = fixture();
+    let body = b"0123456789";
+    // Each response stops after four bytes, behind a redirect as on a release link.
+    let ranged = Ranged {
+        cut: 4,
+        ..Ranged::new(body)
+    };
+    let base = serve(vec![
+        ("/release/model.bin", Reply::Redirect("/asset/model.bin")),
+        ("/asset/model.bin", Reply::Ranged(ranged.clone())),
+    ])
+    .await;
+    f.list_model(&format!("{base}/release/model.bin"), body);
+    let dir = f.install_dir_after_install().await;
+    assert_eq!(fs::read(dir.join("model.bin")).expect("model"), body);
+    assert_eq!(ranged.starts(), [None, Some(4), Some(8)]);
     assert_eq!(f.entries(), [INSTALL_STATE, name(&dir).as_str()]);
+}
+
+#[tokio::test]
+async fn a_partial_response_that_covers_part_of_the_rest_is_continued() {
+    let f = fixture();
+    let body = b"0123456789";
+    let ranged = Ranged {
+        span: 4,
+        ..Ranged::new(body)
+    };
+    let base = serve(vec![("/model.bin", Reply::Ranged(ranged.clone()))]).await;
+    f.list_model(&format!("{base}/model.bin"), body);
+    f.keep_part(body, b"0123");
+    let dir = f.install_dir_after_install().await;
+    assert_eq!(fs::read(dir.join("model.bin")).expect("model"), body);
+    // bytes 4-7/10, then 8-9/10.
+    assert_eq!(ranged.starts(), [Some(4), Some(8)]);
+}
+
+#[tokio::test]
+async fn partial_responses_that_bring_data_are_not_failures() {
+    let f = fixture();
+    let body = b"0123456789abcdefghijklmnopqrstuv";
+    let ranged = Ranged {
+        span: 1,
+        ..Ranged::new(body)
+    };
+    let base = serve(vec![("/model.bin", Reply::Ranged(ranged.clone()))]).await;
+    f.list_model(&format!("{base}/model.bin"), body);
+    f.keep_part(body, b"0");
+    let dir = f.install_dir_after_install().await;
+    assert_eq!(fs::read(dir.join("model.bin")).expect("model"), body);
+    // One byte per response: more requests than the failure limit allows.
+    assert!(ranged.starts().len() as u32 > MAX_FAILURES);
+}
+
+#[tokio::test]
+async fn a_server_file_of_another_size_fails_before_anything_is_written() {
+    let f = fixture();
+    let ranged = Ranged::new(b"model, larger");
+    let base = serve(vec![("/model.bin", Reply::Ranged(ranged.clone()))]).await;
+    f.list_model(&format!("{base}/model.bin"), b"model");
+    let part = f.keep_part(b"model", b"mo");
+    let status = f.run_install().await;
+    assert_eq!(status["status"], "failed", "{status}");
+    assert_eq!(status["error"]["code"], "voice_model_download_failed");
+    let message = status["error"]["message"].as_str().expect("message");
+    assert!(
+        message.contains("13 bytes") && message.contains("expects 5"),
+        "{message}"
+    );
+    assert_eq!(fs::read(&part).expect("kept part"), b"mo");
+    assert_eq!(ranged.starts(), [Some(2)]);
+}
+
+#[tokio::test]
+async fn a_download_that_gets_no_further_gives_up() {
+    let f = fixture();
+    let ranged = Ranged {
+        cut: 0,
+        ..Ranged::new(b"model")
+    };
+    let base = serve(vec![("/model.bin", Reply::Ranged(ranged.clone()))]).await;
+    f.list_model(&format!("{base}/model.bin"), b"model");
+    let status = f.run_install().await;
+    assert_eq!(status["status"], "failed", "{status}");
+    assert_eq!(status["error"]["code"], "voice_model_download_failed");
+    assert_eq!(ranged.starts(), vec![None; IDLE_ATTEMPTS as usize]);
+    assert_eq!(f.entries(), [INSTALL_STATE]);
+}
+
+#[tokio::test]
+async fn a_server_that_ignores_the_range_sends_the_file_over() {
+    let f = fixture();
+    let base = serve(vec![("/model.bin", Reply::Body(b"model".to_vec()))]).await;
+    f.list_model(&format!("{base}/model.bin"), b"model");
+    // Bytes that are not the file's start: joined to the rest, they would fail the check.
+    f.keep_part(b"model", b"xy");
+    let dir = f.install_dir_after_install().await;
+    assert_eq!(fs::read(dir.join("model.bin")).expect("model"), b"model");
+}
+
+#[tokio::test]
+async fn a_partial_response_from_another_byte_starts_the_file_over() {
+    let f = fixture();
+    let ranged = Ranged {
+        misplaced: true,
+        ..Ranged::new(b"model")
+    };
+    let base = serve(vec![("/model.bin", Reply::Ranged(ranged.clone()))]).await;
+    f.list_model(&format!("{base}/model.bin"), b"model");
+    f.keep_part(b"model", b"mo");
+    let dir = f.install_dir_after_install().await;
+    assert_eq!(fs::read(dir.join("model.bin")).expect("model"), b"model");
+    assert_eq!(ranged.starts(), [Some(2), None]);
+}
+
+#[tokio::test]
+async fn a_range_past_the_end_starts_the_file_over() {
+    let f = fixture();
+    let ranged = Ranged::new(b"model");
+    let base = serve(vec![("/model.bin", Reply::Ranged(ranged.clone()))]).await;
+    // Without a listed size, a whole kept file looks unfinished until the server says otherwise.
+    let mut artifact = plain(&base, "model.bin", b"model");
+    artifact
+        .as_object_mut()
+        .expect("artifact")
+        .remove("size_bytes");
+    f.list_artifacts(vec![artifact], &["model.bin"]);
+    f.keep_part(b"model", b"model");
+    let dir = f.install_dir_after_install().await;
+    assert_eq!(fs::read(dir.join("model.bin")).expect("model"), b"model");
+    assert_eq!(ranged.starts(), [Some(5), None]);
+}
+
+#[tokio::test]
+async fn a_kept_part_that_does_not_add_up_is_dropped() {
+    let f = fixture();
+    let ranged = Ranged::new(b"model");
+    let base = serve(vec![("/model.bin", Reply::Ranged(ranged.clone()))]).await;
+    f.list_model(&format!("{base}/model.bin"), b"model");
+    let part = f.keep_part(b"model", b"xy");
+    let status = f.run_install().await;
+    assert_eq!(status["status"], "failed", "{status}");
+    assert_eq!(status["error"]["code"], "voice_model_hash_mismatch");
+    assert!(!part.exists());
+    assert_eq!(f.entries(), [INSTALL_STATE]);
+    // The next install downloads the whole file.
+    f.install_dir_after_install().await;
+    assert_eq!(ranged.starts(), [Some(2), None]);
+}
+
+#[tokio::test]
+async fn a_whole_kept_file_is_checked_without_asking_the_server() {
+    let f = fixture();
+    f.list_model(UNUSED_URL, b"model");
+    f.keep_part(b"model", b"model");
+    let dir = f.install_dir_after_install().await;
+    assert_eq!(fs::read(dir.join("model.bin")).expect("model"), b"model");
 }
 
 #[tokio::test]
@@ -791,19 +1066,25 @@ async fn blocking_work_keeps_the_lock_after_its_install_is_cancelled() {
 }
 
 #[test]
-fn a_download_that_stops_early_removes_its_part() {
+fn a_download_that_stops_early_keeps_what_arrived() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let part = temp.path().join("nested/model.binpart");
+    let part = temp.path().join("nested/model.part");
     let (sender, receiver) = mpsc::channel(4);
     sender
         .try_send(Chunk::Data(b"partial".to_vec()))
         .expect("chunk");
     drop(sender);
-    let error = write_artifact(&part, receiver)
+    let error = write_artifact(&part, Resume::default(), receiver)
         .err()
         .expect("an unfinished download fails");
     assert_eq!(error.code, "voice_model_download_failed");
-    assert!(!part.exists());
+    assert_eq!(fs::read(&part).expect("kept part"), b"partial");
+    // One that received nothing leaves no part.
+    let empty = temp.path().join("nested/empty.part");
+    let (sender, receiver) = mpsc::channel::<Chunk<Vec<u8>>>(4);
+    drop(sender);
+    assert!(write_artifact(&empty, Resume::default(), receiver).is_err());
+    assert!(!empty.exists());
 }
 
 #[cfg(target_os = "linux")]
@@ -821,7 +1102,7 @@ fn a_full_disk_fails_the_download_and_removes_its_part() {
         .try_send(Chunk::Data(vec![0_u8; 64 * 1024]))
         .expect("chunk");
     sender.try_send(Chunk::Finish).expect("finish");
-    let error = write_artifact(&part, receiver)
+    let error = write_artifact(&part, Resume::default(), receiver)
         .err()
         .expect("a full disk fails");
     assert_eq!(error.code, "voice_io_error");
@@ -1044,6 +1325,38 @@ fn cleanup_removes_what_the_confirmed_version_replaced_once_no_reader_holds_it()
     drop((reader, legacy_reader));
     collect_garbage(&f.root, &f.model(), &payload::read_state(&f.root));
     assert_eq!(f.entries(), [INSTALL_LOCK, INSTALL_STATE, "payload-a"]);
+}
+
+#[test]
+fn cleanup_keeps_only_the_kept_downloads_an_install_will_continue() {
+    let f = fixture();
+    f.list_artifacts(
+        vec![
+            plain(UNUSED_URL, "model.bin", b"model"),
+            plain(UNUSED_URL, "extra.bin", b"extra"),
+        ],
+        &["model.bin"],
+    );
+    // A confirmed current version, so the cleanup also sweeps what is not a version.
+    f.version("payload-a");
+    f.ready_at("payload-a");
+    let fresh = f.keep_part(b"model", b"mo");
+    let old = f.keep_part(b"extra", b"ex");
+    fs::File::options()
+        .write(true)
+        .open(&old)
+        .expect("old part")
+        .set_modified(SystemTime::now() - RESUME_MAX_AGE - Duration::from_secs(60))
+        .expect("age the part");
+    let unlisted = f.keep_part(b"no longer listed", b"no");
+    collect_garbage(&f.root, &f.model(), &payload::read_state(&f.root));
+    assert!(fresh.exists());
+    assert!(!old.exists());
+    assert!(!unlisted.exists());
+    // A catalog change leaves nothing to continue, and the directory goes too.
+    f.list_model(UNUSED_URL, b"newer");
+    collect_garbage(&f.root, &f.model(), &payload::read_state(&f.root));
+    assert_eq!(f.entries(), [INSTALL_STATE, "payload-a"]);
 }
 
 #[test]

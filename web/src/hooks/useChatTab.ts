@@ -17,6 +17,7 @@ import {
 } from "../stores/useComposerStore";
 import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION, getChatSession } from "../stores/useUIStore";
 import { useChatOutboxStore, selectOutboxEntries } from "../stores/chatOutboxStore";
+import { beginPendingPageWork } from "../stores/usePendingPageWork";
 import type { Actor, LedgerEvent, MessageRef } from "../types";
 import { formatSendMessageError } from "../utils/chatSend";
 import { CHET_SELECTOR, chetGeneration } from "../utils/chetIdentity";
@@ -1194,12 +1195,12 @@ export function useChatTab({
       insertLocalAssistantPlaceholders();
     }
 
-    const afterClear = applyImmediateComposerFeedback(
-      shouldLockBottomAfterSend && sentMessageVisible,
-    );
-    sendInFlightRef.current = true;
+    const finishPageWork = beginPendingPageWork();
+    let afterClear: ReturnType<typeof applyImmediateComposerFeedback> | undefined;
     let successfulSendCount = 0;
     try {
+      afterClear = applyImmediateComposerFeedback(shouldLockBottomAfterSend && sentMessageVisible);
+      sendInFlightRef.current = true;
       const dispatched = await dispatchPreparedMessage({
         selectedGroupId,
         text: txt,
@@ -1301,6 +1302,7 @@ export function useChatTab({
       showError(describeSendFailure(originGroupId, message));
     } finally {
       sendInFlightRef.current = false;
+      finishPageWork();
     }
   }, [
     selectedGroupId,

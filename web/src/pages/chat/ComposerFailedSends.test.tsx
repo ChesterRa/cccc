@@ -2,7 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { FailedSendsUnloadGuard } from "../../components/app/FailedSendsUnloadGuard";
+import { PendingPageWorkUnloadGuard } from "../../components/app/PendingPageWorkUnloadGuard";
 import { useComposerStore, type FailedSend } from "../../stores/useComposerStore";
 import { ComposerFailedSends } from "./ComposerFailedSends";
 
@@ -251,7 +251,7 @@ it("discards one send and keeps the rest", () => {
 });
 
 it("asks before leaving the page only while a send waits to be restored", () => {
-  render(<FailedSendsUnloadGuard />);
+  render(<PendingPageWorkUnloadGuard />);
   const leave = () => {
     const event = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(event);

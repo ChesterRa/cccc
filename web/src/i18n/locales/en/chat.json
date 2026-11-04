@@ -319,6 +319,7 @@
   "voiceSecretaryAudioWorkletUnsupported": "This browser does not support the audio processing needed for local or external speech recognition.",
   "voiceSecretaryAudioWorkletFailed": "Audio processing could not be started. Refresh the page and try again.",
   "voiceSecretaryAudioProcessingInterrupted": "Audio processing stopped; this recording may be incomplete.",
+  "voiceSecretaryInputSilenceHint": "No audio detected. If you're speaking, check that the right microphone is selected and not muted.",
   "voiceSecretaryAudioFlushUnconfirmed": "Audio processing did not confirm the last buffered samples; the result may be incomplete.",
   "voiceSecretaryBrowserStopUnconfirmed": "The browser did not confirm that speech recognition finished; the result may be incomplete.",
   "voiceSecretaryStopWaiting": "Stop waiting",
@@ -568,6 +569,7 @@
   "replyTargetNotLoaded": "Original message is not loaded.",
   "sentTo": "Sent to {{label}} · {{to}}",
   "relayedTo": "Delegated to {{label}} · {{to}}",
+  "delegationOutboundStatus": "Contacted the target Group; waiting for its reply.",
   "updated": "Updated {{time}}",
   "noAgentStateYet": "No agent state yet",
   "taskShort": "task {{id}}",
@@ -870,7 +872,7 @@
   "workspaceEmptyFilteredHint": "Files may be hidden by Git ignore rules.",
   "workspaceUnsaved": {
     "title": "Leave unsaved work?",
-    "description": "Unsaved edits, or sends waiting to be restored, are lost if you continue.",
+    "description": "Unsaved edits, sends in progress or waiting to be restored, and recordings in progress or being finalized may be lost if you continue.",
     "stay": "Stay here",
     "discard": "Discard and continue"
   },

@@ -24,11 +24,7 @@ import { getTaskMessageRefs } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
 import { getMessageInsight } from "../utils/messagePerspective";
 import { getMessageMentionTokens } from "../utils/mentionHighlight";
-import {
-  getDelegationDisplayText,
-  getDelegationSourceOutboundStatus,
-  isDelegationSourceOutbound,
-} from "./messageBubbleDelegation";
+import { getDelegationDisplayText, isDelegationSourceOutbound } from "./messageBubbleDelegation";
 import { MessageActions } from "./messageBubble/MessageActions";
 import {
   QUICK_REPLY_EMOJI,
@@ -313,7 +309,7 @@ export const MessageBubble = memo(
         if (replyView.state === "answered" || replyView.state === "withdrawn")
           return recordedQuestionText(replyView.question, t("pendingReply.recommended"));
       }
-      if (delegationSourceOutbound) return getDelegationSourceOutboundStatus(displayMessageText);
+      if (delegationSourceOutbound) return t("delegationOutboundStatus");
       const receipt = isUserMessage
         ? localizedAnswerReceipt(ev.data, displayMessageText, {
             selected: (optionId) => t("answerReceiptSelected", { id: optionId }),

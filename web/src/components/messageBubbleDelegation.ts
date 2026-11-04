@@ -66,8 +66,3 @@ export function getDelegationProtocolText(rawText: string): string {
   if (end < 0) return "";
   return raw.slice(start + PROTOCOL_COMMENT_OPEN.length, end).trim();
 }
-
-export function getDelegationSourceOutboundStatus(rawText: string): string {
-  if (!isDelegationRequestText(rawText)) return "";
-  return "已联系目标组，等待对方回复。";
-}

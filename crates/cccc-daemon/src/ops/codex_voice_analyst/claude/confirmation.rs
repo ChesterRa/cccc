@@ -43,6 +43,17 @@ impl ConfirmationLaunch {
             arguments,
         }
     }
+
+    /// Which settings directory a manual retry must use, since a confirmation made under
+    /// another one does not count. The directory itself is already in the message, and quoting
+    /// it again as an assignment would break on a path with a quote in it.
+    pub(super) fn config_dir_hint(&self) -> &'static str {
+        if self.environment.contains_key("CLAUDE_CONFIG_DIR") {
+            " For a manual retry, set CLAUDE_CONFIG_DIR to the resolved settings directory."
+        } else {
+            " For a manual retry, keep CLAUDE_CONFIG_DIR unset."
+        }
+    }
 }
 
 impl fmt::Debug for ConfirmationLaunch {
@@ -64,10 +75,11 @@ impl fmt::Display for DisclaimerRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Claude Code requires your bypassPermissions confirmation. Open the configured executable interactively with --dangerously-skip-permissions in '{}', using the same settings, and review Claude's disclaimer before retrying. Configured executable: '{}'; resolved settings directory: '{}'.",
+            "Claude Code requires your bypassPermissions confirmation. Open the configured executable interactively with --dangerously-skip-permissions in '{}', using the same settings, and review Claude's disclaimer before retrying. Configured executable: '{}'; resolved settings directory: '{}'.{}",
             self.workspace.display(),
             self.launch.executable,
-            self.launch.config_dir.display()
+            self.launch.config_dir.display(),
+            self.launch.config_dir_hint()
         )
     }
 }

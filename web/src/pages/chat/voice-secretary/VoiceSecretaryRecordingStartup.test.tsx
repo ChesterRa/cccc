@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { VoiceSecretaryComposerControl } from "../VoiceSecretaryComposerControl";
 import { useComposerStore, useGroupStore, useModalStore, useUIStore } from "../../../stores";
 import { useVoiceAudioStore } from "../../../stores/useVoiceAudioStore";
+import { usePendingPageWork } from "../../../stores/usePendingPageWork";
 import type { AssistantStateResult } from "../../../types";
 import type { BrowserSpeechRecognitionEvent } from "./voiceBrowserSpeechTypes";
 
@@ -158,6 +159,7 @@ describe("Voice Secretary recording startup ownership", () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
     vi.useFakeTimers();
     vi.clearAllMocks();
+    usePendingPageWork.setState({ owners: new Set() });
     Recognition.autoEndOnStop = true;
     Socket.initialReadyState = 1;
     WorkletNodeFixture.autoFlush = true;
@@ -218,10 +220,46 @@ describe("Voice Secretary recording startup ownership", () => {
   });
   afterEach(async () => {
     if (rootMounted) await act(async () => root.unmount());
+    expect(usePendingPageWork.getState().owners.size).toBe(0);
     host.remove();
     vi.clearAllTimers();
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it("warns for absent or all-zero service audio and clears the hint on even quiet input", async () => {
+    api.workspace.mockResolvedValue({
+      ok: true,
+      result: state("A", "assistant_service_local_asr"),
+    });
+    api.status.mockResolvedValue({ ok: true, result: state("A", "assistant_service_local_asr") });
+    await render("A");
+    await act(async () => recordButton().click());
+    expect(usePendingPageWork.getState().owners.size).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(5_999));
+    expect(host.querySelector("[data-voice-input-silence]")).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(host.querySelector("[data-voice-input-silence]")).not.toBeNull();
+    await act(async () => WorkletNodeFixture.latest.emitSamples(new Float32Array(960)));
+    expect(host.querySelector("[data-voice-input-silence]")).not.toBeNull();
+    await act(async () => WorkletNodeFixture.latest.emitSamples(new Float32Array([0.000001])));
+    expect(host.querySelector("[data-voice-input-silence]")).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(6_000));
+    expect(host.querySelector("[data-voice-input-silence]")).not.toBeNull();
+    await act(async () => recordButton().click());
+    expect(host.querySelector("[data-voice-input-silence]")).toBeNull();
+    expect(usePendingPageWork.getState().owners.size).toBe(1);
+    await act(async () => Socket.latest.onmessage?.({ data: JSON.stringify({ type: "closed" }) }));
+    expect(usePendingPageWork.getState().owners.size).toBe(0);
+  });
+
+  it("does not claim to inspect browser speech recognition audio", async () => {
+    api.workspace.mockResolvedValue({ ok: true, result: state("A", "browser_asr") });
+    api.status.mockResolvedValue({ ok: true, result: state("A", "browser_asr") });
+    await render("A");
+    await act(async () => recordButton().click());
+    await act(async () => vi.advanceTimersByTimeAsync(7_000));
+    expect(host.querySelector("[data-voice-input-silence]")).toBeNull();
   });
 
   it.each([

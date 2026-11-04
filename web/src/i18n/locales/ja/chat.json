@@ -319,6 +319,7 @@
   "voiceSecretaryAudioWorkletUnsupported": "このブラウザーはローカルまたは外部音声認識に必要な音声処理に対応していません。",
   "voiceSecretaryAudioWorkletFailed": "音声処理を開始できませんでした。ページを更新して再試行してください。",
   "voiceSecretaryAudioProcessingInterrupted": "音声処理が停止しました。今回の録音が不完全な可能性があります。",
+  "voiceSecretaryInputSilenceHint": "音声を検出していません。話している場合は、マイクのミュート設定や選択を確認してください。",
   "voiceSecretaryAudioFlushUnconfirmed": "最後の音声データを処理できたか確認できませんでした。結果が不完全な可能性があります。",
   "voiceSecretaryBrowserStopUnconfirmed": "ブラウザーから音声認識の終了を確認できませんでした。結果が不完全な可能性があります。",
   "voiceSecretaryStopWaiting": "待機を終了",
@@ -568,6 +569,7 @@
   "replyTargetNotLoaded": "元のメッセージは読み込まれていません。",
   "sentTo": "{{label}} · {{to}} に送信",
   "relayedTo": "{{label}} · {{to}} に委任",
+  "delegationOutboundStatus": "対象のグループに連絡しました。返信を待っています。",
   "updated": "更新： {{time}}",
   "noAgentStateYet": "エージェント状態はまだありません",
   "taskShort": "タスク {{id}}",
@@ -870,7 +872,7 @@
   "workspaceEmptyFilteredHint": "Git の除外ルールで非表示になっている可能性があります。",
   "workspaceUnsaved": {
     "title": "未保存の作業を破棄しますか",
-    "description": "続行すると、保存していない変更や復元待ちの送信は失われます。",
+    "description": "続行すると、未保存の変更、送信中や復元待ちの内容、録音中または仕上げ中の音声が失われる可能性があります。",
     "stay": "ここに留まる",
     "discard": "破棄して移動"
   },

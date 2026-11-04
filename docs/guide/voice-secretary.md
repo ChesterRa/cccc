@@ -478,6 +478,20 @@ after an install completes, or when CCCC Web starts. A version that a
 recognition in progress still uses waits for a later cleanup. Removing a model
 deletes all of its versions at once, even one in use.
 
+A download that stops partway continues instead of starting over. When the
+connection drops, or no data arrives for 60 seconds, CCCC asks for the rest of
+the file; it reports the error after three requests in a row that bring nothing,
+or after 20 failed requests. What arrived stays in the model's
+`.download-resume` folder, so installing again continues from there.
+Continuing needs a server that supports range requests, as GitHub release
+downloads do; a server that sends the whole file again starts it over. Every
+file is still checked against its SHA-256, and against its size when the model
+definition lists one; a kept file that fails the check is deleted. Cleanup
+deletes kept files that the model definition no longer lists or that nothing
+has added to for seven days, and removing the model deletes them too. A
+download that cannot be written, as on a full disk, deletes its partial file
+so that the space is free again.
+
 Existing model caches and `install-state.json` files are read in place; their
 next install or update moves the model into a version directory. Versions of
 CCCC before this layout show such a model as not installed, so after a

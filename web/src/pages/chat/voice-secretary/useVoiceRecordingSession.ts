@@ -1,5 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { VoiceAudioPreferences } from "../../../stores/useVoiceAudioStore";
+import { beginPendingPageWork } from "../../../stores/usePendingPageWork";
 import { createVoiceRecordingSessionId } from "./voiceCaptureLock";
 import {
   createVoiceRecordingSessionScope,
@@ -50,6 +51,7 @@ type BeginRecording = {
  */
 export function useVoiceRecordingSession() {
   const current = useRef<VoiceRecordingSession | null>(null);
+  const releasePageWork = useRef<(() => void) | null>(null);
   const nextRunId = useRef(0);
   const [phase, setPhase] = useState<VoiceRecordingPhase>("idle");
   const [waitingForFinal, setWaitingForFinal] = useState(false);
@@ -91,6 +93,7 @@ export function useVoiceRecordingSession() {
       },
     };
     current.current = run;
+    releasePageWork.current = beginPendingPageWork();
     setPhase("starting");
     return run;
   }, []);
@@ -129,10 +132,20 @@ export function useVoiceRecordingSession() {
     const run = current.current;
     if (!run || run.id !== runId) return null;
     current.current = null;
+    releasePageWork.current?.();
+    releasePageWork.current = null;
     setPhase("idle");
     setWaitingForFinal(false);
     return run;
   }, []);
+
+  useEffect(
+    () => () => {
+      releasePageWork.current?.();
+      releasePageWork.current = null;
+    },
+    [],
+  );
 
   return {
     current,

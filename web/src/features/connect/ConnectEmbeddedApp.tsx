@@ -15,6 +15,7 @@ import { apiJson } from "../../services/api/base";
 import { fetchGroups } from "../../services/api";
 import { useGroupStore } from "../../stores";
 import { useComposerStore } from "../../stores/useComposerStore";
+import { usePendingPageWork } from "../../stores/usePendingPageWork";
 import { useModalStore } from "../../stores/useModalStore";
 import { acceptsFrameMessage, CONNECT_CHANNEL, readFrameProof, type FrameProof } from "./protocol";
 
@@ -37,6 +38,7 @@ export function ConnectEmbeddedApp() {
   const pendingSends = useComposerStore((state) =>
     Object.values(state.failedSendsByGroup).some((items) => items.length > 0),
   );
+  const pendingPageWork = usePendingPageWork((state) => state.owners.size > 0);
   const proofRef = useRef(proof);
   const send = useCallback((message: Record<string, unknown>) => {
     const current = proofRef.current;
@@ -115,8 +117,8 @@ export function ConnectEmbeddedApp() {
   // Keep reporting through the sign-in gate: a send can fail after it unmounts
   // the workbench, and its recovery snapshot is still owned by this page.
   useEffect(() => {
-    send({ type: "workspace_dirty", dirty: workspaceDirty || pendingSends });
-  }, [workspaceDirty, pendingSends, send]);
+    send({ type: "workspace_dirty", dirty: workspaceDirty || pendingSends || pendingPageWork });
+  }, [workspaceDirty, pendingSends, pendingPageWork, send]);
 
   if (!proof || expired || window.parent === window) {
     return (

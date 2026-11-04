@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 
 import * as api from "../services/api";
+import { beginPendingPageWork } from "../stores/usePendingPageWork";
 import type { ReplyTarget } from "../types";
 import {
   captureSendComposerState,
@@ -144,11 +145,13 @@ export function useSlashCommands(args: {
               null,
             )
           : null;
-      const dynamicAfterClear = dynamicSnapshot ? clearSendComposerState(gid) : undefined;
+      const finishPageWork = beginPendingPageWork();
+      let dynamicAfterClear: ReturnType<typeof clearSendComposerState> | undefined;
       const preserveDynamicFailure = () => {
         if (dynamicSnapshot) restoreFailedSendComposerState(dynamicSnapshot, dynamicAfterClear);
       };
       try {
+        dynamicAfterClear = dynamicSnapshot ? clearSendComposerState(gid) : undefined;
         if (item.sourceType === "builtin_command") {
           const dispatchText = [item.command, slashCommand.argsText]
             .filter(Boolean)
@@ -221,6 +224,7 @@ export function useSlashCommands(args: {
         return true;
       } finally {
         slashInFlightRef.current = false;
+        finishPageWork();
       }
     },
     [

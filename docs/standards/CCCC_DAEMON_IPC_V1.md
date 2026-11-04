@@ -2688,9 +2688,10 @@ tests and local development may add a local overlay at
 `CCCC_HOME/config/voice-models.json`. An overlay path that exists but cannot be
 read, including a dangling link, fails the catalog instead of falling back to
 the built-in manifest. Each artifact entry must include a fixed URL and
-`sha256`. Each install downloads and verifies every artifact into
-staging storage, unpacks archives there and deletes each one unless the model
-definition requires that file, renames the result to a
+`sha256`. Each install downloads every artifact into the model's resume
+storage, named by its expected `sha256`, verifies its SHA-256 (and its size
+when `size_bytes` is listed), moves it into staging storage, unpacks archives there and deletes each one unless the
+model definition requires that file, renames the result to a
 new version directory, and then switches to it with one atomic write of the
 model's install state. Until that write the installed version stays current: an
 update that fails before it keeps that version's files and records the failure
@@ -2712,6 +2713,21 @@ install fails with the same code instead of replacing it. A model ID starts with
 a lowercase letter or digit, so a model directory cannot be `.`, `..` or one of
 the cache's own entries, and does not end with `.`, which Windows drops from a
 directory name.
+
+A partial download is kept in resume storage across requests and installs. A
+dropped or stalled request is retried from the bytes kept, until three requests
+in a row bring nothing or 20 requests for that artifact have failed. Bytes are
+added only from a `206` response whose single-range `Content-Range` starts at
+the bytes kept. When the file's total size is known, from `size_bytes` or the
+response, a `206` that covers less than the rest is followed by a request for
+what remains and does not count as a failure. A `200` response replaces what was
+kept, and a `206` that starts elsewhere or a `416` drops it and asks for the
+whole file. The combined file is installed only if its SHA-256 matches the
+artifact's `sha256`. A response whose stated total size differs
+from the artifact's `size_bytes` fails the install before anything is written.
+A kept file that fails verification, or that cannot be written, is deleted. Cleanup
+deletes kept files that the model definition no longer names or that nothing has
+added to for seven days, and removing a model deletes them.
 
 Args:
 ```ts

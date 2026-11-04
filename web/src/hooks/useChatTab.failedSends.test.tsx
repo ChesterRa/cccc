@@ -3,7 +3,9 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import * as api from "../services/api";
+import { PendingPageWorkUnloadGuard } from "../components/app/PendingPageWorkUnloadGuard";
 import { useComposerStore, useGroupStore, useUIStore } from "../stores";
+import { usePendingPageWork } from "../stores/usePendingPageWork";
 import { useChatTab } from "./useChatTab";
 import type { Actor } from "../types";
 
@@ -42,14 +44,23 @@ let recipientActors = actors;
 let root: Root;
 let host: HTMLDivElement;
 let chat: ReturnType<typeof useChatTab>;
-function Harness() {
+function ChatHarness() {
   const selectedGroupId = useGroupStore((s) => s.selectedGroupId);
   chat = useChatTab({ selectedGroupId, selectedGroupRunning: false, actors, recipientActors });
   return null;
 }
+function Harness({ showChat = true }: { showChat?: boolean }) {
+  return (
+    <>
+      <PendingPageWorkUnloadGuard />
+      {showChat ? <ChatHarness /> : null}
+    </>
+  );
+}
 
 beforeEach(async () => {
   vi.resetAllMocks();
+  usePendingPageWork.setState({ owners: new Set() });
   recipientActors = actors;
   useComposerStore.setState({ ...useComposerStore.getInitialState() });
   useGroupStore.setState({
@@ -80,6 +91,64 @@ function delayedSend() {
   );
   return finish;
 }
+
+function leavingIsBlocked() {
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+it.each([
+  ["message", "message A"],
+  ["slash message", "/install example"],
+  ["dynamic tool", "/lookup example"],
+])("warns while a %s is in flight, including after a Group switch", async (kind, text) => {
+  let complete: () => void;
+  if (kind === "dynamic tool") {
+    let finish!: (value: { ok: true; result: Record<string, unknown> }) => void;
+    vi.mocked(api.useGroupCapability).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    complete = () => finish({ ok: true, result: {} });
+  } else {
+    const finish = delayedSend();
+    complete = () => finish({ ok: true, result: {} });
+  }
+  await act(async () => useComposerStore.getState().setComposerText(text));
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = chat.sendMessage();
+    expect(leavingIsBlocked()).toBe(true);
+  });
+  await act(async () => {
+    useGroupStore.setState({ selectedGroupId: "g-b" });
+    useComposerStore.getState().switchGroup("g-a", "g-b");
+  });
+  expect(leavingIsBlocked()).toBe(true);
+  await act(async () => {
+    complete();
+    await pending;
+  });
+  expect(leavingIsBlocked()).toBe(false);
+});
+
+it("keeps the leave warning while an in-flight send outlives its chat component", async () => {
+  const finish = delayedSend();
+  await act(async () => useComposerStore.getState().setComposerText("message A"));
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = chat.sendMessage();
+    root.render(<Harness showChat={false} />);
+  });
+  expect(leavingIsBlocked()).toBe(true);
+  await act(async () => {
+    finish({ ok: true, result: {} });
+    await pending;
+  });
+  expect(leavingIsBlocked()).toBe(false);
+});
 
 it("T123: restores the original remote destination when a new cross-Group send fails", async () => {
   vi.mocked(api.sendCrossGroupMessage)
@@ -247,6 +316,7 @@ it("T123: does not replace a new draft when an earlier ordinary send fails", asy
     pending = chat.sendMessage();
     await Promise.resolve();
   });
+  expect(leavingIsBlocked()).toBe(true);
   await act(async () => useComposerStore.getState().setComposerText("new draft B"));
   await act(async () => {
     finish(failed);
@@ -257,6 +327,10 @@ it("T123: does not replace a new draft when an earlier ordinary send fails", asy
     useComposerStore.getState().failedSendsByGroup["g-a"]?.map((item) => item.composerText),
   ).toEqual(["message A"]);
   expect(useUIStore.getState().errorMsg).toBe("sendResultUnknown");
+  expect(leavingIsBlocked()).toBe(true);
+  const failedId = useComposerStore.getState().failedSendsByGroup["g-a"][0].id;
+  act(() => useComposerStore.getState().discardFailedSend("g-a", failedId));
+  expect(leavingIsBlocked()).toBe(false);
 });
 
 it("keeps a newly attached file when an earlier send fails and the text is still empty", async () => {

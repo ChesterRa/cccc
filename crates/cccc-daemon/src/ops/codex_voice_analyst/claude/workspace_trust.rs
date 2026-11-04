@@ -37,22 +37,12 @@ impl fmt::Display for WorkspaceUntrusted {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "Claude Code has not trusted the workspace '{}'. Open Claude interactively in that workspace, review the trust prompt, and retry when ready. Configured executable: '{}'; resolved settings directory: '{}'. Trusting a parent folder does not cover a separate Git repository.",
+            "Claude Code has not trusted the workspace '{}'. Open Claude interactively in that workspace, review the trust prompt, and retry when ready. Configured executable: '{}'; resolved settings directory: '{}'. Trusting a parent folder does not cover a separate Git repository.{}",
             self.workspace.display(),
             self.launch.executable,
-            self.launch.config_dir.display()
-        )?;
-        if let Some(value) = self.launch.environment.get("CLAUDE_CONFIG_DIR") {
-            write!(
-                formatter,
-                " For a manual retry preserve CLAUDE_CONFIG_DIR='{value}'."
-            )
-        } else {
-            write!(
-                formatter,
-                " For a manual retry keep CLAUDE_CONFIG_DIR unset."
-            )
-        }
+            self.launch.config_dir.display(),
+            self.launch.config_dir_hint()
+        )
     }
 }
 

@@ -47,6 +47,7 @@ describe("VoicePanelInputBar", () => {
       recording: true,
       recordDisabled: true,
       liveSnippet: "first words",
+      captureHint: "No audio detected. Check the microphone if you are speaking.",
       onToggleRecord: toggle,
     });
     const record = host.querySelector<HTMLButtonElement>("[data-voice-record]")!;
@@ -54,6 +55,9 @@ describe("VoicePanelInputBar", () => {
       "Recording into Notes",
     );
     expect(host.textContent).toContain("first words");
+    const hint = host.querySelector('[data-voice-input-silence][role="status"]');
+    expect(hint?.textContent).toContain("No audio detected");
+    expect(hint?.getAttribute("data-status-tone")).toBe("warning");
     expect(record.textContent).toBe("Stop & save");
     expect(record.disabled).toBe(false);
     expect(record.getAttribute("aria-pressed")).toBe("true");

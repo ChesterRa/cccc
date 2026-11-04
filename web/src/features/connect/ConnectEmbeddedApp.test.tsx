@@ -7,6 +7,7 @@ import { CONNECT_CHANNEL } from "./protocol";
 import { useGroupStore } from "../../stores";
 import { useModalStore } from "../../stores/useModalStore";
 import { useComposerStore } from "../../stores/useComposerStore";
+import { beginPendingPageWork, usePendingPageWork } from "../../stores/usePendingPageWork";
 import { setWorkspaceDirty, useWorkspaceNavigation } from "../../stores/workspaceNavigation";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), admitted: true }));
@@ -51,6 +52,7 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   mocks.admitted = true;
   useComposerStore.setState(useComposerStore.getInitialState(), true);
+  usePendingPageWork.setState({ owners: new Set() });
   useWorkspaceNavigation.setState({ owners: new Set(), pending: null });
   mocks.request.mockReset().mockResolvedValue({ ok: true, result: {} });
   vi.spyOn(window, "parent", "get").mockReturnValue(parent);
@@ -70,6 +72,25 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
+});
+
+it("reports in-flight page work after the workbench unmounts and until it settles", async () => {
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  let finish!: () => void;
+  await act(async () => {
+    finish = beginPendingPageWork();
+  });
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+  mocks.admitted = false;
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  await act(async () => finish());
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
 });
 afterEach(async () => {
   await act(async () => root.unmount());

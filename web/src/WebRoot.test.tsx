@@ -19,6 +19,7 @@ vi.mock("./components/capabilities/CapabilityCenterStandaloneApp", () => ({
 
 import { WebRoot } from "./WebRoot";
 import { useComposerStore } from "./stores/useComposerStore";
+import { beginPendingPageWork, usePendingPageWork } from "./stores/usePendingPageWork";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -69,3 +70,26 @@ it.each(["/ui/", "/ui/connect"])(
     host.remove();
   },
 );
+
+it("protects independent in-flight work synchronously, without guarding an ordinary draft", async () => {
+  shell.open = true;
+  useComposerStore.setState({ failedSendsByGroup: {}, composerText: "ordinary draft" });
+  usePendingPageWork.setState({ owners: new Set() });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  await act(async () => root.render(<WebRoot pathname="/ui/" />));
+  expect(leaveIsBlocked()).toBe(false);
+
+  // The listener must be in place before React renders another frame.
+  const finishSend = beginPendingPageWork();
+  expect(leaveIsBlocked()).toBe(true);
+  const finishRecording = beginPendingPageWork();
+  finishSend();
+  finishSend();
+  expect(leaveIsBlocked()).toBe(true);
+  finishRecording();
+  expect(leaveIsBlocked()).toBe(false);
+  await act(async () => root.unmount());
+  host.remove();
+});
