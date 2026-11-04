@@ -115,8 +115,14 @@ pub(crate) async fn while_group_access(
     }
 }
 
+#[derive(Clone)]
+struct ActiveFrame {
+    proof: ConnectFrameProof,
+    account_id: String,
+}
+
 #[derive(Default)]
-pub(crate) struct ConnectFrames(Mutex<HashMap<String, ConnectFrameProof>>);
+pub(crate) struct ConnectFrames(Mutex<HashMap<String, ActiveFrame>>);
 
 pub(crate) use cccc_core::connect_peer::identity_proof;
 
@@ -180,7 +186,7 @@ pub(crate) fn issue(
     target_id: &str,
     parent_origin: &str,
     frame_id: &str,
-) -> Result<(String, ConnectFrameProof), String> {
+) -> Result<(String, String, ConnectFrameProof), String> {
     if uuid::Uuid::parse_str(frame_id).is_err() {
         return Err("invalid frame identifier".into());
     }
@@ -222,10 +228,10 @@ pub(crate) fn issue(
     proof.signature = identity
         .sign(&proof.signing_material())
         .map_err(|error| error.to_string())?;
-    Ok((target_origin, proof))
+    Ok((target_origin, directory.account_id, proof))
 }
 
-fn verify(home: &HomeLayout, proof: &ConnectFrameProof) -> Result<(), String> {
+fn verify(home: &HomeLayout, proof: &ConnectFrameProof) -> Result<String, String> {
     let snapshot = connect::load(home)
         .map_err(|error| error.to_string())?
         .ok_or("Connect is not linked")?;
@@ -275,7 +281,7 @@ fn verify(home: &HomeLayout, proof: &ConnectFrameProof) -> Result<(), String> {
     ) {
         return Err("invalid frame signature".into());
     }
-    Ok(())
+    Ok(directory.account_id)
 }
 
 fn distinct_web_hosts(
@@ -315,32 +321,82 @@ impl ConnectFrames {
         proof: ConnectFrameProof,
         opening: bool,
     ) -> Result<(), String> {
-        verify(home, &proof)?;
+        self.accept_inner(
+            home,
+            proof,
+            if opening {
+                FrameAdmission::Open
+            } else {
+                FrameAdmission::Renew
+            },
+            None,
+        )
+    }
+
+    // Recovery still requires a fresh signed proof, the target administrator,
+    // and the account captured by the already admitted document. It can renew
+    // a live frame or restore one evicted after expiry or a Web restart.
+    pub(crate) fn resume(
+        &self,
+        home: &HomeLayout,
+        proof: ConnectFrameProof,
+        expected_account_id: &str,
+    ) -> Result<(), String> {
+        self.accept_inner(
+            home,
+            proof,
+            FrameAdmission::Resume,
+            Some(expected_account_id),
+        )
+    }
+
+    fn accept_inner(
+        &self,
+        home: &HomeLayout,
+        proof: ConnectFrameProof,
+        admission: FrameAdmission,
+        expected_account_id: Option<&str>,
+    ) -> Result<(), String> {
+        let account_id = verify(home, &proof)?;
+        if expected_account_id.is_some_and(|expected| expected != account_id) {
+            return Err("Connect account changed; reopen the instance".into());
+        }
         let mut frames = self.0.lock().map_err(|_| "frame registry unavailable")?;
         let now = Utc::now();
         frames.retain(|_, entry| {
-            DateTime::parse_from_rfc3339(&entry.expires_at).is_ok_and(|expires| expires > now)
+            DateTime::parse_from_rfc3339(&entry.proof.expires_at).is_ok_and(|expires| expires > now)
         });
         if let Some(previous) = frames.get(&proof.frame_id) {
-            if opening
-                || previous.nonce == proof.nonce
-                || previous.issued_at >= proof.issued_at
-                || previous.account_origin != proof.account_origin
-                || previous.source_device_id != proof.source_device_id
-                || previous.source_instance_id != proof.source_instance_id
-                || previous.parent_origin != proof.parent_origin
-                || previous.target_device_id != proof.target_device_id
-                || previous.target_instance_id != proof.target_instance_id
+            let old_proof = &previous.proof;
+            // A recovery response can be lost after the registration is
+            // committed. Retrying that exact signed proof must be safe.
+            if admission == FrameAdmission::Resume
+                && previous.account_id == account_id
+                && old_proof.nonce == proof.nonce
+                && old_proof.signature == proof.signature
+            {
+                return Ok(());
+            }
+            if admission == FrameAdmission::Open
+                || previous.account_id != account_id
+                || old_proof.nonce == proof.nonce
+                || old_proof.issued_at >= proof.issued_at
+                || old_proof.account_origin != proof.account_origin
+                || old_proof.source_device_id != proof.source_device_id
+                || old_proof.source_instance_id != proof.source_instance_id
+                || old_proof.parent_origin != proof.parent_origin
+                || old_proof.target_device_id != proof.target_device_id
+                || old_proof.target_instance_id != proof.target_instance_id
             {
                 return Err("frame proof was replayed or belongs to another entry".into());
             }
-        } else if !opening {
+        } else if admission == FrameAdmission::Renew {
             return Err("frame is no longer active; reopen it from the entry workbench".into());
         }
         if frames.len() >= MAX_FRAMES && !frames.contains_key(&proof.frame_id) {
             return Err("too many active Connect frames".into());
         }
-        frames.insert(proof.frame_id.clone(), proof);
+        frames.insert(proof.frame_id.clone(), ActiveFrame { proof, account_id });
         Ok(())
     }
 
@@ -349,14 +405,33 @@ impl ConnectFrames {
         home: &HomeLayout,
         frame_id: &str,
     ) -> Result<ConnectFrameProof, String> {
-        let proof = self
+        self.current_with_account(home, frame_id)
+            .map(|(proof, _)| proof)
+    }
+
+    pub(crate) fn current_with_account(
+        &self,
+        home: &HomeLayout,
+        frame_id: &str,
+    ) -> Result<(ConnectFrameProof, String), String> {
+        let frame = self
             .0
             .lock()
             .map_err(|_| "frame registry unavailable")?
             .get(frame_id)
             .cloned()
             .ok_or("frame is no longer active")?;
-        verify(home, &proof)?;
-        Ok(proof)
+        let current_account = verify(home, &frame.proof)?;
+        if current_account != frame.account_id {
+            return Err("Connect account changed; reopen the instance".into());
+        }
+        Ok((frame.proof, current_account))
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FrameAdmission {
+    Open,
+    Renew,
+    Resume,
 }

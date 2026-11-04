@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  frameAccessPaused,
+  subscribeFrameAccess,
+  useFrameAccessPaused,
+} from "../../features/connect/frameAccess";
 
 import { withAuthToken } from "../../services/api";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
@@ -39,6 +44,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const STARTUP_RACE_RECONNECT_DELAY_MS = 750;
 
 export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
+  const framePaused = useFrameAccessPaused();
   const {
     activated,
     isRunning,
@@ -95,6 +101,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   const canSendInput = useCallback(
     () =>
       canControlRef.current &&
+      !frameAccessPaused() &&
       visibleRef.current &&
       terminalWritableRef.current &&
       wsRef.current?.readyState === WebSocket.OPEN,
@@ -141,7 +148,13 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   }, [setReconnectTrigger]);
 
   const sendInterrupt = useCallback(() => {
-    if (!visibleRef.current || !canControlRef.current || !terminalWritableRef.current) return;
+    if (
+      frameAccessPaused() ||
+      !visibleRef.current ||
+      !canControlRef.current ||
+      !terminalWritableRef.current
+    )
+      return;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(encodeTerminalInputFrame("\x03"));
@@ -152,6 +165,16 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     takeoverRequestedRef.current = true;
     requestReconnect();
   }, [requestReconnect]);
+
+  useEffect(
+    () =>
+      subscribeFrameAccess(() => {
+        if (!frameAccessPaused()) return;
+        updateTerminalWritable(false);
+        wsRef.current?.close();
+      }),
+    [updateTerminalWritable],
+  );
 
   const terminalConnectionKey = buildTerminalConnectionKey({
     activated,
@@ -164,7 +187,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
   });
 
   useEffect(() => {
-    if (!activated || !isRunning || isHeadless || !terminalRef.current) return;
+    if (framePaused || !activated || !isRunning || isHeadless || !terminalRef.current) return;
     const replayWriteGuard = createTerminalReplayWriteGuard(terminalRef.current);
 
     if (reconnectTimeoutRef.current) {
@@ -188,7 +211,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     let connectionGeneration = 0;
 
     const connect = async () => {
-      if (disposed) return;
+      if (disposed || frameAccessPaused()) return;
       const existingWs = wsRef.current;
       if (
         existingWs &&
@@ -214,7 +237,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
       setConnectionStatus("connecting");
 
       const openWebSocket = (isFirstAttach: boolean) => {
-        if (disposed) return;
+        if (disposed || frameAccessPaused()) return;
         const generation = ++connectionGeneration;
         const fittedTerm = terminalRef.current;
         const standardWsUrl = buildTerminalWebSocketUrl({
@@ -533,6 +556,7 @@ export function useAgentTerminalConnection(args: AgentTerminalConnectionArgs) {
     };
   }, [
     activated,
+    framePaused,
     actorId,
     canControl,
     groupId,

@@ -33,6 +33,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/v1/connect/open", post(open))
         .route("/api/v1/connect/frame", get(frame).post(renew))
+        .route("/api/v1/connect/frame/resume", post(resume))
         .layer(DefaultBodyLimit::max(4096))
         .route(
             "/api/v1/connect/peer",
@@ -269,7 +270,7 @@ async fn open(
 ) -> ApiResult {
     let origin = crate::request_origin::served_origin(&state, &headers)
         .ok_or_else(|| ApiError::bad("entry origin is unavailable"))?;
-    let (target_origin, proof) =
+    let (target_origin, account_id, proof) =
         connect_frames::issue(&state.home, &body.instance_id, &origin, &body.frame_id)
             .map_err(|message| ApiError::unavailable("connect_unavailable", message))?;
     let client = state
@@ -287,10 +288,11 @@ async fn open(
             "entry administrator access was revoked",
         ));
     }
-    let (current_origin, current_proof) =
+    let (current_origin, current_account, current_proof) =
         connect_frames::issue(&state.home, &body.instance_id, &origin, &body.frame_id)
             .map_err(|message| ApiError::unavailable("connect_unavailable", message))?;
     if current_origin != target_origin
+        || current_account != account_id
         || current_proof.target_device_id != proof.target_device_id
         || current_proof.source_device_id != proof.source_device_id
     {
@@ -302,7 +304,7 @@ async fn open(
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(serde_json::to_vec(&proof).map_err(|error| ApiError::bad(error.to_string()))?);
     Ok(success(
-        json!({"origin":target_origin, "url":format!("{target_origin}/ui/connect/?proof={encoded}"), "proof":proof}),
+        json!({"origin":target_origin, "account_id":account_id, "url":format!("{target_origin}/ui/connect/?proof={encoded}"), "proof":proof}),
     ))
 }
 
@@ -312,11 +314,11 @@ struct FrameQuery {
 }
 
 async fn frame(State(state): State<AppState>, Query(query): Query<FrameQuery>) -> ApiResult {
-    let proof = state
+    let (proof, account_id) = state
         .connect_frames
-        .current(&state.home, &query.frame_id)
+        .current_with_account(&state.home, &query.frame_id)
         .map_err(|message| ApiError::forbidden_code("connect_frame_expired", message))?;
-    Ok(success(json!({"frame": proof})))
+    Ok(success(json!({"frame": proof, "account_id": account_id})))
 }
 
 async fn renew(State(state): State<AppState>, Json(proof): Json<ConnectFrameProof>) -> ApiResult {
@@ -324,6 +326,35 @@ async fn renew(State(state): State<AppState>, Json(proof): Json<ConnectFrameProo
     state
         .connect_frames
         .accept(&state.home, proof, false)
+        .map_err(|message| ApiError::forbidden_code("connect_frame_invalid", message))?;
+    Ok(success(json!({"frame_id":frame_id})))
+}
+
+#[derive(serde::Deserialize)]
+struct ResumeRequest {
+    proof: ConnectFrameProof,
+    account_id: String,
+}
+
+// Unlike ordinary proof renewal, this restores a live document after its
+// registry entry has expired. The normal Connect admin gate applies.
+async fn resume(
+    State(state): State<AppState>,
+    Extension(principal): Extension<crate::auth::Principal>,
+    Json(body): Json<ResumeRequest>,
+) -> ApiResult {
+    if !principal
+        .current_admin(&state.home)
+        .map_err(|error| ApiError::unavailable("access_token_store_error", error.to_string()))?
+    {
+        return Err(ApiError::forbidden(
+            "target administrator access was revoked",
+        ));
+    }
+    let frame_id = body.proof.frame_id.clone();
+    state
+        .connect_frames
+        .resume(&state.home, body.proof, &body.account_id)
         .map_err(|message| ApiError::forbidden_code("connect_frame_invalid", message))?;
     Ok(success(json!({"frame_id":frame_id})))
 }

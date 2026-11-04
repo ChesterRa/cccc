@@ -210,9 +210,10 @@ version and the challenge. The signature covers the fixed array defined by
 
 `POST /api/v1/connect/open { instance_id, frame_id }` requires current entry
 administrator access, including a recheck after the network challenge. It returns
-a target `/ui/connect/` URL and an Ed25519 frame proof binding account issuer,
-both instance/device IDs, exact parent origin, frame ID, nonce, issue and expiry
-times. `ConnectFrameProof::signing_material` defines the ordered signing array.
+a target `/ui/connect/` URL, the current account ID, and an Ed25519 frame proof
+binding account issuer, both instance/device IDs, exact parent origin, frame ID,
+nonce, issue and expiry times. `ConnectFrameProof::signing_material` defines the
+ordered signing array.
 Proof lifetime is at most 120 seconds, with up to 30 seconds of future clock skew.
 This proof permits embedding only; it does not create a target Web login.
 
@@ -222,12 +223,19 @@ in `frame-ancestors`; ordinary pages retain same-origin embedding policy. An
 already opened frame cannot be opened again with that proof. Public signed
 `POST /api/v1/connect/frame` renews an existing frame with a newer issue time and
 fresh nonce without changing its origin or bindings. Replayed renewals fail.
-The ephemeral registry is not a durable replay store: a Web restart ends live
-frames; an old proof still within its original expiry may open again after a
-restart, but never creates a human login or extends its authority.
+The ephemeral registry is not a durable replay store: a Web restart ends its
+registrations; an old proof still within its original expiry may open again
+after a restart, but never creates a human login or extends its authority.
 
 Administrator `GET /api/v1/connect/frame?frame_id=...` checks current target
-authority. Nested target-owned Presentation resources carry only `connect_frame`
+authority and returns the account ID associated with the admission. A loaded
+document may recover after expiration or a target Web restart using administrator
+`POST /api/v1/connect/frame/resume {proof,account_id}`. The target verifies the
+fresh signed proof and current account, checks the original bindings when a
+registration is still live, and records it atomically. A retry of the identical
+valid proof and account is idempotent; an older proof cannot replace a newer one.
+The account ID is retained in the page and registry memory, not browser storage.
+Nested target-owned Presentation resources carry only `connect_frame`
 to select that existing embedding authority; they still require the target
 token. Target downloads use authenticated fetch and a Blob URL because native
 download navigation can leave the embedded cookie partition. No bearer token
@@ -250,8 +258,18 @@ leaving it releases those connections. Previously viewed Group navigation remain
 in entry-page memory, independently of the selected workspace and explicit
 expand/collapse state. Inactive lists are labeled as saved navigation, not current
 online or administrator confirmation. Reopening always authenticates the target
-again before receiving content. Expired entry directory/entry access, device or
-origin replacement, and an active target lock clear the affected navigation.
+again before receiving content. When fresh authority is temporarily unavailable,
+implementations that support recovery keep the selected target document in memory
+but hide it, block new requests through the shared API wrappers, and stop the
+workbench's interactive streams and recording. They resume only after the entry
+administrator, both account IDs, the target administrator, bindings and a fresh
+proof have been checked. Entry access revocation or an account, device or origin
+replacement ends the old document; older targets that cannot confirm recovery
+continue to close it. When an active target login is lost, the target shows its
+login gate and the entry clears the affected navigation. The workbench unmounts;
+only page-level state remains in memory. Target authorization rejected during a
+recovery closes the old page. A write already in flight may have completed and is
+not automatically replayed.
 No inactive iframe, TUI connection, bearer cache, or content synchronization is
 kept alive merely to preserve the sidebar. Realtime event and terminal connections also recheck current token access
 every 15 seconds; embedded resource connections additionally check the frame.

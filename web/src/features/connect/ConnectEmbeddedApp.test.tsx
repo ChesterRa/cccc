@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, type ReactNode } from "react";
+import { act, StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { ConnectEmbeddedApp } from "./ConnectEmbeddedApp";
@@ -9,6 +9,7 @@ import { useModalStore } from "../../stores/useModalStore";
 import { useComposerStore } from "../../stores/useComposerStore";
 import { beginPendingPageWork, usePendingPageWork } from "../../stores/usePendingPageWork";
 import { setWorkspaceDirty, useWorkspaceNavigation } from "../../stores/workspaceNavigation";
+import { frameAccessPaused } from "./frameAccess";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), admitted: true }));
 vi.mock("../../App", () => ({
@@ -22,7 +23,10 @@ vi.mock("../../App", () => ({
 vi.mock("../../components/AuthGate", () => ({
   AuthGate: ({ children }: { children: ReactNode }) => (mocks.admitted ? children : null),
 }));
-vi.mock("../../services/api/base", () => ({ apiJson: mocks.request }));
+vi.mock("../../services/api/base", () => ({
+  apiJson: mocks.request,
+  apiFrameControl: mocks.request,
+}));
 vi.mock("../../services/api", () => ({
   fetchGroups: async () => ({ ok: true, result: { groups: useGroupStore.getState().groups } }),
 }));
@@ -358,8 +362,39 @@ it("does not admit the workbench when its first frame check returns a gateway er
   expect(host.textContent).toContain("Native workbench");
 });
 
+it("reports a 401 to the login gate without terminating the frame", async () => {
+  vi.useFakeTimers();
+  const { onAuthRequired } =
+    await vi.importActual<typeof import("../../services/api/base")>("../../services/api/base");
+  const onLoginRequired = vi.fn();
+  const unsubscribe = onAuthRequired(onLoginRequired);
+  try {
+    const fetchFrame = await useRealFrameApi([
+      successfulFrameResponse(),
+      new Response(JSON.stringify({ ok: false, error: { code: "auth_required" } }), {
+        status: 401,
+      }),
+    ]);
+    await act(async () => root.render(<ConnectEmbeddedApp />));
+    vi.mocked(parent.postMessage).mockClear();
+    await tick(15000);
+    expect(fetchFrame).toHaveBeenCalledTimes(2);
+    expect(onLoginRequired).toHaveBeenCalled();
+    expect(host.textContent).toContain("Native workbench");
+    expect(parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "expired" }),
+      expect.anything(),
+    );
+    expect(parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "identity_changed" }),
+      expect.anything(),
+    );
+  } finally {
+    unsubscribe();
+  }
+});
+
 it.each([
-  [401, JSON.stringify({ ok: false, error: { code: "auth_required", message: "denied" } })],
   [403, "<html>Forbidden</html>"],
   [403, JSON.stringify({ ok: false, error: { code: "connect_frame_expired", message: "denied" } })],
 ])("closes the workbench for an explicit HTTP %i denial", async (status, body) => {
@@ -459,8 +494,6 @@ it("closes for a 403 even if reading the response body is interrupted", async ()
 
 it.each([
   "connect_frame_expired",
-  "admin_required",
-  "auth_required",
   "bootstrap_required",
   "HTTP_ERROR",
   "EMPTY_RESPONSE",
@@ -478,6 +511,28 @@ it.each([
     "https://entry.test",
   );
 });
+
+it.each(["admin_required", "auth_required"])(
+  "leaves an admitted frame for the login gate to handle %s",
+  async (code) => {
+    vi.useFakeTimers();
+    const reads = frameSequence(["ok", code, "ok"]);
+    await act(async () => root.render(<ConnectEmbeddedApp />));
+    vi.mocked(parent.postMessage).mockClear();
+    await tick(15000);
+    expect(host.textContent).toContain("Native workbench");
+    expect(parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "expired" }),
+      expect.anything(),
+    );
+    expect(parent.postMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "identity_changed" }),
+      expect.anything(),
+    );
+    await tick(15000);
+    expect(reads()).toBe(3);
+  },
+);
 
 it("uses the renewed proof deadline while intermittent network failures continue", async () => {
   vi.useFakeTimers();
@@ -544,4 +599,146 @@ it("does not retry or restore a workbench after an in-flight check outlives admi
     expect.objectContaining({ type: "expired" }),
     expect.anything(),
   );
+});
+
+it("retains an admitted document until the same-account recovery handshake commits", async () => {
+  vi.useFakeTimers();
+  mocks.request.mockImplementation(async (path: string) => {
+    if (path.startsWith("/api/v1/connect/frame?"))
+      return { ok: true, result: { account_id: "owner" } };
+    if (path === "/api/v1/connect")
+      return { ok: true, result: { connect: { directory: { account_id: "owner" } } } };
+    return { ok: true, result: {} };
+  });
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  const input = host.querySelector<HTMLInputElement>("input")!;
+  input.value = "unsent work";
+  const encoded = new URLSearchParams(window.location.search).get("proof")!;
+  const original = JSON.parse(atob(encoded));
+  await tick(120000);
+  expect(host.querySelector("input")).toBe(input);
+  expect(document.body.inert).toBe(true);
+  expect(parent.postMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "expired", recoverable: true }),
+    "https://entry.test",
+  );
+  const next = {
+    ...original,
+    nonce: "fresh",
+    expires_at: new Date(Date.now() + 120000).toISOString(),
+  };
+  await act(async () =>
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: parent,
+        origin: "https://entry.test",
+        data: {
+          channel: CONNECT_CHANNEL,
+          frame_id: "frame",
+          type: "resume",
+          account_id: "owner",
+          proof: next,
+        },
+      }),
+    ),
+  );
+  expect(parent.postMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "resume_ready", nonce: "fresh" }),
+    "https://entry.test",
+  );
+  expect(document.body.inert).toBe(true);
+  await act(async () =>
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: parent,
+        origin: "https://entry.test",
+        data: {
+          channel: CONNECT_CHANNEL,
+          frame_id: "frame",
+          type: "resume_commit",
+          nonce: "fresh",
+        },
+      }),
+    ),
+  );
+  expect(document.body.inert).toBe(false);
+  expect(host.querySelector("input")).toBe(input);
+  expect(input.value).toBe("unsent work");
+  expect(parent.postMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "resumed", nonce: "fresh" }),
+    "https://entry.test",
+  );
+  const reads = () =>
+    mocks.request.mock.calls.filter(([path]) => path.startsWith("/api/v1/connect/frame?")).length;
+  const before = reads();
+  await tick(15000);
+  expect(reads()).toBeGreaterThan(before);
+});
+
+it("does not restore an old document under a different target account", async () => {
+  vi.useFakeTimers();
+  let changed = false;
+  mocks.request.mockImplementation(async (path: string) => {
+    if (path.startsWith("/api/v1/connect/frame?"))
+      return { ok: true, result: { account_id: "owner" } };
+    if (path === "/api/v1/connect")
+      return {
+        ok: true,
+        result: { connect: { directory: { account_id: changed ? "other" : "owner" } } },
+      };
+    return { ok: true, result: {} };
+  });
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  const original = JSON.parse(atob(new URLSearchParams(window.location.search).get("proof")!));
+  await tick(120000);
+  changed = true;
+  await act(async () =>
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: parent,
+        origin: "https://entry.test",
+        data: {
+          channel: CONNECT_CHANNEL,
+          frame_id: "frame",
+          type: "resume",
+          account_id: "owner",
+          proof: {
+            ...original,
+            nonce: "fresh",
+            expires_at: new Date(Date.now() + 120000).toISOString(),
+          },
+        },
+      }),
+    ),
+  );
+  expect(parent.postMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "identity_changed" }),
+    "https://entry.test",
+  );
+  expect(host.textContent).toContain("connect.reopen");
+  expect(mocks.request.mock.calls.some(([path]) => path === "/api/v1/connect/frame/resume")).toBe(
+    false,
+  );
+  expect(frameAccessPaused()).toBe(true);
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const actual =
+    await vi.importActual<typeof import("../../services/api/base")>("../../services/api/base");
+  expect((await actual.apiJson("/api/v1/groups/g/settings", { method: "PUT" })).ok).toBe(false);
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+it("keeps the deadline guard active after StrictMode replays its effects", async () => {
+  vi.useFakeTimers();
+  await act(async () =>
+    root.render(
+      <StrictMode>
+        <ConnectEmbeddedApp />
+      </StrictMode>,
+    ),
+  );
+  vi.setSystemTime(Date.now() + 120001);
+  await act(async () => {
+    expect(frameAccessPaused()).toBe(true);
+  });
 });

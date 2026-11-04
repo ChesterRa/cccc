@@ -143,10 +143,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - A Connect remote workspace no longer closes when one of its periodic access checks, including the
   administrator sign-in check, fails with a network error or a server error (HTTP 5xx), for example
   from a reverse proxy or tunnel. It keeps the page that is already shown, with any unsent work, and
-  checks again at the usual interval. The current access proof's
-  deadline still applies, and renewing the proof moves it as before; a refusal (HTTP 4xx) still
-  closes the workspace. Until the workspace is ready, the frame says it is connecting instead of
-  staying blank.
+  checks again at the usual interval. Until the workspace is ready, the frame says it is connecting
+  instead of staying blank.
+- A Connect remote workspace also stays open when its access proof expires, for example after the
+  computer slept, when the account directory is briefly unavailable, or when the target's Web
+  service restarts. The page is kept as it was, hidden behind a notice with the time of the last
+  connection attempt. Meanwhile it pauses new requests and live updates, disconnects its agent
+  terminals and browser views, ends a voice conversation and stops a Voice Secretary recording,
+  putting recognized words not yet confirmed as saved into the message draft of the recording's
+  Group. The entry keeps trying and shows the page again once both instances confirm the same
+  account, administrator access on each side and a fresh access proof. **Close this page** asks
+  first when the page has reported unsent work. A change of account, or of the target's device or
+  address, or revoked administrator access on the entry still closes the page, as does a refusal
+  from the target during recovery. A change that was being saved when the connection dropped may
+  already have been made; recovery does not automatically resend it. Both instances need this
+  version; with an older one the page closes as before.
+- A Connect remote page that needs to reload, from its update notice, its error screen or after
+  part of its code failed to load, now asks the entry to open it again, and the entry asks first
+  when the page has unsent work. Reloading inside the frame ended the connection.
 - A Connect delivery whose window ended, or whose connection was disconnected, before the target
   received it no longer tells the sender that the target did not accept it. The notice now says the
   message did not arrive and can be sent again, after reconnecting when the connection was

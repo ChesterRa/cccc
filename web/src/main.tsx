@@ -9,15 +9,16 @@ import { applyUiStylePrefs, getUiStylePrefs } from "./utils/uiStyle";
 import { claimVitePreloadReload, recoverDynamicImportError } from "./utils/vitePreloadRecovery";
 import { cleanupLegacyWorkers } from "./features/pushNotifications/legacyWorkers";
 import { WebRoot } from "./WebRoot";
+import { reloadPage } from "./features/connect/reloadPage";
 
 function reloadAfterStaleModuleError(error: unknown): boolean {
-  return recoverDynamicImportError(error, window.sessionStorage, () => window.location.reload());
+  return recoverDynamicImportError(error, window.sessionStorage, reloadPage);
 }
 
 window.addEventListener("vite:preloadError", (event) => {
   event.preventDefault();
   if (claimVitePreloadReload(window.sessionStorage)) {
-    window.location.reload();
+    reloadPage();
   }
 });
 

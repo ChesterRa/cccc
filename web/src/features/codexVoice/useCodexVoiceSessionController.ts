@@ -1,4 +1,5 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { frameAccessPaused, subscribeFrameAccess } from "../connect/frameAccess";
 import { useTranslation } from "react-i18next";
 import {
   cancelCodexVoiceAnalyst,
@@ -180,6 +181,21 @@ export function useCodexVoiceSessionController(enabled = true) {
 
   useCodexVoiceWindowLifecycle({ refresh, mountedRef, refreshGenerationRef, sessionRef });
   useCodexVoicePolling({ enabled, analyst, owned, sessionRef, refresh });
+
+  useEffect(
+    () =>
+      subscribeFrameAccess(() => {
+        if (!frameAccessPaused()) return;
+        refreshGenerationRef.current += 1;
+        const session = sessionRef.current;
+        sessionRef.current = null;
+        if (session) {
+          setOwned(false);
+          void session.stop();
+        }
+      }),
+    [],
+  );
 
   const start = useCallback(async () => {
     const audio = audioRef.current;

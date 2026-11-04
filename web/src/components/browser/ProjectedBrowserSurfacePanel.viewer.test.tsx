@@ -4,6 +4,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { PresentationBrowserSurfaceState } from "../../types";
+import {
+  beginFrameAccess,
+  endFrameAccess,
+  pauseFrameAccess,
+  resumeFrameAccess,
+} from "../../features/connect/frameAccess";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -104,8 +110,42 @@ describe("ProjectedBrowserSurfacePanel viewer switching", () => {
 
   afterEach(async () => {
     await act(async () => root.unmount());
+    endFrameAccess();
     host.remove();
     vi.unstubAllGlobals();
+  });
+
+  it("disconnects on suspension and observes the same browser without starting another", async () => {
+    const loadSession = vi.fn(async () => ({
+      ok: true as const,
+      result: { browser_surface: readySurface },
+    }));
+    const startSession = vi.fn(async () => ({
+      ok: true as const,
+      result: { browser_surface: readySurface },
+    }));
+    beginFrameAccess(new Date(Date.now() + 120000).toISOString());
+    await act(async () =>
+      root.render(
+        <ProjectedBrowserSurfacePanel
+          isDark={false}
+          refreshNonce={0}
+          defaultViewerMode="page"
+          loadSession={loadSession}
+          startSession={startSession}
+          webSocketUrl="ws://localhost/browser"
+        />,
+      ),
+    );
+    expect(loadSession).toHaveBeenCalledTimes(1);
+    expect(startSession).not.toHaveBeenCalled();
+    const socket = FakeWebSocket.instances.at(-1)!;
+    await act(async () => pauseFrameAccess());
+    expect(socket.readyState).toBe(3);
+    await act(async () => resumeFrameAccess(new Date(Date.now() + 120000).toISOString()));
+    expect(loadSession).toHaveBeenCalledTimes(2);
+    expect(startSession).not.toHaveBeenCalled();
+    expect(FakeWebSocket.instances.at(-1)).not.toBe(socket);
   });
 
   it("switches transports without starting a replacement browser session", async () => {

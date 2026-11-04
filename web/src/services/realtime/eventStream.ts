@@ -1,4 +1,5 @@
 import { EventStreamTransport } from "./transport";
+import { frameAccessPaused, subscribeFrameAccess } from "../../features/connect/frameAccess";
 
 export type Channel = "global" | "ledger" | "headless";
 export class EventStreamSource extends EventTarget {
@@ -40,6 +41,9 @@ export class EventStreamSource extends EventTarget {
 }
 
 let transport: EventStreamTransport | null = null;
+const unsubscribeFrameAccess = subscribeFrameAccess(() => {
+  transport?.setSuspended(frameAccessPaused());
+});
 let sequence = 0;
 /** Logical event subscriptions share one socket per page; no HTTP SSE fallback. */
 export function openEventStream(path: string): EventStreamSource {
@@ -54,6 +58,7 @@ export function openEventStream(path: string): EventStreamSource {
   if (!transport || transport.url !== endpoint.href) {
     transport?.dispose();
     transport = new EventStreamTransport(endpoint.href);
+    transport.setSuspended(frameAccessPaused());
   }
   const channel: Channel = match ? (match[2] === "ledger" ? "ledger" : "headless") : "global";
   const source = new EventStreamSource(
@@ -67,4 +72,8 @@ export function openEventStream(path: string): EventStreamSource {
   return source;
 }
 
-if (import.meta.hot) import.meta.hot.dispose(() => transport?.dispose());
+if (import.meta.hot)
+  import.meta.hot.dispose(() => {
+    unsubscribeFrameAccess();
+    transport?.dispose();
+  });

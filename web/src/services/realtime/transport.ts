@@ -15,7 +15,32 @@ export class EventStreamTransport {
   >();
   private watchdog: ReturnType<typeof setTimeout> | null = null;
   private lastFrameAt: number | null = null;
+  private suspended = false;
   constructor(readonly url: string) {}
+
+  setSuspended(suspended: boolean) {
+    if (this.suspended === suspended) return;
+    this.suspended = suspended;
+    if (!suspended) {
+      this.schedule();
+      return;
+    }
+    if (this.retry) clearTimeout(this.retry);
+    this.retry = null;
+    this.retryAt = 0;
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.watchdog = null;
+    for (const retry of this.channelRetries.values()) clearTimeout(retry.timer);
+    this.channelRetries.clear();
+    const socket = this.socket;
+    this.socket = null;
+    this.lastFrameAt = null;
+    socket?.close();
+    for (const source of this.sources.values()) {
+      source.sent = false;
+      source.readyState = 0;
+    }
+  }
 
   reconnect() {
     if (this.socket) this.fail(this.socket);
@@ -92,6 +117,7 @@ export class EventStreamTransport {
     }
   }
   private sync() {
+    if (this.suspended) return;
     if (!this.sources.size) {
       this.dispose();
       return;

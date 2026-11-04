@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { useComposerStore } from "../stores/useComposerStore";
 
 const state = vi.hoisted(() => ({
   admin: false,
@@ -10,6 +11,7 @@ const state = vi.hoisted(() => ({
   groups: vi.fn(),
   clear: vi.fn(),
   session: vi.fn(),
+  authRequired: null as (() => void) | null,
   translate: (key: string) => key,
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: state.translate }) }));
@@ -28,7 +30,12 @@ vi.mock("../services/api", () => ({
   setAuthToken: vi.fn(),
   clearForceTokenLogin: vi.fn(),
   isAuthRequiredErrorCode: (code: string) => code === "unauthorized",
-  onAuthRequired: () => () => {},
+  onAuthRequired: (handler: () => void) => {
+    state.authRequired = handler;
+    return () => {
+      if (state.authRequired === handler) state.authRequired = null;
+    };
+  },
   fetchWebAccessSession: state.session,
   fetchGroups: state.groups,
 }));
@@ -43,6 +50,7 @@ describe("Connect administrator login gate", () => {
     state.admin = false;
     state.signedIn = true;
     state.bootstrap = false;
+    state.authRequired = null;
     state.clear.mockReset();
     state.groups.mockReset().mockResolvedValue({ ok: true, result: { groups: [] } });
     state.session
@@ -64,6 +72,7 @@ describe("Connect administrator login gate", () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     host.remove();
+    useComposerStore.setState(useComposerStore.getInitialState(), true);
     vi.useRealTimers();
   });
   const mount = () =>
@@ -100,6 +109,18 @@ describe("Connect administrator login gate", () => {
     await act(async () => vi.advanceTimersByTimeAsync(15000));
     expect(host.querySelector("[data-workbench]")).toBeNull();
     expect(host.textContent).toContain("connect.adminRequired");
+  });
+
+  it("opens the target login on a mid-session 401 and keeps page-level composer work", async () => {
+    state.admin = true;
+    await mount();
+    useComposerStore.setState({ composerText: "unsent fixture" });
+    expect(state.authRequired).not.toBeNull();
+    await act(async () => state.authRequired?.());
+    expect(host.querySelector("[data-workbench]")).toBeNull();
+    expect(host.textContent).toContain("login");
+    expect(state.clear).toHaveBeenCalled();
+    expect(useComposerStore.getState().composerText).toBe("unsent fixture");
   });
 
   it.each([
@@ -161,4 +182,47 @@ describe("Connect administrator login gate", () => {
     expect(host.querySelector("[data-workbench]")).toBeNull();
     expect(state.groups).not.toHaveBeenCalled();
   });
+});
+
+it("keeps page-level composer work when the target login gate reappears", async () => {
+  vi.useFakeTimers();
+  state.admin = true;
+  state.signedIn = true;
+  state.bootstrap = false;
+  state.session
+    .mockReset()
+    .mockImplementation(async () => ({
+      ok: true,
+      result: {
+        web_access_session: {
+          is_admin: state.admin,
+          current_browser_signed_in: state.signedIn,
+          bootstrap_required: false,
+        },
+      },
+    }));
+  state.groups.mockReset().mockResolvedValue({ ok: true, result: { groups: [] } });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () =>
+      root.render(
+        <AuthGate requireAdmin>
+          <div>admitted</div>
+        </AuthGate>,
+      ),
+    );
+    expect(host.textContent).toContain("admitted");
+    useComposerStore.setState({ composerText: "unsent fixture" });
+    state.admin = false;
+    await act(async () => vi.advanceTimersByTimeAsync(15000));
+    expect(host.textContent).toContain("connect.adminRequired");
+    expect(useComposerStore.getState().composerText).toBe("unsent fixture");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    useComposerStore.setState(useComposerStore.getInitialState(), true);
+    vi.useRealTimers();
+  }
 });

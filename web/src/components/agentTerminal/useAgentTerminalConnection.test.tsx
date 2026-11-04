@@ -4,6 +4,12 @@ import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { Terminal } from "@xterm/xterm";
 import { useAgentTerminalConnection } from "./useAgentTerminalConnection";
+import {
+  beginFrameAccess,
+  endFrameAccess,
+  pauseFrameAccess,
+  resumeFrameAccess,
+} from "../../features/connect/frameAccess";
 
 it("does not take over or resize a read-only attachment and limits explicit takeover to one attempt", async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -304,6 +310,93 @@ it("resizes an explicitly supported read-only task viewer without enabling input
     expect(sockets[0].sent).toHaveLength(before);
   } finally {
     await act(async () => root.unmount());
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  }
+});
+
+it("closes a terminal while the embedded frame is paused and reconnects only after recovery", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.useFakeTimers();
+  const sockets: FakeSocket[] = [];
+  class FakeSocket {
+    static OPEN = 1;
+    static CONNECTING = 0;
+    readyState = 0;
+    onopen?: () => void;
+    onclose?: (event: { code: number }) => void;
+    onmessage?: (event: { data: string }) => void;
+    constructor(_url: string) {
+      sockets.push(this);
+    }
+    send() {}
+    close() {
+      this.readyState = 3;
+    }
+  }
+  vi.stubGlobal("WebSocket", FakeSocket);
+  const terminalRef = {
+    current: {
+      cols: 80,
+      rows: 24,
+      reset: vi.fn(),
+      write: (_data: unknown, done?: () => void) => done?.(),
+      onData: () => ({ dispose() {} }),
+      onResize: () => ({ dispose() {} }),
+    } as unknown as Terminal,
+  };
+  let controls: ReturnType<typeof useAgentTerminalConnection>;
+  function Probe() {
+    const [reconnectTrigger, setReconnectTrigger] = useState(0);
+    controls = useAgentTerminalConnection({
+      activated: true,
+      isRunning: true,
+      isHeadless: false,
+      groupId: "g1",
+      actorId: "a",
+      actorRuntime: "codex",
+      canControl: true,
+      termEpoch: 0,
+      reconnectTrigger,
+      setReconnectTrigger,
+      terminalRef,
+      inspectActorTail: false,
+      takeoverOnAttach: false,
+      setTerminalSignal: vi.fn(),
+      clearTerminalSignal: vi.fn(),
+    });
+    return null;
+  }
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    beginFrameAccess(new Date(Date.now() + 120000).toISOString());
+    await act(async () => root.render(<Probe />));
+    expect(sockets).toHaveLength(1);
+    await act(async () => {
+      sockets[0].readyState = 1;
+      sockets[0].onopen?.();
+      sockets[0].onmessage?.({
+        data: JSON.stringify({
+          type: "terminal.attach",
+          ok: true,
+          result: { terminal_writable: true, replay_cursor: 0, replay_end_cursor: 0 },
+        }),
+      });
+    });
+    expect(controls!.canSendInput()).toBe(true);
+    await act(async () => pauseFrameAccess());
+    expect(sockets[0].readyState).toBe(3);
+    expect(controls!.canSendInput()).toBe(false);
+    await act(async () => vi.advanceTimersByTimeAsync(30000));
+    expect(sockets).toHaveLength(1);
+    await act(async () => resumeFrameAccess(new Date(Date.now() + 120000).toISOString()));
+    expect(sockets).toHaveLength(2);
+  } finally {
+    await act(async () => root.unmount());
+    endFrameAccess();
+    host.remove();
     vi.unstubAllGlobals();
     vi.useRealTimers();
   }

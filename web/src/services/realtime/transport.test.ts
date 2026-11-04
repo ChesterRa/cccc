@@ -307,3 +307,27 @@ it("keeps a subscription's own backoff when the socket drops and recovers first"
   // The socket is back; the ledger is still waiting on its own backoff.
   expect(retries.slice(1)).toEqual([{ delay_ms: 1000, cause: "channel" }]);
 });
+
+it("suspends its socket without retrying and resumes subscriptions at the last cursor", async () => {
+  const ledger = source(1, "ledger", "A");
+  await Promise.resolve();
+  const first = Socket.instances[0];
+  first.open();
+  first.message({
+    type: "event",
+    channel: "ledger",
+    id: 1,
+    message: { event: "ledger", id: "cursor", data: {} },
+  });
+  transport.setSuspended(true);
+  expect(first.readyState).toBe(3);
+  first.onclose?.();
+  await vi.advanceTimersByTimeAsync(120000);
+  expect(Socket.instances).toHaveLength(1);
+  transport.setSuspended(false);
+  await Promise.resolve();
+  const resumed = Socket.instances[1];
+  resumed.open();
+  expect(resumed.sent.find((packet) => packet.channel === "ledger")?.cursor).toBe("cursor");
+  expect(ledger.cursor).toBe("cursor");
+});

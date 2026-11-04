@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { MicrophoneIcon } from "../../components/Icons";
 import { classNames } from "../../utils/classNames";
 import { recoverDynamicImportError } from "../../utils/vitePreloadRecovery";
+import { reloadPage } from "../../features/connect/reloadPage";
 import type {
   VoiceSecretaryCaptureMode,
   VoiceSecretaryComposerControlProps,
@@ -23,7 +24,7 @@ function VoiceSecretaryLoadFailure(props: VoiceSecretaryComposerControlProps) {
       )}
       aria-label={label}
       title={label}
-      onClick={() => window.location.reload()}
+      onClick={reloadPage}
     >
       <MicrophoneIcon size={15} aria-hidden="true" />
       {assistantRow ? t("voiceSecretaryReloadShort", { defaultValue: "Reload" }) : null}
@@ -36,9 +37,7 @@ async function loadVoiceSecretaryComposerControl() {
     const module = await import("./VoiceSecretaryComposerControl");
     return { default: module.VoiceSecretaryComposerControl };
   } catch (error) {
-    const recovered = recoverDynamicImportError(error, window.sessionStorage, () =>
-      window.location.reload(),
-    );
+    const recovered = recoverDynamicImportError(error, window.sessionStorage, reloadPage);
     if (!recovered) throw error;
     return { default: VoiceSecretaryLoadFailure };
   }

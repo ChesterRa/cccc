@@ -1,4 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
+import { reloadPage } from "./features/connect/reloadPage";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { DropOverlay } from "./components/DropOverlay";
 const AppModals = lazy(() =>
   import("./components/AppModals").then((m) => ({ default: m.AppModals })),
@@ -440,10 +442,7 @@ export default function App({
               onDismiss={dismissDaemonVersionMismatch}
             />
           ) : webUpdateAvailable ? (
-            <WebUpdateNotice
-              onDismiss={dismissWebUpdate}
-              onReload={() => window.location.reload()}
-            />
+            <WebUpdateNotice onDismiss={dismissWebUpdate} onReload={reloadPage} />
           ) : null}
         </div>
       ) : null}
@@ -576,26 +575,28 @@ export default function App({
       />
 
       {shouldRenderAppModals ? (
-        <Suspense fallback={null}>
-          <AppModals
-            codexVoice={codexVoice}
-            isDark={isDark}
-            theme={theme}
-            textScale={textScale}
-            readOnly={webReadOnly}
-            notificationsAllowed={webModeKnown && !webReadOnly && !connectEmbedded}
-            ccccHome={ccccHome}
-            composerRef={composerRef}
-            onStartReply={startReply}
-            onNativeActorCreated={onNativeActorCreated}
-            onThemeChange={setTheme}
-            onTextScaleChange={setTextScale}
-            onDeleteGroup={handleDeleteGroup}
-            fetchContext={fetchContext}
-            canManageGroups={canManageGroups}
-            accountLabel={connectEmbedded ? embeddedAccountLabel : connect.accountLabel}
-          />
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={null}>
+            <AppModals
+              codexVoice={codexVoice}
+              isDark={isDark}
+              theme={theme}
+              textScale={textScale}
+              readOnly={webReadOnly}
+              notificationsAllowed={webModeKnown && !webReadOnly && !connectEmbedded}
+              ccccHome={ccccHome}
+              composerRef={composerRef}
+              onStartReply={startReply}
+              onNativeActorCreated={onNativeActorCreated}
+              onThemeChange={setTheme}
+              onTextScaleChange={setTextScale}
+              onDeleteGroup={handleDeleteGroup}
+              fetchContext={fetchContext}
+              canManageGroups={canManageGroups}
+              accountLabel={connectEmbedded ? embeddedAccountLabel : connect.accountLabel}
+            />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
 
       <DropOverlay isOpen={dropOverlayOpen} isDark={isDark} maxFileMb={WEB_MAX_FILE_MB} />

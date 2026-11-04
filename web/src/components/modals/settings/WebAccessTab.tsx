@@ -952,7 +952,7 @@ export function WebAccessTab({
       if (resp.result?.deleted_current_session || !resp.result?.access_tokens_remain) {
         document.cookie = "cccc_access_token=; path=/; max-age=0";
         api.clearAuthToken();
-        window.location.reload();
+        if (!endConnectFrame()) window.location.reload();
         return;
       }
       await load();

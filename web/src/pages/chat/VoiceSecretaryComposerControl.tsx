@@ -1,4 +1,7 @@
 import "./voice-secretary/voiceWorkspaceMobile.css";
+import { frameAccessPaused, subscribeFrameAccess } from "../../features/connect/frameAccess";
+import { isConnectFramePath } from "../../features/connect/protocol";
+import { beginPendingPageWork } from "../../stores/usePendingPageWork";
 import { useVoiceAudioStore, voiceAudioSnapshot } from "../../stores/useVoiceAudioStore";
 import { useVoiceAudioDevices } from "../../features/voice/useVoiceAudioDevices";
 import { secretaryReadinessIssue } from "../../features/voice/secretaryReadiness";
@@ -500,6 +503,24 @@ export function VoiceSecretaryComposerControl({
   const documentDraftSessionRef = useRef(0);
   // In-memory only: one unsaved working document per Group, for tab switching.
   const suspendedVoiceDraftsRef = useRef(new Map<string, SuspendedVoiceDraft>());
+  const releaseDocumentPageWork = useRef<(() => void) | null>(null);
+  const reportDocumentPageWork = useCallback((currentDirty: boolean) => {
+    if (!isConnectFramePath(window.location.pathname) || window.parent === window) return;
+    const dirty = currentDirty || suspendedVoiceDraftsRef.current.size > 0;
+    if (dirty && !releaseDocumentPageWork.current) {
+      releaseDocumentPageWork.current = beginPendingPageWork();
+    } else if (!dirty && releaseDocumentPageWork.current) {
+      releaseDocumentPageWork.current();
+      releaseDocumentPageWork.current = null;
+    }
+  }, []);
+  useEffect(
+    () => () => {
+      releaseDocumentPageWork.current?.();
+      releaseDocumentPageWork.current = null;
+    },
+    [],
+  );
   const documentOwnerGroupRef = useRef(String(selectedGroupId || "").trim());
   const documentEditingRef = useRef(false);
   const documentRemoteChangedRef = useRef(false);
@@ -889,6 +910,9 @@ export function VoiceSecretaryComposerControl({
     documentTitleDraft.trim() ||
     t("voiceSecretaryWorkdocTitle", { defaultValue: "Voice Secretary workdoc" });
   const documentHasUnsavedEdits = documentDraft !== documentBaseContent;
+  useEffect(() => {
+    reportDocumentPageWork(documentHasUnsavedEdits);
+  }, [documentHasUnsavedEdits, reportDocumentPageWork, selectedGroupId]);
   const documentContentLoading = documentContentLoadingMatches(
     documentContentLoadingPath,
     activeDocumentWritePath,
@@ -1243,10 +1267,14 @@ export function VoiceSecretaryComposerControl({
     setDocumentSaveConflict(null);
   }, []);
 
-  const updateDocumentDraft = useCallback((value: string) => {
-    documentDraftRef.current = value;
-    setDocumentDraft(value);
-  }, []);
+  const updateDocumentDraft = useCallback(
+    (value: string) => {
+      documentDraftRef.current = value;
+      reportDocumentPageWork(value !== documentBaseContentRef.current);
+      setDocumentDraft(value);
+    },
+    [reportDocumentPageWork],
+  );
 
   const getDraftSnapshot = useCallback(
     () => ({
@@ -3533,6 +3561,42 @@ export function VoiceSecretaryComposerControl({
     }
     stopBrowserSpeech();
   }, [stopBrowserSpeech, stopServiceAudio]);
+
+  useEffect(
+    () =>
+      subscribeFrameAccess(() => {
+        if (!frameAccessPaused()) return;
+        const run = getVoiceSession();
+        if (!run) return;
+        if (run.config.recognition_backend === "browser_asr") {
+          // Do not dispatch speech captured before suspension as a new request.
+          // The existing cleanup preserves it in the recording's Group first.
+          unmountCleanupRef.current();
+          showError(
+            t("voiceSecretaryRecordingConnectionFailed", {
+              defaultValue:
+                "Could not complete the speech-recognition connection; this recording may not have been fully transcribed.",
+            }),
+          );
+        } else {
+          if (run.scope.dispatchTarget === "document" && !run.service.recovered) {
+            const text = nextUncommittedServiceTranscriptText(
+              serviceTranscriptForRecovery(run),
+              run.service.documentHandled,
+            );
+            if (text.trim()) {
+              run.service.recovered = appendDirectDictationToComposer(
+                text,
+                run.service.documentCheckpointTail ? "unconfirmed" : "interrupted",
+                run.scope.groupId,
+              );
+            }
+          }
+          failServiceConnection(run.id);
+        }
+      }),
+    [appendDirectDictationToComposer, failServiceConnection, getVoiceSession, showError, t],
+  );
 
   const closePanel = useCallback(() => {
     setOpen(false);

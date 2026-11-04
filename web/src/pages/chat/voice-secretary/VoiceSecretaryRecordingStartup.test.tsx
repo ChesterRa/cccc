@@ -8,6 +8,11 @@ import { useVoiceAudioStore } from "../../../stores/useVoiceAudioStore";
 import { usePendingPageWork } from "../../../stores/usePendingPageWork";
 import type { AssistantStateResult } from "../../../types";
 import type { BrowserSpeechRecognitionEvent } from "./voiceBrowserSpeechTypes";
+import {
+  beginFrameAccess,
+  endFrameAccess,
+  pauseFrameAccess,
+} from "../../../features/connect/frameAccess";
 
 const api = vi.hoisted(() => ({
   workspace: vi.fn(),
@@ -220,6 +225,7 @@ describe("Voice Secretary recording startup ownership", () => {
   });
   afterEach(async () => {
     if (rootMounted) await act(async () => root.unmount());
+    endFrameAccess();
     expect(usePendingPageWork.getState().owners.size).toBe(0);
     host.remove();
     vi.clearAllTimers();
@@ -700,6 +706,47 @@ describe("Voice Secretary recording startup ownership", () => {
   );
 
   it.each(["browser_asr", "assistant_service_local_asr"])(
+    "stops %s on Connect suspension and keeps recognized speech in its original Group",
+    async (backend) => {
+      api.workspace.mockImplementation(async (group: string) => ({
+        ok: true,
+        result: state(group, backend),
+      }));
+      api.status.mockImplementation(async (group: string) => ({
+        ok: true,
+        result: state(group, backend),
+      }));
+      beginFrameAccess(new Date(Date.now() + 120000).toISOString());
+      await render("A");
+      await act(async () => recordButton().click());
+      await act(async () => {
+        if (backend === "browser_asr") {
+          Recognition.latest.onresult?.({
+            resultIndex: 0,
+            results: {
+              length: 1,
+              0: { isFinal: true, length: 1, 0: { transcript: "keep these words" } },
+            },
+          });
+        } else {
+          Socket.latest.onmessage?.({
+            data: JSON.stringify({ type: "final", text: "keep these words" }),
+          });
+        }
+        useComposerStore.getState().switchGroup("A", "B");
+        useComposerStore.getState().setComposerText("Private B draft");
+      });
+      await render("B");
+      await act(async () => pauseFrameAccess());
+      expect(trackStop).toHaveBeenCalled();
+      expect(useComposerStore.getState().drafts.A?.composerText).toContain("keep these words");
+      expect(useComposerStore.getState().composerText).toBe("Private B draft");
+      expect(api.append).not.toHaveBeenCalled();
+      if (backend !== "browser_asr") expect(Socket.latest.readyState).toBe(3);
+    },
+  );
+
+  it.each(["browser_asr", "assistant_service_local_asr"])(
     "keeps %s speech once when its refinement submission is still pending at unmount",
     async (backend) => {
       api.workspace.mockImplementation(async (group: string) => ({
@@ -1123,6 +1170,50 @@ describe("Voice Secretary recording startup ownership", () => {
     expect(useComposerStore.getState().composerText).toBe("Private B draft");
     await act(async () => finishCheckpoint({ ok: true, result: {} }));
     expect(useComposerStore.getState().drafts.A?.composerText).toBe("Unsent A draft first second");
+  });
+
+  it("keeps an unconfirmed document checkpoint when Connect pauses without unmounting", async () => {
+    const documentState = (group: string) => {
+      const result = state(group, "assistant_service_local_asr");
+      result.assistant!.config = {
+        ...result.assistant!.config,
+        auto_document_max_window_seconds: 10,
+      };
+      return result;
+    };
+    api.workspace.mockImplementation(async (group: string) => ({
+      ok: true,
+      result: documentState(group),
+    }));
+    api.status.mockImplementation(async (group: string) => ({
+      ok: true,
+      result: documentState(group),
+    }));
+    let finish!: (value: unknown) => void;
+    api.segment.mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)));
+    beginFrameAccess(new Date(Date.now() + 120000).toISOString());
+    await act(async () =>
+      root.render(
+        <VoiceSecretaryComposerControl
+          selectedGroupId="A"
+          isDark={false}
+          busy=""
+          variant="assistantRow"
+          captureMode="document"
+        />,
+      ),
+    );
+    await act(async () => recordButton().click());
+    await act(async () =>
+      Socket.latest.onmessage?.({ data: JSON.stringify({ type: "final", text: "pending words" }) }),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(api.segment).toHaveBeenCalledTimes(1);
+    await act(async () => pauseFrameAccess());
+    expect(useComposerStore.getState().composerText).toContain("pending words");
+    const recovered = useComposerStore.getState().composerText;
+    await act(async () => finish({ ok: true, result: {} }));
+    expect(useComposerStore.getState().composerText).toBe(recovered);
   });
 
   it("keeps distinct service segments even when they contain the same words", async () => {

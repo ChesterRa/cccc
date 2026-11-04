@@ -3,6 +3,7 @@ import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LcdSpinner } from "./LcdSpinner";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { SearchModal } from "./SearchModal";
 import { MobileMenuSheet } from "./layout/MobileMenuSheet";
 import { CreateGroupModal } from "./modals/CreateGroupModal";
@@ -1343,113 +1344,119 @@ export function AppModals({
       />
 
       {presentationViewerSlotIds.length > 0 ? (
-        <Suspense fallback={<LazyModalFallback />}>
-          {presentationViewerSlotIds.map((slotId) => {
-            const slot = findPresentationSlot(groupPresentation, slotId);
-            const version = String(slot?.card?.published_at || "empty").trim() || "empty";
-            return (
-              <PresentationViewerModal
-                key={`${selectedGroupId}:${slotId}:${version}`}
-                isOpen={
-                  !!presentationViewer &&
-                  presentationViewer.surface !== "split" &&
-                  presentationViewer.groupId === selectedGroupId &&
-                  presentationViewer.slotId === slotId
-                }
-                isDark={isDark}
-                readOnly={readOnly}
-                groupId={selectedGroupId}
-                slotId={slotId}
-                presentation={groupPresentation}
-                focusRef={
-                  presentationViewer?.groupId === selectedGroupId &&
-                  presentationViewer.slotId === slotId
-                    ? presentationViewer.focusRef || null
-                    : null
-                }
-                focusEventId={
-                  presentationViewer?.groupId === selectedGroupId &&
-                  presentationViewer.slotId === slotId
-                    ? presentationViewer.focusEventId || null
-                    : null
-                }
-                sourceEvent={
-                  presentationViewer?.groupId === selectedGroupId &&
-                  presentationViewer.slotId === slotId
-                    ? presentationViewerSourceEvent
-                    : null
-                }
-                onSelectSlot={(nextSlotId) =>
-                  setPresentationViewer({
-                    groupId: selectedGroupId,
-                    slotId: nextSlotId,
-                    surface: "modal",
-                  })
-                }
-                onPinSlot={(nextSlotId) => {
-                  setPresentationViewer(null);
-                  setPresentationPin({ groupId: selectedGroupId, slotId: nextSlotId });
-                }}
-                onQuoteInChat={handleQuotePresentationReference}
-                onOpenMessageContext={(eventId) =>
-                  void handleOpenPresentationMessageContext(eventId)
-                }
-                onReplyToMessage={(event) => void handleReplyToPresentationMessage(event)}
-                onReplaceSlot={(nextSlotId) => {
-                  const gid = String(selectedGroupId || "").trim();
-                  if (!gid || !nextSlotId) return;
-                  setPresentationViewer(null);
-                  setPresentationPin({ groupId: gid, slotId: nextSlotId });
-                }}
-                onClearSlot={(nextSlotId) => void handlePresentationClear(nextSlotId)}
-                supportsSplit={!isSmallScreen}
-                onOpenSplit={() => {
-                  const gid = String(selectedGroupId || "").trim();
-                  if (!gid || !presentationViewer) return;
-                  setChatPresentationDisplayMode(gid, "split");
-                  setChatPresentationDockOpen(gid, true);
-                  setPresentationViewer({ ...presentationViewer, surface: "split" });
-                }}
-                onClose={() => setPresentationViewer(null)}
-              />
-            );
-          })}
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<LazyModalFallback />}>
+            {presentationViewerSlotIds.map((slotId) => {
+              const slot = findPresentationSlot(groupPresentation, slotId);
+              const version = String(slot?.card?.published_at || "empty").trim() || "empty";
+              return (
+                <PresentationViewerModal
+                  key={`${selectedGroupId}:${slotId}:${version}`}
+                  isOpen={
+                    !!presentationViewer &&
+                    presentationViewer.surface !== "split" &&
+                    presentationViewer.groupId === selectedGroupId &&
+                    presentationViewer.slotId === slotId
+                  }
+                  isDark={isDark}
+                  readOnly={readOnly}
+                  groupId={selectedGroupId}
+                  slotId={slotId}
+                  presentation={groupPresentation}
+                  focusRef={
+                    presentationViewer?.groupId === selectedGroupId &&
+                    presentationViewer.slotId === slotId
+                      ? presentationViewer.focusRef || null
+                      : null
+                  }
+                  focusEventId={
+                    presentationViewer?.groupId === selectedGroupId &&
+                    presentationViewer.slotId === slotId
+                      ? presentationViewer.focusEventId || null
+                      : null
+                  }
+                  sourceEvent={
+                    presentationViewer?.groupId === selectedGroupId &&
+                    presentationViewer.slotId === slotId
+                      ? presentationViewerSourceEvent
+                      : null
+                  }
+                  onSelectSlot={(nextSlotId) =>
+                    setPresentationViewer({
+                      groupId: selectedGroupId,
+                      slotId: nextSlotId,
+                      surface: "modal",
+                    })
+                  }
+                  onPinSlot={(nextSlotId) => {
+                    setPresentationViewer(null);
+                    setPresentationPin({ groupId: selectedGroupId, slotId: nextSlotId });
+                  }}
+                  onQuoteInChat={handleQuotePresentationReference}
+                  onOpenMessageContext={(eventId) =>
+                    void handleOpenPresentationMessageContext(eventId)
+                  }
+                  onReplyToMessage={(event) => void handleReplyToPresentationMessage(event)}
+                  onReplaceSlot={(nextSlotId) => {
+                    const gid = String(selectedGroupId || "").trim();
+                    if (!gid || !nextSlotId) return;
+                    setPresentationViewer(null);
+                    setPresentationPin({ groupId: gid, slotId: nextSlotId });
+                  }}
+                  onClearSlot={(nextSlotId) => void handlePresentationClear(nextSlotId)}
+                  supportsSplit={!isSmallScreen}
+                  onOpenSplit={() => {
+                    const gid = String(selectedGroupId || "").trim();
+                    if (!gid || !presentationViewer) return;
+                    setChatPresentationDisplayMode(gid, "split");
+                    setChatPresentationDockOpen(gid, true);
+                    setPresentationViewer({ ...presentationViewer, surface: "split" });
+                  }}
+                  onClose={() => setPresentationViewer(null)}
+                />
+              );
+            })}
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
 
       {modals.context ? (
-        <Suspense fallback={<LazyModalFallback />}>
-          <ContextModal
-            isOpen={modals.context}
-            onClose={() => closeModal("context")}
-            groupId={selectedGroupId}
-            groupTitle={groupDoc?.group_id === selectedGroupId ? groupDoc.title : undefined}
-            context={groupContext}
-            initialTaskId={contextTaskId}
-            onInitialTaskHandled={clearContextTask}
-            onOpenContext={() => openContextModalData(fetchContext, selectedGroupId)}
-            onSyncContext={() => syncContextModalData(fetchContext, selectedGroupId)}
-            isDark={isDark}
-          />
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<LazyModalFallback />}>
+            <ContextModal
+              isOpen={modals.context}
+              onClose={() => closeModal("context")}
+              groupId={selectedGroupId}
+              groupTitle={groupDoc?.group_id === selectedGroupId ? groupDoc.title : undefined}
+              context={groupContext}
+              initialTaskId={contextTaskId}
+              onInitialTaskHandled={clearContextTask}
+              onOpenContext={() => openContextModalData(fetchContext, selectedGroupId)}
+              onSyncContext={() => syncContextModalData(fetchContext, selectedGroupId)}
+              isDark={isDark}
+            />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
 
       {modals.settings ? (
-        <Suspense fallback={<LazyModalFallback />}>
-          <SettingsModal
-            codexVoice={codexVoice}
-            isOpen={modals.settings}
-            onClose={() => closeModal("settings")}
-            settings={groupSettings}
-            onUpdateSettings={handleUpdateSettings}
-            onRegistryChanged={refreshGroups}
-            busy={busy.startsWith("settings")}
-            isDark={isDark}
-            groupId={selectedGroupId}
-            groupDoc={groupDoc}
-            notificationsAllowed={notificationsAllowed === true}
-          />
-        </Suspense>
+        <ErrorBoundary>
+          <Suspense fallback={<LazyModalFallback />}>
+            <SettingsModal
+              codexVoice={codexVoice}
+              isOpen={modals.settings}
+              onClose={() => closeModal("settings")}
+              settings={groupSettings}
+              onUpdateSettings={handleUpdateSettings}
+              onRegistryChanged={refreshGroups}
+              busy={busy.startsWith("settings")}
+              isDark={isDark}
+              groupId={selectedGroupId}
+              groupDoc={groupDoc}
+              notificationsAllowed={notificationsAllowed === true}
+            />
+          </Suspense>
+        </ErrorBoundary>
       ) : null}
 
       <RecipientsModal

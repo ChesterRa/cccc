@@ -14,7 +14,7 @@ export type ConnectSnapshot = {
   device_id: string;
   instance_id: string;
   checked_at: string;
-  directory: { expires_at: string; instances: ConnectInstance[] } | null;
+  directory: { account_id: string; expires_at: string; instances: ConnectInstance[] } | null;
   error_code: string | null;
   error_message: string | null;
 };
@@ -33,7 +33,8 @@ export type FrameProof = {
   signature: string;
 };
 
-export type OpenFrame = { origin: string; url: string; proof: FrameProof };
+// An older entry may not return an account ID; its frame cannot use recovery.
+export type OpenFrame = { origin: string; url: string; proof: FrameProof; account_id?: string };
 export type GroupConnectionSummary = { counts: Record<string, number | null>; expires_at: string };
 export type GroupConnectionCount = { count: number | null; expires_at: string };
 export type ConnectStatusResponse = {

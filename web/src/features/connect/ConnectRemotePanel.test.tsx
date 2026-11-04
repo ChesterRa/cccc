@@ -47,10 +47,12 @@ beforeEach(async () => {
         result: {
           origin: instance.public_origin,
           url: "about:blank",
+          account_id: "owner",
           proof: {
             frame_id: frameId,
             target_device_id: instance.device_id,
             expires_at: new Date(Date.now() + 120000).toISOString(),
+            nonce: crypto.randomUUID(),
           },
         },
       };
@@ -61,6 +63,7 @@ beforeEach(async () => {
         connect: {
           instance_id: "a",
           directory: {
+            account_id: "owner",
             expires_at: new Date(Date.now() + 120000).toISOString(),
             instances: [instance],
           },
@@ -77,6 +80,7 @@ beforeEach(async () => {
     () => {},
   );
   await fromTarget({ type: "ready", instance_id: "b", device_id: "device-b" });
+  await fromTarget({ type: "admitted", account_id: "owner" });
 });
 afterEach(async () => {
   await act(async () => root.unmount());
@@ -178,4 +182,146 @@ it("does not let an unverified source create an unsaved-edits prompt", async () 
   await fromTarget({ type: "workspace_dirty", dirty: true });
   await fromTarget({ type: "expired" });
   expect(useWorkspaceNavigation.getState().owners.size).toBe(0);
+});
+
+it("keeps the same dirty iframe through directory expiry and confirms recovery on both sides", async () => {
+  const frame = host.querySelector("iframe")!;
+  const post = vi.mocked(frame.contentWindow!.postMessage);
+  await fromTarget({ type: "workspace_dirty", dirty: true });
+  const originalRequest = mocks.request.getMockImplementation()!;
+  let offline = true;
+  mocks.request.mockImplementation((path: string, options: unknown) => {
+    if (path === "/api/v1/connect" && offline)
+      return Promise.resolve({
+        ok: true,
+        result: {
+          connect: { instance_id: "a", directory: null, error_code: "connect_directory_expired" },
+        },
+      });
+    return originalRequest(path, options);
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  expect(state.available).toBe(false);
+  expect(host.querySelector("iframe")).toBe(frame);
+  expect(frame.className).toContain("invisible");
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(1);
+  expect(post).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "suspend" }),
+    instance.public_origin,
+  );
+
+  offline = false;
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  const resumes = post.mock.calls
+    .map(([message]) => message)
+    .filter((message) => message.type === "resume");
+  const resume = resumes[resumes.length - 1];
+  expect(resume.account_id).toBe("owner");
+  await fromTarget({ type: "resume_ready", nonce: resume.proof.nonce });
+  expect(post).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "resume_commit", nonce: resume.proof.nonce }),
+    instance.public_origin,
+  );
+  expect(frame.className).toContain("invisible");
+  await fromTarget({ type: "resumed", nonce: resume.proof.nonce });
+  expect(host.querySelector("iframe")).toBe(frame);
+  expect(frame.className).not.toContain("invisible");
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(1);
+});
+
+it("asks before reopening a frame that reports unsaved work", async () => {
+  const frame = host.querySelector("iframe");
+  await fromTarget({ type: "workspace_dirty", dirty: true });
+  await fromTarget({ type: "reload" });
+  expect(host.querySelector("iframe")).toBe(frame);
+  expect(useWorkspaceNavigation.getState().pending).not.toBeNull();
+  await act(async () => finishWorkspaceNavigation(false));
+  expect(host.querySelector("iframe")).toBe(frame);
+  await fromTarget({ type: "reload" });
+  await act(async () => finishWorkspaceNavigation(true));
+  expect(host.querySelector("iframe")).not.toBe(frame);
+});
+
+it("ignores a recovery acknowledgement after entry authority is lost again", async () => {
+  const frame = host.querySelector("iframe")!;
+  const post = vi.mocked(frame.contentWindow!.postMessage);
+  const originalRequest = mocks.request.getMockImplementation()!;
+  let offline = true;
+  mocks.request.mockImplementation((path: string, options: unknown) => {
+    if (path === "/api/v1/connect" && offline)
+      return Promise.resolve({
+        ok: true,
+        result: {
+          connect: { instance_id: "a", directory: null, error_code: "connect_directory_expired" },
+        },
+      });
+    return originalRequest(path, options);
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  offline = false;
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  const resumes = post.mock.calls
+    .map(([message]) => message)
+    .filter((message) => message.type === "resume");
+  const oldNonce = resumes[resumes.length - 1].proof.nonce;
+  offline = true;
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  post.mockClear();
+  await fromTarget({ type: "resume_ready", nonce: oldNonce });
+  expect(post.mock.calls.some(([message]) => message.type === "resume_commit")).toBe(false);
+  expect(frame.className).toContain("invisible");
+});
+
+it("suspends again when the entry directory expires before the target confirms recovery", async () => {
+  const frame = host.querySelector("iframe")!;
+  const post = vi.mocked(frame.contentWindow!.postMessage);
+  await fromTarget({ type: "expired", recoverable: true });
+  await act(async () => vi.advanceTimersByTimeAsync(15000));
+  const resumes = post.mock.calls
+    .map(([message]) => message)
+    .filter((message) => message.type === "resume");
+  const nonce = resumes[resumes.length - 1].proof.nonce;
+  await fromTarget({ type: "resume_ready", nonce });
+  post.mockClear();
+  vi.setSystemTime(Date.now() + 121000);
+  await fromTarget({ type: "resumed", nonce });
+  expect(post).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "suspend" }),
+    instance.public_origin,
+  );
+  expect(frame.className).toContain("invisible");
+});
+
+it("keeps dirty work through an unavailable open and retries while suspended", async () => {
+  const frame = host.querySelector("iframe")!;
+  const originalRequest = mocks.request.getMockImplementation()!;
+  await fromTarget({ type: "workspace_dirty", dirty: true });
+  await fromTarget({ type: "expired", recoverable: true });
+  mocks.request.mockImplementation((path: string, options: unknown) => {
+    if (path === "/api/v1/connect/open")
+      return Promise.resolve({
+        ok: false,
+        error: { code: "unavailable", message: "offline", httpStatus: 503 },
+      });
+    return originalRequest(path, options);
+  });
+  await act(async () => vi.advanceTimersByTimeAsync(30000));
+  expect(
+    mocks.request.mock.calls.filter(([path]) => path === "/api/v1/connect/open").length,
+  ).toBeGreaterThan(2);
+  expect(host.querySelector("iframe")).toBe(frame);
+  expect(frame.className).toContain("invisible");
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(1);
+});
+
+it("closes an older target that cannot confirm an account for recovery", async () => {
+  await act(async () => state.selectLocal());
+  await act(async () => state.select("b"));
+  vi.spyOn(host.querySelector("iframe")!.contentWindow!, "postMessage").mockImplementation(
+    () => {},
+  );
+  await fromTarget({ type: "ready", instance_id: "b", device_id: "device-b" });
+  await fromTarget({ type: "expired", recoverable: true });
+  expect(host.querySelector("iframe")).toBeNull();
+  expect(host.textContent).toContain("connect.reopen");
 });

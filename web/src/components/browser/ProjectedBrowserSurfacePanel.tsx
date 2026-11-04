@@ -9,6 +9,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import {
+  frameAccessPaused,
+  subscribeFrameAccess,
+  useFrameAccessPaused,
+} from "../../features/connect/frameAccess";
 import type { ApiResponse } from "../../services/api";
 import type { PresentationBrowserSurfaceState } from "../../types";
 import { classNames } from "../../utils/classNames";
@@ -215,12 +220,25 @@ export function ProjectedBrowserSurfacePanel({
   const imageRef = useRef<HTMLImageElement | null>(null);
   const inputRelayRef = useRef<HTMLTextAreaElement | null>(null);
   const vncTargetRef = useRef<HTMLDivElement | null>(null);
+  const framePaused = useFrameAccessPaused();
+  const pausedForRecovery = useRef(false);
   const rfbRef = useRef<RfbInstance | null>(null);
   const frameRef = useRef<ProjectedBrowserFrame | null>(null);
   const renderedFrameRef = useRef<ProjectedBrowserFrame | null>(null);
   const frameRenderTokenRef = useRef(0);
   const lastFrameCallbackAtRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
+  useEffect(
+    () =>
+      subscribeFrameAccess(() => {
+        if (!frameAccessPaused()) return;
+        pausedForRecovery.current = true;
+        wsRef.current?.close();
+        rfbRef.current?.disconnect();
+        rfbRef.current = null;
+      }),
+    [],
+  );
   const loadSessionRef = useRef(loadSession);
   const startSessionRef = useRef(startSession);
   const resizeTimerRef = useRef<number | null>(null);
@@ -418,6 +436,7 @@ export function ProjectedBrowserSurfacePanel({
   }, [isExpanded]);
 
   const sendCommand = (payload: Record<string, unknown>): boolean => {
+    if (frameAccessPaused()) return false;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(payload));
@@ -435,6 +454,7 @@ export function ProjectedBrowserSurfacePanel({
   };
 
   useEffect(() => {
+    if (framePaused) return;
     const lifecycleKey = `${sessionIdentity}\u0000${webSocketUrl}\u0000${runNonce}`;
     const reuseCurrentSession = shouldReuseProjectedBrowserSession(
       reuseActiveSession,
@@ -464,6 +484,7 @@ export function ProjectedBrowserSurfacePanel({
     };
 
     const attachSocket = () => {
+      if (disposed || frameAccessPaused()) return;
       const socketViewerMode = projectedBrowserSocketViewerMode(viewerMode, vncFailed);
       const ws = new WebSocket(urlWithViewerParam(webSocketUrl, "viewer_mode", socketViewerMode));
       wsRef.current = ws;
@@ -555,12 +576,12 @@ export function ProjectedBrowserSurfacePanel({
       };
 
       ws.onerror = () => {
-        if (disposed || runIdRef.current !== runId) return;
+        if (disposed || frameAccessPaused() || runIdRef.current !== runId) return;
         setPanelError(texts.connectionFailed);
       };
 
       ws.onclose = () => {
-        if (disposed || runIdRef.current !== runId) return;
+        if (disposed || frameAccessPaused() || runIdRef.current !== runId) return;
         wsRef.current = null;
         void (async () => {
           const info = await loadSessionRef.current();
@@ -627,6 +648,15 @@ export function ProjectedBrowserSurfacePanel({
       const existing = await loadSessionRef.current();
       if (disposed) return;
 
+      if (pausedForRecovery.current) {
+        pausedForRecovery.current = false;
+        if (existing.ok) {
+          setSessionState(normalizeState(existing.result.browser_surface));
+          if (existing.result.browser_surface.active) attachSocket();
+        } else setPanelError(`${existing.error.code}: ${existing.error.message}`);
+        return;
+      }
+
       if (
         reuseCurrentSession &&
         existing.ok &&
@@ -687,6 +717,7 @@ export function ProjectedBrowserSurfacePanel({
       cleanupTransport();
     };
   }, [
+    framePaused,
     onFrameUpdate,
     runNonce,
     texts.closed,
@@ -726,7 +757,7 @@ export function ProjectedBrowserSurfacePanel({
   );
 
   useEffect(() => {
-    if (!vncAvailable || sessionState.state !== "ready") {
+    if (framePaused || !vncAvailable || sessionState.state !== "ready") {
       if (rfbRef.current) {
         rfbRef.current.disconnect();
         rfbRef.current = null;
@@ -741,7 +772,7 @@ export function ProjectedBrowserSurfacePanel({
     void (async () => {
       try {
         const mod = await import("@novnc/novnc");
-        if (cancelled || rfbRef.current) return;
+        if (cancelled || frameAccessPaused() || rfbRef.current) return;
         const RFB = mod.default as RfbConstructor;
         target.replaceChildren();
         const rfb = new RFB(target, urlWithViewerParam(webSocketUrl, "mode", "vnc"), {});
@@ -754,7 +785,7 @@ export function ProjectedBrowserSurfacePanel({
           if (!cancelled) setVncConnected(true);
         });
         rfb.addEventListener("disconnect", () => {
-          if (!cancelled) {
+          if (!cancelled && !frameAccessPaused()) {
             setVncConnected(false);
             setVncFailed(true);
           }
@@ -777,7 +808,7 @@ export function ProjectedBrowserSurfacePanel({
       target.replaceChildren();
       setVncConnected(false);
     };
-  }, [isExpanded, sessionState.state, vncAvailable, webSocketUrl]);
+  }, [framePaused, isExpanded, sessionState.state, vncAvailable, webSocketUrl]);
 
   useEffect(() => {
     const container = containerRef.current;

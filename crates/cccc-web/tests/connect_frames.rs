@@ -532,6 +532,232 @@ async fn frame_renewal_preserves_scope_and_nested_resources_require_current_auth
 }
 
 #[tokio::test]
+async fn restoring_a_frame_requires_a_fresh_proof_admin_and_the_original_account() {
+    let (_temp, a, b, _, _) = setup("https://b.test");
+    let admin = AccessTokenStore::new(b.clone())
+        .expect("tokens")
+        .create("target-admin", Vec::new(), true, None)
+        .expect("admin")
+        .token;
+    let restricted = AccessTokenStore::new(b.clone())
+        .expect("tokens")
+        .create("restricted", Vec::new(), false, None)
+        .expect("restricted")
+        .token;
+    let identity = InstanceIdentity::load_or_create(&a).expect("source key");
+    let mut current = proof(&a, &b);
+    current.issued_at = (Utc::now() - chrono::Duration::seconds(2)).to_rfc3339();
+    current.expires_at = (Utc::now() + chrono::Duration::seconds(110)).to_rfc3339();
+    current.signature = identity.sign(&current.signing_material()).expect("sign");
+    let app = cccc_web::app(b.clone());
+    assert_eq!(
+        app.clone()
+            .oneshot(frame_request(&current))
+            .await
+            .expect("open original frame")
+            .status(),
+        StatusCode::OK
+    );
+
+    let mut fresh = current.clone();
+    fresh.issued_at = Utc::now().to_rfc3339();
+    fresh.expires_at = (Utc::now() + chrono::Duration::seconds(110)).to_rfc3339();
+    fresh.nonce = uuid::Uuid::new_v4().to_string();
+    fresh.signature = identity
+        .sign(&fresh.signing_material())
+        .expect("sign renewal");
+    let resume = |token: Option<&str>, account_id: &str, proof: &ConnectFrameProof| {
+        let mut request = Request::post("/api/v1/connect/frame/resume")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        request
+            .body(Body::from(
+                json!({"proof": proof, "account_id": account_id}).to_string(),
+            ))
+            .expect("build resume request")
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(resume(None, "owner", &fresh))
+            .await
+            .expect("unauthenticated resume response")
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(resume(Some(&restricted), "owner", &fresh))
+            .await
+            .expect("restricted resume response")
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(resume(Some(&admin), "another-account", &fresh))
+            .await
+            .expect("wrong-account resume response")
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(resume(Some(&admin), "owner", &fresh))
+            .await
+            .expect("resume response")
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(resume(Some(&admin), "owner", &fresh))
+            .await
+            .expect("resume retry response")
+            .status(),
+        StatusCode::OK,
+        "a lost recovery response can be retried"
+    );
+    assert_eq!(
+        app.clone()
+            .oneshot(resume(Some(&admin), "owner", &current))
+            .await
+            .expect("old-proof resume response")
+            .status(),
+        StatusCode::FORBIDDEN,
+        "an older proof cannot replace the current one"
+    );
+
+    // A new Web process has no frame registry, but a new proof can restore
+    // the same document when its captured account and administrator still match.
+    let restarted = cccc_web::app(b.clone());
+    let mut after_restart = fresh.clone();
+    after_restart.nonce = uuid::Uuid::new_v4().to_string();
+    after_restart.signature = identity
+        .sign(&after_restart.signing_material())
+        .expect("sign");
+    assert_eq!(
+        restarted
+            .clone()
+            .oneshot(resume(Some(&admin), "owner", &after_restart))
+            .await
+            .expect("resume after restart response")
+            .status(),
+        StatusCode::OK
+    );
+    let read = Request::get(format!(
+        "/api/v1/connect/frame?frame_id={}",
+        after_restart.frame_id
+    ))
+    .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+    .body(Body::empty())
+    .expect("build frame read");
+    let response = restarted.clone().oneshot(read).await.expect("read frame");
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("read frame body");
+    let value: Value = serde_json::from_slice(&body.to_bytes()).expect("parse frame body");
+    assert_eq!(value["result"]["account_id"], "owner");
+
+    let mut snapshot = cccc_core::connect::load(&b)
+        .expect("read directory snapshot")
+        .expect("directory snapshot exists");
+    snapshot
+        .directory
+        .as_mut()
+        .expect("directory exists")
+        .account_id = "new-owner".into();
+    save(&b, &snapshot).expect("new account directory");
+    let read = Request::get(format!(
+        "/api/v1/connect/frame?frame_id={}",
+        after_restart.frame_id
+    ))
+    .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+    .body(Body::empty())
+    .expect("build frame read after account change");
+    assert_eq!(
+        restarted
+            .clone()
+            .oneshot(read)
+            .await
+            .expect("read frame")
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let empty_registry = cccc_web::app(b.clone());
+    assert_eq!(
+        empty_registry
+            .oneshot(resume(Some(&admin), "owner", &after_restart))
+            .await
+            .expect("resume after account change response")
+            .status(),
+        StatusCode::FORBIDDEN,
+        "an account change cannot restore the old document"
+    );
+}
+
+#[tokio::test]
+async fn an_expired_frame_is_restored_only_with_a_new_proof() {
+    let (_temp, a, b, _, _) = setup("https://b.test");
+    let admin = AccessTokenStore::new(b.clone())
+        .expect("tokens")
+        .create("target-admin", Vec::new(), true, None)
+        .expect("admin")
+        .token;
+    let identity = InstanceIdentity::load_or_create(&a).expect("source key");
+    let mut original = proof(&a, &b);
+    original.issued_at = (Utc::now() - chrono::Duration::seconds(1)).to_rfc3339();
+    original.expires_at = (Utc::now() + chrono::Duration::seconds(2)).to_rfc3339();
+    original.signature = identity
+        .sign(&original.signing_material())
+        .expect("sign original proof");
+    let app = cccc_web::app(b);
+    assert_eq!(
+        app.clone()
+            .oneshot(frame_request(&original))
+            .await
+            .expect("open original frame")
+            .status(),
+        StatusCode::OK
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+    let resume = |proof: &ConnectFrameProof| {
+        Request::post("/api/v1/connect/frame/resume")
+            .header(header::AUTHORIZATION, format!("Bearer {admin}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"proof": proof, "account_id": "owner"}).to_string(),
+            ))
+            .expect("build resume request")
+    };
+    assert_eq!(
+        app.clone()
+            .oneshot(resume(&original))
+            .await
+            .expect("expired-proof resume response")
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let mut fresh = original.clone();
+    fresh.nonce = uuid::Uuid::new_v4().to_string();
+    fresh.issued_at = Utc::now().to_rfc3339();
+    fresh.expires_at = (Utc::now() + chrono::Duration::seconds(110)).to_rfc3339();
+    fresh.signature = identity
+        .sign(&fresh.signing_material())
+        .expect("sign fresh proof");
+    assert_eq!(
+        app.oneshot(resume(&fresh))
+            .await
+            .expect("resume response")
+            .status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
 async fn an_exhibit_cannot_be_opened_as_an_administrator_workbench() {
     let (_temp, a, b, _, _) = setup("https://b.test");
     let request = frame_request(&proof(&a, &b));

@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { VoiceSecretaryComposerControl } from "../VoiceSecretaryComposerControl";
 import { useGroupStore, useModalStore, useUIStore } from "../../../stores";
+import { usePendingPageWork } from "../../../stores/usePendingPageWork";
 import type { AssistantStateResult, AssistantVoiceDocument, LedgerEvent } from "../../../types";
 
 const mocks = vi.hoisted(() => ({
@@ -82,6 +83,7 @@ vi.mock("./VoiceSecretaryWorkspacePanel", () => ({
       </output>
       <button onClick={() => onEditDocumentChange("saved edit")} data-edit-document />
       <button onClick={() => onEditDocumentChange("second edit")} data-edit-document-later />
+      <button onClick={() => onEditDocumentChange("original")} data-reset-document />
       <button onClick={onSaveDocument} data-save-document />
       <button onClick={onToggleDocumentEditing} data-toggle-editor />
       <button onClick={onLoadLatestDocument} data-load-document />
@@ -788,6 +790,27 @@ describe("Voice Secretary workspace refresh ownership", () => {
         expect(value).not.toContain("saved edit");
         expect(value).not.toContain("second edit");
       }
+    }
+  });
+
+  it("reports a dirty embedded voice document while it is held for another Group", async () => {
+    const parent = { postMessage: vi.fn() } as unknown as Window;
+    vi.spyOn(window, "parent", "get").mockReturnValue(parent);
+    window.history.replaceState(null, "", "/ui/connect");
+    usePendingPageWork.setState({ owners: new Set() });
+    try {
+      await render("A");
+      await click("[data-edit-document]");
+      expect(usePendingPageWork.getState().owners.size).toBe(1);
+      await render("B");
+      expect(usePendingPageWork.getState().owners.size).toBe(1);
+      await render("A");
+      await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+      await click("[data-reset-document]");
+      expect(usePendingPageWork.getState().owners.size).toBe(0);
+    } finally {
+      window.history.replaceState(null, "", "/");
+      vi.restoreAllMocks();
     }
   });
 

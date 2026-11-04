@@ -1,6 +1,7 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import i18n from "../i18n";
 import { buttonVariants } from "./ui/button-variants";
+import { reloadPage } from "../features/connect/reloadPage";
 
 interface Props {
   children: ReactNode;
@@ -27,7 +28,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   handleRefresh = () => {
-    window.location.reload();
+    reloadPage();
   };
 
   handleReset = () => {

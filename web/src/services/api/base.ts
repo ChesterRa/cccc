@@ -16,6 +16,7 @@ import type {
   TaskChecklistItem,
 } from "../../types";
 import { frameResourceUrl } from "../../features/connect/protocol";
+import { frameAccessPaused } from "../../features/connect/frameAccess";
 
 export type ApiResponse<T> =
   | { ok: true; result: T; error?: null }
@@ -799,6 +800,25 @@ export function normalizePresentationBrowserSurfaceState(
 }
 
 export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
+  if (frameAccessPaused()) {
+    return makeErrorResponse("NETWORK_ERROR", "The remote workspace is reconnecting.");
+  }
+  return apiJsonRequest<T>(path, init, true);
+}
+
+// Only Connect's admission checks use this while an embedded page is paused.
+export async function apiFrameControl<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<ApiResponse<T>> {
+  return apiJsonRequest<T>(path, init, false);
+}
+
+async function apiJsonRequest<T>(
+  path: string,
+  init: RequestInit | undefined,
+  notifyAuth: boolean,
+): Promise<ApiResponse<T>> {
   let resp: Response;
   try {
     resp = await fetch(path, {
@@ -816,7 +836,7 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
     );
   }
 
-  if (resp.status === 401) {
+  if (notifyAuth && resp.status === 401) {
     authRequiredHandler?.();
   }
 
@@ -843,7 +863,12 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
 
   try {
     const data = JSON.parse(text);
-    if (!data.ok && resp.status === 401 && isAuthRequiredErrorCode(data.error?.code)) {
+    if (
+      notifyAuth &&
+      !data.ok &&
+      resp.status === 401 &&
+      isAuthRequiredErrorCode(data.error?.code)
+    ) {
       authRequiredHandler?.();
     }
     const result = normalizeApiResponse<T>(data);
@@ -870,6 +895,9 @@ export async function apiForm<T>(
   form: FormData,
   init?: RequestInit,
 ): Promise<ApiResponse<T>> {
+  if (frameAccessPaused()) {
+    return makeErrorResponse("NETWORK_ERROR", "The remote workspace is reconnecting.");
+  }
   let resp: Response;
   try {
     resp = await fetch(path, {
