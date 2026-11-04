@@ -607,6 +607,23 @@ pub(super) fn reply(
     Ok(result)
 }
 
+/// What the sender should do next. A delivery that ran out of time or lost
+/// its connection before any receipt was pending never reached the target, so
+/// it was not refused and a plain resend is the action.
+fn failure_next_step(cancellation: bool, state: &str, reason: &str) -> &'static str {
+    if cancellation {
+        "The reply request may still be active on the target. This does not stop an Actor or retract delivered work."
+    } else if state != "failed" {
+        "The target may have received this message. Check with the target before sending again."
+    } else if reason == "delivery window ended" {
+        "The delivery window ended before the target received this message. Send it again if it is still needed."
+    } else if reason == "external Group connection was disconnected" {
+        "The connection closed before the target received this message. Reconnect, then send it again if it is still needed."
+    } else {
+        "The target did not accept this message. Resolve the failure before sending a new message."
+    }
+}
+
 /// Called under the source Group permit, before the active record is removed.
 /// A final receipt and its optional notification are independently recoverable.
 pub(crate) fn notify_delivery_failure(
@@ -647,13 +664,6 @@ pub(crate) fn notify_delivery_failure(
         (false, "failed") => "Connect delivery failed",
         (false, _) => "Connect delivery unconfirmed",
     };
-    let next = if cancellation {
-        "The reply request may still be active on the target. This does not stop an Actor or retract delivered work."
-    } else if state == "failed" {
-        "The target did not accept this message. Resolve the failure before sending a new message."
-    } else {
-        "The target may have received this message. Check with the target before sending again."
-    };
     let reason = receipt
         .data
         .get("error")
@@ -662,6 +672,7 @@ pub(crate) fn notify_delivery_failure(
         .chars()
         .take(1024)
         .collect::<String>();
+    let next = failure_next_step(cancellation, state, &reason);
     let text = format!(
         "{title}: {} / {}. {next} Reason: {reason}. Source event: {}.",
         work.target().instance_id,
@@ -675,4 +686,31 @@ pub(crate) fn notify_delivery_failure(
         "context":{"transport":"connect","delivery_id":work.delivery_id(),"state":state,"dst_instance_id":work.target().instance_id,"dst_group_id":work.target().group_id}
     }).as_object().expect("notification").clone() },"system.notify")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod failure_next_step_tests {
+    use super::failure_next_step;
+
+    #[test]
+    fn an_expired_or_disconnected_delivery_is_not_reported_as_refused() {
+        for reason in [
+            "delivery window ended",
+            "external Group connection was disconnected",
+        ] {
+            let next = failure_next_step(false, "failed", reason);
+            assert!(!next.contains("did not accept"), "{reason}: {next}");
+            assert!(next.contains("send it again"), "{reason}: {next}");
+        }
+        assert!(
+            failure_next_step(false, "failed", "rejected by target").contains("did not accept")
+        );
+        assert!(
+            failure_next_step(false, "unconfirmed", "delivery window ended")
+                .contains("may have received")
+        );
+        assert!(
+            failure_next_step(true, "failed", "delivery window ended").contains("reply request")
+        );
+    }
 }
