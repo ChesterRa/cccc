@@ -452,10 +452,17 @@ fn send_with_audience_policy(
     {
         return duplicate_send(event);
     }
+    // Captured port authority is checked before dispatch and is never event
+    // content, for notifications as for chat.
     let mut data: Map<String, Value> = request
         .args
         .iter()
-        .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by"))
+        .filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "group_id" | "by" | "_cccc_native_binding" | "_cccc_web_binding"
+            )
+        })
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     match data.remove("answer") {
@@ -504,6 +511,26 @@ fn send_with_audience_policy(
                 "unsupported_notify_field",
                 "system notifications do not support generic acknowledgement",
             ));
+        }
+        // Routing ignores a target or recipient list it cannot read, and a
+        // notification without either is a broadcast; refuse those instead.
+        for key in ["target_actor_id", "actor_id"] {
+            if !matches!(data.get(key), None | Some(Value::Null | Value::String(_))) {
+                return Err(OpError::new(
+                    "invalid_args",
+                    format!("{key} must be an Actor ID"),
+                ));
+            }
+        }
+        match data.get("to") {
+            None | Some(Value::Null) => {}
+            Some(Value::Array(items)) if items.iter().all(Value::is_string) => {}
+            Some(_) => {
+                return Err(OpError::new(
+                    "invalid_args",
+                    "to must be a list of Actor IDs or selectors",
+                ));
+            }
         }
         match data.get("im_visibility") {
             None | Some(Value::Null) => {

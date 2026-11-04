@@ -2250,6 +2250,42 @@ fn captured_native_authority_rejects_replaced_members_and_conversations() {
     );
 }
 
+#[test]
+fn captured_native_authority_is_not_stored_in_a_notification() {
+    use cccc_contracts::local_session::LocalSessionBinding;
+    let fixture = Fixture::new();
+    fixture.attach();
+    let group = fixture.conversation();
+    let actor = &group.actors[0];
+    let binding = LocalSessionBinding {
+        group_id: group.group_id.clone(),
+        actor_id: actor.id.clone(),
+        actor_generation: cccc_core::actors::generation_identity(actor),
+        source_id: fixture.source.source_id.clone(),
+        session_revision: fixture.source.revision.clone(),
+    };
+    let response = crate::dispatch::dispatch(
+        &fixture.home,
+        &req(
+            "system_notify",
+            json!({
+                "group_id":group.group_id,"by":actor.id,"kind":"info",
+                "title":"Build finished","_cccc_native_binding":binding
+            }),
+        ),
+    );
+    assert!(response.ok, "native notification: {:?}", response.error);
+    let groups = GroupStore::new(fixture.home.clone()).expect("store");
+    let events = cccc_core::ledger::read_all(&groups.ledger_path(&group.group_id).expect("ledger"))
+        .expect("events");
+    let notice = events
+        .iter()
+        .find(|event| event.kind == "system.notify" && event.by == actor.id)
+        .expect("stored notification");
+    assert_eq!(notice.data["title"], "Build finished");
+    assert!(!notice.data.contains_key("_cccc_native_binding"));
+}
+
 #[tokio::test]
 async fn native_source_authority_is_rechecked_after_waiting_for_the_daemon_permit() {
     use crate::dispatch_concurrency::DispatchLocks;

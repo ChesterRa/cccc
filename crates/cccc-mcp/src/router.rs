@@ -1093,6 +1093,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bound_notifications_reach_their_recipients_and_never_widen_a_target() {
+        if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+            module_path!(),
+            "::",
+            "bound_notifications_reach_their_recipients_and_never_widen_a_target"
+        )) {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("groups");
+        let mut group = store.create("notify routing", "").expect("group");
+        for id in ["lead", "peer", "other"] {
+            cccc_core::actors::add(&mut group, cccc_contracts::Actor::new(id)).expect("actor");
+        }
+        store.save(&group).expect("save group");
+        let daemon_home = home.clone();
+        let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        let client = cccc_client::DaemonClient::new(home.clone());
+        for _ in 0..100 {
+            if client
+                .call(&cccc_contracts::DaemonRequest {
+                    v: 1,
+                    op: "group_list".into(),
+                    args: serde_json::Map::new(),
+                })
+                .await
+                .is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+
+        let context = Some(RequestContext {
+            native_binding: None,
+            binding: None,
+            group_id: &group.group_id,
+            actor_id: "lead",
+        });
+        for (route, recipients) in [
+            // No target is a broadcast to everyone but the sender.
+            (json!({}), vec!["peer", "other"]),
+            (json!({"target_actor_id":"peer"}), vec!["peer"]),
+            // A target naming the sender reaches no one rather than everyone.
+            (json!({"target_actor_id":"lead"}), vec![]),
+            // The caller's identity must not override the recipients it names.
+            (json!({"to":["peer"]}), vec!["peer"]),
+        ] {
+            let mut args = route.as_object().cloned().expect("route");
+            args.insert("title".into(), json!("Build finished"));
+            let result =
+                super::call_with_context(&home, &client, "cccc_notify", args, context, false)
+                    .await
+                    .expect("notify");
+            let event: cccc_contracts::Event =
+                serde_json::from_value(result["structuredContent"]["event"].clone())
+                    .expect("stored notification");
+            assert_eq!(event.kind, "system.notify", "{route}");
+            assert_eq!(event.by, "lead", "{route}");
+            assert!(!event.data.contains_key("actor_id"), "{route}");
+            let reached: Vec<_> = ["lead", "peer", "other"]
+                .into_iter()
+                .filter(|actor| cccc_core::inbox::is_for_actor(&group, &event, actor))
+                .collect();
+            assert_eq!(reached, recipients, "{route}");
+        }
+
+        // Delivery bookkeeping may still be appended, so count notifications.
+        let ledger = store.ledger_path(&group.group_id).expect("ledger path");
+        let notifications = || {
+            cccc_core::ledger::read_all(&ledger)
+                .expect("ledger")
+                .iter()
+                .filter(|event| event.kind == "system.notify")
+                .count()
+        };
+        let before = notifications();
+        for refused in [
+            // The tool promises an internal notification.
+            json!({"im_visibility":"public"}),
+            // Routing cannot read these, and would treat them as no target.
+            json!({"target_actor_id":["peer"]}),
+            json!({"to":[7]}),
+        ] {
+            let mut args = refused.as_object().cloned().expect("refused");
+            args.insert("title".into(), json!("Build finished"));
+            assert!(
+                super::call_with_context(&home, &client, "cccc_notify", args, context, false)
+                    .await
+                    .is_err(),
+                "{refused}"
+            );
+        }
+        assert_eq!(notifications(), before);
+
+        daemon_task.abort();
+    }
+
+    #[tokio::test]
     async fn user_control_plane_routes_an_explicit_cross_group_target() {
         if crate::lib_tests::isolate_embedded_daemon_test(concat!(
             module_path!(),

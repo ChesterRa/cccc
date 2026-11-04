@@ -94,7 +94,23 @@ pub fn daemon_call(
         "cccc_memory" => return action(args, actions::memory),
         "cccc_memory_admin" => return action(args, actions::memory_admin),
         "cccc_automation" => return action(args, actions::automation),
-        "cccc_notify" => return action(args, actions::notify),
+        "cccc_notify" => {
+            // The tool's `actor_id` names the caller, as for every Actor tool, but a
+            // stored notification would read it as its target, and the sender never
+            // receives its own event. Resolve the caller into `by`; only
+            // `target_actor_id` (or `to`) addresses someone.
+            normalize_message_author(&mut args);
+            args.remove("actor_id");
+            // The tool promises an internal notification; IM visibility stays a
+            // daemon producer's explicit choice.
+            if args
+                .get("im_visibility")
+                .is_some_and(|value| !value.is_null() && value != "internal")
+            {
+                return Err("cccc_notify sends internal notifications; omit im_visibility".into());
+            }
+            return action(args, actions::notify);
+        }
         "cccc_presentation" => return action(args, actions::presentation),
         "cccc_space" => return space(args),
         "cccc_headless" => return action(args, actions::headless),
@@ -536,6 +552,44 @@ mod tests {
             let args = args.clone();
             let (_, args) = daemon_call(tool, args).expect("mapping");
             assert_eq!(args["by"], "backend", "tool={tool}");
+        }
+    }
+
+    #[test]
+    fn notify_resolves_its_actor_id_into_the_author_never_the_target() {
+        for (input, author) in [
+            // Without runtime context, actor_id is the caller, as the schema says.
+            (json!({"actor_id":"lead"}), "lead"),
+            // A bound or environment caller's own actor_id.
+            (json!({"actor_id":"lead","by":"lead"}), "lead"),
+            // Any other actor_id still names a caller, never a recipient.
+            (json!({"actor_id":"peer","by":"lead"}), "lead"),
+        ] {
+            let mut args = input.as_object().cloned().expect("args");
+            args.insert("action".into(), json!("send"));
+            args.insert("title".into(), json!("Build finished"));
+            args.insert("target_actor_id".into(), json!("reviewer"));
+            let (op, args) = daemon_call("cccc_notify", args).expect("mapping");
+            assert_eq!(op, "system_notify", "{input}");
+            assert_eq!(args["by"], author, "{input}");
+            assert!(!args.contains_key("actor_id"), "{input}");
+            assert_eq!(args["target_actor_id"], "reviewer", "{input}");
+            assert_eq!(args["title"], "Build finished", "{input}");
+        }
+        for (visibility, accepted) in [
+            (json!("internal"), true),
+            (json!(null), true),
+            (json!("public"), false),
+        ] {
+            let args = json!({"action":"send","by":"lead","im_visibility":visibility})
+                .as_object()
+                .cloned()
+                .expect("args");
+            assert_eq!(
+                daemon_call("cccc_notify", args).is_ok(),
+                accepted,
+                "{visibility}"
+            );
         }
     }
 

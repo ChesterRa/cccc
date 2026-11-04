@@ -157,6 +157,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   silence: each validated update and each answered permission request restarts it, so a turn still
   times out when the provider sends neither for 300 seconds.
   Thanks to [@chriscoveries](https://github.com/chriscoveries) for [#184](https://github.com/ChesterRa/cccc/pull/184).
+- A notification an agent sends with the MCP `cccc_notify` tool without `target_actor_id` now
+  reaches its recipients. The tool stored the calling agent's own ID in the notification, where
+  routing reads it as the target, and an agent never receives its own notification, so such a
+  notification reached no one. The caller is now only the author, and an ordinary notification with
+  neither a target nor recipients is a broadcast to the Group, as the event standard says; one that
+  targets its sender still reaches no one. The tool refuses an `im_visibility` other than
+  `internal`, and the daemon refuses a `target_actor_id` or `to` it cannot read instead of treating
+  it as no target. Notifications from a native session or Web model no longer copy the binding CCCC
+  checked the call against into the Group's history. Thanks to
+  [@chriscoveries](https://github.com/chriscoveries) for finding and diagnosing this in
+  [#186](https://github.com/ChesterRa/cccc/pull/186).
 - Commands a Web model runs with `cccc_exec_command` now have the common pagers turned off by
   default, so `git log` and similar commands no longer wait in a pager for a key press. On Unix the
   session sets `PAGER`, `GIT_PAGER`, `GH_PAGER` and `MANPAGER` to `cat`, overriding inherited

@@ -3078,7 +3078,8 @@
           "type": "string"
         },
         "target_actor_id": {
-          "type": "string"
+          "type": "string",
+          "description": "Actor to notify. Omit to broadcast to the Group."
         },
         "priority": {
           "type": "string",

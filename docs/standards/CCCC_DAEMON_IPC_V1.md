@@ -6373,6 +6373,15 @@ Args:
 external IM delivery. Producers must opt in explicitly instead of relying on
 `to`, `actor_id`, or `target_actor_id` inference.
 
+The caller is the event's `by`, and recipients follow the routing rules in
+CCCS §7.1. `target_actor_id` (and a legacy `actor_id`) must be a string or
+null, and `to` a list of strings or null; the operation rejects other types with
+`invalid_args` instead of reading them as no target, which would be a
+broadcast. Port authority such as `_cccc_native_binding` is checked before
+dispatch and is not stored in the event. The MCP `cccc_notify` tool's `actor_id`
+names the caller; the port resolves it into `by` and does not forward it. The
+tool sends internal notifications only and refuses any other `im_visibility`.
+
 Result:
 ```ts
 { event: CCCSEventV1 } // kind="system.notify"
