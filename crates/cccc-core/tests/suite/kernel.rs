@@ -245,3 +245,33 @@ fn system_notification_respects_its_explicit_actor_target() {
     assert!(inbox::is_for_actor(&group, &notification, "peer"));
     assert!(!inbox::is_for_actor(&group, &notification, "lead"));
 }
+
+#[test]
+fn system_notification_naming_its_sender_routes_by_to() {
+    let (_temp, _home, store, group_id) = fixture();
+    store
+        .mutate(&group_id, |group| {
+            actors::add(group, Actor::new("lead"))?;
+            actors::add(group, Actor::new("peer"))?;
+            actors::add(group, Actor::new("other"))?;
+            Ok(())
+        })
+        .expect("actors");
+    let group = store.load(&group_id).expect("load");
+    // An actor's notify call carried its own identity as actor_id.
+    let notify = |to: &[&str]| {
+        let mut event = Event::new("system.notify", &group_id);
+        event.by = "lead".into();
+        event.data = json!({"actor_id":"lead","to":to,"text":"handover ready"})
+            .as_object()
+            .cloned()
+            .expect("notify data");
+        event
+    };
+
+    assert!(inbox::is_for_actor(&group, &notify(&["peer"]), "peer"));
+    assert!(!inbox::is_for_actor(&group, &notify(&["peer"]), "other"));
+    assert!(!inbox::is_for_actor(&group, &notify(&["peer"]), "lead"));
+    // With no `to`, nothing changes: the notification is not broadcast.
+    assert!(!inbox::is_for_actor(&group, &notify(&[]), "peer"));
+}
