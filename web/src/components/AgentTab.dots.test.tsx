@@ -193,6 +193,31 @@ it("keeps confirmation visible after Actor refresh without adding read-only cont
   expect(host.querySelector("[data-runtime-confirmation]")).toBeNull();
 });
 
+it("says why a stopped Claude waits only when the daemon reports the paused confirmation", async () => {
+  const stopped: Actor = {
+    id: "claude",
+    title: "Claude",
+    runtime: "claude",
+    runner_effective: "pty",
+    enabled: true,
+    running: false,
+  };
+  await render(false, { ...stopped, runtime_confirmation_paused: true }, "g_confirmation");
+  const notice = host.querySelector('[data-runtime-confirmation="paused"]')!;
+  expect(notice.getAttribute("role")).toBe("status");
+  expect(notice.textContent).toBe("runtimeConfirmationPausedHint");
+  expect(host.textContent).toContain("runtimeConfirmationPaused");
+  // Without a Launch control the state stays named, but no instruction is shown.
+  await render(false, { ...stopped, runtime_confirmation_paused: true }, "g_confirmation", true);
+  expect(host.querySelector("[data-runtime-confirmation]")).toBeNull();
+  expect(host.textContent).toContain("runtimeConfirmationPaused");
+  for (const paused of [false, undefined]) {
+    await render(false, { ...stopped, runtime_confirmation_paused: paused }, "g_confirmation");
+    expect(host.querySelector("[data-runtime-confirmation]")).toBeNull();
+    expect(host.textContent).not.toContain("runtimeConfirmationPaused");
+  }
+});
+
 it("keeps distinct LCD status shapes and their accessible Actor labels", async () => {
   const managed: Actor = {
     id: "managed",

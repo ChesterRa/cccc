@@ -12,6 +12,92 @@ fn launches(fixture: &Fixture) -> usize {
 }
 
 #[test]
+fn pause_projection_tracks_the_effective_runtime_and_is_not_configuration() {
+    if isolated(
+        "pause_tests::pause_projection_tracks_the_effective_runtime_and_is_not_configuration",
+    ) {
+        return;
+    }
+    let fixture = Fixture::new();
+    assert_eq!(fixture.listed()["runtime_confirmation_paused"], false);
+    crate::ops::local_headless::pause_confirmation(&fixture.group.group_id, "claude")
+        .expect("pause confirmation");
+    assert_eq!(fixture.listed()["runtime_confirmation_paused"], true);
+
+    let updated = fixture.request(
+        "actor_update",
+        json!({"title":"Renamed", "runtime_confirmation_paused":false}),
+    );
+    assert!(updated.ok, "{:?}", updated.error);
+    assert_eq!(updated.result["actor"]["runtime_confirmation_paused"], true);
+    assert!(
+        updated.result["event"]["data"]["patch"]
+            .get("runtime_confirmation_paused")
+            .is_none(),
+        "observed state is not part of the persisted update event"
+    );
+    assert!(
+        json!(fixture.stored().actors[0])
+            .get("runtime_confirmation_paused")
+            .is_none()
+    );
+
+    let store = GroupStore::new(fixture.home.clone()).expect("store");
+    store
+        .mutate(&fixture.group.group_id, |group| {
+            group.actors[0].runtime = ActorRuntime::Codex;
+            Ok(())
+        })
+        .expect("change configured runtime");
+    assert!(
+        crate::ops::local_headless::confirmation_paused(&fixture.group.group_id, "claude")
+            .expect("pause key is retained")
+    );
+    assert_eq!(fixture.listed()["runtime_confirmation_paused"], false);
+
+    store
+        .mutate(&fixture.group.group_id, |group| {
+            group.actors[0].runtime = ActorRuntime::Claude;
+            group.actors[0].external_session_id = "claude:native".into();
+            Ok(())
+        })
+        .expect("switch to a native session");
+    assert_eq!(fixture.listed()["runtime_confirmation_paused"], false);
+
+    store
+        .mutate(&fixture.group.group_id, |group| {
+            group.actors[0].runtime = ActorRuntime::Claude;
+            group.actors[0].external_session_id.clear();
+            group.actors[0].profile_id = "missing-profile".into();
+            Ok(())
+        })
+        .expect("link missing profile");
+    assert!(
+        fixture
+            .listed()
+            .get("runtime_confirmation_paused")
+            .is_none(),
+        "an unresolved Profile must not turn an unknown pause into false"
+    );
+    let renamed = fixture.request("actor_update", json!({"title":"Still saved"}));
+    assert!(
+        renamed.ok,
+        "projection failure must not fail an update: {:?}",
+        renamed.error
+    );
+    assert_eq!(fixture.stored().actors[0].title, "Still saved");
+    assert!(
+        renamed.result["actor"]
+            .get("runtime_confirmation_paused")
+            .is_none()
+    );
+    assert!(
+        !fixture.config.join("launches").exists(),
+        "reading the projection must not launch a provider"
+    );
+}
+
+#[test]
 fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
     if isolated("pause_tests::closed_confirmation_defers_queued_delivery_until_an_explicit_retry") {
         return;
@@ -54,6 +140,7 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
             assert!(Instant::now() < deadline, "confirmation did not exit");
             std::thread::sleep(Duration::from_millis(20));
         }
+        assert_eq!(fixture.listed()["runtime_confirmation_paused"], true);
         assert_eq!(launches(&fixture), 1);
         let mut event = Event::new("chat.message", &fixture.group.group_id);
         event.by = "user".into();
@@ -160,6 +247,7 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
         }
         let retried = fixture.request(operation, json!({"enabled":true}));
         assert!(retried.ok, "{operation}: {:?}", retried.error);
+        assert_eq!(fixture.listed()["runtime_confirmation_paused"], false);
         assert_eq!(
             launches(&fixture),
             2,
@@ -322,6 +410,11 @@ fn paused_claude_does_not_block_a_profile_switched_to_another_runtime() {
         ActorRuntime::Custom
     );
     crate::ops::local_headless::pause_confirmation(&group.group_id, "claude").expect("old pause");
+    assert_eq!(
+        fixture.listed()["runtime_confirmation_paused"],
+        false,
+        "a retained pause does not describe the effective Custom Profile"
+    );
     let mut event = Event::new("chat.message", &group.group_id);
     event.by = "user".into();
     event.data = json!({"to":["claude"],"text":"PENDING_TASK","message_mode":"send"})

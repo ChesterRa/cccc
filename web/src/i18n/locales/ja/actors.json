@@ -24,6 +24,8 @@
   "runtimeConfirmationOpenTerminal": "確認用ターミナルを開く",
   "runtimeConfirmationPending": "ターミナルでの確認を待っています",
   "runtimeConfirmationHint": "このターミナルで Claude の確認に答え、ターミナルは開いたままにしてください。承認すると CCCC が接続を試みます。拒否または終了した場合は「起動」で再試行してください。",
+  "runtimeConfirmationPaused": "確認が閉じられました",
+  "runtimeConfirmationPausedHint": "CCCC が接続する前に Claude の確認が閉じられました。今回の CCCC の実行中は自動で再試行せず、このエージェントへのメッセージは待機します。「起動」で再試行してください。",
   "runtimeResumeFailedDescription": "自動再開を停止しています。保存済みの会話と未配信メッセージは保持されます。原因を修正して起動または再起動で再試行するか、新しいセッションを選んで開始してください。",
   "lastTerminalOutput": "最後のターミナル出力",
   "launchAgent": "エージェントを起動",

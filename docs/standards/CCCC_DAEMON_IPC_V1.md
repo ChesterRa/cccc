@@ -3706,6 +3706,22 @@ is running without a ready managed session. It is a live projection, not Actor
 configuration, consent, provider readiness or task-delivery acceptance. A false
 value alone MUST NOT be interpreted as approval. Reads MUST NOT start a Runtime.
 
+Actor rows may also include `runtime_confirmation_paused: boolean`. When true,
+the effective Runtime is a managed Claude session whose automatic retries are
+paused in this daemon process after a confirmation ended before connection.
+This is a live observation, not Actor configuration or a statement that the
+user declined. Explicit user `actor_start`, `actor_restart`, `actor_new_session`,
+`group_start`, or `actor_update` with `enabled=true` can clear the pause, subject
+to the operation's running-state conditions. `actor_update` can clear it while
+the Group is stopped without starting the Actor; the operations retain their
+normal lifecycle behavior. Daemon restart also clears this
+in-memory state. A false value does not imply approval or
+provider readiness. An absent field means the observation is unavailable (or
+the daemon predates it), not that retries are enabled. Runtime/Profile changes
+are considered when evaluating the observation; reads do not start work.
+The `actor` returned by `actor_update`, `actor_start`, `actor_stop`,
+`actor_restart` and `actor_new_session` carries the same projection.
+
 Each row's `effective_scope` is the `group_show.effective_scope` projection
 evaluated for that row's Actor rather than the caller, with the same shape and
 `{}` when unavailable. For a running managed owner, `path` is its immutable
@@ -3831,6 +3847,10 @@ Result:
 ```ts
 { actor: Record<string, unknown>; event: CCCSEventV1; runtime_confirmation_required: boolean }
 ```
+
+The returned `actor` carries the same live confirmation projections as
+`actor_list`. `runtime_confirmation_paused` is read-only response metadata and
+MUST NOT be applied as Actor configuration by `actor_update`.
 
 #### `actor_remove`
 

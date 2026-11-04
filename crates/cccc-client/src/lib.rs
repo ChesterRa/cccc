@@ -11,6 +11,12 @@ mod connection;
 use connection::Connection;
 pub use connection::DaemonStream;
 
+/// The address file the running daemon writes for its clients.
+#[must_use]
+pub fn address_path(home: &HomeLayout) -> PathBuf {
+    home.daemon_dir().join("ccccd.addr.json")
+}
+
 #[derive(Debug, Error)]
 pub enum ClientError {
     #[error("daemon address unavailable at {0}")]
@@ -235,7 +241,7 @@ impl DaemonClient {
         if let Some(address) = self.shared.address.read().await.clone() {
             return Ok(address);
         }
-        let path = self.home.daemon_dir().join("ccccd.addr.json");
+        let path = address_path(&self.home);
         let raw = tokio::fs::read(&path)
             .await
             .map_err(|_| ClientError::AddressUnavailable(path))?;

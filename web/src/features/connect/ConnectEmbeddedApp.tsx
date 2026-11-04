@@ -14,6 +14,7 @@ import { AuthGate } from "../../components/AuthGate";
 import { apiJson } from "../../services/api/base";
 import { fetchGroups } from "../../services/api";
 import { useGroupStore } from "../../stores";
+import { useComposerStore } from "../../stores/useComposerStore";
 import { useModalStore } from "../../stores/useModalStore";
 import { acceptsFrameMessage, CONNECT_CHANNEL, readFrameProof, type FrameProof } from "./protocol";
 
@@ -24,6 +25,10 @@ export function ConnectEmbeddedApp() {
   const [proof, setProof] = useState(() => readFrameProof(window.location));
   const [expired, setExpired] = useState(false);
   const [selection, setSelection] = useState<EmbeddedSelection | null>(null);
+  const workspaceDirty = useWorkspaceNavigation((state) => state.owners.size > 0);
+  const pendingSends = useComposerStore((state) =>
+    Object.values(state.failedSendsByGroup).some((items) => items.length > 0),
+  );
   const proofRef = useRef(proof);
   const send = useCallback((message: Record<string, unknown>) => {
     const current = proofRef.current;
@@ -98,6 +103,13 @@ export function ConnectEmbeddedApp() {
     };
   }, [proof, send]);
 
+  // Switching instances destroys this document without a beforeunload event.
+  // Keep reporting through the sign-in gate: a send can fail after it unmounts
+  // the workbench, and its recovery snapshot is still owned by this page.
+  useEffect(() => {
+    send({ type: "workspace_dirty", dirty: workspaceDirty || pendingSends });
+  }, [workspaceDirty, pendingSends, send]);
+
   if (!proof || expired || window.parent === window) {
     return (
       <div role="status" className="flex h-dvh items-center justify-center p-6 text-center text-sm">
@@ -128,10 +140,6 @@ function AdmittedWorkbench({
   send: (message: Record<string, unknown>) => void;
   expire: () => void;
 }) {
-  const workspaceDirty = useWorkspaceNavigation((state) => state.owners.size > 0);
-  useEffect(() => {
-    send({ type: "workspace_dirty", dirty: workspaceDirty });
-  }, [workspaceDirty, send]);
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groups = useGroupStore((state) => state.groups);
   const lastSummary = useRef<GroupConnectionSummary | null>(null);

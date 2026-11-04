@@ -1,80 +1,79 @@
-import { useComposerStore } from "../../stores/useComposerStore";
+import { hasComposerDraft, useComposerStore } from "../../stores/useComposerStore";
 import { useGroupStore } from "../../stores";
 import {
   getEffectiveComposerDestGroupId,
   isComposerGroupSettled,
 } from "../../stores/useComposerStore";
-import type { PresentationMessageRef, ReplyTarget, VoiceDocumentMessageRef } from "../../types";
-import type { ComposerMessageMode } from "../../stores/useComposerStore";
+import type { ComposerState, FailedSend } from "../../stores/useComposerStore";
 
-export type FailedSendComposerSnapshot = {
-  composerGroupMentionTokens?: ReturnType<
-    typeof useComposerStore.getState
-  >["composerGroupMentionTokens"];
-  composerAgentMentionTokens?: ReturnType<
-    typeof useComposerStore.getState
-  >["composerAgentMentionTokens"];
-  originGroupId: string;
-  composerText: string;
-  composerFiles: File[];
-  toText: string;
-  replyTarget: ReplyTarget;
-  quotedPresentationRef: PresentationMessageRef | null;
-  quotedVoiceDocumentRef: VoiceDocumentMessageRef | null;
-  messageMode: ComposerMessageMode;
-};
-
-type FailedSendComposerRestoreActions = Pick<
-  ReturnType<typeof useComposerStore.getState>,
-  | "setComposerText"
-  | "setComposerFiles"
-  | "setReplyTarget"
-  | "setQuotedPresentationRef"
-  | "setQuotedVoiceDocumentRef"
-  | "setMessageMode"
-  | "upsertDraft"
+export type FailedSendComposerSnapshot = FailedSend;
+type EmptyComposerRoute = Pick<
+  ComposerState,
+  "activeGroupId" | "destGroupId" | "toText" | "messageMode"
 >;
+
+/** A late failure belongs to its source Group, not the Group now on screen. */
+export function describeSendFailure(originGroupId: string, message: string): string {
+  const groupId = originGroupId.trim();
+  const { selectedGroupId, groups } = useGroupStore.getState();
+  if (!groupId || selectedGroupId === groupId) return message;
+  const title = groups.find((group) => group.group_id === groupId)?.title?.trim() || groupId;
+  return `${title}: ${message}`;
+}
+
+/** Capture the user's actual input, including its destination, before clearing it. */
+export function captureSendComposerState(
+  originGroupId: string,
+  id: string,
+  retryKey: string | null,
+  state = useComposerStore.getState(),
+): FailedSend {
+  return {
+    id,
+    originGroupId,
+    retryKey,
+    destGroupId: state.destGroupId || originGroupId,
+    composerGroupMentionTokens: state.composerGroupMentionTokens.slice(),
+    composerAgentMentionTokens: state.composerAgentMentionTokens.slice(),
+    composerText: state.composerText,
+    composerFiles: state.composerFiles.slice(),
+    toText: state.toText,
+    replyTarget: state.replyTarget,
+    quotedPresentationRef: state.quotedPresentationRef,
+    quotedVoiceDocumentRef: state.quotedVoiceDocumentRef,
+    messageMode: state.messageMode,
+  };
+}
+
+/** Consume only the draft being sent; later completion must not clear a newer draft. */
+export function clearSendComposerState(originGroupId: string): EmptyComposerRoute {
+  const state = useComposerStore.getState();
+  state.clearComposer();
+  state.clearDraft(originGroupId);
+  const { activeGroupId, destGroupId, toText, messageMode } = useComposerStore.getState();
+  return { activeGroupId, destGroupId, toText, messageMode };
+}
 
 export function restoreFailedSendComposerState(
   snapshot: FailedSendComposerSnapshot,
-  actions?: FailedSendComposerRestoreActions,
+  afterClear?: EmptyComposerRoute,
 ): void {
   const originGroupId = String(snapshot.originGroupId || "").trim();
   if (!originGroupId) return;
-
+  useComposerStore.getState().enqueueFailedSend(snapshot);
   const composerState = useComposerStore.getState();
-  const restoreActions = actions || composerState;
   const currentSelectedGroupId = String(useGroupStore.getState().selectedGroupId || "").trim();
-  const currentActiveGroupId = String(composerState.activeGroupId || "").trim();
-  const stillOnOriginGroup =
-    currentSelectedGroupId === originGroupId && currentActiveGroupId === originGroupId;
-
-  if (stillOnOriginGroup) {
-    composerState.setComposerGroupMentionTokens(snapshot.composerGroupMentionTokens || []);
-    composerState.setComposerAgentMentionTokens(snapshot.composerAgentMentionTokens || []);
-    restoreActions.setComposerText(snapshot.composerText);
-    restoreActions.setComposerFiles(snapshot.composerFiles);
-    restoreActions.setReplyTarget(snapshot.replyTarget);
-    restoreActions.setQuotedPresentationRef(snapshot.quotedPresentationRef);
-    restoreActions.setQuotedVoiceDocumentRef(snapshot.quotedVoiceDocumentRef);
-    restoreActions.setMessageMode(snapshot.messageMode);
-    // Restore the failed message's exact recipients without overwriting a
-    // normal selection the user may have changed while its request was pending.
-    useComposerStore.setState({ toText: snapshot.toText });
-    return;
+  if (
+    afterClear &&
+    currentSelectedGroupId === originGroupId &&
+    !hasComposerDraft(composerState) &&
+    composerState.activeGroupId === afterClear.activeGroupId &&
+    composerState.destGroupId === afterClear.destGroupId &&
+    composerState.toText === afterClear.toText &&
+    composerState.messageMode === afterClear.messageMode
+  ) {
+    composerState.restoreFailedSend(originGroupId, snapshot.id);
   }
-
-  restoreActions.upsertDraft(originGroupId, () => ({
-    composerGroupMentionTokens: snapshot.composerGroupMentionTokens,
-    composerAgentMentionTokens: snapshot.composerAgentMentionTokens,
-    composerText: snapshot.composerText,
-    composerFiles: snapshot.composerFiles,
-    toText: snapshot.toText,
-    replyTarget: snapshot.replyTarget,
-    quotedPresentationRef: snapshot.quotedPresentationRef,
-    quotedVoiceDocumentRef: snapshot.quotedVoiceDocumentRef,
-    messageMode: snapshot.messageMode,
-  }));
 }
 
 export type ComposerSendRoutingSnapshot = {

@@ -17,7 +17,8 @@ mod untrusted_workspace_tests;
 mod workspace;
 pub(crate) use attributed_reap::reap_group;
 pub(super) use confirmation::{
-    AUTOMATIC_LIFECYCLE, actor_response, restore_runtime, user_confirmation_retry,
+    AUTOMATIC_LIFECYCLE, actor_response, confirmation_pause_applies, restore_runtime,
+    user_confirmation_retry,
 };
 #[cfg(test)]
 pub(super) use confirmation::{confirmation_required, require_restored_managed_actor};

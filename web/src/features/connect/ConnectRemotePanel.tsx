@@ -101,7 +101,8 @@ export function ConnectRemotePanel({
           latest.current.onOpenSidebar();
           break;
         case "locked":
-          setWorkspaceDirty(dirtyOwner, false);
+          // The frame document can still own failed sends while its sign-in
+          // gate is shown. Its outer component reports when that work clears.
           latest.current.workbench.remember(target, null);
           break;
         case "expired":

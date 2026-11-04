@@ -116,6 +116,17 @@ it("shows confirmation from refreshed Actors and keeps the existing terminal ent
   expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
 });
 
+it("names a closed confirmation only when the daemon reports the pause", async () => {
+  await render({ running: false, runtime_confirmation_paused: true });
+  expect(host.textContent).toContain("actors:runtimeConfirmationPaused");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
+  for (const paused of [false, undefined]) {
+    await render({ running: false, runtime_confirmation_paused: paused });
+    expect(host.textContent).not.toContain("actors:runtimeConfirmationPaused");
+    expect(host.querySelector('button[data-tone="attention"]')).toBeNull();
+  }
+});
+
 it("moves the ring only while work is in progress", async () => {
   for (const state of ["working", "idle", "stuck", "stopped", "working"] as const) {
     await render({ effective_working_state: state, running: state !== "stopped" });

@@ -61,6 +61,8 @@ Updating CCCC and loading the update into an existing native session are separat
    - **OpenCode:** it watches the owned plugin directory; reload or reopen the same native session if its plugin or MCP declaration remains old.
 4. Check the newly loaded tools: `cccc_message_history` must offer `event_id`, and `cccc_session send` must offer `mode`. `cccc sessions list` confirms receive readiness, not which tool declarations a native application has cached. If the tool fields are missing, finish reconnecting MCP before processing notifications that use them.
 
+After each tool call, the `cccc` MCP server compares its own CCCC version with the version the daemon address file declares when read. When they differ, the next tool result that can carry it includes a `cccc_version_notice` field naming both versions and the step above for that runtime, or asking you to restart CCCC when the daemon is the older one. The notice appears once, and again only after the declared version changes to another one that differs. MCP servers from releases before this check cannot report a difference, and two builds with the same version number are not told apart.
+
 If the native application cannot reload those processes, resume its original
 conversation after restarting it. Native history is retained. When Claude or Pi
 resumes the last recorded conversation with the same provider configuration,

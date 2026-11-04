@@ -250,11 +250,13 @@ function RuntimeDockActorButtonView({
   const useRuntimeStatus = hasManagedRuntimeOutput(item.actor) || workingState === "error";
   const statusLabel = item.actor.runtime_confirmation_required
     ? t("actors:runtimeConfirmationPending")
-    : item.liveWorkCard && !useRuntimeStatus
-      ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
-      : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
-          t(key === "error" ? "common:error" : `actors:${key}`, options),
-        );
+    : item.actor.runtime_confirmation_paused === true
+      ? t("actors:runtimeConfirmationPaused")
+      : item.liveWorkCard && !useRuntimeStatus
+        ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
+        : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
+            t(key === "error" ? "common:error" : `actors:${key}`, options),
+          );
   const queuedCount = Math.max(0, Number(item.webModelQueuedCount || 0));
   const queuedLabel =
     queuedCount > 0

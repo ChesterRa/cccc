@@ -124,10 +124,14 @@ describe("Connect Group references", () => {
       composerText: "new draft",
       composerGroupMentionTokens: [],
       drafts: {},
+      failedSendsByGroup: {},
     });
     useGroupStore.setState({ selectedGroupId: "b" });
     restoreFailedSendComposerState({
+      id: "failed-1",
       originGroupId: "a",
+      destGroupId: "a",
+      retryKey: null,
       composerText: "#Team · Mac",
       composerGroupMentionTokens: [token],
       composerFiles: [],
@@ -139,6 +143,7 @@ describe("Connect Group references", () => {
     });
     expect(useComposerStore.getState().composerGroupMentionTokens).toEqual([]);
     useComposerStore.getState().switchGroup("b", "a");
+    expect(useComposerStore.getState().restoreFailedSend("a", "failed-1")).toBe(true);
     expect(useComposerStore.getState().composerGroupMentionTokens).toEqual([token]);
   });
 

@@ -14,6 +14,16 @@ export const RUNTIME_CONFIRMATION_REFRESH_EVENTS = new Set([
   "headless.turn.cancelled",
 ]);
 
+/** The daemon reports a confirmation terminal that closed before admission. It can arrive before
+ *  the page saw that confirmation, so it refreshes Actors on its own; whether delivery is paused
+ *  is read from the refreshed Actor, never inferred from this event. */
+export function runtimeConfirmationEnded(eventType: string, data: unknown): boolean {
+  return (
+    eventType === "headless.session.exited" &&
+    (data as { reason?: unknown } | null)?.reason === "interactive_confirmation_ended"
+  );
+}
+
 export function runtimeConfirmationRequired(result: unknown, actor?: Actor): boolean {
   const value = result as
     | { runtime_confirmation_required?: boolean; actor?: Actor }

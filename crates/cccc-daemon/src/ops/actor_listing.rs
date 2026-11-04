@@ -34,7 +34,7 @@ pub(super) fn list(
             actor.normalize_runtime_constraints();
             actor.role = actors::effective_role(group, &actor.id);
             let status = actor_runtime_status::resolve(home, group, &actor);
-            let mut value = super::actor_runtime::actor_response(&group.group_id, &actor);
+            let mut value = super::actor_runtime::actor_response(home, &group.group_id, &actor);
             if let Some(object) = value.as_object_mut() {
                 object.extend(runtime_session::actor_fields(
                     home,

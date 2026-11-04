@@ -345,12 +345,8 @@ fn dispatch_to_inner(
         // Leave new events pending while this managed Claude awaits an explicit
         // retry. Already claimed work must reach the worker to be settled safely.
         if !preclaimed
-            && crate::ops::local_headless::confirmation_paused(&group.group_id, &actor.id)
-                .unwrap_or(false)
-            && crate::ops::actor_profile_runtime::resolve(home, actor).is_ok_and(|resolved| {
-                resolved.runtime == ActorRuntime::Claude
-                    && crate::ops::local_headless::supports(&resolved)
-            })
+            && crate::ops::actor_runtime::confirmation_pause_applies(home, &group.group_id, actor)
+                .is_ok_and(|paused| paused)
         {
             continue;
         }

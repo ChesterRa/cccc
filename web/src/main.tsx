@@ -1,19 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { AuthGate } from "./components/AuthGate";
-import App from "./App";
-import { CapabilityCenterStandaloneApp } from "./components/capabilities/CapabilityCenterStandaloneApp";
-import { isCapabilityCenterPath } from "./components/capabilities/capabilityCenterRoute";
 import { i18nReady } from "./i18n";
 import "./index.css";
 import { useBrandingStore } from "./stores";
 import { applyBrandingToDocument, DEFAULT_WEB_BRANDING } from "./utils/branding";
 import { applyTextScale, getStoredTextScale } from "./utils/textScale";
 import { applyUiStylePrefs, getUiStylePrefs } from "./utils/uiStyle";
-import { ConnectEmbeddedApp } from "./features/connect/ConnectEmbeddedApp";
-import { isConnectFramePath } from "./features/connect/protocol";
 import { claimVitePreloadReload, recoverDynamicImportError } from "./utils/vitePreloadRecovery";
 import { cleanupLegacyWorkers } from "./features/pushNotifications/legacyWorkers";
+import { WebRoot } from "./WebRoot";
 
 function reloadAfterStaleModuleError(error: unknown): boolean {
   return recoverDynamicImportError(error, window.sessionStorage, () => window.location.reload());
@@ -55,15 +50,10 @@ applyBrandingToDocument(DEFAULT_WEB_BRANDING);
 applyTextScale(getStoredTextScale());
 applyUiStylePrefs(getUiStylePrefs());
 void useBrandingStore.getState().refreshBranding();
-const isCapabilityCenterPage = isCapabilityCenterPath(window.location.pathname);
 
 function renderApp() {
   ReactDOM.createRoot(document.getElementById("root")!).render(
-    isConnectFramePath(window.location.pathname) ? (
-      <ConnectEmbeddedApp />
-    ) : (
-      <AuthGate>{isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}</AuthGate>
-    ),
+    <WebRoot pathname={window.location.pathname} />,
   );
 }
 

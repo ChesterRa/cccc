@@ -3,6 +3,12 @@ import { useCallback, useRef } from "react";
 import * as api from "../services/api";
 import type { ReplyTarget } from "../types";
 import {
+  captureSendComposerState,
+  clearSendComposerState,
+  describeSendFailure,
+  restoreFailedSendComposerState,
+} from "./chat/chatComposerState";
+import {
   buildSlashCommandToolArgumentsForItem,
   parseSlashCommandInput,
   resolveCapsuleSkillSlashCommand,
@@ -18,7 +24,10 @@ export type SlashDispatchMessageOptions = {
   replyTarget?: ReplyTarget;
   command?: string;
   capabilityId?: string;
+  clientId?: string;
 };
+
+type SlashAttempt = { clientId: string; restore: () => void };
 
 function summarizeCapabilityUseResult(result: unknown): string {
   const record = result && typeof result === "object" ? (result as Record<string, unknown>) : {};
@@ -42,48 +51,44 @@ function summarizeCapabilityUseResult(result: unknown): string {
 
 export async function dispatchSlashMessageOptimistically(args: {
   dispatchText: string;
-  originalText: string;
   command?: string;
   capabilityId?: string;
   replyTarget?: ReplyTarget;
   dispatchMessage: (text: string, options?: SlashDispatchMessageOptions) => Promise<boolean>;
-  clearComposer: () => void;
-  restoreComposerText: (text: string) => void;
+  beginDispatch: (text: string, options: SlashDispatchMessageOptions) => SlashAttempt;
 }): Promise<OptimisticSlashDispatchResult> {
   const dispatchText = String(args.dispatchText || "").trim();
   if (!dispatchText) return { ok: false, dispatchText: "" };
-  args.clearComposer();
-  const sent = await args.dispatchMessage(dispatchText, {
+  const options = {
     replyTarget: args.replyTarget || null,
     command: String(args.command || "").trim() || undefined,
     capabilityId: String(args.capabilityId || "").trim() || undefined,
-  });
-  if (!sent) {
-    args.restoreComposerText(args.originalText);
+  };
+  const attempt = args.beginDispatch(dispatchText, options);
+  try {
+    const sent = await args.dispatchMessage(dispatchText, {
+      ...options,
+      clientId: attempt.clientId,
+    });
+    if (!sent) attempt.restore();
+    return { ok: sent, dispatchText };
+  } catch (error) {
+    attempt.restore();
+    throw error;
   }
-  return { ok: sent, dispatchText };
 }
 
 export function useSlashCommands(args: {
   selectedGroupId: string;
-  clearComposer: () => void;
-  restoreComposerText: (text: string) => void;
+  beginDispatch: (text: string, options: SlashDispatchMessageOptions) => SlashAttempt;
   showError: (message: string) => void;
   showNotice: (payload: { message: string }) => void;
   dispatchMessage?: (text: string, options?: SlashDispatchMessageOptions) => Promise<boolean>;
   onExecuted?: () => void;
   t: TranslateFn;
 }) {
-  const {
-    selectedGroupId,
-    clearComposer,
-    restoreComposerText,
-    showError,
-    showNotice,
-    dispatchMessage,
-    onExecuted,
-    t,
-  } = args;
+  const { selectedGroupId, beginDispatch, showError, showNotice, dispatchMessage, onExecuted, t } =
+    args;
   const slashInFlightRef = useRef(false);
   const { slashCommands, refreshSlashCommands } = useSlashCommandState(selectedGroupId);
 
@@ -129,6 +134,20 @@ export function useSlashCommands(args: {
       }
 
       slashInFlightRef.current = true;
+      // A dynamic tool has no server-side client ID. Preserve its input on a
+      // failure, but do not promise an idempotent retry.
+      const dynamicSnapshot =
+        item.sourceType === "dynamic_tool"
+          ? captureSendComposerState(
+              gid,
+              `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              null,
+            )
+          : null;
+      const dynamicAfterClear = dynamicSnapshot ? clearSendComposerState(gid) : undefined;
+      const preserveDynamicFailure = () => {
+        if (dynamicSnapshot) restoreFailedSendComposerState(dynamicSnapshot, dynamicAfterClear);
+      };
       try {
         if (item.sourceType === "builtin_command") {
           const dispatchText = [item.command, slashCommand.argsText]
@@ -138,11 +157,9 @@ export function useSlashCommands(args: {
           if (!dispatchText || !dispatchMessage) return true;
           const sent = await dispatchSlashMessageOptimistically({
             dispatchText,
-            originalText: opts.text,
             replyTarget: opts.replyTarget || null,
             dispatchMessage,
-            clearComposer,
-            restoreComposerText,
+            beginDispatch,
           });
           if (!sent.ok) return true;
           void refreshSlashCommands();
@@ -155,13 +172,11 @@ export function useSlashCommands(args: {
           if (resolution.kind === "dispatch" && dispatchMessage) {
             const sent = await dispatchSlashMessageOptimistically({
               dispatchText: resolution.dispatchText,
-              originalText: opts.text,
               command: item.command,
               capabilityId: item.capabilityId,
               replyTarget: opts.replyTarget || null,
               dispatchMessage,
-              clearComposer,
-              restoreComposerText,
+              beginDispatch,
             });
             if (!sent.ok) return true;
             void refreshSlashCommands();
@@ -182,36 +197,37 @@ export function useSlashCommands(args: {
           reason: "chat_slash_command",
         });
         if (!resp.ok) {
+          preserveDynamicFailure();
           const code = String(resp.error.code || "").trim();
           const message = String(resp.error.message || "").trim();
-          showError(
-            message
-              ? code
-                ? `${code}: ${message}`
-                : message
-              : t("sendFailed", { defaultValue: "Failed to send message." }),
-          );
+          const errorMessage = message
+            ? code
+              ? `${code}: ${message}`
+              : message
+            : t("sendFailed", { defaultValue: "Failed to send message." });
+          showError(describeSendFailure(gid, errorMessage));
           return true;
         }
         const summary = summarizeCapabilityUseResult(resp.result);
-        clearComposer();
         void refreshSlashCommands();
         showNotice({ message: summary || `Executed ${item.command}` });
         onExecuted?.();
         return true;
       } catch (error) {
-        showError(error instanceof Error ? error.message : "slash command failed");
+        preserveDynamicFailure();
+        showError(
+          describeSendFailure(gid, error instanceof Error ? error.message : "slash command failed"),
+        );
         return true;
       } finally {
         slashInFlightRef.current = false;
       }
     },
     [
-      clearComposer,
       dispatchMessage,
       onExecuted,
       refreshSlashCommands,
-      restoreComposerText,
+      beginDispatch,
       selectedGroupId,
       showError,
       showNotice,

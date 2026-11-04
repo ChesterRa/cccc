@@ -137,6 +137,34 @@ fn members_are_named_by_state_and_kind() {
 }
 
 #[test]
+fn managed_confirmation_pause_is_visible_without_overriding_other_states() {
+    let actor = |enabled: bool, running: bool, native: bool, paused: Option<bool>| {
+        let mut value = json!({
+            "id":"claude", "runtime":"claude", "role":"peer", "enabled":enabled,
+            "running":running, "external_session_id":if native { "claude:s" } else { "" }
+        });
+        if let Some(paused) = paused {
+            value["runtime_confirmation_paused"] = json!(paused);
+        }
+        value
+    };
+    for (value, label) in [
+        (actor(true, false, false, Some(true)), "confirm retry"),
+        (actor(true, false, false, Some(false)), "stopped"),
+        (actor(true, false, false, None), "stopped"),
+        (actor(false, false, false, Some(true)), "off"),
+        (actor(true, true, false, Some(true)), "running"),
+        (actor(true, false, true, Some(true)), "not receiving"),
+    ] {
+        assert_eq!(
+            member(&value).expect("member").state.label(),
+            label,
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn member_reads_for_another_group_replace_instead_of_mixing() {
     let now = Instant::now();
     let one = |id: &str| Member {

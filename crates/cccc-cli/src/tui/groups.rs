@@ -131,6 +131,8 @@ fn display_order(left: &GroupSummary, right: &GroupSummary) -> Ordering {
 pub(super) enum MemberState {
     Running,
     Stopped,
+    /// A managed Claude session awaiting an explicit confirmation retry.
+    ConfirmationPaused,
     /// A managed actor that is not enabled.
     Off,
     /// A native member this group can deliver to now.
@@ -145,6 +147,7 @@ impl MemberState {
         match self {
             Self::Running => "running",
             Self::Stopped => "stopped",
+            Self::ConfirmationPaused => "confirm retry",
             Self::Off => "off",
             Self::Ready => "ready",
             Self::NotReceiving => "not receiving",
@@ -270,6 +273,9 @@ fn member(value: &Value) -> Option<Member> {
         (true, true, false) => MemberState::NotReceiving,
         (false, false, _) => MemberState::Off,
         (false, true, true) => MemberState::Running,
+        (false, true, false) if flag("runtime_confirmation_paused") == Some(true) => {
+            MemberState::ConfirmationPaused
+        }
         (false, true, false) => MemberState::Stopped,
     };
     Some(Member {

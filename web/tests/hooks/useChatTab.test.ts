@@ -42,6 +42,7 @@ import {
 } from "../../src/hooks/useChatTab";
 import { useComposerStore } from "../../src/stores/useComposerStore";
 import { useGroupStore } from "../../src/stores/useGroupStore";
+import { clearSendComposerState } from "../../src/hooks/chat/chatComposerState";
 import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION } from "../../src/stores/useUIStore";
 import {
   formatSendMessageError,
@@ -68,6 +69,8 @@ const resetComposerAndGroupSelection = () => {
     destGroupId: "",
     drafts: {},
     normalToTextByGroup: {},
+    failedSendsByGroup: {},
+    retryCandidate: null,
   });
 };
 
@@ -321,17 +324,24 @@ describe("restoreFailedSendComposerState", () => {
     useGroupStore.setState({ selectedGroupId: "g-a" });
     useComposerStore.getState().switchGroup(null, "g-a");
     useComposerStore.getState().setComposerText("");
+    const afterClear = clearSendComposerState("g-a");
 
-    restoreFailedSendComposerState({
-      originGroupId: "g-a",
-      composerText: "failed message",
-      composerFiles: [],
-      toText: "@foreman",
-      replyTarget: { eventId: "evt-1", by: "peer-1", text: "prior" },
-      quotedPresentationRef: null,
-      quotedVoiceDocumentRef: null,
-      messageMode: "mail",
-    });
+    restoreFailedSendComposerState(
+      {
+        id: "send-a",
+        originGroupId: "g-a",
+        destGroupId: "g-a",
+        retryKey: null,
+        composerText: "failed message",
+        composerFiles: [],
+        toText: "@foreman",
+        replyTarget: { eventId: "evt-1", by: "peer-1", text: "prior" },
+        quotedPresentationRef: null,
+        quotedVoiceDocumentRef: null,
+        messageMode: "mail",
+      },
+      afterClear,
+    );
 
     const state = useComposerStore.getState();
     expect(state.composerText).toBe("failed message");
@@ -341,7 +351,7 @@ describe("restoreFailedSendComposerState", () => {
     expect(state.messageMode).toBe("mail");
   });
 
-  it("stores the failed send as the origin group draft when selection moved away", () => {
+  it("queues the failed send in the origin group without replacing the current draft", () => {
     resetComposerAndGroupSelection();
     const file = new File(["hello"], "hello.txt", { type: "text/plain" });
     useGroupStore.setState({ selectedGroupId: "g-b" });
@@ -349,7 +359,10 @@ describe("restoreFailedSendComposerState", () => {
     useComposerStore.getState().setComposerText("current b text");
 
     restoreFailedSendComposerState({
+      id: "send-a",
       originGroupId: "g-a",
+      destGroupId: "g-a",
+      retryKey: null,
       composerText: "failed a message",
       composerFiles: [file],
       toText: "@foreman",
@@ -362,7 +375,8 @@ describe("restoreFailedSendComposerState", () => {
     const state = useComposerStore.getState();
     expect(state.activeGroupId).toBe("g-b");
     expect(state.composerText).toBe("current b text");
-    expect(state.drafts["g-a"]).toMatchObject({
+    expect(state.failedSendsByGroup["g-a"]).toHaveLength(1);
+    expect(state.failedSendsByGroup["g-a"][0]).toMatchObject({
       composerText: "failed a message",
       composerFiles: [file],
       toText: "@foreman",

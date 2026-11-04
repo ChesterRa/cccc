@@ -24,6 +24,8 @@
   "runtimeConfirmationOpenTerminal": "打开确认终端",
   "runtimeConfirmationPending": "等待你在终端确认",
   "runtimeConfirmationHint": "请在这个终端里回答 Claude 的提示，并保持终端打开。你确认后 CCCC 会尝试接上；如果拒绝或关闭，点「启动」重试。",
+  "runtimeConfirmationPaused": "确认已关闭",
+  "runtimeConfirmationPausedHint": "Claude 的确认在 CCCC 接上之前就关闭了。这次 CCCC 运行期间不会自动重试，发给这个智能体的消息会先等着。点「启动」重试。",
   "runtimeResumeFailedDescription": "自动恢复已暂停，原会话和待投递消息会保留。修正原因后可启动或重启以重试，也可选择“新会话”重新开始。",
   "lastTerminalOutput": "最近终端输出",
   "launchAgent": "启动智能体",

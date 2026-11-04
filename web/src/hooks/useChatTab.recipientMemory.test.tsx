@@ -238,9 +238,18 @@ describe("composer recipient isolation through actual send callbacks", () => {
       await pending;
     });
     expect(useComposerStore.getState()).toMatchObject({
+      toText: "peer-2",
+      composerText: "",
+      normalToTextByGroup: { "g-a": "peer-2" },
+    });
+    const failed = useComposerStore.getState().failedSendsByGroup["g-a"][0];
+    expect(failed.toText).toBe("peer-1");
+    await act(async () => {
+      expect(useComposerStore.getState().restoreFailedSend("g-a", failed.id)).toBe(true);
+    });
+    expect(useComposerStore.getState()).toMatchObject({
       toText: "peer-1",
       composerText: "first message",
-      normalToTextByGroup: { "g-a": "peer-2" },
     });
     vi.mocked(api.sendMessage).mockResolvedValue({ ok: true, result: {} });
     await act(async () => {
@@ -277,6 +286,10 @@ describe("composer recipient isolation through actual send callbacks", () => {
     });
     await act(async () => {
       selectGroup("g-a");
+    });
+    const failed = useComposerStore.getState().failedSendsByGroup["g-a"][0];
+    await act(async () => {
+      expect(useComposerStore.getState().restoreFailedSend("g-a", failed.id)).toBe(true);
     });
     expect(useComposerStore.getState()).toMatchObject({
       toText: "peer-1",

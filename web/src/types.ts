@@ -366,6 +366,9 @@ export type Actor = {
   runtime_session_last_resume_error?: string | null;
   /** The original PTY is waiting for the user before managed runtime admission. */
   runtime_confirmation_required?: boolean;
+  /** That confirmation ended before admission: automatic retries are paused in the current
+   *  daemon process, and an explicit retry can clear it. Absent when the daemon cannot observe it. */
+  runtime_confirmation_paused?: boolean;
   submit?: "enter" | "newline" | "none";
   profile_id?: string;
   profile_scope?: "global" | "user";

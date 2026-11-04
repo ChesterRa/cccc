@@ -6,6 +6,8 @@ import { ConnectEmbeddedApp } from "./ConnectEmbeddedApp";
 import { CONNECT_CHANNEL } from "./protocol";
 import { useGroupStore } from "../../stores";
 import { useModalStore } from "../../stores/useModalStore";
+import { useComposerStore } from "../../stores/useComposerStore";
+import { setWorkspaceDirty, useWorkspaceNavigation } from "../../stores/workspaceNavigation";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), admitted: true }));
 vi.mock("../../App", () => ({ default: () => <div>Native workbench</div> }));
@@ -41,6 +43,8 @@ async function select(revision: number, group = "b", origin = "https://entry.tes
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   mocks.admitted = true;
+  useComposerStore.setState(useComposerStore.getInitialState(), true);
+  useWorkspaceNavigation.setState({ owners: new Set(), pending: null });
   mocks.request.mockReset().mockResolvedValue({ ok: true, result: {} });
   vi.spyOn(window, "parent", "get").mockReturnValue(parent);
   const proof = btoa(
@@ -66,6 +70,80 @@ afterEach(async () => {
   vi.restoreAllMocks();
   window.history.replaceState(null, "", "/");
   useModalStore.setState({ groupConnectionsId: null });
+});
+
+it("reports a late failed send after the sign-in gate has unmounted the workbench", async () => {
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  vi.mocked(parent.postMessage).mockClear();
+  mocks.admitted = false;
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  await act(async () =>
+    useComposerStore.setState({
+      failedSendsByGroup: {
+        a: [
+          {
+            id: "fixture",
+            originGroupId: "a",
+            destGroupId: "a",
+            retryKey: null,
+            composerText: "Unconfirmed message",
+            composerFiles: [],
+            toText: "",
+            replyTarget: null,
+            quotedPresentationRef: null,
+            quotedVoiceDocumentRef: null,
+            messageMode: "send",
+          },
+        ],
+      },
+    }),
+  );
+  expect(parent.postMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+  await act(async () => useComposerStore.setState({ failedSendsByGroup: {} }));
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
+});
+
+it("reports dirty while either a file edit or a failed send remains", async () => {
+  await act(async () => root.render(<ConnectEmbeddedApp />));
+  const owner = Symbol("fixture editor");
+  await act(async () => setWorkspaceDirty(owner, true));
+  await act(async () =>
+    useComposerStore.setState({
+      failedSendsByGroup: {
+        a: [
+          {
+            id: "fixture",
+            originGroupId: "a",
+            destGroupId: "a",
+            retryKey: null,
+            composerText: "Unconfirmed message",
+            composerFiles: [],
+            toText: "",
+            replyTarget: null,
+            quotedPresentationRef: null,
+            quotedVoiceDocumentRef: null,
+            messageMode: "send",
+          },
+        ],
+      },
+    }),
+  );
+  await act(async () => setWorkspaceDirty(owner, false));
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: true }),
+    "https://entry.test",
+  );
+  await act(async () => useComposerStore.setState({ failedSendsByGroup: {} }));
+  expect(parent.postMessage).toHaveBeenLastCalledWith(
+    expect.objectContaining({ type: "workspace_dirty", dirty: false }),
+    "https://entry.test",
+  );
 });
 
 it("opens the requested remote Group once and rejects stale, foreign and absent targets", async () => {

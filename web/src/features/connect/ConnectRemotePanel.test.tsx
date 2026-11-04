@@ -149,6 +149,21 @@ it("guards leaving a dirty remote editor and clears its flag when the verified f
   expect(useWorkspaceNavigation.getState().owners.size).toBe(0);
 });
 
+it("retains the remote leave guard across sign-in until the frame reports work is clear", async () => {
+  await fromTarget({ type: "workspace_dirty", dirty: true });
+  await fromTarget({ type: "locked" });
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(1);
+  // Moving within the same remote instance does not destroy its document.
+  await act(async () => state.select("b", "another-group"));
+  expect(state.selected?.groupId).toBe("another-group");
+  await act(async () => requestWorkspaceNavigation(() => state.selectLocal()));
+  expect(state.selected?.instanceId).toBe("b");
+  await act(async () => finishWorkspaceNavigation(false));
+  expect(state.selected?.instanceId).toBe("b");
+  await fromTarget({ type: "workspace_dirty", dirty: false });
+  expect(useWorkspaceNavigation.getState().owners.size).toBe(0);
+});
+
 it("does not let an unverified source create an unsaved-edits prompt", async () => {
   await act(async () =>
     window.dispatchEvent(

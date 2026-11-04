@@ -85,6 +85,36 @@ export function buildOptimisticMessage(input: {
   };
 }
 
+/** Identifies where and how a prepared send goes. The daemon returns an accepted message by
+ *  client ID alone, without comparing content, so a failed send's ID may be reused only for this
+ *  same request from the restored draft the user has not touched; see useChatTab. */
+export function retrySendKey(input: {
+  groupId: string;
+  text: string;
+  localTo: string[];
+  crossTo: string[];
+  messageMode: MessageMode;
+  replyTarget: ReplyTarget;
+  remoteReplyGroupId: string;
+  remoteReplyTo: string[];
+  refs: MessageRef[];
+  sendPlanTargets: ComposerSendPlanTarget[];
+}): string {
+  return JSON.stringify([
+    input.groupId,
+    input.text,
+    input.localTo,
+    input.crossTo,
+    input.messageMode,
+    // The whole target: its quote and a remote parent that a later receipt can fill in are sent.
+    input.replyTarget ?? null,
+    input.remoteReplyGroupId,
+    input.remoteReplyTo,
+    input.refs,
+    input.sendPlanTargets,
+  ]);
+}
+
 export async function dispatchPreparedMessage(input: {
   selectedGroupId: string;
   text: string;
@@ -158,8 +188,12 @@ export async function dispatchPreparedMessage(input: {
           error: { code: "missing_cross_group_target", message: "missing cross-group target" },
         };
       }
-      for (const target of crossTargets) {
+      for (const [index, target] of crossTargets.entries()) {
         const recipients = target.recipientTokens?.length ? target.recipientTokens : input.crossTo;
+        // The same ID replays a single lost-response send. If a future plan has
+        // several targets, each source event needs its own deterministic ID.
+        const clientId =
+          input.sendPlanTargets.length === 1 ? input.localId : `${input.localId}:cross:${index}`;
         response = await api.sendCrossGroupMessage(
           input.selectedGroupId,
           target.groupId,
@@ -167,6 +201,7 @@ export async function dispatchPreparedMessage(input: {
           recipients,
           effectiveMessageMode,
           files,
+          { clientId },
         );
         if (!response.ok) break;
         successfulSendCount += 1;

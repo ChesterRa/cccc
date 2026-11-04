@@ -29,7 +29,10 @@ import { processLedgerEvent } from "./sse/ledgerEventProcessor";
 import { reconcileLedgerTail } from "./sse/reconcileLedgerTail";
 import { getGroupStreamsHiddenDisconnectDelayMs, shouldStartGroupStreams } from "./sse/visibility";
 import type { UseSSEOptions } from "./sse/types";
-import { RUNTIME_CONFIRMATION_REFRESH_EVENTS } from "./runtimeConfirmation";
+import {
+  RUNTIME_CONFIRMATION_REFRESH_EVENTS,
+  runtimeConfirmationEnded,
+} from "./runtimeConfirmation";
 
 // Covers overlapping HTTP and socket catch-up beyond the 800-row UI cache.
 const MAX_RECENT_PROCESSED_IDS = 10000;
@@ -530,10 +533,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (
         live &&
         currentGroup.selectedGroupId === groupId &&
-        RUNTIME_CONFIRMATION_REFRESH_EVENTS.has(eventType) &&
-        currentGroup.actors.some(
-          (actor) => actor.id === actorId && actor.runtime_confirmation_required,
-        )
+        ((RUNTIME_CONFIRMATION_REFRESH_EVENTS.has(eventType) &&
+          currentGroup.actors.some(
+            (actor) => actor.id === actorId && actor.runtime_confirmation_required,
+          )) ||
+          runtimeConfirmationEnded(eventType, data))
       ) {
         // Admission/exit changes PTY ownership; ordinary output must not poll Actors.
         void refreshActors(groupId);

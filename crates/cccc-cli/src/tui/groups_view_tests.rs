@@ -130,6 +130,31 @@ fn groups_lists_states_and_the_selected_groups_members() {
 }
 
 #[test]
+fn confirmation_pause_is_visible_at_the_minimum_terminal_width() {
+    let mut app = app_with(demo());
+    with_members(
+        &mut app,
+        "g_dev",
+        vec![member(
+            "claude-1",
+            "Claude Code",
+            "peer",
+            false,
+            MemberState::ConfirmationPaused,
+        )],
+    );
+    for width in [60, 80] {
+        let rows = draw_rows(&app, width, 16);
+        let row = rows
+            .iter()
+            .find(|row| row.contains("claude-1"))
+            .expect("member row");
+        assert!(row.contains("confirm retry"), "{row:?}");
+        assert!(row.len() <= usize::from(width), "{row:?}");
+    }
+}
+
+#[test]
 fn long_group_identity_and_stale_state_remain_visible_on_a_small_screen() {
     let title = "long-group-".repeat(9);
     let mut app = app_with(vec![group(

@@ -202,6 +202,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     patch.remove("runtime_state_source");
     patch.remove("runtime_confirmation_required");
+    patch.remove("runtime_confirmation_paused");
     patch.remove(actor_runtime::AUTOMATIC_LIFECYCLE);
     if let Some(value) = patch.get("default_scope_key") {
         let reference = value
@@ -443,7 +444,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if enabling_native {
         actor_delivery::dispatch_unread(home, &updated_group, &actor_id);
     }
-    let actor = actor_runtime::actor_response(&group_id, &actor);
+    let actor = actor_runtime::actor_response(home, &group_id, &actor);
     object(
         json!({"runtime_confirmation_required":actor["runtime_confirmation_required"],
         "actor": actor, "event": event}),
@@ -1009,7 +1010,7 @@ pub(super) fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) 
             ),
         }
     }
-    let actor = actor_runtime::actor_response(&group_id, &actor);
+    let actor = actor_runtime::actor_response(home, &group_id, &actor);
     object(
         json!({"runtime_confirmation_required":actor["runtime_confirmation_required"],
         "actor": actor, "event": event, "runtime": status}),

@@ -6,6 +6,56 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+
+- The `cccc` MCP server now says when its CCCC version differs from the version in
+  the daemon address file. The next tool result that can carry it includes `cccc_version_notice` with
+  both versions and what to restart: the MCP server in that runtime when the server is older, or
+  CCCC when the daemon is. The notice appears once, and again only after the declared version
+  changes to another one that differs.
+  MCP servers from earlier releases cannot report this, so reconnect each one once after upgrading;
+  two different builds with the same version number are not told apart.
+- A managed Claude agent whose startup confirmation closed before CCCC connected now says why it
+  is stopped. The Web shows **Confirmation closed**, with a note that CCCC will not retry on its own
+  while it keeps running, messages to the agent wait, and **Launch** tries again; the terminal
+  interface shows `confirm retry`. Actor rows and lifecycle results report this as
+  `runtime_confirmation_paused`. The pause itself is unchanged: an explicit retry or a CCCC
+  restart clears it.
+
+### Fixed
+
+- Sending again after a send whose result was unknown, for example when the connection dropped
+  before the response arrived, no longer creates a duplicate message, including a message to another
+  Group. If the restored message is sent again without any change, the Web reuses the first
+  attempt's client ID, so the daemon returns the message it already accepted. Editing it, even back
+  to the same text, or replacing an attachment makes it a new message. The retry is remembered only
+  in the open page; reloading the page starts over.
+- A send that fails no longer overwrites a draft you started while it was in flight. If the composer
+  is still empty, the failed message comes back as before. Otherwise it waits under **N sends to
+  restore** with its destination, recipients, reply target, references and attachments, until you
+  restore it into the empty composer or discard it. Slash commands follow the same rule, and a
+  command that finishes after you switched Groups no longer clears the draft you started there. A
+  failed send may still have arrived, or a command may already have run, so the list says to check
+  the conversation before sending again.
+- The **N sends to restore** list appears in every Group, and in place of the composer when no Group
+  is open, so a send that fails after you switched Groups is not left behind. Its content shows only
+  in its own Group; elsewhere the list names that Group, and **Open** goes there. The error for such
+  a send names its Group as well. A send whose Group is no longer available cannot be viewed or
+  restored unless that Group becomes available again; it stays listed until you discard it. Waiting
+  sends live only in the open page: while any wait, the page asks the browser to warn before a
+  reload or close, and switching away from a Connect remote workspace asks first once that
+  workspace has reported them.
+- A draft addressed to another Group now keeps that destination and its recipients when you switch
+  Groups and come back. A send naming a recipient who is no longer available stays in the composer
+  with a request to check the recipients; it used to go without that recipient, or to the Group's
+  default recipients when none was left.
+- Images read with `cccc_file`, directly or through `cccc_code_exec`, now reach the model in Codex.
+  Codex gives the model only `structuredContent` when a tool result has it, so the image was dropped.
+  For Codex's MCP client (`codex-mcp-client`, checked with Codex CLI 0.166.0), a tool result that
+  contains an image now leaves out `structuredContent` and keeps the same metadata as text; structured
+  error results are left as they are. Other clients receive results as before; Codex hosts that
+  identify themselves differently are not covered.
+
 ## [0.4.47]
 
 ### Added

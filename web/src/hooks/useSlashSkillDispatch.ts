@@ -6,6 +6,7 @@ import type { ChatFilter, MobileSurface } from "../stores/useUIStore";
 import type { LedgerEvent, ReplyTarget } from "../types";
 import { formatSendMessageError, type ChatTFunction } from "../utils/chatSend";
 import type { SlashDispatchMessageOptions } from "./useSlashCommands";
+import { describeSendFailure } from "./chat/chatComposerState";
 
 export async function sendSlashSkillMessageRequest(args: {
   selectedGroupId: string;
@@ -55,7 +56,6 @@ export async function sendSlashSkillMessageRequest(args: {
 export function useSlashSkillDispatch(args: {
   selectedGroupId: string;
   toTokens: string[];
-  clearDraft: (groupId: string) => void;
   setChatUnreadCount: (groupId: string, count: number) => void;
   setChatFilter: (groupId: string, filter: ChatFilter) => void;
   setChatMobileSurface: (groupId: string, surface: MobileSurface) => void;
@@ -68,7 +68,6 @@ export function useSlashSkillDispatch(args: {
   const {
     selectedGroupId,
     toTokens,
-    clearDraft,
     setChatUnreadCount,
     setChatFilter,
     setChatMobileSurface,
@@ -88,7 +87,8 @@ export function useSlashSkillDispatch(args: {
       const command = String(options?.command || "").trim();
       const capabilityId = String(options?.capabilityId || "").trim();
       const replyTarget: ReplyTarget = options?.replyTarget || null;
-      const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const localId =
+        options?.clientId || `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const resp = await sendSlashSkillMessageRequest({
         selectedGroupId,
         message,
@@ -100,12 +100,14 @@ export function useSlashSkillDispatch(args: {
       });
       if (!resp.ok) {
         showError(
-          formatSendMessageError({ code: resp.error.code, message: resp.error.message, t }),
+          describeSendFailure(
+            selectedGroupId,
+            formatSendMessageError({ code: resp.error.code, message: resp.error.message, t }),
+          ),
         );
         return false;
       }
 
-      clearDraft(selectedGroupId);
       if (groupMessagesVisible(selectedGroupId, useUIStore.getState()))
         setChatUnreadCount(selectedGroupId, 0);
       setChatFilter(selectedGroupId, "all");
@@ -114,7 +116,6 @@ export function useSlashSkillDispatch(args: {
       return true;
     },
     [
-      clearDraft,
       onMessageSent,
       selectedGroupId,
       setChatFilter,

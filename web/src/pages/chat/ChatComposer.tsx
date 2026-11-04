@@ -1,6 +1,7 @@
 import { ComposerSendControl } from "./ComposerSendControl";
 import { ComposerTypingPlaceholder } from "./ComposerTypingPlaceholder";
 import { ComposerResizeHandle } from "./ComposerResizeHandle";
+import { ComposerFailedSends } from "./ComposerFailedSends";
 import { useComposerHeightResize } from "./useComposerHeightResize";
 
 // ChatComposer renders the chat message composer.
@@ -929,6 +930,8 @@ export function ChatComposer({
         data-composer-surface
         className="@container/composer chat-reading-width rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-1 pt-1 shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-[var(--color-border-secondary)] motion-reduce:transition-none"
       >
+        <ComposerFailedSends groupId={selectedGroupId} isDark={isDark} />
+
         {/* Reply indicator */}
         {replyTarget && (
           <div

@@ -39,7 +39,10 @@ function isLocalDestination(state: { activeGroupId: string; destGroupId: string 
   return !state.destGroupId || state.destGroupId === state.activeGroupId;
 }
 
-interface GroupDraft {
+export interface GroupDraft {
+  /** Explicit delivery destination, which may differ from the draft's owning Group. */
+  destGroupId?: string;
+  retryCandidate?: RetryCandidate | null;
   composerGroupMentionTokens?: ComposerGroupMentionToken[];
   composerAgentMentionTokens?: ComposerAgentMentionToken[];
   composerText: string;
@@ -51,7 +54,24 @@ interface GroupDraft {
   messageMode: ComposerMessageMode;
 }
 
-interface ComposerState {
+/** A complete, page-local send snapshot. Files remain in memory, like ordinary drafts. */
+export interface FailedSend extends GroupDraft {
+  id: string;
+  originGroupId: string;
+  destGroupId: string;
+  /** An unchanged restored request may reuse its original ID when this key still matches. */
+  retryKey: string | null;
+}
+
+interface RetryCandidate {
+  id: string;
+  originGroupId: string;
+  retryKey: string;
+  text: string;
+  files: File[];
+}
+
+export interface ComposerState {
   composerGroupMentionTokens: ComposerGroupMentionToken[];
   composerAgentMentionTokens: ComposerAgentMentionToken[];
   setComposerGroupMentionTokens: (
@@ -79,6 +99,8 @@ interface ComposerState {
   // Drafts per group (memory only)
   drafts: Record<string, GroupDraft>;
   normalToTextByGroup: Record<string, string>;
+  failedSendsByGroup: Record<string, FailedSend[]>;
+  retryCandidate: RetryCandidate | null;
 
   // Actions
   setComposerText: (text: string | ((prev: string) => string)) => void;
@@ -102,6 +124,29 @@ interface ComposerState {
   upsertDraft: (groupId: string, updater: (draft: GroupDraft | null) => GroupDraft | null) => void;
   // Clear draft for a specific group
   clearDraft: (groupId: string) => void;
+  enqueueFailedSend: (snapshot: FailedSend) => void;
+  restoreFailedSend: (groupId: string, id: string) => boolean;
+  discardFailedSend: (groupId: string, id: string) => void;
+}
+
+/** A recovery must not replace even an unfinished or whitespace-only draft. */
+export function hasComposerDraft(
+  state: Pick<
+    ComposerState,
+    | "composerText"
+    | "composerFiles"
+    | "replyTarget"
+    | "quotedPresentationRef"
+    | "quotedVoiceDocumentRef"
+  >,
+): boolean {
+  return !!(
+    state.composerText.length ||
+    state.composerFiles.length ||
+    state.replyTarget ||
+    state.quotedPresentationRef ||
+    state.quotedVoiceDocumentRef
+  );
 }
 
 export const useComposerStore = create<ComposerState>((set, get) => ({
@@ -129,12 +174,22 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
   destGroupId: "",
   drafts: {},
   normalToTextByGroup: {},
+  failedSendsByGroup: {},
+  retryCandidate: null,
 
   setComposerText: (text) =>
+    set((state) => {
+      const next = typeof text === "function" ? text(state.composerText) : text;
+      return {
+        composerText: next,
+        retryCandidate: next === state.composerText ? state.retryCandidate : null,
+      };
+    }),
+  setComposerFiles: (files) =>
     set((state) => ({
-      composerText: typeof text === "function" ? text(state.composerText) : text,
+      composerFiles: files,
+      retryCandidate: files === state.composerFiles ? state.retryCandidate : null,
     })),
-  setComposerFiles: (files) => set({ composerFiles: files }),
 
   appendComposerFiles: (files) =>
     set((state) => {
@@ -148,7 +203,10 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
           next.push(f);
         }
       }
-      return { composerFiles: next };
+      return {
+        composerFiles: next,
+        retryCandidate: next.length === state.composerFiles.length ? state.retryCandidate : null,
+      };
     }),
 
   setToText: (text) =>
@@ -256,6 +314,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
         quotedVoiceDocumentRef: null,
         messageMode: state.preferredMessageMode,
         destGroupId: activeGroupId,
+        retryCandidate: null,
       };
     }),
 
@@ -271,7 +330,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     // Save current state as draft for the old group (if any content)
     if (normalizedFromGroupId) {
       const hasContent =
-        state.composerText.trim() ||
+        state.composerText.length > 0 ||
         state.composerFiles.length > 0 ||
         state.replyTarget ||
         state.quotedPresentationRef ||
@@ -283,10 +342,9 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
           composerAgentMentionTokens: state.composerAgentMentionTokens,
           composerText: state.composerText,
           composerFiles: state.composerFiles,
-          toText:
-            state.replyTarget || isLocalDestination(state)
-              ? state.toText
-              : (state.normalToTextByGroup[normalizedFromGroupId] ?? ""),
+          toText: state.toText,
+          destGroupId: state.destGroupId || normalizedFromGroupId,
+          retryCandidate: state.retryCandidate,
           replyTarget: state.replyTarget,
           quotedPresentationRef: state.quotedPresentationRef,
           quotedVoiceDocumentRef: state.quotedVoiceDocumentRef,
@@ -299,7 +357,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
 
     // Load draft for the new group
     const draft = normalizedToGroupId ? newDrafts[normalizedToGroupId] : null;
-    const normalizedDestGroupId = normalizedToGroupId;
+    const normalizedDestGroupId = draft?.destGroupId || normalizedToGroupId;
 
     const nextToText = draft?.toText ?? state.normalToTextByGroup[normalizedToGroupId] ?? "";
     const nextMessageMode = draft?.replyTarget
@@ -307,7 +365,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       : draft?.messageMode || state.preferredMessageMode;
 
     set({
-      activeGroupId: normalizedDestGroupId,
+      activeGroupId: normalizedToGroupId,
       drafts: newDrafts,
       composerGroupMentionTokens: draft?.composerGroupMentionTokens || [],
       composerAgentMentionTokens: draft?.composerAgentMentionTokens || [],
@@ -318,9 +376,9 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       quotedPresentationRef: draft?.quotedPresentationRef || null,
       quotedVoiceDocumentRef: draft?.quotedVoiceDocumentRef || null,
       messageMode: nextMessageMode,
-      // After switching groups, return delivery to the current group. Cross-group
-      // sends must be selected explicitly so restored drafts do not trigger remote fetches.
+      // A draft retains its explicit destination and recipients across Group switches.
       destGroupId: normalizedDestGroupId,
+      retryCandidate: draft?.retryCandidate || null,
     });
   },
 
@@ -328,7 +386,17 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     set((state) => {
       const gid = String(groupId || "").trim();
       if (!gid) return state;
-      const nextDraft = updater(state.drafts[gid] || null);
+      const previous = state.drafts[gid] || null;
+      let nextDraft = updater(previous);
+      if (
+        nextDraft?.retryCandidate &&
+        previous &&
+        (nextDraft.composerText !== previous.composerText ||
+          nextDraft.composerFiles.length !== previous.composerFiles.length ||
+          nextDraft.composerFiles.some((file, index) => file !== previous.composerFiles[index]))
+      ) {
+        nextDraft = { ...nextDraft, retryCandidate: null };
+      }
       const drafts = { ...state.drafts };
       if (nextDraft) {
         drafts[gid] = nextDraft;
@@ -344,4 +412,62 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     delete newDrafts[groupId];
     set({ drafts: newDrafts });
   },
+
+  enqueueFailedSend: (snapshot) =>
+    set((state) => {
+      const queue = state.failedSendsByGroup[snapshot.originGroupId] || [];
+      const index = queue.findIndex((item) => item.id === snapshot.id);
+      const next = queue.slice();
+      if (index < 0) next.push(snapshot);
+      else next[index] = snapshot;
+      return {
+        failedSendsByGroup: { ...state.failedSendsByGroup, [snapshot.originGroupId]: next },
+      };
+    }),
+
+  restoreFailedSend: (groupId, id) => {
+    const state = get();
+    if (state.activeGroupId !== groupId || hasComposerDraft(state)) return false;
+    const queue = state.failedSendsByGroup[groupId] || [];
+    const snapshot = queue.find((item) => item.id === id);
+    if (!snapshot) return false;
+    const remaining = queue.filter((item) => item.id !== id);
+    const failedSendsByGroup = { ...state.failedSendsByGroup };
+    if (remaining.length) failedSendsByGroup[groupId] = remaining;
+    else delete failedSendsByGroup[groupId];
+    set({
+      composerGroupMentionTokens: snapshot.composerGroupMentionTokens || [],
+      composerAgentMentionTokens: snapshot.composerAgentMentionTokens || [],
+      composerText: snapshot.composerText,
+      composerFiles: snapshot.composerFiles,
+      toText: snapshot.toText,
+      replyTarget: snapshot.replyTarget,
+      quotedPresentationRef: snapshot.quotedPresentationRef,
+      quotedVoiceDocumentRef: snapshot.quotedVoiceDocumentRef,
+      messageMode: snapshot.messageMode,
+      destGroupId: snapshot.destGroupId,
+      retryCandidate: snapshot.retryKey
+        ? {
+            id: snapshot.id,
+            originGroupId: snapshot.originGroupId,
+            retryKey: snapshot.retryKey,
+            text: snapshot.composerText,
+            files: snapshot.composerFiles,
+          }
+        : null,
+      failedSendsByGroup,
+    });
+    return true;
+  },
+
+  discardFailedSend: (groupId, id) =>
+    set((state) => {
+      const queue = state.failedSendsByGroup[groupId] || [];
+      const remaining = queue.filter((item) => item.id !== id);
+      if (queue.length === remaining.length) return state;
+      const failedSendsByGroup = { ...state.failedSendsByGroup };
+      if (remaining.length) failedSendsByGroup[groupId] = remaining;
+      else delete failedSendsByGroup[groupId];
+      return { failedSendsByGroup };
+    }),
 }));

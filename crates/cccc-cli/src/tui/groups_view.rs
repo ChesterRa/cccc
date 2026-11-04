@@ -380,6 +380,7 @@ fn member_row(member: &Member, theme: Theme, width: usize) -> Line<'static> {
     let role = text::fit(&text::one_line(&member.role), ROLE_COLUMN - 1);
     let state_style = match member.state {
         MemberState::Running | MemberState::Ready => theme.ok(),
+        MemberState::ConfirmationPaused => theme.error(),
         MemberState::Stopped
         | MemberState::Off
         | MemberState::NotReceiving

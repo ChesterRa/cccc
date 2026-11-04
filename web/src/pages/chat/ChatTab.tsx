@@ -33,6 +33,7 @@ import { useNotificationPromptOffer } from "../../features/pushNotifications/use
 import { classNames } from "../../utils/classNames";
 import { buttonVariants } from "../../components/ui/button-variants";
 import { ChatComposer } from "./ChatComposer";
+import { ComposerFailedSends } from "./ComposerFailedSends";
 import { ChatFilterTabs } from "./ChatFilterTabs";
 import { usePinnedIds } from "../../features/pins/pinStore";
 import { GroupWorkArea, type RuntimeActorRenderer } from "./GroupWorkArea";
@@ -1396,7 +1397,15 @@ export function ChatTab({
                       setMentionTriggerIndex={setMentionTriggerIndex}
                       slashCommands={slashCommands}
                     />
-                  ) : null}
+                  ) : (
+                    // With no Group open there is no composer, but sends waiting to be restored
+                    // still need a place to be seen and discarded.
+                    <div className="flex-shrink-0 px-2 pb-2 sm:px-4">
+                      <div className="chat-reading-width">
+                        <ComposerFailedSends groupId="" isDark={isDark} />
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </section>

@@ -21,7 +21,8 @@ import type { Actor, LedgerEvent, MessageRef } from "../types";
 import { formatSendMessageError } from "../utils/chatSend";
 import { CHET_SELECTOR, chetGeneration } from "../utils/chetIdentity";
 import { messageModeForRecipients } from "../stores/composerMessageMode";
-import { useSlashCommands } from "./useSlashCommands";
+import { parseSlashCommandInput } from "../utils/slashCommands";
+import { useSlashCommands, type SlashDispatchMessageOptions } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
 import { useConnectMentionGroups } from "./useConnectMentionGroups";
 import {
@@ -53,6 +54,9 @@ import { shouldFollowChatSendFromViewport } from "./chat/chatSendAutoFollow";
 import {
   buildComposerSendRecipientTokens,
   buildComposerSendRoutingSnapshot,
+  captureSendComposerState,
+  clearSendComposerState,
+  describeSendFailure,
   restoreFailedSendComposerState,
   shouldRestoreComposerAfterFailedSend,
 } from "./chat/chatComposerState";
@@ -65,6 +69,7 @@ import {
   buildAssistantPlaceholders,
   buildOptimisticMessage,
   dispatchPreparedMessage,
+  retrySendKey,
 } from "./chat/chatMessageSend";
 import { prepareComposerMessage } from "./chat/prepareComposerMessage";
 import { useChatMessageActions } from "./chat/useChatMessageActions";
@@ -224,9 +229,6 @@ export function useChatTab({
     setQuotedVoiceDocumentRef,
     setMessageMode,
     setDestGroupId,
-    upsertDraft,
-    clearDraft,
-    clearComposer,
   } = useComposerStore(
     useShallow((s) => ({
       composerGroupMentionTokens: s.composerGroupMentionTokens,
@@ -250,9 +252,6 @@ export function useChatTab({
       setQuotedVoiceDocumentRef: s.setQuotedVoiceDocumentRef,
       setMessageMode: s.setMessageMode,
       setDestGroupId: s.setDestGroupId,
-      upsertDraft: s.upsertDraft,
-      clearDraft: s.clearDraft,
-      clearComposer: s.clearComposer,
     })),
   );
   const composerGroupSettled = isComposerGroupSettled(activeGroupId, selectedGroupId);
@@ -428,7 +427,6 @@ export function useChatTab({
   const dispatchSlashSkillMessage = useSlashSkillDispatch({
     selectedGroupId,
     toTokens,
-    clearDraft,
     setChatUnreadCount,
     setChatFilter,
     setChatMobileSurface,
@@ -439,15 +437,46 @@ export function useChatTab({
     t,
   });
 
+  const beginSlashDispatch = useCallback(
+    (text: string, options: SlashDispatchMessageOptions) => {
+      const state = useComposerStore.getState();
+      // A slash command may resolve differently after a capability refresh. Never reuse an
+      // accepted ID unless its resolved command, recipients and reply target also match.
+      const retryKey = JSON.stringify([
+        "slash",
+        selectedGroupId,
+        text,
+        toTokens,
+        options.command || "",
+        options.capabilityId || "",
+        options.replyTarget || null,
+      ]);
+      const previous = state.retryCandidate;
+      const same =
+        previous?.originGroupId === selectedGroupId &&
+        previous.retryKey === retryKey &&
+        previous.text === state.composerText &&
+        previous.files.length === state.composerFiles.length &&
+        previous.files.every((file, index) => file === state.composerFiles[index]);
+      const clientId = same
+        ? previous.id
+        : `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const snapshot = captureSendComposerState(selectedGroupId, clientId, retryKey);
+      const afterClear = clearSendComposerState(selectedGroupId);
+      return { clientId, restore: () => restoreFailedSendComposerState(snapshot, afterClear) };
+    },
+    [selectedGroupId, toTokens],
+  );
+
   const { slashCommands, tryExecuteSlashCommand } = useSlashCommands({
     selectedGroupId,
-    clearComposer,
-    restoreComposerText: setComposerText,
+    beginDispatch: beginSlashDispatch,
     showError,
     showNotice,
     dispatchMessage: dispatchSlashSkillMessage,
     onExecuted: () => {
-      if (fileInputRef?.current) fileInputRef.current.value = "";
+      if (fileInputRef?.current && useComposerStore.getState().composerFiles.length === 0)
+        fileInputRef.current.value = "";
     },
     t,
   });
@@ -966,6 +995,34 @@ export function useChatTab({
       validRecipientSet,
       crossGroupValidRecipientSet,
     });
+    const remoteReplyGroup = String(
+      composerStateSnapshot.replyTarget?.remoteDstGroupId || "",
+    ).trim();
+    const remoteReplyRecipients = composerStateSnapshot.replyTarget?.remoteDstTo || [];
+    const usesSavedRemoteRecipients =
+      !!remoteReplyGroup && remoteReplyRecipients.some((token) => String(token || "").trim());
+    const allowedRecipients =
+      isCrossGroup || remoteReplyGroup ? crossGroupValidRecipientSet : validRecipientSet;
+    const unresolvedRecipients = toTextSnapshot
+      .split(",")
+      .map((token) => token.trim())
+      .filter((token) => token && !allowedRecipients.has(token));
+    // Dropping a formerly valid recipient can route a message to the Group's
+    // default audience. Keep the draft instead of silently changing its target.
+    const slash = parseSlashCommandInput(composerStateSnapshot.composerText, slashCommands);
+    if (
+      !usesSavedRemoteRecipients &&
+      unresolvedRecipients.length > 0 &&
+      slash?.item.sourceType !== "dynamic_tool"
+    ) {
+      showError(
+        t("recipientUnavailable", {
+          defaultValue:
+            "One or more recipients are unavailable. Check the recipients before sending.",
+        }),
+      );
+      return;
+    }
     const sendPlanTargets = buildComposerSendPlanTargets({
       selectedGroupId: originGroupId,
       dstGroupId: dstGroup,
@@ -985,7 +1042,8 @@ export function useChatTab({
       ? sendPlanTargets.find((target) => target.isCrossGroup)?.groupId || dstGroup
       : dstGroup;
     if (
-      await tryExecuteSlashCommand({
+      slash &&
+      (await tryExecuteSlashCommand({
         text: composerStateSnapshot.composerText,
         composerFilesCount: composerFilesSnapshot.length,
         hasReplyTarget: !!composerStateSnapshot.replyTarget,
@@ -993,7 +1051,7 @@ export function useChatTab({
         hasQuotedPresentationRef: !!composerStateSnapshot.quotedPresentationRef,
         hasQuotedVoiceDocumentRef: !!composerStateSnapshot.quotedVoiceDocumentRef,
         sendGroupId: slashGuardSendGroupId,
-      })
+      }))
     ) {
       return;
     }
@@ -1025,8 +1083,6 @@ export function useChatTab({
       localToTokensSnapshot,
       !!replyTargetSnapshot?.toChet,
     );
-    const groupMentionTokensSnapshot = composerGroupMentionTokens;
-    const agentMentionTokensSnapshot = composerAgentMentionTokens;
     const assistantTargets =
       sendsLocal &&
       !sendsCrossGroup &&
@@ -1035,7 +1091,35 @@ export function useChatTab({
         ? resolveAssistantTargets(localToTokensSnapshot)
         : [];
 
-    const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const retryKey = retrySendKey({
+      groupId: selectedGroupId,
+      // The draft as typed: a long draft becomes an attachment named by the current time.
+      text: draftTextSnapshot,
+      localTo: localToTokensSnapshot,
+      crossTo: crossToTokensSnapshot,
+      messageMode: messageModeSnapshot,
+      replyTarget: replyTargetSnapshot,
+      remoteReplyGroupId: remoteReplyDstGroupId,
+      remoteReplyTo: remoteReplyDstTo,
+      refs: refsSnapshot,
+      sendPlanTargets,
+    });
+    const failedSend = composerStateSnapshot.retryCandidate;
+    const untouchedRetry =
+      failedSend?.originGroupId === originGroupId &&
+      failedSend.retryKey === retryKey &&
+      failedSend.text === composerStateSnapshot.composerText &&
+      failedSend.files.length === composerStateSnapshot.composerFiles.length &&
+      failedSend.files.every((file, index) => file === composerStateSnapshot.composerFiles[index]);
+    const localId = untouchedRetry
+      ? failedSend.id
+      : `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const failedSnapshot = captureSendComposerState(
+      originGroupId,
+      localId,
+      retryKey,
+      composerStateSnapshot,
+    );
     const insertLocalAssistantPlaceholders = () => {
       for (const placeholder of buildAssistantPlaceholders(
         assistantTargets,
@@ -1050,39 +1134,10 @@ export function useChatTab({
       removeStreamingEventsByPrefix(`local:${localId}:`, selectedGroupId);
     };
 
-    const restoreComposerState = () => {
-      restoreFailedSendComposerState(
-        {
-          originGroupId,
-          composerGroupMentionTokens: groupMentionTokensSnapshot,
-          composerAgentMentionTokens: agentMentionTokensSnapshot,
-          composerText: draftTextSnapshot,
-          composerFiles: draftFilesSnapshot,
-          toText: toTextSnapshot,
-          replyTarget: replyTargetSnapshot,
-          quotedPresentationRef: quotedPresentationRefSnapshot,
-          quotedVoiceDocumentRef: quotedVoiceDocumentRefSnapshot,
-          // The composer's own mode: the send may have changed it for its recipients
-          // (Chet takes no Mail), and restoring that would replace the saved choice.
-          messageMode: composerStateSnapshot.messageMode,
-        },
-        {
-          setComposerText,
-          setComposerFiles,
-          setReplyTarget,
-          setQuotedPresentationRef,
-          setQuotedVoiceDocumentRef,
-          setMessageMode,
-          upsertDraft,
-        },
-      );
-    };
-
     const applyImmediateComposerFeedback = (shouldLockBottom: boolean) => {
-      clearComposer();
       // Consume only the draft being sent. Completion may arrive after the
       // user has composed another draft or switched to another Group.
-      clearDraft(originGroupId);
+      const afterClear = clearSendComposerState(originGroupId);
       if (chatAtBottomRef) chatAtBottomRef.current = shouldLockBottom;
       if (selectedGroupId) {
         setShowScrollButton(selectedGroupId, !shouldLockBottom);
@@ -1097,6 +1152,7 @@ export function useChatTab({
           ),
         );
       }
+      return afterClear;
     };
 
     if (replyTargetSnapshot && sendsCrossGroup && !remoteReplyDstGroupId) {
@@ -1138,7 +1194,9 @@ export function useChatTab({
       insertLocalAssistantPlaceholders();
     }
 
-    applyImmediateComposerFeedback(shouldLockBottomAfterSend && sentMessageVisible);
+    const afterClear = applyImmediateComposerFeedback(
+      shouldLockBottomAfterSend && sentMessageVisible,
+    );
     sendInFlightRef.current = true;
     let successfulSendCount = 0;
     try {
@@ -1164,15 +1222,21 @@ export function useChatTab({
         removeOutbox(selectedGroupId, localId);
         clearLocalAssistantPlaceholders();
         const shouldRestoreComposer = shouldRestoreComposerAfterFailedSend(successfulSendCount);
-        if (shouldRestoreComposer) restoreComposerState();
+        if (shouldRestoreComposer) restoreFailedSendComposerState(failedSnapshot, afterClear);
         const sendError = resp.error || { code: "send_failed", message: "send failed" };
-        showError(formatSendMessageError({ code: sendError.code, message: sendError.message, t }));
+        showError(
+          describeSendFailure(
+            originGroupId,
+            formatSendMessageError({ code: sendError.code, message: sendError.message, t }),
+          ),
+        );
         return;
       }
       const result = resp.result as {
         event?: LedgerEvent;
         source_event?: LedgerEvent;
         src_event?: LedgerEvent;
+        duplicate?: boolean;
       } | null;
       const canonicalEvent = sendsLocal && !sendsCrossGroup ? result?.event : undefined;
       const sourceEvent = canonicalEvent ?? result?.source_event ?? result?.src_event;
@@ -1184,7 +1248,10 @@ export function useChatTab({
         const reconciliation = reconcileCanonicalOutboxEvent(canonicalEvent, selectedGroupId);
         const canonicalEventId = String(reconciliation.event.id || "").trim();
         appendEvent(reconciliation.event, selectedGroupId);
-        if (canonicalEventId) {
+        // A retried send the daemon already accepted returns the old event and starts no new
+        // work, so this attempt's queued placeholders would never settle.
+        if (result?.duplicate === true) clearLocalAssistantPlaceholders();
+        else if (canonicalEventId) {
           promoteStreamingEventsByPrefix(`local:${localId}:`, canonicalEventId, selectedGroupId);
         }
         completeCanonicalOutboxReconciliation(selectedGroupId, reconciliation);
@@ -1230,14 +1297,15 @@ export function useChatTab({
       removeOutbox(selectedGroupId, localId);
       clearLocalAssistantPlaceholders();
       const shouldRestoreComposer = shouldRestoreComposerAfterFailedSend(successfulSendCount);
-      if (shouldRestoreComposer) restoreComposerState();
-      showError(message);
+      if (shouldRestoreComposer) restoreFailedSendComposerState(failedSnapshot, afterClear);
+      showError(describeSendFailure(originGroupId, message));
     } finally {
       sendInFlightRef.current = false;
     }
   }, [
     selectedGroupId,
     tryExecuteSlashCommand,
+    slashCommands,
     validRecipientSet,
     crossGroupValidRecipientSet,
     inChatWindow,
@@ -1245,16 +1313,7 @@ export function useChatTab({
     enqueueOutbox,
     removeOutbox,
     showError,
-    clearComposer,
-    setComposerText,
-    setComposerFiles,
-    setReplyTarget,
-    setQuotedPresentationRef,
-    setQuotedVoiceDocumentRef,
-    setMessageMode,
     setDestGroupId,
-    upsertDraft,
-    clearDraft,
     closeChatWindow,
     fileInputRef,
     shouldFollowCurrentSend,
@@ -1272,7 +1331,6 @@ export function useChatTab({
     upsertStreamingEvent,
     t,
     composerGroupMentionTokens,
-    composerAgentMentionTokens,
     composerRouteGroups,
     chatAtBottomRef,
     chatViewKey,

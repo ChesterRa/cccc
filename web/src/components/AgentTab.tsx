@@ -427,6 +427,7 @@ export function AgentTab({
   });
   const runtimeStatusText = (() => {
     if (actor.runtime_confirmation_required) return t("runtimeConfirmationPending");
+    if (actor.runtime_confirmation_paused === true) return t("runtimeConfirmationPaused");
     if (isNativeSession) return t(nativeStatusKey);
     if (isEventActor)
       return t(
@@ -1018,7 +1019,7 @@ export function AgentTab({
         </div>
       </div>
 
-      <ActorRuntimeConfirmationNotice actor={actor} />
+      <ActorRuntimeConfirmationNotice actor={actor} readOnly={readOnly} />
 
       {/* Terminal or Status Area */}
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}

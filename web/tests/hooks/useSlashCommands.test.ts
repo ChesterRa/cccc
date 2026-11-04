@@ -17,13 +17,14 @@ describe("dispatchSlashMessageOptimistically", () => {
 
     const resultPromise = dispatchSlashMessageOptimistically({
       dispatchText: "/install https://github.com/obra/superpowers",
-      originalText: "/install https://github.com/obra/superpowers",
       dispatchMessage: async () => {
         calls.push("dispatch-start");
         return dispatchPromise;
       },
-      clearComposer: () => calls.push("clear"),
-      restoreComposerText: (text) => calls.push(`restore:${text}`),
+      beginDispatch: () => {
+        calls.push("clear");
+        return { clientId: "fixture-id", restore: () => calls.push("restore") };
+      },
     });
 
     await Promise.resolve();
@@ -46,17 +47,15 @@ describe("dispatchSlashMessageOptimistically", () => {
     await expect(
       dispatchSlashMessageOptimistically({
         dispatchText: "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
-        originalText: "/using-superpowers 开始执行",
         replyTarget,
         dispatchMessage,
-        clearComposer: vi.fn(),
-        restoreComposerText: vi.fn(),
+        beginDispatch: () => ({ clientId: "fixture-id", restore: vi.fn() }),
       }),
     ).resolves.toMatchObject({ ok: true });
 
     expect(dispatchMessage).toHaveBeenCalledWith(
       "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
-      { replyTarget },
+      { replyTarget, command: undefined, capabilityId: undefined, clientId: "fixture-id" },
     );
   });
 
@@ -66,12 +65,10 @@ describe("dispatchSlashMessageOptimistically", () => {
     await expect(
       dispatchSlashMessageOptimistically({
         dispatchText: "开始执行",
-        originalText: "/using-superpowers 开始执行",
         command: "/using-superpowers",
         capabilityId: "skill:agent_self_proposed:using-superpowers",
         dispatchMessage,
-        clearComposer: vi.fn(),
-        restoreComposerText: vi.fn(),
+        beginDispatch: () => ({ clientId: "fixture-id", restore: vi.fn() }),
       }),
     ).resolves.toMatchObject({ ok: true });
 
@@ -79,6 +76,7 @@ describe("dispatchSlashMessageOptimistically", () => {
       replyTarget: null,
       command: "/using-superpowers",
       capabilityId: "skill:agent_self_proposed:using-superpowers",
+      clientId: "fixture-id",
     });
   });
 
@@ -88,12 +86,10 @@ describe("dispatchSlashMessageOptimistically", () => {
     await expect(
       dispatchSlashMessageOptimistically({
         dispatchText: DEFAULT_CAPSULE_SKILL_TASK_TEXT,
-        originalText: "/cccc-self-evolution",
         command: "/cccc-self-evolution",
         capabilityId: "skill:agent_self_proposed:cccc-self-evolution",
         dispatchMessage,
-        clearComposer: vi.fn(),
-        restoreComposerText: vi.fn(),
+        beginDispatch: () => ({ clientId: "fixture-id", restore: vi.fn() }),
       }),
     ).resolves.toEqual({ ok: true, dispatchText: DEFAULT_CAPSULE_SKILL_TASK_TEXT });
 
@@ -101,22 +97,24 @@ describe("dispatchSlashMessageOptimistically", () => {
       replyTarget: null,
       command: "/cccc-self-evolution",
       capabilityId: "skill:agent_self_proposed:cccc-self-evolution",
+      clientId: "fixture-id",
     });
   });
 
-  it("restores the original slash text when dispatch fails", async () => {
+  it("restores the captured slash draft when dispatch fails", async () => {
     const calls: string[] = [];
 
     await expect(
       dispatchSlashMessageOptimistically({
         dispatchText: "/install bad-target",
-        originalText: "/install bad-target",
         dispatchMessage: async () => false,
-        clearComposer: () => calls.push("clear"),
-        restoreComposerText: (text) => calls.push(`restore:${text}`),
+        beginDispatch: () => {
+          calls.push("clear");
+          return { clientId: "fixture-id", restore: () => calls.push("restore") };
+        },
       }),
     ).resolves.toMatchObject({ ok: false });
 
-    expect(calls).toEqual(["clear", "restore:/install bad-target"]);
+    expect(calls).toEqual(["clear", "restore"]);
   });
 });

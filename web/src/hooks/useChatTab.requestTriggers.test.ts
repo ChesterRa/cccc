@@ -48,6 +48,7 @@ describe("useChatTab request triggers", () => {
       ["remote-agent"],
       "send",
       undefined,
+      { clientId: "local_1" },
     );
   });
 
@@ -110,6 +111,9 @@ describe("useChatTab request triggers", () => {
 
     expect(result.successfulSendCount).toBe(1);
     expect(result.response.ok).toBe(false);
+    expect(
+      vi.mocked(api.sendCrossGroupMessage).mock.calls.map((call) => call[6]?.clientId),
+    ).toEqual(["local_1:cross:0", "local_1:cross:1"]);
     expect(shouldRestoreComposerAfterFailedSend(result.successfulSendCount)).toBe(false);
     expect(shouldRestoreComposerAfterFailedSend(0)).toBe(true);
   });

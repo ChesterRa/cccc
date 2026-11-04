@@ -2,6 +2,7 @@ mod actions;
 mod argument_normalization;
 mod bootstrap;
 mod code_mode;
+mod codex_image_result;
 mod context_projection;
 mod cross_group;
 mod file_read;
@@ -17,6 +18,7 @@ mod response_projection;
 mod router;
 mod task_summary;
 mod tools;
+mod version_notice;
 
 #[cfg(test)]
 mod lib_tests;
@@ -138,6 +140,9 @@ async fn run_stdio_loop(
         .filter(|_| !cccc_core::local_sessions::cccc_owned_environment())
         .map(|runtime| native_session::Context::new(runtime, host_pid))
         .transpose()?;
+    let notice_runtime = runtime.filter(|_| native.is_some());
+    let mut notice = version_notice::VersionNotice::default();
+    let mut codex_client = false;
     let mut input = BufReader::new(tokio::io::stdin()).lines();
     let mut output = tokio::io::stdout();
     while let Some(line) = input.next_line().await? {
@@ -159,11 +164,22 @@ async fn run_stdio_loop(
         if request.get("id").is_none() {
             continue;
         }
-        let response = if let Some(native) = native.as_mut() {
+        if request.get("method").and_then(Value::as_str) == Some("initialize") {
+            codex_client = request
+                .pointer("/params/clientInfo/name")
+                .and_then(Value::as_str)
+                == Some(codex_image_result::CODEX_MCP_CLIENT);
+        }
+        let mut response = if let Some(native) = native.as_mut() {
             native.handle(home, &client, &request).await
         } else {
             handle(home, &client, &request, None).await
         };
+        // Convert first, so the notice is never folded into the metadata it compares.
+        codex_image_result::preserve_images(codex_client, &request, &mut response);
+        notice
+            .annotate(home, notice_runtime, &request, &mut response)
+            .await;
         write_response(&mut output, &response).await?;
     }
     Ok(())
