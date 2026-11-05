@@ -232,17 +232,20 @@ fn payload(home: &HomeLayout, group: &GroupDoc, by: &str) -> Result<Value, OpErr
                 .and_then(Value::as_str)
                 .unwrap_or("interval");
             let enabled = rule.get("enabled").and_then(Value::as_bool) != Some(false);
-            let next_fire_at = enabled
-                .then(|| cccc_core::automation::next_rule_fire_at(trigger, last_fired, now))
-                .flatten()
-                .map(|value| value.to_rfc3339())
-                .unwrap_or_default();
-            let completed = trigger_kind == "at"
+            let fired_count = entry.and_then(|entry| entry.get("fired_count")).and_then(Value::as_u64).unwrap_or(0);
+            let completed = (trigger_kind == "at"
                 && (last_fired.is_some()
                     || entry
                         .and_then(|entry| entry.get("at_fired"))
                         .and_then(Value::as_bool)
-                        .unwrap_or(false));
+                        .unwrap_or(false)))
+                || trigger.and_then(|trigger| trigger.get("max_runs")).and_then(Value::as_u64)
+                    .is_some_and(|limit| fired_count >= limit);
+            let next_fire_at = (enabled && !completed)
+                .then(|| cccc_core::automation::next_rule_fire_at(trigger, last_fired, now))
+                .flatten()
+                .map(|value| value.to_rfc3339())
+                .unwrap_or_default();
             Some((
                 id.to_owned(),
                 json!({

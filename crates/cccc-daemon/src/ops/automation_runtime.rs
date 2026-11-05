@@ -169,6 +169,16 @@ fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
     let Ok(store) = GroupStore::new(home.clone()) else {
         return;
     };
+    for (group_id, rule_id) in &result.completed_rules {
+        call(
+            home,
+            "group_automation_manage",
+            json!({
+                "group_id":group_id, "by":"user",
+                "actions":[{"type":"set_rule_enabled","rule_id":rule_id,"enabled":false}]
+            }),
+        );
+    }
     let mut completed_notifications = BTreeSet::new();
     for event in &result.notifications {
         let rule_id = event
@@ -699,3 +709,7 @@ mod mail_notice_repeat_tests;
 #[cfg(all(test, unix))]
 #[path = "automation_mail_tests.rs"]
 mod automation_mail_tests;
+
+#[cfg(test)]
+#[path = "automation_repeat_tests.rs"]
+mod repeat_tests;

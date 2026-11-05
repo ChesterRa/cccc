@@ -3492,8 +3492,8 @@ Args:
       owner_actor_id?: string | null
       to?: string[]
       trigger:
-        | { kind: "interval"; every_seconds: number }
-        | { kind: "cron"; cron: string; timezone?: string }
+        | { kind: "interval"; every_seconds: number; max_runs?: number } // positive integer
+        | { kind: "cron"; cron: string; timezone?: string; max_runs?: number } // positive integer
         | { kind: "at"; at: string } // RFC3339
       action?:
         | {
@@ -3597,6 +3597,7 @@ Notes:
 - The first tick of a newly enabled interval rule establishes its clock and
   does not fire immediately. A paused or stopped group runs no automation. An
   idle group runs user rules but suppresses the built-in `standup` rule.
+- Interval and cron `max_runs` completes after that many notification firings; edits and disabling retain the count, deletion removes it.
 - Resume never catches up missed work: interval and cron clocks are rebased,
   missed one-time rules are completed without execution, and future one-time
   rules remain eligible.

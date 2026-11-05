@@ -39,6 +39,7 @@ pub enum ScheduledAction {
 pub struct TickResult {
     pub notifications: Vec<Event>,
     pub actions: Vec<ScheduledAction>,
+    pub completed_rules: Vec<(String, String)>,
     /// Failure while discovering or appending Mail/reply notices. Retained
     /// alongside committed notifications and prepared rule actions so callers
     /// can still apply those results. Unwritten notices remain due for a later pass.
@@ -59,6 +60,7 @@ pub fn tick_scheduled(home: &HomeLayout, include_unread: bool) -> io::Result<Tic
         };
         result.notifications.extend(group_result.notifications);
         result.actions.extend(group_result.actions);
+        result.completed_rules.extend(group_result.completed_rules);
         if result.unread_failure.is_none() {
             result.unread_failure = group_result.unread_failure;
         }
@@ -134,6 +136,13 @@ pub fn reset_rule_timers_on_resume(home: &HomeLayout, group_id: &str) -> io::Res
             .and_then(|trigger| trigger.get("kind"))
             .and_then(Value::as_str)
             .unwrap_or("");
+        if trigger
+            .and_then(|t| t.get("max_runs"))
+            .and_then(Value::as_u64)
+            .is_some_and(|limit| state.fired_count.get(id).copied().unwrap_or(0) >= limit)
+        {
+            continue;
+        }
         let should_reset = match kind {
             "interval" | "cron" => true,
             "at" => trigger
@@ -288,6 +297,15 @@ fn tick_rules(
             .and_then(|trigger| trigger.get("kind"))
             .and_then(Value::as_str)
             .unwrap_or("interval");
+        let max_runs = trigger
+            .and_then(|t| t.get("max_runs"))
+            .and_then(Value::as_u64);
+        if max_runs.is_some_and(|limit| state.fired_count.get(id).copied().unwrap_or(0) >= limit) {
+            result
+                .completed_rules
+                .push((group.group_id.clone(), id.into()));
+            continue;
+        }
         if trigger_kind == "interval" && last_fired.is_none() {
             state.last_rule.insert(id.into(), now.timestamp());
             continue;
@@ -354,6 +372,15 @@ fn tick_rules(
         }
         if completed {
             state.last_rule.insert(id.into(), now.timestamp());
+            if matches!(trigger_kind, "interval" | "cron") {
+                let count = state.fired_count.entry(id.into()).or_default();
+                *count = count.saturating_add(1);
+                if max_runs.is_some_and(|limit| *count >= limit) {
+                    result
+                        .completed_rules
+                        .push((group.group_id.clone(), id.into()));
+                }
+            }
         }
     }
     Ok(())

@@ -258,7 +258,11 @@ fn validate_trigger(value: &mut Value, stored_cron: Option<&str>) -> Result<Stri
     let kind = required_text(trigger, "kind")?.to_owned();
     match kind.as_str() {
         "interval" => {
-            reject_unknown(trigger, &["kind", "every_seconds"], "interval trigger")?;
+            reject_unknown(
+                trigger,
+                &["kind", "every_seconds", "max_runs"],
+                "interval trigger",
+            )?;
             if trigger
                 .get("every_seconds")
                 .and_then(Value::as_i64)
@@ -268,7 +272,11 @@ fn validate_trigger(value: &mut Value, stored_cron: Option<&str>) -> Result<Stri
             }
         }
         "cron" => {
-            reject_unknown(trigger, &["kind", "cron", "timezone"], "cron trigger")?;
+            reject_unknown(
+                trigger,
+                &["kind", "cron", "timezone", "max_runs"],
+                "cron trigger",
+            )?;
             let expression = required_text(trigger, "cron")?;
             if stored_cron.map(str::trim) != Some(expression)
                 && let Some(error) = cccc_core::automation::cron_expression_error(expression)
@@ -290,6 +298,12 @@ fn validate_trigger(value: &mut Value, stored_cron: Option<&str>) -> Result<Stri
             required_text(trigger, "at")?;
         }
         _ => return Err(invalid(format!("unsupported trigger kind: {kind}"))),
+    }
+    if trigger
+        .get("max_runs")
+        .is_some_and(|value| value.as_u64().is_none_or(|n| n == 0))
+    {
+        return Err(invalid("max_runs must be an integer >= 1"));
     }
     Ok(kind)
 }

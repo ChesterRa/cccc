@@ -1,0 +1,1 @@
+{"cron":{"action":{"kind":"notify"},"trigger":{"cron":"0 * * * *","kind":"cron","timezone":"UTC"}},"interval":{"action":{"kind":"notify"},"trigger":{"every_seconds":900,"kind":"interval"}}}
