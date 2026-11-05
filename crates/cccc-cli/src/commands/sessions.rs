@@ -6,6 +6,7 @@ use cccc_contracts::{DaemonRequest, local_session::LocalSessionRuntime};
 use cccc_core::{
     HomeLayout,
     local_sessions::{self, NativeHost, NativeSession, RetireReason},
+    monitor_records,
 };
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -14,6 +15,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod extension;
 pub(crate) mod setup;
+
+/// Claude Code merges Monitor events that arrive close together and drops them
+/// past an output rate. This gap delivered 45 of 45 on 2.1.317; one second lost
+/// half of them after the 18th.
+const MONITOR_NOTICE_GAP: Duration = Duration::from_millis(2_100);
 
 pub async fn run(home: &HomeLayout, action: SessionsAction) -> Result<()> {
     let client = DaemonClient::new(home.clone());
@@ -314,34 +320,37 @@ async fn hook(
         } else {
             (None, Some(false), None, None)
         };
-    let registered = local_sessions::write_with_codex_readiness(
-        home,
-        NativeSession {
-            source_id,
-            runtime,
-            native_session_id: native_id.into(),
-            host,
-            cwd,
-            title,
-            origin,
-            revision: uuid::Uuid::new_v4().to_string(),
-            codex_home,
-            codex_can_receive: codex_can_receive.unwrap_or(false),
-            codex_program,
-            claude_config_dir: if runtime == LocalSessionRuntime::Claude {
-                Some(std::path::absolute(provider_home.map(Ok).unwrap_or_else(
-                    || native_home("CLAUDE_CONFIG_DIR", ".claude"),
-                )?)?)
-            } else {
-                None
-            },
-            pi_agent_dir: None,
-            opencode_config_dir: None,
-            opencode_server: None,
-            retired: None,
+    let compacted = event["hook_event_name"] == "SessionStart" && event["source"] == "compact";
+    let session = NativeSession {
+        source_id,
+        runtime,
+        native_session_id: native_id.into(),
+        host,
+        cwd,
+        title,
+        origin,
+        revision: uuid::Uuid::new_v4().to_string(),
+        context_epoch: 0,
+        codex_home,
+        codex_can_receive: codex_can_receive.unwrap_or(false),
+        codex_program,
+        claude_config_dir: if runtime == LocalSessionRuntime::Claude {
+            Some(std::path::absolute(provider_home.map(Ok).unwrap_or_else(
+                || native_home("CLAUDE_CONFIG_DIR", ".claude"),
+            )?)?)
+        } else {
+            None
         },
-        codex_can_receive,
-    );
+        pi_agent_dir: None,
+        opencode_config_dir: None,
+        opencode_server: None,
+        retired: None,
+    };
+    let registered = if compacted {
+        local_sessions::write_after_compact(home, session, codex_can_receive)
+    } else {
+        local_sessions::write_with_codex_readiness(home, session, codex_can_receive)
+    };
     if let Err(error) = registered
         && !local_sessions::integration_disabled(home, runtime)?
     {
@@ -375,6 +384,7 @@ async fn receive(home: &HomeLayout, host_pid: Option<u32>) -> Result<()> {
     let mut attached = false;
     let mut attached_revision = String::new();
     let mut heartbeat_at = tokio::time::Instant::now() - Duration::from_secs(5);
+    let mut next_notice_at = tokio::time::Instant::now();
     let mut output = tokio::io::stdout();
     let mut stop = std::pin::pin!(stop_signal());
     let result = async {
@@ -430,6 +440,9 @@ async fn receive(home: &HomeLayout, host_pid: Option<u32>) -> Result<()> {
                     }
                 }
             }
+            if tokio::time::Instant::now() < next_notice_at {
+                continue;
+            }
             let next = match request(
                 &client,
                 "local_session_receiver_next",
@@ -447,11 +460,16 @@ async fn receive(home: &HomeLayout, host_pid: Option<u32>) -> Result<()> {
                 continue;
             }
             let handoff = &next["handoff"];
-            // One stdout event per handoff; native Monitor consumes this in order.
-            let line = serde_json::to_vec(&json!({"message":handoff["text"]}))?;
-            output.write_all(&line).await?;
-            output.write_all(b"\n").await?;
+            // One notification per handoff: Monitor joins records written together
+            // and keeps them in order.
+            let mut records = String::new();
+            for record in monitor_records::records(handoff["text"].as_str().unwrap_or_default()) {
+                records.push_str(&record);
+                records.push('\n');
+            }
+            output.write_all(records.as_bytes()).await?;
             output.flush().await?;
+            next_notice_at = tokio::time::Instant::now() + MONITOR_NOTICE_GAP;
             // Never replay stdout if an ACK is lost. The daemon retains and settles
             // the existing delivery claim, then continues with later messages.
             let _ = request(

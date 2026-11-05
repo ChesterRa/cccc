@@ -342,7 +342,7 @@ fn process_external_batch(
         if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
             return BatchOutcome::Retry;
         }
-        let Some(marker) =
+        let Some(session) =
             super::local_sessions::session_marker(&job.home, &actor.external_session_id)
         else {
             return defer_external_job(job);
@@ -356,6 +356,8 @@ fn process_external_batch(
         ) else {
             return BatchOutcome::Terminal("Native delivery could not be rendered".into());
         };
+        let preamble = super::actor_delivery_preamble::render(&job.home, &group, actor);
+        let marker = preamble_marker(&session, chrono::Utc::now().timestamp(), &preamble);
         let first_delivery = *preamble_session != marker;
         let mut instructions = super::local_sessions::instruction_session(&job.home, actor)
             .and_then(|(session, root)| {
@@ -370,6 +372,8 @@ fn process_external_batch(
                 actor,
                 &job.event,
                 short.as_deref(),
+                &text,
+                first_delivery,
             ) else {
                 return BatchOutcome::Terminal(
                     "Native notification routing context exceeds the Claude Monitor budget".into(),
@@ -380,10 +384,7 @@ fn process_external_batch(
             }
             text = notice;
         } else if first_delivery {
-            text = format!(
-                "{}\n\n{text}",
-                super::actor_delivery_preamble::render(&job.home, &group, actor)
-            );
+            text = format!("{preamble}\n\n{text}");
         } else {
             // One native session may serve several Groups. Later messages
             // still identify their receiving member without repeating startup.
@@ -489,6 +490,14 @@ fn process_external_batch(
         jobs.remove(0);
     }
     BatchOutcome::Delivered
+}
+
+/// A delivery owes the Preamble when this differs from the last one accepted: in
+/// a new conversation, after a reported compaction and when its text changes.
+/// The hour gives a compaction nobody reported one more chance, since a missed
+/// signal looks just like none.
+fn preamble_marker(session: &str, now: i64, preamble: &str) -> String {
+    format!("{session}:{}\n{preamble}", now / 3_600)
 }
 
 fn defer_external_job(job: &mut DeliveryJob) -> BatchOutcome {
@@ -788,6 +797,15 @@ pub(super) fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) ->
 mod tests {
     use super::*;
     use cccc_contracts::{Actor, ActorRuntime, ActorSubmit, Event};
+
+    #[test]
+    fn the_preamble_comes_due_with_a_new_session_hour_or_text() {
+        let marker = preamble_marker("revision:0", 7_200, "rules");
+        assert_eq!(marker, preamble_marker("revision:0", 10_799, "rules"));
+        assert_ne!(marker, preamble_marker("revision:0", 10_800, "rules"));
+        assert_ne!(marker, preamble_marker("revision:1", 7_200, "rules"));
+        assert_ne!(marker, preamble_marker("revision:0", 7_200, "new rules"));
+    }
 
     #[test]
     fn repeats_enter_only_for_tuis_that_can_drop_the_first_submit() {

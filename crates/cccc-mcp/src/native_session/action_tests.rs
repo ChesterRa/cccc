@@ -32,6 +32,7 @@ impl Fixture {
                 title: "Isolated native fixture".into(),
                 origin: None,
                 revision: "current-revision".into(),
+                context_epoch: 0,
                 codex_home: None,
                 codex_can_receive: false,
                 codex_program: None,

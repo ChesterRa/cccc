@@ -219,6 +219,9 @@ pub struct NativeSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     pub revision: String,
+    /// Changes when this conversation compacts, without replacing its authority.
+    #[serde(default)]
+    pub context_epoch: u64,
     #[serde(default)]
     pub codex_home: Option<PathBuf>,
     #[serde(default)]
@@ -445,8 +448,26 @@ pub fn write(home: &HomeLayout, session: NativeSession) -> io::Result<NativeSess
 /// Merge under the lifecycle lock so a concurrent negative check is not lost.
 pub fn write_with_codex_readiness(
     home: &HomeLayout,
+    session: NativeSession,
+    ready: Option<bool>,
+) -> io::Result<NativeSession> {
+    write_lifecycle(home, session, ready, false)
+}
+
+/// Record a compact callback in the same critical section as lifecycle merging.
+pub fn write_after_compact(
+    home: &HomeLayout,
+    session: NativeSession,
+    ready: Option<bool>,
+) -> io::Result<NativeSession> {
+    write_lifecycle(home, session, ready, true)
+}
+
+fn write_lifecycle(
+    home: &HomeLayout,
     mut session: NativeSession,
     ready: Option<bool>,
+    compacted: bool,
 ) -> io::Result<NativeSession> {
     home.initialize().map_err(io::Error::other)?;
     fs::with_exclusive_lock(&home.root().join("state/local_sessions.lock"), || {
@@ -457,6 +478,8 @@ pub fn write_with_codex_readiness(
             ));
         }
         session.codex_can_receive = ready.unwrap_or(false);
+        // A new lifecycle does not inherit an older snapshot's epoch.
+        session.context_epoch = u64::from(compacted);
         if session.runtime == LocalSessionRuntime::Opencode
             && let Ok(previous) = read(home, &session.source_id)
             && previous.host != session.host
@@ -475,6 +498,7 @@ pub fn write_with_codex_readiness(
             && session.runtime != LocalSessionRuntime::Opencode
         {
             session.revision.clone_from(&previous.revision);
+            session.context_epoch = previous.context_epoch + u64::from(compacted);
             if ready.is_none()
                 && previous.cwd == session.cwd
                 && previous.codex_home == session.codex_home
@@ -714,6 +738,116 @@ mod tests {
     }
 
     #[test]
+    fn compact_epoch_survives_callbacks_but_not_a_new_conversation() {
+        let temp = tempfile::tempdir().expect("temporary home");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let host = NativeHost::capture(std::process::id()).expect("host");
+        let session = NativeSession {
+            source_id: format!("claude:{}", host.key()),
+            runtime: LocalSessionRuntime::Claude,
+            native_session_id: "first".into(),
+            host,
+            cwd: "/tmp".into(),
+            title: "Claude".into(),
+            origin: None,
+            revision: "initial".into(),
+            context_epoch: 0,
+            codex_home: None,
+            codex_can_receive: false,
+            codex_program: None,
+            claude_config_dir: None,
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: None,
+            retired: None,
+        };
+        let initial = write(&home, session.clone()).expect("register");
+        let mut older_json = serde_json::to_value(&initial).expect("session JSON");
+        older_json
+            .as_object_mut()
+            .expect("object")
+            .remove("context_epoch");
+        assert_eq!(
+            serde_json::from_value::<NativeSession>(older_json)
+                .expect("existing record")
+                .context_epoch,
+            0
+        );
+
+        let compacted = write_after_compact(&home, session.clone(), Some(false)).expect("compact");
+        assert_eq!(compacted.context_epoch, 1);
+        assert_eq!(compacted.revision, initial.revision);
+        validate_source(&home, &initial.source_id, &initial.revision)
+            .expect("compaction preserves source authority");
+
+        let mut ordinary = session.clone();
+        ordinary.title = "Updated".into();
+        let ordinary = write(&home, ordinary).expect("later prompt");
+        assert_eq!(ordinary.context_epoch, 1);
+        assert_eq!(ordinary.revision, initial.revision);
+        let twice = write_after_compact(&home, session, Some(false)).expect("second compact");
+        assert_eq!(twice.context_epoch, 2);
+
+        let mut replacement = twice;
+        replacement.native_session_id = "second".into();
+        replacement.revision = "replacement".into();
+        let replacement = write(&home, replacement).expect("new conversation");
+        assert_eq!(replacement.context_epoch, 0);
+        assert_eq!(replacement.revision, "replacement");
+    }
+
+    #[test]
+    fn concurrent_compact_and_prompt_callbacks_do_not_lose_the_epoch() {
+        use std::sync::{Arc, Barrier};
+
+        let temp = tempfile::tempdir().expect("temporary home");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let host = NativeHost::capture(std::process::id()).expect("host");
+        let session = NativeSession {
+            source_id: format!("claude:{}", host.key()),
+            runtime: LocalSessionRuntime::Claude,
+            native_session_id: "conversation".into(),
+            host,
+            cwd: "/tmp".into(),
+            title: "Claude".into(),
+            origin: None,
+            revision: "initial".into(),
+            context_epoch: 0,
+            codex_home: None,
+            codex_can_receive: false,
+            codex_program: None,
+            claude_config_dir: None,
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: None,
+            retired: None,
+        };
+        write(&home, session.clone()).expect("register");
+        let barrier = Arc::new(Barrier::new(8));
+        let threads: Vec<_> = (0..8)
+            .map(|index| {
+                let home = home.clone();
+                let session = session.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    if index % 2 == 0 {
+                        write_after_compact(&home, session, Some(false)).expect("compact");
+                    } else {
+                        write(&home, session).expect("prompt");
+                    }
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().expect("callback");
+        }
+        let current = read(&home, &session.source_id).expect("current");
+        assert_eq!(current.context_epoch, 4);
+        assert_eq!(current.revision, session.revision);
+    }
+
+    #[test]
     fn host_identity_and_native_parent_follow_process_lifetime() {
         use std::process::{Command, Stdio};
         if std::env::var_os("CCCC_TEST_NATIVE_HOST_CHILD").is_some() {
@@ -766,6 +900,7 @@ mod tests {
             title: "Claude".into(),
             origin: None,
             revision: "one".into(),
+            context_epoch: 0,
             codex_home: None,
             codex_can_receive: false,
             codex_program: None,
@@ -835,6 +970,7 @@ mod tests {
             title: "Codex".into(),
             origin: None,
             revision: "one".into(),
+            context_epoch: 0,
             codex_home: None,
             codex_can_receive: false,
             codex_program: None,
@@ -895,6 +1031,7 @@ mod tests {
                 title: "Codex".into(),
                 origin: None,
                 revision: "one".into(),
+                context_epoch: 0,
                 codex_home: Some("/fixture/codex-home".into()),
                 codex_can_receive: true,
                 codex_program: Some("/fixture/codex".into()),
@@ -971,6 +1108,7 @@ mod tests {
                 title: "Codex".into(),
                 origin: None,
                 revision: "one".into(),
+                context_epoch: 0,
                 codex_home: Some("/fixture/codex-home".into()),
                 codex_can_receive: true,
                 codex_program: Some("/fixture/codex".into()),
@@ -1031,6 +1169,7 @@ mod opencode_tests {
             title: "OpenCode".into(),
             origin: None,
             revision: "first".into(),
+            context_epoch: 0,
             codex_home: None,
             codex_can_receive: false,
             codex_program: None,

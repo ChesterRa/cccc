@@ -32,6 +32,7 @@ impl Fixture {
             title: "Claude native fixture".into(),
             origin: None,
             revision: "first-revision".into(),
+            context_epoch: 0,
             codex_home: None,
             codex_can_receive: false,
             codex_program: None,
@@ -493,6 +494,24 @@ fn claude_compact_notification_recovers_full_message_and_instructions_without_re
         transport::next(&fixture.home, &receiver)
             .expect("no replay")
             .is_none()
+    );
+}
+
+#[test]
+fn compaction_changes_the_delivery_marker_without_replacing_the_native_session() {
+    let fixture = Fixture::new();
+    let source = &fixture.source;
+    let before = session_marker(&fixture.home, &source.source_id).expect("initial marker");
+    let changed = native::write_after_compact(&fixture.home, source.clone(), Some(false))
+        .expect("compact callback");
+    assert_eq!(changed.revision, source.revision);
+    let after = session_marker(&fixture.home, &source.source_id).expect("compact marker");
+    assert_ne!(before, after);
+
+    native::write(&fixture.home, source.clone()).expect("ordinary callback");
+    assert_eq!(
+        session_marker(&fixture.home, &source.source_id).as_deref(),
+        Some(after.as_str())
     );
 }
 
@@ -2516,7 +2535,12 @@ fn native_deliveries_always_identify_the_receiving_group_and_member() {
         );
         let handoff = offered(&fixture.home, &receiver);
         assert_eq!(handoff.group_id, group.group_id);
-        assert!(handoff.text.contains(label));
+        assert_eq!(
+            handoff.text.contains(label),
+            label == "A2",
+            "only a member's first notice in a Group withholds the message: {}",
+            handoff.text
+        );
         assert!(
             handoff
                 .text
@@ -2561,6 +2585,78 @@ fn native_deliveries_always_identify_the_receiving_group_and_member() {
             "accepted",
         );
     }
+}
+
+#[test]
+fn a_claude_member_reads_when_its_preamble_is_due_and_otherwise_gets_the_whole_message() {
+    let fixture = Fixture::new();
+    let group = fixture.conversation();
+    let receiver = fixture.attach();
+    let groups = GroupStore::new(fixture.home.clone()).expect("store");
+    groups
+        .mutate(&group.group_id, |doc| {
+            doc.actors.push(Actor::new("peer"));
+            Ok(())
+        })
+        .expect("add a peer");
+    let deliver = |text: &str| {
+        let sent = fixture.call(
+            "message_send",
+            json!({
+                "group_id":group.group_id,"by":"peer","to":[group.actors[0].id],
+                "message_mode":"send","text":text
+            }),
+        );
+        let handoff = offered(&fixture.home, &receiver);
+        transport::acknowledge(
+            &fixture.home,
+            &receiver,
+            &handoff.handoff_id,
+            transport::Outcome::Accepted,
+        )
+        .expect("accept handoff");
+        fixture.wait_state(
+            &group,
+            sent["event"]["id"].as_str().expect("message ID"),
+            "accepted",
+        );
+        handoff.text
+    };
+    let assert_read = |notice: &str, body: &str| {
+        assert!(
+            notice.starts_with("[CCCC] Read full message and instructions:"),
+            "{notice}"
+        );
+        assert!(!notice.contains(body), "{notice}");
+    };
+    let assert_whole = |notice: &str, body: &str| {
+        assert!(notice.starts_with("[CCCC] Message below."), "{notice}");
+        assert!(notice.contains(body), "{notice}");
+        assert!(notice.contains("cccc_message_reply"), "{notice}");
+    };
+
+    assert_read(&deliver("first body"), "first body");
+    assert_whole(&deliver("second body"), "second body");
+    assert_whole(&deliver("third body"), "third body");
+
+    cccc_core::group_prompts::write_preamble(&groups, &group.group_id, "New Group rules")
+        .expect("custom preamble");
+    assert_read(&deliver("fourth body"), "fourth body");
+    assert_whole(&deliver("fifth body"), "fifth body");
+
+    groups
+        .mutate(&group.group_id, |doc| {
+            doc.actors.push(Actor::new("another"));
+            Ok(())
+        })
+        .expect("add a member");
+    assert_read(&deliver("sixth body"), "sixth body");
+    assert_whole(&deliver("seventh body"), "seventh body");
+
+    let session = native::read(&fixture.home, &fixture.source.source_id).expect("session");
+    native::write_after_compact(&fixture.home, session, Some(false)).expect("compact callback");
+    assert_read(&deliver("eighth body"), "eighth body");
+    assert_whole(&deliver("ninth body"), "ninth body");
 }
 
 #[test]

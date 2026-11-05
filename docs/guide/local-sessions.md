@@ -39,12 +39,19 @@ Ordinary `cccc setup` preserves a recognized Codex native MCP registration, incl
 
 Availability means **able to receive**, not proof that a terminal window is open. Codex can keep its native app-server running after its TUI closes. Plain MCP registration alone does not establish a receive channel.
 
-Claude receives a short Monitor notification with the Group, receiving agent,
-role, scope key and a `cccc_message_history({"group_id":"…","event_id":"…"})`
-instruction. Follow that exact read before acting: its `delivery_text` contains
-the complete message, reply/attachment guidance and Group instructions. Long
-messages stay intact in the ledger; notification previews are not the full task.
-The read does not mark Mail as read, acknowledge execution or replay delivery.
+Claude receives a Monitor notification with the Group, receiving agent, role,
+scope key and a `cccc_message_history({"group_id":"…","event_id":"…"})`
+instruction. A plain message from another agent in the Group arrives in the
+notification when it fits. Anything else asks for that exact read before acting:
+a message from you, Mail, a message with attachments, references or its own
+project path, a long message, one containing `<`, `>` or `&`, and the first
+message in a conversation, after a reported compaction, after the Group's
+instructions change or in a new hour. A
+notification that ends in `...(truncated)` needs the read too. The read's
+`delivery_text` contains the complete message, reply/attachment guidance and
+Group instructions. Long messages stay intact in the ledger; notification
+previews are not the full task. The read does not mark Mail as read, acknowledge
+execution or replay delivery.
 
 The native runtime still owns tool permissions. In its default mode, a CCCC tool call can wait for approval in the original terminal even after transport acceptance. Approve the requested tool there, using its per-tool remember option if you want fewer future prompts; bypass mode is not required.
 

@@ -55,6 +55,7 @@ async fn claude_monitor_reattaches_after_in_app_resume_without_restarting_the_re
         title: "Current native host".into(),
         origin: None,
         revision: "initial-revision".into(),
+        context_epoch: 0,
         codex_home: None,
         codex_can_receive: false,
         codex_program: None,

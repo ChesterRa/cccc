@@ -712,6 +712,37 @@ fn generated_codex_hook_registers_its_verified_parent_without_a_pid_argument() {
         source.title,
         format!("Codex_{}_ixture", directory.to_string_lossy())
     );
+
+    for (event, reason, expected_epoch) in [
+        ("SessionStart", "compact", 1),
+        ("UserPromptSubmit", "compact", 1),
+        ("SessionStart", "resume", 1),
+        ("SessionStart", "compact", 2),
+    ] {
+        let callback = json!({
+            "session_id":"native-fixture",
+            "hook_event_name":event,
+            "source":reason,
+            "cwd":fixture.directory.path(),
+        })
+        .to_string();
+        let output = cccc_runtime::capture_command_blocking(
+            &mut hook,
+            Some(callback.as_bytes()),
+            std::time::Duration::from_secs(5),
+            4096,
+        )
+        .expect("generated lifecycle callback");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let current = cccc_core::local_sessions::read(&layout, "codex:native-fixture")
+            .expect("callback source");
+        assert_eq!(current.revision, source.revision);
+        assert_eq!(current.context_epoch, expected_epoch);
+    }
 }
 
 #[test]
@@ -862,6 +893,145 @@ fn receiver_waits_out_a_previous_lease_instead_of_exiting_on_reload() {
         1,
         "one native notification, no polling chatter"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn receiver_writes_a_long_notice_as_records_and_paces_the_next_one() {
+    use cccc_core::local_sessions::NativeHost;
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    let fixture = CodexSetupFixture::new("overwrite");
+    install_fake_claude(&fixture);
+    let path = fixture.home("generated-claude");
+    fixture.run(&["sessions", "enable", "--runtime", "claude"], &path);
+    let home = cccc_core::HomeLayout::from_path(&path).expect("home");
+    let host = NativeHost::capture(std::process::id()).expect("fixture host");
+    let plugin = path.join("integrations/local-sessions/plugins/cccc-local-sessions");
+    let hooks: Value =
+        cccc_core::fs::read_json(&plugin.join("hooks/hooks.json")).expect("generated hooks");
+    let args = hooks["hooks"]["SessionStart"][0]["hooks"][0]["args"]
+        .as_array()
+        .expect("exec-form hook")
+        .iter()
+        .map(|value| value.as_str().expect("argument"))
+        .collect::<Vec<_>>();
+    let mut hook = fixture.command(&args, &path);
+    hook.env("CLAUDE_PID", std::process::id().to_string());
+    let callback = json!({"session_id":"fixture-records","hook_event_name":"SessionStart","cwd":fixture.directory.path()}).to_string();
+    let output = cccc_runtime::capture_command_blocking(
+        &mut hook,
+        Some(callback.as_bytes()),
+        Duration::from_secs(5),
+        4096,
+    )
+    .expect("generated hook");
+    assert!(output.status.success());
+    assert!(
+        cccc_core::local_sessions::read(&home, &format!("claude:{}", host.key())).is_ok(),
+        "the fixture session is registered"
+    );
+
+    let long = format!("[CCCC] {}\n{}", "界".repeat(700), "\"quoted\"\n".repeat(60));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("IPC listener");
+    listener.set_nonblocking(true).expect("bounded server");
+    cccc_core::fs::write_json(&home.daemon_dir().join("ccccd.addr.json"), &serde_json::json!({"v":1,"transport":"tcp","path":"","host":"127.0.0.1","port":listener.local_addr().expect("port").port(),"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"ts":"2026-10-21T00:00:00Z"})).expect("IPC address");
+    let (sender, offers) = mpsc::channel();
+    let handoffs = vec![long.clone(), "second".to_owned()];
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut handoffs = handoffs.into_iter();
+        while Instant::now() < deadline {
+            let (stream, _) = match listener.accept() {
+                Ok(value) => value,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("accept: {error}"),
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .expect("read timeout");
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).expect("request");
+            let request: cccc_contracts::DaemonRequest =
+                serde_json::from_str(&line).expect("request JSON");
+            let response = if request.op == "local_session_receiver_next" {
+                match handoffs.next() {
+                    Some(text) => {
+                        sender.send(Instant::now()).expect("offer time");
+                        serde_json::json!({"ok":true,"result":{"handoff":{"handoff_id":"fixture","text":text}}})
+                    }
+                    None => serde_json::json!({"ok":true,"result":{"handoff":null}}),
+                }
+            } else {
+                serde_json::json!({"ok":true,"result":{}})
+            };
+            writeln!(stream.get_mut(), "{response}").expect("response");
+            if request.op == "local_session_receiver_detach" {
+                break;
+            }
+        }
+    });
+    let monitors: Value = cccc_core::fs::read_json(&plugin.join("monitors/monitors.json"))
+        .expect("generated monitor");
+    let environment = fixture.command(&[], &path);
+    let mut child = Command::new("/bin/sh")
+        .args([
+            "-c",
+            monitors[0]["command"].as_str().expect("monitor command"),
+        ])
+        .env_clear()
+        .envs(
+            environment
+                .get_envs()
+                .map(|(key, value)| (key, value.expect("fixture environment"))),
+        )
+        .env("CLAUDE_PID", std::process::id().to_string())
+        .current_dir(fixture.directory.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("receiver");
+    let first = offers
+        .recv_timeout(Duration::from_secs(5))
+        .expect("first offer");
+    let second = offers
+        .recv_timeout(Duration::from_secs(5))
+        .expect("second offer");
+    std::thread::sleep(Duration::from_millis(300));
+    let _ = nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGTERM,
+    );
+    child.wait().expect("own receiver exits");
+    let output = child.wait_with_output().expect("receiver output");
+    server.join().expect("IPC server");
+
+    assert!(
+        second - first >= Duration::from_secs(2),
+        "the next notification waits: {:?}",
+        second - first
+    );
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 stdout");
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert!(lines.len() > 3, "{} records", lines.len());
+    let (last, records) = lines.split_last().expect("records");
+    let message = |line: &str| {
+        let record: Value = serde_json::from_str(line).expect("JSON record");
+        record["message"].as_str().expect("message").to_owned()
+    };
+    assert_eq!(
+        records.iter().map(|line| message(line)).collect::<String>(),
+        long
+    );
+    assert_eq!(message(last), "second");
+    for line in records {
+        assert!(line.encode_utf16().count() < 500, "{line}");
+    }
 }
 
 struct CodexSetupFixture {

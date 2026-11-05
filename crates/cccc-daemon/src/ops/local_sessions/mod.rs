@@ -453,7 +453,7 @@ pub(super) fn session_marker(home: &HomeLayout, source_id: &str) -> Option<Strin
     cccc_core::local_sessions::read(home, source_id)
         .ok()
         .filter(cccc_core::local_sessions::NativeSession::host_alive)
-        .map(|session| session.revision)
+        .map(|session| format!("{}:{}", session.revision, session.context_epoch))
 }
 
 /// Native instructions are associated with the working directory reported by

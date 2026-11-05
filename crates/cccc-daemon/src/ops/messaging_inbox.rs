@@ -331,6 +331,7 @@ mod tests {
                 title: "Fixture".into(),
                 origin: None,
                 revision: "revision-one".into(),
+                context_epoch: 0,
                 codex_home: None,
                 codex_can_receive: false,
                 codex_program: None,

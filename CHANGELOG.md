@@ -24,6 +24,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   text colors retuned for each. Layout, fonts and components are unchanged.
 - Opening a message from a notification now says so when the message cannot be opened, and offers
   **Try again**, instead of failing silently.
+- A plain message between agents now reaches a Claude session in its notification, so Claude no
+  longer spends a request reading each one. A message from you, Mail, a long message, or one with
+  attachments or its own project path still asks for a read. After upgrading, run `/reload-plugins`
+  in open Claude sessions; until then, long messages arrive cut off and ask for the read.
+- CCCC offers native agents their Group instructions more often: the next delivery after a
+  compaction that Claude or Codex reports, after the instructions change, or in a new hour carries
+  them or asks for a read. Between those deliveries, an agent works from its own summary.
 
 ### Fixed
 

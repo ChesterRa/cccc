@@ -76,6 +76,7 @@ pub(super) async fn bridge(
             ),
             origin: None,
             revision: uuid::Uuid::new_v4().to_string(),
+            context_epoch: 0,
             codex_home: None,
             codex_can_receive: false,
             codex_program: None,
