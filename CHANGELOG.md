@@ -6,8 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.48]
+
 ### Added
 
+- An administrator can switch the runtime that runs an agent without losing the agent: between
+  connected native sessions, between a native session and a CCCC-managed runtime, or between
+  managed runtimes and Profiles. In the agent editor, **Runtime** first offers CCCC managed, Native
+  session or Web Model, then the item within it. The agent keeps its ID, role, tasks, Mail, reply
+  requests, message history, agent state and notes. CCCC stops the managed process that ran it; a
+  native application's process stays open until you stop it. A message the old runtime may have
+  received without a confirmed result is listed in a handoff notice to the new runtime and is not
+  delivered again automatically. When the new runtime can receive during the switch, the notice
+  comes before the messages still waiting; an agent that is stopped, paused or has its access
+  paused receives them all later, in the order they were written. Switching to a native
+  session removes the agent's managed configuration, including its own private environment
+  variables, which cannot be recovered; **Save as Profile first** keeps a custom configuration.
+  The old native session is told it was replaced and does not take the agent back when it
+  reconnects. If the final step of a switch fails, the agent stops receiving until **Retry
+  completion** succeeds or the daemon restarts. Web Model agents keep **Save** and **Save and
+  restart** in this release. The CLI offers `cccc actor switch`; the daemon operations are
+  `actor_runtime_switch` and `actor_runtime_switch_complete`.
 - Agents are told when their instruction files change. After `AGENTS.md`, `AGENTS.override.md`,
   `CLAUDE.md`, `CLAUDE.local.md` or `.claude/CLAUDE.md` in an agent's workspace or a directory
   above it changes, appears or is removed, the next CCCC message that has room for it carries one
@@ -27,7 +46,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   interface shows `confirm retry`. Actor rows and lifecycle results report this as
   `runtime_confirmation_paused`. The pause itself is unchanged: an explicit retry or a CCCC
   restart clears it.
-- Mail can now tell its sender when a named recipient cannot act on it yet. The result of a new
+- Mail results can now report the state of named recipients. The result of a new
   local Mail may list, as `mail_recipient_advisories`, explicitly addressed agents that are
   disabled, in a paused or stopped Group, or reported by the daemon as not running, with a note that
   writing Mail starts no agent and resumes no Group, and that Send, or delivering this Mail, can
@@ -38,6 +57,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Changed
 
+- **Save and restart** after changing a managed agent's runtime, mode or Profile, or after the
+  linked Profile changed, now switches the agent as described above, with its handoff notice, so a
+  message cut off by the restart is not sent twice. A restart without such a change is unchanged.
+  The add-agent dialog lists the same runtime categories; its **Native session** category opens
+  **Connect existing sessions** for the current Group.
+- The default name of a native session is shorter and has no spaces: `Codex_cccc_0632d7` instead of
+  `Codex · cccc · 0632d7`. Spaces in the directory name become hyphens, and a title the session
+  supplies itself is still used. Agents already in a Group are not renamed at once; one that still
+  has its default name can take the new form when its session is restored.
+- An agent on a native session now opens the same agent editor as other agents, with its avatar,
+  display name, group role, behavior preset and notes. Its working directory is read-only, because
+  the original application sets it, and settings that apply only to a process CCCC starts are
+  hidden.
+- Copying a Group now stops and asks you to copy it again when its agents changed while the copy
+  was being made, instead of producing a copy whose agents do not match its history.
 - Chinese and Japanese interface text now uses the names from the published READMEs. Chinese says
   语音秘书 instead of 小秘书, and 领班 where the English foreman remained. Japanese calls the
   foreman and peers フォアマン and ピア instead of the English names or リーダー, and says 音声秘書
@@ -118,6 +152,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- A system notice without a message mode, such as a Voice Secretary request, was never delivered
+  to a connected Claude session: building its notification failed and ended that session's
+  delivery worker. Such notices are now delivered, with their text as the preview.
 - The Runtime Dock no longer calls a native session **Stopped** when CCCC only cannot deliver
   to it; it shows the same receive status as the agent's tab. A Codex member that
   cannot receive now says that CCCC reaches Codex only through the shared app-server and asks you
@@ -125,6 +162,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   identifies that Codex session on a tool call, the tool result can include a notice telling the
   agent that messages may not reach it unless it looks, so it can ask the user to check. While that
   state stays the same, each MCP server repeats this at most once every six hours.
+- A custom agent avatar now appears in the agent editor and the agent list after you upload it, and
+  stays after a reload, with **Reset** to remove it. Before, the upload was saved but those views
+  kept showing the default image. The avatar picker no longer offers SVG, because CCCC's file route
+  serves SVG as binary data rather than as an image, and says which formats work if you choose one
+  anyway.
+- Codex sessions started in a terminal are no longer labelled **VS Code** in **Connect existing
+  sessions** when Codex records the client that created the thread, as Codex 0.166 does. That
+  version records terminal threads with the source `vscode`, so CCCC now reads the recorded client
+  and uses the source only when no client is recorded. Threads created by other clients get no
+  origin badge. A session listed before this change can keep its old badge.
 - Switching away from a Connect remote workspace now asks before discarding an unsent message
   draft or attachment, once that workspace has reported it. Drafts in other Groups on the same
   remote page count too; an empty or whitespace-only draft does not.
@@ -149,6 +196,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   sends live only in the open page: while any wait, the page asks the browser to warn before a
   reload or close, and switching away from a Connect remote workspace asks first once that
   workspace has reported them.
+- While a message is being sent, the Send button now shows that it is still sending and becomes
+  available again when the attempt finishes; you can keep editing the next draft meanwhile. Before,
+  a second send during that time looked possible but did nothing. Slash commands are unchanged.
 - A draft addressed to another Group now keeps that destination and its recipients when you switch
   Groups and come back. A send naming a recipient who is no longer available stays in the composer
   with a request to check the recipients; it used to go without that recipient, or to the Group's
@@ -277,6 +327,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   and a retry returns the first message, also after a source file was removed.
 - Ctrl+Enter (Cmd+Enter on macOS) did not send a message ending in an `@` or `#` mention that matched
   no suggestion, such as `see #34`; it now sends.
+
+### Security
+
+- Linking an agent to an Actor Profile now requires permission to read that Profile. Before, a
+  Group member without administrator access could link another user's private Profile to an agent,
+  through the Web or by asking an agent to do it, and the agent then started with that Profile's
+  command and private environment, such as API keys. Adding an agent with a Profile, linking or
+  relinking one, changing which user's Profile a link points to, and converting a linked agent to
+  a custom one now check that the caller may read the Profile, and an update's `patch` can no
+  longer set the link directly. A request made by an agent can list, read and link global Profiles
+  only, whatever authority fields it carries. The Web takes the caller from the signed-in session
+  instead of the request body, and the `cccc` MCP server drops authority fields supplied by a
+  model. Local `cccc` commands keep administrator access. Links made before this release are not
+  checked again: an administrator of a CCCC that others sign in to can see which agents use each
+  Profile under Settings → Agent Profiles → **Usage**, and should remove an agent that should not
+  use one or link it to another Profile. **Convert to Custom**, or deleting the Profile with
+  **Delete anyway and convert linked agents to custom**, would copy the Profile's keys into the
+  agent.
 
 ## [0.4.47]
 

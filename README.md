@@ -44,25 +44,20 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.47
+## What's new in 0.4.48
 
-- **A new look.** The Web UI is now a pixel-terminal screen, light or dark, and fully replaces the previous look.
-- **Chet by text.** Chet, formerly the Voice Analyst, takes typed messages without a voice call, and Group members can address it as `@chet`.
-- **Connect sessions** now sits above the Group list, and its dialog shows setup steps for one app at a time.
-- **Pin message** keeps a message in the **Pinned** tab, up to 100 per Group. A message's **More** menu offers four ready answers to its agent under **Quick reply · sends immediately**.
-- **Reading.** Changing a chat filter keeps your place, and **Show in chat** opens a filtered message in the whole conversation.
-- **Claude's first-run prompts** for workspace trust and the `--dangerously-skip-permissions` disclaimer open in the agent's terminal. CCCC never answers them for you.
-- **Smaller tool results.** `cccc_task` lists one short row per task and `cccc_coordination` no longer repeats the task list, so agents read far less: about 2,900 instead of 98,000 characters for 60 tasks in a probe Group.
+- **Switch an agent's runtime.** An administrator can move an agent between connected native sessions, from a native session to a CCCC-managed runtime and back, or between managed runtimes and Profiles. The agent keeps its ID, role, tasks, Mail, history and notes. Messages whose delivery is uncertain are listed for the new runtime to check instead of being sent again automatically.
+- **Sends that did not confirm.** A Web send that failed, or whose result never came back, returns to an empty composer or waits under **N sends to restore**; it never overwrites a draft you started meanwhile. An unchanged restored message (not a slash command), sent again from the same open page, reuses its original ID and does not create a duplicate.
+- **Voice keeps recognized words** in more of the ways a recording can end early, and dictation continues your draft. A voice model download that stops partway continues where it stopped when the server supports it.
+- **Connect waits.** A Connect remote workspace keeps its page and unsent work while its access is renewed, for example after the computer slept, instead of closing.
+- **Instruction files.** After `AGENTS.md`, `CLAUDE.md` or a related file in an agent's workspace changes, a later CCCC message to that agent can carry one line asking it to check the current instructions.
+- **Mentions.** `@` and `#` suggestions open at the cursor, also right after Chinese or Japanese text, and messages highlight each agent in the colour of its name.
+- **Mail results can report recipient states**: a named agent that is disabled or reported as not running, or whose Group is paused or stopped. A result without them does not mean the Mail will be read.
+- **Version notice.** The `cccc` MCP server can say when it runs a different version than the daemon, and which one to restart.
 
-**Security fixes**
+**Upgrade notes.** Before upgrading, let sends and recordings finish, and restore or discard waiting sends: they live only in the open page. Then reload open Web pages. Native-session users should [reload the integration in each app](https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration). A Connect remote workspace waits for its access only when both instances run 0.4.48 or later.
 
-- Web Access Tokens restricted to certain Groups could access, change or delete other Groups. Authorization now checks the Group identified by the route.
-- The Web routes for sending, replying, sending attachments and sending to another Group now send as the authenticated human's `user` identity and reject a caller-supplied agent or Chet author.
-- Copy Groups packages now leave out Weixin login credentials, DingTalk reply sessions, pending IM binding keys, legacy actor secrets, and in-progress temporary files in the Group root and its state directory.
-
-**Upgrade notes.** Reload open Web pages once; pages opened before 0.4.47 cannot show the new **Refresh page** notice. The chat's tabs are now **Waiting for you**, **All**, **Pinned** and **User-related**, and **Relay** is **Forward**. The Web `delegate_contact` route and the daemon `relay_user_delegation` operation are removed; use the Web `send_cross_group` route. Native-session users should [reload the integration in each app](https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration). The interface says agents; `cccc actor` and `actor_id` are unchanged.
-
-Details: [0.4.47 release notes](https://chesterra.github.io/cccc/release/v0.4.47_release_notes).
+Details: [0.4.48 release notes](https://chesterra.github.io/cccc/release/v0.4.48_release_notes).
 
 ## Quick start
 
