@@ -315,7 +315,8 @@ async fn inspect(
         )
     })??;
     // A missing/changed/slow optional API must not discard qualification.
-    // Deserialize only source; includeTurns=false never requests the transcript.
+    // Deserialize only source and originator; includeTurns=false never requests
+    // the transcript.
     let origin = if include_origin {
         tokio::time::timeout(
             Duration::from_millis(250),
@@ -330,11 +331,7 @@ async fn inspect(
         .ok()
         .and_then(Result::ok)
         .flatten()
-        .and_then(|reply| match reply.thread.source.as_str() {
-            Some("cli") => Some("cli".into()),
-            Some("vscode") => Some("vscode".into()),
-            _ => None,
-        })
+        .and_then(|reply| reply.thread.label())
     } else {
         None
     };
@@ -353,6 +350,29 @@ struct ThreadOrigin {
 struct OriginMetadata {
     #[serde(default)]
     source: Value,
+    #[serde(default)]
+    originator: Value,
+}
+
+impl OriginMetadata {
+    /// Which client created the thread, for display. Codex's terminal UI now
+    /// creates threads through the app-server, which records them with source
+    /// "vscode", so only the originator recorded at creation tells the two
+    /// apart. Other clients, CCCC's own included, get no label. A server that
+    /// records no originator falls back to source.
+    fn label(&self) -> Option<String> {
+        let label = match self.originator.as_str() {
+            Some("codex_vscode") => "vscode",
+            Some("codex-tui" | "codex_cli_rs") => "cli",
+            Some(_) => return None,
+            None => match self.source.as_str() {
+                Some("cli") => "cli",
+                Some("vscode") => "vscode",
+                _ => return None,
+            },
+        };
+        Some(label.into())
+    }
 }
 
 #[derive(Deserialize)]

@@ -130,6 +130,7 @@
   "avatarSaved": "头像已更新。",
   "avatarReset": "头像已恢复默认。",
   "avatarUploadFailed": "上传头像失败。",
+  "avatarUnsupportedFormat": "请选择 PNG、JPEG、GIF、WebP、BMP、AVIF 或 ICO 图片，暂不支持 SVG。",
   "runtime": "运行时",
   "piRuntimeHint": "Pi 在受控工作区中运行，没有原生终端。",
   "command": "命令",

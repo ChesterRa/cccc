@@ -707,6 +707,11 @@ fn generated_codex_hook_registers_its_verified_parent_without_a_pid_argument() {
         cccc_core::local_sessions::NativeHost::capture(std::process::id()).expect("host")
     );
     assert!(source.codex_can_receive);
+    let directory = fixture.directory.path().file_name().expect("directory");
+    assert_eq!(
+        source.title,
+        format!("Codex_{}_ixture", directory.to_string_lossy())
+    );
 }
 
 #[test]
@@ -753,6 +758,16 @@ fn receiver_waits_out_a_previous_lease_instead_of_exiting_on_reload() {
         cccc_core::local_sessions::read(&home, &source_id).expect("generated hook host identity");
     assert_eq!(source.host, host);
     assert_eq!(source.native_session_id, "fixture-context");
+    // Claude's id changes on /clear, so its name uses the host PID instead.
+    let directory = fixture.directory.path().file_name().expect("directory");
+    assert_eq!(
+        source.title,
+        format!(
+            "Claude_{}_{}",
+            directory.to_string_lossy(),
+            std::process::id()
+        )
+    );
     let mcp: Value =
         cccc_core::fs::read_json(&fixture.home("claude/.claude.json")).expect("MCP registration");
     fixture.assert_tool_contract(&json!({"transport":mcp["mcpServers"]["cccc"]}), &path, true);
@@ -997,6 +1012,8 @@ if args == ['app-server', 'proxy']:
                 send({'id': message['id'], 'error': {'code': -32601 if origin == 'unsupported' else -32603, 'message': 'SYNTHETIC_PROVIDER_DETAIL_MUST_NOT_LEAK'}})
                 continue
             result = {'thread': {'source': origin, 'preview': 'SYNTHETIC_NATIVE_INPUT_MUST_NOT_COPY'}}
+            if 'originator' in capability:
+                result['thread']['originator'] = capability['originator']
         else:
             sys.exit(93)
         send({'id': message['id'], 'result': result})
@@ -2204,6 +2221,36 @@ fn optional_codex_origin_failures_never_remove_receive_readiness() {
                 "display hints are not identity changes"
             );
         }
+    }
+    // Codex's terminal UI records source "vscode"; the recorded originator decides.
+    for (index, (source, originator, expected)) in [
+        ("vscode", json!("codex-tui"), Some("cli")),
+        ("cli", json!("codex_vscode"), Some("vscode")),
+        ("vscode", json!("cccc"), None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let home = fixture.home(&format!("originator-{index}"));
+        let layout = cccc_core::HomeLayout::from_path(&home).expect("home");
+        cccc_core::fs::write_json(
+            &fixture.provider.join("capability.json"),
+            &json!({"origin":source,"originator":originator}),
+        )
+        .expect("capability");
+        fixture.hook(
+            &home,
+            "codex",
+            std::process::id(),
+            "native-fixture",
+            "SessionStart",
+        );
+        let session = local_sessions::read(&layout, "codex:native-fixture").expect("registered");
+        assert_eq!(
+            session.origin.as_deref(),
+            expected,
+            "originator {originator}"
+        );
     }
 }
 

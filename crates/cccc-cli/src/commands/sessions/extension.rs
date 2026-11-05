@@ -65,15 +65,14 @@ pub(super) async fn bridge(
             native_session_id: session_id.into(),
             host: host.clone(),
             cwd: cwd.to_string_lossy().into_owned(),
-            title: format!(
-                "{} · {} · {}",
+            title: default_session_title(
                 if runtime == LocalSessionRuntime::Pi {
                     "Pi"
                 } else {
                     "OpenCode"
                 },
-                cwd.file_name().unwrap_or_default().to_string_lossy(),
-                &session_id[session_id.len().saturating_sub(6)..]
+                cwd,
+                &session_id[session_id.len().saturating_sub(6)..],
             ),
             origin: None,
             revision: uuid::Uuid::new_v4().to_string(),

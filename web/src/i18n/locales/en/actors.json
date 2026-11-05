@@ -130,6 +130,7 @@
   "avatarSaved": "Avatar updated.",
   "avatarReset": "Avatar reset to default.",
   "avatarUploadFailed": "Failed to upload avatar.",
+  "avatarUnsupportedFormat": "Choose a PNG, JPEG, GIF, WebP, BMP, AVIF, or ICO image. SVG is not supported.",
   "runtime": "Runtime",
   "piRuntimeHint": "Pi runs in a controlled workspace without a native terminal.",
   "command": "Command",

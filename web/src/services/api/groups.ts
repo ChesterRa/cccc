@@ -1239,12 +1239,13 @@ export function getPresentationAssetUrl(
 }
 
 export function getGroupBlobUrl(groupId: string, relPath: string): string {
+  const gid = String(groupId || "").trim();
   const normalized = String(relPath || "").trim();
-  if (!normalized.startsWith("state/blobs/")) return "";
+  if (!gid || !normalized.startsWith("state/blobs/")) return "";
   const blobName = normalized.split("/").pop() || "";
   if (!blobName) return "";
   return withAuthToken(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`,
+    `/api/v1/groups/${encodeURIComponent(gid)}/blobs/${encodeURIComponent(blobName)}`,
   );
 }
 

@@ -118,6 +118,18 @@ pub async fn run(home: &HomeLayout, action: SessionsAction) -> Result<()> {
     }
 }
 
+/// A default display name such as `Codex_cccc_0632d7`. Underscores separate its
+/// parts because directory names often contain hyphens; it has no spaces.
+fn default_session_title(runtime: &str, cwd: &std::path::Path, suffix: &str) -> String {
+    let directory = cwd.file_name().unwrap_or_default().to_string_lossy();
+    let directory = directory.split_whitespace().collect::<Vec<_>>().join("-");
+    [runtime, &directory, suffix]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
 fn native_home(name: &str, folder: &str) -> Result<PathBuf> {
     if let Some(path) = std::env::var_os(name).filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(path));
@@ -246,25 +258,21 @@ async fn hook(
         .as_str()
         .context("Native hook did not supply cwd")?
         .to_owned();
-    let default_title = format!(
-        "{} · {} · {}",
+    let default_title = default_session_title(
         if runtime == LocalSessionRuntime::Codex {
             "Codex"
         } else {
             "Claude"
         },
-        std::path::Path::new(&cwd)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy(),
-        if runtime == LocalSessionRuntime::Codex {
+        std::path::Path::new(&cwd),
+        &if runtime == LocalSessionRuntime::Codex {
             native_id
                 .get(native_id.len().saturating_sub(6)..)
                 .unwrap_or(native_id)
                 .to_owned()
         } else {
             host.pid.to_string()
-        }
+        },
     );
     let title = event["session_title"]
         .as_str()
@@ -478,5 +486,24 @@ async fn stop_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_session_title;
+    use std::path::Path;
+
+    #[test]
+    fn a_default_session_title_has_three_parts_and_no_spaces() {
+        let title = |cwd, suffix| default_session_title("Codex", Path::new(cwd), suffix);
+        assert_eq!(title("/work/cccc", "0632d7"), "Codex_cccc_0632d7");
+        assert_eq!(title("/work/my-app", "0632d7"), "Codex_my-app_0632d7");
+        assert_eq!(
+            title("/work/my  new app", "0632d7"),
+            "Codex_my-new-app_0632d7"
+        );
+        // The filesystem root has no directory name to show.
+        assert_eq!(title("/", "0632d7"), "Codex_0632d7");
     }
 }

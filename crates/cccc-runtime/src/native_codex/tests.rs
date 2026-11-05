@@ -289,3 +289,39 @@ async fn unanswered_write_has_a_bounded_ambiguous_outcome() {
     );
     peer.await.expect("fixture");
 }
+
+#[test]
+fn the_origin_label_follows_the_recorded_originator_before_source() {
+    let label = |thread: Value| {
+        serde_json::from_value::<ThreadOrigin>(json!({ "thread": thread }))
+            .expect("origin metadata")
+            .thread
+            .label()
+    };
+    // Codex's terminal UI records its threads with source "vscode".
+    assert_eq!(
+        label(json!({"source":"vscode","originator":"codex-tui"})).as_deref(),
+        Some("cli")
+    );
+    assert_eq!(
+        label(json!({"source":"cli","originator":"codex_cli_rs"})).as_deref(),
+        Some("cli")
+    );
+    assert_eq!(
+        label(json!({"source":"vscode","originator":"codex_vscode"})).as_deref(),
+        Some("vscode")
+    );
+    // Any other client gets no label, whatever its source says.
+    assert_eq!(label(json!({"source":"vscode","originator":"cccc"})), None);
+    assert_eq!(
+        label(json!({"source":"exec","originator":"codex_exec"})),
+        None
+    );
+    // Without a recorded originator, source still decides.
+    assert_eq!(
+        label(json!({"source":"vscode","originator":null})).as_deref(),
+        Some("vscode")
+    );
+    assert_eq!(label(json!({"source":"cli"})).as_deref(), Some("cli"));
+    assert_eq!(label(json!({"source":{"subAgent":"other"}})), None);
+}

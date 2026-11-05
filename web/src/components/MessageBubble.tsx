@@ -33,7 +33,7 @@ import {
   type QuickReplyTarget,
 } from "./messageBubble/quickReplies";
 import { MessageFooter } from "./messageBubble/MessageBubbleChrome";
-import { withAuthToken } from "../services/api/base";
+import { getGroupBlobUrl } from "../services/api/groups";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
 import {
   buildToLabel,
@@ -63,14 +63,7 @@ import {
 import { LivePendingStatusContext } from "../features/pendingReplies/liveStatusContext";
 
 function buildSenderAvatarUrl(groupId: string, senderAvatarPath?: string): string {
-  const gid = String(groupId || "").trim();
-  const relPath = String(senderAvatarPath || "").trim();
-  if (!gid || !relPath.startsWith("state/blobs/")) return "";
-  const blobName = relPath.split("/").pop() || "";
-  if (!blobName) return "";
-  return withAuthToken(
-    `/api/v1/groups/${encodeURIComponent(gid)}/blobs/${encodeURIComponent(blobName)}`,
-  );
+  return getGroupBlobUrl(groupId, senderAvatarPath || "");
 }
 
 export interface MessageBubbleProps {

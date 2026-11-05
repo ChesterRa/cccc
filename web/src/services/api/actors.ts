@@ -1,5 +1,6 @@
 import type { Actor, ActorProfile, ActorProfileUsage } from "../../types";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
+import { getGroupBlobUrl } from "./groups";
 import {
   actorsReadOnlyRequestKey,
   apiForm,
@@ -36,6 +37,19 @@ function buildProfileDeleteQuery(opts?: ProfileDeleteOptions): string {
   return params.toString();
 }
 
+export function actorWithAvatar(groupId: string, actor: Actor): Actor {
+  const avatarUrl = getGroupBlobUrl(groupId, actor.avatar_asset_path || "");
+  const projected = { ...actor };
+  if (avatarUrl) {
+    projected.avatar_url = avatarUrl;
+    projected.has_custom_avatar = true;
+  } else {
+    delete projected.avatar_url;
+    delete projected.has_custom_avatar;
+  }
+  return projected;
+}
+
 export async function fetchActors(
   groupId: string,
   includeUnread = false,
@@ -51,15 +65,19 @@ export async function fetchActors(
   const url = includeUnread
     ? `/api/v1/groups/${encodeURIComponent(gid)}/actors?${query}`
     : `/api/v1/groups/${encodeURIComponent(gid)}/actors${query ? `?${query}` : ""}`;
-  if (init?.noCache || init?.signal) {
-    return apiJson<{ actors: Actor[] }>(url, init);
-  }
-  if (includeUnread) {
-    return apiJson<{ actors: Actor[] }>(url);
-  }
-  return reuseSharedReadRequest(actorsReadOnlyRequestKey(gid, includeInternal), () =>
-    apiJson<{ actors: Actor[] }>(url),
-  );
+  const read = async () => {
+    const response = await apiJson<{ actors: Actor[] }>(url, init);
+    if (!response.ok) return response;
+    return {
+      ...response,
+      result: {
+        ...response.result,
+        actors: response.result.actors.map((actor) => actorWithAvatar(gid, actor)),
+      },
+    };
+  };
+  if (init?.noCache || init?.signal || includeUnread) return read();
+  return reuseSharedReadRequest(actorsReadOnlyRequestKey(gid, includeInternal), read);
 }
 
 function invalidateGroupActorsReads(groupId: string, includeGroups = true) {
