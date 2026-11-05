@@ -2232,6 +2232,54 @@ fn message_domain_contracts_cover_install_reply_idle_stream_and_validation() {
 }
 
 #[test]
+fn a_message_takes_its_scope_only_from_a_path_the_daemon_checked() {
+    let temp = tempfile::tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"scoped message","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    let project = temp.path().join("project");
+    std::fs::create_dir_all(project.join("src")).expect("project");
+    let attached = call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":project,"by":"user"}),
+    );
+    let scope_key = attached.result["scope_key"]
+        .as_str()
+        .expect("scope")
+        .to_owned();
+
+    let scoped = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["user"],"text":"scoped",
+            "message_mode":"send","path":project.join("src").to_string_lossy()
+        }),
+    );
+    assert_eq!(scoped.result["event"]["scope_key"], scope_key);
+    assert_eq!(scoped.result["event"]["data"]["scope_key"], scope_key);
+
+    let claimed = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["user"],"text":"claimed",
+            "message_mode":"send","scope_key":scope_key
+        }),
+    );
+    assert_eq!(claimed.result["event"]["scope_key"], "");
+    assert!(claimed.result["event"]["data"].get("scope_key").is_none());
+}
+
+#[test]
 fn retired_delegation_is_rejected_and_user_cross_group_reply_still_works() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

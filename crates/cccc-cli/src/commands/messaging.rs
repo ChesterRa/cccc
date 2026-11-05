@@ -11,9 +11,11 @@ use crate::commands::common::{call, group, print};
 
 pub async fn send(client: &DaemonClient, home: &HomeLayout, args: SendArgs) -> Result<()> {
     let group_id = group(home, args.group_id)?;
-    let scope_key = if args.path.trim().is_empty() {
-        String::new()
-    } else {
+    let mut request = json!({
+        "group_id":group_id, "text":args.text, "by":sender(args.by),
+        "to":args.recipients, "message_mode":args.mode.replace('-', "_")
+    });
+    if !args.path.trim().is_empty() {
         let scope = cccc_core::scope::detect(std::path::Path::new(&args.path))?;
         let attached = cccc_core::GroupStore::new(home.clone())?
             .load(&group_id)?
@@ -21,13 +23,9 @@ pub async fn send(client: &DaemonClient, home: &HomeLayout, args: SendArgs) -> R
             .iter()
             .any(|item| item.scope_key == scope.scope_key);
         anyhow::ensure!(attached, "scope not attached: {}", scope.scope_key);
-        scope.scope_key
-    };
-    let mut request = json!({
-        "group_id":group_id, "text":args.text, "by":sender(args.by),
-        "to":args.recipients, "message_mode":args.mode.replace('-', "_"),
-        "scope_key":scope_key
-    });
+        // The daemon resolves a relative path from its own directory, not this one.
+        request["path"] = json!(std::path::absolute(&args.path)?.to_string_lossy());
+    }
     if let Some(insight) = args.insight {
         request["insight"] = json!(insight);
     }

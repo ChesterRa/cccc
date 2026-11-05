@@ -589,9 +589,21 @@ mod tests {
         let directory = tempfile::tempdir().expect("tempdir");
         let program = directory.path().join("run_テストサーバー");
         std::fs::copy("/bin/sleep", &program).expect("copy sleep");
-        let other = Reap(Command::new(&program).arg("60").spawn().expect("cut name"));
-        let other_pid = other.0.id() as i32;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // A test forking in another thread can hold the new file open for writing
+        // until its child execs.
+        let other = loop {
+            match Command::new(&program).arg("60").spawn() {
+                Err(error)
+                    if error.kind() == io::ErrorKind::ExecutableFileBusy
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                spawned => break Reap(spawned.expect("cut name")),
+            }
+        };
+        let other_pid = other.0.id() as i32;
         while !std::fs::read(format!("/proc/{other_pid}/comm"))
             .is_ok_and(|name| name.starts_with(b"run_"))
         {

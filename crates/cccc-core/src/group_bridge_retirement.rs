@@ -128,6 +128,19 @@ fn record_key(record: &Value) -> io::Result<String> {
     ))
 }
 
+/// Early outbound receipts name no operation and no source message, so there is
+/// nothing to report a result on. Only a finished one qualifies: the remote side
+/// accepted it, so no outcome is lost and nothing could be retried.
+fn finished_early_send(record: &Value) -> bool {
+    record.get("ok").and_then(Value::as_bool) == Some(true)
+        && text(record, "transport") == Some("group_bridge_session")
+        && text(record, "remote_event_id").is_some()
+        && text(record, "accepted_at").is_some()
+        && record
+            .get("source_event_id")
+            .is_none_or(|id| id.is_null() || id.as_str().is_some_and(|id| id.trim().is_empty()))
+}
+
 fn project_receipt(
     store: &GroupStore,
     registered: &std::collections::HashSet<String>,
@@ -137,8 +150,8 @@ fn project_receipt(
     let status = text(record, "status").ok_or_else(invalid_state)?;
     if status == "sent" && record.get("operation").is_none() {
         // Inbound dedupe receipts have a target event, not an outbound source.
-        return text(record, "event_id")
-            .map(|_| ())
+        return (text(record, "event_id").is_some() || finished_early_send(record))
+            .then_some(())
             .ok_or_else(invalid_state);
     }
     if !matches!(

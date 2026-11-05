@@ -190,6 +190,74 @@ fn malformed_state_is_retained_without_erasing_credentials_or_history() {
     );
 }
 
+fn finished_early_send(source: &Event) -> Value {
+    json!({
+        "status":"sent", "ok":true, "attempt":1,
+        "registration_id":"early", "idempotency_key":"early-send",
+        "src_group_id":source.group_id, "transport":"group_bridge_session",
+        "source_event_id":null, "remote_event_id":"remote-event",
+        "accepted_at":"2026-08-10T00:00:00Z", "payload":{"text":"old payload"}
+    })
+}
+
+#[test]
+fn a_finished_early_send_with_no_source_message_does_not_hold_retirement_back() {
+    let (_temp, home, store, source, _) = fixture();
+    for no_source in [Value::Null, json!("")] {
+        let mut record = finished_early_send(&source);
+        record["source_event_id"] = no_source;
+        std::fs::write(home.root().join(RETIRED_FILES[0]), "old").expect("credentials");
+        write_records(&home, &[record]);
+
+        retire(&home).expect("retire");
+
+        assert!(
+            RETIRED_FILES
+                .iter()
+                .all(|file| !home.root().join(file).exists())
+        );
+    }
+    assert_eq!(
+        ledger::read_all(&store.ledger_path(&source.group_id).expect("ledger")).expect("events"),
+        [source]
+    );
+}
+
+#[test]
+fn an_early_receipt_that_cannot_be_shown_finished_keeps_its_state() {
+    let (_temp, home, store, source, _) = fixture();
+    let early = finished_early_send(&source);
+    let changed = |field: &str, value: Value| {
+        let mut record = early.clone();
+        record[field] = value;
+        record
+    };
+    for record in [
+        changed("ok", json!(false)),
+        changed("transport", json!("connect")),
+        changed("remote_event_id", json!("")),
+        changed("accepted_at", Value::Null),
+        changed("source_event_id", json!(source.id)),
+        changed("source_event_id", json!(7)),
+        changed("source_event_id", json!({"id":"damaged"})),
+    ] {
+        std::fs::write(home.root().join(RETIRED_FILES[0]), "kept").expect("credentials");
+        write_records(&home, std::slice::from_ref(&record));
+
+        assert!(retire(&home).is_err(), "{record}");
+
+        assert_eq!(
+            std::fs::read_to_string(home.root().join(RETIRED_FILES[0])).expect("retained"),
+            "kept"
+        );
+        assert!(home.root().join(RECEIPTS).exists());
+    }
+    assert_eq!(
+        ledger::read_all(&store.ledger_path(&source.group_id).expect("ledger")).expect("events"),
+        [source]
+    );
+}
+
 #[test]
 fn deleted_group_is_not_recreated_and_inbound_receipts_do_not_create_outbound_history() {
     let (_temp, home, store, source, record) = fixture();

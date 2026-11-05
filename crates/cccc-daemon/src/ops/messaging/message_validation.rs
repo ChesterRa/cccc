@@ -55,6 +55,8 @@ fn normalize_scoped_path(
     by: Option<&str>,
     data: &mut Map<String, Value>,
 ) -> Result<(), OpError> {
+    // A scope comes only from a path checked here, never from the caller.
+    data.remove("scope_key");
     let Some(raw) = data
         .get("path")
         .and_then(Value::as_str)

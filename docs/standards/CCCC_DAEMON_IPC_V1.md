@@ -5031,7 +5031,7 @@ Args (core):
   by?: string
   to?: string[]                 // empty/omitted materializes group default_send_to
   message_mode: "send" | "request_reply" | "mail"
-  path?: string                 // optional filesystem path to attribute scope_key
+  path?: string                 // optional filesystem path; sets the event's scope_key once checked against the Group's scopes. A caller's own scope_key is ignored
   attachments?: unknown[]       // attachment refs (implementation-defined)
   refs?: ReferenceV1[]          // structured message refs, e.g. presentation_ref/task_ref
   insight?: string              // optional provisional sender perspective; max 1200 characters
@@ -7656,7 +7656,9 @@ unattempted queued work ends failed; possibly transmitted work ends unconfirmed.
 Final `chat.cross_group_receipt` events preserve source scope and operation IDs,
 carry `group_bridge_retired=true`, and precede removal of source state. Cleanup
 is idempotent across interruption and ledger rotation. Deleted Groups are not
-recreated. Unreadable or unprojectable records remain for inspection and retry
+recreated. An early outbound receipt names no source message, so a finished one
+(accepted by the remote side) has nothing to project and is removed with the
+rest. Unreadable or unprojectable records remain for inspection and retry
 at next startup, with a warning; they neither revive old workers nor prevent
 ordinary local startup. A deduplicated internal `system.notify` informs the user
 in each affected Group. Secrets and original payloads MUST NOT appear in it.

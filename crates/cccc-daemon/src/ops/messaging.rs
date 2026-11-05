@@ -545,7 +545,8 @@ fn send_with_audience_policy(
             }
         }
     }
-    let event = append(home, &group.group_id, kind, &by, data)?;
+    let scope_key = message_scope(kind, &data);
+    let event = append_in_scope(home, &group.group_id, kind, &by, data, scope_key)?;
     let mut advisories = Vec::new();
     if kind == "chat.message"
         && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
@@ -1325,12 +1326,32 @@ fn append_raw(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"event": event}))
 }
 
+/// The scope `message_validation` verified for a message, if any.
+fn message_scope(kind: &str, data: &Map<String, Value>) -> String {
+    data.get("scope_key")
+        .and_then(Value::as_str)
+        .filter(|_| kind == "chat.message")
+        .unwrap_or_default()
+        .to_owned()
+}
+
 pub(super) fn append(
     home: &HomeLayout,
     group_id: &str,
     kind: &str,
     by: &str,
+    data: Map<String, Value>,
+) -> Result<Event, OpError> {
+    append_in_scope(home, group_id, kind, by, data, String::new())
+}
+
+fn append_in_scope(
+    home: &HomeLayout,
+    group_id: &str,
+    kind: &str,
+    by: &str,
     mut data: Map<String, Value>,
+    scope_key: String,
 ) -> Result<Event, OpError> {
     let origin = data.remove(cccc_core::voice_notifications::ORIGIN_ARG);
     reject_chet_provenance(&data)?;
@@ -1340,6 +1361,7 @@ pub(super) fn append(
     }
     let mut event = Event::new(kind, group_id);
     event.by = by.into();
+    event.scope_key = scope_key;
     event.data = data;
     if let Some(origin) = origin {
         let token = origin
