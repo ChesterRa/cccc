@@ -408,6 +408,33 @@ fn acknowledge(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"recorded":true}))
 }
 
+/// A connected source chosen as a member's new runtime.
+pub(super) fn switch_source(
+    home: &HomeLayout,
+    source_id: &str,
+) -> Result<cccc_contracts::local_session::LocalSessionSource, OpError> {
+    conversations::connected_source(home, source_id)
+}
+
+/// The working directory a switched member takes from its new source.
+pub(super) fn switch_scope(
+    source: &cccc_contracts::local_session::LocalSessionSource,
+    attached: &[cccc_core::Scope],
+) -> Result<cccc_core::Scope, OpError> {
+    conversations::source_scope(source, attached)
+}
+
+pub(super) fn provider(runtime: LocalSessionRuntime) -> ActorRuntime {
+    actor_runtime(runtime)
+}
+
+/// The title a native source reports for its conversation, if known.
+pub(super) fn source_title(home: &HomeLayout, source_id: &str) -> Option<String> {
+    cccc_core::local_sessions::read_record(home, source_id)
+        .ok()
+        .map(|record| record.title)
+}
+
 pub(super) fn connected(home: &HomeLayout, source_id: &str) -> bool {
     store::connected(home, source_id)
 }

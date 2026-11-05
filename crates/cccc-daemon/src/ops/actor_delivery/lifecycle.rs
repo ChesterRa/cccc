@@ -1,12 +1,30 @@
 use super::*;
 
+/// Why an Actor's delivery worker stops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShutdownReason {
+    /// Unfinished work keeps its ordinary retry semantics.
+    Stop,
+    /// The Actor's runtime owner is being replaced. Work whose submission may
+    /// have started is recorded as ambiguous and never offered again; work
+    /// that was never submitted stays retryable for the new owner.
+    Replace,
+}
+
 pub fn shutdown_actor(group_id: &str, actor_id: &str) {
+    shutdown_actor_for(group_id, actor_id, ShutdownReason::Stop);
+}
+
+/// Stop and join the Actor's worker. Its outcomes are recorded before this
+/// returns, except a record that failed to persist: that claim stays claimed
+/// and the caller settles it.
+pub fn shutdown_actor_for(group_id: &str, actor_id: &str, reason: ShutdownReason) {
     let worker = workers()
         .lock()
         .ok()
         .and_then(|mut workers| workers.remove(&(group_id.to_owned(), actor_id.to_owned())));
     if let Some(worker) = worker {
-        worker.shutdown();
+        worker.shutdown_for(reason);
     }
     clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
 }

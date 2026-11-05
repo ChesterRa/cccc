@@ -263,6 +263,14 @@ impl Context {
         let group_id = args.get("group_id").and_then(Value::as_str).filter(|s|!s.is_empty())
             .ok_or("Pass the explicit group_id from the CCCC message; native sessions do not use the global active Group")?.to_owned();
         let actors = daemon(client, "actor_list", json!({"group_id":group_id})).await?;
+        let member = actors["actors"]
+            .as_array()
+            .is_some_and(|actors| actors.iter().any(|a| a["external_session_id"] == source_id));
+        if !member
+            && let Some(error) = replaced_session(client, &group_id, &source_id, &actors).await
+        {
+            return Err(error);
+        }
         let actor = actors["actors"]
             .as_array()
             .and_then(|actors| {
@@ -388,6 +396,56 @@ fn validate_session_args(
     }
     args.retain(|field, _| allowed.contains(&field.as_str()));
     Ok(())
+}
+
+/// The user switched a member this source used to run to another runtime.
+/// Tell the old session to stop instead of asking for it to be reconnected.
+async fn replaced_session(
+    client: &DaemonClient,
+    group_id: &str,
+    source_id: &str,
+    actors: &Value,
+) -> Option<ToolCallError> {
+    let shown = daemon(client, "group_show", json!({"group_id": group_id}))
+        .await
+        .ok()?;
+    let generation = |actor: &Value| match actor["generation"].as_str() {
+        Some(generation) if !generation.is_empty() => generation.to_owned(),
+        _ => format!(
+            "legacy:{}",
+            actor["created_at"].as_str().unwrap_or_default()
+        ),
+    };
+    let record = shown["group"]["runtime_switches"]
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|record| {
+            record["from"]["kind"] == "native"
+                && record["from"]["source_id"] == source_id
+                && actors["actors"].as_array().is_some_and(|actors| {
+                    actors.iter().any(|actor| {
+                        actor["id"] == record["actor_id"]
+                            && record["actor_generation"].as_str() == Some(&generation(actor))
+                    })
+                })
+        })?;
+    let actor_id = record["actor_id"].as_str().unwrap_or_default();
+    let successor = if record["to"]["kind"] == "native" {
+        "another native session"
+    } else {
+        "a runtime managed by CCCC"
+    };
+    Some(ToolCallError::new(
+        "native_session_replaced",
+        format!(
+            "This session no longer runs member {actor_id} in Group {group_id}: the user switched that member to {successor}. Stop working on this Group's tasks and do not reconnect this session to it; ask the user if anything is unclear."
+        ),
+        json!({"group_id": group_id, "source_id": source_id, "actor_id": actor_id})
+            .as_object()
+            .cloned()
+            .unwrap_or_default(),
+    ))
 }
 
 async fn daemon(

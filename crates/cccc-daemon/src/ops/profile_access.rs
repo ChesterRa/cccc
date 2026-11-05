@@ -134,6 +134,21 @@ pub(super) fn actor_origin(request: &DaemonRequest) -> bool {
     })
 }
 
+/// A local user or an administrator of the Web port. Actor-originated
+/// requests and Web users without administration rights are refused.
+pub(super) fn require_admin_user(request: &DaemonRequest) -> Result<(), OpError> {
+    if actor_origin(request)
+        || string_arg(request, "by").is_some_and(|by| by.trim() == "system")
+        || !admin(request)
+    {
+        return Err(OpError::new(
+            "permission_denied",
+            "Only an administrator can switch a member's runtime",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn explicit_admin(request: &DaemonRequest) -> bool {
     !actor_origin(request) && bool_arg(request, "is_admin", false)
 }

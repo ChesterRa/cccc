@@ -440,12 +440,34 @@ pub fn status(group_id: &str, actor_id: &str) -> Option<HeadlessStatus> {
     Some(state.clone())
 }
 
+#[cfg(test)]
 pub fn submit_batch(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
     source_events: &[Event],
     cancelled: &AtomicBool,
+) -> BatchSubmission {
+    submit_batch_marked(
+        home,
+        group,
+        actor,
+        source_events,
+        cancelled,
+        &AtomicBool::new(false),
+    )
+}
+
+/// As [`submit_batch`], setting `started` right before input is handed to the
+/// managed session or written to its terminal. Input may have arrived even
+/// when the submission then reports `Deferred`.
+pub fn submit_batch_marked(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    source_events: &[Event],
+    cancelled: &AtomicBool,
+    started: &AtomicBool,
 ) -> BatchSubmission {
     let Some(item) = lookup(&(group.group_id.clone(), actor.id.clone())) else {
         return BatchSubmission::Deferred;
@@ -457,7 +479,7 @@ pub fn submit_batch(
         return BatchSubmission::Deferred;
     }
     item.admit_batch(source_events, || {
-        submit_admitted(home, group, actor, source_events, cancelled, &item)
+        submit_admitted(home, group, actor, source_events, cancelled, started, &item)
     })
 }
 
@@ -475,6 +497,7 @@ fn submit_admitted(
     actor: &Actor,
     source_events: &[Event],
     cancelled: &AtomicBool,
+    started: &AtomicBool,
     item: &Session,
 ) -> BatchSubmission {
     let Some(mut delivery) = super::super::actor_delivery_render::render_batch_with_mail_context(
@@ -517,6 +540,7 @@ fn submit_admitted(
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 return false;
             }
+            started.store(true, Ordering::Release);
             match super::block_on_managed(async {
                 tokio::select! {
                     biased;
@@ -591,6 +615,7 @@ fn submit_admitted(
     }
     if item.has_terminal() {
         let accepted = submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
+            started.store(true, Ordering::Release);
             super::super::actor_delivery::submit_terminal_text(
                 &group.group_id,
                 actor,

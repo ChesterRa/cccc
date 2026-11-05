@@ -44,8 +44,11 @@ it.each([
       },
     });
     vi.spyOn(api, "fetchGroupPrompts").mockResolvedValue({
-      ok: false,
-      error: { code: "empty", message: "No notes" },
+      ok: true,
+      result: {
+        help: { kind: "help", source: "builtin", filename: "help.md", content: "" },
+        preamble: { kind: "preamble", source: "builtin", filename: "preamble.md", content: "" },
+      },
     });
     const update = vi
       .spyOn(api, "updateActor")

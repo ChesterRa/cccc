@@ -25,6 +25,7 @@ import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
 import { appendQuotedOriginalPerspective, getMessageInsight } from "../utils/messagePerspective";
 import { installedRuntimeFor } from "../utils/installedRuntime";
+import { sameActorConfiguration } from "../utils/actorIdentity";
 import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
 import { CHET_NAME, CHET_PRINCIPAL } from "../utils/chetIdentity";
 import {
@@ -78,6 +79,7 @@ interface AppModalsProps {
   fetchContext: ContextModalFetch;
   canManageGroups: boolean;
   accountLabel?: string | null;
+  onSelectGroup?: (groupId: string) => void;
   onNativeActorCreated?: (
     visit: import("../hooks/useAppTabState").CreatedNativeActorNavigation,
   ) => void;
@@ -120,6 +122,7 @@ export function AppModals({
   fetchContext,
   canManageGroups,
   accountLabel,
+  onSelectGroup,
 }: AppModalsProps) {
   const { t } = useTranslation(["actors", "chat", "modals"]);
   // Stores
@@ -394,10 +397,13 @@ export function AppModals({
     actorProfiles,
     actorProfilesBusy,
     editActorNotesBusy,
+    editActorNotesError,
     savedActorNotes,
+    retryEditActorNotes,
     loadActorProfiles,
     handleSaveEditActorOnly,
     handleSaveEditActorAndRestart,
+    handleSaveEditActorBasics,
     handleSaveEditActorAsProfile,
     handleAddActor,
     handleSaveNewActorAsProfile,
@@ -1550,10 +1556,13 @@ export function AppModals({
         actorNotes={editActorNotes}
         onChangeActorNotes={setEditActorNotes}
         actorNotesBusy={editActorNotesBusy}
+        actorNotesError={editActorNotesError}
+        onRetryActorNotes={retryEditActorNotes}
         capabilityAutoloadText={editActorCapabilityAutoloadText}
         onChangeCapabilityAutoloadText={setEditActorCapabilityAutoloadText}
         onSave={handleSaveEditActorOnly}
         onSaveAndRestart={handleSaveEditActorAndRestart}
+        onSaveBasics={handleSaveEditActorBasics}
         linkedProfileId={String(editingActor?.profile_id || "") || undefined}
         linkedProfileScope={
           (String(editingActor?.profile_scope || "global").trim() || "global") as "global" | "user"
@@ -1563,7 +1572,30 @@ export function AppModals({
         actorProfilesBusy={actorProfilesBusy}
         onRequestActorProfiles={loadActorProfiles}
         onSaveAsProfile={handleSaveEditActorAsProfile}
-        onAvatarChanged={refreshActors}
+        onAvatarChanged={async (updated, previous) => {
+          const current = useModalStore.getState().editingActor;
+          const sameVisit =
+            useGroupStore.getState().selectedGroupId === selectedGroupId &&
+            current &&
+            previous &&
+            current.updated_at === previous.updated_at &&
+            sameActorConfiguration(current, previous) &&
+            // Listing computes the effective role from Group order, while an
+            // actor_update response can contain the absent stored role.
+            sameActorConfiguration(previous, { ...updated, role: previous.role }) &&
+            typeof updated.updated_at === "string";
+          if (sameVisit) {
+            setEditingActor(
+              api.actorWithAvatar(selectedGroupId || "", {
+                ...current,
+                updated_at: updated.updated_at,
+                avatar_asset_path: updated.avatar_asset_path,
+              }),
+            );
+          }
+          await refreshActors(selectedGroupId || undefined);
+          return Boolean(sameVisit);
+        }}
         onCancel={handleCancelEditActor}
       />
 
@@ -1604,6 +1636,7 @@ export function AppModals({
       <ActorConfigModal
         key={`create-actor-${selectedGroupId}`}
         mode="create"
+        onSelectGroup={onSelectGroup}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
         scopes={groupDoc?.group_id === selectedGroupId ? groupDoc.scopes : undefined}
         activeScopeKey={

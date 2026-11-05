@@ -630,4 +630,26 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn runtime_switch_refuses_options_its_target_would_ignore() {
+        let parse = |args: &[&str]| {
+            Cli::try_parse_from(["cccc", "actor", "switch", "x"].iter().chain(args).copied())
+        };
+        assert!(parse(&["--session", "codex:a"]).is_ok());
+        assert!(parse(&["--runtime", "claude", "--no-start"]).is_ok());
+        assert!(parse(&["--profile", "shared", "--scope", "/repo"]).is_ok());
+        assert!(parse(&["--finish"]).is_ok());
+        for rejected in [
+            &["--session", "codex:a", "--no-start"][..],
+            &["--session", "codex:a", "--command", "codex"],
+            &["--session", "codex:a", "--scope", "/repo"],
+            &["--profile", "shared", "--runtime", "claude"],
+            &["--profile", "shared", "--env", "A=1"],
+            &["--finish", "--no-start"],
+            &["--finish", "--runtime", "claude"],
+        ] {
+            assert!(parse(rejected).is_err(), "{rejected:?}");
+        }
+    }
 }

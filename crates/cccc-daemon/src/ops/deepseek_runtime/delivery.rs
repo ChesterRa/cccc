@@ -23,6 +23,7 @@ pub enum TurnDelivery {
 /// caller records a cursor completion. Anything but `Completed` leaves the
 /// source event unread; permanent deployment/context failures also block
 /// automatic restart until the actor is explicitly started again.
+#[cfg(test)]
 pub fn deliver(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -30,16 +31,39 @@ pub fn deliver(
     event: &Event,
     cancelled: &AtomicBool,
 ) -> TurnDelivery {
-    deliver_with_timeout(
+    deliver_marked(
+        home,
+        group,
+        actor,
+        event,
+        cancelled,
+        &AtomicBool::new(false),
+    )
+}
+
+/// As [`deliver`], setting `started` right before the request is handed to
+/// the provider. A started request may have reached DeepSeek even when the
+/// delivery ends incomplete.
+pub fn deliver_marked(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+    cancelled: &AtomicBool,
+    started: &AtomicBool,
+) -> TurnDelivery {
+    deliver_with_timeout_marked(
         home,
         group,
         actor,
         event,
         cancelled,
         Duration::from_secs(cccc_contracts::DEEPSEEK_TURN_TIMEOUT_SECONDS),
+        started,
     )
 }
 
+#[cfg(test)]
 pub(super) fn deliver_with_timeout(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -47,6 +71,26 @@ pub(super) fn deliver_with_timeout(
     event: &Event,
     cancelled: &AtomicBool,
     turn_timeout: Duration,
+) -> TurnDelivery {
+    deliver_with_timeout_marked(
+        home,
+        group,
+        actor,
+        event,
+        cancelled,
+        turn_timeout,
+        &AtomicBool::new(false),
+    )
+}
+
+fn deliver_with_timeout_marked(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+    cancelled: &AtomicBool,
+    turn_timeout: Duration,
+    started: &AtomicBool,
 ) -> TurnDelivery {
     if cancelled.load(Ordering::Acquire) {
         return TurnDelivery::Incomplete;
@@ -97,6 +141,7 @@ pub(super) fn deliver_with_timeout(
     let Some(session_id) = supervisor.session_id().map(str::to_owned) else {
         return TurnDelivery::Incomplete;
     };
+    started.store(true, Ordering::Release);
     let request_id = match supervisor.enqueue(payload).and_then(|_| {
         supervisor
             .flush_one(&session_id)

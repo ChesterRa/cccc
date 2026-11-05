@@ -13,14 +13,16 @@ export function LocalSessionsDialog({
   isDark,
   onClose,
   onSelectGroup,
+  initialTargetGroupId,
 }: {
   isDark: boolean;
   onClose: () => void;
   onSelectGroup: (id: string) => void;
+  initialTargetGroupId?: string;
 }) {
   const { t } = useTranslation("layout");
   const { modalRef } = useModalA11y(true, onClose);
-  const connection = useLocalSessionsConnection({ onClose, onSelectGroup });
+  const connection = useLocalSessionsConnection({ onClose, onSelectGroup, initialTargetGroupId });
   const [helpRequest, setHelpRequest] = useState<LocalSessionsHelpRequest | null>(null);
   const showHelp = (section: LocalSessionsHelpRequest["section"]) =>
     setHelpRequest((previous) => ({ section, sequence: (previous?.sequence || 0) + 1 }));

@@ -588,6 +588,10 @@ export default function App({
               composerRef={composerRef}
               onStartReply={startReply}
               onNativeActorCreated={onNativeActorCreated}
+              onSelectGroup={(groupId) => {
+                connect.selectLocal();
+                setSelectedGroupId(groupId);
+              }}
               onThemeChange={setTheme}
               onTextScaleChange={setTextScale}
               onDeleteGroup={handleDeleteGroup}

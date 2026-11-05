@@ -2,7 +2,7 @@
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { useModalStore } from "../../stores";
+import { useModalStore, useUIStore } from "../../stores";
 import type { ActorSecretChanges } from "./actorSecretManagerModel";
 const mocks = vi.hoisted(() => ({ env: vi.fn(), status: vi.fn(), native: vi.fn() }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -126,6 +126,65 @@ describe("Web Model effective Actor configuration", () => {
   });
   const button = (label: string) =>
     [...host.querySelectorAll("button")].find((b) => b.textContent === label)!;
+  it.each([
+    { revision: 2, switches: false },
+    { revision: 3, switches: true },
+  ])(
+    "uses the applied Profile revision to distinguish a restart from a switch ($revision)",
+    async ({ revision, switches }) => {
+      const previous = useUIStore.getState();
+      useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+      const p = props();
+      p.linkedProfileId = "profile-1";
+      p.linkedProfileScope = "global";
+      p.savedActor = {
+        id: "alpha",
+        title: p.title,
+        runtime: "codex",
+        runtime_mode: "default",
+        command: ["codex"],
+        capability_autoload: ["skill:fixture"],
+        profile_id: "profile-1",
+        profile_scope: "global",
+        profile_revision_applied: 2,
+      };
+      p.actorProfiles = [
+        {
+          id: "profile-1",
+          name: "Profile",
+          scope: "global",
+          runtime: "codex",
+          runner: "pty",
+          command: ["codex"],
+          submit: "enter",
+          env: {},
+          created_at: "",
+          updated_at: "",
+          revision,
+        },
+      ];
+      try {
+        await act(async () => root.render(<ActorConfigModal {...p} />));
+        await act(async () => button("saveAndRestart").click());
+        if (switches) {
+          expect(p.onSaveAndRestart).not.toHaveBeenCalled();
+          const confirm = [...document.querySelectorAll("button")].find(
+            (item) => item.textContent === "runtimeSwitch.confirm",
+          )!;
+          await act(async () => confirm.click());
+          expect(p.onSaveAndRestart).toHaveBeenCalledWith(
+            expect.objectContaining({ runtimeSwitch: { start: true } }),
+          );
+        } else {
+          expect(p.onSaveAndRestart).toHaveBeenCalledWith(
+            expect.not.objectContaining({ runtimeSwitch: expect.anything() }),
+          );
+        }
+      } finally {
+        useUIStore.setState(previous, true);
+      }
+    },
+  );
   it("shows ACP settings on runtime selection and preserves the saved mode baseline", async () => {
     const p = props();
     p.runtime = "antigravity";
@@ -274,9 +333,8 @@ describe("Web Model effective Actor configuration", () => {
     await act(async () => root.render(<ActorConfigModal {...p} runtime="web_model" command="" />));
     expect(host.textContent).not.toContain("conversation-setup");
     await act(async () => button("common:save").click());
-    expect(p.onSave).toHaveBeenLastCalledWith(
-      expect.objectContaining({ setVars: {}, unsetKeys: [], clear: false }),
-    );
+    expect(p.onSave).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("secretDraftNotApplied");
     await act(async () => root.render(<ActorConfigModal {...p} />));
     await act(async () => button("common:save").click());
     expect(p.onSave).toHaveBeenLastCalledWith(

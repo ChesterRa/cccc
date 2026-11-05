@@ -54,6 +54,8 @@ pub(crate) fn settle_stranded(home: &HomeLayout) -> Result<(), OpError> {
             }
         }
         let settled = crate::ops::runtime_delivery::settle_stranded_claims(home, &group)?;
+        // After stranded claims are settled, so a handoff notice lists them.
+        super::actor_switch::complete_stranded(home, &group);
         if settled > 0 {
             tracing::warn!(
                 group_id = %meta.group_id,

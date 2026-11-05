@@ -4168,6 +4168,158 @@ MUST retire its viewed reference in the same transaction: scan has already passe
 Viewed references ahead of the scan cursor, explicit request context, and handed-off observations
 MUST remain available for their existing consumption and output checks.
 
+#### `actor_runtime_switch`
+
+Explicitly changes the owner that runs one Actor: between connected native
+sessions, between a native session and a CCCC-managed runtime, or between
+managed runtimes. The Actor keeps its id, generation, role, tasks, Mail, reply
+requests, history, agent state and notes.
+
+Args:
+```ts
+type Endpoint = { kind: "native" | "managed"; runtime: string; source_id?: string };
+{
+  group_id: string;
+  actor_id: string;
+  by?: "user";
+  expected_actor_generation: string;  // the stored generation, or "legacy:<created_at>"
+  expected_actor_updated_at: string;  // as read; empty for members saved without it
+  expected_source_id?: string;        // required when the Actor is native
+  target:
+    | { kind: "native"; source_id: string; expected_native_session_id: string }
+    | {
+        kind: "managed";
+        patch?: {                     // only these fields; anything else is invalid_args
+          runtime?: string; runtime_mode?: "default" | "acp"; command?: string[];
+          env?: Record<string, string>; submit?: string; default_scope_key?: string;
+        };
+        profile_id?: string;
+        profile_scope?: "global" | "user";
+        profile_owner?: string;
+        expected_profile_revision?: number; // required with profile_id
+        start?: boolean;                    // default true
+      };
+}
+```
+
+Notes:
+- Only a local user or a Web administrator may switch. Actor-originated
+  requests, `by: "system"`, non-administrators and cloud connector bindings
+  receive `permission_denied`. A target field of the wrong type is
+  `invalid_args`; it is never read as its default.
+- Web Model Actors, and managed targets that resolve to a Web Model runtime
+  (directly or through a Profile), receive `actor_switch_unsupported`; they keep
+  the save and restart flow. Switching to the session the Actor already uses is
+  also `actor_switch_unsupported`.
+- Refusals change nothing: `actor_switch_conflict` when the expected values or
+  the Profile revision no longer match; `local_session_offline`,
+  `local_session_source_changed` (the session shows another conversation),
+  `local_session_source_in_use` (`details.actor_id` names the member using it)
+  and `local_session_scope_conflict` for native targets; `scope_not_attached`
+  for a `default_scope_key` that is neither empty nor attached; for a managed
+  target, `invalid_args` for a `runtime_mode` the runtime does not support, and
+  `scope_not_attached`, `missing_project_root` or `invalid_project_root` when
+  the directory the Actor names, or the one an enabled Actor would use, cannot
+  be used. A stopped Actor that follows the Group's active scope needs none
+  yet. A Profile target requires the caller to be allowed to link that Profile.
+- Order: the daemon holds new delivery to the Actor, stops every managed owner
+  registered for it and confirms each stopped, settles its handoffs, then
+  commits the new binding and a pending switch record in one Group write. A
+  native target is checked again under the native-session lock at the commit.
+  Completion and the start of the new owner follow.
+- Handoffs: a delivery whose submission to the old owner had begun, or a claim
+  without an outcome, is recorded `ambiguous` and is not delivered again. Work
+  never submitted stays deliverable and goes to the new owner.
+- Completion writes each of these at most once; event ids derive from `op_id`:
+  - an `actor.update` audit with `reason: "runtime_switched"`, `op_id`, `from`,
+    `to` and the changed fields;
+  - a `system.notify` with `kind: "runtime_switch_handoff"`, `target_actor_id`,
+    `op_id`, `from`, `to`, `message` and `unconfirmed: {event_id, by, ts}[]`
+    (every ambiguous delivery of the Actor, newest first; `message` lists at
+    most 20 and points to this field);
+  - removal of the Actor's own private env file when the switch discards it:
+    managed → native, a residue when native → managed, and leaving a Profile
+    for a custom configuration. Custom → custom keeps the private env; custom →
+    Profile leaves it unused behind the Profile. Shared Profile secrets are
+    never touched.
+- While a switch record is pending, the Actor receives no delivery, and
+  `actor_update`, `actor_env_private_update`, `actor_start`, `actor_restart`,
+  `actor_remove`, `group_reset` and a new switch return `actor_switch_pending`
+  after their own authorization and target checks. `actor_stop` stays
+  available, and `group_start` starts the other members and leaves the Actor
+  held. Only
+  `actor_runtime_switch_complete`, which also starts the new owner, and daemon
+  startup, before IPC and runtime restore, complete a pending switch.
+- Work refused because its Actor is being switched is recorded as unsubmitted
+  before the switch can finish, so the new owner is offered it. If that record
+  cannot be written, the claim stays until daemon startup settles stranded
+  claims.
+- Native target: the managed configuration (command, environment, submission,
+  mode and Profile link) is discarded. The title follows the session when it
+  is empty or was the previous session's own title. The default scope becomes
+  the session's directory, attached if needed. The Actor's `enabled` state, its
+  CCCC access, is kept.
+- Managed target: `start: false` leaves the Actor stopped (`enabled: false`;
+  the Group stops running when no enabled member remains). With `start: true`,
+  a switch from a managed owner acts as save and restart: a stopped Actor is
+  enabled and started, and a stopped Group runs again, as `actor_start` does. A
+  switch from a native session starts the managed owner only while the Group
+  is running and not paused; a native Actor whose access was paused stays
+  stopped. Leaving a native session clears the title it gave the Actor.
+- The Group keeps switch records in `runtime_switches` (visible through
+  `group_show`): `{op_id, actor_id, actor_generation, from, to, at, pending}`.
+  Records carry no message ids or content. A record of a native session the
+  Actor left stays while that Actor generation exists: MCP calls from that
+  session return `native_session_replaced` and receiver attach never restores
+  the Actor to it. Switching back to that session removes the record, and
+  removing the Actor removes all of its records.
+- Group copy (`group_copy` export) refuses while a switch is pending or when
+  members changed during the copy. Import refuses a package with a pending
+  switch. Copies and `group_reset` keep only completed records of native
+  sessions left.
+
+Result:
+```ts
+{
+  group_id: string; actor_id: string; op_id: string; switched: true;
+  from: Endpoint; to: Endpoint;
+  completion: "done" | "pending";
+  start: "started" | "pending" | "stopped" | "error" | "native" | "held";
+  start_error?: { code: string; message: string };
+  access_paused?: true;
+  notice_event_id?: string;
+}
+```
+- `start`: `started`, the managed owner started; `pending`, it starts when the
+  Group runs; `stopped`, the Actor is stopped; `error`, the switch stands but
+  the new owner was not started (`start_error`); `native`, the native session
+  is bound and its delivery is offered, the handoff ahead of waiting work when
+  the Group runs and the Actor's access is not paused (`access_paused`);
+  otherwise all of it waits in ledger order; `held`, completion is pending
+  (`completion: "pending"`) and the Actor is held.
+- Before the commit, failures return `actor_switch_incomplete`: the binding is
+  unchanged, `details.cause` names the failure and `details.old_owner` is
+  `native`, `restarted` (restarted from its current configuration),
+  `restart_failed`, `not_running` or `unknown` (its stop was not confirmed;
+  delivery is left as it is, even for a native Actor).
+  `actor_switch_unknown` means the commit could not be read back. Clients MUST
+  NOT retry automatically; they reload the Actor.
+
+#### `actor_runtime_switch_complete`
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: "user" }
+```
+
+Notes:
+- Same authorization as `actor_runtime_switch`. Retries a pending completion,
+  then starts the new owner as the switch would have.
+
+Result: the `actor_runtime_switch` result; when nothing is pending,
+`{ group_id: string; actor_id: string; switched: false; completion: "done" }`.
+`actor_switch_pending` when completion still fails.
+
 #### `actor_new_session`
 
 Args:
@@ -4652,9 +4804,15 @@ Args:
   profile_id: string
   group_id: string
   actor_id: string
+  expected_actor_generation?: string
+  expected_actor_updated_at?: string
   by?: string
 }
 ```
+
+Saving a configuration as a Profile copies the environment in a second request.
+`expected_actor_generation` and `expected_actor_updated_at` pin the Actor the
+configuration was read from; a changed Actor returns `actor_changed`.
 
 Result:
 ```ts

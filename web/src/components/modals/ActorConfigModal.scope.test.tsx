@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, createRef } from "react";
+import { act, createRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Actor, ActorProfile } from "../../types";
@@ -15,7 +15,34 @@ vi.mock("react-i18next", async (original) => ({
 }));
 vi.mock("../CapabilityPicker", () => ({ CapabilityPicker: () => null }));
 vi.mock("../RolePresetPicker", () => ({ RolePresetPicker: () => null }));
-vi.mock("../ActorAvatarField", () => ({ ActorAvatarField: () => null }));
+vi.mock("../ActorAvatarField", () => ({
+  ActorAvatarField: ({
+    onSelectFile,
+    disabled,
+    avatarUrl,
+    resetDisabled,
+    onReset,
+  }: {
+    onSelectFile: (file: File) => void;
+    disabled?: boolean;
+    avatarUrl?: string | null;
+    resetDisabled?: boolean;
+    onReset: () => void;
+  }) => (
+    <div data-avatar-url={avatarUrl || ""}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onSelectFile(new File(["avatar"], "avatar.png"))}
+      >
+        fixture avatar upload
+      </button>
+      <button type="button" disabled={disabled || resetDisabled} onClick={onReset}>
+        fixture avatar reset
+      </button>
+    </div>
+  ),
+}));
 vi.mock("./RuntimeSelector", () => ({ RuntimeSelector: () => null }));
 vi.mock("../SelectCombobox", () => ({
   SelectCombobox: ({
@@ -58,6 +85,8 @@ import { AppModals } from "../AppModals";
 import { useFormStore, useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { setAuthToken } from "../../services/api/base";
 import { actorProfileIdentityKey } from "../../utils/actorProfiles";
+import { updateActorHelpNote } from "../../utils/helpMarkdown";
+import * as switchState from "../../features/runtimeSwitch/runtimeSwitchState";
 
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
@@ -144,7 +173,25 @@ it("follows the Group by default and sends a fixed scope independently of runtim
   await act(async () => create().click());
   expect(props.onCreate).toHaveBeenLastCalledWith(null, "default", "");
   await choose("s_b");
-  props = { ...props, useProfile: true };
+  const profile: ActorProfile = {
+    id: "fixture-profile",
+    name: "Fixture",
+    runtime: "codex",
+    scope: "global",
+    runner: "pty",
+    command: [],
+    submit: "enter",
+    env: {},
+    created_at: "",
+    updated_at: "",
+    revision: 1,
+  };
+  props = {
+    ...props,
+    useProfile: true,
+    profileId: actorProfileIdentityKey(profile),
+    actorProfiles: [profile],
+  };
   await render();
   await act(async () => create().click());
   expect(props.onCreate).toHaveBeenLastCalledWith(null, "default", "s_b");
@@ -188,8 +235,44 @@ it("does not silently retarget a removed selection to the remaining Group direct
 
 const button = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>("button")].find(
-    (node) => node.textContent === label,
+    (node) => node.textContent === label && !node.closest("[hidden]"),
   );
+
+async function stageFixtureSecret() {
+  await act(async () => button("secretManager.addVariable")!.click());
+  const panel = host.querySelector<HTMLElement>('[aria-label="secretManager.title"]')!;
+  const key = panel.querySelector<HTMLInputElement>("label input")!;
+  const value = panel.querySelector<HTMLInputElement>('input[aria-label="secretManager.value"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      key,
+      "SYNTHETIC_KEY",
+    );
+    key.dispatchEvent(new Event("input", { bubbles: true }));
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      value,
+      "synthetic-value",
+    );
+    value.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => button("secretManager.addVariable")!.click());
+}
+
+it("offers the existing session join flow instead of an unused create form for native sessions", async () => {
+  const { isWebAdmin, webReadOnly } = useUIStore.getState();
+  try {
+    useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+    props = { ...props, groupId: "g_a" };
+    await render();
+    await act(async () => button("runtimeSwitch.native")!.click());
+    expect(button("runtimeSwitch.joinNative")).toBeDefined();
+    expect(button("addAgent")).toBeUndefined();
+    expect(props.onCreate).not.toHaveBeenCalled();
+  } finally {
+    useUIStore.setState({ isWebAdmin, webReadOnly });
+  }
+});
+
 const directorySelect = () =>
   document.querySelector<HTMLSelectElement>('select[aria-label="workingDirectory"]');
 const respond = (result: unknown) => new Response(JSON.stringify({ ok: true, result }));
@@ -205,7 +288,15 @@ const addedScope = {
 async function editActor(
   overrides: Partial<Actor> = {},
   failNotesOnce = false,
-  requests: { attach?: () => Promise<Response>; list?: () => Promise<Response> } = {},
+  requests: {
+    attach?: () => Promise<Response>;
+    list?: () => Promise<Response>;
+    prompts?: () => Promise<Response>;
+    avatarActor?: (actor: Actor) => Actor;
+    resetAvatarActor?: (actor: Actor) => Actor;
+    privateKeys?: string[];
+    profileSecretFails?: boolean;
+  } = {},
 ) {
   let savedActor = {
     id: "managed",
@@ -232,13 +323,15 @@ async function editActor(
     revision: 1,
   };
   const mutations: Array<{ path: string; method: string; body: Record<string, unknown> }> = [];
+  let createdProfile: ActorProfile | undefined;
   const fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
     const path = String(url);
     const method = init?.method || "GET";
-    const body = JSON.parse(String(init?.body || "{}")) as Record<string, unknown>;
+    const body =
+      typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : {};
     if (method !== "GET") mutations.push({ path, method, body });
     if (path.endsWith("/prompts")) {
-      return respond({ help: { content: "" } });
+      return requests.prompts?.() || respond({ help: { content: "" } });
     }
     if (path === "/api/v1/fs/recent") {
       return respond({ suggestions: [{ name: "Home", path: "/fixture", icon: "home" }] });
@@ -256,8 +349,74 @@ async function editActor(
         requests.attach?.() || respond({ group_id: "g_a", scope_key: "s_c", scope: addedScope })
       );
     }
-    if (path === "/api/v1/profiles?view=accessible") return respond({ profiles: [profile] });
-    if (path.endsWith("/env_private?by=user")) return respond({ keys: [] });
+    if (path === "/api/v1/profiles?view=accessible")
+      return respond({ profiles: [profile, ...(createdProfile ? [createdProfile] : [])] });
+    if (path === "/api/v1/actor_profiles" && method === "POST") {
+      createdProfile = { ...profile, id: "saved-profile", name: "Saved Profile" };
+      return respond({ profile: createdProfile });
+    }
+    if (path === "/api/v1/actor_profiles/saved-profile/copy_actor_secrets") {
+      return respond({ keys: requests.privateKeys || [] });
+    }
+    if (path === "/api/v1/profiles/saved-profile/env_private" && method === "POST") {
+      if (requests.profileSecretFails) {
+        return new Response(
+          JSON.stringify({ ok: false, error: { code: "fixture", message: "Failed" } }),
+        );
+      }
+      return respond({ keys: ["SYNTHETIC_KEY"] });
+    }
+    if (path === "/api/v1/local_sessions") {
+      return respond({
+        sources: [
+          {
+            source_id: "codex:old",
+            native_session_id: "old",
+            runtime: "codex",
+            title: "Old",
+            cwd: "/fixture/a",
+            connected: true,
+          },
+          {
+            source_id: "codex:new",
+            native_session_id: "new",
+            runtime: "codex",
+            title: "New",
+            cwd: "/fixture/a",
+            connected: true,
+          },
+        ],
+      });
+    }
+    if (path === "/api/v1/groups/g_a/actors" && method === "GET")
+      return respond({ actors: [savedActor] });
+    if (path === "/api/v1/groups/g_a/actors/managed/avatar" && method === "POST") {
+      savedActor = {
+        ...savedActor,
+        avatar_asset_path: "state/blobs/fixture",
+        updated_at: "after-avatar",
+      };
+      savedActor = requests.avatarActor?.(savedActor) || savedActor;
+      return respond({ actor: savedActor });
+    }
+    if (path === "/api/v1/groups/g_a/actors/managed/avatar?by=user" && method === "DELETE") {
+      savedActor = { ...savedActor, avatar_asset_path: "", updated_at: "after-reset" };
+      savedActor = requests.resetAvatarActor?.(savedActor) || savedActor;
+      return respond({ actor: savedActor });
+    }
+    if (path === "/api/v1/groups/g_a/actors/managed/runtime_switch" && method === "POST") {
+      return respond({
+        group_id: "g_a",
+        actor_id: "managed",
+        op_id: "op",
+        switched: true,
+        from: { kind: savedActor.external_session_id ? "native" : "managed", runtime: "codex" },
+        to: { kind: (body.target as { kind: string }).kind, runtime: "codex" },
+        completion: "done",
+        start: savedActor.external_session_id ? "started" : "native",
+      });
+    }
+    if (path.endsWith("/env_private?by=user")) return respond({ keys: requests.privateKeys || [] });
     if (path.endsWith("/prompts/help") && method === "PUT") {
       if (failNotesOnce) {
         failNotesOnce = false;
@@ -273,11 +432,15 @@ async function editActor(
     if (path === "/api/v1/groups/g_a/actors/managed" && method === "POST") {
       savedActor = {
         ...savedActor,
+        title: (body.title as string | undefined) ?? savedActor.title,
         default_scope_key:
           (body.default_scope_key as string | undefined) ?? savedActor.default_scope_key,
         profile_id: (body.profile_id as string | undefined) ?? savedActor.profile_id,
       };
-      return respond({ actor: savedActor });
+      const wireActor = { ...savedActor };
+      delete wireActor.avatar_url;
+      delete wireActor.has_custom_avatar;
+      return respond({ actor: wireActor });
     }
     if (path === "/api/v1/groups/g_a/actors" && method === "POST") {
       return respond({ actor: { id: "created", ...body } });
@@ -323,6 +486,15 @@ async function editActor(
   );
   return { mutations, groupDoc, profile, fetch, saved: () => savedActor };
 }
+
+it("keeps a managed command draft when visiting the Web Model category and returning", async () => {
+  await editActor({ command: ["codex", "--model", "example"] });
+  expect(useFormStore.getState().editActorCommand).toBe("codex --model example");
+  await act(async () => button("runtimeSwitch.web")!.click());
+  await act(async () => button("runtimeSwitch.managed")!.click());
+  expect(useFormStore.getState().editActorRuntime).toBe("codex");
+  expect(useFormStore.getState().editActorCommand).toBe("codex --model example");
+});
 
 it.each([false, true])(
   "saves an edited attached directory through the real Actor API without changing the Group (Profile=%s)",
@@ -744,3 +916,446 @@ it("keeps an attached Group directory after canceling the Actor without saving i
   expect(directorySelect()?.value).toBe("");
   expect(directorySelect()?.querySelector('option[value="s_c"]')).not.toBeNull();
 });
+
+it.each(["native", "managed"] as const)(
+  "uses the successful avatar update's version for a subsequent %s switch",
+  async (kind) => {
+    const { isWebAdmin, webReadOnly } = useUIStore.getState();
+    try {
+      useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+      vi.spyOn(switchState, "refreshRuntimeSwitchGroup").mockResolvedValue(undefined);
+      const { mutations } = await editActor({
+        generation: "generation-1",
+        updated_at: "before-avatar",
+        ...(kind === "native" ? { external_session_id: "codex:old" } : {}),
+      });
+      await act(async () => button("fixture avatar upload")!.click());
+      expect(useModalStore.getState().editingActor?.updated_at).toBe("after-avatar");
+      await act(async () =>
+        button(kind === "native" ? "runtimeSwitch.managed" : "runtimeSwitch.native")!.click(),
+      );
+      if (kind === "managed") {
+        const select = document.querySelector<HTMLSelectElement>(
+          'select[aria-label="runtimeSwitch.source"]',
+        )!;
+        await act(async () => {
+          select.value = "codex:new";
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      }
+      await act(async () => button("runtimeSwitch.switch")!.click());
+      await act(async () => button("runtimeSwitch.confirm")!.click());
+      const call = mutations.find((item) => item.path.endsWith("/runtime_switch"));
+      expect(call?.body.expected_actor_generation).toBe("generation-1");
+      expect(call?.body.expected_actor_updated_at).toBe("after-avatar");
+      if (kind === "native") expect(call?.body.expected_source_id).toBe("codex:old");
+      else expect(call?.body.target).toMatchObject({ kind: "native", source_id: "codex:new" });
+    } finally {
+      useUIStore.setState({ isWebAdmin, webReadOnly });
+    }
+  },
+);
+
+it("does not silently rebase an editor if the native session changed during avatar upload", async () => {
+  const { isWebAdmin, webReadOnly } = useUIStore.getState();
+  try {
+    useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+    const { mutations } = await editActor(
+      { generation: "generation-1", updated_at: "before-avatar", external_session_id: "codex:old" },
+      false,
+      { avatarActor: (actor) => ({ ...actor, external_session_id: "codex:other" }) },
+    );
+    await act(async () => button("fixture avatar upload")!.click());
+    expect(host.textContent).toContain("runtimeSwitch.conflict");
+    expect(host.textContent).toContain("avatarSaved");
+    expect(useModalStore.getState().editingActor?.updated_at).toBe("before-avatar");
+    expect(mutations.some((item) => item.path.endsWith("/runtime_switch"))).toBe(false);
+  } finally {
+    useUIStore.setState({ isWebAdmin, webReadOnly });
+  }
+});
+
+it("reports a successful avatar reset even if the Actor changed concurrently", async () => {
+  await editActor(
+    {
+      generation: "generation-1",
+      updated_at: "before-avatar",
+      external_session_id: "codex:old",
+      avatar_asset_path: "state/blobs/fixture",
+      avatar_url: "/api/v1/groups/g_a/blobs/fixture",
+      has_custom_avatar: true,
+    },
+    false,
+    { resetAvatarActor: (actor) => ({ ...actor, external_session_id: "codex:other" }) },
+  );
+  await act(async () => button("fixture avatar reset")!.click());
+  expect(host.textContent).toContain("avatarReset");
+  expect(host.textContent).toContain("runtimeSwitch.conflict");
+  expect(useModalStore.getState().editingActor?.updated_at).toBe("before-avatar");
+});
+
+it("saves only native metadata even after selecting a managed switch draft", async () => {
+  const { isWebAdmin, webReadOnly } = useUIStore.getState();
+  try {
+    useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+    const { mutations } = await editActor({
+      generation: "generation-1",
+      updated_at: "before",
+      external_session_id: "codex:old",
+      capability_autoload: ["existing-capability"],
+    });
+    await act(async () => button("runtimeSwitch.managed")!.click());
+    await act(async () =>
+      useFormStore.setState({ editActorTitle: "Updated title", editActorNotes: "New notes" }),
+    );
+    await act(async () => button("common:save")!.click());
+    const actorUpdate = mutations.find((item) => item.path === "/api/v1/groups/g_a/actors/managed");
+    expect(actorUpdate?.body).toEqual({ by: "user", title: "Updated title" });
+    expect(mutations.some((item) => item.path.endsWith("/prompts/help"))).toBe(true);
+    expect(mutations.some((item) => item.path.endsWith("/runtime_switch"))).toBe(false);
+  } finally {
+    useUIStore.setState({ isWebAdmin, webReadOnly });
+  }
+});
+
+it.each([
+  { env: { SERVICE_URL: "https://updated.invalid" } },
+  { capability_autoload: ["new-capability"] },
+])(
+  "does not rebase an avatar update over a concurrent managed configuration change %#",
+  async (patch) => {
+    const { isWebAdmin, webReadOnly } = useUIStore.getState();
+    try {
+      useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+      const { mutations } = await editActor(
+        { generation: "generation-1", updated_at: "before-avatar" },
+        false,
+        { avatarActor: (actor) => ({ ...actor, ...patch }) },
+      );
+      await act(async () => button("fixture avatar upload")!.click());
+      expect(host.textContent).toContain("runtimeSwitch.conflict");
+      expect(useModalStore.getState().editingActor?.updated_at).toBe("before-avatar");
+      expect(mutations.some((item) => item.path.endsWith("/runtime_switch"))).toBe(false);
+    } finally {
+      useUIStore.setState({ isWebAdmin, webReadOnly });
+    }
+  },
+);
+
+it("shows the committed avatar and reset immediately even if the actor list has not refreshed", async () => {
+  const { isWebAdmin, webReadOnly } = useUIStore.getState();
+  try {
+    useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+    await editActor({ generation: "generation-1", updated_at: "before-avatar" });
+    await act(async () => button("fixture avatar upload")!.click());
+    expect(host.querySelector("[data-avatar-url]")?.getAttribute("data-avatar-url")).toBe(
+      "/api/v1/groups/g_a/blobs/fixture",
+    );
+    expect(button("fixture avatar reset")!.disabled).toBe(false);
+    await act(async () => button("fixture avatar reset")!.click());
+    expect(host.querySelector("[data-avatar-url]")?.getAttribute("data-avatar-url")).toBe("");
+    expect(button("fixture avatar reset")!.disabled).toBe(true);
+  } finally {
+    useUIStore.setState({ isWebAdmin, webReadOnly });
+  }
+});
+
+it.each(["response", "network"] as const)(
+  "does not overwrite native notes after a %s load failure and restores them on retry",
+  async (failure) => {
+    const { isWebAdmin, webReadOnly } = useUIStore.getState();
+    let attempts = 0;
+    try {
+      useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+      const { mutations } = await editActor(
+        { generation: "generation-1", updated_at: "before", external_session_id: "codex:old" },
+        false,
+        {
+          prompts: async () => {
+            attempts += 1;
+            if (attempts === 1) {
+              if (failure === "network") throw new Error("synthetic network error");
+              return new Response(
+                JSON.stringify({ ok: false, error: { code: "fixture", message: "Unavailable" } }),
+              );
+            }
+            return respond({
+              help: { content: updateActorHelpNote("", "managed", "Original notes", ["managed"]) },
+            });
+          },
+        },
+      );
+      expect(host.textContent).toContain("actorNotesLoadFailed");
+      expect(host.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(true);
+      expect(button("common:done")!.disabled).toBe(true);
+      expect(mutations.some((item) => item.path.endsWith("/prompts/help"))).toBe(false);
+      await act(async () => button("common:retry")!.click());
+      expect(host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Original notes");
+      expect(host.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(false);
+      await act(async () => useFormStore.setState({ editActorNotes: "Updated notes" }));
+      await act(async () => button("common:save")!.click());
+      const noteSave = mutations.find((item) => item.path.endsWith("/prompts/help"));
+      expect(String(noteSave?.body.content)).toContain("Updated notes");
+    } finally {
+      useUIStore.setState({ isWebAdmin, webReadOnly });
+    }
+  },
+);
+
+it("keeps separate create drafts when moving among managed, Web Model, and native categories", async () => {
+  const { isWebAdmin, webReadOnly } = useUIStore.getState();
+  const managedProfile: ActorProfile = {
+    id: "managed-profile",
+    name: "Managed profile",
+    runtime: "codex",
+    scope: "global",
+    runner: "pty",
+    command: ["codex"],
+    submit: "enter",
+    env: {},
+    created_at: "",
+    updated_at: "",
+    revision: 1,
+  };
+  const webProfile: ActorProfile = {
+    ...managedProfile,
+    id: "web-profile",
+    name: "Web profile",
+    runtime: "web_model",
+  };
+  function CreateDraft() {
+    const [runtime, setRuntime] = useState<CreateActorConfigProps["runtime"]>("codex");
+    const [command, setCommand] = useState("codex --fixture");
+    const [useDefault, setUseDefault] = useState(false);
+    const [useProfile, setUseProfile] = useState(true);
+    const [profileId, setProfileId] = useState(actorProfileIdentityKey(managedProfile));
+    return (
+      <ActorConfigModal
+        {...props}
+        groupId="g_a"
+        actorProfiles={[managedProfile, webProfile]}
+        runtime={runtime}
+        onChangeRuntime={setRuntime}
+        command={command}
+        onChangeCommand={setCommand}
+        useDefaultCommand={useDefault}
+        onChangeUseDefaultCommand={setUseDefault}
+        useProfile={useProfile}
+        onChangeUseProfile={setUseProfile}
+        profileId={profileId}
+        onChangeProfileId={setProfileId}
+      />
+    );
+  }
+  try {
+    useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+    await act(async () => root.render(<CreateDraft />));
+    expect(
+      document.querySelector<HTMLSelectElement>('select[aria-label="actorProfile"]')?.value,
+    ).toBe(actorProfileIdentityKey(managedProfile));
+    await act(async () => button("runtimeSwitch.web")!.click());
+    await act(async () => button("fromActorProfile")!.click());
+    const select = document.querySelector<HTMLSelectElement>('select[aria-label="actorProfile"]')!;
+    await act(async () => {
+      select.value = actorProfileIdentityKey(webProfile);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => button("runtimeSwitch.native")!.click());
+    await act(async () => button("runtimeSwitch.managed")!.click());
+    expect(
+      document.querySelector<HTMLSelectElement>('select[aria-label="actorProfile"]')?.value,
+    ).toBe(actorProfileIdentityKey(managedProfile));
+    await act(async () => button("runtimeSwitch.web")!.click());
+    expect(
+      document.querySelector<HTMLSelectElement>('select[aria-label="actorProfile"]')?.value,
+    ).toBe(actorProfileIdentityKey(webProfile));
+  } finally {
+    useUIStore.setState({ isWebAdmin, webReadOnly });
+  }
+});
+
+it.each([
+  { useProfile: true, runtime: "codex" as const },
+  { useProfile: false, runtime: "web_model" as const },
+])("does not drop a private environment draft while creating with $runtime", async (target) => {
+  props = { ...props, ...target, secretsSetText: "SYNTHETIC_KEY=synthetic-value" };
+  await render();
+  await act(async () => create().click());
+  expect(props.onCreate).not.toHaveBeenCalled();
+  expect(props.onChangeError).toHaveBeenCalledWith("secretDraftNotApplied");
+});
+
+it("does not discard an in-progress or staged private environment edit when changing category", async () => {
+  const { isWebAdmin, webReadOnly } = useUIStore.getState();
+  try {
+    useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+    const { mutations } = await editActor({ generation: "generation-1", updated_at: "before" });
+    await act(async () => button("secretManager.addVariable")!.click());
+    await act(async () => button("saveAndRestart")!.click());
+    expect(host.textContent).toContain("secretEditorIncomplete");
+    expect(mutations).toHaveLength(0);
+    await act(async () => button("runtimeSwitch.web")!.click());
+    expect(host.textContent).toContain("secretEditorIncomplete");
+    expect(button("runtimeSwitch.managed")!.getAttribute("aria-pressed")).toBe("true");
+
+    await act(async () =>
+      host
+        .querySelector<HTMLButtonElement>(
+          '[aria-label="secretManager.title"] [aria-label="common:cancel"]',
+        )!
+        .click(),
+    );
+    await stageFixtureSecret();
+    await act(async () => button("runtimeSwitch.web")!.click());
+    await act(async () => button("common:save")!.click());
+    expect(host.textContent).toContain("secretDraftNotApplied");
+    expect(mutations.some((item) => item.path === "/api/v1/groups/g_a/actors/managed")).toBe(false);
+    await act(async () => button("runtimeSwitch.managed")!.click());
+    expect(host.textContent).toContain("SYNTHETIC_KEY");
+  } finally {
+    useUIStore.setState({ isWebAdmin, webReadOnly });
+  }
+});
+
+it("keeps an existing private-value edit until it is finished or canceled", async () => {
+  await editActor({}, false, { privateKeys: ["KEY_A", "KEY_B"] });
+  const edit = (key: string) =>
+    host.querySelector<HTMLButtonElement>(`button[aria-label="secretManager.update ${key}"]`)!;
+  await act(async () => edit("KEY_A").click());
+  const input = host.querySelector<HTMLInputElement>(
+    'input[aria-label="secretManager.newValue KEY_A"]',
+  )!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "draft");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(edit("KEY_A").disabled).toBe(true);
+  expect(edit("KEY_B").disabled).toBe(true);
+  expect(input.value).toBe("draft");
+});
+
+it("accepts an avatar update for a foreman when the mutation response omits the effective role", async () => {
+  await editActor(
+    { generation: "generation-1", updated_at: "before-avatar", role: "foreman" },
+    false,
+    { avatarActor: (actor) => ({ ...actor, role: undefined }) },
+  );
+  await act(async () => button("fixture avatar upload")!.click());
+  expect(host.textContent).not.toContain("runtimeSwitch.conflict");
+  expect(host.querySelector("[data-avatar-url]")?.getAttribute("data-avatar-url")).toBe(
+    "/api/v1/groups/g_a/blobs/fixture",
+  );
+  expect(useModalStore.getState().editingActor?.role).toBe("foreman");
+  expect(useModalStore.getState().editingActor?.updated_at).toBe("after-avatar");
+});
+
+it("keeps the avatar visible when a native member's title saves but notes fail", async () => {
+  await editActor(
+    {
+      external_session_id: "codex:old",
+      avatar_asset_path: "state/blobs/fixture",
+      avatar_url: "/api/v1/groups/g_a/blobs/fixture",
+      has_custom_avatar: true,
+    },
+    true,
+  );
+  await act(async () =>
+    useFormStore.setState({ editActorTitle: "Changed title", editActorNotes: "New notes" }),
+  );
+  await act(async () => button("common:save")!.click());
+  expect(host.textContent).toContain("Notes unavailable");
+  expect(host.querySelector("[data-avatar-url]")?.getAttribute("data-avatar-url")).toBe(
+    "/api/v1/groups/g_a/blobs/fixture",
+  );
+  expect(button("fixture avatar reset")!.disabled).toBe(false);
+});
+
+it("refuses a Profile whose runtime has moved out of the selected create category", async () => {
+  const movedProfile: ActorProfile = {
+    id: "moved-profile",
+    name: "Moved profile",
+    scope: "global",
+    runtime: "web_model",
+    runner: "pty",
+    command: [],
+    submit: "enter",
+    env: {},
+    created_at: "",
+    updated_at: "",
+    revision: 2,
+  };
+  props = {
+    ...props,
+    useProfile: true,
+    profileId: actorProfileIdentityKey(movedProfile),
+    actorProfiles: [movedProfile],
+  };
+  await render();
+  await act(async () => create().click());
+  expect(props.onCreate).not.toHaveBeenCalled();
+  expect(props.onChangeError).toHaveBeenCalledWith("profileRequired");
+});
+
+it("does not lose a secret draft when returning to the original Profile", async () => {
+  const { mutations } = await editActor({ profile_id: "codex-profile", profile_scope: "global" });
+  await act(async () => button("customAgent")!.click());
+  await stageFixtureSecret();
+  await act(async () => button("fromActorProfile")!.click());
+  expect(button("common:save")).toBeDefined();
+  await act(async () => button("common:save")!.click());
+  expect(host.textContent).toContain("secretDraftNotApplied");
+  expect(mutations.some((item) => item.path === "/api/v1/groups/g_a/actors/managed")).toBe(false);
+});
+
+it.each(["use", "keep", "fail"] as const)(
+  "handles a staged secret when saving a Profile (%s)",
+  async (outcome) => {
+    vi.stubGlobal("prompt", vi.fn().mockReturnValue("Saved Profile"));
+    vi.stubGlobal("confirm", vi.fn().mockReturnValue(outcome === "use"));
+    const { mutations } = await editActor({}, false, { profileSecretFails: outcome === "fail" });
+    await stageFixtureSecret();
+    await act(async () => button("profileToolsSection")!.click());
+    await act(async () => button("addToActorProfiles")!.click());
+    const secretWrite = mutations.find(
+      (item) => item.path === "/api/v1/profiles/saved-profile/env_private",
+    );
+    expect(secretWrite?.body.set).toEqual({ SYNTHETIC_KEY: "synthetic-value" });
+    if (outcome === "use") {
+      await act(async () => button("common:save")!.click());
+      expect(host.textContent).not.toContain("secretDraftNotApplied");
+      expect(
+        mutations.find((item) => item.path === "/api/v1/groups/g_a/actors/managed")?.body,
+      ).toMatchObject({ profile_id: "saved-profile" });
+    } else {
+      await act(async () => button("secretsSection")!.click());
+      expect(host.textContent).toContain("SYNTHETIC_KEY");
+    }
+  },
+);
+
+it.each(["common:save", "saveAndRestart"])(
+  "asks before copying Profile secrets when %s moves to a Web Model",
+  async (saveLabel) => {
+    const { isWebAdmin, webReadOnly } = useUIStore.getState();
+    try {
+      useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+      const confirm = vi.fn().mockReturnValue(false);
+      vi.stubGlobal("confirm", confirm);
+      const { mutations } = await editActor({
+        generation: "generation-1",
+        updated_at: "before",
+        profile_id: "codex-profile",
+        profile_scope: "global",
+      });
+      await act(async () => button("runtimeSwitch.web")!.click());
+      await act(async () => button(saveLabel)!.click());
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(confirm.mock.calls[0][0]).toContain("profileToWebSecretsConfirm");
+      expect(mutations.some((item) => item.path === "/api/v1/groups/g_a/actors/managed")).toBe(
+        false,
+      );
+    } finally {
+      useUIStore.setState({ isWebAdmin, webReadOnly });
+    }
+  },
+);

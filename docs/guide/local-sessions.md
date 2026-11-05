@@ -108,11 +108,66 @@ Select at least one available session to submit. The count refers to sessions, n
 
 Connecting to an existing Group creates an agent only for each new source. Existing agents, roles, access settings, Group state and default directory remain unchanged. Already-connected sources are marked and cannot be selected again. Paused members have a separate **Resume CCCC access** action; resuming access does not start the original application or resume the Group. The primary button always connects selected sessions and remains disabled when none are selected.
 
-A different native conversation does not take over an old agent's tasks or
-pending messages. Pause the old membership separately if it should no longer
-receive work, and explicitly send any handoff context to the new agent. Restoring
-the same conversation after its host exits follows the recovery rules above;
-this retains the original agent instead of creating another member.
+A different native conversation does not take over an old agent by itself. To
+move an agent to another connected session, or between a native session and a
+CCCC-managed runtime, use **Switch runtime** (below). Otherwise pause the old
+membership if it should no longer receive work, and send any handoff context to
+the new agent yourself. Restoring the same conversation after its host exits
+follows the recovery rules above; this retains the original agent instead of
+creating another member.
+
+### Switch an agent's runtime
+
+In the agent editor, **Runtime** first offers **CCCC managed**, **Native
+session** or **Web Model**, then the item within it. Only the instance
+administrator can switch; the control is unavailable in Exhibit. The agent keeps
+its ID, role, tasks, Mail, reply requests, message history, agent state and
+notes; only the runtime that runs it changes. A new member cannot be created as
+a native session from the add dialog: use **Join from connected sessions**,
+which opens **Connect existing sessions** for the current Group.
+
+What a switch does:
+
+- CCCC stops the managed process that runs the agent. It cannot close a native
+  application's process: stop the old session yourself if it is still running.
+- A message the old runtime may have received without a confirmed result is
+  listed in a handoff notice to the new runtime and is not delivered again
+  automatically. Messages not yet handed over go to the new runtime. When it
+  can receive during the switch, the notice comes first; an agent that is
+  stopped, paused or has its access paused receives them all later, in the
+  order they were written.
+- CCCC does not move the old runtime's own conversation. Whether it remains
+  visible or can be resumed depends on the provider and its configuration. While
+  it can still be opened, you can keep a copy of its context first with
+  `codex fork` or `claude --resume <id> --fork-session`.
+- Switching to a native session removes the agent's managed configuration:
+  command, environment, its own private environment variables and any Profile
+  link. Deleted private values cannot be recovered; choose **Save as Profile
+  first** to keep a custom configuration. A linked Profile itself is not
+  changed. The agent's working directory becomes the session's.
+- Switching to a CCCC-managed runtime uses the configuration chosen there.
+  **Do not start after switching** leaves the agent stopped, for example to add
+  private environment variables before **Start**. Leaving a native session, the
+  new runtime starts with a running Group; switching between managed runtimes
+  starts it at once, as **Save and restart** does. An agent whose CCCC access
+  was paused stays paused.
+- The old native session cannot take the agent back: its CCCC tools report
+  that it was replaced, and its reconnection does not restore the agent. Switch
+  back explicitly to use it again.
+- If finishing a switch fails, for example while the disk cannot be written,
+  the agent stops receiving and shows **Retry completion**. CCCC also retries
+  when the daemon starts. Its messages wait until then; editing, starting,
+  switching or removing the agent, and resetting its Group, wait for the retry,
+  while **Stop** stays available. The rest of the Group keeps working and can
+  start without it.
+- Web Model agents keep **Save** and **Save and restart** in this release, and a
+  native agent switches to CCCC managed before choosing a Web Model. These
+  changes do not check unfinished work: make sure the previous runtime has
+  finished first.
+
+The CLI offers the same switch: `cccc actor switch <agent> --session <source_id>`,
+`--runtime <runtime> [--command ...] [--no-start]` or `--profile <id>` for a
+global Profile, and `--finish` to retry an unfinished switch.
 
 ### Contact another native session
 
@@ -199,7 +254,7 @@ The private Web sidebar discovers these Groups through its existing global event
 
 ## Ownership and delivery
 
-An external agent's Web pane identifies its native ownership instead of presenting a fake PTY or mirrored transcript. Its name and Group notes remain editable. Configure model, credentials and runtime behavior in the original application. **Pause CCCC access** disables that Group membership; it does not stop the native process. **Resume CCCC access** enables that same source's membership without resuming a stopped or paused Group. The same separation applies to CLI agent Start/Stop for native members. Managed restart/new-session operations are rejected for external agents.
+An external agent's Web pane identifies its native ownership instead of presenting a fake PTY or mirrored transcript. It opens the same agent editor as other agents: its avatar, name, behavior preset and notes stay editable, its working directory is read-only, and settings that apply only to a process CCCC starts are hidden. Configure model, credentials and runtime behavior in the original application. **Pause CCCC access** disables that Group membership; it does not stop the native process. **Resume CCCC access** enables that same source's membership without resuming a stopped or paused Group. The same separation applies to CLI agent Start/Stop for native members. Managed restart/new-session operations are rejected for external agents.
 
 Paused CCCC access, a paused/stopped Group, and an unavailable native receive channel are different states. Resume the access or Group you paused; reload the native integration only when its receive channel is unavailable. Removing the agent removes its membership in that Group, not its original application or native history.
 
@@ -244,7 +299,7 @@ CCCC retains its last lifecycle metadata after an End or host exit, without reta
 
 These are manual recovery commands, not availability checks: restoring a session can resume queued work and use the model. Resuming the same Codex thread can reconnect its existing memberships. Claude and Pi in a replacement host reconnect their previous memberships when they resume the old host's last recorded conversation with the same provider configuration after that host exited. A different conversation, a still-open original host or another provider configuration needs explicit admission as a new agent. You do not need to reinstall hooks for any of these cases.
 
-When a replacement Claude or Pi host does not reconnect this way, use **Connect sessions** in the sidebar, choose the original **Target Group**, select the reconnected source, and choose **Connect to Group**. This adds a new agent without taking over the old agent, role or pending work. Resume paused membership access and paused/stopped Groups separately when you intend to continue delivery. If integration setup itself was disabled, re-enable it and reload native configuration first; merely resuming provider history does not reinstall the integration.
+When a replacement Claude or Pi host does not reconnect this way, use **Connect sessions** in the sidebar, choose the original **Target Group**, select the reconnected source, and choose **Connect to Group**. This adds a new agent without taking over the old agent, role or pending work. To continue as the original agent instead, switch that agent to the reconnected session with **Switch runtime**. Resume paused membership access and paused/stopped Groups separately when you intend to continue delivery. If integration setup itself was disabled, re-enable it and reload native configuration first; merely resuming provider history does not reinstall the integration.
 
 ### Delivery across reconnects
 

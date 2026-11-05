@@ -108,8 +108,22 @@ pub struct ImportResult {
 pub fn export(store: &GroupStore, group_id: &str) -> io::Result<(Vec<u8>, Manifest, String)> {
     let _operation = operation_guard();
     let mut group = store.load(group_id)?;
+    if crate::runtime_switches::any_pending(&group) {
+        return Err(switch_in_progress());
+    }
+    let switches = crate::runtime_switches::records(&group);
+    let members = group.actors.clone();
     scrub_group(&mut group);
     let mut files = collect_files(&store.group_dir(group_id)?)?;
+    // The Group file and its ledger are read separately, without the daemon's
+    // locks. A member changed in between, by a runtime switch or otherwise,
+    // would leave a copy whose members do not match its history.
+    let current = store.load(group_id)?;
+    if crate::runtime_switches::records(&current) != switches || current.actors != members {
+        return Err(io::Error::other(
+            "This Group's members changed while it was being copied; copy it again",
+        ));
+    }
     files.insert(
         "group.yaml".into(),
         // JSON is valid YAML and keeps ISO timestamps as strings when Python's
@@ -193,6 +207,9 @@ pub fn import(
         source_group_id.clone()
     };
     let mut group = package.group;
+    if crate::runtime_switches::any_pending(&group) {
+        return Err(switch_in_progress());
+    }
     group.group_id.clone_from(&final_group_id);
     if !title.trim().is_empty() {
         group.title = title.trim().into();
@@ -631,8 +648,17 @@ fn excluded(relative: &str, _is_dir: bool) -> bool {
         || lower == "state/im_weixin_context_tokens.json"
 }
 
+fn switch_in_progress() -> io::Error {
+    io::Error::other(
+        "A member's runtime switch is in progress in this Group; copy it again once the switch has finished",
+    )
+}
+
 fn scrub_group(group: &mut GroupDoc) {
     group.running = false;
+    // Only native sources that members left travel with a copy.
+    let switches = crate::runtime_switches::for_copy(group);
+    crate::runtime_switches::set_records(group, &switches);
     group.extra.remove("im_bridge");
     group.extra.remove("im");
     for actor in &mut group.actors {
@@ -1253,6 +1279,85 @@ mod tests {
             writer.write_all(&contents).expect("entry data");
         }
         writer.finish().expect("archive").into_inner()
+    }
+
+    #[test]
+    fn copies_keep_only_finished_native_departures_and_refuse_unfinished_switches() {
+        use crate::runtime_switches::{self, Endpoint, SwitchRecord};
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = crate::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("copy", "").expect("group");
+        let actor = cccc_contracts::Actor::new("x");
+        let at = utc_now();
+        let record = |from: &str, pending: bool| SwitchRecord {
+            op_id: format!("op-{from}-{pending}"),
+            actor_id: "x".into(),
+            actor_generation: crate::actors::generation_identity(&actor),
+            from: Endpoint {
+                kind: if from.is_empty() { "managed" } else { "native" }.into(),
+                runtime: "codex".into(),
+                source_id: from.into(),
+            },
+            to: Endpoint {
+                kind: "managed".into(),
+                runtime: "claude".into(),
+                source_id: String::new(),
+            },
+            at: at.clone(),
+            pending,
+            clear_private_env: false,
+        };
+        store
+            .mutate(&group.group_id, |doc| {
+                doc.actors.push(actor.clone());
+                runtime_switches::set_records(doc, &[record("codex:a", false), record("", false)]);
+                Ok(())
+            })
+            .expect("records");
+
+        let (bytes, _, _) = export(&store, &group.group_id).expect("export");
+        let package = read_package(&bytes).expect("package");
+        assert_eq!(
+            runtime_switches::records(&package.group),
+            vec![record("codex:a", false)],
+            "a copy keeps the departure that stops the old session reclaiming the member"
+        );
+
+        // An unfinished switch belongs to this Group's history: no copy carries it.
+        store
+            .mutate(&group.group_id, |doc| {
+                runtime_switches::set_records(doc, &[record("codex:b", true)]);
+                Ok(())
+            })
+            .expect("pending record");
+        let refused = export(&store, &group.group_id).expect_err("export waits for the switch");
+        assert!(refused.to_string().contains("runtime switch"), "{refused}");
+        let mut package = read_package(&bytes).expect("package");
+        let mut pending = package.group.clone();
+        runtime_switches::set_records(&mut pending, &[record("codex:b", true)]);
+        package.files.insert(
+            "group.yaml".into(),
+            serde_json::to_vec_pretty(&pending).expect("group"),
+        );
+        package.manifest.content_digest = content_digest(&package.files);
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        writer
+            .start_file("manifest.json", options)
+            .expect("manifest");
+        writer
+            .write_all(&serde_json::to_vec(&package.manifest).expect("manifest json"))
+            .expect("manifest data");
+        for (path, contents) in package.files {
+            writer
+                .start_file(format!("group/{path}"), options)
+                .expect("entry");
+            writer.write_all(&contents).expect("entry data");
+        }
+        let carried = writer.finish().expect("archive").into_inner();
+        let refused = import(&store, &carried, "", "").expect_err("import refuses it");
+        assert!(refused.to_string().contains("runtime switch"), "{refused}");
     }
 
     #[test]

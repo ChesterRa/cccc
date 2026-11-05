@@ -7,7 +7,9 @@ use cccc_core::actors;
 use cccc_core::context::ContextStore;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
-use cccc_core::{GroupDoc, GroupStore, HomeLayout, group_scope, web_model_connectors};
+use cccc_core::{
+    GroupDoc, GroupStore, HomeLayout, group_scope, runtime_switches, web_model_connectors,
+};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -166,6 +168,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let actor_id = required_arg(request, "actor_id")?;
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     authorize(&group, request, ActorAction::Update, &actor_id)?;
+    super::actor_switch::refuse_pending(home, &group_id, &actor_id)?;
     let profile_id = string_arg(request, "profile_id").unwrap_or_default();
     let profile_action = string_arg(request, "profile_action").unwrap_or_default();
     if !profile_id.is_empty() && !profile_action.is_empty() {
@@ -576,6 +579,9 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let actor_id = required_arg(request, "actor_id")?;
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     authorize(&group, request, ActorAction::Remove, &actor_id)?;
+    // Its switch audit must not be lost with the member, and its Retry,
+    // not a removal that may still fail, completes and resumes it.
+    super::actor_switch::refuse_pending(home, &group_id, &actor_id)?;
     // The Foreman is the first visible Actor: removing it hands the role on.
     let succession =
         (actors::effective_role(&group, &actor_id) == Some(ActorRole::Foreman)).then(|| {
@@ -714,6 +720,21 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     if let Err(error) = retire_actor_context(home, &group_id, &actor_id, &event.by) {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit Actor context cleanup failed");
+    }
+    // Not with the removal itself: a removal that fails restores the member,
+    // which still needs its records. A leftover record names no member and
+    // has no effect.
+    if !runtime_switches::records(&group).is_empty()
+        && let Err(error) = store(home).and_then(|store| {
+            store
+                .mutate(&group_id, |doc| {
+                    runtime_switches::prune(doc);
+                    Ok(())
+                })
+                .map_err(OpError::io)
+        })
+    {
+        tracing::warn!(error = %error.message, %group_id, %actor_id, "post-commit switch record cleanup failed");
     }
     object(json!({"actor_id": actor_id, "event": event}))
 }
@@ -883,6 +904,17 @@ fn remove_persisted_headless_state(
 }
 
 pub(super) fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
+    lifecycle_leading(home, request, kind, None)
+}
+
+/// As [`lifecycle`]; `leading` is delivered ahead of the backlog a start
+/// dispatches, as a runtime switch does with its handoff.
+pub(super) fn lifecycle_leading(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    kind: &str,
+    leading: Option<&Event>,
+) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let actor_id = required_arg(request, "actor_id")?;
     let _timing_span = tracing::info_span!(
@@ -896,6 +928,10 @@ pub(super) fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) 
         _ => ActorAction::Restart,
     };
     authorize(&group, request, action, &actor_id)?;
+    if kind != "actor.stop" {
+        // Stopping stays available; a start waits for the switch's retry.
+        super::actor_switch::refuse_pending(home, &group_id, &actor_id)?;
+    }
     let original_actor = group
         .actors
         .iter()
@@ -1040,6 +1076,17 @@ pub(super) fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) 
     if enabled {
         match GroupStore::new(home.clone()).and_then(|store| store.load(&group_id)) {
             Ok(current_group) => {
+                if let Some(leading) = leading
+                    && let Some(actor) = actors::find(&current_group, &actor_id)
+                {
+                    actor_delivery::dispatch_to(
+                        home,
+                        &current_group,
+                        leading,
+                        std::slice::from_ref(actor),
+                        false,
+                    );
+                }
                 actor_delivery::dispatch_unread(home, &current_group, &actor_id);
             }
             Err(error) => tracing::warn!(

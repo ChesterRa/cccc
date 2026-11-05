@@ -16,6 +16,57 @@ export type ProfileScope = "global" | "user";
 
 export type ActorRuntimeActionResult = { actor?: Actor; runtime_confirmation_required?: boolean };
 
+export type ActorRuntimeSwitchTarget =
+  | { kind: "native"; source_id: string; expected_native_session_id: string }
+  | {
+      kind: "managed";
+      patch: {
+        runtime: string;
+        runtime_mode?: "default" | "acp";
+        command?: string | string[];
+        env?: Record<string, string>;
+        submit?: string;
+        default_scope_key?: string;
+      };
+      profile_id?: string;
+      profile_scope?: ProfileScope;
+      profile_owner?: string;
+      expected_profile_revision?: number;
+      start?: boolean;
+    };
+
+export type ActorRuntimeSwitchRequest = {
+  expected_actor_generation: string;
+  expected_actor_updated_at: string;
+  expected_source_id?: string;
+  target: ActorRuntimeSwitchTarget;
+};
+
+export type ActorRuntimeSwitchResult = {
+  group_id: string;
+  actor_id: string;
+  op_id: string;
+  switched: true;
+  from: { kind: "native" | "managed"; runtime: string; source_id?: string };
+  to: { kind: "native" | "managed"; runtime: string; source_id?: string };
+  completion: "done" | "pending";
+  start: "started" | "pending" | "stopped" | "error" | "native" | "held";
+  start_error?: unknown;
+  access_paused?: boolean;
+  notice_event_id?: string;
+};
+
+export type ActorRuntimeSwitchCompletion =
+  | ActorRuntimeSwitchResult
+  | {
+      group_id: string;
+      actor_id: string;
+      switched: false;
+      completion: "done";
+      start?: undefined;
+      access_paused?: undefined;
+    };
+
 type ProfileLookupOptions = { scope?: ProfileScope; ownerId?: string };
 
 type ProfileDeleteOptions = ProfileLookupOptions & { forceDetach?: boolean };
@@ -286,6 +337,119 @@ export async function restartActor(groupId: string, actorId: string) {
   }
 }
 
+function runtimeSwitchUnknown<T>(response: ApiResponse<T>): ApiResponse<T> {
+  if (
+    !response.ok &&
+    ([
+      "NETWORK_ERROR",
+      "PARSE_ERROR",
+      "EMPTY_RESPONSE",
+      "HTTP_ERROR",
+      "UNKNOWN_ERROR",
+      "daemon_unavailable",
+    ].includes(response.error.code) ||
+      response.error.httpStatus === 408 ||
+      (response.error.httpStatus ?? 0) >= 500)
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: "actor_switch_unknown",
+        message: "The result is unknown. Refresh the member before trying again.",
+        details: { cause: response.error.code },
+      },
+    };
+  }
+  return response;
+}
+
+function isRuntimeSwitchResult(
+  value: ActorRuntimeSwitchResult | undefined,
+  groupId: string,
+  actorId: string,
+): value is ActorRuntimeSwitchResult {
+  return Boolean(
+    value &&
+    value.switched === true &&
+    value.group_id === groupId &&
+    value.actor_id === actorId &&
+    typeof value.op_id === "string" &&
+    value.op_id.length > 0 &&
+    ["done", "pending"].includes(value.completion) &&
+    ["started", "pending", "stopped", "error", "native", "held"].includes(value.start) &&
+    (value.completion === "pending" ? value.start === "held" : value.start !== "held") &&
+    value.from &&
+    ["native", "managed"].includes(value.from.kind) &&
+    value.to &&
+    ["native", "managed"].includes(value.to.kind),
+  );
+}
+
+export async function switchActorRuntime(
+  groupId: string,
+  actorId: string,
+  request: ActorRuntimeSwitchRequest,
+): Promise<ApiResponse<ActorRuntimeSwitchResult>> {
+  invalidateGroupActorsReads(groupId);
+  try {
+    const response = runtimeSwitchUnknown(
+      await apiJson<ActorRuntimeSwitchResult>(
+        `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/runtime_switch`,
+        { method: "POST", body: JSON.stringify(request) },
+      ),
+    );
+    if (response.ok && !isRuntimeSwitchResult(response.result, groupId, actorId)) {
+      return {
+        ok: false,
+        error: {
+          code: "actor_switch_unknown",
+          message: "The result is unknown. Refresh the member before trying again.",
+        },
+      };
+    }
+    return response;
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
+}
+
+export async function completeActorRuntimeSwitch(
+  groupId: string,
+  actorId: string,
+): Promise<ApiResponse<ActorRuntimeSwitchCompletion>> {
+  invalidateGroupActorsReads(groupId);
+  try {
+    const response = runtimeSwitchUnknown(
+      await apiJson<ActorRuntimeSwitchCompletion>(
+        `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/runtime_switch/complete`,
+        { method: "POST" },
+      ),
+    );
+    if (
+      response.ok &&
+      !(
+        response.result &&
+        response.result.group_id === groupId &&
+        response.result.actor_id === actorId &&
+        ((response.result.switched === false && response.result.completion === "done") ||
+          (response.result.switched === true &&
+            isRuntimeSwitchResult(response.result, groupId, actorId)))
+      )
+    ) {
+      return {
+        ok: false,
+        error: {
+          code: "actor_switch_unknown",
+          message: "The result is unknown. Refresh the member before trying again.",
+        },
+      };
+    }
+    return response;
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
+}
+
 export async function newActorSession(groupId: string, actorId: string) {
   invalidateGroupActorsReads(groupId);
   try {
@@ -445,7 +609,10 @@ export async function copyActorPrivateEnvToProfile(
   profileId: string,
   groupId: string,
   actorId: string,
-  opts?: ProfileLookupOptions,
+  opts?: ProfileLookupOptions & {
+    expectedActorGeneration?: string;
+    expectedActorUpdatedAt?: string;
+  },
 ) {
   return apiJson<{ profile_id: string; group_id: string; actor_id: string; keys: string[] }>(
     `/api/v1/actor_profiles/${encodeURIComponent(profileId)}/copy_actor_secrets`,
@@ -457,6 +624,8 @@ export async function copyActorPrivateEnvToProfile(
         owner_id: opts?.ownerId,
         group_id: groupId,
         actor_id: actorId,
+        expected_actor_generation: opts?.expectedActorGeneration,
+        expected_actor_updated_at: opts?.expectedActorUpdatedAt,
       }),
     },
   );

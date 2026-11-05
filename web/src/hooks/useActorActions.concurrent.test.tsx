@@ -285,12 +285,15 @@ it("does not let a late inbox response replace a newly opened inbox", async () =
 it.each([
   [
     "en",
-    'Remove "Native fixture" from this Group? This removes its CCCC membership only; it does not stop the native application or session.',
+    'Remove "Native fixture" from this Group? Its unfinished tasks will be unassigned and its collaboration state will not be transferred. Resolve outstanding work first. The native application and session will not be stopped.',
   ],
-  ["zh", "从本工作组移除“Native fixture”？此操作仅移除 CCCC 成员关系，不会停止原生应用或会话。"],
+  [
+    "zh",
+    "从本工作组移除“Native fixture”？其未完成任务会解除指派，协作状态不会转移，请先处理未结事项。原生应用或会话不会停止。",
+  ],
   [
     "ja",
-    "「Native fixture」をこのグループから削除しますか？CCCC のメンバー登録のみを解除し、元のアプリやセッションは停止しません。",
+    "「Native fixture」をこのグループから削除しますか？未完了タスクの担当は解除され、作業状態は引き継がれません。先に未処理の作業を済ませてください。元のアプリやセッションは停止しません。",
   ],
 ])(
   "confirms non-terminating native membership removal and respects cancellation in %s",

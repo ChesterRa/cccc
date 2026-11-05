@@ -15,13 +15,15 @@ export const MAX_SELECTED_SESSIONS = 16;
 export function useLocalSessionsConnection({
   onClose,
   onSelectGroup,
+  initialTargetGroupId = "",
 }: {
   onClose: () => void;
   onSelectGroup: (id: string) => void;
+  initialTargetGroupId?: string;
 }) {
   const { t } = useTranslation("layout");
   const groups = useGroupStore((state) => state.groups);
-  const [targetGroupId, setTargetGroupId] = useState("");
+  const [targetGroupId, setTargetGroupId] = useState(initialTargetGroupId);
   const [sources, setSources] = useState<LocalSessionSource[]>([]);
   const [selected, setSelected] = useState<LocalSessionSource[]>([]);
   const [loading, setLoading] = useState(true);

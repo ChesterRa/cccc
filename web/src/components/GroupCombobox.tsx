@@ -17,6 +17,7 @@ export type GroupComboboxItem = {
   value: string;
   label: string;
   description?: string;
+  group?: string;
   keywords?: string[];
   disabled?: boolean;
 };
@@ -65,6 +66,16 @@ export function GroupCombobox({
   );
   const triggerLabel = selectedItem?.label || placeholder;
   const isDisabled = disabled || items.length === 0;
+  const groups = useMemo(() => {
+    const result = new Map<string, GroupComboboxItem[]>();
+    for (const item of items) {
+      const key = item.group || "";
+      const group = result.get(key) || [];
+      group.push(item);
+      result.set(key, group);
+    }
+    return [...result.entries()];
+  }, [items]);
 
   useLayoutEffect(() => {
     if (!matchTriggerWidth || !open) return;
@@ -128,45 +139,47 @@ export function GroupCombobox({
           {searchable ? <CommandInput placeholder={searchPlaceholder} /> : null}
           <CommandList ref={listRef} label={ariaLabel}>
             <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup>
-              {items.map((item) => {
-                const selected = item.value === value;
-                return (
-                  <CommandItem
-                    key={item.value}
-                    // cmdk reserves the empty value and trims values. Wrap
-                    // ours so empty strings and whitespace stay distinct.
-                    value={`=${item.value}=`}
-                    disabled={item.disabled}
-                    keywords={[item.label, item.description || "", ...(item.keywords || [])]}
-                    onSelect={() => {
-                      if (item.disabled) return;
-                      onChange(item.value);
-                      setOpen(false);
-                    }}
-                  >
-                    <CheckIcon
-                      size={24}
-                      absoluteStrokeWidth={false}
-                      className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm">{item.label}</div>
-                      {item.description ? (
-                        <div
-                          className={cn(
-                            "truncate text-[11px] text-[var(--color-text-muted)]",
-                            descriptionClassName,
-                          )}
-                        >
-                          {item.description}
-                        </div>
-                      ) : null}
-                    </div>
-                  </CommandItem>
-                );
-              })}
-            </CommandGroup>
+            {groups.map(([group, groupItems]) => (
+              <CommandGroup key={group} heading={group || undefined}>
+                {groupItems.map((item) => {
+                  const selected = item.value === value;
+                  return (
+                    <CommandItem
+                      key={item.value}
+                      // cmdk reserves the empty value and trims values. Wrap
+                      // ours so empty strings and whitespace stay distinct.
+                      value={`=${item.value}=`}
+                      disabled={item.disabled}
+                      keywords={[item.label, item.description || "", ...(item.keywords || [])]}
+                      onSelect={() => {
+                        if (item.disabled) return;
+                        onChange(item.value);
+                        setOpen(false);
+                      }}
+                    >
+                      <CheckIcon
+                        size={24}
+                        absoluteStrokeWidth={false}
+                        className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm">{item.label}</div>
+                        {item.description ? (
+                          <div
+                            className={cn(
+                              "truncate text-[11px] text-[var(--color-text-muted)]",
+                              descriptionClassName,
+                            )}
+                          >
+                            {item.description}
+                          </div>
+                        ) : null}
+                      </div>
+                    </CommandItem>
+                  );
+                })}
+              </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>

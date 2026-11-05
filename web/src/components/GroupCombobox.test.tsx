@@ -55,6 +55,36 @@ async function open(searchable = false, emptyFirst = false) {
   return trigger;
 }
 
+it("keeps unavailable choices in a named group and prevents selecting them", async () => {
+  const onChange = vi.fn();
+  await act(async () =>
+    root.render(
+      <GroupCombobox
+        items={[
+          { value: "ready", label: "Ready" },
+          { value: "missing", label: "Missing", group: "Not detected", disabled: true },
+        ]}
+        value="ready"
+        onChange={onChange}
+        placeholder="Choose"
+        searchPlaceholder="Search"
+        emptyText="No matches"
+        ariaLabel="Runtime"
+        searchable={false}
+      />,
+    ),
+  );
+  await act(async () => host.querySelector<HTMLButtonElement>('button[role="combobox"]')!.click());
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  expect(document.body.textContent).toContain("Not detected");
+  const missing = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (item) => item.textContent === "Missing",
+  );
+  expect(missing?.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => missing?.click());
+  expect(onChange).not.toHaveBeenCalled();
+});
+
 it("lets a non-searchable list be operated with arrow keys and Enter", async () => {
   const trigger = await open();
   const list = document.querySelector<HTMLElement>('[role="listbox"]')!;

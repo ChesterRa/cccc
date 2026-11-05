@@ -1,4 +1,5 @@
 import { NativeSessionPanel } from "../features/localSessions/NativeSessionPanel";
+import { RuntimeSwitchPendingNotice } from "../features/runtimeSwitch/RuntimeSwitchPendingNotice";
 import { ActorRuntimeConfirmationNotice } from "./agentTerminal/ActorRuntimeConfirmationNotice";
 import { isWebModelRuntime } from "../types";
 import { useTerminalTitlePaging } from "./agentTerminal/useTerminalTitlePaging";
@@ -1009,6 +1010,7 @@ export function AgentTab({
       </div>
 
       <ActorRuntimeConfirmationNotice actor={actor} readOnly={readOnly} />
+      <RuntimeSwitchPendingNotice actor={actor} groupId={groupId} />
 
       {/* Terminal or Status Area */}
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}

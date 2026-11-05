@@ -89,6 +89,13 @@ pub(super) fn apply_resolved(
             "This Group's secretary is managed by the global Voice Secretary; it is not an Actor runtime",
         ));
     }
+    if kind != "actor.stop" && cccc_core::runtime_switches::has_pending(group, actor_id) {
+        // Its handoff is not written yet; the replacement must not run first.
+        return Err(OpError::new(
+            "actor_switch_pending",
+            "This member's last runtime switch has not finished; it starts once the switch completes",
+        ));
+    }
     if !matches!(kind, "actor.restart" | "actor.new_session") && actor_is_running(group, actor) {
         // Saving config does not restart an existing session. Explicit restart
         // applies it; start remains idempotent across backend changes too.
@@ -279,6 +286,20 @@ fn stop_registered(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionSta
     })
 }
 
+/// Stop every managed owner registered for the Actor, whatever its saved
+/// configuration names, and confirm each stopped. Returns whether one was
+/// running. Used when the runtime owner is replaced: an owner that cannot be
+/// confirmed stopped must keep the Actor.
+pub(super) fn stop_owner_confirmed(group: &GroupDoc, actor_id: &str) -> Result<bool, OpError> {
+    let was_running = super::local_headless::running(&group.group_id, actor_id)
+        || super::deepseek_runtime::running(&group.group_id, actor_id)
+        || cccc_runtime::status(&group.group_id, actor_id).is_ok_and(|status| status.running);
+    super::local_headless::stop(&group.group_id, actor_id).map_err(OpError::io)?;
+    super::deepseek_runtime::stop_confirmed(&group.group_id, actor_id).map_err(OpError::io)?;
+    stop(group, actor_id)?;
+    Ok(was_running)
+}
+
 pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
     cccc_runtime::status(group_id, actor_id).ok()
 }
@@ -293,6 +314,11 @@ pub fn start_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionSta
     let mut statuses = Vec::new();
     let mut started_actor_ids = Vec::new();
     for actor in group.actors.iter().filter(|actor| actor.enabled) {
+        // Held until its own retry. Skipped before anything of it is read, so
+        // nothing about this member can stop the rest of the Group.
+        if cccc_core::runtime_switches::has_pending(group, &actor.id) {
+            continue;
+        }
         let was_running = actor_is_running(group, actor);
         match apply(home, group, &actor.id, "actor.start") {
             Ok(status) => {

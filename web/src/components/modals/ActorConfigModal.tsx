@@ -1,4 +1,16 @@
-import { NativeActorEditor } from "../../features/localSessions/NativeActorEditor";
+import { LocalSessionsDialog } from "../../features/localSessions/LocalSessionsDialog";
+import { RuntimeCategoryPicker } from "../../features/runtimeSwitch/RuntimeCategoryPicker";
+import {
+  actorRuntimeCategory,
+  type RuntimeCategory,
+} from "../../features/runtimeSwitch/runtimeCategory";
+import {
+  RuntimeSwitchConfirm,
+  RuntimeSwitchControls,
+} from "../../features/runtimeSwitch/RuntimeSwitchControls";
+import { RuntimeSwitchPendingNotice } from "../../features/runtimeSwitch/RuntimeSwitchPendingNotice";
+import { joinRuntimeSentences } from "../../features/runtimeSwitch/runtimeSwitchOutcome";
+import { hasPendingActorSwitch } from "../../features/runtimeSwitch/runtimeSwitchState";
 import { supportsAcpMode } from "../../types";
 import { GrokActorSetup } from "../webModel/GrokActorSetup";
 import { isWebModelRuntime } from "../../types";
@@ -6,6 +18,7 @@ import { type Actor, ActorProfile, GroupDoc, RuntimeInfo, SupportedRuntime } fro
 import { useTranslation } from "react-i18next";
 import { BASIC_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
@@ -36,7 +49,8 @@ import {
 } from "./actorSecretManagerModel";
 import { WebModelActorSetup } from "../webModel/WebModelActorSetup";
 import { DotsActorPanel } from "../webModel/DotsActorPanel";
-import { useModalStore, useUIStore } from "../../stores";
+import { useGroupStore, useModalStore, useUIStore } from "../../stores";
+import { SUPPORTED_RUNTIMES } from "../../types";
 import { isGrokBotUrl } from "../../utils/webModelTargetDraft";
 import { ModalFrame } from "./ModalFrame";
 
@@ -65,6 +79,7 @@ export interface EditActorSavePayload {
   grokBotUrl?: string;
   // A later notes/binding/restart failure must not replay committed secret edits.
   onSecretsSaved?: (keys: string[]) => void;
+  runtimeSwitch?: { start: boolean };
 }
 
 export interface SaveActorProfileResult {
@@ -88,6 +103,7 @@ interface ActorConfigBaseProps {
   onSaveAsProfile: (
     secrets?: ActorSecretSaveChanges,
     runtimeMode?: RuntimeMode,
+    options?: { savedActor?: boolean },
   ) => Promise<SaveActorProfileResult | void> | void;
   onCancel: () => void;
 }
@@ -113,14 +129,17 @@ export interface EditActorConfigProps extends ActorConfigBaseProps {
   actorNotes: string;
   onChangeActorNotes: (value: string) => void;
   actorNotesBusy?: boolean;
+  actorNotesError?: boolean;
+  onRetryActorNotes?: () => void;
   capabilityAutoloadText: string;
   onChangeCapabilityAutoloadText: (value: string) => void;
   onSave: (payload: EditActorSavePayload) => Promise<void>;
   onSaveAndRestart: (payload: EditActorSavePayload) => Promise<void>;
+  onSaveBasics?: () => Promise<void>;
   linkedProfileId?: string;
   linkedProfileScope?: "global" | "user";
   linkedProfileOwner?: string;
-  onAvatarChanged?: () => Promise<void>;
+  onAvatarChanged?: (updated: Actor, previous?: Actor) => Promise<boolean | void>;
   inlineNotice?: string;
 }
 
@@ -157,6 +176,7 @@ export interface CreateActorConfigProps extends ActorConfigBaseProps {
     runtimeMode?: RuntimeMode,
     defaultScopeKey?: string,
   ) => Promise<boolean> | boolean;
+  onSelectGroup?: (groupId: string) => void;
 }
 
 export type ActorConfigModalProps = EditActorConfigProps | CreateActorConfigProps;
@@ -282,10 +302,31 @@ function CreateActorConfigModal({
   onCreate,
   onSaveAsProfile,
   onCancel,
+  onSelectGroup,
 }: CreateActorConfigProps) {
   const { t } = useTranslation("actors");
-  const { modalRef } = useModalA11y(isOpen, onCancel);
+  const [localDialogOpen, setLocalDialogOpen] = useState(false);
+  const [createCategory, setCreateCategory] = useState<RuntimeCategory>(
+    isWebModelRuntime(runtime) ? "web" : "managed",
+  );
+  const canJoinNative = useUIStore((state) => state.isWebAdmin === true && !state.webReadOnly);
+  const { modalRef } = useModalA11y(isOpen && !localDialogOpen, onCancel);
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("default");
+  const createDrafts = useRef<
+    Partial<
+      Record<
+        "managed" | "web",
+        {
+          runtime: SupportedRuntime;
+          command: string;
+          useDefaultCommand: boolean;
+          runtimeMode: RuntimeMode;
+          useProfile: boolean;
+          profileId: string;
+        }
+      >
+    >
+  >({});
   const [defaultScopeKey, setDefaultScopeKey] = useState("");
   const [directoryBusy, setDirectoryBusy] = useState(false);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -299,7 +340,15 @@ function CreateActorConfigModal({
   useEffect(() => {
     if (!isOpen) {
       setRuntimeMode("default");
+      setLocalDialogOpen(false);
     }
+  }, [isOpen]);
+
+  useEffect(() => {
+    createDrafts.current = {};
+    if (isOpen) setCreateCategory(isWebModelRuntime(runtime) ? "web" : "managed");
+    // The selected category is a draft during this modal visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   useEffect(() => {
@@ -312,15 +361,13 @@ function CreateActorConfigModal({
     };
   }, [avatarPreviewUrl]);
 
-  const selectableActorProfiles = actorProfiles;
-
-  useEffect(() => {
-    if (!isOpen || !useProfile || !String(profileId || "").trim()) return;
-    const selected = selectableActorProfiles.some(
-      (profile) => actorProfileIdentityKey(profile) === String(profileId || "").trim(),
-    );
-    if (!selected) onChangeProfileId("");
-  }, [isOpen, onChangeProfileId, profileId, selectableActorProfiles, useProfile]);
+  const selectableActorProfiles = useMemo(
+    () =>
+      actorProfiles.filter(
+        (profile) => isWebModelRuntime(profile.runtime) === (createCategory === "web"),
+      ),
+    [actorProfiles, createCategory],
+  );
 
   if (!isOpen) return null;
 
@@ -360,6 +407,14 @@ function CreateActorConfigModal({
 
   const handleSubmit = async () => {
     if (scopeUnavailable || directoryBusy) return;
+    if (String(secretsSetText || "").trim() && (useProfile || isWebModelRuntime(runtime))) {
+      onChangeError(t("secretDraftNotApplied"));
+      return;
+    }
+    if (useProfile && !selectedProfile) {
+      onChangeError(t("profileRequired"));
+      return;
+    }
     try {
       const ok = await Promise.resolve(
         onCreate(avatarFile, supportsAcpMode(runtime) ? runtimeMode : "default", defaultScopeKey),
@@ -377,7 +432,7 @@ function CreateActorConfigModal({
 
   return (
     <ModalFrame
-      isOpen={isOpen}
+      isOpen={isOpen && !localDialogOpen}
       isDark={isDark}
       onClose={handleCancel}
       titleId="actor-config-create-title"
@@ -423,378 +478,456 @@ function CreateActorConfigModal({
             >
               {t("common:cancel")}
             </Button>
-            <div className="w-full sm:w-auto sm:min-w-[14rem]">
-              <Button
-                type="button"
-                className="w-full font-semibold"
-                onClick={() => void handleSubmit()}
-                disabled={!canSubmit || scopeUnavailable || directoryBusy}
-              >
-                {busy === "actor-add"
-                  ? t("adding")
-                  : useProfile
-                    ? t("createFromProfile")
-                    : t("addAgent")}
-              </Button>
-              {scopeUnavailable || submitDisabledReason ? (
-                <div
-                  className="text-[10px] text-amber-700 dark:text-amber-400 mt-1.5"
-                  data-status-tone="warning"
+            {createCategory !== "native" ? (
+              <div className="w-full sm:w-auto sm:min-w-[14rem]">
+                <Button
+                  type="button"
+                  className="w-full font-semibold"
+                  onClick={() => void handleSubmit()}
+                  disabled={!canSubmit || scopeUnavailable || directoryBusy}
                 >
-                  {scopeUnavailable ? t("workingDirectoryUnavailable") : submitDisabledReason}
-                </div>
-              ) : null}
-            </div>
+                  {busy === "actor-add"
+                    ? t("adding")
+                    : useProfile
+                      ? t("createFromProfile")
+                      : t("addAgent")}
+                </Button>
+                {scopeUnavailable || submitDisabledReason ? (
+                  <div
+                    className="text-[10px] text-amber-700 dark:text-amber-400 mt-1.5"
+                    data-status-tone="warning"
+                  >
+                    {scopeUnavailable ? t("workingDirectoryUnavailable") : submitDisabledReason}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </>
       }
     >
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide bg-[var(--color-bg-primary)] p-4 sm:p-6">
         <div className="mx-auto w-full max-w-6xl space-y-4">
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
-            <Surface className={sectionCardClass}>
-              <div className={sectionTitleClass}>{t("sectionBasics")}</div>
-              <div className={sectionHintClass}>{t("addSectionBasicsHint")}</div>
-
-              <div className="mt-4 space-y-4">
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
-                  <ActorAvatarField
-                    label={null}
-                    avatarUrl={undefined}
-                    previewUrl={avatarPreviewUrl}
-                    runtime={previewRuntime}
-                    title={previewTitle}
-                    isDark={isDark}
-                    sizeClassName="h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]"
-                    disabled={busy === "actor-add"}
-                    resetDisabled={!avatarFile}
-                    onSelectFile={setAvatarFile}
-                    onReset={() => setAvatarFile(null)}
-                  />
-
-                  <div className="min-w-0 space-y-4">
-                    <div>
-                      <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                        {t("agentId", { defaultValue: "Agent ID" })}
-                      </label>
-                      <Input
-                        value={actorId}
-                        onChange={(e) => onChangeActorId(e.target.value)}
-                        placeholder={suggestedActorId}
-                        disabled={busy === "actor-add"}
-                      />
-                      <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                        {t("leaveEmptyToUse")}{" "}
-                        <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-                          {suggestedActorId}
-                        </code>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                        {t("agentRole", { defaultValue: "Agent role" })}
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={modeButtonClass(role === "peer")}
-                          onClick={() => onChangeRole("peer")}
-                          disabled={busy === "actor-add"}
-                        >
-                          {t("peerRole")}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          className={modeButtonClass(role === "foreman")}
-                          onClick={() => onChangeRole("foreman")}
-                          disabled={busy === "actor-add" || hasForeman}
-                          title={
-                            hasForeman
-                              ? t("foremanAlreadyConfigured", {
-                                  defaultValue: "Foreman already configured",
-                                })
-                              : undefined
-                          }
-                        >
-                          {t("foremanRole")}
-                        </Button>
-                      </div>
-                      <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                        {hasForeman ? t("foremanLeads") : t("firstAgentForeman")}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {attachedScopes.length > 0 || defaultScopeKey || groupId ? (
-                  <ActorWorkingDirectory
-                    key={`${groupId}/${isOpen}`}
-                    groupId={groupId}
-                    scopes={attachedScopes}
-                    activeScopeKey={activeScopeKey}
-                    value={defaultScopeKey}
-                    onChange={setDefaultScopeKey}
-                    onScopeAttached={onScopeAttached}
-                    onBusyChange={setDirectoryBusy}
-                    disabled={busy === "actor-add"}
-                    hint={t("workingDirectoryHint")}
-                  />
-                ) : null}
-
-                <div>
-                  <RolePresetPicker
-                    draftValue={actorNotes}
-                    onChangeDraft={onChangeActorNotes}
-                    disabled={busy === "actor-add"}
-                  />
-                  <label className="block text-xs font-medium mt-3 mb-2 text-[var(--color-text-muted)]">
-                    {t("actorNotes")}
-                  </label>
-                  <Textarea
-                    className="min-h-[144px]"
-                    value={actorNotes}
-                    onChange={(e) => onChangeActorNotes(e.target.value)}
-                    placeholder={t("actorNotesPlaceholder")}
-                    spellCheck={false}
-                    disabled={busy === "actor-add"}
-                  />
-                  <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                    {t("newActorNotesHint")}
-                  </div>
-                </div>
-              </div>
-            </Surface>
-
-            <Surface className={sectionCardClass}>
-              <div className={sectionTitleClass}>{t("sectionRuntime", "Runtime & Profile")}</div>
-              <div className={sectionHintClass}>{t("sectionRuntimeHint")}</div>
-
-              <div className="mt-4">
-                <RuntimeConfigurationModePicker
-                  value={useProfile ? "profile" : "custom"}
-                  disabled={busy === "actor-add"}
-                  onChange={(mode) => {
-                    const nextUsesProfile = mode === "profile";
-                    onChangeUseProfile(nextUsesProfile);
-                    if (!nextUsesProfile) return;
-                    if (!actorProfilesBusy && selectableActorProfiles.length <= 0)
-                      void onRequestActorProfiles?.();
-                    if (selectableActorProfiles.length > 0 && !profileId)
-                      onChangeProfileId(actorProfileIdentityKey(selectableActorProfiles[0]));
-                  }}
-                />
-              </div>
-
-              <div className="mt-4 space-y-4">
-                {useProfile ? (
-                  <RuntimeProfilePicker
-                    value={profileId}
-                    profiles={selectableActorProfiles}
-                    busy={actorProfilesBusy}
-                    disabled={busy === "actor-add"}
-                    onChange={onChangeProfileId}
-                  />
-                ) : (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                        {t("runtime")}
-                      </label>
-                      <RuntimeSelector
-                        className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
-                        value={runtime}
-                        runtimeMode={runtimeMode}
-                        disabled={busy === "actor-add"}
-                        onChange={(value) => {
-                          const next = value as SupportedRuntime;
-                          onChangeRuntime(next);
-                          if (next === "custom") onChangeUseDefaultCommand(false);
-                          else onChangeUseDefaultCommand(true);
-                          const nextInfo = runtimes.find((r) => r.name === next);
-                          onChangeCommand(String(nextInfo?.recommended_command || "").trim());
-                        }}
-                        ariaLabel={t("runtime")}
-                      />
-                      <OpenCodeManagedModelHint runtime={runtime} />
-                      {supportsAcpMode(runtime) && (
-                        <AcpRuntimeMode
-                          runtime={runtime}
-                          value={runtimeMode}
-                          onChange={setRuntimeMode}
-                          disabled={busy === "actor-add"}
-                        />
-                      )}
-                    </div>
-
-                    <RuntimeCommandControl
-                      runtime={runtime}
-                      command={command}
-                      defaultCommand={defaultCommand}
-                      useDefaultCommand={useDefaultCommand}
-                      disabled={busy === "actor-add"}
-                      onCommandChange={onChangeCommand}
-                      onUseDefaultCommandChange={onChangeUseDefaultCommand}
-                    />
-
-                    {webModelSetupIsActorBound ? (
-                      <div
-                        className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300"
-                        data-status-tone="info"
-                      >
-                        <div className="font-medium">
-                          {runtime === "grok_web_model"
-                            ? "Grok Bot Web Model"
-                            : runtime === "chatgpt_dots"
-                              ? "ChatGPT Dots"
-                              : t("webModelActorBoundConnectorTitle", {
-                                  defaultValue: "ChatGPT Web Model",
-                                })}
-                        </div>
-                        <div className="mt-1">
-                          {runtime === "grok_web_model"
-                            ? t("settings:grokActor.hint")
-                            : runtime === "chatgpt_dots"
-                              ? t("settings:dotsActor.createHint")
-                              : t("webModelActorBoundConnectorHint", {
-                                  defaultValue:
-                                    "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
-                                })}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-            </Surface>
-          </div>
-
           <Surface className={sectionCardClass}>
-            <div className={sectionTitleClass}>{t("sectionAdvanced")}</div>
-            <div className={sectionHintClass}>{t("sectionAdvancedHint")}</div>
-            <div className="mt-4">
-              <ActorConfigTabs
-                ariaLabel={t("sectionAdvanced")}
-                activeId={activeAdvancedTab || ""}
-                onChange={selectAdvancedTab}
-                tabs={[
-                  ...(showRuntimeSetup
-                    ? [
-                        {
-                          id: "connection",
-                          label: t("runtimeSetupSection"),
-                          panel: (
-                            <div
-                              className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
-                              data-status-tone="warning"
-                            >
-                              <div className="font-medium">{t("manualMcpRequired")}</div>
-                              <div className="mt-1">
-                                {t("configureMcpStdio")}{" "}
-                                <code className="px-1 rounded bg-amber-500/15">cccc</code>{" "}
-                                {t("thatRuns")}{" "}
-                                <code className="px-1 rounded bg-amber-500/15">cccc mcp</code>.
-                              </div>
-                              <pre className="mt-1.5 p-2 rounded overflow-x-auto whitespace-pre bg-amber-500/10 text-amber-800 dark:text-amber-100">
-                                <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
-                              </pre>
-                              <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-400/80">
-                                {t("restartAfterConfig")}
-                              </div>
-                            </div>
-                          ),
-                        },
-                      ]
-                    : []),
-                  ...(!useProfile && !isWebModelRuntime(runtime)
-                    ? [
-                        {
-                          id: "environment",
-                          label: t("secretsSection"),
-                          panel: (
-                            <div>
-                              <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                                {t("secretsWriteOnly")}
-                              </label>
-                              <Textarea
-                                className="min-h-[96px] font-mono"
-                                value={secretsSetText}
-                                onChange={(e) => onChangeSecretsSetText(e.target.value)}
-                                placeholder={secretsPlaceholder}
-                                disabled={busy === "actor-add"}
-                              />
-                              <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                                {t("secretsStoredLocally").replace(/<1>|<\/1>/g, "")}
-                              </div>
-                              <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">
-                                {t("secretsFormat").replace(/<1>|<\/1>|<2>|<\/2>/g, "")}
-                              </div>
-                            </div>
-                          ),
-                        },
-                      ]
-                    : []),
-                  ...(previewRuntime
-                    ? [
-                        {
-                          id: "capabilities",
-                          label: t("capabilitiesSection"),
-                          panel: (
-                            <CapabilityPicker
-                              isDark={isDark}
-                              value={parseCapabilityIdInput(capabilityAutoloadText)}
-                              onChange={(next) =>
-                                onChangeCapabilityAutoloadText(formatCapabilityIdInput(next))
-                              }
-                              disabled={busy === "actor-add"}
-                              active={capabilitiesPrimed || activeAdvancedTab === "capabilities"}
-                              label={t("autoloadCapabilities")}
-                              hint={t("autoloadCapabilitiesHint")}
-                            />
-                          ),
-                        },
-                      ]
-                    : []),
-                  ...(!useProfile
-                    ? [
-                        {
-                          id: "profile",
-                          label: t("profileToolsSection"),
-                          panel: (
-                            <div className="flex flex-wrap gap-3">
-                              {isWebModelRuntime(runtime) && (
-                                <p className="w-full text-sm text-[var(--color-text-secondary)]">
-                                  {t("webModelProfileHint")}
-                                </p>
-                              )}
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() =>
-                                  void onSaveAsProfile(
-                                    undefined,
-                                    supportsAcpMode(runtime) ? runtimeMode : "default",
-                                  )
-                                }
-                                disabled={busy === "actor-profile-save" || busy === "actor-add"}
-                              >
-                                {busy === "actor-profile-save"
-                                  ? t("savingProfile")
-                                  : t("addToActorProfiles")}
-                              </Button>
-                            </div>
-                          ),
-                        },
-                      ]
-                    : []),
-                ]}
-              />
-            </div>
+            <RuntimeCategoryPicker
+              value={createCategory}
+              current="managed"
+              canSwitch={canJoinNative}
+              disabled={busy === "actor-add"}
+              onChange={(next) => {
+                if (next === createCategory) return;
+                if (createCategory !== "native") {
+                  createDrafts.current[createCategory] = {
+                    runtime,
+                    command,
+                    useDefaultCommand,
+                    runtimeMode,
+                    useProfile,
+                    profileId,
+                  };
+                }
+                setCreateCategory(next);
+                if (next === "native") return;
+                const draft = createDrafts.current[next];
+                const nextRuntime: SupportedRuntime =
+                  draft?.runtime || (next === "web" ? "web_model" : "codex");
+                onChangeUseProfile(draft?.useProfile || false);
+                onChangeProfileId(draft?.profileId || "");
+                onChangeRuntime(nextRuntime);
+                onChangeCommand(
+                  draft?.command ??
+                    runtimes.find((item) => item.name === nextRuntime)?.recommended_command ??
+                    "",
+                );
+                onChangeUseDefaultCommand(draft?.useDefaultCommand ?? true);
+                setRuntimeMode(draft?.runtimeMode || "default");
+              }}
+            />
           </Surface>
+          {createCategory === "native" ? (
+            <Surface className={sectionCardClass}>
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                {t("runtimeSwitch.joinNativeHint")}
+              </p>
+              <Button
+                type="button"
+                className="mt-4"
+                disabled={!canJoinNative || !groupId}
+                onClick={() => setLocalDialogOpen(true)}
+              >
+                {t("runtimeSwitch.joinNative")}
+              </Button>
+            </Surface>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
+                <Surface className={sectionCardClass}>
+                  <div className={sectionTitleClass}>{t("sectionBasics")}</div>
+                  <div className={sectionHintClass}>{t("addSectionBasicsHint")}</div>
+
+                  <div className="mt-4 space-y-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
+                      <ActorAvatarField
+                        label={null}
+                        avatarUrl={undefined}
+                        previewUrl={avatarPreviewUrl}
+                        runtime={previewRuntime}
+                        title={previewTitle}
+                        isDark={isDark}
+                        sizeClassName="h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]"
+                        disabled={busy === "actor-add"}
+                        resetDisabled={!avatarFile}
+                        onSelectFile={setAvatarFile}
+                        onReset={() => setAvatarFile(null)}
+                      />
+
+                      <div className="min-w-0 space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                            {t("agentId", { defaultValue: "Agent ID" })}
+                          </label>
+                          <Input
+                            value={actorId}
+                            onChange={(e) => onChangeActorId(e.target.value)}
+                            placeholder={suggestedActorId}
+                            disabled={busy === "actor-add"}
+                          />
+                          <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                            {t("leaveEmptyToUse")}{" "}
+                            <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
+                              {suggestedActorId}
+                            </code>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                            {t("agentRole", { defaultValue: "Agent role" })}
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className={modeButtonClass(role === "peer")}
+                              onClick={() => onChangeRole("peer")}
+                              disabled={busy === "actor-add"}
+                            >
+                              {t("peerRole")}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className={modeButtonClass(role === "foreman")}
+                              onClick={() => onChangeRole("foreman")}
+                              disabled={busy === "actor-add" || hasForeman}
+                              title={
+                                hasForeman
+                                  ? t("foremanAlreadyConfigured", {
+                                      defaultValue: "Foreman already configured",
+                                    })
+                                  : undefined
+                              }
+                            >
+                              {t("foremanRole")}
+                            </Button>
+                          </div>
+                          <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                            {hasForeman ? t("foremanLeads") : t("firstAgentForeman")}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {attachedScopes.length > 0 || defaultScopeKey || groupId ? (
+                      <ActorWorkingDirectory
+                        key={`${groupId}/${isOpen}`}
+                        groupId={groupId}
+                        scopes={attachedScopes}
+                        activeScopeKey={activeScopeKey}
+                        value={defaultScopeKey}
+                        onChange={setDefaultScopeKey}
+                        onScopeAttached={onScopeAttached}
+                        onBusyChange={setDirectoryBusy}
+                        disabled={busy === "actor-add"}
+                        hint={t("workingDirectoryHint")}
+                      />
+                    ) : null}
+
+                    <div>
+                      <RolePresetPicker
+                        draftValue={actorNotes}
+                        onChangeDraft={onChangeActorNotes}
+                        disabled={busy === "actor-add"}
+                      />
+                      <label className="block text-xs font-medium mt-3 mb-2 text-[var(--color-text-muted)]">
+                        {t("actorNotes")}
+                      </label>
+                      <Textarea
+                        className="min-h-[144px]"
+                        value={actorNotes}
+                        onChange={(e) => onChangeActorNotes(e.target.value)}
+                        placeholder={t("actorNotesPlaceholder")}
+                        spellCheck={false}
+                        disabled={busy === "actor-add"}
+                      />
+                      <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                        {t("newActorNotesHint")}
+                      </div>
+                    </div>
+                  </div>
+                </Surface>
+
+                <Surface className={sectionCardClass}>
+                  <div className={sectionTitleClass}>
+                    {t("sectionRuntime", "Runtime & Profile")}
+                  </div>
+                  <div className={sectionHintClass}>{t("sectionRuntimeHint")}</div>
+
+                  <div className="mt-4">
+                    <RuntimeConfigurationModePicker
+                      value={useProfile ? "profile" : "custom"}
+                      disabled={busy === "actor-add"}
+                      onChange={(mode) => {
+                        const nextUsesProfile = mode === "profile";
+                        onChangeUseProfile(nextUsesProfile);
+                        if (!nextUsesProfile) return;
+                        if (!actorProfilesBusy && selectableActorProfiles.length <= 0)
+                          void onRequestActorProfiles?.();
+                        if (selectableActorProfiles.length > 0 && !profileId)
+                          onChangeProfileId(actorProfileIdentityKey(selectableActorProfiles[0]));
+                      }}
+                    />
+                  </div>
+
+                  <div className="mt-4 space-y-4">
+                    {useProfile ? (
+                      <RuntimeProfilePicker
+                        value={profileId}
+                        profiles={selectableActorProfiles}
+                        busy={actorProfilesBusy}
+                        disabled={busy === "actor-add"}
+                        onChange={onChangeProfileId}
+                      />
+                    ) : (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                            {t("runtime")}
+                          </label>
+                          <RuntimeSelector
+                            className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
+                            value={runtime}
+                            runtimeMode={runtimeMode}
+                            disabled={busy === "actor-add"}
+                            allowedRuntimes={SUPPORTED_RUNTIMES.filter(
+                              (item) => isWebModelRuntime(item) === (createCategory === "web"),
+                            )}
+                            onChange={(value) => {
+                              const next = value as SupportedRuntime;
+                              onChangeRuntime(next);
+                              if (next === "custom") onChangeUseDefaultCommand(false);
+                              else onChangeUseDefaultCommand(true);
+                              const nextInfo = runtimes.find((r) => r.name === next);
+                              onChangeCommand(String(nextInfo?.recommended_command || "").trim());
+                            }}
+                            ariaLabel={t("runtime")}
+                          />
+                          <OpenCodeManagedModelHint runtime={runtime} />
+                          {supportsAcpMode(runtime) && (
+                            <AcpRuntimeMode
+                              runtime={runtime}
+                              value={runtimeMode}
+                              onChange={setRuntimeMode}
+                              disabled={busy === "actor-add"}
+                            />
+                          )}
+                        </div>
+
+                        <RuntimeCommandControl
+                          runtime={runtime}
+                          command={command}
+                          defaultCommand={defaultCommand}
+                          useDefaultCommand={useDefaultCommand}
+                          disabled={busy === "actor-add"}
+                          onCommandChange={onChangeCommand}
+                          onUseDefaultCommandChange={onChangeUseDefaultCommand}
+                        />
+
+                        {webModelSetupIsActorBound ? (
+                          <div
+                            className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                            data-status-tone="info"
+                          >
+                            <div className="font-medium">
+                              {runtime === "grok_web_model"
+                                ? "Grok Bot Web Model"
+                                : runtime === "chatgpt_dots"
+                                  ? "ChatGPT Dots"
+                                  : t("webModelActorBoundConnectorTitle", {
+                                      defaultValue: "ChatGPT Web Model",
+                                    })}
+                            </div>
+                            <div className="mt-1">
+                              {runtime === "grok_web_model"
+                                ? t("settings:grokActor.hint")
+                                : runtime === "chatgpt_dots"
+                                  ? t("settings:dotsActor.createHint")
+                                  : t("webModelActorBoundConnectorHint", {
+                                      defaultValue:
+                                        "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
+                                    })}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+                </Surface>
+              </div>
+
+              <Surface className={sectionCardClass}>
+                <div className={sectionTitleClass}>{t("sectionAdvanced")}</div>
+                <div className={sectionHintClass}>{t("sectionAdvancedHint")}</div>
+                <div className="mt-4">
+                  <ActorConfigTabs
+                    ariaLabel={t("sectionAdvanced")}
+                    activeId={activeAdvancedTab || ""}
+                    onChange={selectAdvancedTab}
+                    tabs={[
+                      ...(showRuntimeSetup
+                        ? [
+                            {
+                              id: "connection",
+                              label: t("runtimeSetupSection"),
+                              panel: (
+                                <div
+                                  className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
+                                  data-status-tone="warning"
+                                >
+                                  <div className="font-medium">{t("manualMcpRequired")}</div>
+                                  <div className="mt-1">
+                                    {t("configureMcpStdio")}{" "}
+                                    <code className="px-1 rounded bg-amber-500/15">cccc</code>{" "}
+                                    {t("thatRuns")}{" "}
+                                    <code className="px-1 rounded bg-amber-500/15">cccc mcp</code>.
+                                  </div>
+                                  <pre className="mt-1.5 p-2 rounded overflow-x-auto whitespace-pre bg-amber-500/10 text-amber-800 dark:text-amber-100">
+                                    <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
+                                  </pre>
+                                  <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-400/80">
+                                    {t("restartAfterConfig")}
+                                  </div>
+                                </div>
+                              ),
+                            },
+                          ]
+                        : []),
+                      ...(!useProfile && !isWebModelRuntime(runtime)
+                        ? [
+                            {
+                              id: "environment",
+                              label: t("secretsSection"),
+                              panel: (
+                                <div>
+                                  <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                                    {t("secretsWriteOnly")}
+                                  </label>
+                                  <Textarea
+                                    className="min-h-[96px] font-mono"
+                                    value={secretsSetText}
+                                    onChange={(e) => onChangeSecretsSetText(e.target.value)}
+                                    placeholder={secretsPlaceholder}
+                                    disabled={busy === "actor-add"}
+                                  />
+                                  <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                                    {t("secretsStoredLocally").replace(/<1>|<\/1>/g, "")}
+                                  </div>
+                                  <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">
+                                    {t("secretsFormat").replace(/<1>|<\/1>|<2>|<\/2>/g, "")}
+                                  </div>
+                                </div>
+                              ),
+                            },
+                          ]
+                        : []),
+                      ...(previewRuntime
+                        ? [
+                            {
+                              id: "capabilities",
+                              label: t("capabilitiesSection"),
+                              panel: (
+                                <CapabilityPicker
+                                  isDark={isDark}
+                                  value={parseCapabilityIdInput(capabilityAutoloadText)}
+                                  onChange={(next) =>
+                                    onChangeCapabilityAutoloadText(formatCapabilityIdInput(next))
+                                  }
+                                  disabled={busy === "actor-add"}
+                                  active={
+                                    capabilitiesPrimed || activeAdvancedTab === "capabilities"
+                                  }
+                                  label={t("autoloadCapabilities")}
+                                  hint={t("autoloadCapabilitiesHint")}
+                                />
+                              ),
+                            },
+                          ]
+                        : []),
+                      ...(!useProfile
+                        ? [
+                            {
+                              id: "profile",
+                              label: t("profileToolsSection"),
+                              panel: (
+                                <div className="flex flex-wrap gap-3">
+                                  {isWebModelRuntime(runtime) && (
+                                    <p className="w-full text-sm text-[var(--color-text-secondary)]">
+                                      {t("webModelProfileHint")}
+                                    </p>
+                                  )}
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    onClick={() =>
+                                      void onSaveAsProfile(
+                                        undefined,
+                                        supportsAcpMode(runtime) ? runtimeMode : "default",
+                                      )
+                                    }
+                                    disabled={busy === "actor-profile-save" || busy === "actor-add"}
+                                  >
+                                    {busy === "actor-profile-save"
+                                      ? t("savingProfile")
+                                      : t("addToActorProfiles")}
+                                  </Button>
+                                </div>
+                              ),
+                            },
+                          ]
+                        : []),
+                    ]}
+                  />
+                </div>
+              </Surface>
+            </>
+          )}
         </div>
       </div>
+      {localDialogOpen
+        ? createPortal(
+            <LocalSessionsDialog
+              isDark={isDark}
+              initialTargetGroupId={groupId}
+              onClose={() => setLocalDialogOpen(false)}
+              onSelectGroup={(id) => {
+                if (onSelectGroup) onSelectGroup(id);
+                else useGroupStore.getState().setSelectedGroupId(id);
+                handleCancel();
+              }}
+            />,
+            document.body,
+          )
+        : null}
     </ModalFrame>
   );
 }
@@ -803,7 +936,6 @@ export function ActorConfigModal(props: ActorConfigModalProps) {
   if (props.mode === "create") {
     return <CreateActorConfigModal {...props} />;
   }
-  if (props.savedActor?.external_session_id) return <NativeActorEditor {...props} />;
   return <EditActorConfigModal {...props} />;
 }
 
@@ -835,10 +967,13 @@ function EditActorConfigModal({
   actorNotes,
   onChangeActorNotes,
   actorNotesBusy = false,
+  actorNotesError = false,
+  onRetryActorNotes,
   capabilityAutoloadText,
   onChangeCapabilityAutoloadText,
   onSave,
   onSaveAndRestart,
+  onSaveBasics,
   linkedProfileId,
   linkedProfileScope,
   linkedProfileOwner,
@@ -857,6 +992,18 @@ function EditActorConfigModal({
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const canAccessGlobalSettings = useUIStore((state) => state.canAccessGlobalSettings !== false);
   const [sharedSettingsRequested, setSharedSettingsRequested] = useState(false);
+  const currentCategory = actorRuntimeCategory(
+    savedActor || { id: actorId, runtime: savedRuntime },
+  );
+  const isNativeActor = currentCategory === "native";
+  const [category, setCategory] = useState<RuntimeCategory>(currentCategory);
+  const [nativeSwitchVisited, setNativeSwitchVisited] = useState(isNativeActor);
+  const [managedSwitchVisited, setManagedSwitchVisited] = useState(false);
+  const [sourceDirectory, setSourceDirectory] = useState("");
+  const canSwitch = useUIStore((state) => state.isWebAdmin === true && !state.webReadOnly);
+  const switchPending = useGroupStore((state) =>
+    savedActor ? hasPendingActorSwitch(state.groupDoc, savedActor, groupId) : false,
+  );
   const suspended = sharedSettingsRequested && settingsOpen;
   const focusConversation = initialSection === "chatgpt" && isWebModelRuntime(savedRuntime);
   const { modalRef } = useModalA11y(isOpen && !suspended, closeEdit, {
@@ -910,9 +1057,16 @@ function EditActorConfigModal({
   const [secretsError, setSecretsError] = useState("");
   const [secretsBusy, setSecretsBusy] = useState(false);
   const [secretsRefreshing, setSecretsRefreshing] = useState(false);
+  const [secretEditorOpen, setSecretEditorOpen] = useState(false);
   const [secretKeysLoadFailed, setSecretKeysLoadFailed] = useState(false);
   const [attachProfileId, setAttachProfileId] = useState("");
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("default");
+  const [managedSwitchPayload, setManagedSwitchPayload] = useState<EditActorSavePayload | null>(
+    null,
+  );
+  const [managedSwitchNoStart, setManagedSwitchNoStart] = useState(false);
+  const [managedSwitchBlocked, setManagedSwitchBlocked] = useState(false);
+  const [managedSwitchDone, setManagedSwitchDone] = useState(false);
   const savedDefaultScopeKey = savedActor?.default_scope_key || "";
   const [defaultScopeKey, setDefaultScopeKey] = useState(savedDefaultScopeKey);
   const [directoryBusy, setDirectoryBusy] = useState(false);
@@ -922,6 +1076,37 @@ function EditActorConfigModal({
   );
   const [editMode, setEditMode] = useState<ConfigMode>("custom");
   const [pendingConvertToCustom, setPendingConvertToCustom] = useState(false);
+  const lastNonNativeCategory = useRef<"managed" | "web">(
+    currentCategory === "web" ? "web" : "managed",
+  );
+  const categoryDrafts = useRef<
+    Partial<
+      Record<
+        "managed" | "web",
+        {
+          runtime: SupportedRuntime;
+          command: string;
+          runtimeMode: RuntimeMode;
+          editMode: ConfigMode;
+          pendingConvertToCustom: boolean;
+          attachProfileId: string;
+        }
+      >
+    >
+  >({});
+  useEffect(() => {
+    if (isOpen) {
+      const current = actorRuntimeCategory(savedActor || { id: actorId, runtime: savedRuntime });
+      setCategory(current);
+      setNativeSwitchVisited(current === "native");
+      setManagedSwitchVisited(false);
+      lastNonNativeCategory.current = current === "web" ? "web" : "managed";
+      categoryDrafts.current = {};
+      setSourceDirectory("");
+    }
+    // The category and its drafts belong to one editor visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId, actorId, isOpen]);
   const [grokBotUrl, setGrokBotUrl] = useState<string | undefined>();
   const [connectionBusy, setConnectionBusy] = useState(false);
   const [connectionEnabled, setConnectionEnabled] = useState<boolean | undefined>();
@@ -935,6 +1120,8 @@ function EditActorConfigModal({
     capabilityAutoloadText,
   });
   const identity = isOpen ? `${groupId}/${actorId}` : "";
+  const avatarVisitRef = useRef({ identity });
+  if (avatarVisitRef.current.identity !== identity) avatarVisitRef.current = { identity };
   if (baseline.current.identity !== identity) {
     baseline.current = {
       identity,
@@ -992,7 +1179,15 @@ function EditActorConfigModal({
 
   const linked = Boolean(String(linkedProfileId || "").trim());
   const effectiveLinked = linked && !pendingConvertToCustom;
-  const selectableActorProfiles = actorProfiles;
+  const selectableActorProfiles = useMemo(
+    () =>
+      category === "native"
+        ? actorProfiles
+        : actorProfiles.filter(
+            (profile) => isWebModelRuntime(profile.runtime) === (category === "web"),
+          ),
+    [actorProfiles, category],
+  );
   const selectedProfile = useMemo(
     () =>
       selectableActorProfiles.find(
@@ -1008,11 +1203,17 @@ function EditActorConfigModal({
     conversationRuntime === "grok_web_model" && (stagingGrok || grokBotUrl !== undefined);
   const applyRunningTarget = grokTargetChanged && (connectionEnabled ?? isRunning);
   const launchChanges = buildActorSecretSaveChanges(secretChanges);
-  const hasChanges =
-    scopeUnavailable ||
+  const hasSecretChanges =
+    launchChanges.clear ||
+    launchChanges.unsetKeys.length > 0 ||
+    Object.keys(launchChanges.setVars).length > 0;
+  const basicsChanged =
     title.trim() !== baseline.current.title.trim() ||
+    (baseline.current.notesLoaded && actorNotes.trim() !== baseline.current.actorNotes.trim());
+  const otherChanges =
+    scopeUnavailable ||
+    hasSecretChanges ||
     defaultScopeKey !== savedDefaultScopeKey ||
-    (baseline.current.notesLoaded && actorNotes.trim() !== baseline.current.actorNotes.trim()) ||
     JSON.stringify(parseCapabilityIdInput(capabilityAutoloadText)) !==
       JSON.stringify(parseCapabilityIdInput(baseline.current.capabilityAutoloadText)) ||
     grokTargetChanged ||
@@ -1022,11 +1223,7 @@ function EditActorConfigModal({
         runtime !== savedRuntime ||
         (supportsAcpMode(runtime) ? runtimeMode : "default") !==
           (savedActor?.runtime_mode || "default") ||
-        (!isWebModelRuntime(runtime) &&
-          (command.trim() !== baseline.current.command.trim() ||
-            launchChanges.clear ||
-            launchChanges.unsetKeys.length > 0 ||
-            Object.keys(launchChanges.setVars).length > 0)))) ||
+        (!isWebModelRuntime(runtime) && command.trim() !== baseline.current.command.trim()))) ||
     (editMode === "profile" &&
       (!linked ||
         attachProfileId !==
@@ -1035,6 +1232,7 @@ function EditActorConfigModal({
             scope: linkedProfileScope || "global",
             owner_id: linkedProfileOwner || "",
           })));
+  const hasChanges = basicsChanged || otherChanges || secretEditorOpen;
   const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
   const editAdvancedTabIds: AdvancedTabId[] = [
     ...(showRuntimeSetup ? ["connection" as const] : []),
@@ -1046,6 +1244,57 @@ function EditActorConfigModal({
     ? advancedTab
     : editAdvancedTabIds[0];
   const selectedProfileName = String(selectedProfile?.name || "").trim();
+  const changeCategory = (next: RuntimeCategory) => {
+    if (next !== category && secretEditorOpen) {
+      setSecretsError(t("secretEditorIncomplete"));
+      return;
+    }
+    if (next === "native") setNativeSwitchVisited(true);
+    if (isNativeActor && next === "managed") setManagedSwitchVisited(true);
+    // A native member's managed target is a separate switch draft. Do not
+    // put it in the ordinary saved runtime fields.
+    if (isNativeActor) {
+      setCategory(next);
+      return;
+    }
+    if (next === "native") {
+      if (category !== "native") lastNonNativeCategory.current = category;
+      setCategory(next);
+      return;
+    }
+    const previous = category === "native" ? lastNonNativeCategory.current : category;
+    if (previous !== next) {
+      categoryDrafts.current[previous] = {
+        runtime,
+        command,
+        runtimeMode,
+        editMode,
+        pendingConvertToCustom,
+        attachProfileId,
+      };
+      const draft = categoryDrafts.current[next];
+      if (draft) {
+        onChangeRuntime(draft.runtime);
+        onChangeCommand(draft.command);
+        setRuntimeMode(draft.runtimeMode);
+        setEditMode(draft.editMode);
+        setPendingConvertToCustom(draft.pendingConvertToCustom);
+        setAttachProfileId(draft.attachProfileId);
+      } else {
+        const candidate = next === "web" ? "web_model" : "codex";
+        if (linked) setPendingConvertToCustom(true);
+        setEditMode("custom");
+        onChangeRuntime(candidate);
+        if (next === "managed") {
+          onChangeCommand(
+            runtimes.find((item) => item.name === candidate)?.recommended_command || "",
+          );
+        }
+      }
+    }
+    lastNonNativeCategory.current = next;
+    setCategory(next);
+  };
   useEffect(() => {
     modalStateRef.current = {
       groupId,
@@ -1187,6 +1436,9 @@ function EditActorConfigModal({
     }
     initializedDraftIdentityRef.current = identity;
     setRuntimeMode(savedActor?.runtime_mode || "default");
+    setManagedSwitchPayload(null);
+    setManagedSwitchBlocked(false);
+    setManagedSwitchDone(false);
     setDefaultScopeKey(savedDefaultScopeKey);
     secretFetchSeqRef.current += 1;
     setEditMode(hasLinked ? "profile" : "custom");
@@ -1201,6 +1453,7 @@ function EditActorConfigModal({
         : "",
     );
     setLocalNotice("");
+    setAvatarBusy("");
     setSecretsError("");
     setSecretsRefreshing(false);
     setSecretKeysLoadFailed(false);
@@ -1219,7 +1472,7 @@ function EditActorConfigModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    if (editMode === "profile" || isWebModelRuntime(runtime)) {
+    if (isNativeActor || editMode === "profile" || isWebModelRuntime(runtime)) {
       secretFetchSeqRef.current += 1;
       setSecretsRefreshing(false);
       setSecretKeysLoadFailed(false);
@@ -1229,7 +1482,7 @@ function EditActorConfigModal({
     }
     if (!effectiveLinked) void refreshSecretKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, groupId, actorId, editMode, effectiveLinked, runtime]);
+  }, [isOpen, groupId, actorId, editMode, effectiveLinked, runtime, isNativeActor]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1262,8 +1515,17 @@ function EditActorConfigModal({
   };
 
   const saveAsProfile = async () => {
+    if (secretEditorOpen) {
+      setSecretsError(t("secretEditorIncomplete"));
+      return;
+    }
+    if (isWebModelRuntime(runtime) && hasSecretChanges) {
+      setSecretsError(t("secretDraftNotApplied"));
+      return;
+    }
     setSecretsError("");
     setLocalNotice("");
+    setSecretsBusy(true);
     try {
       const result = await onSaveAsProfile(
         buildActorSecretSaveChanges(
@@ -1273,6 +1535,7 @@ function EditActorConfigModal({
       );
       const profileId = String(result?.profileId || "").trim();
       if (profileId && result?.useNow) {
+        setSecretChanges(emptyActorSecretChanges());
         setPendingConvertToCustom(false);
         setEditMode("profile");
         setAttachProfileId(
@@ -1284,53 +1547,139 @@ function EditActorConfigModal({
       }
     } catch (e) {
       setSecretsError(e instanceof Error ? e.message : t("saveFailed"));
+    } finally {
+      setSecretsBusy(false);
     }
   };
 
   const handleUploadAvatar = async (file: File | null) => {
     if (!file || !groupId || !actorId) return;
+    const visit = avatarVisitRef.current;
     setAvatarBusy("upload");
     setSecretsError("");
     setLocalNotice("");
     try {
       const resp = await api.uploadActorAvatar(groupId, actorId, file);
+      if (avatarVisitRef.current !== visit) return;
       if (!resp.ok) {
         setSecretsError(resp.error?.message || t("avatarUploadFailed"));
         return;
       }
-      await onAvatarChanged?.();
+      const adopted = await onAvatarChanged?.(resp.result.actor, savedActor);
+      if (avatarVisitRef.current !== visit) return;
+      if (adopted === false) {
+        setManagedSwitchBlocked(true);
+        setSecretsError(joinRuntimeSentences([t("avatarSaved"), t("runtimeSwitch.conflict")]));
+        return;
+      }
       setLocalNotice(t("avatarSaved"));
     } catch {
-      setSecretsError(t("avatarUploadFailed"));
+      if (avatarVisitRef.current === visit) setSecretsError(t("avatarUploadFailed"));
     } finally {
-      setAvatarBusy("");
+      if (avatarVisitRef.current === visit) setAvatarBusy("");
     }
   };
 
   const handleClearAvatar = async () => {
     if (!groupId || !actorId) return;
+    const visit = avatarVisitRef.current;
     setAvatarBusy("clear");
     setSecretsError("");
     setLocalNotice("");
     try {
       const resp = await api.clearActorAvatar(groupId, actorId);
+      if (avatarVisitRef.current !== visit) return;
       if (!resp.ok) {
         setSecretsError(resp.error?.message || t("saveFailed"));
         return;
       }
-      await onAvatarChanged?.();
+      const adopted = await onAvatarChanged?.(resp.result.actor, savedActor);
+      if (avatarVisitRef.current !== visit) return;
+      if (adopted === false) {
+        setManagedSwitchBlocked(true);
+        setSecretsError(joinRuntimeSentences([t("avatarReset"), t("runtimeSwitch.conflict")]));
+        return;
+      }
       setLocalNotice(t("avatarReset"));
     } catch {
-      setSecretsError(t("saveFailed"));
+      if (avatarVisitRef.current === visit) setSecretsError(t("saveFailed"));
     } finally {
-      setAvatarBusy("");
+      if (avatarVisitRef.current === visit) setAvatarBusy("");
     }
   };
 
   const submit = async (restart: boolean) => {
     if (!groupId || !actorId) return;
     if (busy === "actor-update" || scopeUnavailable || directoryBusy) return;
+    if (secretEditorOpen) {
+      setSecretsError(t("secretEditorIncomplete"));
+      return;
+    }
     const callback = restart ? onSaveAndRestart : onSave;
+    const nextRuntime = editMode === "profile" ? selectedProfile?.runtime : runtime;
+    if (hasSecretChanges && (editMode === "profile" || isWebModelRuntime(nextRuntime))) {
+      setSecretsError(t("secretDraftNotApplied"));
+      return;
+    }
+    const profileChanged =
+      editMode === "profile" &&
+      (!linked ||
+        attachProfileId !==
+          actorProfileIdentityKey({
+            id: linkedProfileId || "",
+            scope: linkedProfileScope || "global",
+            owner_id: linkedProfileOwner || "",
+          }));
+    const profileRevisionChanged =
+      linked &&
+      editMode === "profile" &&
+      (selectedProfile?.revision === undefined ||
+        selectedProfile.revision !== savedActor?.profile_revision_applied);
+    const needsSwitch =
+      restart &&
+      currentCategory === "managed" &&
+      nextRuntime &&
+      !isWebModelRuntime(nextRuntime) &&
+      ((linked && editMode === "custom") ||
+        profileChanged ||
+        profileRevisionChanged ||
+        nextRuntime !== savedRuntime ||
+        (supportsAcpMode(nextRuntime) ? runtimeMode : "default") !==
+          (savedActor?.runtime_mode || "default"));
+    const invoke = async (payload: EditActorSavePayload) => {
+      if (needsSwitch) {
+        if (!canSwitch) {
+          setSecretsError(t("runtimeSwitch.notAdmin"));
+          return;
+        }
+        if (managedSwitchBlocked) {
+          setSecretsError(t("runtimeSwitch.unknown"));
+          return;
+        }
+        const capabilityChanged =
+          JSON.stringify(parseCapabilityIdInput(capabilityAutoloadText)) !==
+          JSON.stringify(parseCapabilityIdInput(baseline.current.capabilityAutoloadText));
+        if (
+          basicsChanged ||
+          actorNotesBusy ||
+          capabilityChanged ||
+          launchChanges.clear ||
+          launchChanges.unsetKeys.length ||
+          Object.keys(launchChanges.setVars).length
+        ) {
+          setSecretsError(t("runtimeSwitch.dirty"));
+          return;
+        }
+        if (!linked && editMode === "custom" && (secretsRefreshing || secretKeysLoadFailed)) {
+          setSecretsError(t("failedToLoadSecrets"));
+          return;
+        }
+        setManagedSwitchNoStart(linked && editMode === "custom");
+        setManagedSwitchPayload(payload);
+        return;
+      }
+      await callback(payload);
+    };
 
     if (grokTargetChanged && !isGrokBotUrl(grokBotUrl || "")) {
       setSecretsError(t("settings:grokActor.invalidUrl"));
@@ -1354,7 +1703,7 @@ function EditActorConfigModal({
       setLocalNotice("");
       setSecretsBusy(true);
       try {
-        await callback({
+        await invoke({
           mode: "profile",
           setVars: {},
           unsetKeys: [],
@@ -1386,7 +1735,7 @@ function EditActorConfigModal({
 
     setSecretsBusy(true);
     try {
-      await callback({
+      await invoke({
         mode: "custom",
         runtimeMode: supportsAcpMode(runtime) ? runtimeMode : "default",
         setVars: secretSaveChanges.setVars,
@@ -1425,6 +1774,7 @@ function EditActorConfigModal({
     secretsBusy ||
     secretsRefreshing ||
     actorNotesBusy ||
+    actorNotesError ||
     scopeUnavailable ||
     directoryBusy ||
     (grokTargetChanged && !grokBotUrl?.trim()) ||
@@ -1433,7 +1783,7 @@ function EditActorConfigModal({
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
   function closeEdit() {
-    if (busy === "actor-update" || secretsBusy || connectionBusy) return;
+    if (busy === "actor-update" || secretsBusy || connectionBusy || avatarBusy !== "") return;
     onCancel();
   }
   const normalizedGroupRole = normalizeGroupRole(groupRole);
@@ -1441,6 +1791,45 @@ function EditActorConfigModal({
     normalizedGroupRole === "foreman"
       ? t("groupRoleForeman", { defaultValue: "Foreman" })
       : t("groupRolePeer", { defaultValue: "Peer" });
+  const renderSwitchControls = (targetKind: "native" | "managed") =>
+    savedActor && canSwitch ? (
+      <RuntimeSwitchControls
+        key={`${groupId}/${actorId}/${targetKind}`}
+        groupId={groupId}
+        actor={savedActor}
+        targetKind={targetKind}
+        isDark={isDark}
+        dirty={
+          isNativeActor
+            ? basicsChanged || actorNotesBusy || actorNotesError || savedActorNotes === undefined
+            : hasChanges || actorNotesBusy || actorNotesError
+        }
+        disabled={
+          busy === "actor-update" || avatarBusy !== "" || switchPending || managedSwitchBlocked
+        }
+        onOutcomeUnknown={() => setManagedSwitchBlocked(true)}
+        onSwitched={() => {
+          setManagedSwitchBlocked(true);
+          setManagedSwitchDone(true);
+        }}
+        runtimes={runtimes}
+        profiles={actorProfiles}
+        profilesBusy={actorProfilesBusy}
+        scopes={scopes}
+        activeScopeKey={activeScopeKey}
+        onRequestProfiles={onRequestActorProfiles}
+        onCurrentSourceDirectory={isNativeActor ? setSourceDirectory : undefined}
+        onSaveCurrentProfile={async () =>
+          Boolean(
+            (
+              await onSaveAsProfile(undefined, savedActor.runtime_mode || "default", {
+                savedActor: true,
+              })
+            )?.profileId,
+          )
+        }
+      />
+    ) : null;
 
   return (
     <ModalFrame
@@ -1457,6 +1846,7 @@ function EditActorConfigModal({
         </div>
       }
       closeAriaLabel={t("common:close")}
+      closeDisabled={busy === "actor-update" || secretsBusy || connectionBusy || avatarBusy !== ""}
       panelClassName={ACTOR_MODAL_PANEL_CLASS}
       modalRef={modalRef}
       footerActions={
@@ -1480,48 +1870,98 @@ function EditActorConfigModal({
             </div>
           ) : null}
 
-          <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
-            {hasChanges && (
+          {isNativeActor || category === "native" ? (
+            <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
               <Button
                 type="button"
                 variant="secondary"
-                className="w-full sm:w-auto transition-all ease-spring duration-300"
                 onClick={closeEdit}
-                disabled={busy === "actor-update" || secretsBusy || connectionBusy}
+                disabled={busy === "actor-update" || secretsBusy || avatarBusy !== ""}
               >
-                {t("common:cancel")}
+                {t(managedSwitchDone ? "common:close" : "common:cancel")}
               </Button>
-            )}
-            {hasChanges && !applyRunningTarget && (
               <Button
                 type="button"
-                variant="outline"
-                className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
-                onClick={() => void submit(true)}
-                disabled={saveDisabled}
+                disabled={
+                  busy === "actor-update" ||
+                  actorNotesBusy ||
+                  actorNotesError ||
+                  (isNativeActor && savedActorNotes === undefined) ||
+                  switchPending ||
+                  managedSwitchBlocked ||
+                  avatarBusy !== "" ||
+                  (!isNativeActor && otherChanges) ||
+                  (basicsChanged && !onSaveBasics)
+                }
+                onClick={() => {
+                  if (!basicsChanged) {
+                    closeEdit();
+                    return;
+                  }
+                  void onSaveBasics?.().catch((error: unknown) =>
+                    setSecretsError(error instanceof Error ? error.message : t("saveFailed")),
+                  );
+                }}
               >
-                {t("saveAndRestart")}
+                {t(basicsChanged ? "common:save" : "common:done")}
               </Button>
-            )}
-            <Button
-              type="button"
-              className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
-              onClick={() =>
-                hasChanges ? void submit(applyRunningTarget && stagingGrok) : closeEdit()
-              }
-              disabled={
-                hasChanges ? saveDisabled : busy === "actor-update" || secretsBusy || connectionBusy
-              }
-            >
-              {t(!hasChanges ? "common:done" : applyRunningTarget ? "saveAndApply" : "common:save")}
-            </Button>
-          </div>
+            </div>
+          ) : (
+            <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+              {hasChanges && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full sm:w-auto transition-all ease-spring duration-300"
+                  onClick={closeEdit}
+                  disabled={busy === "actor-update" || secretsBusy || connectionBusy}
+                >
+                  {t("common:cancel")}
+                </Button>
+              )}
+              {(hasChanges || linked) && !applyRunningTarget && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
+                  onClick={() => void submit(true)}
+                  disabled={saveDisabled || switchPending || managedSwitchBlocked}
+                >
+                  {t("saveAndRestart")}
+                </Button>
+              )}
+              <Button
+                type="button"
+                className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
+                onClick={() =>
+                  hasChanges ? void submit(applyRunningTarget && stagingGrok) : closeEdit()
+                }
+                disabled={
+                  hasChanges
+                    ? saveDisabled || switchPending || managedSwitchBlocked
+                    : busy === "actor-update" || secretsBusy || connectionBusy
+                }
+              >
+                {t(
+                  !hasChanges ? "common:done" : applyRunningTarget ? "saveAndApply" : "common:save",
+                )}
+              </Button>
+            </div>
+          )}
         </>
       }
     >
+      {savedActor ? <RuntimeSwitchPendingNotice actor={savedActor} groupId={groupId} /> : null}
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-hide bg-[var(--color-bg-primary)] p-4 sm:p-6">
         <fieldset
-          disabled={secretsBusy || connectionBusy || busy === "actor-update"}
+          disabled={
+            secretsBusy ||
+            connectionBusy ||
+            busy === "actor-update" ||
+            avatarBusy !== "" ||
+            managedSwitchBlocked
+          }
+          aria-busy={busy === "actor-update" || actorNotesBusy || avatarBusy !== ""}
           className="mx-auto w-full max-w-6xl min-w-0 space-y-4"
         >
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
@@ -1544,7 +1984,7 @@ function EditActorConfigModal({
                       title={title || actorId}
                       isDark={isDark}
                       sizeClassName="h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]"
-                      disabled={busy === "actor-update" || avatarBusy !== ""}
+                      disabled={busy === "actor-update" || avatarBusy !== "" || switchPending}
                       resetDisabled={!hasCustomAvatar}
                       uploadBusy={avatarBusy === "upload"}
                       resetBusy={avatarBusy === "clear"}
@@ -1576,7 +2016,24 @@ function EditActorConfigModal({
                   </div>
                 </div>
 
-                {attachedScopes.length > 0 || defaultScopeKey || groupId ? (
+                {isNativeActor ? (
+                  <div className="space-y-2 text-xs text-[var(--color-text-muted)]">
+                    <span className="font-medium">
+                      {t(sourceDirectory ? "workingDirectory" : "runtimeSwitch.ccccWorkspace")}
+                    </span>
+                    <div
+                      className="break-all rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2.5 text-sm text-[var(--color-text-secondary)]"
+                      aria-readonly="true"
+                    >
+                      {sourceDirectory ||
+                        scopes.find(
+                          (scope) => scope.scope_key === (savedDefaultScopeKey || activeScopeKey),
+                        )?.url ||
+                        t("runtimeSwitch.directoryUnavailable")}
+                    </div>
+                    <p>{t("nativeSession.configHint")}</p>
+                  </div>
+                ) : attachedScopes.length > 0 || defaultScopeKey || groupId ? (
                   <ActorWorkingDirectory
                     key={`${groupId}/${actorId}/${isOpen}`}
                     groupId={groupId}
@@ -1595,7 +2052,7 @@ function EditActorConfigModal({
                   <RolePresetPicker
                     draftValue={actorNotes}
                     onChangeDraft={onChangeActorNotes}
-                    disabled={actorNotesBusy || busy === "actor-update"}
+                    disabled={actorNotesBusy || actorNotesError || busy === "actor-update"}
                   />
                   <label className="block text-xs font-medium mt-3 mb-2 text-[var(--color-text-muted)]">
                     {t("actorNotes")}
@@ -1606,7 +2063,7 @@ function EditActorConfigModal({
                     onChange={(e) => onChangeActorNotes(e.target.value)}
                     placeholder={t("actorNotesPlaceholder")}
                     spellCheck={false}
-                    disabled={actorNotesBusy}
+                    disabled={actorNotesBusy || actorNotesError}
                   />
                   <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
                     {t("actorNotesHint")}
@@ -1616,184 +2073,233 @@ function EditActorConfigModal({
                       {t("loadingActorNotes")}
                     </div>
                   ) : null}
+                  {actorNotesError ? (
+                    <div role="alert" className="mt-2 text-xs text-rose-600 dark:text-rose-400">
+                      {t("actorNotesLoadFailed")}{" "}
+                      <Button type="button" variant="outline" size="sm" onClick={onRetryActorNotes}>
+                        {t("common:retry")}
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </Surface>
 
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionRuntime", "Runtime & Profile")}</div>
-              <div className={sectionHintClass}>
-                {t("sectionRuntimeHint", "Choose a runtime profile or custom runtime config.")}
-              </div>
+              {category !== "native" ? (
+                <div className={sectionHintClass}>
+                  {t("sectionRuntimeHint", "Choose a runtime profile or custom runtime config.")}
+                </div>
+              ) : null}
 
               <div className="mt-4">
-                <RuntimeConfigurationModePicker
-                  value={editMode}
-                  disabled={busy === "actor-update"}
-                  onChange={(mode) => {
-                    setEditMode(mode);
-                    if (mode !== "profile") return;
-                    setPendingConvertToCustom(false);
-                    setLocalNotice("");
-                    if (!actorProfilesBusy && selectableActorProfiles.length <= 0) {
-                      void onRequestActorProfiles?.();
-                    }
-                  }}
+                <RuntimeCategoryPicker
+                  value={category}
+                  current={currentCategory}
+                  canSwitch={canSwitch}
+                  disabled={busy === "actor-update" || switchPending || managedSwitchBlocked}
+                  onChange={changeCategory}
                 />
               </div>
-
-              <div className="mt-4 space-y-4">
-                {editMode === "profile" ? (
-                  <RuntimeProfilePicker
-                    value={attachProfileId}
-                    profiles={selectableActorProfiles}
-                    busy={actorProfilesBusy}
-                    disabled={busy === "actor-update"}
-                    emptyHint={
-                      actorProfiles.length > 0
-                        ? "ChatGPT Web Model is managed directly in Settings > ChatGPT Web Model."
-                        : undefined
-                    }
-                    onChange={setAttachProfileId}
-                  />
-                ) : effectiveLinked ? (
-                  <Surface
-                    className="border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3 text-[var(--color-text-primary)]"
-                    radius="md"
-                    padding="none"
-                  >
-                    <div className="text-sm font-medium">
-                      {selectedProfileName
-                        ? t("managedByProfileName", { name: selectedProfileName })
-                        : t("managedByProfile")}
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
-                      {t("managedByProfileCustomHint")}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="mt-3 transition-all ease-spring duration-300"
-                      onClick={convertToCustomDraft}
+              {category !== "native" &&
+              ((currentCategory === "web") !== (category === "web") ||
+                (category === "web" && conversationRuntime !== savedRuntime)) ? (
+                <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
+                  {t("runtimeSwitch.legacyWebWarning")}
+                </p>
+              ) : null}
+              {nativeSwitchVisited && canSwitch ? (
+                <div className="mt-4" hidden={category !== "native"}>
+                  {renderSwitchControls("native")}
+                </div>
+              ) : null}
+              {isNativeActor && managedSwitchVisited && canSwitch ? (
+                <div className="mt-4" hidden={category !== "managed"}>
+                  {renderSwitchControls("managed")}
+                </div>
+              ) : null}
+              {!isNativeActor && category !== "native" ? (
+                <>
+                  <div className="mt-4">
+                    <RuntimeConfigurationModePicker
+                      value={editMode}
                       disabled={busy === "actor-update"}
-                    >
-                      {t("convertToCustom")}
-                    </Button>
-                  </Surface>
-                ) : (
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                        {t("runtime")}
-                      </label>
-                      <RuntimeSelector
-                        className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
-                        value={runtime}
-                        runtimeMode={runtimeMode}
+                      onChange={(mode) => {
+                        if (mode !== editMode && secretEditorOpen) {
+                          setSecretsError(t("secretEditorIncomplete"));
+                          return;
+                        }
+                        setEditMode(mode);
+                        if (mode !== "profile") return;
+                        setPendingConvertToCustom(false);
+                        setLocalNotice("");
+                        if (!actorProfilesBusy && selectableActorProfiles.length <= 0) {
+                          void onRequestActorProfiles?.();
+                        }
+                      }}
+                    />
+                  </div>
+
+                  <div className="mt-4 space-y-4">
+                    {editMode === "profile" ? (
+                      <RuntimeProfilePicker
+                        value={attachProfileId}
+                        profiles={selectableActorProfiles}
+                        busy={actorProfilesBusy}
                         disabled={busy === "actor-update"}
-                        onChange={(value) => {
-                          const next = value as SupportedRuntime;
-                          onChangeRuntime(next);
-                          const nextInfo = runtimes.find((r) => r.name === next);
-                          const nextDefault = String(nextInfo?.recommended_command || "").trim();
-                          onChangeCommand(nextDefault);
-                        }}
-                        ariaLabel={t("runtime")}
+                        emptyHint={
+                          actorProfiles.length > 0
+                            ? "ChatGPT Web Model is managed directly in Settings > ChatGPT Web Model."
+                            : undefined
+                        }
+                        onChange={setAttachProfileId}
                       />
-                      <OpenCodeManagedModelHint runtime={runtime} />
-                      {supportsAcpMode(runtime) && (
-                        <AcpRuntimeMode
-                          runtime={runtime}
-                          value={runtimeMode}
-                          onChange={setRuntimeMode}
-                          disabled={busy === "actor-update"}
-                        />
-                      )}
-                    </div>
-
-                    {isWebModelRuntime(runtime) ? (
-                      <div
-                        className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300"
-                        data-status-tone="info"
+                    ) : effectiveLinked ? (
+                      <Surface
+                        className="border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-3 text-[var(--color-text-primary)]"
+                        radius="md"
+                        padding="none"
                       >
-                        <div className="font-medium">
-                          {runtime === "grok_web_model"
-                            ? "Grok Bot Web Model"
-                            : runtime === "chatgpt_dots"
-                              ? "ChatGPT Dots"
-                              : t("webModelActorBoundConnectorTitle", {
-                                  defaultValue: "ChatGPT Web Model",
-                                })}
+                        <div className="text-sm font-medium">
+                          {selectedProfileName
+                            ? t("managedByProfileName", { name: selectedProfileName })
+                            : t("managedByProfile")}
                         </div>
-                        <div className="mt-1">
-                          {runtime === "grok_web_model"
-                            ? t("settings:grokActor.hint")
-                            : runtime === "chatgpt_dots"
-                              ? t("settings:dotsActor.createHint")
-                              : t("webModelActorBoundConnectorHint", {
-                                  defaultValue:
-                                    "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
-                                })}
+                        <div className="mt-1 text-xs text-[var(--color-text-secondary)]">
+                          {t("managedByProfileCustomHint")}
                         </div>
-                      </div>
-                    ) : null}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="mt-3 transition-all ease-spring duration-300"
+                          onClick={convertToCustomDraft}
+                          disabled={busy === "actor-update"}
+                        >
+                          {t("convertToCustom")}
+                        </Button>
+                      </Surface>
+                    ) : (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                            {t("runtime")}
+                          </label>
+                          <RuntimeSelector
+                            className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
+                            value={runtime}
+                            runtimeMode={runtimeMode}
+                            disabled={busy === "actor-update"}
+                            allowedRuntimes={SUPPORTED_RUNTIMES.filter(
+                              (item) => isWebModelRuntime(item) === (category === "web"),
+                            )}
+                            onChange={(value) => {
+                              const next = value as SupportedRuntime;
+                              onChangeRuntime(next);
+                              const nextInfo = runtimes.find((r) => r.name === next);
+                              const nextDefault = String(
+                                nextInfo?.recommended_command || "",
+                              ).trim();
+                              onChangeCommand(nextDefault);
+                            }}
+                            ariaLabel={t("runtime")}
+                          />
+                          <OpenCodeManagedModelHint runtime={runtime} />
+                          {supportsAcpMode(runtime) && (
+                            <AcpRuntimeMode
+                              runtime={runtime}
+                              value={runtimeMode}
+                              onChange={setRuntimeMode}
+                              disabled={busy === "actor-update"}
+                            />
+                          )}
+                        </div>
 
-                    {!isWebModelRuntime(runtime) && (
-                      <div>
-                        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                          {t("command")}
+                        {isWebModelRuntime(runtime) ? (
+                          <div
+                            className="rounded-xl border px-3 py-2 text-[11px] border-sky-500/20 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+                            data-status-tone="info"
+                          >
+                            <div className="font-medium">
+                              {runtime === "grok_web_model"
+                                ? "Grok Bot Web Model"
+                                : runtime === "chatgpt_dots"
+                                  ? "ChatGPT Dots"
+                                  : t("webModelActorBoundConnectorTitle", {
+                                      defaultValue: "ChatGPT Web Model",
+                                    })}
+                            </div>
+                            <div className="mt-1">
+                              {runtime === "grok_web_model"
+                                ? t("settings:grokActor.hint")
+                                : runtime === "chatgpt_dots"
+                                  ? t("settings:dotsActor.createHint")
+                                  : t("webModelActorBoundConnectorHint", {
+                                      defaultValue:
+                                        "Use shared login and one connector in global Web Model settings. After saving this Actor, pair its own conversation below.",
+                                    })}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {!isWebModelRuntime(runtime) && (
+                          <div>
+                            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                              {t("command")}
+                            </label>
+                            <Input
+                              className="font-mono"
+                              value={command}
+                              onChange={(e) => onChangeCommand(e.target.value)}
+                              placeholder={defaultCommand || t("enterCommand")}
+                            />
+                            {isRunning ? (
+                              <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                                {t("runtimeChangesNote")}
+                              </div>
+                            ) : null}
+                            {defaultCommand.trim() ? (
+                              <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                                {t("default")}{" "}
+                                <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
+                                  {defaultCommand}
+                                </code>
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {stagingGrok && (
+                      <div className="space-y-2">
+                        <label className="block text-sm" htmlFor="edit-grok-bot-url">
+                          {t("settings:grokActor.url")}
                         </label>
                         <Input
-                          className="font-mono"
-                          value={command}
-                          onChange={(e) => onChangeCommand(e.target.value)}
-                          placeholder={defaultCommand || t("enterCommand")}
+                          id="edit-grok-bot-url"
+                          type="url"
+                          required
+                          value={grokBotUrl ?? ""}
+                          onChange={(e) => setGrokBotUrl(e.target.value)}
+                          disabled={busy === "actor-update" || secretsBusy}
+                          placeholder="https://grok.com/bot/…"
+                          aria-describedby="edit-grok-bot-url-hint"
                         />
-                        {isRunning ? (
-                          <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                            {t("runtimeChangesNote")}
-                          </div>
-                        ) : null}
-                        {defaultCommand.trim() ? (
-                          <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                            {t("default")}{" "}
-                            <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-                              {defaultCommand}
-                            </code>
-                          </div>
-                        ) : null}
+                        <p
+                          id="edit-grok-bot-url-hint"
+                          className="text-xs text-[var(--color-text-muted)]"
+                        >
+                          {t("settings:grokActor.runtimeSaveHint")}
+                        </p>
+                        <Button type="button" variant="outline" onClick={openSharedSettings}>
+                          {t("settings:grokActor.shared")}
+                        </Button>
                       </div>
                     )}
                   </div>
-                )}
-                {stagingGrok && (
-                  <div className="space-y-2">
-                    <label className="block text-sm" htmlFor="edit-grok-bot-url">
-                      {t("settings:grokActor.url")}
-                    </label>
-                    <Input
-                      id="edit-grok-bot-url"
-                      type="url"
-                      required
-                      value={grokBotUrl ?? ""}
-                      onChange={(e) => setGrokBotUrl(e.target.value)}
-                      disabled={busy === "actor-update" || secretsBusy}
-                      placeholder="https://grok.com/bot/…"
-                      aria-describedby="edit-grok-bot-url-hint"
-                    />
-                    <p
-                      id="edit-grok-bot-url-hint"
-                      className="text-xs text-[var(--color-text-muted)]"
-                    >
-                      {t("settings:grokActor.runtimeSaveHint")}
-                    </p>
-                    <Button type="button" variant="outline" onClick={openSharedSettings}>
-                      {t("settings:grokActor.shared")}
-                    </Button>
-                  </div>
-                )}
-              </div>
+                </>
+              ) : null}
             </Surface>
           </div>
 
@@ -1858,118 +2364,184 @@ function EditActorConfigModal({
             </div>
           )}
 
-          <Surface className={sectionCardClass}>
-            <div className={sectionTitleClass}>{t("sectionAdvanced", "Advanced")}</div>
-            <div className={sectionHintClass}>
-              {t(
-                "sectionAdvancedHint",
-                "Keep low-frequency configuration here so the main edit path stays short.",
-              )}
-            </div>
-            <div className="mt-4">
-              <ActorConfigTabs
-                ariaLabel={t("sectionAdvanced", "Advanced")}
-                activeId={activeAdvancedTab}
-                onChange={selectAdvancedTab}
-                tabs={[
-                  ...(showRuntimeSetup
-                    ? [
-                        {
-                          id: "connection",
-                          label: t("runtimeSetupSection", "Connection setup"),
-                          panel: (
-                            <div
-                              className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
-                              data-status-tone="warning"
-                            >
-                              <div className="font-medium">{t("manualMcpRequired")}</div>
-                              <div className="mt-1">
-                                {t("configureMcpStdio")}{" "}
-                                <code className="px-1 rounded bg-amber-500/15">cccc</code>{" "}
-                                {t("thatRuns")}{" "}
-                                <code className="px-1 rounded bg-amber-500/15">cccc mcp</code>.
-                              </div>
-                              <pre className="mt-1.5 p-2 rounded overflow-x-auto whitespace-pre bg-amber-500/10 text-amber-800 dark:text-amber-100">
-                                <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
-                              </pre>
-                              <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-400/80">
-                                {t("restartAfterConfig")}
-                              </div>
-                            </div>
-                          ),
-                        },
-                      ]
-                    : []),
-                  ...(editMode === "custom" && !isWebModelRuntime(runtime)
-                    ? [
-                        {
-                          id: "environment",
-                          label: t("secretsSection", "Environment variables"),
-                          panel: (
-                            <ActorSecretManager
-                              keys={secretKeys}
-                              masks={secretMasks}
-                              changes={secretChanges}
-                              loading={secretsRefreshing}
-                              keysLoadFailed={secretKeysLoadFailed}
-                              disabled={secretsBusy || secretsRefreshing || busy === "actor-update"}
-                              onRefresh={() => void refreshSecretKeys()}
-                              onChangesChange={setSecretChanges}
-                            />
-                          ),
-                        },
-                      ]
-                    : []),
-                  {
-                    id: "capabilities",
-                    label: t("capabilitiesSection", "Capabilities"),
-                    panel: (
-                      <CapabilityPicker
-                        isDark={isDark}
-                        value={parseCapabilityIdInput(capabilityAutoloadText)}
-                        onChange={(next) =>
-                          onChangeCapabilityAutoloadText(formatCapabilityIdInput(next))
-                        }
-                        disabled={busy === "actor-update"}
-                        active={capabilitiesPrimed || activeAdvancedTab === "capabilities"}
-                        label={t("autoloadCapabilities")}
-                        hint={t("autoloadCapabilitiesHint")}
-                      />
-                    ),
-                  },
-                  ...(editMode === "custom"
-                    ? [
-                        {
-                          id: "profile",
-                          label: t("profileToolsSection", "Profile tools"),
-                          panel: (
-                            <div className="flex flex-wrap gap-3">
-                              {isWebModelRuntime(runtime) && (
-                                <p className="w-full text-sm text-[var(--color-text-secondary)]">
-                                  {t("webModelProfileHint")}
-                                </p>
-                              )}
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                onClick={() => void saveAsProfile()}
-                                disabled={busy === "actor-profile-save" || busy === "actor-update"}
+          {!isNativeActor && category !== "native" ? (
+            <Surface className={sectionCardClass}>
+              <div className={sectionTitleClass}>{t("sectionAdvanced", "Advanced")}</div>
+              <div className={sectionHintClass}>
+                {t(
+                  "sectionAdvancedHint",
+                  "Keep low-frequency configuration here so the main edit path stays short.",
+                )}
+              </div>
+              <div className="mt-4">
+                <ActorConfigTabs
+                  ariaLabel={t("sectionAdvanced", "Advanced")}
+                  activeId={activeAdvancedTab}
+                  onChange={selectAdvancedTab}
+                  tabs={[
+                    ...(showRuntimeSetup
+                      ? [
+                          {
+                            id: "connection",
+                            label: t("runtimeSetupSection", "Connection setup"),
+                            panel: (
+                              <div
+                                className="rounded-xl border px-3 py-2 text-[11px] border-amber-500/20 bg-amber-500/5 text-amber-700 dark:text-amber-400"
+                                data-status-tone="warning"
                               >
-                                {busy === "actor-profile-save"
-                                  ? t("savingProfile")
-                                  : t("addToActorProfiles")}
-                              </Button>
-                            </div>
-                          ),
-                        },
-                      ]
-                    : []),
-                ]}
-              />
-            </div>
-          </Surface>
+                                <div className="font-medium">{t("manualMcpRequired")}</div>
+                                <div className="mt-1">
+                                  {t("configureMcpStdio")}{" "}
+                                  <code className="px-1 rounded bg-amber-500/15">cccc</code>{" "}
+                                  {t("thatRuns")}{" "}
+                                  <code className="px-1 rounded bg-amber-500/15">cccc mcp</code>.
+                                </div>
+                                <pre className="mt-1.5 p-2 rounded overflow-x-auto whitespace-pre bg-amber-500/10 text-amber-800 dark:text-amber-100">
+                                  <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
+                                </pre>
+                                <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-400/80">
+                                  {t("restartAfterConfig")}
+                                </div>
+                              </div>
+                            ),
+                          },
+                        ]
+                      : []),
+                    ...(editMode === "custom" && !isWebModelRuntime(runtime)
+                      ? [
+                          {
+                            id: "environment",
+                            label: t("secretsSection", "Environment variables"),
+                            panel: (
+                              <>
+                                {linked &&
+                                pendingConvertToCustom &&
+                                currentCategory === "managed" ? (
+                                  <p className="mb-3 text-xs text-[var(--color-text-muted)]">
+                                    {t("runtimeSwitch.profileToCustomSecrets")}
+                                  </p>
+                                ) : null}
+                                <ActorSecretManager
+                                  keys={secretKeys}
+                                  masks={secretMasks}
+                                  changes={secretChanges}
+                                  loading={secretsRefreshing}
+                                  keysLoadFailed={secretKeysLoadFailed}
+                                  disabled={
+                                    secretsBusy || secretsRefreshing || busy === "actor-update"
+                                  }
+                                  onRefresh={() => void refreshSecretKeys()}
+                                  onChangesChange={setSecretChanges}
+                                  onDraftOpenChange={setSecretEditorOpen}
+                                />
+                              </>
+                            ),
+                          },
+                        ]
+                      : []),
+                    {
+                      id: "capabilities",
+                      label: t("capabilitiesSection", "Capabilities"),
+                      panel: (
+                        <CapabilityPicker
+                          isDark={isDark}
+                          value={parseCapabilityIdInput(capabilityAutoloadText)}
+                          onChange={(next) =>
+                            onChangeCapabilityAutoloadText(formatCapabilityIdInput(next))
+                          }
+                          disabled={busy === "actor-update"}
+                          active={capabilitiesPrimed || activeAdvancedTab === "capabilities"}
+                          label={t("autoloadCapabilities")}
+                          hint={t("autoloadCapabilitiesHint")}
+                        />
+                      ),
+                    },
+                    ...(editMode === "custom"
+                      ? [
+                          {
+                            id: "profile",
+                            label: t("profileToolsSection", "Profile tools"),
+                            panel: (
+                              <div className="flex flex-wrap gap-3">
+                                {isWebModelRuntime(runtime) && (
+                                  <p className="w-full text-sm text-[var(--color-text-secondary)]">
+                                    {t("webModelProfileHint")}
+                                  </p>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  onClick={() => void saveAsProfile()}
+                                  disabled={
+                                    busy === "actor-profile-save" || busy === "actor-update"
+                                  }
+                                >
+                                  {busy === "actor-profile-save"
+                                    ? t("savingProfile")
+                                    : t("addToActorProfiles")}
+                                </Button>
+                              </div>
+                            ),
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
+              </div>
+            </Surface>
+          ) : null}
         </fieldset>
       </div>
+      {managedSwitchPayload && savedActor
+        ? createPortal(
+            <RuntimeSwitchConfirm
+              isDark={isDark}
+              actor={savedActor}
+              targetLabel={
+                managedSwitchPayload.mode === "profile"
+                  ? selectedProfile?.name?.trim() || selectedProfile?.id || runtime
+                  : runtime
+              }
+              targetDirectory={
+                attachedScopes.find(
+                  (scope) => scope.scope_key === (defaultScopeKey || activeScopeKey),
+                )?.url
+              }
+              targetKind="managed"
+              noStart={managedSwitchNoStart}
+              onNoStart={setManagedSwitchNoStart}
+              busy={secretsBusy || busy === "actor-update"}
+              message=""
+              profileToCustom={linked && managedSwitchPayload.mode === "custom"}
+              keepCustomSecrets={
+                !linked && managedSwitchPayload.mode === "custom" && secretKeys.length > 0
+              }
+              secretKeys={secretKeys}
+              onCancel={() => setManagedSwitchPayload(null)}
+              onConfirm={() => {
+                setSecretsBusy(true);
+                setSecretsError("");
+                void onSaveAndRestart({
+                  ...managedSwitchPayload,
+                  runtimeSwitch: { start: !managedSwitchNoStart },
+                })
+                  .then(() => setManagedSwitchPayload(null))
+                  .catch((error: unknown) => {
+                    const message = error instanceof Error ? error.message : t("saveFailed");
+                    if (
+                      message.startsWith("actor_switch_unknown:") ||
+                      message.startsWith("actor_switch_conflict:")
+                    )
+                      setManagedSwitchBlocked(true);
+                    setManagedSwitchPayload(null);
+                    setSecretsError(message.replace(/^actor_switch_[a-z_]+:\s*/, ""));
+                  })
+                  .finally(() => setSecretsBusy(false));
+              }}
+            />,
+            document.body,
+          )
+        : null}
     </ModalFrame>
   );
 }

@@ -17,6 +17,7 @@ pub fn keys(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = public_target(home, request, "update private env")?;
+    super::actor_switch::refuse_pending(home, &group_id, &actor_id)?;
     let clear = request
         .args
         .get("clear")

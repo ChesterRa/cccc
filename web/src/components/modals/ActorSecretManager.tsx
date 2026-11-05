@@ -1,4 +1,4 @@
-import { useId, useMemo, useReducer, useState } from "react";
+import { useEffect, useId, useMemo, useReducer, useState } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { LcdSpinner } from "../LcdSpinner";
@@ -35,6 +35,7 @@ interface ActorSecretManagerProps {
   disabled?: boolean;
   onRefresh: () => void;
   onChangesChange: (changes: ActorSecretChanges) => void;
+  onDraftOpenChange?: (open: boolean) => void;
 }
 export function ActorSecretManager({
   keys,
@@ -45,6 +46,7 @@ export function ActorSecretManager({
   disabled = false,
   onRefresh,
   onChangesChange,
+  onDraftOpenChange,
 }: ActorSecretManagerProps) {
   const { t } = useTranslation("actors");
   const inputId = useId();
@@ -65,6 +67,10 @@ export function ActorSecretManager({
     editValueTouched,
     showEditValue,
   } = drafts;
+  useEffect(() => {
+    onDraftOpenChange?.(addOpen || Boolean(editingKey) || bulkOpen);
+    return () => onDraftOpenChange?.(false);
+  }, [addOpen, editingKey, bulkOpen, onDraftOpenChange]);
   const configuredKeys = useMemo(() => new Set(keys), [keys]);
   const stagedSetKeys = Object.keys(changes.setVars);
   const hasPendingChanges = stagedSetKeys.length > 0 || changes.unsetKeys.length > 0;
@@ -320,7 +326,7 @@ export function ActorSecretManager({
                       data-lcd-key
                       size="sm"
                       className="w-9 px-0"
-                      disabled={controlsDisabled}
+                      disabled={controlsDisabled || Boolean(editingKey)}
                       aria-label={`${t("secretManager.update")} ${key}`}
                       title={`${t("secretManager.update")} ${key}`}
                       onClick={() => dispatchDraft({ type: "startEdit", key })}
@@ -473,6 +479,7 @@ export function ActorSecretManager({
           disabled={controlsDisabled || keysLoadFailed || keys.length === 0}
           onClick={() => {
             dispatchDraft({ type: "discardAll" });
+            setBulkOpen(false);
             onChangesChange(setActorSecretClearAll(changes, true));
           }}
         >

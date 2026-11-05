@@ -13,6 +13,7 @@ mod actor_runtime_status_tests;
 mod actor_runtime_tests;
 mod actor_saga;
 mod actor_secrets;
+mod actor_switch;
 mod actors;
 mod assistants;
 mod automation_config;
@@ -110,6 +111,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         group_scopes::resolve_operation,
         group_space::resolve_operation,
         actors::resolve_operation,
+        actor_switch::resolve_operation,
         local_sessions::resolve_operation,
         automation_config::resolve_operation,
         assistants::resolve_operation,

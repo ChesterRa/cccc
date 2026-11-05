@@ -280,6 +280,95 @@ pub(super) fn settle_replaced_transport_claims(
     )
 }
 
+/// After an Actor's runtime owner was stopped and its delivery worker joined:
+/// record every handoff still claimed, through any transport, as ambiguous, and
+/// return all of the Actor's unconfirmed handoffs, oldest first.
+///
+/// The caller must keep new delivery away from the Actor. A worker can itself
+/// record an ambiguous result while it is being stopped, so returning only the
+/// claims settled here would omit work the new owner needs to review. Earlier
+/// ambiguous handoffs of this member generation are returned as well, and a
+/// repeated call appends nothing.
+pub(super) fn settle_replaced_owner_claims(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+) -> Result<Vec<String>, OpError> {
+    let actor = group
+        .actors
+        .iter()
+        .find(|actor| actor.id == actor_id)
+        .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
+    with_exclusive_lock(&delivery_lock_path(&ledger_path), || {
+        // The last receipt wins, including a receipt from a different
+        // transport. Keep its position so the handoffs stay in ledger order.
+        let mut unresolved = HashMap::<String, (Option<String>, usize)>::new();
+        let mut position = 0_usize;
+        ledger::visit_snapshot_oldest_first(&ledger_path, |event| {
+            position += 1;
+            if event.kind == "actor.add" {
+                let added = event
+                    .data
+                    .get("actor")
+                    .and_then(Value::as_object)
+                    .and_then(|actor| actor.get("id"))
+                    .and_then(Value::as_str);
+                if added == Some(actor_id) {
+                    unresolved.clear();
+                }
+            } else if event.kind == "runtime.delivery"
+                && event.data.get("actor_id").and_then(Value::as_str) == Some(actor_id)
+                && let Some(source) = event
+                    .data
+                    .get("source_event_id")
+                    .and_then(Value::as_str)
+                    .filter(|source| !source.is_empty())
+            {
+                let transport = event
+                    .data
+                    .get("transport")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                match event.data.get("state").and_then(Value::as_str) {
+                    Some("claimed") => {
+                        unresolved
+                            .insert(source.to_owned(), (Some(transport.to_owned()), position));
+                    }
+                    Some("ambiguous") => {
+                        unresolved.insert(source.to_owned(), (None, position));
+                    }
+                    _ => {
+                        unresolved.remove(source);
+                    }
+                }
+            }
+            std::ops::ControlFlow::Continue(())
+        })?;
+        let mut unresolved = unresolved.into_iter().collect::<Vec<_>>();
+        unresolved.sort_by_key(|(_, (_, position))| *position);
+        for (source, (claimed_transport, _)) in &unresolved {
+            if let Some(transport) = claimed_transport {
+                append_state(
+                    home,
+                    &group.group_id,
+                    actor_id,
+                    &actor.created_at,
+                    source,
+                    transport,
+                    DeliveryOutcome::Ambiguous(
+                        "runtime replaced before the claimed handoff recorded an outcome",
+                    ),
+                )
+                .map_err(|error| std::io::Error::other(error.message))?;
+            }
+        }
+        Ok(unresolved.into_iter().map(|(source, _)| source).collect())
+    })
+    .map_err(OpError::io)
+}
+
 fn settle_claims(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -470,6 +559,187 @@ fn legacy_pending_sources(
 mod tests {
     use super::*;
     use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn replaced_owner_keeps_all_unconfirmed_handoffs_without_replaying_them() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("native replacement", "").expect("group");
+        let actor = Actor::new("old");
+        let other = Actor::new("other");
+        group.actors.extend([actor.clone(), other.clone()]);
+        store.save(&group).expect("save group");
+
+        let receipt = |who: &Actor, source: &str, transport: &str, outcome: DeliveryOutcome<'_>| {
+            append_state(
+                &home,
+                &group.group_id,
+                &who.id,
+                &who.created_at,
+                source,
+                transport,
+                outcome,
+            )
+            .expect("delivery receipt");
+        };
+        receipt(
+            &actor,
+            "older-ambiguous",
+            "local_session",
+            DeliveryOutcome::Ambiguous("unknown"),
+        );
+        receipt(
+            &actor,
+            "claimed-z",
+            "local_session",
+            DeliveryOutcome::Claimed,
+        );
+        receipt(
+            &actor,
+            "claimed-a",
+            "local_session",
+            DeliveryOutcome::Claimed,
+        );
+        receipt(
+            &actor,
+            "accepted",
+            "local_session",
+            DeliveryOutcome::Claimed,
+        );
+        receipt(
+            &actor,
+            "accepted",
+            "local_session",
+            DeliveryOutcome::Accepted,
+        );
+        receipt(
+            &actor,
+            "unsubmitted",
+            "local_session",
+            DeliveryOutcome::Claimed,
+        );
+        receipt(
+            &actor,
+            "unsubmitted",
+            "local_session",
+            DeliveryOutcome::Unsubmitted("receiver unavailable"),
+        );
+        receipt(&actor, "pty-claim", "pty", DeliveryOutcome::Claimed);
+        receipt(
+            &other,
+            "other-claim",
+            "local_session",
+            DeliveryOutcome::Claimed,
+        );
+        receipt(
+            &actor,
+            "changed-transport",
+            "local_session",
+            DeliveryOutcome::Ambiguous("old"),
+        );
+        receipt(
+            &actor,
+            "changed-transport",
+            "pty",
+            DeliveryOutcome::Accepted,
+        );
+
+        // Every transport's open claim may have reached the replaced owner.
+        let expected = vec!["older-ambiguous", "claimed-z", "claimed-a", "pty-claim"];
+        assert_eq!(
+            settle_replaced_owner_claims(&home, &group, &actor.id).expect("settle"),
+            expected
+        );
+        assert_eq!(
+            settle_replaced_owner_claims(&home, &group, &actor.id).expect("settle again"),
+            expected
+        );
+        for source in ["older-ambiguous", "claimed-z", "claimed-a"] {
+            assert_eq!(
+                claim(&home, &group, &actor, source, "local_session", false).expect("retry"),
+                ClaimResult::Terminal("ambiguous".into())
+            );
+        }
+        assert_eq!(
+            claim(&home, &group, &actor, "pty-claim", "pty", false).expect("retry"),
+            ClaimResult::Terminal("ambiguous".into())
+        );
+        assert_eq!(
+            latest_state(&home, &group.group_id, &actor.id, "accepted").expect("accepted"),
+            Some(("accepted".into(), "local_session".into()))
+        );
+        assert_eq!(
+            latest_state(&home, &group.group_id, &actor.id, "unsubmitted").expect("unsubmitted"),
+            Some(("failed".into(), "local_session".into()))
+        );
+        assert_eq!(
+            latest_state(&home, &group.group_id, &actor.id, "pty-claim").expect("pty"),
+            Some(("ambiguous".into(), "pty".into()))
+        );
+        assert_eq!(
+            latest_state(&home, &group.group_id, &other.id, "other-claim").expect("other"),
+            Some(("claimed".into(), "local_session".into()))
+        );
+        let events =
+            ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger")).expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event.kind == "runtime.delivery"
+                        && event.data["actor_id"] == actor.id
+                        && event.data["source_event_id"] == "claimed-z"
+                        && event.data["state"] == "ambiguous"
+                })
+                .count(),
+            1,
+            "repeating the operation must not append another uncertainty receipt"
+        );
+    }
+
+    #[test]
+    fn native_replacement_ignores_claims_from_an_earlier_actor_registration() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("actor generation", "").expect("group");
+        let actor = Actor::new("peer");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        append_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            "earlier",
+            "local_session",
+            DeliveryOutcome::Claimed,
+        )
+        .expect("previous claim");
+        let mut added = Event::new("actor.add", &group.group_id);
+        added.data = json!({"actor":{"id":actor.id}})
+            .as_object()
+            .expect("actor data")
+            .clone();
+        ledger::append(&path, &added).expect("new actor registration");
+        append_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            "current",
+            "local_session",
+            DeliveryOutcome::Claimed,
+        )
+        .expect("current claim");
+
+        assert_eq!(
+            settle_replaced_owner_claims(&home, &group, &actor.id).expect("settle"),
+            ["current"]
+        );
+    }
 
     #[test]
     #[ignore = "operator-supplied copied real groups only"]

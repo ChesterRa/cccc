@@ -1,6 +1,6 @@
 use cccc_contracts::{Actor, ActorRole, Event};
 use cccc_core::GroupDoc;
-use serde_json::json;
+use serde_json::{Value, json};
 
 // Claude Code 2.1.310 exposes only the first 500 raw characters of a Monitor
 // stdout record. Budget the complete JSON line in bytes, including escaping,
@@ -23,7 +23,11 @@ pub(crate) fn claude_notice(
     };
     let scope = cccc_core::group_scope::effective_scope(group, Some(actor));
     let scope_key = scope.map_or("none", |scope| scope.scope_key.as_str());
-    let mode = event.data["message_mode"].as_str().unwrap_or("notify");
+    let mode = event
+        .data
+        .get("message_mode")
+        .and_then(Value::as_str)
+        .unwrap_or("notify");
     let mut text = format!(
         "[CCCC] Read full message and instructions: cccc_message_history({lookup}).\nYou are {} ({role}); scope={scope_key}; from={}; mode={mode}.\n",
         actor.id, event.by,
@@ -40,13 +44,12 @@ pub(crate) fn claude_notice(
         }
     }
     let header_len = text.len();
-    text.extend(
-        event.data["text"]
-            .as_str()
-            .unwrap_or_default()
-            .chars()
-            .take(80),
-    );
+    // System notices may carry their body as `message` instead of `text`.
+    let preview = ["text", "message"]
+        .into_iter()
+        .find_map(|key| event.data.get(key).and_then(Value::as_str))
+        .unwrap_or_default();
+    text.extend(preview.chars().take(80));
     while encoded_len(&text) > MONITOR_LINE_BYTES && text.len() > header_len {
         text.pop();
     }
@@ -135,5 +138,27 @@ mod tests {
         assert!(!included, "the line waits; the message still goes out");
         assert!(!notice.contains("xxx"));
         assert!(notice.contains("mode=send.\n界"), "{notice}");
+    }
+
+    #[test]
+    fn a_system_notice_without_a_mode_or_text_previews_its_message() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let mut group = GroupStore::new(home)
+            .expect("store")
+            .create("g", "")
+            .expect("group");
+        let actor = Actor::new("x");
+        group.actors.push(actor.clone());
+        let mut event = Event::new("system.notify", &group.group_id);
+        event.by = "system".into();
+        event.data = json!({"kind":"runtime_switch_handoff","target_actor_id":"x","message":"You are now x."})
+            .as_object()
+            .expect("data")
+            .clone();
+
+        let (notice, _) = claude_notice(&group, &actor, &event, None).expect("notice");
+
+        assert!(notice.contains("mode=notify.\nYou are now x."), "{notice}");
     }
 }

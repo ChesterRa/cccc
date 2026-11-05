@@ -20,6 +20,11 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         &string_arg(request, "by").unwrap_or_else(|| "user".into()),
     )
     .map_err(OpError::invalid)?;
+    // An unfinished switch still writes into this Group's ledger, and its
+    // Retry starts the member: it is completed before a reset.
+    for actor in &old.actors {
+        super::actor_switch::refuse_pending(home, &group_id, &actor.id)?;
+    }
     let was_active = active::get(home).map_err(OpError::io)?.as_deref() == Some(&group_id);
     let created = store.create(&old.title, &old.topic).map_err(OpError::io)?;
     let replacement = prepare_replacement(&store, &old, &created)
@@ -124,6 +129,11 @@ fn prepare_replacement(
                     );
                 }
             }
+            // Native sources members left still must not reclaim them.
+            cccc_core::runtime_switches::set_records(
+                document,
+                &cccc_core::runtime_switches::for_copy(old),
+            );
             for actor in &mut document.actors {
                 actor.avatar_asset_path.clear();
             }

@@ -39,6 +39,7 @@ vi.mock("../../services/api/actors", async (original) => ({
 }));
 vi.mock("../../components/ActorAvatar", () => ({ ActorAvatar: () => <span /> }));
 import { LocalSessionsButton } from "./LocalSessionsButton";
+import { LocalSessionsDialog } from "./LocalSessionsDialog";
 
 const i18n = createInstance();
 let host: HTMLDivElement;
@@ -177,6 +178,23 @@ async function open(select = vi.fn()) {
   await mount(select);
   await click(host.querySelector("button"));
 }
+
+it("can open the existing session picker with the current Group already selected", async () => {
+  await act(async () =>
+    root.render(
+      <I18nextProvider i18n={i18n}>
+        <LocalSessionsDialog
+          isDark={false}
+          initialTargetGroupId={existingGroup.group_id}
+          onClose={vi.fn()}
+          onSelectGroup={vi.fn()}
+        />
+      </I18nextProvider>,
+    ),
+  );
+  expect(mocks.members).toHaveBeenCalledWith(existingGroup.group_id, false, { noCache: true });
+  expect(document.body.textContent).toContain("Existing Group");
+});
 
 it("discovers only when opened and creates a new Group with a separate selection count", async () => {
   const select = vi.fn();

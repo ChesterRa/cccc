@@ -95,6 +95,55 @@ pub enum ActorAction {
         #[arg(long, default_value = "user")]
         by: String,
     },
+    /// Switch the runtime that runs an agent: another connected native session or
+    /// a CCCC-managed runtime. The agent keeps its identity, tasks and history.
+    Switch {
+        /// Agent ID within the Group.
+        actor_id: String,
+        /// Target Group ID; omit to use the current Group.
+        #[arg(long = "group")]
+        group_id: Option<String>,
+        /// Connected native session source ID that will run this agent. Its
+        /// application owns the configuration, so managed options do not apply.
+        #[arg(long, conflicts_with_all = [
+            "runtime", "profile", "finish", "runtime_mode", "command", "env", "submit", "scope",
+            "no_start",
+        ])]
+        session: Option<String>,
+        /// Managed runtime that will run this agent.
+        #[arg(long, conflicts_with = "finish")]
+        runtime: Option<String>,
+        /// Global Runtime Profile ID for the managed runtime. The Profile sets the
+        /// runtime, mode, command, environment and submission.
+        #[arg(long, conflicts_with_all = [
+            "finish", "runtime", "runtime_mode", "command", "env", "submit",
+        ])]
+        profile: Option<String>,
+        /// Runtime adapter mode: default or acp.
+        #[arg(long, value_parser = ["default", "acp"])]
+        runtime_mode: Option<String>,
+        /// Launch command with arguments, parsed as one quoted command line.
+        #[arg(long)]
+        command: Option<String>,
+        /// Public environment entry KEY=VALUE stored in the agent configuration;
+        /// repeat for multiple entries. Use `cccc actor secrets` for private values.
+        #[arg(long = "env")]
+        env: Vec<String>,
+        /// Terminal submission: enter, newline or none.
+        #[arg(long)]
+        submit: Option<String>,
+        /// Attached project directory for the default workspace; empty inherits the Group scope.
+        #[arg(long)]
+        scope: Option<String>,
+        /// Leave the managed runtime stopped, for example to add private env first.
+        #[arg(long)]
+        no_start: bool,
+        /// Retry an unfinished switch completion for this agent.
+        #[arg(long, conflicts_with_all = [
+            "runtime_mode", "command", "env", "submit", "scope", "no_start",
+        ])]
+        finish: bool,
+    },
     /// Manage runtime-only secrets without writing them to agent configuration.
     Secrets {
         /// Agent ID within the Group.

@@ -4,7 +4,7 @@ use axum::{Json, Router};
 use serde_json::{Map, Value, json};
 
 use crate::AppState;
-use crate::api::{ApiResult, body_object, call, object};
+use crate::api::{ApiError, ApiResult, body_object, call, object};
 use crate::auth::Principal;
 
 pub fn routes() -> Router<AppState> {
@@ -25,6 +25,14 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/groups/{group_id}/actors/{actor_id}/restart",
             post(restart),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/actors/{actor_id}/runtime_switch",
+            post(runtime_switch),
+        )
+        .route(
+            "/api/v1/groups/{group_id}/actors/{actor_id}/runtime_switch/complete",
+            post(runtime_switch_complete),
         )
         .route(
             "/api/v1/groups/{group_id}/actors/{actor_id}/new_session",
@@ -121,6 +129,69 @@ async fn restart(
 ) -> ApiResult {
     lifecycle(&state, &group_id, &actor_id, "actor_restart").await
 }
+
+fn require_runtime_switch_admin(state: &AppState, principal: &Principal) -> Result<(), ApiError> {
+    if state.web_mode.is_read_only() || !principal.current_admin(&state.home).unwrap_or(false) {
+        return Err(ApiError::forbidden(
+            "Runtime switching is available only to this instance's administrator",
+        ));
+    }
+    Ok(())
+}
+
+async fn runtime_switch(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Path((group_id, actor_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    require_runtime_switch_admin(&state, &principal)?;
+    let args = runtime_switch_args(&principal, group_id, actor_id, body)?;
+    call(&state, "actor_runtime_switch", args).await
+}
+
+async fn runtime_switch_complete(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Path((group_id, actor_id)): Path<(String, String)>,
+) -> ApiResult {
+    require_runtime_switch_admin(&state, &principal)?;
+    call(
+        &state,
+        "actor_runtime_switch_complete",
+        super::actor_profiles::auth_args(
+            &principal,
+            object(json!({"group_id":group_id,"actor_id":actor_id})),
+        ),
+    )
+    .await
+}
+
+fn runtime_switch_args(
+    principal: &Principal,
+    group_id: String,
+    actor_id: String,
+    body: Value,
+) -> Result<Map<String, Value>, ApiError> {
+    let mut args = body_object(body)?;
+    args.retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "expected_actor_generation"
+                | "expected_actor_updated_at"
+                | "expected_source_id"
+                | "target"
+        )
+    });
+    if let Some(Value::Object(target)) = args.get_mut("target")
+        && let Some(Value::Object(patch)) = target.get_mut("patch")
+    {
+        normalize_command(patch)?;
+    }
+    args.insert("group_id".into(), Value::String(group_id));
+    args.insert("actor_id".into(), Value::String(actor_id));
+    Ok(super::actor_profiles::auth_args(principal, args))
+}
 async fn new_session(
     State(state): State<AppState>,
     Path((group_id, actor_id)): Path<(String, String)>,
@@ -144,4 +215,49 @@ fn normalize_command(args: &mut Map<String, Value>) -> Result<(), crate::api::Ap
         args.insert("command".into(), json!(command));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_switch_args;
+    use crate::auth::Principal;
+    use serde_json::json;
+
+    #[test]
+    fn runtime_switch_binds_actor_and_authority_to_the_route_and_principal() {
+        let principal = Principal {
+            user_id: "admin".into(),
+            allowed_groups: vec!["g_actual".into()],
+            is_admin: true,
+            raw_token: String::new(),
+        };
+        let args = runtime_switch_args(
+            &principal,
+            "g_actual".into(),
+            "real-actor".into(),
+            json!({
+                "group_id":"g_other",
+                "actor_id":"other",
+                "by":"other",
+                "caller_id":"forged",
+                "is_admin":false,
+                "allowed_groups":["g_other"],
+                "expected_actor_generation":"generation-1",
+                "expected_actor_updated_at":"2026-01-01T00:00:00Z",
+                "expected_source_id":"codex:old",
+                "target":{"kind":"managed","patch":{"runtime":"custom","command":"tool --model 'a b'"}}
+            }),
+        )
+        .expect("object body");
+        assert_eq!(args["group_id"], "g_actual");
+        assert_eq!(args["actor_id"], "real-actor");
+        assert_eq!(args["by"], "user");
+        assert_eq!(args["caller_id"], "admin");
+        assert_eq!(args["is_admin"], true);
+        assert_eq!(args["allowed_groups"], json!(["g_actual"]));
+        assert_eq!(
+            args["target"]["patch"]["command"],
+            json!(["tool", "--model", "a b"])
+        );
+    }
 }

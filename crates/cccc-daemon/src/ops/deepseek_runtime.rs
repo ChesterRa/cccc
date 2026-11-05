@@ -7,7 +7,9 @@ mod recovery;
 mod turn_failure;
 mod turn_timeout;
 
-pub use delivery::{TurnDelivery, deliver};
+#[cfg(test)]
+pub use delivery::deliver;
+pub use delivery::{TurnDelivery, deliver_marked};
 pub use lifecycle::apply;
 
 use cccc_contracts::Actor;
@@ -137,6 +139,46 @@ pub fn stop(group_id: &str, actor_id: &str) {
     if let Ok(mut flags) = cancel_flags().write() {
         flags.remove(&key);
     }
+}
+
+/// Stop the Actor's DeepSeek session and report whether it stopped. A session
+/// that fails to stop stays registered, so it is never mistaken for gone; its
+/// deliveries remain cancelled until an explicit Stop releases it.
+pub fn stop_confirmed(group_id: &str, actor_id: &str) -> std::io::Result<()> {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    let holder = sessions()
+        .read()
+        .map_err(|_| std::io::Error::other("deepseek session lock poisoned"))?
+        .get(&key)
+        .cloned();
+    let Some(holder) = holder else {
+        return Ok(());
+    };
+    if let Ok(flags) = cancel_flags().read()
+        && let Some(flag) = flags.get(&key)
+    {
+        flag.store(true, Ordering::Release);
+    }
+    holder
+        .supervisor
+        .lock()
+        .map_err(|_| std::io::Error::other("deepseek supervisor lock poisoned"))?
+        .stop()
+        .map_err(|error| {
+            std::io::Error::other(format!("DeepSeek session did not stop: {error}"))
+        })?;
+    holder.running.store(false, Ordering::Release);
+    if let Ok(mut map) = sessions().write()
+        && map
+            .get(&key)
+            .is_some_and(|current| Arc::ptr_eq(current, &holder))
+    {
+        map.remove(&key);
+    }
+    if let Ok(mut flags) = cancel_flags().write() {
+        flags.remove(&key);
+    }
+    Ok(())
 }
 
 pub fn stop_group(group_id: &str) {

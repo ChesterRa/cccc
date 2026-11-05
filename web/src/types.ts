@@ -78,6 +78,7 @@ export type GroupDoc = {
   running?: boolean;
   state?: "active" | "idle" | "paused" | "stopped";
   runtime_status?: GroupRuntimeStatus;
+  runtime_switches?: Array<{ actor_id?: string; actor_generation?: string; pending?: boolean }>;
 };
 
 // Server-backed attachment metadata carried by canonical ledger events.
@@ -337,9 +338,11 @@ export type Actor = {
   external_session_id?: string;
   id: string;
   generation?: string;
+  created_at?: string;
   role?: string;
   internal_kind?: string | null;
   title?: string;
+  model_label?: string;
   avatar_asset_path?: string;
   avatar_url?: string | null;
   has_custom_avatar?: boolean;

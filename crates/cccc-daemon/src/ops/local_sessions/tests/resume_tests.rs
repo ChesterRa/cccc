@@ -106,6 +106,48 @@ fn receive_attach_restores_the_same_conversation_memberships_and_direct_reuse() 
 }
 
 #[test]
+fn receive_attach_does_not_return_a_member_to_a_session_it_was_switched_away_from() {
+    use cccc_core::runtime_switches::{self, Endpoint, SwitchRecord};
+    let (fixture, old, mut group) = resumed_fixture(LocalSessionRuntime::Claude);
+    // The user switched the member from this live session to the other host
+    // of the same conversation, which has since exited.
+    let member = group.actors[0].clone();
+    let endpoint = |source_id: &str| Endpoint {
+        kind: "native".into(),
+        runtime: "claude".into(),
+        source_id: source_id.into(),
+    };
+    runtime_switches::set_records(
+        &mut group,
+        &[SwitchRecord {
+            op_id: "explicit-switch".into(),
+            actor_id: member.id.clone(),
+            actor_generation: actors::generation_identity(&member),
+            from: endpoint(&fixture.source.source_id),
+            to: endpoint(&old.source_id),
+            at: cccc_contracts::utc_now(),
+            pending: false,
+            clear_private_env: false,
+        }],
+    );
+    let store = GroupStore::new(fixture.home.clone()).expect("groups");
+    store.save(&group).expect("record the switch");
+
+    attach_resumed(&fixture);
+
+    let after = store.load(&group.group_id).expect("Group");
+    assert_eq!(
+        after.actors[0].external_session_id, old.source_id,
+        "only an explicit switch brings the member back"
+    );
+    assert!(
+        ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
+            .expect("ledger")
+            .is_empty()
+    );
+}
+
+#[test]
 fn receive_attach_does_not_guess_or_override_explicit_native_boundaries() {
     for runtime in [LocalSessionRuntime::Claude, LocalSessionRuntime::Pi] {
         for boundary in [

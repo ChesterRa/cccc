@@ -81,6 +81,29 @@ fn resolve_scopes(
     Ok(scopes)
 }
 
+pub(super) fn connected_source(
+    home: &HomeLayout,
+    source_id: &str,
+) -> Result<LocalSessionSource, OpError> {
+    resolve_sources(home, &[source_id.to_owned()])?
+        .pop()
+        .ok_or_else(|| {
+            OpError::new(
+                "local_session_offline",
+                "The selected source is not connected",
+            )
+        })
+}
+
+pub(super) fn source_scope(
+    source: &LocalSessionSource,
+    attached: &[cccc_core::Scope],
+) -> Result<cccc_core::Scope, OpError> {
+    resolve_scopes(std::slice::from_ref(source), attached)?
+        .pop()
+        .ok_or_else(|| OpError::new("local_session_scope_conflict", "No working directory"))
+}
+
 pub(super) fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     local(request)?;
     let source_ids = selected_source_ids(request)?;

@@ -1,5 +1,6 @@
 use cccc_contracts::{Actor, ActorRuntime, GroupState};
 use cccc_core::GroupStore;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -41,10 +42,24 @@ fn terminal_reason(error: &crate::dispatch::OpError) -> Option<String> {
 
 /// Deliver `jobs`. Jobs settled here for good (stale Mail notices) are removed
 /// from `jobs`, so a caller that retries the batch never offers them again.
+#[cfg(test)]
 pub fn process_batch(
     jobs: &mut Vec<DeliveryJob>,
     preamble_session: &mut String,
     cancelled: &AtomicBool,
+) -> BatchOutcome {
+    process_batch_tracked(jobs, preamble_session, cancelled, &mut HashSet::new())
+}
+
+/// As [`process_batch`], adding to `attempted` the event ids of managed work
+/// right before its submission can begin: a PTY payload write, a DeepSeek
+/// request, or a managed session's input. A runtime replacement records work
+/// that stays unconfirmed as ambiguous instead of offering it again.
+pub fn process_batch_tracked(
+    jobs: &mut Vec<DeliveryJob>,
+    preamble_session: &mut String,
+    cancelled: &AtomicBool,
+    attempted: &mut HashSet<String>,
 ) -> BatchOutcome {
     let Some(job) = jobs.first().cloned() else {
         return BatchOutcome::Retry;
@@ -74,6 +89,24 @@ pub fn process_batch(
     if !current_actor.enabled {
         return BatchOutcome::Retry;
     }
+    // A job queued from an older snapshot can outlive a switch's fence. Until
+    // the switch has written its handoff, nothing reaches the new owner: the
+    // work goes back unsubmitted and follows the handoff once it is written.
+    if cccc_core::runtime_switches::pending_for(&current_group, &current_actor).is_some() {
+        for job in jobs.drain(..) {
+            if job.claimed {
+                finish_job(
+                    &job,
+                    CompletedDelivery::Unsubmitted(
+                        "held until the member's runtime switch is completed".into(),
+                    ),
+                );
+            } else {
+                super::actor_delivery::release_in_flight(&job);
+            }
+        }
+        return BatchOutcome::Delivered;
+    }
     // Every attempt, including retries, re-checks Mail notices against their
     // Mail: one read, answered, or delivered since is withdrawn, never sent, and
     // leaves the batch for good.
@@ -91,11 +124,25 @@ pub fn process_batch(
         );
     }
     if current_actor.runtime == ActorRuntime::Deepseek {
-        return process_deepseek_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
+        return process_deepseek_batch(
+            jobs,
+            &job.home,
+            &current_group,
+            &current_actor,
+            cancelled,
+            attempted,
+        );
     }
     let jobs = jobs.as_slice();
     if crate::ops::local_headless::uses_managed_delivery(&current_group.group_id, &current_actor) {
-        return process_managed_batch(jobs, &job.home, &current_group, &current_actor, cancelled);
+        return process_managed_batch(
+            jobs,
+            &job.home,
+            &current_group,
+            &current_actor,
+            cancelled,
+            attempted,
+        );
     }
     let status = match ensure_running(&job.home, &current_group, &current_actor) {
         Ok(Some(status)) => status,
@@ -167,6 +214,7 @@ pub fn process_batch(
     if let Some(pending) = &instructions {
         payload = format!("{payload}\n\n{}", pending.delivery_line());
     }
+    attempted.extend(jobs.iter().map(|job| job.event.id.clone()));
     if submit_text(
         &current_group.group_id,
         &current_actor,
@@ -395,6 +443,7 @@ fn process_deepseek_batch(
     group: &cccc_core::GroupDoc,
     actor: &Actor,
     cancelled: &AtomicBool,
+    attempted: &mut HashSet<String>,
 ) -> BatchOutcome {
     if !crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) {
         if crate::ops::deepseek_runtime::manual_restart_required(home, group, actor) {
@@ -415,7 +464,14 @@ fn process_deepseek_batch(
         if cancelled.load(Ordering::Acquire) {
             return BatchOutcome::Retry;
         }
-        match crate::ops::deepseek_runtime::deliver(home, group, actor, &job.event, cancelled) {
+        let started = AtomicBool::new(false);
+        let delivery = crate::ops::deepseek_runtime::deliver_marked(
+            home, group, actor, &job.event, cancelled, &started,
+        );
+        if started.load(Ordering::Acquire) {
+            attempted.insert(job.event.id.clone());
+        }
+        match delivery {
             TurnDelivery::Completed => complete_job(&jobs.remove(0)),
             TurnDelivery::Failed(reason) => return BatchOutcome::Rejected(reason),
             TurnDelivery::Incomplete => return BatchOutcome::Retry,
@@ -430,6 +486,7 @@ fn process_managed_batch(
     group: &cccc_core::GroupDoc,
     actor: &Actor,
     cancelled: &AtomicBool,
+    attempted: &mut HashSet<String>,
 ) -> BatchOutcome {
     if !crate::ops::local_headless::running(&group.group_id, &actor.id) {
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
@@ -467,7 +524,13 @@ fn process_managed_batch(
         }
     }
     let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
-    let outcome = crate::ops::local_headless::submit_batch(home, group, actor, &events, cancelled);
+    let started = AtomicBool::new(false);
+    let outcome = crate::ops::local_headless::submit_batch_marked(
+        home, group, actor, &events, cancelled, &started,
+    );
+    if started.load(Ordering::Acquire) {
+        attempted.extend(jobs.iter().map(|job| job.event.id.clone()));
+    }
     settle_managed_batch(jobs, home, group, actor, outcome)
 }
 

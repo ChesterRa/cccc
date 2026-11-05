@@ -36,6 +36,16 @@ fn predecessors(
         .collect())
 }
 
+fn left_by_switch(group: &GroupDoc, member: &Actor, current: &NativeSession) -> bool {
+    cccc_core::runtime_switches::records(group)
+        .iter()
+        .any(|record| {
+            record.left_native()
+                && record.from.source_id == current.source_id
+                && record.names(member)
+        })
+}
+
 pub(super) fn restore_memberships(home: &HomeLayout, receiver: &Receiver) -> Result<(), OpError> {
     if !matches!(
         receiver.runtime,
@@ -79,6 +89,11 @@ pub(super) fn restore_memberships(home: &HomeLayout, receiver: &Receiver) -> Res
         {
             // Explicit admission already chose another Actor. Do not merge it
             // with a former member, transfer tasks, or override paused access.
+            continue;
+        }
+        if left_by_switch(&group, previous, &current) {
+            // The user switched this member away from this session; only an
+            // explicit switch brings it back.
             continue;
         }
         // receiver_attach already owns the daemon's GlobalWrite permit. The
@@ -127,6 +142,9 @@ fn restore_group(
     let path = store.ledger_path(&group.group_id)?;
     store.mutate_with_rollback(&group.group_id, |doc| {
         if doc.actors.iter().any(|actor| actor.external_session_id == current.source_id) {
+            return Err(io::Error::other("Native recovery membership changed"));
+        }
+        if left_by_switch(doc, previous, current) {
             return Err(io::Error::other("Native recovery membership changed"));
         }
         let actor = doc.actors.iter_mut().find(|actor| {

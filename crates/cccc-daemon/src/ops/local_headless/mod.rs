@@ -35,9 +35,11 @@ use std::future::Future;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
+#[cfg(test)]
+pub use supervisor::submit_batch;
 pub use supervisor::{
     detach_after_viewer_exit, ensure_viewer, kill_all_requests, ready_for_mail_notice, running,
-    start, status, stop, stop_all, stop_group, submit_batch, supports,
+    start, status, stop, stop_all, stop_group, submit_batch_marked, supports,
 };
 
 pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {

@@ -12,7 +12,9 @@ mod drain;
 mod lifecycle;
 mod terminal;
 pub(crate) use drain::{drain_group, pending_group_ids};
-pub use lifecycle::{shutdown_actor, shutdown_all, shutdown_group};
+pub use lifecycle::{
+    ShutdownReason, shutdown_actor, shutdown_actor_for, shutdown_all, shutdown_group,
+};
 pub(super) use terminal::{submit_terminal_text, submit_terminal_text_for_session};
 
 const QUEUE_CAPACITY: usize = 256;
@@ -94,13 +96,22 @@ impl CompletedDelivery {
 struct DeliveryWorker {
     sender: Option<SyncSender<DeliveryJob>>,
     cancelled: Arc<AtomicBool>,
+    /// Set before cancellation when the Actor's runtime owner is replaced.
+    replaced: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
     /// Native pending work exceeded this worker's memory queue or query page.
     needs_refill: bool,
 }
 
 impl DeliveryWorker {
-    fn shutdown(mut self) {
+    fn shutdown(self) {
+        self.shutdown_for(lifecycle::ShutdownReason::Stop);
+    }
+
+    fn shutdown_for(mut self, reason: lifecycle::ShutdownReason) {
+        if reason == lifecycle::ShutdownReason::Replace {
+            self.replaced.store(true, Ordering::Release);
+        }
         self.stop();
     }
 
@@ -134,6 +145,50 @@ fn completions() -> &'static Mutex<VecDeque<DeliveryCompletion>> {
 fn in_flight() -> &'static Mutex<HashSet<(String, String, String)>> {
     static IN_FLIGHT: OnceLock<Mutex<HashSet<(String, String, String)>>> = OnceLock::new();
     IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn fenced() -> &'static Mutex<HashSet<Key>> {
+    static FENCED: OnceLock<Mutex<HashSet<Key>>> = OnceLock::new();
+    FENCED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Keeps new delivery work away from one Actor while its runtime owner is
+/// replaced. Dropping the guard lifts the fence.
+pub struct DeliveryFence(Key);
+
+impl Drop for DeliveryFence {
+    fn drop(&mut self) {
+        // Lift under the worker map, as it was raised: every refusal the
+        // fence caused has been settled by then.
+        let _workers = workers().lock();
+        if let Ok(mut fenced) = fenced().lock() {
+            fenced.remove(&self.0);
+        }
+    }
+}
+
+pub fn fence_actor(group_id: &str, actor_id: &str) -> DeliveryFence {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    // Fence under the worker map: a racing enqueue either created its worker
+    // before (the shutdown that follows stops it) or sees the fence.
+    let _workers = workers().lock();
+    if let Ok(mut fenced) = fenced().lock() {
+        fenced.insert(key.clone());
+    }
+    DeliveryFence(key)
+}
+
+fn is_fenced(group_id: &str, actor_id: &str) -> bool {
+    fenced()
+        .lock()
+        .is_ok_and(|fenced| fenced.contains(&(group_id.to_owned(), actor_id.to_owned())))
+}
+
+/// New work waits while the Actor's runtime is being replaced, or until an
+/// unfinished switch has written its handoff.
+fn held_for_switch(group: &GroupDoc, actor: &Actor) -> bool {
+    is_fenced(&group.group_id, &actor.id)
+        || cccc_core::runtime_switches::pending_for(group, actor).is_some()
 }
 
 pub(super) fn record_completion(completion: DeliveryCompletion) {
@@ -339,7 +394,7 @@ fn dispatch_to_inner(
     let mut queued = 0;
     let mut online = 0;
     for actor in targets {
-        if !actor.enabled {
+        if !actor.enabled || held_for_switch(group, actor) {
             continue;
         }
         // Leave new events pending while this managed Claude awaits an explicit
@@ -393,15 +448,17 @@ fn dispatch_to_inner(
                 }
             }
         }
-        if enqueue(DeliveryJob {
+        let offered = enqueue(DeliveryJob {
             home: home.clone(),
             group: group.clone(),
             actor: actor.clone(),
             event: event.clone(),
             claimed,
-        }) {
+        });
+        if offered == Offer::Queued {
             queued += 1;
-        } else if claimed
+        } else if offered == Offer::Refused
+            && claimed
             && let Err(error) = crate::ops::runtime_delivery::append_state(
                 home,
                 &group.group_id,
@@ -434,6 +491,7 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
         return 0;
     };
     if !actor.enabled
+        || held_for_switch(group, actor)
         || (crate::ops::actor_runtime::is_structured(actor)
             && actor.external_session_id.is_empty()
             && !crate::ops::local_headless::supports(actor)
@@ -607,7 +665,16 @@ fn set_refill(group_id: &str, actor_id: &str, needed: bool) {
     }
 }
 
-fn enqueue(job: DeliveryJob) -> bool {
+#[derive(Debug, PartialEq, Eq)]
+enum Offer {
+    Queued,
+    /// The member's runtime is being switched. A claimed job was already
+    /// given back as unsubmitted, so the switch's own dispatch offers it again.
+    Held,
+    Refused,
+}
+
+fn enqueue(job: DeliveryJob) -> Offer {
     let key = (job.group.group_id.clone(), job.actor.id.clone());
     let delivery_key = (key.0.clone(), key.1.clone(), job.event.id.clone());
     let reserved = in_flight()
@@ -615,29 +682,49 @@ fn enqueue(job: DeliveryJob) -> bool {
         .map(|mut pending| pending.insert(delivery_key.clone()))
         .unwrap_or(false);
     if !reserved {
-        return false;
+        return Offer::Refused;
     }
     let mut map = match workers().lock() {
         Ok(map) => map,
         Err(_) => {
             clear_in_flight(|item| item == &delivery_key);
-            return false;
+            return Offer::Refused;
         }
     };
+    if is_fenced(&key.0, &key.1) {
+        // Settled under the worker map: the fence is lifted only afterwards.
+        if job.claimed
+            && let Err(error) = crate::ops::runtime_delivery::append_state(
+                &job.home,
+                &key.0,
+                &key.1,
+                &job.actor.created_at,
+                &job.event.id,
+                delivery_transport(&job.home, &job.group, &job.actor),
+                crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
+                    "held while the member's runtime was switched",
+                ),
+            )
+        {
+            tracing::warn!(message = %error.message, "failed to give back held runtime delivery");
+        }
+        clear_in_flight(|item| item == &delivery_key);
+        return Offer::Held;
+    }
     let worker = map.entry(key.clone()).or_insert_with(|| spawn_worker(&key));
     let Some(sender) = worker.sender.as_ref() else {
         clear_in_flight(|item| item == &delivery_key);
-        return false;
+        return Offer::Refused;
     };
     match sender.try_send(job) {
-        Ok(()) => true,
+        Ok(()) => Offer::Queued,
         Err(TrySendError::Full(job)) => {
             if !job.actor.external_session_id.is_empty() {
                 worker.needs_refill = true;
             }
             clear_in_flight(|item| item == &delivery_key);
             tracing::warn!(group_id = %key.0, actor_id = %key.1, "PTY delivery queue is full");
-            false
+            Offer::Refused
         }
         Err(TrySendError::Disconnected(job)) => {
             let mut replacement = spawn_worker(&key);
@@ -653,8 +740,9 @@ fn enqueue(job: DeliveryJob) -> bool {
             }
             if !result {
                 clear_in_flight(|item| item == &delivery_key);
+                return Offer::Refused;
             }
-            result
+            Offer::Queued
         }
     }
 }
@@ -664,8 +752,13 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
     let name = format!("cccc-delivery:{}:{}", key.0, key.1);
     let cancelled = Arc::new(AtomicBool::new(false));
     let thread_cancelled = Arc::clone(&cancelled);
+    let replaced = Arc::new(AtomicBool::new(false));
+    let thread_replaced = Arc::clone(&replaced);
     let thread = std::thread::Builder::new().name(name).spawn(move || {
         let mut preamble_session = String::new();
+        // Deferred work whose submission may have started. Only a runtime
+        // replacement reads it: such work is never offered to the new owner.
+        let mut attempted = HashSet::<String>::new();
         let mut deferred = Vec::new();
         let mut deferred_failures: u32 = 0;
         // Failed turns of the job at the head of the batch, by event id.
@@ -713,10 +806,11 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
             let mut terminal_reason = None;
             let mut rejected = None;
             for attempt in 0..3 {
-                match actor_delivery_worker::process_batch(
+                match actor_delivery_worker::process_batch_tracked(
                     &mut batch,
                     &mut preamble_session,
                     &thread_cancelled,
+                    &mut attempted,
                 ) {
                     actor_delivery_worker::BatchOutcome::Delivered => {
                         delivered = true;
@@ -765,10 +859,26 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
             } else {
                 deferred_failures = 0;
             }
+            attempted.retain(|id| deferred.iter().any(|job: &DeliveryJob| &job.event.id == id));
         }
+        let replacing = thread_replaced.load(Ordering::Acquire);
         for job in deferred.into_iter().chain(receiver.try_iter()) {
             let reason = "delivery worker stopped before runtime acceptance".to_owned();
-            if job.actor.external_session_id.is_empty() {
+            // Only managed submission marks a job attempted; it decides, not
+            // the snapshot the job was queued with.
+            if replacing && attempted.contains(&job.event.id) {
+                // The old runtime may already hold this input. Keep it for the
+                // replacement to review instead of submitting it twice.
+                finish_job(
+                    &job,
+                    CompletedDelivery::Ambiguous(
+                        "runtime replaced while this delivery was being submitted".into(),
+                    ),
+                );
+            } else if replacing && job.actor.external_session_id.is_empty() {
+                // Never submitted to the old runtime: the replacement receives it.
+                finish_job(&job, CompletedDelivery::Unsubmitted(reason));
+            } else if job.actor.external_session_id.is_empty() {
                 fail_job(&job, &reason);
             } else if !job.claimed {
                 release_in_flight(&job);
@@ -789,6 +899,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
     DeliveryWorker {
         sender: thread.as_ref().map(|_| sender),
         cancelled,
+        replaced,
         thread,
         needs_refill: false,
     }
@@ -1134,6 +1245,7 @@ done"#;
         let worker = DeliveryWorker {
             sender: None,
             cancelled,
+            replaced: Arc::new(AtomicBool::new(false)),
             thread: Some(thread),
             needs_refill: false,
         };
@@ -1183,13 +1295,16 @@ done"#;
         )
         .expect("claim");
 
-        assert!(enqueue(DeliveryJob {
-            home: home.clone(),
-            group: group.clone(),
-            actor: actor.clone(),
-            event: event.clone(),
-            claimed: true,
-        }));
+        assert_eq!(
+            enqueue(DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event: event.clone(),
+                claimed: true,
+            }),
+            Offer::Queued
+        );
         shutdown_actor(&group.group_id, &actor.id);
 
         assert_eq!(
@@ -1210,6 +1325,84 @@ done"#;
                 .expect("in flight")
                 .iter()
                 .any(|item| item.0 == group.group_id)
+        );
+    }
+    #[test]
+    fn work_a_switch_fence_refuses_is_given_back_before_the_fence_lifts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("fenced delivery", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save actor");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":["peer1"],"text":"after the switch","message_mode":"send"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger path"),
+            &event,
+        )
+        .expect("append source");
+        // Claimed by a dispatch that passed its check just before the fence.
+        crate::ops::runtime_delivery::append_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &event.id,
+            delivery_transport(&home, &group, &actor),
+            crate::ops::runtime_delivery::DeliveryOutcome::Claimed,
+        )
+        .expect("claim");
+        let fence = fence_actor(&group.group_id, &actor.id);
+
+        let offered = enqueue(DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: event.clone(),
+            claimed: true,
+        });
+        drop(fence);
+
+        assert_eq!(offered, Offer::Held);
+        assert_eq!(
+            crate::ops::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &event.id,
+            )
+            .expect("latest state")
+            .expect("delivery state")
+            .0,
+            "failed",
+            "unsubmitted is recorded as a retryable failure"
+        );
+        assert!(
+            !workers()
+                .lock()
+                .expect("workers")
+                .contains_key(&(group.group_id.clone(), actor.id.clone())),
+            "a fenced member gets no worker"
+        );
+        assert!(
+            !in_flight()
+                .lock()
+                .expect("in flight")
+                .iter()
+                .any(|item| item.0 == group.group_id)
+        );
+        let pending = crate::ops::runtime_delivery::pending_sources(&home, &group, &actor, 10)
+            .expect("pending deliveries");
+        assert_eq!(
+            pending.iter().map(|event| &event.id).collect::<Vec<_>>(),
+            [&event.id],
+            "the switch's own dispatch offers it again"
         );
     }
 }

@@ -62,23 +62,28 @@ export function RuntimeSelector({
         ariaLabel={ariaLabel || t("runtime")}
         items={SUPPORTED_RUNTIMES.filter(
           (runtime) => !allowedRuntimes || allowedRuntimes.includes(runtime),
-        ).map((runtime) => {
-          const info = runtimes.find((item) => item.name === runtime);
-          const key = runtimeDetectionKey(runtime, info, status);
-          const description =
-            runtime === "antigravity"
-              ? `TUI: ${t(`runtimeDetection.${key}`)} · ACP: ${t(`runtimeDetection.${runtimeDetectionKey(runtime, info, status, "acp")}`)}`
-              : t(`runtimeDetection.${key}`);
-          return {
-            value: runtime,
-            label:
-              runtime === "pi"
-                ? `${RUNTIME_INFO[runtime].label} (RPC)`
-                : RUNTIME_INFO[runtime]?.label || runtime,
-            description,
-            disabled: !allowUndetected && runtime !== "antigravity" && key === "missing",
-          };
-        })}
+        )
+          .map((runtime) => {
+            const info = runtimes.find((item) => item.name === runtime);
+            const key = runtimeDetectionKey(runtime, info, status);
+            const description =
+              runtime === "antigravity"
+                ? `TUI: ${t(`runtimeDetection.${key}`)} · ACP: ${t(`runtimeDetection.${runtimeDetectionKey(runtime, info, status, "acp")}`)}`
+                : key === "failed" || key === "unknown"
+                  ? t(`runtimeDetection.${key}`)
+                  : undefined;
+            return {
+              value: runtime,
+              label:
+                runtime === "pi"
+                  ? `${RUNTIME_INFO[runtime].label} (RPC)`
+                  : RUNTIME_INFO[runtime]?.label || runtime,
+              description,
+              group: key === "missing" ? t("runtimeSwitch.notDetected") : undefined,
+              disabled: !allowUndetected && runtime !== "antigravity" && key === "missing",
+            };
+          })
+          .sort((left, right) => Number(Boolean(left.group)) - Number(Boolean(right.group)))}
         searchable
       />
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
