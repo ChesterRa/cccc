@@ -993,6 +993,7 @@
   "voiceSecretaryTranscriptEmpty": "Document-mode transcript for this document will appear here.",
   "voiceSecretaryTranscriptNeedsDocument": "Choose or create a document to see its transcript.",
   "sendResultUnknown": "Delivery could not be confirmed. Check the conversation before sending again.",
+  "stopUploadWaiting": "Stop waiting for upload",
   "voiceSecretaryTypedRequest": "Typed request",
   "voiceSecretaryAskDocument": "Ask about the saved document",
   "voiceSecretaryUpdateDocument": "Update document",

@@ -129,6 +129,7 @@ export async function dispatchPreparedMessage(input: {
   remoteReplyTo: string[];
   sendPlanTargets: ComposerSendPlanTarget[];
   sendsCrossGroup: boolean;
+  uploadSignal?: AbortSignal;
 }): Promise<{ response: SendMessageResponse; successfulSendCount: number }> {
   const files = input.files.length > 0 ? input.files : undefined;
   let response: SendMessageResponse | undefined;
@@ -149,6 +150,7 @@ export async function dispatchPreparedMessage(input: {
         quoteText: input.replyTarget.text,
         clientId: input.localId,
         remoteReplyToEventId: input.replyTarget.remoteReplyToEventId || "",
+        ...(input.uploadSignal ? { signal: input.uploadSignal } : {}),
       },
     );
     if (response.ok) successfulSendCount += 1;
@@ -163,6 +165,7 @@ export async function dispatchPreparedMessage(input: {
       input.refs,
       input.replyTarget.text,
       replyMessageMode,
+      ...(input.uploadSignal ? ([input.uploadSignal] as const) : []),
     );
     if (response.ok) successfulSendCount += 1;
   } else {
@@ -176,6 +179,7 @@ export async function dispatchPreparedMessage(input: {
         effectiveMessageMode,
         input.localId,
         input.refs,
+        ...(input.uploadSignal ? ([input.uploadSignal] as const) : []),
       );
       if (!response.ok) break;
       successfulSendCount += 1;
@@ -201,7 +205,7 @@ export async function dispatchPreparedMessage(input: {
           recipients,
           effectiveMessageMode,
           files,
-          { clientId },
+          { clientId, ...(input.uploadSignal ? { signal: input.uploadSignal } : {}) },
         );
         if (!response.ok) break;
         successfulSendCount += 1;

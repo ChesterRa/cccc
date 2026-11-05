@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDownIcon, InboxIcon, ReplyIcon, SendIcon } from "../../components/Icons";
+import { ChevronDownIcon, InboxIcon, ReplyIcon, SendIcon, StopIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import { LcdSpinner } from "../../components/LcdSpinner";
 import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
@@ -13,6 +13,7 @@ export function ComposerSendControl({
   onOpenChange,
   onModeChange,
   onSend,
+  onStopUploadWaiting,
   busy,
   canSend,
   modeDisabled,
@@ -25,6 +26,7 @@ export function ComposerSendControl({
   onOpenChange: (open: boolean) => void;
   onModeChange: (mode: ComposerMessageMode) => void;
   onSend: () => void;
+  onStopUploadWaiting?: () => void;
   busy: boolean;
   canSend: boolean;
   modeDisabled: boolean;
@@ -50,6 +52,17 @@ export function ComposerSendControl({
       data-composer-send-control
       className="ml-auto flex shrink-0 items-stretch rounded-xl bg-[var(--glass-tab-bg)]"
     >
+      {onStopUploadWaiting && (
+        <Button
+          variant="ghost"
+          className="h-[44px] min-h-[44px] w-[44px] px-0 @min-[600px]/composer:h-9 @min-[600px]/composer:min-h-9 @min-[600px]/composer:w-9"
+          onClick={onStopUploadWaiting}
+          aria-label={t("stopUploadWaiting")}
+          title={t("stopUploadWaiting")}
+        >
+          <StopIcon size={14} strokeWidth={1.25} />
+        </Button>
+      )}
       <Button
         variant="ghost"
         data-composer-send-primary

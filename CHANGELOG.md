@@ -14,6 +14,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   connection, so coming back means connecting again. While CCCC is handing a message to the browser,
   a switch asks you to try again in a moment.
 - An agent can now take up a planned or active task that nobody holds.
+- While a message with attachments is uploading, a stop button next to **Send** ends the wait and
+  keeps your draft for recovery. The message may already have arrived, so check the conversation
+  before sending it again.
 
 ### Changed
 
@@ -28,12 +31,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   agent, its terminal keeps receiving them, with the submit key it launched with, until a launch
   replaces it. A Profile change takes effect at that launch, and a connector no longer takes work
   from a terminal that still runs.
-- A message cut off part way into a terminal is kept for review instead of being written again, so
-  a restart or an interrupted write no longer leaves two copies. Work claimed for a terminal that
-  has since stopped moves to the agent's current runtime.
+- A message cut off part way into a terminal is kept for review, and CCCC does not automatically
+  write it again. Work claimed for a terminal that has since stopped, and never written to it,
+  moves to the agent's current runtime.
 - A browser delivery that could not finish no longer blocks an agent. Delivery resumes the same
   batch, and a batch that runs out of retries is kept for review, because the conversation may still
   hold its draft.
+- A native foreman now gets the default foreman capabilities, as a managed one does: when it joins
+  a running Group, on Start or a daemon restart, and when a switch makes it native. A capability
+  you blocked stays blocked.
+- A message sent with `cccc send --path` now belongs to that project, and a relative path means the
+  directory you ran the command in.
+- A finished early Group Bridge delivery that names no source message no longer prevents the
+  retirement of old Group Bridge state, which left its files behind with a warning at every start.
 
 ## [0.4.48]
 

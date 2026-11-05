@@ -296,6 +296,8 @@ export function ChatTab({
     // UI state
     busy,
     sendInFlight,
+    uploadInFlight,
+    stopUploadWaiting,
     showScrollButton,
     chatUnreadCount,
     sendScrollRequest,
@@ -1360,6 +1362,8 @@ export function ChatTab({
                       destGroupScopeLabel={destGroupScopeLabel}
                       busy={busy}
                       sendInFlight={sendInFlight}
+                      uploadInFlight={uploadInFlight}
+                      onStopUploadWaiting={stopUploadWaiting}
                       recentMessages={chatMessages}
                       suggestionSourceMessages={suggestionSourceMessages}
                       replyTarget={replyTarget}

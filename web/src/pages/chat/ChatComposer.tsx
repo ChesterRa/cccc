@@ -120,6 +120,8 @@ export interface ChatComposerProps {
   destGroupScopeLabel?: string;
   busy: string;
   sendInFlight: boolean;
+  uploadInFlight?: boolean;
+  onStopUploadWaiting?: () => void;
   recentMessages?: LedgerEvent[];
   suggestionSourceMessages?: LedgerEvent[];
 
@@ -185,6 +187,8 @@ export function ChatComposer({
   destGroupScopeLabel: _destGroupScopeLabel,
   busy,
   sendInFlight,
+  uploadInFlight,
+  onStopUploadWaiting,
   recentMessages = [],
   suggestionSourceMessages,
   replyTarget,
@@ -1335,6 +1339,7 @@ export function ChatComposer({
                 onModeChange={setMessageMode}
                 onSend={onSendMessage}
                 busy={busy === "send" || sendInFlight}
+                onStopUploadWaiting={uploadInFlight ? onStopUploadWaiting : undefined}
                 canSend={canSend}
                 modeDisabled={busy === "send" || !selectedGroupId}
                 requestReplyReady={requestReplyRecipientsReady}

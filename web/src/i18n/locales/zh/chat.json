@@ -993,6 +993,7 @@
   "voiceSecretaryTranscriptEmpty": "此文档的文档模式转录将显示在这里。",
   "voiceSecretaryTranscriptNeedsDocument": "选择或创建文档以查看其转录记录。",
   "sendResultUnknown": "暂时无法确认消息是否已送达。请先检查消息列表，再决定是否重新发送。",
+  "stopUploadWaiting": "停止等待上传",
   "voiceSecretaryTypedRequest": "文字请求",
   "voiceSecretaryAskDocument": "询问已保存的文档",
   "voiceSecretaryUpdateDocument": "修改文档",

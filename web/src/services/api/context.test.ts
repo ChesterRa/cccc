@@ -641,6 +641,39 @@ describe("cross-group attachment API helper", () => {
     vi.unstubAllGlobals();
   });
 
+  it("passes the stop signal to ordinary, reply and cross-Group uploads", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => new Response(JSON.stringify({ ok: true, result: {} })));
+    const file = new File(["file"], "file.txt");
+    const controller = new AbortController();
+
+    await sendMessage("g1", "text", ["lead"], [file], "send", "id", [], controller.signal);
+    await replyMessage(
+      "g1",
+      "text",
+      ["lead"],
+      "parent",
+      [file],
+      "id",
+      [],
+      "",
+      "send",
+      controller.signal,
+    );
+    await sendCrossGroupMessage("g1", "g2", "text", ["lead"], "send", [file], {
+      clientId: "id",
+      signal: controller.signal,
+    });
+
+    expect(fetchMock.mock.calls.map((call) => call[1]?.signal)).toEqual([
+      controller.signal,
+      controller.signal,
+      controller.signal,
+    ]);
+  });
+
   it("uploads files with the destination Group and reply thread", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
     const fetchMock = vi

@@ -917,7 +917,15 @@ export async function apiForm<T>(
     authRequiredHandler?.();
   }
 
-  const text = await resp.text();
+  let text: string;
+  try {
+    text = await resp.text();
+  } catch (error) {
+    return makeErrorResponse(
+      "NETWORK_ERROR",
+      error instanceof Error ? error.message : "Network request failed",
+    );
+  }
   if (!text) {
     if (resp.ok) {
       return { ok: true, result: {} as T };

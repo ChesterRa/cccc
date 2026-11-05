@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   apiJson,
+  apiForm,
   filenameFromContentDisposition,
   isAuthRequiredErrorCode,
   normalizePresentationBrowserSurfaceState,
@@ -115,6 +116,24 @@ describe("apiJson", () => {
     expect(resp.ok).toBe(false);
     expect(resp.ok ? "" : resp.error.code).toBe("HTTP_ERROR");
     expect(resp.ok ? "" : resp.error.message).toContain("504 Gateway Time-out");
+  });
+});
+
+describe("apiForm", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("reports an interrupted response body as an unknown network result", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const response = new Response("partial");
+    vi.spyOn(response, "text").mockRejectedValue(new DOMException("Aborted", "AbortError"));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    expect(await apiForm("/upload", new FormData())).toMatchObject({
+      ok: false,
+      error: { code: "NETWORK_ERROR" },
+    });
   });
 });
 

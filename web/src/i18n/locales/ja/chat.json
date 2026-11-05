@@ -993,6 +993,7 @@
   "voiceSecretaryTranscriptEmpty": "このドキュメントの文書モードの文字起こしがここに表示されます。",
   "voiceSecretaryTranscriptNeedsDocument": "ドキュメントを選択または作成すると、文字起こしを表示できます。",
   "sendResultUnknown": "メッセージが届いたか確認できません。再送する前に会話を確認してください。",
+  "stopUploadWaiting": "アップロードの待機を中止",
   "voiceSecretaryTypedRequest": "テキストでの依頼",
   "voiceSecretaryAskDocument": "保存済み文書について質問",
   "voiceSecretaryUpdateDocument": "文書を更新",

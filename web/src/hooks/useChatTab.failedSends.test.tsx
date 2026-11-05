@@ -385,6 +385,78 @@ it("does not replace a new draft when an earlier ordinary send fails", async () 
   expect(leavingIsBlocked()).toBe(false);
 });
 
+it("stops waiting for an upload, keeps a newer draft and retries the original with its ID", async () => {
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:upload");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  vi.mocked(api.sendMessage).mockImplementationOnce(
+    (_group, _text, _to, _files, _mode, _id, _refs, signal) =>
+      new Promise((resolve) => signal?.addEventListener("abort", () => resolve(failed))),
+  );
+  const file = new File(["original"], "original.txt");
+  await act(async () => {
+    useComposerStore.getState().setComposerText("original message");
+    useComposerStore.getState().setComposerFiles([file]);
+  });
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = chat.sendMessage();
+    await Promise.resolve();
+  });
+  expect(chat.uploadInFlight).toBe(true);
+  const firstId = vi.mocked(api.sendMessage).mock.calls[0][5];
+  await act(async () => useComposerStore.getState().setComposerText("new draft"));
+  await act(async () => {
+    chat.stopUploadWaiting();
+    await pending;
+  });
+  expect(chat.uploadInFlight).toBe(false);
+  expect(chat.sendInFlight).toBe(false);
+  expect(useUIStore.getState().errorMsg).toBe("sendResultUnknown");
+  expect(useComposerStore.getState().composerText).toBe("new draft");
+  const saved = useComposerStore.getState().failedSendsByGroup["g-a"][0];
+  expect(saved.id).toBe(firstId);
+  expect(saved.composerFiles).toEqual([file]);
+
+  await act(async () => useComposerStore.getState().clearComposer());
+  await act(async () =>
+    expect(useComposerStore.getState().restoreFailedSend("g-a", saved.id)).toBe(true),
+  );
+  vi.mocked(api.sendMessage).mockResolvedValueOnce({ ok: true, result: {} });
+  await act(async () => chat.sendMessage());
+  expect(vi.mocked(api.sendMessage).mock.calls[1][5]).toBe(firstId);
+  vi.restoreAllMocks();
+});
+
+it("stops a cross-Group upload without changing its destination or retry ID", async () => {
+  vi.mocked(api.sendCrossGroupMessage).mockImplementationOnce(
+    (_source, _dest, _text, _to, _mode, _files, options) =>
+      new Promise((resolve) => options?.signal?.addEventListener("abort", () => resolve(failed))),
+  );
+  const file = new File(["file"], "file.txt");
+  await act(async () => {
+    useComposerStore.getState().setDestGroupId("g-b");
+    useComposerStore.getState().setComposerText("message");
+    useComposerStore.getState().setComposerFiles([file]);
+  });
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = chat.sendMessage();
+    await Promise.resolve();
+  });
+  const firstId = vi.mocked(api.sendCrossGroupMessage).mock.calls[0][6]?.clientId;
+  await act(async () => {
+    chat.stopUploadWaiting();
+    await pending;
+  });
+  expect(useUIStore.getState().errorMsg).toBe("sendResultUnknown");
+  expect(useComposerStore.getState().destGroupId).toBe("g-b");
+  expect(useComposerStore.getState().composerFiles).toEqual([file]);
+  vi.mocked(api.sendCrossGroupMessage).mockResolvedValueOnce({ ok: true, result: {} });
+  await act(async () => chat.sendMessage());
+  expect(vi.mocked(api.sendCrossGroupMessage).mock.calls[1][1]).toBe("g-b");
+  expect(vi.mocked(api.sendCrossGroupMessage).mock.calls[1][6]?.clientId).toBe(firstId);
+});
+
 it("keeps a newly attached file when an earlier send fails and the text is still empty", async () => {
   const finish = delayedSend();
   const attachment = new File(["new file"], "draft.txt", { type: "text/plain" });

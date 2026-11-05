@@ -62,6 +62,12 @@ label and tooltip. Unsupported or unreadable images fall back to a filename chip
 as do ordinary files. The attachment area scrolls when needed and local preview
 URLs are released when a file is replaced or removed.
 
+While a message with attachments is uploading, a stop button appears next to
+**Send**. It ends the wait and keeps your draft: it returns to an empty composer,
+or waits to be restored if you have started a new one. It does not recall the
+message, which may already have arrived, so check the conversation before sending
+it again.
+
 On wider screens, an empty, unfocused composer cycles through four localized typing hints for tasks,
 Skills (`/` and `/install`), agents (`@`), and Groups (`#`). Focusing the composer
 pauses the hint; any draft text hides it, and a suggested reply takes precedence.

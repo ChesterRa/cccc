@@ -783,6 +783,7 @@ export async function sendMessage(
   messageMode: MessageMode = "send",
   clientId = "",
   refs?: MessageRef[],
+  signal?: AbortSignal,
 ) {
   if (files && files.length > 0) {
     const tooLarge = attachmentLimitError(files);
@@ -796,7 +797,7 @@ export async function sendMessage(
     if (clientId) form.append("client_id", clientId);
     if (refs && refs.length > 0) form.append("refs_json", JSON.stringify(refs));
     for (const file of files) form.append("files", file);
-    return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/send_upload`, form);
+    return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/send_upload`, form, { signal });
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/send`, {
     method: "POST",
@@ -885,6 +886,7 @@ export async function replyMessage(
   refs?: MessageRef[],
   quoteText = "",
   messageMode: "send" | "mail" = "send",
+  signal?: AbortSignal,
 ) {
   if (files && files.length > 0) {
     const tooLarge = attachmentLimitError(files);
@@ -899,7 +901,7 @@ export async function replyMessage(
     if (clientId) form.append("client_id", clientId);
     if (refs && refs.length > 0) form.append("refs_json", JSON.stringify(refs));
     for (const file of files) form.append("files", file);
-    return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/reply_upload`, form);
+    return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/reply_upload`, form, { signal });
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/reply`, {
     method: "POST",
@@ -972,6 +974,7 @@ export async function sendCrossGroupMessage(
     quoteText?: string;
     clientId?: string;
     remoteReplyToEventId?: string;
+    signal?: AbortSignal;
   },
 ) {
   const replyMetadata = {
@@ -994,7 +997,9 @@ export async function sendCrossGroupMessage(
     form.append("message_mode", messageMode);
     for (const [key, value] of Object.entries(replyMetadata)) form.append(key, value);
     for (const file of files) form.append("files", file);
-    return apiForm(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_upload`, form);
+    return apiForm(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_upload`, form, {
+      signal: options?.signal,
+    });
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group`, {
     method: "POST",

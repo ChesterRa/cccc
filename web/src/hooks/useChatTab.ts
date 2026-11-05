@@ -299,6 +299,12 @@ export function useChatTab({
   const removeOutbox = useChatOutboxStore((s) => s.remove);
   const sendInFlightRef = useRef(false);
   const [sendInFlight, setSendInFlight] = useState(false);
+  const uploadAbortRef = useRef<AbortController | null>(null);
+  const [uploadInFlight, setUploadInFlight] = useState(false);
+  const stopUploadWaiting = useCallback(() => {
+    uploadAbortRef.current?.abort();
+    setUploadInFlight(false);
+  }, []);
 
   // ============ Computed Values ============
 
@@ -1249,12 +1255,15 @@ export function useChatTab({
     }
 
     const finishPageWork = beginPendingPageWork();
+    const uploadController = composerFilesSnapshot.length > 0 ? new AbortController() : null;
     let afterClear: ReturnType<typeof applyImmediateComposerFeedback> | undefined;
     let successfulSendCount = 0;
     try {
       afterClear = applyImmediateComposerFeedback(shouldLockBottomAfterSend && sentMessageVisible);
       sendInFlightRef.current = true;
       setSendInFlight(true);
+      uploadAbortRef.current = uploadController;
+      setUploadInFlight(!!uploadController);
       const dispatched = await dispatchPreparedMessage({
         selectedGroupId,
         text: txt,
@@ -1269,6 +1278,7 @@ export function useChatTab({
         remoteReplyTo: remoteReplyDstTo,
         sendPlanTargets,
         sendsCrossGroup,
+        uploadSignal: uploadController?.signal,
       });
       const resp = dispatched.response;
       successfulSendCount = dispatched.successfulSendCount;
@@ -1359,6 +1369,8 @@ export function useChatTab({
       if (shouldRestoreComposer) restoreFailedSendComposerState(failedSnapshot, afterClear);
       showError(describeSendFailure(originGroupId, message));
     } finally {
+      uploadAbortRef.current = null;
+      setUploadInFlight(false);
       sendInFlightRef.current = false;
       setSendInFlight(false);
       finishPageWork();
@@ -1449,6 +1461,8 @@ export function useChatTab({
     // UI state
     busy,
     sendInFlight,
+    uploadInFlight,
+    stopUploadWaiting,
     showScrollButton,
     chatUnreadCount,
     sendScrollRequest,

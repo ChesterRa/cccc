@@ -81,3 +81,39 @@ it("switches the single send label without sending and preserves permission gate
     host.remove();
   }
 });
+
+it("offers a stop control only while an attachment upload can be stopped", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const stop = vi.fn();
+  const render = (onStopUploadWaiting?: () => void) => (
+    <ComposerSendControl
+      mode="send"
+      options={[{ key: "send", label: "Send", description: "Send now" }]}
+      open={false}
+      onOpenChange={() => {}}
+      onModeChange={() => {}}
+      onSend={() => {}}
+      onStopUploadWaiting={onStopUploadWaiting}
+      busy
+      canSend={false}
+      modeDisabled
+      requestReplyReady
+      title="Send"
+    />
+  );
+  try {
+    await act(async () => root.render(render()));
+    expect(host.querySelector('button[aria-label="stopUploadWaiting"]')).toBeNull();
+    await act(async () => root.render(render(stop)));
+    const button = host.querySelector<HTMLButtonElement>('button[aria-label="stopUploadWaiting"]')!;
+    expect(button.title).toBe("stopUploadWaiting");
+    await act(async () => button.click());
+    expect(stop).toHaveBeenCalledOnce();
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
