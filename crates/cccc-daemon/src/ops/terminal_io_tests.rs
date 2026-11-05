@@ -7,7 +7,7 @@ use cccc_core::{GroupStore, HomeLayout};
 use cccc_runtime::LaunchSpec;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn pty_group(home: &HomeLayout, actor_id: &str) -> String {
     let store = GroupStore::new(home.clone()).expect("store");
@@ -49,10 +49,16 @@ fn write_preserves_standalone_carriage_return() {
         };
         assert!(write(&home, &request).is_ok());
     }
-    std::thread::sleep(Duration::from_millis(100));
-    let output = cccc_runtime::history(&group_id, actor_id, None, 1024)
-        .expect("history")
-        .data;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let output = loop {
+        let output = cccc_runtime::history(&group_id, actor_id, None, 1024)
+            .expect("history")
+            .data;
+        if output.contains("received:</model>") || Instant::now() >= deadline {
+            break output;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     assert!(output.contains("received:</model>"), "{output:?}");
     let _ = cccc_runtime::stop(&group_id, actor_id);
 }

@@ -96,11 +96,13 @@ else:
     root = pathlib.Path(configured) if configured is not None else pathlib.Path(os.environ.get("HOME") or os.environ["USERPROFILE"]) / ".claude"
     mode = (root / "mode").read_text()
     if "--bg" in sys.argv:
+        # Read consent before this launch is counted: a test may answer the
+        # next prompt as soon as it sees the count.
+        stage = confirmation_stage(root, mode)
         with (root / "launches").open("a") as log:
             log.write("resume\n" if "--resume" in sys.argv else "fresh\n")
         with (root / "launch_contexts").open("a") as log:
             log.write(json.dumps(launch_context(root)) + "\n")
-        stage = confirmation_stage(root, mode)
         if mode == "untrusted" or stage == "workspace":
             print("Workspace not trusted", file=sys.stderr)
             sys.exit(1)

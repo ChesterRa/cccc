@@ -156,6 +156,10 @@ fn explicit_start_replaces_an_orphaned_confirmation() {
     f.wait(|| f.config.join("prompt_stage").exists());
     super::input(&f, b"yes\r");
     f.wait(|| f.delivery_state(&event.id).as_deref() == Some("accepted"));
+    f.wait(|| {
+        std::fs::read_to_string(f.config.join("received"))
+            .is_ok_and(|text| text.contains("PENDING_TASK"))
+    });
     let received = std::fs::read_to_string(f.config.join("received")).expect("read delivery");
     assert_eq!(received.matches("PENDING_TASK").count(), 1);
 }
