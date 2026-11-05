@@ -127,17 +127,7 @@ pub(super) fn authorize_scope_mutation(
 }
 
 pub(super) fn apply_actor_startup_baseline(home: &HomeLayout, group: &GroupDoc, actor: &Actor) {
-    if cccc_core::actors::effective_role(group, &actor.id) == Some(ActorRole::Foreman) {
-        enable_startup_capabilities(
-            home,
-            &group.group_id,
-            &actor.id,
-            FOREMAN_STARTUP_CAPABILITIES.iter().copied(),
-            "actor",
-            3600,
-            "foreman role default",
-        );
-    }
+    apply_foreman_startup_baseline(home, group, actor);
     match super::actor_profile_runtime::capability_defaults(home, actor) {
         Ok(Some(defaults)) => enable_startup_capabilities(
             home,
@@ -165,6 +155,35 @@ pub(super) fn apply_actor_startup_baseline(home: &HomeLayout, group: &GroupDoc, 
         3600,
         "actor autoload",
     );
+}
+
+/// Native sessions own their startup, so only the Group role defaults apply.
+/// In particular, a managed member's old autoload must not start installers
+/// when it is switched to a native session.
+pub(super) fn apply_native_foreman_startup_baseline(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) {
+    if !actor.external_session_id.is_empty()
+        && !cccc_core::runtime_switches::has_pending(group, &actor.id)
+    {
+        apply_foreman_startup_baseline(home, group, actor);
+    }
+}
+
+fn apply_foreman_startup_baseline(home: &HomeLayout, group: &GroupDoc, actor: &Actor) {
+    if cccc_core::actors::effective_role(group, &actor.id) == Some(ActorRole::Foreman) {
+        enable_startup_capabilities(
+            home,
+            &group.group_id,
+            &actor.id,
+            FOREMAN_STARTUP_CAPABILITIES.iter().copied(),
+            "actor",
+            3600,
+            "foreman role default",
+        );
+    }
 }
 
 fn enable_startup_capabilities<'a>(

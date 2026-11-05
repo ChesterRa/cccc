@@ -123,6 +123,158 @@ fn pending_instruction_notice(fixture: &Fixture, group: &GroupDoc, actor: &Actor
 }
 
 #[test]
+fn native_foreman_gets_startup_capabilities_without_granting_its_peer() {
+    let fixture = Fixture::new();
+    fixture.attach();
+    let mut peer = fixture.source.clone();
+    peer.source_id = "codex:peer-fixture".into();
+    peer.native_session_id = "peer-fixture".into();
+    peer.runtime = LocalSessionRuntime::Codex;
+    peer.codex_can_receive = true;
+    native::write(&fixture.home, peer.clone()).expect("peer source");
+    let args = json!({
+        "source_ids": [fixture.source.source_id, peer.source_id],
+        "direct": true,
+    });
+    let first = conversations::create(
+        &fixture.home,
+        &req("local_session_conversation", args.clone()),
+    )
+    .expect("create");
+    let group = GroupStore::new(fixture.home.clone())
+        .expect("store")
+        .load(first["group_id"].as_str().expect("group"))
+        .expect("created group");
+    let foreman = &group.actors[0];
+    let peer = &group.actors[1];
+    let caps = cccc_core::capabilities::CapabilityStore::new(fixture.home.clone());
+    let enabled = |id: &str, actor: &Actor| {
+        caps.is_enabled_for(id, &group.group_id, &actor.id, "actor")
+            .expect("capability state")
+    };
+    for id in ["pack:group-runtime", "pack:diagnostics"] {
+        assert!(enabled(id, foreman), "foreman is missing {id}");
+        assert!(!enabled(id, peer), "peer unexpectedly received {id}");
+    }
+
+    // Reusing the same direct Group is not another start and must not undo an
+    // explicit choice; an explicit Start does apply the ordinary startup defaults.
+    caps.set_enabled_for(
+        "pack:diagnostics",
+        false,
+        &group.group_id,
+        &foreman.id,
+        "actor",
+        3600,
+    )
+    .expect("disable");
+    let reused = conversations::create(&fixture.home, &req("local_session_conversation", args))
+        .expect("reuse");
+    assert_eq!(reused["reused"], true);
+    heartbeat(
+        &fixture.home,
+        &req(
+            "local_session_receiver_heartbeat",
+            json!({"source_id":fixture.source.source_id,"connection_id":"fixture-receiver"}),
+        ),
+    )
+    .expect("heartbeat");
+    assert!(!enabled("pack:diagnostics", foreman));
+    // A dormant managed autoload is not a native-session startup instruction.
+    GroupStore::new(fixture.home.clone())
+        .expect("store")
+        .mutate(&group.group_id, |group| {
+            group.actors[0].capability_autoload = vec!["pack:space".into()];
+            Ok(())
+        })
+        .expect("stored autoload");
+    fixture.call(
+        "actor_start",
+        json!({"group_id":group.group_id,"actor_id":foreman.id,"by":"user"}),
+    );
+    assert!(enabled("pack:diagnostics", foreman));
+    assert!(!enabled("pack:space", foreman));
+}
+
+#[test]
+fn joining_a_running_group_loads_defaults_and_a_stopped_group_waits_for_start() {
+    for running in [true, false] {
+        let fixture = Fixture::new();
+        fixture.attach();
+        let store = GroupStore::new(fixture.home.clone()).expect("store");
+        let mut group = store.create("existing group", "").expect("group");
+        group.running = running;
+        group.state = if running {
+            GroupState::Active
+        } else {
+            GroupState::Stopped
+        };
+        store.save(&group).expect("group state");
+        fixture.call(
+            "local_session_join",
+            json!({"group_id":group.group_id,"source_ids":[fixture.source.source_id],"by":"user"}),
+        );
+        let group = store.load(&group.group_id).expect("joined group");
+        let actor_id = &group.actors[0].id;
+        let caps = cccc_core::capabilities::CapabilityStore::new(fixture.home.clone());
+        let enabled = |id| {
+            caps.is_enabled_for(id, &group.group_id, actor_id, "actor")
+                .expect("state")
+        };
+        assert_eq!(enabled("pack:group-runtime"), running);
+        assert_eq!(enabled("pack:diagnostics"), running);
+
+        if !running {
+            fixture.call(
+                "group_start",
+                json!({"group_id":group.group_id,"by":"user"}),
+            );
+            assert!(enabled("pack:group-runtime"));
+            assert!(enabled("pack:diagnostics"));
+        }
+    }
+}
+
+#[test]
+fn native_foreman_restore_keeps_a_user_blocked_pack_blocked() {
+    let fixture = Fixture::new();
+    let group = fixture.conversation();
+    let actor_id = &group.actors[0].id;
+    let caps = cccc_core::capabilities::CapabilityStore::new(fixture.home.clone());
+    caps.set_blocked_for(
+        "pack:diagnostics",
+        true,
+        &group.group_id,
+        "fixture",
+        "user",
+        0,
+    )
+    .expect("block");
+    assert!(
+        !caps
+            .is_enabled_for("pack:diagnostics", &group.group_id, actor_id, "actor")
+            .expect("state")
+    );
+
+    super::super::runtime_restore::restore_running(&fixture.home).expect("daemon restore");
+
+    assert!(
+        caps.blocked_for_group("pack:diagnostics", &group.group_id)
+            .expect("block state")
+            .is_some()
+    );
+    assert!(
+        !caps
+            .is_enabled_for("pack:diagnostics", &group.group_id, actor_id, "actor")
+            .expect("state")
+    );
+    assert!(
+        caps.is_enabled_for("pack:group-runtime", &group.group_id, actor_id, "actor")
+            .expect("state")
+    );
+}
+
+#[test]
 fn instruction_baseline_is_set_at_conversation_creation_and_survives_heartbeat() {
     let fixture = Fixture::new();
     let instructions = fixture._temp.path().join("AGENTS.md");

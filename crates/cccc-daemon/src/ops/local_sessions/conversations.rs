@@ -174,6 +174,7 @@ pub(super) fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     match result {
         Ok(group) => {
             super::record_group_instruction_baselines(home, &group);
+            initialize_added_foremen(home, &group, &group.actors);
             object(
                 json!({"group_id":group.group_id,"group":super::super::group_runtime::group(home, group),"reused":false}),
             )
@@ -222,7 +223,7 @@ pub(super) fn join(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     // scopes. Neither a new directory nor a new source changes Group defaults.
     let scopes = resolve_scopes(&sources, &group.scopes)?;
     let path = store.ledger_path(&group_id).map_err(OpError::io)?;
-    store
+    let added = store
         .mutate_with_rollback(
             &group_id,
             |group| {
@@ -247,9 +248,22 @@ pub(super) fn join(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::io)?;
     super::record_group_instruction_baselines(home, &group);
+    initialize_added_foremen(home, &group, &added);
     object(
         json!({"group_id":group_id,"group":super::super::group_runtime::group(home, group),"reused":false}),
     )
+}
+
+/// A newly joined native member participates immediately only in a running Group.
+fn initialize_added_foremen(home: &HomeLayout, group: &GroupDoc, added: &[Actor]) {
+    if !group.running || matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        return;
+    }
+    for added_actor in added {
+        if let Some(actor) = actors::find(group, &added_actor.id) {
+            super::super::capabilities::apply_native_foreman_startup_baseline(home, group, actor);
+        }
+    }
 }
 
 fn add_sources(

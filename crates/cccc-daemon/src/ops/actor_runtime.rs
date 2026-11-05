@@ -51,7 +51,7 @@ pub fn apply(
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("not_found", format!("actor not found: {actor_id}")))?;
     if !stored_actor.external_session_id.is_empty() {
-        return external_lifecycle(kind);
+        return apply_resolved(home, group, stored_actor, kind);
     }
     // Configuration may already name a different backend. Lifecycle ownership
     // comes from the registries, not from the next launch configuration.
@@ -85,7 +85,11 @@ pub(super) fn apply_resolved(
     kind: &str,
 ) -> Result<Option<SessionStatus>, OpError> {
     if !actor.external_session_id.is_empty() {
-        return external_lifecycle(kind);
+        let result = external_lifecycle(kind)?;
+        if matches!(kind, "actor.start" | "actor.restore") {
+            super::capabilities::apply_native_foreman_startup_baseline(home, group, actor);
+        }
+        return Ok(result);
     }
     let actor_id = &actor.id;
     if actor_id == "voice-secretary" || actor.internal_kind.as_deref() == Some("voice_secretary") {

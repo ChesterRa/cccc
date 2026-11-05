@@ -317,6 +317,29 @@ impl Fixture {
     }
 }
 
+#[test]
+fn native_foreman_defaults_wait_for_switch_completion() {
+    let fixture = Fixture::new();
+    fixture.mutate(|group| group.running = true);
+    let source = fixture.source("baseline", true);
+    let blocked = fixture.block_private_env_cleanup();
+    let result = fixture.switch(native_target(&source));
+    assert_eq!(result["completion"], "pending");
+    let caps = cccc_core::capabilities::CapabilityStore::new(fixture.home.clone());
+    let enabled = |id| {
+        caps.is_enabled_for(id, &fixture.group_id, "x", "actor")
+            .expect("state")
+    };
+    assert!(!enabled("pack:group-runtime"));
+    assert!(!enabled("pack:diagnostics"));
+
+    fixture.unblock(&blocked);
+    let response = fixture.request("actor_runtime_switch_complete", json!({"actor_id":"x"}));
+    assert!(response.ok, "completion: {:?}", response.error);
+    assert!(enabled("pack:group-runtime"));
+    assert!(enabled("pack:diagnostics"));
+}
+
 impl Drop for Fixture {
     fn drop(&mut self) {
         actor_delivery::shutdown_group(&self.group_id);

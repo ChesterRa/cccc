@@ -786,6 +786,9 @@ fn start_new_owner(
                 access_paused: true,
             };
         }
+        if group.running && !matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+            super::capabilities::apply_native_foreman_startup_baseline(home, group, actor);
+        }
         deliver_native(home, group, actor, notice);
         return StartReport::of(StartKind::Native);
     }
