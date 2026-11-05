@@ -3,15 +3,16 @@ import type { ITheme } from "@xterm/xterm";
 /**
  * Interactive terminal apps commonly render their own ANSI background blocks.
  * Keep the PTY canvas dark so those blocks and the surrounding xterm surface
- * always use the same color model, regardless of the dashboard theme.
+ * always use the same color model, regardless of the dashboard theme. Its ground is
+ * a neutral dark, a step deeper than the page in dark mode, so ANSI black stays legible.
  */
 export function getTerminalTheme(): ITheme {
   return {
-    background: "#0f172a",
+    background: "#181715",
     foreground: "#e2e8f0",
     cursor: "#e2e8f0",
-    cursorAccent: "#0f172a",
-    selectionBackground: "#334155",
+    cursorAccent: "#181715",
+    selectionBackground: "#3a3936",
     black: "#64748b",
     red: "#f87171",
     green: "#4ade80",

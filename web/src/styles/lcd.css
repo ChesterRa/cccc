@@ -63,38 +63,38 @@
 }
 
 /* Palette: light, then dark.
-   Light keeps the screen's grey-green (OKLCH hue ~123, chroma ~0.03). Its lightness was
-   screened with APCA Lc, which estimates perceived contrast on mid-tone grounds, with
-   WCAG 2 ratios as a floor and a review of the real page: body >= 85, secondary >= 75,
-   placeholder >= 60 and 4.5:1, control outlines >= 45 and 3:1, dividers >= 15. The
-   earlier #c6ceb8 gave body Lc 73. The panel, a step darker for menus and cards, costs
-   text about 5 Lc: placeholder and outline tones are dark enough to keep their floors on
-   it too, while body and secondary text keep Lc 80 and 70 there, enough for labels. */
+   Paper and ink, as on an e-reader: near-neutral with a trace of warmth (OKLCH hue ~95,
+   chroma <= 0.007), in place of the earlier grey-green, which read as an old LCD panel.
+   Lightness was screened with APCA Lc, which estimates perceived contrast on mid-tone
+   grounds, with WCAG 2 ratios as a floor and a review of the real page: body >= 85,
+   secondary >= 75, placeholder >= 60 and 4.5:1, control outlines >= 45 and 3:1, dividers
+   >= 15. The darkest ground text sits on, panel-2, costs text about 9 Lc: body and
+   secondary keep Lc 81 and 71 there, and placeholder tones stay above 4.5:1. */
 :root[data-ui-style="lcd"] {
-  --lcd-bg: #dae2cb;
-  --lcd-panel: #d1d9c1;
-  --lcd-panel-2: #c8d2b8;
-  --lcd-raised: #e2e9d5;
-  --lcd-plate: #f1f5e6;
+  --lcd-bg: #ebe9e5;
+  --lcd-panel: #e2e1dc;
+  --lcd-panel-2: #dad9d5;
+  --lcd-raised: #f1f0ec;
+  --lcd-plate: #faf8f4;
   /* Text on the plate, which stays light in both themes. */
-  --lcd-plate-ink: #3e4737;
-  --lcd-ink: #161a0d;
-  --lcd-ink-strong: #0e120c;
-  --lcd-dim: #3e4236;
-  --lcd-muted: #575b4f;
-  --lcd-rule: #bcc2b1;
-  --lcd-rule-strong: #767a6d;
+  --lcd-plate-ink: #454440;
+  --lcd-ink: #1f1e1b;
+  --lcd-ink-strong: #131310;
+  --lcd-dim: #43423f;
+  --lcd-muted: #5d5c58;
+  --lcd-rule: #cccac6;
+  --lcd-rule-strong: #7a7975;
   /* The line between messages. */
-  --lcd-sep: #bcc2b1;
+  --lcd-sep: #cccac6;
   --lcd-wait: #832c0d;
-  --lcd-on-wait: #eef0e6;
+  --lcd-on-wait: #f1f0ec;
   --lcd-danger: #7e2f18;
   --lcd-link: #164a63;
-  --lcd-sel-bg: #161a0d;
-  --lcd-sel-fg: #dae2cb;
-  --lcd-sel-soft: #c8d2b8;
-  --lcd-code-bg: #c9d3b9;
-  --lcd-overlay: rgba(14, 18, 12, 0.35);
+  --lcd-sel-bg: #1f1e1b;
+  --lcd-sel-fg: #ebe9e5;
+  --lcd-sel-soft: #dad9d5;
+  --lcd-code-bg: #dddcd8;
+  --lcd-overlay: rgba(19, 19, 16, 0.35);
   --lcd-font-cjk:
     "Noto Sans Mono CJK SC", "Noto Sans CJK SC", "PingFang SC", "Hiragino Sans", "Microsoft YaHei",
     "Yu Gothic", "Meiryo", monospace;
@@ -119,29 +119,30 @@
 }
 
 :root[data-ui-style="lcd"].dark {
-  --lcd-bg: #1d221d;
-  --lcd-panel: #262c26;
-  --lcd-panel-2: #29302a;
-  --lcd-raised: #232923;
-  --lcd-plate: #cdd3c4;
-  --lcd-ink: #d0d6c8;
-  --lcd-ink-strong: #e5eadd;
-  /* Ground and body stay as tuned; secondary text rises from Lc 48 to 60. */
-  --lcd-dim: #adb8ad;
-  --lcd-muted: #9ba69b;
-  --lcd-rule: #2e352e;
-  --lcd-rule-strong: #6e7764;
+  --lcd-bg: #21201e;
+  --lcd-panel: #2b2a27;
+  --lcd-panel-2: #2e2e2b;
+  --lcd-raised: #282724;
+  --lcd-plate: #d2d1cd;
+  --lcd-ink: #dad9d5;
+  --lcd-ink-strong: #ecebe7;
+  /* The same paper and ink, inverted: body Lc 81, secondary 65 and faint text 55, each
+     about 2.5 lower on panel-2. */
+  --lcd-dim: #bfbeba;
+  --lcd-muted: #adaca9;
+  --lcd-rule: #343330;
+  --lcd-rule-strong: #7d7c78;
   /* The dark rule all but vanishes on the screen; between messages the line takes
      the strong rule mixed 45% into the screen. */
-  --lcd-sep: #41483d;
+  --lcd-sep: #464543;
   --lcd-wait: #f2ae4c;
-  --lcd-on-wait: #1d221d;
+  --lcd-on-wait: #21201e;
   --lcd-danger: #ee9c80;
   --lcd-link: #86c4e2;
-  --lcd-sel-bg: #d0d6c8;
-  --lcd-sel-fg: #1d221d;
-  --lcd-sel-soft: #29302a;
-  --lcd-code-bg: #262c26;
+  --lcd-sel-bg: #dad9d5;
+  --lcd-sel-fg: #21201e;
+  --lcd-sel-soft: #2e2e2b;
+  --lcd-code-bg: #2b2a27;
   --lcd-overlay: rgba(0, 0, 0, 0.5);
 }
 
@@ -950,6 +951,19 @@
   border-color: var(--lcd-sel-bg);
   background-color: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);
+}
+
+/* A diagram sits on the code panel; its status lines read as secondary text. */
+:root[data-ui-style="lcd"] [data-lcd-scope] .mermaid-render-target {
+  background-color: transparent;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] .mermaid-status {
+  color: var(--lcd-dim);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] .mermaid-error {
+  color: var(--lcd-wait);
 }
 
 /* "Copied" is confirmed by its words, not by the classic green. */
