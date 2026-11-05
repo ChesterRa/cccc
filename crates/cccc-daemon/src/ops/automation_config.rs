@@ -513,12 +513,9 @@ fn caller_role(group: &GroupDoc, by: &str) -> Result<Option<ActorRole>, OpError>
         .ok_or_else(|| OpError::new("permission_denied", format!("unknown actor: {by}")))
 }
 
-/// What a saved change did, for its ledger event: the version step, which
-/// parts of the ruleset changed, and the ids of the rules it added, removed or
-/// modified. Rules are compared by id, so a rule that only moved because
-/// another was inserted or deleted is not modified. A caller can only change
-/// rules it is allowed to, so a peer's write records only its own reminders.
-/// Rule bodies and snippet text stay in the group document.
+/// What a saved change did, for its ledger event: the version step and which
+/// parts of the ruleset changed. Rule IDs, bodies and snippet text stay in the
+/// group document.
 fn change_data(before: &Map<String, Value>, after: &Map<String, Value>) -> Value {
     let version =
         |doc: &Map<String, Value>| doc.get("version").and_then(Value::as_u64).unwrap_or(1);
@@ -536,39 +533,10 @@ fn change_data(before: &Map<String, Value>, after: &Map<String, Value>) -> Value
         .into_iter()
         .filter(|key| part(before, key) != part(after, key))
         .collect::<Vec<_>>();
-    let by_id = |doc: &Map<String, Value>| {
-        part(doc, "rules")
-            .as_array()
-            .map(|rules| {
-                rules
-                    .iter()
-                    .filter_map(|rule| {
-                        let id = rule.get("id").and_then(Value::as_str)?;
-                        Some((id.to_owned(), rule.clone()))
-                    })
-                    .collect::<std::collections::BTreeMap<_, _>>()
-            })
-            .unwrap_or_default()
-    };
-    let (old, new) = (by_id(before), by_id(after));
-    let added = new
-        .keys()
-        .filter(|id| !old.contains_key(*id))
-        .collect::<Vec<_>>();
-    let removed = old
-        .keys()
-        .filter(|id| !new.contains_key(*id))
-        .collect::<Vec<_>>();
-    let modified = new
-        .iter()
-        .filter(|(id, rule)| old.get(*id).is_some_and(|previous| previous != *rule))
-        .map(|(id, _)| id)
-        .collect::<Vec<_>>();
     json!({
         "previous_version": version(before),
         "version": version(after),
         "changed": changed,
-        "rules": {"added": added, "removed": removed, "modified": modified},
     })
 }
 
