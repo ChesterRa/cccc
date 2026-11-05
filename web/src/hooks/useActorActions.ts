@@ -179,7 +179,11 @@ export function useActorActions(groupId: string) {
       try {
         const resp = await api.removeActor(groupId, actor.id);
         if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(
+            resp.error.code === "actor_browser_busy"
+              ? i18n.t("actors:runtimeSwitch.browserBusy")
+              : `${resp.error.code}: ${resp.error.message}`,
+          );
           return;
         }
         clearStreamingEventsForActor(actor.id, groupId);

@@ -25,6 +25,7 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     for actor in &old.actors {
         super::actor_switch::refuse_pending(home, &group_id, &actor.id)?;
     }
+    let browser_work = super::actor_runtime::hold_group_browser_work(home, &old)?;
     let was_active = active::get(home).map_err(OpError::io)?.as_deref() == Some(&group_id);
     let created = store.create(&old.title, &old.topic).map_err(OpError::io)?;
     let replacement = prepare_replacement(&store, &old, &created)
@@ -70,6 +71,8 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .map_err(OpError::io)?;
         super::actor_secrets::remove_group(home, &old.group_id)?;
         super::voice_secretary::purge_deleted_group(home, &old.group_id).map_err(OpError::io)?;
+        drop(browser_work);
+        cccc_core::web_model_connectors::remove_browser_work_locks(home, &old.group_id);
     }
     object(json!({
         "old_group_id":old.group_id,

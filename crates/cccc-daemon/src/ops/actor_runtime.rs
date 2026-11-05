@@ -9,6 +9,7 @@ use crate::ops::actor_profile_runtime;
 mod attributed_reap;
 mod confirmation;
 mod environment;
+mod owner;
 mod persistence;
 mod reconcile;
 pub(crate) mod terminal_history;
@@ -22,6 +23,10 @@ pub(super) use confirmation::{
 };
 #[cfg(test)]
 pub(super) use confirmation::{confirmation_required, require_restored_managed_actor};
+pub(crate) use owner::{
+    OwnerIdentity, OwnerState, RegisteredOwner, as_launched, delivery_owner, hold_browser_work,
+    hold_group_browser_work,
+};
 pub use persistence::persist_lifecycle;
 pub(crate) use reconcile::record_process_exit;
 pub use reconcile::{reap_exited, reconcile_exited};
@@ -128,6 +133,7 @@ pub(super) fn apply_resolved(
     }
     // Also retire a disconnected registration whose previous cleanup failed.
     stop_registered(group, actor_id)?;
+    persistence::adopt_profile_launch(home, group, actor)?;
     if kind == "actor.new_session" {
         // Pending trust recovery holds the start guard until its launch is
         // attached or discarded. Retire its ownership before removing the
@@ -232,7 +238,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     // Read before the launch: a change made while the runtime starts is then
     // reported instead of being taken as what it loaded.
     let instructions = super::instruction_files::Snapshot::read(&cwd);
-    let status = cccc_runtime::start_with_history(
+    let status = cccc_runtime::start_actor_with_history(
         LaunchSpec {
             group_id: group.group_id.clone(),
             actor_id: actor.id.clone(),
@@ -244,6 +250,10 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
             rows: 40,
         },
         history,
+        cccc_runtime::ActorLaunch {
+            runtime: actor.runtime,
+            submit: actor.submit,
+        },
     )
     .map_err(runtime_error)?;
     if let Some(snapshot) = instructions {
@@ -290,7 +300,21 @@ fn stop_registered(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionSta
 /// configuration names, and confirm each stopped. Returns whether one was
 /// running. Used when the runtime owner is replaced: an owner that cannot be
 /// confirmed stopped must keep the Actor.
-pub(super) fn stop_owner_confirmed(group: &GroupDoc, actor_id: &str) -> Result<bool, OpError> {
+pub(super) fn stop_owner_confirmed(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+) -> Result<bool, OpError> {
+    // A Web Model has no process to stop: its authority is what ends. Old
+    // credentials stop working here; cloud work already running does not.
+    super::dots_events::invalidate(home, group, actor_id)?;
+    super::grok_webhook::invalidate(home, group, actor_id)?;
+    cccc_core::web_model_connectors::interrupt_automatic_pairings(
+        home,
+        &group.group_id,
+        Some(actor_id),
+    )
+    .map_err(OpError::io)?;
     let was_running = super::local_headless::running(&group.group_id, actor_id)
         || super::deepseek_runtime::running(&group.group_id, actor_id)
         || cccc_runtime::status(&group.group_id, actor_id).is_ok_and(|status| status.running);
@@ -302,6 +326,12 @@ pub(super) fn stop_owner_confirmed(group: &GroupDoc, actor_id: &str) -> Result<b
 
 pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
     cccc_runtime::status(group_id, actor_id).ok()
+}
+
+/// Whether the Actor's own primary PTY is registered, running or kept after it
+/// exited. A saved runner of another kind applies only from the next launch.
+pub fn has_primary_pty(group_id: &str, actor_id: &str) -> bool {
+    status(group_id, actor_id).is_some_and(|status| status.launch.is_some())
 }
 
 #[must_use]

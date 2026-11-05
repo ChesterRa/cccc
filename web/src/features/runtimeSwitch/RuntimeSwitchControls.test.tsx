@@ -154,7 +154,12 @@ it("disables an occupied source and switches the selected session with confirmed
   const onCurrentSourceDirectory = vi.fn();
   mocks.switchActorRuntime.mockResolvedValue({
     ok: true,
-    result: { completion: "done", start: "native" },
+    result: {
+      completion: "done",
+      start: "native",
+      from: { runtime: "codex" },
+      to: { runtime: "codex" },
+    },
   });
   await render(false, undefined, onCurrentSourceDirectory);
   expect(onCurrentSourceDirectory).toHaveBeenCalledWith("/fixture");
@@ -238,6 +243,7 @@ it("does not switch after a failed attempt to save the current managed Profile",
   });
   await chooseNew();
   await act(async () => button("runtimeSwitch.switch").click());
+  expect(document.body.textContent).toContain("runtimeSwitch.profileHint");
   await act(async () => button("runtimeSwitch.saveProfile").click());
   expect(button("runtimeSwitch.confirm").disabled).toBe(true);
   expect(document.body.textContent).toContain("runtimeSwitch.profileSaveFailed");
@@ -301,11 +307,45 @@ it("keeps the linked Profile and does not offer to duplicate it on a native swit
   expect(saveProfile).not.toHaveBeenCalled();
 });
 
+it("warns that Web Model secrets will be deleted without suggesting an unavailable backup", async () => {
+  const webActor = { ...actor, external_session_id: "", runtime: "web_model" };
+  await act(async () => {
+    root.render(
+      <RuntimeSwitchControls
+        groupId="g"
+        actor={webActor}
+        targetKind="native"
+        isDark={false}
+        dirty={false}
+        disabled={false}
+        runtimes={[]}
+        profiles={[]}
+        profilesBusy={false}
+        onSaveCurrentProfile={vi.fn().mockResolvedValue(true)}
+      />,
+    );
+  });
+  await chooseNew();
+  await act(async () => button("runtimeSwitch.switch").click());
+  expect(document.body.textContent).toContain("runtimeSwitch.clearWebConfig");
+  expect(document.body.textContent).not.toContain("runtimeSwitch.profileHint");
+  expect(
+    [...document.querySelectorAll("button")].some(
+      (item) => item.textContent === "runtimeSwitch.saveProfile",
+    ),
+  ).toBe(false);
+});
+
 it("can switch to a stopped managed configuration without sending private values", async () => {
   useGroupStore.setState({ runtimeDetectionStatus: "ready" });
   mocks.switchActorRuntime.mockResolvedValue({
     ok: true,
-    result: { completion: "done", start: "stopped" },
+    result: {
+      completion: "done",
+      start: "stopped",
+      from: { runtime: "codex" },
+      to: { runtime: "codex" },
+    },
   });
   await act(async () => {
     root.render(
@@ -344,11 +384,80 @@ it("can switch to a stopped managed configuration without sending private values
   );
 });
 
+it("switches a native member to Web Model and offers connection setup", async () => {
+  const openSetup = vi.fn();
+  mocks.switchActorRuntime.mockResolvedValue({
+    ok: true,
+    result: {
+      completion: "done",
+      start: "started",
+      from: { runtime: "codex" },
+      to: { runtime: "web_model" },
+    },
+  });
+  await act(async () =>
+    root.render(
+      <RuntimeSwitchControls
+        groupId="g"
+        actor={actor}
+        targetKind="web"
+        isDark={false}
+        dirty={false}
+        disabled={false}
+        runtimes={[]}
+        profiles={[]}
+        profilesBusy={false}
+        onOpenWebSetup={openSetup}
+      />,
+    ),
+  );
+  await act(async () => button("runtimeSwitch.switch").click());
+  expect(document.body.textContent).toContain("runtimeSwitch.oldNative");
+  await act(async () => button("runtimeSwitch.confirm").click());
+  expect(mocks.switchActorRuntime).toHaveBeenCalledWith(
+    "g",
+    "old",
+    expect.objectContaining({
+      target: { kind: "managed", patch: { runtime: "web_model" }, start: true },
+    }),
+  );
+  expect(host.textContent).toContain("runtimeSwitch.webConnectionRequired");
+  await act(async () => button("runtimeSwitch.openWebSetup").click());
+  expect(openSetup).toHaveBeenCalledOnce();
+});
+
+it("warns about a previous Web conversation before switching to native", async () => {
+  await act(async () =>
+    root.render(
+      <RuntimeSwitchControls
+        groupId="g"
+        actor={{ ...actor, external_session_id: "", runtime: "web_model" }}
+        targetKind="native"
+        isDark={false}
+        dirty={false}
+        disabled={false}
+        runtimes={[]}
+        profiles={[]}
+        profilesBusy={false}
+      />,
+    ),
+  );
+  await chooseNew();
+  await act(async () => button("runtimeSwitch.switch").click());
+  expect(document.body.textContent).toContain("runtimeSwitch.oldWeb");
+  expect(document.body.textContent).not.toContain("runtimeSwitch.oldManaged");
+});
+
 it("keeps a paused native member stopped when switching to managed", async () => {
   useGroupStore.setState({ runtimeDetectionStatus: "ready" });
   mocks.switchActorRuntime.mockResolvedValue({
     ok: true,
-    result: { completion: "done", start: "stopped" },
+    result: {
+      completion: "done",
+      start: "stopped",
+      from: { runtime: "codex" },
+      to: { runtime: "codex" },
+    },
   });
   await act(async () => {
     root.render(
@@ -426,7 +535,12 @@ it("confirms the custom runtime after switching back from a Profile draft", asyn
   };
   mocks.switchActorRuntime.mockResolvedValue({
     ok: true,
-    result: { completion: "done", start: "stopped" },
+    result: {
+      completion: "done",
+      start: "stopped",
+      from: { runtime: "codex" },
+      to: { runtime: "codex" },
+    },
   });
   await act(async () =>
     root.render(

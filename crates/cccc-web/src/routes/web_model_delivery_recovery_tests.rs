@@ -9,6 +9,34 @@ use cccc_core::{GroupStore, HomeLayout, ledger};
 use std::sync::{Arc, Mutex};
 
 #[test]
+fn browser_work_and_a_switch_exclude_each_other_without_waiting() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let path = cccc_core::web_model_connectors::browser_work_lock(&home, "group", "actor");
+    let lock = || cccc_core::fs::try_exclusive_lock(&path).expect("lock");
+
+    let switch = lock().expect("free");
+    assert!(
+        browser_work_in(&home, "group", "actor")
+            .expect("work")
+            .is_none()
+    );
+    drop(switch);
+
+    let work = browser_work_in(&home, "group", "actor")
+        .expect("work")
+        .expect("free");
+    assert!(lock().is_none());
+    assert!(
+        browser_work_in(&home, "group", "actor")
+            .expect("work")
+            .is_none()
+    );
+    drop(work);
+    assert!(lock().is_some());
+}
+
+#[test]
 fn rejected_session_guards_do_not_release_the_active_owner() {
     for registry in [&WORKERS, &IN_FLIGHT] {
         let key = "guard-contention-regression".to_owned();

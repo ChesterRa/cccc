@@ -222,6 +222,56 @@ async fn exact_history_read_returns_the_delivered_text_once_without_dropping_met
     let _ = daemon_task.await;
 }
 
+#[tokio::test]
+async fn a_tool_caller_cannot_take_back_a_batch_the_browser_staged() {
+    let _guard = daemon_fixture_guard().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("staged batch", "").expect("group");
+    let mut actor = cccc_contracts::Actor::new("peer1");
+    actor.runtime = cccc_contracts::ActorRuntime::WebModel;
+    actor.normalize_runtime_constraints();
+    cccc_core::actors::add(&mut group, actor).expect("actor");
+    group.running = true;
+    store.save(&group).expect("save group");
+    let daemon_home = home.clone();
+    let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = DaemonClient::new(home.clone());
+    wait_for_daemon(&client).await;
+    send_message(&client, &group.group_id, "staged", "send").await;
+    let args = json!({
+        "group_id":group.group_id,"actor_id":"peer1","by":"peer1",
+        "transport":"web_model_browser"
+    });
+    let staged = daemon_call(&client, "runtime_wait_next_turn", args.clone()).await;
+    let turn_id = staged["turn"]["turn_id"].clone();
+    assert!(turn_id.is_string(), "{staged}");
+
+    let taken = mcp_call(
+        &home,
+        &group.group_id,
+        1,
+        "cccc_runtime_wait_next_turn",
+        json!({"transport":"web_model_browser","resume_turn_id":turn_id}),
+    )
+    .await;
+    assert_eq!(
+        taken["result"]["structuredContent"]["status"], "turn_in_progress",
+        "{taken}"
+    );
+
+    // The browser itself still takes it back.
+    let mut resume = args;
+    resume["resume_turn_id"] = turn_id;
+    let resumed = daemon_call(&client, "runtime_wait_next_turn", resume).await;
+    assert_eq!(resumed["status"], "work_available", "{resumed}");
+
+    daemon_task.abort();
+    let _ = daemon_task.await;
+}
+
 async fn daemon_call(client: &DaemonClient, op: &str, args: Value) -> Value {
     let response = client
         .call(&DaemonRequest {

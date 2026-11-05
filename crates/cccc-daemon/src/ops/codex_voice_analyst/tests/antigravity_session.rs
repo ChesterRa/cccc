@@ -525,6 +525,7 @@ fn antigravity_supervisor_keeps_actual_acp_surface_after_a_pending_mode_edit() {
         actor: pending.clone(),
         event,
         claimed: true,
+        transport: "managed_session",
     };
     assert!(
         matches!(

@@ -193,6 +193,7 @@ mod tests {
             actor: actor.clone(),
             event: notice.clone(),
             claimed: true,
+            transport: "pty",
         };
         if let Ok(mut pending) = in_flight().lock() {
             pending.insert((group.group_id.clone(), actor.id.clone(), notice.id.clone()));

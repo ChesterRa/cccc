@@ -667,6 +667,22 @@ fn retire(home: &HomeLayout, group: &str, actor: Option<&str>) -> io::Result<Vec
         Ok(retired)
     })
 }
+/// Held by a Web process for one Actor's browser work, from its claim to its
+/// last write, and by a runtime switch. Neither waits, so the work falls wholly
+/// before or after the switch, whichever process each runs in.
+pub fn browser_work_lock(home: &HomeLayout, group: &str, actor: &str) -> std::path::PathBuf {
+    browser_work_locks(home, group).join(format!("{actor}.lock"))
+}
+
+fn browser_work_locks(home: &HomeLayout, group: &str) -> std::path::PathBuf {
+    home.root().join("state/web_model_browser_work").join(group)
+}
+
+/// Best effort, once a Group is gone: nothing depends on these empty files.
+pub fn remove_browser_work_locks(home: &HomeLayout, group: &str) {
+    let _ = std::fs::remove_dir_all(browser_work_locks(home, group));
+}
+
 pub fn retire_actor(home: &HomeLayout, group: &str, actor: &str) -> io::Result<Vec<Value>> {
     retire(home, group, Some(actor))
 }

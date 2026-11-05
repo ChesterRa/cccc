@@ -285,6 +285,22 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     };
     final_preview.role = None;
     final_preview.normalize_runtime_constraints();
+    // A Web Model's route is its authority, so saving a new one ends it. A turn
+    // that route still carries is settled by a runtime switch, not by a save.
+    let route_changes = web_model_route_changes(&original_actor, &final_preview);
+    let _browser_work = route_changes
+        .then(|| actor_runtime::hold_browser_work(home, &group_id, &actor_id))
+        .transpose()?;
+    if route_changes
+        && super::runtime_state::actor_state(home, &group_id, &actor_id)?["active_turn_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    {
+        return Err(OpError::new(
+            "delivery_unresolved",
+            "This member has an unfinished turn. Wait for it to finish, or switch its runtime.",
+        ));
+    }
     let original_secrets = if profile_action == "convert_to_custom" {
         Some(actor_secrets::values(home, &group_id, &actor_id)?)
     } else {
@@ -427,12 +443,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             effect = ActorUpdateEffect::Started;
         }
     }
-    let retired_routes = if original_actor.runtime.web_model_provider()
-        != actor.runtime.web_model_provider()
-        || (original_actor.runtime != actor.runtime
-            && (original_actor.runtime == ActorRuntime::ChatgptDots
-                || actor.runtime == ActorRuntime::ChatgptDots))
-    {
+    let retired_routes = if route_changes {
         match web_model_connectors::retire_actor(home, &group_id, &actor_id) {
             Ok(routes) => routes,
             Err(error) => {
@@ -594,6 +605,7 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .iter()
         .position(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
+    let _browser_work = actor_runtime::hold_browser_work(home, &group_id, &actor_id)?;
     let original_actor = group.actors[index].clone();
     let original_web_model_target = web_model_target(&group, &actor_id).cloned();
     let original_web_model_delivery_preference =
@@ -903,6 +915,15 @@ fn remove_persisted_headless_state(
     }
 }
 
+/// Whether a runtime change leaves the Actor's Web Model route pointing at the
+/// wrong provider or delivery kind.
+pub(super) fn web_model_route_changes(before: &Actor, after: &Actor) -> bool {
+    before.runtime.web_model_provider() != after.runtime.web_model_provider()
+        || (before.runtime != after.runtime
+            && (before.runtime == ActorRuntime::ChatgptDots
+                || after.runtime == ActorRuntime::ChatgptDots))
+}
+
 pub(super) fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
     lifecycle_leading(home, request, kind, None)
 }
@@ -972,8 +993,14 @@ pub(super) fn lifecycle_leading(
         None
     };
     if kind != "actor.start" || !runtime_was_running || retry_claude_trust {
+        // A restart replaces the session: what it may hold is not sent again.
+        let reason = if matches!(kind, "actor.restart" | "actor.new_session") {
+            actor_delivery::ShutdownReason::Replace
+        } else {
+            actor_delivery::ShutdownReason::Stop
+        };
         super::codex_voice_analyst::lifecycle_timing::run_sync("actor.delivery_shutdown", || {
-            actor_delivery::shutdown_actor(&group_id, &actor_id);
+            actor_delivery::shutdown_actor_for(&group_id, &actor_id, reason);
             Ok(())
         })
         .map_err(OpError::io)?;
@@ -1076,8 +1103,10 @@ pub(super) fn lifecycle_leading(
     if enabled {
         match GroupStore::new(home.clone()).and_then(|store| store.load(&group_id)) {
             Ok(current_group) => {
+                // A member that pulls claims it with the backlog, in ledger order.
                 if let Some(leading) = leading
                     && let Some(actor) = actors::find(&current_group, &actor_id)
+                    && actor_delivery::receives_push(&current_group, actor)
                 {
                     actor_delivery::dispatch_to(
                         home,

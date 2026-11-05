@@ -880,7 +880,11 @@ export function AppModals({
     try {
       const resp = await api.resetGroup(oldGroupId);
       if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
+        showError(
+          resp.error.code === "actor_browser_busy"
+            ? t("runtimeSwitch.browserBusy")
+            : `${resp.error.code}: ${resp.error.message}`,
+        );
         return;
       }
       const result = resp.result || {};

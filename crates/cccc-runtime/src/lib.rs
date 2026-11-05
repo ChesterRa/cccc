@@ -67,10 +67,11 @@ pub use history_access::{
     history_since, last_output, retained_history, retained_history_tail,
 };
 pub use manager::{
-    reap, resize, start, start_with_history, start_with_history_isolated_environment, status, stop,
-    stop_all, stop_if_started_at, submit, submit_interruptible,
-    submit_sequence_for_session_interruptible, submit_sequence_interruptible, wait_for_input_ready,
-    write,
+    PtyHandoff, PtyHandoffReason, reap, resize, start, start_actor_with_history,
+    start_with_history, start_with_history_isolated_environment, status, stop, stop_all,
+    stop_if_started_at, submit, submit_interruptible, submit_sequence_for_session_interruptible,
+    submit_sequence_for_session_with_evidence_interruptible, submit_sequence_interruptible,
+    wait_for_input_ready, write,
 };
 pub use output::HistoryPage;
 pub use path_form::compatible_path;
@@ -80,7 +81,7 @@ pub use process_tree::{
 };
 #[cfg(unix)]
 pub use process_tree::{prepare_web_process_guard, protect_owned_process_groups};
-pub use session::{LaunchSpec, SessionStatus};
+pub use session::{ActorLaunch, LaunchSpec, SessionStatus};
 pub use session_history::OutputObservation;
 pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput, TerminalOutput};
 pub use terminal_initial_output::{TerminalInitialOutput, TerminalInitialOutputKind};

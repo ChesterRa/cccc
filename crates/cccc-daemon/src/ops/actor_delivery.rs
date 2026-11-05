@@ -59,6 +59,9 @@ pub(super) struct DeliveryJob {
     pub event: Event,
     /// Native waiting work owns only its in-memory slot until handoff is ready.
     pub claimed: bool,
+    /// The channel that claimed this work. Its outcome is recorded here, even
+    /// if the Actor's owner changed since.
+    pub transport: &'static str,
 }
 
 /// A delivery outcome whose ledger record is still pending. It holds the
@@ -212,14 +215,13 @@ pub(super) fn complete_job(job: &DeliveryJob) {
 }
 
 pub(super) fn finish_job(job: &DeliveryJob, outcome: CompletedDelivery) {
-    let transport = delivery_transport(&job.home, &job.group, &job.actor);
     match crate::ops::runtime_delivery::append_state(
         &job.home,
         &job.group.group_id,
         &job.actor.id,
         &job.actor.created_at,
         &job.event.id,
-        transport,
+        job.transport,
         outcome.ledger_outcome(),
     ) {
         Ok(_) => release_in_flight(job),
@@ -234,7 +236,7 @@ pub(super) fn finish_job(job: &DeliveryJob, outcome: CompletedDelivery) {
                 actor_id: job.actor.id.clone(),
                 actor_created_at: job.actor.created_at.clone(),
                 event_id: job.event.id.clone(),
-                transport: transport.into(),
+                transport: job.transport.into(),
                 outcome,
             });
         }
@@ -264,7 +266,7 @@ fn fail_job(job: &DeliveryJob, reason: &str) {
         &job.actor.id,
         &job.actor.created_at,
         &job.event.id,
-        delivery_transport(&job.home, &job.group, &job.actor),
+        job.transport,
         crate::ops::runtime_delivery::DeliveryOutcome::Failed(reason),
     ) {
         tracing::warn!(
@@ -281,14 +283,13 @@ fn fail_job(job: &DeliveryJob, reason: &str) {
 /// the submission, and the event keeps its in-flight slot meanwhile.
 pub(super) fn withdraw_jobs(jobs: &[DeliveryJob], reason: &str) {
     for job in jobs {
-        let transport = delivery_transport(&job.home, &job.group, &job.actor);
         match crate::ops::runtime_delivery::append_state(
             &job.home,
             &job.group.group_id,
             &job.actor.id,
             &job.actor.created_at,
             &job.event.id,
-            transport,
+            job.transport,
             crate::ops::runtime_delivery::DeliveryOutcome::Withdrawn(reason),
         ) {
             Ok(_) => release_in_flight(job),
@@ -299,7 +300,7 @@ pub(super) fn withdraw_jobs(jobs: &[DeliveryJob], reason: &str) {
                     actor_id: job.actor.id.clone(),
                     actor_created_at: job.actor.created_at.clone(),
                     event_id: job.event.id.clone(),
-                    transport: transport.into(),
+                    transport: job.transport.into(),
                     outcome: CompletedDelivery::Withdrawn(reason.into()),
                 });
             }
@@ -333,16 +334,26 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
     let targets: Vec<_> = group
         .actors
         .iter()
-        .filter(|actor| {
-            (!actor.external_session_id.is_empty()
-                || !crate::ops::actor_runtime::is_structured(actor)
-                || crate::ops::local_headless::supports(actor)
-                || actor.runtime == ActorRuntime::Deepseek)
-                && event_targets_actor(group, event, &actor.id)
-        })
+        .filter(|actor| event_targets_actor(group, event, &actor.id) && receives_push(group, actor))
         .cloned()
         .collect();
     dispatch_to(home, group, event, &targets, false)
+}
+
+/// Whether work reaches this Actor by push rather than by its own pull. What
+/// runs now decides; saved settings apply when nothing does.
+pub(super) fn receives_push(group: &GroupDoc, actor: &Actor) -> bool {
+    !actor.external_session_id.is_empty()
+        || !crate::ops::actor_runtime::is_structured(actor)
+        || crate::ops::local_headless::supports(actor)
+        || actor.runtime == ActorRuntime::Deepseek
+        || owner_running(group, actor)
+}
+
+fn owner_running(group: &GroupDoc, actor: &Actor) -> bool {
+    use crate::ops::actor_runtime::{OwnerState, delivery_owner};
+    delivery_owner(&group.group_id, &actor.id)
+        .is_ok_and(|owner| owner.is_some_and(|owner| owner.state == OwnerState::Running))
 }
 
 pub(super) fn event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
@@ -368,16 +379,21 @@ pub fn dispatch_to(
     targets: &[Actor],
     force_ambiguous: bool,
 ) -> DispatchReport {
-    dispatch_to_inner(home, group, event, targets, force_ambiguous, false)
+    dispatch_to_inner(home, group, event, targets, force_ambiguous, None)
 }
 
+/// Offer work its caller already claimed, each on the channel that claimed it.
 pub fn dispatch_preclaimed(
     home: &HomeLayout,
     group: &GroupDoc,
     event: &Event,
-    targets: &[Actor],
+    claims: &[(&Actor, &'static str)],
 ) -> DispatchReport {
-    dispatch_to_inner(home, group, event, targets, false, true)
+    let targets = claims
+        .iter()
+        .map(|(actor, _)| (*actor).clone())
+        .collect::<Vec<_>>();
+    dispatch_to_inner(home, group, event, &targets, false, Some(claims))
 }
 
 fn dispatch_to_inner(
@@ -386,13 +402,14 @@ fn dispatch_to_inner(
     event: &Event,
     targets: &[Actor],
     force_ambiguous: bool,
-    preclaimed: bool,
+    claims: Option<&[(&Actor, &'static str)]>,
 ) -> DispatchReport {
     if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
         return report(targets.len(), 0, 0);
     }
     let mut queued = 0;
     let mut online = 0;
+    let preclaimed = claims.is_some();
     for actor in targets {
         if !actor.enabled || held_for_switch(group, actor) {
             continue;
@@ -407,18 +424,33 @@ fn dispatch_to_inner(
         }
         let actor_online = if !actor.external_session_id.is_empty() {
             super::local_sessions::connected(home, &actor.external_session_id)
-        } else if actor.runtime == ActorRuntime::Deepseek {
-            crate::ops::deepseek_runtime::running(&group.group_id, &actor.id)
-        } else if crate::ops::local_headless::uses_managed_delivery(&group.group_id, actor) {
-            crate::ops::local_headless::running(&group.group_id, &actor.id)
         } else {
-            cccc_runtime::status(&group.group_id, &actor.id).is_ok_and(|status| status.running)
+            owner_running(group, actor)
         };
         if actor_online {
             online += 1;
         }
-        let transport = delivery_transport(home, group, actor);
-        if preclaimed && actor.runtime.is_web_model() {
+        let claimed_on = claims.and_then(|claims| {
+            claims
+                .iter()
+                .find(|(claimed, _)| claimed.id == actor.id)
+                .map(|(_, transport)| *transport)
+        });
+        let transport = match claimed_on.map_or_else(|| delivery_transport(home, group, actor), Ok)
+        {
+            Ok(transport) => transport,
+            // The message stays pending for the next dispatch.
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    group_id = %group.group_id,
+                    actor_id = %actor.id,
+                    "failed to read the Actor's runtime owner"
+                );
+                continue;
+            }
+        };
+        if preclaimed && transport.starts_with("web_model") {
             // Structured Web Model consumers take the durable claim through
             // runtime_wait_next_turn. Do not enqueue the actor on the PTY lane.
             queued += 1;
@@ -454,6 +486,7 @@ fn dispatch_to_inner(
             actor: actor.clone(),
             event: event.clone(),
             claimed,
+            transport,
         });
         if offered == Offer::Queued {
             queued += 1;
@@ -490,13 +523,7 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
     let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
         return 0;
     };
-    if !actor.enabled
-        || held_for_switch(group, actor)
-        || (crate::ops::actor_runtime::is_structured(actor)
-            && actor.external_session_id.is_empty()
-            && !crate::ops::local_headless::supports(actor)
-            && actor.runtime != ActorRuntime::Deepseek)
-    {
+    if !actor.enabled || held_for_switch(group, actor) || !receives_push(group, actor) {
         return 0;
     }
     let events = match crate::ops::runtime_delivery::pending_sources(
@@ -559,14 +586,38 @@ pub fn mail_report() -> DispatchReport {
     }
 }
 
+/// The channel that would take this Actor's work now. A failed owner query is
+/// an error: claiming on a guessed channel records the wrong one.
 pub(super) fn delivery_transport(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
-) -> &'static str {
+) -> std::io::Result<&'static str> {
     if !actor.external_session_id.is_empty() {
-        "local_session"
-    } else if actor.runtime == ActorRuntime::Deepseek {
+        return Ok("local_session");
+    }
+    let owner = crate::ops::actor_runtime::delivery_owner(&group.group_id, &actor.id)?;
+    Ok(owner_transport(home, group, actor, owner.as_ref()))
+}
+
+/// The channel that takes an Actor's work: what runs, else what is saved.
+pub(super) fn owner_transport(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    owner: Option<&crate::ops::actor_runtime::RegisteredOwner>,
+) -> &'static str {
+    use crate::ops::actor_runtime::OwnerIdentity;
+    match owner.map(|owner| &owner.identity) {
+        Some(OwnerIdentity::DeepSeek { .. }) => "deepseek",
+        Some(OwnerIdentity::Managed { .. }) => "managed_session",
+        Some(OwnerIdentity::Pty { .. }) => "pty",
+        None => saved_transport(home, group, actor),
+    }
+}
+
+fn saved_transport(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> &'static str {
+    if actor.runtime == ActorRuntime::Deepseek {
         "deepseek"
     } else if actor.runtime == ActorRuntime::ChatgptDots {
         "web_model_pull"
@@ -700,7 +751,7 @@ fn enqueue(job: DeliveryJob) -> Offer {
                 &key.1,
                 &job.actor.created_at,
                 &job.event.id,
-                delivery_transport(&job.home, &job.group, &job.actor),
+                job.transport,
                 crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
                     "held while the member's runtime was switched",
                 ),
@@ -790,10 +841,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
             };
-            if batch[0].actor.runtime != ActorRuntime::Custom
-                && batch[0].actor.runtime != ActorRuntime::Deepseek
-                && !crate::ops::local_headless::supports(&batch[0].actor)
-            {
+            if actor_delivery_worker::merges_batches(&batch[0]) {
                 while batch.len() < BATCH_CAPACITY {
                     match receiver.try_recv() {
                         Ok(job) => batch.push(job),
@@ -934,6 +982,7 @@ mod tests {
             actor: actor.clone(),
             event: event.clone(),
             claimed: true,
+            transport: "pty",
         };
         let key = (group.group_id.clone(), actor.id.clone(), event.id.clone());
         in_flight().lock().expect("claims").insert(key.clone());
@@ -943,7 +992,7 @@ mod tests {
             &actor.id,
             &actor.created_at,
             &event.id,
-            delivery_transport(&home, &group, &actor),
+            delivery_transport(&home, &group, &actor).expect("owner"),
             crate::ops::runtime_delivery::DeliveryOutcome::Claimed,
         )
         .expect("claim");
@@ -1053,6 +1102,7 @@ done"#;
                 actor: actor.clone(),
                 event: event.clone(),
                 claimed: true,
+                transport: "deepseek",
             })
             .expect("enqueue");
         worker
@@ -1065,6 +1115,7 @@ done"#;
                 actor: actor.clone(),
                 event: followup.clone(),
                 claimed: true,
+                transport: "deepseek",
             })
             .expect("enqueue follow-up behind failed delivery");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -1290,7 +1341,7 @@ done"#;
             &actor.id,
             &actor.created_at,
             &event.id,
-            delivery_transport(&home, &group, &actor),
+            delivery_transport(&home, &group, &actor).expect("owner"),
             crate::ops::runtime_delivery::DeliveryOutcome::Claimed,
         )
         .expect("claim");
@@ -1302,6 +1353,7 @@ done"#;
                 actor: actor.clone(),
                 event: event.clone(),
                 claimed: true,
+                transport: "pty",
             }),
             Offer::Queued
         );
@@ -1354,7 +1406,7 @@ done"#;
             &actor.id,
             &actor.created_at,
             &event.id,
-            delivery_transport(&home, &group, &actor),
+            delivery_transport(&home, &group, &actor).expect("owner"),
             crate::ops::runtime_delivery::DeliveryOutcome::Claimed,
         )
         .expect("claim");
@@ -1366,6 +1418,7 @@ done"#;
             actor: actor.clone(),
             event: event.clone(),
             claimed: true,
+            transport: "pty",
         });
         drop(fence);
 

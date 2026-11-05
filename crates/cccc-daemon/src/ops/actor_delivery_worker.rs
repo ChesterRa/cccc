@@ -1,5 +1,6 @@
 use cccc_contracts::{Actor, ActorRuntime, GroupState};
 use cccc_core::GroupStore;
+use cccc_runtime::PtyHandoff;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -123,7 +124,33 @@ pub fn process_batch_tracked(
             cancelled,
         );
     }
-    if current_actor.runtime == ActorRuntime::Deepseek {
+    // What runs now takes the work, whatever was saved for the next launch.
+    let owner = match actor_runtime::delivery_owner(&current_group.group_id, &current_actor.id) {
+        Ok(owner) => owner,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                group_id = %current_group.group_id,
+                actor_id = %current_actor.id,
+                "failed to read the Actor's runtime owner"
+            );
+            return BatchOutcome::Retry;
+        }
+    };
+    // A claim names the channel it was made for. When that is no longer what
+    // takes the work, the work goes back for the current owner to claim.
+    let transport = super::actor_delivery::owner_transport(
+        &job.home,
+        &current_group,
+        &current_actor,
+        owner.as_ref(),
+    );
+    if jobs.iter().any(|job| job.transport != transport) {
+        return_to_queue(jobs, attempted);
+        super::actor_delivery::dispatch_unread(&job.home, &current_group, &current_actor.id);
+        return BatchOutcome::Delivered;
+    }
+    if transport == "deepseek" {
         return process_deepseek_batch(
             jobs,
             &job.home,
@@ -149,6 +176,10 @@ pub fn process_batch_tracked(
         Ok(None) => return BatchOutcome::Retry,
         Err(reason) => return BatchOutcome::Terminal(reason),
     };
+    // Input follows the terminal that runs. It may predate the saved settings.
+    let current_actor = status.launch.map_or(current_actor.clone(), |launch| {
+        actor_runtime::as_launched(&current_actor, launch)
+    });
     let first_delivery = *preamble_session != status.started_at;
     if first_delivery {
         if current_actor.runtime != ActorRuntime::Custom
@@ -168,12 +199,19 @@ pub fn process_batch_tracked(
         // Custom terminal programs retain their line-oriented preamble contract.
         // Native agents receive their startup context and task in one submission.
         if current_actor.runtime == ActorRuntime::Custom {
-            if !submit_text(
-                &current_group.group_id,
-                &current_actor,
-                &status,
-                &super::actor_delivery_preamble::render(&job.home, &current_group, &current_actor),
-                cancelled,
+            if !matches!(
+                submit_text(
+                    &current_group.group_id,
+                    &current_actor,
+                    &status,
+                    &super::actor_delivery_preamble::render(
+                        &job.home,
+                        &current_group,
+                        &current_actor
+                    ),
+                    cancelled,
+                ),
+                PtyHandoff::Accepted
             ) {
                 return BatchOutcome::Retry;
             }
@@ -215,21 +253,63 @@ pub fn process_batch_tracked(
         payload = format!("{payload}\n\n{}", pending.delivery_line());
     }
     attempted.extend(jobs.iter().map(|job| job.event.id.clone()));
-    if submit_text(
+    match submit_text(
         &current_group.group_id,
         &current_actor,
         &status,
         &payload,
         cancelled,
     ) {
-        if let Some(pending) = instructions {
-            pending.delivered();
+        PtyHandoff::Accepted => {
+            if let Some(pending) = instructions {
+                pending.delivered();
+            }
+            preamble_session.clone_from(&status.started_at);
+            finish_jobs(jobs);
+            BatchOutcome::Delivered
         }
-        preamble_session.clone_from(&status.started_at);
-        finish_jobs(jobs);
-        return BatchOutcome::Delivered;
+        PtyHandoff::NotWritten(_) => {
+            for job in jobs {
+                attempted.remove(&job.event.id);
+            }
+            BatchOutcome::Retry
+        }
+        // Writing it again could leave the terminal with two copies.
+        PtyHandoff::Uncertain(reason) => {
+            for job in jobs {
+                finish_job(
+                    job,
+                    CompletedDelivery::Ambiguous(format!(
+                        "the terminal may hold part of this delivery: {reason}"
+                    )),
+                );
+            }
+            BatchOutcome::Delivered
+        }
     }
-    BatchOutcome::Retry
+}
+
+/// The owner that took this work is gone. The next owner claims what was never
+/// written; a handoff that may have been written stays for review, like any other
+/// replaced owner's.
+fn return_to_queue(jobs: &mut Vec<DeliveryJob>, attempted: &HashSet<String>) {
+    for job in jobs.drain(..) {
+        if attempted.contains(&job.event.id) {
+            finish_job(
+                &job,
+                CompletedDelivery::Ambiguous(
+                    "its owner stopped while this delivery was being submitted".into(),
+                ),
+            );
+        } else {
+            finish_job(
+                &job,
+                CompletedDelivery::Unsubmitted(
+                    "its owner stopped before this delivery was submitted".into(),
+                ),
+            );
+        }
+    }
 }
 
 fn process_external_batch(
@@ -580,7 +660,7 @@ fn settle_managed_batch(
                     &actor.id,
                     &actor.created_at,
                     &job.event.id,
-                    super::actor_delivery::delivery_transport(home, group, actor),
+                    job.transport,
                     crate::ops::runtime_delivery::DeliveryOutcome::Ambiguous(
                         "ACP prompt receipt was not confirmed; inspect the Actor before an explicit retry",
                     ),
@@ -595,6 +675,23 @@ fn settle_managed_batch(
     }
     // Terminal handling includes uncertainty; only Deferred enters automatic retry.
     BatchOutcome::Delivered
+}
+
+/// Terminal programs other than Custom take a batch as one submission. Managed
+/// and DeepSeek sessions take their messages one turn at a time.
+pub(super) fn merges_batches(job: &DeliveryJob) -> bool {
+    use actor_runtime::{OwnerIdentity, RegisteredOwner};
+    let actor = match actor_runtime::delivery_owner(&job.group.group_id, &job.actor.id) {
+        Ok(None) => job.actor.clone(),
+        Ok(Some(RegisteredOwner {
+            identity: OwnerIdentity::Pty { launch, .. },
+            ..
+        })) => actor_runtime::as_launched(&job.actor, launch),
+        Ok(Some(_)) | Err(_) => return false,
+    };
+    actor.runtime != ActorRuntime::Custom
+        && actor.runtime != ActorRuntime::Deepseek
+        && !crate::ops::local_headless::supports(&actor)
 }
 
 fn finish_jobs(jobs: &[DeliveryJob]) {
@@ -643,11 +740,11 @@ fn submit_text(
     expected: &cccc_runtime::SessionStatus,
     text: &str,
     cancelled: &AtomicBool,
-) -> bool {
+) -> PtyHandoff {
     // Configuration and terminal ownership can change while this batch is waiting.
     // Reclassify before each preamble/payload, then pin the observed PTY at the writer.
     if super::local_headless::uses_managed_delivery(group_id, actor) {
-        return false;
+        return PtyHandoff::NotWritten(cccc_runtime::PtyHandoffReason::SessionChanged);
     }
     super::actor_delivery::submit_terminal_text_for_session(expected, actor, text, cancelled)
 }
@@ -753,6 +850,7 @@ mod tests {
             actor: actor.clone(),
             event: notice.clone(),
             claimed: true,
+            transport: "pty",
         };
         let state = || {
             crate::ops::runtime_delivery::latest_state(&home, &group.group_id, "peer1", &notice.id)
@@ -821,6 +919,7 @@ mod tests {
             actor: actor.clone(),
             event: event.clone(),
             claimed: true,
+            transport: "pty",
         };
         let mut batch = vec![job(&notice), job(&send)];
 
@@ -869,6 +968,7 @@ mod tests {
                 actor: actor.clone(),
                 event,
                 claimed: true,
+                transport: "pty",
             }
         };
         let state = |job: &DeliveryJob| {
@@ -933,6 +1033,7 @@ mod tests {
             actor: actor.clone(),
             event,
             claimed: true,
+            transport: "pty",
         };
 
         assert_eq!(
@@ -942,6 +1043,141 @@ mod tests {
         let saved = store.load(&group.group_id).expect("reload group");
         assert!(!saved.actors[0].enabled);
         assert!(cccc_runtime::status(&group.group_id, &actor.id).is_err());
+    }
+
+    #[test]
+    fn work_claimed_for_a_gone_terminal_moves_to_the_saved_push_owner() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("saved push", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Deepseek;
+        actor.command = vec!["sh".into(), "-c".into(), "exit 1".into()];
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = serde_json::json!({"to":["peer1"],"text":"left","message_mode":"send"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        cccc_core::ledger::append(&ledger_path, &event).expect("event");
+        crate::ops::runtime_delivery::claim(&home, &group, &actor, &event.id, "pty", false)
+            .expect("claim");
+        let mut jobs = vec![DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: event.clone(),
+            claimed: true,
+            transport: "pty",
+        }];
+
+        assert_eq!(
+            process_batch_tracked(
+                &mut jobs,
+                &mut String::new(),
+                &AtomicBool::new(false),
+                &mut HashSet::new(),
+            ),
+            BatchOutcome::Delivered
+        );
+
+        // The old claim is settled on its channel, and only then does the owner
+        // that takes the work claim it on its own.
+        assert!(jobs.is_empty());
+        let settled = cccc_core::ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .into_iter()
+            .filter(|record| {
+                record.kind == "runtime.delivery" && record.data["source_event_id"] == event.id
+            })
+            .map(|record| {
+                (
+                    record.data["state"].as_str().expect("state").to_owned(),
+                    record.data["transport"]
+                        .as_str()
+                        .expect("transport")
+                        .to_owned(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(settled[0], ("claimed".to_owned(), "pty".to_owned()));
+        assert_eq!(settled[1], ("failed".to_owned(), "pty".to_owned()));
+        assert_eq!(settled[2], ("claimed".to_owned(), "deepseek".to_owned()));
+        super::super::actor_delivery::shutdown_actor(&group.group_id, &actor.id);
+    }
+
+    #[test]
+    fn work_left_by_a_terminal_returns_to_a_saved_pull_on_its_own_channel() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("saved pull", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::WebModel;
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        let job = |text: &str| {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = "user".into();
+            event.data = serde_json::json!({"to":["peer1"],"text":text,"message_mode":"send"})
+                .as_object()
+                .cloned()
+                .expect("event data");
+            cccc_core::ledger::append(&ledger_path, &event).expect("event");
+            crate::ops::runtime_delivery::claim(&home, &group, &actor, &event.id, "pty", false)
+                .expect("claim");
+            DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event,
+                claimed: true,
+                transport: "pty",
+            }
+        };
+        let never_written = job("never written");
+        let maybe_written = job("maybe written");
+        let mut attempted = HashSet::from([maybe_written.event.id.clone()]);
+        let mut jobs = vec![never_written.clone(), maybe_written.clone()];
+
+        assert_eq!(
+            process_batch_tracked(
+                &mut jobs,
+                &mut String::new(),
+                &AtomicBool::new(false),
+                &mut attempted,
+            ),
+            BatchOutcome::Delivered
+        );
+
+        assert!(jobs.is_empty());
+        let settled = |job: &DeliveryJob| {
+            crate::ops::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &job.event.id,
+            )
+            .expect("delivery state")
+            .expect("settled")
+        };
+        assert_eq!(settled(&never_written).1, "pty");
+        assert_eq!(
+            settled(&maybe_written),
+            ("ambiguous".to_owned(), "pty".to_owned())
+        );
+        // Only what was never written is offered to the next pull.
+        let pending = crate::ops::runtime_delivery::pending_sources(&home, &group, &actor, 10)
+            .expect("pending work");
+        assert_eq!(
+            pending.iter().map(|event| &event.id).collect::<Vec<_>>(),
+            [&never_written.event.id]
+        );
     }
 
     #[test]
@@ -967,6 +1203,7 @@ mod tests {
             actor,
             event,
             claimed: true,
+            transport: "managed_session",
         };
 
         match process_batch(&mut vec![job], &mut String::new(), &AtomicBool::new(false)) {

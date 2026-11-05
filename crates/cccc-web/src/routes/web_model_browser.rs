@@ -97,10 +97,11 @@ pub(super) async fn ensure_open_for_actor(
         .find(|a| a.id == actor_id)
         .ok_or_else(|| ApiError::not_found("Web Model Actor was removed"))?;
     let generation = crate::browser_surface::actor_identity(actor);
+    // Read again here: a runtime switch can land after the caller's check.
     let provider = actor
         .runtime
         .web_model_provider()
-        .expect("validated runtime");
+        .ok_or_else(|| ApiError::not_found("This Actor is no longer a Web Model"))?;
     let target = super::web_model_delivery_state::target(state, group_id, actor_id)?;
     let open_url = browser_open_url(&target, provider_url(provider))?;
     let profile = super::web_model_shared_browser::profile(state, provider);
@@ -183,7 +184,9 @@ async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) ->
     let group_id = required(&body, "group_id")?;
     let actor_id = required(&body, "actor_id")?;
     validate_actor(&state, &group_id, &actor_id)?;
-    let _control = super::web_model_delivery::control_guard(&group_id, &actor_id)?;
+    let _work = super::web_model_delivery::control_work(&state, &group_id, &actor_id)?;
+    // A switch may have finished while this waited for the lock.
+    validate_actor(&state, &group_id, &actor_id)?;
     require_stopped(&state, &group_id, &actor_id)?;
     let url = if body["new_chat"] == true {
         "https://chatgpt.com/".to_owned()

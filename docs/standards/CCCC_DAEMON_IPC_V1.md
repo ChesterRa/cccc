@@ -3847,8 +3847,16 @@ CLI spelling is `--model-label`, with no `model` / `--model` alias. Cost tables,
 rankings, allocation policy, runtime detection, registries and automatic
 synchronization are outside this field's contract.
 
+A change that moves an Actor off its Web Model route (another provider, or to or from Dots) retires
+that route. It returns `delivery_unresolved` while the Actor has an active turn, because a save must
+not end a turn; `actor_runtime_switch` settles one instead. During a browser attempt it returns
+`actor_browser_busy`. An empty active turn does not mean the old conversation has finished: a browser
+turn ends at the verified handoff.
+
 A linked Profile owns `runtime`, `runtime_mode`, `command`, `submit` and its explicit environment.
-Actor-local `title`, notes, Web Model conversation bindings and `capability_autoload` remain editable; the Actor's
+Saving a Profile changes no Actor. The launch that replaces an Actor's owner stores the Profile's
+non-private launch fields and revision on that Actor, so lists, pairing and Mail notices describe what
+runs; an idempotent Start stores nothing. Actor-local `title`, notes, Web Model conversation bindings and `capability_autoload` remain editable; the Actor's
 capability baseline is additive to Profile defaults. A linked Actor MUST NOT
 merge dormant custom environment values over the Profile. Converting to custom
 snapshots the effective Profile configuration and secrets, replacing dormant
@@ -3943,6 +3951,7 @@ Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
 - Saving Runtime configuration does not itself replace a running session. `actor_start` remains idempotent while a registered session is running. An unrelated failed native resume receipt MUST NOT turn Start into Restart or alter a healthy managed or native surface. Resume retry MUST match the resolved Runtime and receipt transport, and apply only when stopped or explicitly restarting; a registered Claude workspace-trust recovery is the explicit pending-start exception. A surviving attached terminal MUST NOT make a disconnected managed registration count as running; Start MUST retry its cleanup and report any failure before launching a replacement. Stop/restart MUST retire registered ownership by Group/Actor identity independently of the saved Runtime; restart MUST NOT start a second backend after a reported cleanup failure. Lifecycle status MUST follow registered sessions until explicit restart applies the saved configuration.
 - Message delivery and its transport record MUST also follow the registered running surface. Saving ACP mode on a live native PTY MUST preserve native delivery until explicit restart or the next start; a live managed session continues managed delivery after saving native mode. A registered Claude workspace-trust prompt MUST remain pending recovery rather than becoming a native task-input surface, including after a saved Runtime edit.
+- A running surface keeps the Runtime and submit settings it launched with until a launch replaces it; saved values apply from that launch. A delivery records its outcome on the transport that claimed it, even if the owner changes first. When the claiming PTY is gone and the saved configuration pulls, work it never wrote returns as `unsubmitted` on that transport for the next pull, and work it may have written is recorded `ambiguous`.
 - A managed Actor's native terminal is an attachment, not its provider lifetime. Its exit MUST NOT mark a healthy provider stopped, even before terminal-exit reconciliation. Reconciliation MUST follow the registered owner rather than saved next-launch Runtime settings and MUST NOT detach a replacement terminal. Explicit `actor_start`, writable `term_attach` and message delivery MAY reopen the terminal against the same healthy managed session; status reads and passive viewer attachments MUST NOT start it. A stopped or disconnected provider MUST NOT be restarted by terminal attachment. Confirmed provider process absence alone MUST NOT invalidate a durable Claude conversation receipt; existing identity and transcript validation still govern resume.
 - A daemon-launched actor whose executable is directly identified as `codex` MUST use one daemon-owned Codex app-server thread and MUST attach Codex's writable native TUI to that exact thread. Unsupported subcommands, wrappers, or prompt tails fail explicitly instead of silently selecting another transport. The app-server and TUI MUST receive the same executable, supported Codex global arguments, profile/model/provider configuration, and private environment. CCCC-owned listener, MCP identity, approval, and sandbox settings remain host-controlled. For both Actors and Voice Analyst, execution-policy overrides MUST be applied to the app-server; the remote TUI MUST attach without approval, sandbox, or shell-environment policy overrides. Stop/start MUST validate and resume the same version-2 managed receipt only when Runtime, workspace, command, model, and effective Codex storage identity still match. Legacy Codex receipts MUST NOT be resumed.
 - A daemon-launched `pi` Actor MUST use the official Pi JSONL RPC surface, with derived `runner=headless`, `runtime_state_source=managed_session` and default Runtime mode; no new RPC mode or native terminal attachment is implied. The resolved executable MUST report Pi 1.1.0 or newer. CCCC owns working directory, session identity, instructions and session-local CCCC MCP registration. Host lookup/initialization/status MUST NOT send a synthetic model prompt. A `prompt` response is command disposition, not task completion: `started` may admit its exact owner; `queued` or `handled` MUST NOT be mistaken for that owner's model result. Completion MUST follow `agent_settled` and its aborted/error outcome rather than `agent_end`; full final messages and streamed deltas MUST belong to the same generation and turn. Unknown admission or lost output MUST NOT be replayed automatically. Cancellation MUST fence the owned turn, clear pending provider input before `abort`, and await settlement before assigning a replacement turn. Pi may acknowledge abort while a preflight is still pending. Unless official `started` disposition or the exact live user record proved provider execution before abort, the session MUST invalidate and its owner MUST stop the process; dialog admission alone MUST NOT justify warm reuse. The attempted receipt remains and no replacement turn may enter that unresolved process. Pi's uncorrelated `steer` MUST NOT be advertised as safe exact-turn steering. Matching stop/start MUST verify the same idle session and provider-home/launch identity, including effective `PI_CODING_AGENT_DIR`, `HOME` and `USERPROFILE` selectors. Explicit runtime environment values take precedence over inherited daemon values, and Actor and Voice identities MUST use the same fingerprint rules. Failed resume MUST remain an explicit failure until New session/reset, without fresh-session fallback. Session-local MCP registration MUST reject a conflicting global/project `cccc` entry or another server name aliasing CCCC's tool prefix without overwriting user configuration. Native permissions and other configured MCP connections remain provider-owned; task-tool restriction is not a filesystem or complete MCP sandbox.
@@ -4207,10 +4216,15 @@ Notes:
   requests, `by: "system"`, non-administrators and cloud connector bindings
   receive `permission_denied`. A target field of the wrong type is
   `invalid_args`; it is never read as its default.
-- Web Model Actors, and managed targets that resolve to a Web Model runtime
-  (directly or through a Profile), receive `actor_switch_unsupported`; they keep
-  the save and restart flow. Switching to the session the Actor already uses is
-  also `actor_switch_unsupported`.
+- Switching to the session the Actor already uses is `actor_switch_unsupported`.
+- A Web Model on either side is switched like any other owner. It has no process
+  to stop: its credentials are invalidated and automatic pairing ends. While a
+  browser attempt for the Actor is in progress the switch answers
+  `actor_browser_busy` at once and changes nothing. It never waits. The Web port
+  holds an exclusive per-Actor lock from a claim to its last write, the switch
+  holds the same lock until completion, and the operating system releases it
+  when a holder exits. `actor_update` when it changes the route, `actor_remove`,
+  `group_delete` and `group_reset` take the same lock and answer the same way.
 - Refusals change nothing: `actor_switch_conflict` when the expected values or
   the Profile revision no longer match; `local_session_offline`,
   `local_session_source_changed` (the session shows another conversation),
@@ -4229,7 +4243,12 @@ Notes:
   Completion and the start of the new owner follow.
 - Handoffs: a delivery whose submission to the old owner had begun, or a claim
   without an outcome, is recorded `ambiguous` and is not delivered again. Work
-  never submitted stays deliverable and goes to the new owner.
+  never submitted stays deliverable and goes to the new owner. An active turn
+  of a Web Model is settled the same way: a browser claim with no durable
+  submission mark for that turn was never submitted, and any other is
+  `ambiguous`, as is a pull turn, which was handed over when claimed.
+  `accepted` work is left as it is: it reached the old conversation, whose
+  processing CCCC cannot see, and it is not delivered again.
 - Completion writes each of these at most once; event ids derive from `op_id`:
   - an `actor.update` audit with `reason: "runtime_switched"`, `op_id`, `from`,
     `to` and the changed fields;
@@ -4237,6 +4256,8 @@ Notes:
     `op_id`, `from`, `to`, `message` and `unconfirmed: {event_id, by, ts}[]`
     (every ambiguous delivery of the Actor, newest first; `message` lists at
     most 20 and points to this field);
+  - when the runtime changes, retirement of the Actor's Web Model routes, so
+    a new Web Model always pairs again;
   - removal of the Actor's own private env file when the switch discards it:
     managed → native, a residue when native → managed, and leaving a Profile
     for a custom configuration. Custom → custom keeps the private env; custom →
@@ -4244,8 +4265,9 @@ Notes:
     never touched.
 - While a switch record is pending, the Actor receives no delivery, and
   `actor_update`, `actor_env_private_update`, `actor_start`, `actor_restart`,
-  `actor_remove`, `group_reset` and a new switch return `actor_switch_pending`
-  after their own authorization and target checks. `actor_stop` stays
+  `actor_remove`, `group_reset`, a new switch, and every Web Model operation
+  that makes or changes a connection return `actor_switch_pending` after their
+  own authorization and target checks. `actor_stop` stays
   available, and `group_start` starts the other members and leaves the Actor
   held. Only
   `actor_runtime_switch_complete`, which also starts the new owner, and daemon
@@ -4300,8 +4322,10 @@ Result:
 - Before the commit, failures return `actor_switch_incomplete`: the binding is
   unchanged, `details.cause` names the failure and `details.old_owner` is
   `native`, `restarted` (restarted from its current configuration),
-  `restart_failed`, `not_running` or `unknown` (its stop was not confirmed;
-  delivery is left as it is, even for a native Actor).
+  `restart_failed`, `not_running`, `web_model` (no process to report: its
+  conversation may still be working, and credentials it held are already
+  invalidated) or `unknown` (its stop was not confirmed; delivery is left as it
+  is, even for a native Actor).
   `actor_switch_unknown` means the commit could not be read back. Clients MUST
   NOT retry automatically; they reload the Actor.
 
@@ -6846,7 +6870,7 @@ After a successful handshake, the connection becomes a terminal stream (see §4.
 
 Notes:
 - `term_resize` MUST be sent over a separate daemon connection (the PTY stream is not NDJSON).
-- `term_attach` returns `not_pty_actor` when the actor is not effectively running on the PTY runner.
+- `term_attach` returns `not_pty_actor` when the actor is not effectively running on the PTY runner. An Actor's own PTY stays reachable, running or kept after it exited, until a launch replaces it, whatever Runtime was saved since.
 - Control mode MAY recreate a missing native terminal for an already-running managed Actor without replacing its provider. Viewer mode only attaches to an existing terminal; it MUST NOT launch one. Neither mode starts a stopped provider.
 - `attachment_id` and `initial_output` are optional extensions. Callers MUST
   consult `ping.capabilities.term_attachment_status` and
@@ -8400,6 +8424,7 @@ Args:
   by: string                 // MUST equal actor_id
   limit?: number             // 1..20, default 20
   transport?: "web_model_pull" | "web_model_browser" // internal browser owner only
+  resume_turn_id?: string    // internal browser owner only
 }
 ```
 
@@ -8441,7 +8466,13 @@ the claim after the submit boundary. A second wait while the actor owns an activ
 turn MUST return `turn_in_progress` and MUST NOT replace that turn. The nonempty
 `active_turn_id`, rather than a display status such as working/idle/waiting, owns
 that turn; status heartbeats do not release it. Completion releases only its
-matching active identity and cannot clear a replacement turn.
+matching active identity and cannot clear a replacement turn. A browser whose
+attempt was deferred MAY pass `resume_turn_id` equal to the active turn, with
+`transport: "web_model_browser"`, to take that turn back. It receives exactly the
+events of the turn, in their order, whatever `limit` and later Mail state say; if
+any event is no longer claimed by `web_model_browser`, the result is
+`turn_in_progress` and the turn is unchanged. The MCP tool drops `transport` and
+`resume_turn_id`: a tool caller always pulls.
 `coalesced_text` MUST preserve the complete daemon-rendered batch without a
 secondary character-count truncation. Browser-originated oversized text is
 converted to a `.txt` attachment before daemon delivery; the canonical
@@ -8599,7 +8630,10 @@ Result:
 Each call appends an ordinary `web_model.browser_delivery.<state>` event.
 `submitted` and `bound` MUST settle every referenced runtime claim as
 `runtime.delivery=accepted`; `ambiguous` and `failed` settle it with the matching
-terminal outcome. `submitting` and `pending` remain observations only. The
+terminal outcome. `failed` means nothing was handed to the conversation: it
+releases the matching active turn, and it MUST NOT replace `ambiguous`, which
+keeps work out of the queue. A batch that may remain staged in a composer is
+`ambiguous`, never `failed`. `submitting` and `pending` remain observations only. The
 browser owner MUST record the terminal handoff before `runtime_complete_turn` so
 completion cannot outrun delivery evidence. If the record call itself fails, a
 verified submission remains completion-pending and reconciliation retries this

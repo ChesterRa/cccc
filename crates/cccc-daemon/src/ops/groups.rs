@@ -574,6 +574,7 @@ fn group_update_patch(request: &DaemonRequest) -> Result<serde_json::Map<String,
 fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request)?;
+    let browser_work = actor_runtime::hold_group_browser_work(home, &group)?;
     super::voice_secretary::cancel_group(home, &group.group_id).map_err(OpError::io)?;
     actor_delivery::shutdown_group(&group.group_id);
     actor_runtime::stop_group(home, &group)?;
@@ -590,6 +591,8 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .map_err(OpError::io)?;
         super::actor_secrets::remove_group(home, &group.group_id)?;
         super::voice_secretary::purge_deleted_group(home, &group.group_id).map_err(OpError::io)?;
+        drop(browser_work);
+        cccc_core::web_model_connectors::remove_browser_work_locks(home, &group.group_id);
     }
     if active::get(home).map_err(OpError::io)?.as_deref() == Some(&group.group_id) {
         active::clear(home).map_err(OpError::io)?;

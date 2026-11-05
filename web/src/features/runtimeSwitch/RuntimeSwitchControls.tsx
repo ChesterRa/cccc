@@ -39,6 +39,7 @@ import {
 import { refreshRuntimeSwitchGroup } from "./runtimeSwitchState";
 
 const MANAGED_RUNTIMES = SUPPORTED_RUNTIMES.filter((runtime) => !isWebModelRuntime(runtime));
+const WEB_RUNTIMES = SUPPORTED_RUNTIMES.filter((runtime) => isWebModelRuntime(runtime));
 
 export function RuntimeSwitchControls({
   groupId,
@@ -54,13 +55,14 @@ export function RuntimeSwitchControls({
   onSaveCurrentProfile,
   onOutcomeUnknown,
   onSwitched,
+  onOpenWebSetup,
   onCurrentSourceDirectory,
   scopes = [],
   activeScopeKey,
 }: {
   groupId: string;
   actor: Actor;
-  targetKind: "native" | "managed";
+  targetKind: "native" | "managed" | "web";
   isDark: boolean;
   dirty: boolean;
   disabled: boolean;
@@ -71,6 +73,7 @@ export function RuntimeSwitchControls({
   onSaveCurrentProfile?: () => Promise<boolean>;
   onOutcomeUnknown?: () => void;
   onSwitched?: () => void;
+  onOpenWebSetup?: (runtime: string) => void;
   onCurrentSourceDirectory?: (directory: string) => void;
   scopes?: NonNullable<GroupDoc["scopes"]>;
   activeScopeKey?: string;
@@ -82,7 +85,9 @@ export function RuntimeSwitchControls({
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [runtime, setRuntime] = useState<SupportedRuntime>("codex");
+  const [runtime, setRuntime] = useState<SupportedRuntime>(
+    targetKind === "web" ? "web_model" : "codex",
+  );
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("default");
   const [command, setCommand] = useState("");
   const [defaultScopeKey, setDefaultScopeKey] = useState(actor.default_scope_key || "");
@@ -160,7 +165,9 @@ export function RuntimeSwitchControls({
       disabled: Boolean(owner || !source.connected || !source.native_session_id),
     };
   });
-  const availableProfiles = profiles.filter((profile) => !isWebModelRuntime(profile.runtime));
+  const availableProfiles = profiles.filter(
+    (profile) => isWebModelRuntime(profile.runtime) === (targetKind === "web"),
+  );
   const selectedProfile = availableProfiles.find(
     (profile) => actorProfileIdentityKey(profile) === profileKey,
   );
@@ -181,7 +188,7 @@ export function RuntimeSwitchControls({
   );
   // A checked runtime may use its recommended command; an explicit command
   // remains usable when automatic detection cannot establish availability.
-  const runtimeReady = detection === "detected" || Boolean(command.trim());
+  const runtimeReady = targetKind === "web" || detection === "detected" || Boolean(command.trim());
   const scopeUnavailable =
     targetKind === "managed" &&
     Boolean(defaultScopeKey && !scopes.some((scope) => scope.scope_key === defaultScopeKey));
@@ -204,7 +211,7 @@ export function RuntimeSwitchControls({
               kind: "managed" as const,
               patch: {
                 runtime: String(selectedProfile.runtime),
-                ...(defaultScopeKey !== (actor.default_scope_key || "")
+                ...(targetKind === "managed" && defaultScopeKey !== (actor.default_scope_key || "")
                   ? { default_scope_key: defaultScopeKey }
                   : {}),
               },
@@ -220,12 +227,18 @@ export function RuntimeSwitchControls({
               kind: "managed" as const,
               patch: {
                 runtime,
-                runtime_mode: supportsAcpMode(runtime) ? runtimeMode : ("default" as RuntimeMode),
-                command:
-                  command.trim() ||
-                  runtimes.find((item) => item.name === runtime)?.recommended_command ||
-                  "",
-                ...(defaultScopeKey !== (actor.default_scope_key || "")
+                ...(targetKind === "managed"
+                  ? {
+                      runtime_mode: supportsAcpMode(runtime)
+                        ? runtimeMode
+                        : ("default" as RuntimeMode),
+                      command:
+                        command.trim() ||
+                        runtimes.find((item) => item.name === runtime)?.recommended_command ||
+                        "",
+                    }
+                  : {}),
+                ...(targetKind === "managed" && defaultScopeKey !== (actor.default_scope_key || "")
                   ? { default_scope_key: defaultScopeKey }
                   : {}),
               },
@@ -331,7 +344,7 @@ export function RuntimeSwitchControls({
                 value={runtime}
                 runtimeMode={runtimeMode}
                 disabled={disabled || busy || Boolean(result)}
-                allowedRuntimes={MANAGED_RUNTIMES}
+                allowedRuntimes={targetKind === "web" ? WEB_RUNTIMES : MANAGED_RUNTIMES}
                 onChange={(value) => {
                   const next = value as SupportedRuntime;
                   setRuntime(next);
@@ -342,7 +355,7 @@ export function RuntimeSwitchControls({
                 }}
                 ariaLabel={t("runtimeSwitch.targetRuntime")}
               />
-              {supportsAcpMode(runtime) ? (
+              {targetKind === "managed" && supportsAcpMode(runtime) ? (
                 <AcpRuntimeMode
                   runtime={runtime}
                   value={runtimeMode}
@@ -350,32 +363,38 @@ export function RuntimeSwitchControls({
                   disabled={disabled || busy}
                 />
               ) : null}
-              <label className="block space-y-2 text-xs font-medium text-[var(--color-text-muted)]">
-                <span>{t("runtimeSwitch.command")}</span>
-                <Input
-                  value={command}
-                  onChange={(event) => setCommand(event.target.value)}
-                  placeholder={
-                    runtimes.find((item) => item.name === runtime)?.recommended_command || ""
-                  }
-                  disabled={disabled || busy || Boolean(result)}
-                />
-              </label>
+              {targetKind === "managed" ? (
+                <label className="block space-y-2 text-xs font-medium text-[var(--color-text-muted)]">
+                  <span>{t("runtimeSwitch.command")}</span>
+                  <Input
+                    value={command}
+                    onChange={(event) => setCommand(event.target.value)}
+                    placeholder={
+                      runtimes.find((item) => item.name === runtime)?.recommended_command || ""
+                    }
+                    disabled={disabled || busy || Boolean(result)}
+                  />
+                </label>
+              ) : null}
             </div>
           )}
-          <p className="text-xs leading-5 text-[var(--color-text-muted)]">
-            {t("runtimeSwitch.newSecrets")}
-          </p>
-          <ActorWorkingDirectory
-            groupId={groupId}
-            scopes={scopes}
-            activeScopeKey={activeScopeKey}
-            value={defaultScopeKey}
-            onChange={setDefaultScopeKey}
-            onBusyChange={setDirectoryBusy}
-            disabled={disabled || busy || Boolean(result)}
-            hint={t("workingDirectoryEditHint")}
-          />
+          {targetKind === "managed" ? (
+            <>
+              <p className="text-xs leading-5 text-[var(--color-text-muted)]">
+                {t("runtimeSwitch.newSecrets")}
+              </p>
+              <ActorWorkingDirectory
+                groupId={groupId}
+                scopes={scopes}
+                activeScopeKey={activeScopeKey}
+                value={defaultScopeKey}
+                onChange={setDefaultScopeKey}
+                onBusyChange={setDirectoryBusy}
+                disabled={disabled || busy || Boolean(result)}
+                hint={t("workingDirectoryEditHint")}
+              />
+            </>
+          ) : null}
         </div>
       )}
       {generation === undefined || expectedUpdatedAt === undefined ? (
@@ -403,6 +422,24 @@ export function RuntimeSwitchControls({
           {result.start === "pending" ? <p>{t("runtimeSwitch.startPending")}</p> : null}
           {result.start === "stopped" ? <p>{t("runtimeSwitch.stopped")}</p> : null}
           {result.access_paused ? <p>{t("runtimeSwitch.accessPaused")}</p> : null}
+          {result.completion === "done" &&
+          isWebModelRuntime(result.to.runtime) &&
+          result.from.runtime !== result.to.runtime ? (
+            <>
+              <p>{t("runtimeSwitch.webConnectionRequired")}</p>
+              {onOpenWebSetup ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => onOpenWebSetup(result.to.runtime)}
+                >
+                  {t("runtimeSwitch.openWebSetup")}
+                </Button>
+              ) : null}
+            </>
+          ) : null}
         </div>
       ) : (
         <Button
@@ -451,8 +488,11 @@ export function RuntimeSwitchControls({
               targetDirectory={
                 targetKind === "native"
                   ? selectedSource?.cwd
-                  : scopes.find((scope) => scope.scope_key === (defaultScopeKey || activeScopeKey))
-                      ?.url
+                  : targetKind === "managed"
+                    ? scopes.find(
+                        (scope) => scope.scope_key === (defaultScopeKey || activeScopeKey),
+                      )?.url
+                    : undefined
               }
               targetKind={targetKind}
               noStart={noStart || nativeAccessPaused}
@@ -523,7 +563,7 @@ export function RuntimeSwitchConfirm({
   actor: Actor;
   targetLabel: string;
   targetDirectory?: string;
-  targetKind: "native" | "managed";
+  targetKind: "native" | "managed" | "web";
   noStart: boolean;
   onNoStart: (value: boolean) => void;
   busy: boolean;
@@ -543,6 +583,7 @@ export function RuntimeSwitchConfirm({
     if (!busy) onCancel();
   });
   const leavingNative = Boolean(actor.external_session_id);
+  const leavingWeb = !leavingNative && isWebModelRuntime(actor.runtime);
   return (
     <ModalFrame
       isDark={isDark}
@@ -556,7 +597,10 @@ export function RuntimeSwitchConfirm({
       surface="solid"
       footerActions={
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {!leavingNative && targetKind === "native" && onSaveProfile ? (
+          {!leavingNative &&
+          !leavingWeb &&
+          (targetKind === "native" || targetKind === "web") &&
+          onSaveProfile ? (
             <Button
               type="button"
               variant="outline"
@@ -580,8 +624,8 @@ export function RuntimeSwitchConfirm({
         <p>{t("runtimeSwitch.preserve")}</p>
         <p className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-2">
           {t("runtimeSwitch.transition", {
-            from: `${t(leavingNative ? "runtimeSwitch.native" : "runtimeSwitch.managed")} · ${actor.runtime}`,
-            to: `${t(targetKind === "native" ? "runtimeSwitch.native" : "runtimeSwitch.managed")} · ${targetLabel}`,
+            from: `${t(leavingNative ? "runtimeSwitch.native" : leavingWeb ? "runtimeSwitch.web" : "runtimeSwitch.managed")} · ${actor.runtime}`,
+            to: `${t(targetKind === "native" ? "runtimeSwitch.native" : targetKind === "web" ? "runtimeSwitch.web" : "runtimeSwitch.managed")} · ${targetLabel}`,
           })}
           {targetDirectory ? (
             <span className="mt-1 block break-all text-xs text-[var(--color-text-secondary)]">
@@ -594,14 +638,29 @@ export function RuntimeSwitchConfirm({
           data-status-tone="warning"
         >
           {joinRuntimeSentences([
-            t(leavingNative ? "runtimeSwitch.oldNative" : "runtimeSwitch.oldManaged"),
+            t(
+              leavingNative
+                ? "runtimeSwitch.oldNative"
+                : leavingWeb
+                  ? "runtimeSwitch.oldWeb"
+                  : "runtimeSwitch.oldManaged",
+            ),
             !leavingNative && targetKind === "native" && actor.profile_id
               ? t("runtimeSwitch.unlinkProfile", { name: linkedProfileName || actor.profile_id })
               : "",
             !leavingNative && targetKind === "native" && !actor.profile_id
-              ? t("runtimeSwitch.clearCustomManaged")
+              ? t(leavingWeb ? "runtimeSwitch.clearWebConfig" : "runtimeSwitch.clearCustomManaged")
               : "",
-            !leavingNative && targetKind === "native" && !actor.profile_id
+            !leavingNative && !leavingWeb && targetKind === "native" && !actor.profile_id
+              ? t("runtimeSwitch.profileHint")
+              : "",
+            !leavingNative && !leavingWeb && targetKind === "web" && !actor.profile_id
+              ? t("runtimeSwitch.managedToWeb")
+              : "",
+            !leavingNative && !leavingWeb && targetKind === "web" && actor.profile_id
+              ? t("runtimeSwitch.managedProfileToWeb")
+              : "",
+            !leavingNative && !leavingWeb && targetKind === "web" && !actor.profile_id
               ? t("runtimeSwitch.profileHint")
               : "",
             profileToCustom ? t("runtimeSwitch.clearDormantSecrets") : "",
@@ -614,13 +673,13 @@ export function RuntimeSwitchConfirm({
         {actor.enabled === false && (leavingNative || targetKind === "native") ? (
           <p className="text-xs text-[var(--color-text-secondary)]">
             {t(
-              targetKind === "managed"
+              targetKind !== "native"
                 ? "runtimeSwitch.pausedNativeToManaged"
                 : "runtimeSwitch.pausedNativeTarget",
             )}
           </p>
         ) : null}
-        {targetKind === "managed" ? (
+        {targetKind !== "native" ? (
           <label className="flex items-start gap-2 text-xs">
             <input
               type="checkbox"
@@ -628,7 +687,7 @@ export function RuntimeSwitchConfirm({
               onChange={(event) => onNoStart(event.target.checked)}
               disabled={busy || startLocked}
             />
-            {t("runtimeSwitch.noStart")}
+            {t(targetKind === "web" ? "runtimeSwitch.noStartWeb" : "runtimeSwitch.noStart")}
           </label>
         ) : null}
         {message ? (

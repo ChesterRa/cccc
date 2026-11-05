@@ -4,25 +4,58 @@ use crate::cancellation::lock_interruptibly;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
+/// A write failure or cancellation must retain evidence of earlier bytes.
+pub(crate) struct WriteProgress {
+    pub written: usize,
+    pub result: io::Result<bool>,
+}
+
 pub(crate) trait PtyInput: Write + Send {
     fn write_all_interruptible(
         &mut self,
-        mut data: &[u8],
+        data: &[u8],
         cancelled: &dyn Fn() -> bool,
     ) -> io::Result<bool> {
+        self.write_all_interruptible_tracked(data, cancelled).result
+    }
+
+    fn write_all_interruptible_tracked(
+        &mut self,
+        mut data: &[u8],
+        cancelled: &dyn Fn() -> bool,
+    ) -> WriteProgress {
+        let mut written = 0;
         while !data.is_empty() {
             if cancelled() {
-                return Ok(false);
+                return WriteProgress {
+                    written,
+                    result: Ok(false),
+                };
             }
             match self.write(data) {
-                Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-                Ok(written) => data = &data[written..],
+                Ok(0) => {
+                    return WriteProgress {
+                        written,
+                        result: Err(io::ErrorKind::WriteZero.into()),
+                    };
+                }
+                Ok(count) => {
+                    written += count;
+                    data = &data[count..];
+                }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
+                Err(error) => {
+                    return WriteProgress {
+                        written,
+                        result: Err(error),
+                    };
+                }
             }
         }
-        self.flush()?;
-        Ok(true)
+        WriteProgress {
+            written,
+            result: self.flush().map(|()| true),
+        }
     }
 }
 
@@ -60,4 +93,18 @@ pub(crate) fn write_input_interruptibly(
     writer
         .write_all_interruptible(data, cancelled)
         .map_err(RuntimeError::from)
+}
+
+pub(crate) fn write_input_interruptibly_tracked(
+    writer: &SharedPtyWriter,
+    data: &[u8],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<WriteProgress, RuntimeError> {
+    let Some(mut writer) = lock_interruptibly(writer, cancelled)? else {
+        return Ok(WriteProgress {
+            written: 0,
+            result: Ok(false),
+        });
+    };
+    Ok(writer.write_all_interruptible_tracked(data, cancelled))
 }

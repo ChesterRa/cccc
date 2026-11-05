@@ -10,10 +10,14 @@ import {
 } from "../../features/runtimeSwitch/RuntimeSwitchControls";
 import { RuntimeSwitchPendingNotice } from "../../features/runtimeSwitch/RuntimeSwitchPendingNotice";
 import { joinRuntimeSentences } from "../../features/runtimeSwitch/runtimeSwitchOutcome";
-import { hasPendingActorSwitch } from "../../features/runtimeSwitch/runtimeSwitchState";
+import {
+  hasPendingActorSwitch,
+  openWebSetup,
+} from "../../features/runtimeSwitch/runtimeSwitchState";
 import { supportsAcpMode } from "../../types";
 import { GrokActorSetup } from "../webModel/GrokActorSetup";
 import { isWebModelRuntime } from "../../types";
+import { actorGenerationIdentity } from "../../utils/actorIdentity";
 import { type Actor, ActorProfile, GroupDoc, RuntimeInfo, SupportedRuntime } from "../../types";
 import { useTranslation } from "react-i18next";
 import { BASIC_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
@@ -999,6 +1003,7 @@ function EditActorConfigModal({
   const [category, setCategory] = useState<RuntimeCategory>(currentCategory);
   const [nativeSwitchVisited, setNativeSwitchVisited] = useState(isNativeActor);
   const [managedSwitchVisited, setManagedSwitchVisited] = useState(false);
+  const [webSwitchVisited, setWebSwitchVisited] = useState(false);
   const [sourceDirectory, setSourceDirectory] = useState("");
   const canSwitch = useUIStore((state) => state.isWebAdmin === true && !state.webReadOnly);
   const switchPending = useGroupStore((state) =>
@@ -1065,6 +1070,9 @@ function EditActorConfigModal({
     null,
   );
   const [managedSwitchNoStart, setManagedSwitchNoStart] = useState(false);
+  const [managedProfileBusy, setManagedProfileBusy] = useState(false);
+  const [managedProfileSaveFailed, setManagedProfileSaveFailed] = useState(false);
+  const [managedProfileMessage, setManagedProfileMessage] = useState("");
   const [managedSwitchBlocked, setManagedSwitchBlocked] = useState(false);
   const [managedSwitchDone, setManagedSwitchDone] = useState(false);
   const savedDefaultScopeKey = savedActor?.default_scope_key || "";
@@ -1072,7 +1080,9 @@ function EditActorConfigModal({
   const [directoryBusy, setDirectoryBusy] = useState(false);
   const attachedScopes = scopes.filter((scope) => scope.scope_key && scope.url);
   const scopeUnavailable = Boolean(
-    defaultScopeKey && !attachedScopes.some((scope) => scope.scope_key === defaultScopeKey),
+    category !== "web" &&
+    defaultScopeKey &&
+    !attachedScopes.some((scope) => scope.scope_key === defaultScopeKey),
   );
   const [editMode, setEditMode] = useState<ConfigMode>("custom");
   const [pendingConvertToCustom, setPendingConvertToCustom] = useState(false);
@@ -1100,6 +1110,7 @@ function EditActorConfigModal({
       setCategory(current);
       setNativeSwitchVisited(current === "native");
       setManagedSwitchVisited(false);
+      setWebSwitchVisited(false);
       lastNonNativeCategory.current = current === "web" ? "web" : "managed";
       categoryDrafts.current = {};
       setSourceDirectory("");
@@ -1251,6 +1262,7 @@ function EditActorConfigModal({
     }
     if (next === "native") setNativeSwitchVisited(true);
     if (isNativeActor && next === "managed") setManagedSwitchVisited(true);
+    if (isNativeActor && next === "web") setWebSwitchVisited(true);
     // A native member's managed target is a separate switch draft. Do not
     // put it in the ordinary saved runtime fields.
     if (isNativeActor) {
@@ -1637,9 +1649,8 @@ function EditActorConfigModal({
         selectedProfile.revision !== savedActor?.profile_revision_applied);
     const needsSwitch =
       restart &&
-      currentCategory === "managed" &&
+      currentCategory !== "native" &&
       nextRuntime &&
-      !isWebModelRuntime(nextRuntime) &&
       ((linked && editMode === "custom") ||
         profileChanged ||
         profileRevisionChanged ||
@@ -1670,14 +1681,37 @@ function EditActorConfigModal({
           setSecretsError(t("runtimeSwitch.dirty"));
           return;
         }
-        if (!linked && editMode === "custom" && (secretsRefreshing || secretKeysLoadFailed)) {
+        if (
+          !linked &&
+          editMode === "custom" &&
+          !isWebModelRuntime(nextRuntime) &&
+          (secretsRefreshing || secretKeysLoadFailed)
+        ) {
           setSecretsError(t("failedToLoadSecrets"));
           return;
         }
-        setManagedSwitchNoStart(linked && editMode === "custom");
+        setManagedSwitchNoStart(linked && editMode === "custom" && !isWebModelRuntime(nextRuntime));
+        setManagedProfileSaveFailed(false);
+        setManagedProfileMessage("");
         setManagedSwitchPayload(payload);
         return;
       }
+      if (
+        !restart &&
+        currentCategory === "managed" &&
+        isWebModelRuntime(nextRuntime) &&
+        !linked &&
+        baseline.current.command.trim() &&
+        !window.confirm(t("runtimeSwitch.managedToWebSaveConfirm"))
+      )
+        return;
+      if (
+        !restart &&
+        currentCategory === "web" &&
+        nextRuntime !== savedRuntime &&
+        !window.confirm(t("runtimeSwitch.oldWebSaveConfirm"))
+      )
+        return;
       await callback(payload);
     };
 
@@ -1791,7 +1825,7 @@ function EditActorConfigModal({
     normalizedGroupRole === "foreman"
       ? t("groupRoleForeman", { defaultValue: "Foreman" })
       : t("groupRolePeer", { defaultValue: "Peer" });
-  const renderSwitchControls = (targetKind: "native" | "managed") =>
+  const renderSwitchControls = (targetKind: "native" | "managed" | "web") =>
     savedActor && canSwitch ? (
       <RuntimeSwitchControls
         key={`${groupId}/${actorId}/${targetKind}`}
@@ -1811,6 +1845,23 @@ function EditActorConfigModal({
         onSwitched={() => {
           setManagedSwitchBlocked(true);
           setManagedSwitchDone(true);
+        }}
+        onOpenWebSetup={(runtime) => {
+          const expected = actorGenerationIdentity(savedActor);
+          onCancel();
+          window.setTimeout(() => {
+            const result = openWebSetup(groupId, actorId, runtime, expected);
+            if (result !== "opened")
+              useUIStore
+                .getState()
+                .showNotice({
+                  message: t(
+                    result === "editor_open"
+                      ? "runtimeSwitch.closeEditorFirst"
+                      : "runtimeSwitch.refreshFailed",
+                  ),
+                });
+          }, 0);
         }}
         runtimes={runtimes}
         profiles={actorProfiles}
@@ -1919,7 +1970,7 @@ function EditActorConfigModal({
                   {t("common:cancel")}
                 </Button>
               )}
-              {(hasChanges || linked) && !applyRunningTarget && (
+              {(hasChanges || linked) && (!applyRunningTarget || stagingGrok) && (
                 <Button
                   type="button"
                   variant="outline"
@@ -1933,9 +1984,7 @@ function EditActorConfigModal({
               <Button
                 type="button"
                 className="w-full sm:w-auto font-semibold transition-all ease-spring duration-300"
-                onClick={() =>
-                  hasChanges ? void submit(applyRunningTarget && stagingGrok) : closeEdit()
-                }
+                onClick={() => (hasChanges ? void submit(false) : closeEdit())}
                 disabled={
                   hasChanges
                     ? saveDisabled || switchPending || managedSwitchBlocked
@@ -1943,7 +1992,11 @@ function EditActorConfigModal({
                 }
               >
                 {t(
-                  !hasChanges ? "common:done" : applyRunningTarget ? "saveAndApply" : "common:save",
+                  !hasChanges
+                    ? "common:done"
+                    : applyRunningTarget && !stagingGrok
+                      ? "saveAndApply"
+                      : "common:save",
                 )}
               </Button>
             </div>
@@ -2102,13 +2155,6 @@ function EditActorConfigModal({
                   onChange={changeCategory}
                 />
               </div>
-              {category !== "native" &&
-              ((currentCategory === "web") !== (category === "web") ||
-                (category === "web" && conversationRuntime !== savedRuntime)) ? (
-                <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
-                  {t("runtimeSwitch.legacyWebWarning")}
-                </p>
-              ) : null}
               {nativeSwitchVisited && canSwitch ? (
                 <div className="mt-4" hidden={category !== "native"}>
                   {renderSwitchControls("native")}
@@ -2117,6 +2163,11 @@ function EditActorConfigModal({
               {isNativeActor && managedSwitchVisited && canSwitch ? (
                 <div className="mt-4" hidden={category !== "managed"}>
                   {renderSwitchControls("managed")}
+                </div>
+              ) : null}
+              {isNativeActor && webSwitchVisited && canSwitch ? (
+                <div className="mt-4" hidden={category !== "web"}>
+                  {renderSwitchControls("web")}
                 </div>
               ) : null}
               {!isNativeActor && category !== "native" ? (
@@ -2503,18 +2554,50 @@ function EditActorConfigModal({
                   : runtime
               }
               targetDirectory={
-                attachedScopes.find(
-                  (scope) => scope.scope_key === (defaultScopeKey || activeScopeKey),
-                )?.url
+                isWebModelRuntime(conversationRuntime)
+                  ? undefined
+                  : attachedScopes.find(
+                      (scope) => scope.scope_key === (defaultScopeKey || activeScopeKey),
+                    )?.url
               }
-              targetKind="managed"
+              targetKind={isWebModelRuntime(conversationRuntime) ? "web" : "managed"}
               noStart={managedSwitchNoStart}
               onNoStart={setManagedSwitchNoStart}
-              busy={secretsBusy || busy === "actor-update"}
-              message=""
+              busy={secretsBusy || managedProfileBusy || busy === "actor-update"}
+              confirmDisabled={managedProfileSaveFailed}
+              message={managedProfileMessage}
+              onSaveProfile={
+                !linked &&
+                !isWebModelRuntime(savedRuntime) &&
+                isWebModelRuntime(conversationRuntime)
+                  ? async () => {
+                      setManagedProfileBusy(true);
+                      try {
+                        const saved = await onSaveAsProfile(
+                          undefined,
+                          savedActor.runtime_mode || "default",
+                          { savedActor: true },
+                        );
+                        const ok = Boolean(saved?.profileId);
+                        setManagedProfileSaveFailed(!ok);
+                        setManagedProfileMessage(
+                          t(ok ? "runtimeSwitch.profileSaved" : "runtimeSwitch.profileSaveFailed"),
+                        );
+                      } catch {
+                        setManagedProfileSaveFailed(true);
+                        setManagedProfileMessage(t("runtimeSwitch.profileSaveFailed"));
+                      } finally {
+                        setManagedProfileBusy(false);
+                      }
+                    }
+                  : undefined
+              }
               profileToCustom={linked && managedSwitchPayload.mode === "custom"}
               keepCustomSecrets={
-                !linked && managedSwitchPayload.mode === "custom" && secretKeys.length > 0
+                !linked &&
+                managedSwitchPayload.mode === "custom" &&
+                !isWebModelRuntime(conversationRuntime) &&
+                secretKeys.length > 0
               }
               secretKeys={secretKeys}
               onCancel={() => setManagedSwitchPayload(null)}

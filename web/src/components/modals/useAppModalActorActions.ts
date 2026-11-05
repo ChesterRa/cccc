@@ -18,12 +18,15 @@ import {
   runtimeSwitchErrorMessage,
   runtimeSwitchStartError,
 } from "../../features/runtimeSwitch/runtimeSwitchOutcome";
-import { refreshRuntimeSwitchGroup } from "../../features/runtimeSwitch/runtimeSwitchState";
+import {
+  openWebSetup,
+  refreshRuntimeSwitchGroup,
+} from "../../features/runtimeSwitch/runtimeSwitchState";
 import { normalizeCapabilityIdList, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
 import { parseHelpMarkdown, updateActorHelpNote } from "../../utils/helpMarkdown";
 import { parsePrivateEnvSetText } from "../../utils/privateEnvInput";
 import { runtimeDetectionKey } from "../../utils/runtimeDetection";
-import { isGrokBotUrl } from "../../utils/webModelTargetDraft";
+import { canonicalGrokBotUrl, isGrokBotUrl } from "../../utils/webModelTargetDraft";
 import type { CreatedNativeActorNavigation } from "../../hooks/useAppTabState";
 import type { EditActorSavePayload, SaveActorProfileResult } from "./ActorConfigModal";
 import { resolveNewActorId } from "./actorCreateModel";
@@ -39,7 +42,7 @@ export function useAppModalActorActions(args: {
   busy: string;
   setBusy: (busy: string) => void;
   showError: (msg: string) => void;
-  showNotice: (notice: { message: string }) => void;
+  showNotice: (notice: { message: string; actionLabel?: string; onAction?: () => void }) => void;
   addActorModalOpen: boolean;
   editingActor: Actor | null;
   setEditingActor: (actor: Actor | null) => void;
@@ -367,7 +370,11 @@ export function useAppModalActorActions(args: {
         ? joinRuntimeSentences([msg, t("profileToWebSecretsConfirm")])
         : msg;
       if (!window.confirm(confirmText)) return;
-    } else if (confirmProfileSecretsForWeb && !window.confirm(t("profileToWebSecretsConfirm"))) {
+    } else if (
+      !payload.runtimeSwitch &&
+      confirmProfileSecretsForWeb &&
+      !window.confirm(t("profileToWebSecretsConfirm"))
+    ) {
       return;
     }
 
@@ -377,6 +384,10 @@ export function useAppModalActorActions(args: {
     const isCurrentEdit = () =>
       editActorVisitRef.current === visit &&
       useGroupStore.getState().selectedGroupId === targetGroupId;
+    const actorUpdateError = (error: { code: string; message: string }) =>
+      error.code === "actor_browser_busy" || error.code === "delivery_unresolved"
+        ? runtimeSwitchErrorMessage(error, (key) => t(key))
+        : error.message;
     setBusy("actor-update");
     try {
       if (payload.runtimeSwitch) {
@@ -430,6 +441,23 @@ export function useAppModalActorActions(args: {
         if (response.result.start === "pending") notices.push(t("runtimeSwitch.startPending"));
         if (response.result.start === "stopped") notices.push(t("runtimeSwitch.stopped"));
         if (response.result.access_paused) notices.push(t("runtimeSwitch.accessPaused"));
+        const needsWebSetup =
+          response.result.completion === "done" &&
+          isWebModelRuntime(response.result.to.runtime) &&
+          response.result.from.runtime !== response.result.to.runtime;
+        const canonicalBotUrl = grokBotUrl ? canonicalGrokBotUrl(grokBotUrl) : null;
+        let grokUnconfirmed = Boolean(canonicalBotUrl && response.result.completion === "pending");
+        if (response.result.completion === "done" && canonicalBotUrl) {
+          try {
+            const binding = await api.bindGrokBot(targetGroupId, actorId, canonicalBotUrl);
+            grokUnconfirmed = !binding.ok;
+          } catch {
+            grokUnconfirmed = true;
+          }
+        }
+        if (grokUnconfirmed)
+          notices.push(t("runtimeSwitch.grokDraftNotice", { url: canonicalBotUrl }));
+        if (needsWebSetup) notices.push(t("runtimeSwitch.webConnectionRequired"));
         try {
           await refreshRuntimeSwitchGroup(targetGroupId);
         } catch {
@@ -437,21 +465,37 @@ export function useAppModalActorActions(args: {
         }
         if (isCurrentEdit()) {
           setEditingActor(null);
-          showNotice({ message: joinRuntimeSentences(notices) });
+          showNotice({
+            message: joinRuntimeSentences(notices),
+            ...(needsWebSetup || grokUnconfirmed
+              ? {
+                  actionLabel: t("runtimeSwitch.openWebSetup"),
+                  onAction: () => {
+                    const result = openWebSetup(
+                      targetGroupId,
+                      actorId,
+                      response.result.to.runtime,
+                      generation,
+                    );
+                    if (result !== "opened")
+                      useUIStore
+                        .getState()
+                        .showError(
+                          t(
+                            result === "editor_open"
+                              ? "runtimeSwitch.closeEditorFirst"
+                              : "runtimeSwitch.refreshFailed",
+                          ),
+                        );
+                  },
+                }
+              : {}),
+          });
         }
         return;
       }
       let actorSnapshot: Record<string, unknown> = savedActor as unknown as Record<string, unknown>;
       let confirmationResult: unknown;
-
-      // Runtime conversion still requires stopping the old backend. An existing
-      // native Grok Actor applies its route under the daemon's admission lock.
-      if (grokBotUrl !== undefined && currentRuntime !== "grok_web_model") {
-        const stopResp = await api.stopActor(targetGroupId, actorId);
-        if (!stopResp.ok) throw new Error(`${stopResp.error.code}: ${stopResp.error.message}`);
-        actorSnapshot = { ...actorSnapshot, enabled: false, running: false };
-        if (isCurrentEdit()) setEditingActor(actorSnapshot as Actor);
-      }
 
       if (mode === "custom" && linkedBefore && convertToCustom) {
         const convertResp = await api.updateActor(
@@ -467,7 +511,7 @@ export function useAppModalActorActions(args: {
           },
         );
         if (!convertResp.ok) {
-          throw new Error(`${convertResp.error.code}: ${convertResp.error.message}`);
+          throw new Error(`${convertResp.error.code}: ${actorUpdateError(convertResp.error)}`);
         }
         confirmationResult = convertResp.result;
         const updated =
@@ -501,7 +545,7 @@ export function useAppModalActorActions(args: {
             },
           );
           if (!profileResp.ok) {
-            throw new Error(`${profileResp.error.code}: ${profileResp.error.message}`);
+            throw new Error(`${profileResp.error.code}: ${actorUpdateError(profileResp.error)}`);
           }
           confirmationResult = profileResp.result;
           const updated =
@@ -545,7 +589,7 @@ export function useAppModalActorActions(args: {
             },
           );
           if (!customResp.ok) {
-            throw new Error(`${customResp.error.code}: ${customResp.error.message}`);
+            throw new Error(`${customResp.error.code}: ${actorUpdateError(customResp.error)}`);
           }
           confirmationResult = customResp.result;
           const updated =

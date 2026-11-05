@@ -158,6 +158,7 @@ fn closed_confirmation_defers_queued_delivery_until_an_explicit_retry() {
             actor: fixture.group.actors[0].clone(),
             event: event.clone(),
             claimed: true,
+            transport: "managed_session",
         }];
         assert_eq!(
             actor_delivery_worker::process_batch(
@@ -336,6 +337,7 @@ fn paused_confirmation_keeps_new_and_preclaimed_work_retryable() {
             actor: actor.clone(),
             event: event.clone(),
             claimed: true,
+            transport: "pty",
         });
     }
     assert_eq!(
@@ -457,6 +459,7 @@ fn queued_retry_during_confirmation_exit_never_opens_a_second_prompt() {
         actor: fixture.group.actors[0].clone(),
         event,
         claimed: true,
+        transport: "managed_session",
     }];
     assert_eq!(
         actor_delivery_worker::process_batch(

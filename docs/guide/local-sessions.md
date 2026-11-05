@@ -160,10 +160,13 @@ What a switch does:
   switching or removing the agent, and resetting its Group, wait for the retry,
   while **Stop** stays available. The rest of the Group keeps working and can
   start without it.
-- Web Model agents keep **Save** and **Save and restart** in this release, and a
-  native agent switches to CCCC managed before choosing a Web Model. These
-  changes do not check unfinished work: make sure the previous runtime has
-  finished first.
+- Web Model agents switch the same way. Entering a Web Model starts nothing:
+  connect it to a conversation in its settings, and its messages wait until
+  then. Leaving one retires its connection, so coming back means connecting
+  again.
+- While CCCC is handing a message to the browser, a switch asks you to try again
+  in a moment. A reply the old conversation is still writing may not come back
+  to CCCC, and an unsent draft stays in that conversation for you to handle.
 
 The CLI offers the same switch: `cccc actor switch <agent> --session <source_id>`,
 `--runtime <runtime> [--command ...] [--no-start]` or `--profile <id>` for a

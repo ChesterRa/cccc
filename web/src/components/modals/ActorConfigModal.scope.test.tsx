@@ -1334,7 +1334,7 @@ it.each(["use", "keep", "fail"] as const)(
 );
 
 it.each(["common:save", "saveAndRestart"])(
-  "asks before copying Profile secrets when %s moves to a Web Model",
+  "distinguishes Profile secret handling when %s moves to a Web Model",
   async (saveLabel) => {
     const { isWebAdmin, webReadOnly } = useUIStore.getState();
     try {
@@ -1349,8 +1349,14 @@ it.each(["common:save", "saveAndRestart"])(
       });
       await act(async () => button("runtimeSwitch.web")!.click());
       await act(async () => button(saveLabel)!.click());
-      expect(confirm).toHaveBeenCalledOnce();
-      expect(confirm.mock.calls[0][0]).toContain("profileToWebSecretsConfirm");
+      if (saveLabel === "common:save") {
+        expect(confirm).toHaveBeenCalledOnce();
+        expect(confirm.mock.calls[0][0]).toContain("profileToWebSecretsConfirm");
+      } else {
+        expect(confirm).not.toHaveBeenCalled();
+        expect(document.body.textContent).toContain("runtimeSwitch.clearDormantSecrets");
+        expect(document.body.textContent).toContain("runtimeSwitch.confirm");
+      }
       expect(mutations.some((item) => item.path === "/api/v1/groups/g_a/actors/managed")).toBe(
         false,
       );

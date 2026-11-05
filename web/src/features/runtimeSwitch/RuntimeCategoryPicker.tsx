@@ -17,10 +17,7 @@ export function RuntimeCategoryPicker({
   const { t } = useTranslation("actors");
   const choices: RuntimeCategory[] = ["managed", "native", "web"];
   const unavailable = (choice: RuntimeCategory) =>
-    (current === "native" && choice === "web") ||
-    (current === "web" && choice === "native") ||
-    (!canSwitch && choice !== current && (choice === "native" || current === "native"));
-  const nativeWebRestricted = current === "native" || current === "web";
+    !canSwitch && choice !== current && (choice === "native" || current === "native");
   return (
     <div>
       <div className="mb-2 text-xs font-medium text-[var(--color-text-muted)]">
@@ -50,15 +47,7 @@ export function RuntimeCategoryPicker({
           </button>
         ))}
       </div>
-      {nativeWebRestricted ? (
-        <p className="mt-2 text-xs leading-5 text-[var(--color-text-muted)]">
-          {t(
-            current === "native"
-              ? "runtimeSwitch.nativeWebUnavailable"
-              : "runtimeSwitch.webNativeUnavailable",
-          )}
-        </p>
-      ) : !canSwitch ? (
+      {!canSwitch ? (
         <p className="mt-2 text-xs text-[var(--color-text-muted)]">{t("runtimeSwitch.notAdmin")}</p>
       ) : null}
     </div>

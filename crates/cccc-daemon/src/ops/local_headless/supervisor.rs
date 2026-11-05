@@ -167,6 +167,7 @@ pub(super) fn attach_managed(
             command: app.actor_tui_command(),
             env: app.tui_environment(),
             cwd: cwd.clone(),
+            submit: actor.submit,
         })),
         status: Mutex::new(HeadlessStatus {
             status: "idle".into(),
@@ -419,6 +420,12 @@ pub(crate) fn registered_running(group_id: &str, actor_id: &str) -> Option<bool>
     lookup(&(group_id.to_owned(), actor_id.to_owned())).map(|item| item.running())
 }
 
+/// The registered session's generation, and whether it is running.
+pub(crate) fn registered_generation(group_id: &str, actor_id: &str) -> Option<(String, bool)> {
+    let item = lookup(&(group_id.to_owned(), actor_id.to_owned()))?;
+    Some((item.managed.generation().to_owned(), item.running()))
+}
+
 pub(crate) fn registered_workspace(
     group_id: &str,
     actor_id: &str,
@@ -614,11 +621,12 @@ fn submit_admitted(
         return BatchSubmission::Deferred;
     }
     if item.has_terminal() {
+        let launched = item.launched(actor);
         let accepted = submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
             started.store(true, Ordering::Release);
             super::super::actor_delivery::submit_terminal_text(
                 &group.group_id,
-                actor,
+                &launched,
                 prepared,
                 cancelled,
             )

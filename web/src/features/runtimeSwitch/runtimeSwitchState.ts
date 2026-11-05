@@ -1,7 +1,7 @@
 import type { Actor, GroupDoc } from "../../types";
 import { actorGenerationIdentity } from "../../utils/actorIdentity";
 import * as api from "../../services/api";
-import { useGroupStore } from "../../stores";
+import { useGroupStore, useModalStore } from "../../stores";
 
 export function hasPendingActorSwitch(
   group: GroupDoc | null,
@@ -18,6 +18,26 @@ export function hasPendingActorSwitch(
       entry.pending === true &&
       (!entry.actor_generation || !generation || entry.actor_generation === generation),
   );
+}
+
+/** Open only the member that completed the switch, without replacing another editor. */
+export function openWebSetup(
+  groupId: string,
+  actorId: string,
+  runtime: string,
+  generation: string | undefined,
+): "opened" | "editor_open" | "unavailable" {
+  const group = useGroupStore.getState();
+  const actor = group.actors.find(
+    (item) =>
+      item.id === actorId &&
+      item.runtime === runtime &&
+      actorGenerationIdentity(item) === generation,
+  );
+  if (group.selectedGroupId !== groupId || !actor) return "unavailable";
+  if (useModalStore.getState().editingActor) return "editor_open";
+  useModalStore.getState().openActorEditor(actor, "chatgpt");
+  return "opened";
 }
 
 export async function refreshRuntimeSwitchGroup(groupId: string): Promise<void> {

@@ -1,5 +1,5 @@
 use super::{Session, block_on_managed, managed_runtime, output};
-use cccc_contracts::utc_now;
+use cccc_contracts::{Actor, utc_now};
 use serde_json::Value;
 use std::io;
 use std::sync::atomic::Ordering;
@@ -83,6 +83,19 @@ impl Session {
             state.pid = pid;
             state.updated_at = utc_now();
         }
+    }
+
+    /// The terminal takes input as it was launched. Saved settings describe the
+    /// next launch, which replaces this session.
+    pub(super) fn launched(&self, actor: &Actor) -> Actor {
+        let mut launched = actor.clone();
+        launched.runtime = self.managed.runtime();
+        if let Ok(viewer) = self.viewer.lock()
+            && let Some(viewer) = viewer.as_ref()
+        {
+            launched.submit = viewer.submit;
+        }
+        launched
     }
 
     pub(super) fn detach_viewer(&self) -> io::Result<bool> {

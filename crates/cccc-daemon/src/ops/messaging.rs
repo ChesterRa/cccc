@@ -1191,12 +1191,11 @@ fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let delivery_claims = requested
         .iter()
         .map(|actor| {
-            (
-                actor,
-                actor_delivery::delivery_transport(home, &group, actor),
-            )
+            actor_delivery::delivery_transport(home, &group, actor)
+                .map(|transport| (actor, transport))
+                .map_err(OpError::io)
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, _>>()?;
     let (claimed, states) = crate::ops::runtime_delivery::claim_deliveries(
         home,
         &group,
@@ -1257,7 +1256,7 @@ fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             return Err(settlement_error.unwrap_or(error));
         }
     };
-    actor_delivery::dispatch_preclaimed(home, &group, &source, &requested);
+    actor_delivery::dispatch_preclaimed(home, &group, &source, &delivery_claims);
     object(json!({
         "event": source,
         "actor_ids": actor_ids,

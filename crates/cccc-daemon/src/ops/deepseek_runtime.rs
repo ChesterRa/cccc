@@ -236,6 +236,16 @@ pub(super) fn registered_workspace(
     Some((entry_running(&holder), holder.workspace.clone()))
 }
 
+/// The registered session's generation, and whether it is running.
+pub(super) fn registered_generation(group_id: &str, actor_id: &str) -> Option<(String, bool)> {
+    let holder = sessions()
+        .read()
+        .ok()?
+        .get(&(group_id.to_owned(), actor_id.to_owned()))
+        .cloned()?;
+    Some((holder.generation.clone(), entry_running(&holder)))
+}
+
 fn entry_running(holder: &RuntimeEntry) -> bool {
     if !holder.running.load(Ordering::Acquire) {
         return false;

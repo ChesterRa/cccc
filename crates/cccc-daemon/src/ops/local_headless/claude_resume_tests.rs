@@ -355,6 +355,7 @@ impl Fixture {
             actor: self.actor.clone(),
             event,
             claimed: true,
+            transport: "managed_session",
         }
     }
 }

@@ -206,7 +206,8 @@ fn load_pty_target(home: &HomeLayout, group_id: &str, actor_id: &str) -> Result<
         .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))?;
     let actor = cccc_core::actors::find(&group, actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", format!("actor not found: {actor_id}")))?;
-    if actor.runner != RunnerKind::Pty {
+    if actor.runner != RunnerKind::Pty && !super::actor_runtime::has_primary_pty(group_id, actor_id)
+    {
         let mut error = OpError::new(
             "not_pty_actor",
             "terminal operation is only available for PTY actors",

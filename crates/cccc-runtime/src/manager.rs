@@ -4,7 +4,7 @@ use crate::registry::{
     Key, SharedSession, completed_history, discard_completed, lookup, remember_history, sessions,
     with_session,
 };
-use crate::session::{LaunchSpec, Session, SessionStatus};
+use crate::session::{ActorLaunch, LaunchSpec, Session, SessionStatus};
 use crate::session_history::SessionHistory;
 use crate::transcript_archive::HistoryConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,7 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod submission;
-pub use submission::{submit_sequence_for_session_interruptible, submit_sequence_interruptible};
+pub use submission::{
+    PtyHandoff, PtyHandoffReason, submit_sequence_for_session_interruptible,
+    submit_sequence_for_session_with_evidence_interruptible, submit_sequence_interruptible,
+};
 
 type ReapCandidate = (Key, Arc<Mutex<Session>>, SessionHistory, SessionStatus);
 
@@ -31,7 +34,17 @@ fn start_inner(
     spec: LaunchSpec,
     history: Option<HistoryConfig>,
 ) -> Result<SessionStatus, RuntimeError> {
-    start_inner_environment(spec, history, false)
+    start_inner_environment(spec, history, false, None)
+}
+
+/// Launch an Actor's primary PTY. Its attribution is set before the session is
+/// registered, so no reader can find the process without it.
+pub fn start_actor_with_history(
+    spec: LaunchSpec,
+    history: HistoryConfig,
+    launch: ActorLaunch,
+) -> Result<SessionStatus, RuntimeError> {
+    start_inner_environment(spec, Some(history), false, Some(launch))
 }
 
 /// Launch a PTY with exactly the supplied environment, apart from terminal attribution.
@@ -39,13 +52,14 @@ pub fn start_with_history_isolated_environment(
     spec: LaunchSpec,
     history: HistoryConfig,
 ) -> Result<SessionStatus, RuntimeError> {
-    start_inner_environment(spec, Some(history), true)
+    start_inner_environment(spec, Some(history), true, None)
 }
 
 fn start_inner_environment(
     spec: LaunchSpec,
     history: Option<HistoryConfig>,
     clear_environment: bool,
+    launch: Option<ActorLaunch>,
 ) -> Result<SessionStatus, RuntimeError> {
     let key = (spec.group_id.clone(), spec.actor_id.clone());
     remove_exited_before_start(&key)?;
@@ -58,6 +72,9 @@ fn start_inner_environment(
     } else {
         Session::start_with_history(spec, history, history_cursor_floor)?
     };
+    if let Some(launch) = launch {
+        session.attribute_launch(launch);
+    }
     let status = session.status();
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry.contains_key(&key) {

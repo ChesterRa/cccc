@@ -238,6 +238,47 @@ fn grok_claim_delivers_instruction_changes_once_after_successful_outer_commit() 
 }
 
 #[test]
+fn a_terminal_that_still_runs_keeps_its_work_from_the_webhook() {
+    let f = Fixture::new();
+    f.start();
+    f.source("for the running terminal");
+    let group_id = &f.group.group_id;
+    let history = crate::ops::actor_runtime::terminal_history::config(&f.home, group_id, "bot")
+        .expect("isolated Grok fixture");
+    cccc_runtime::start_actor_with_history(
+        cccc_runtime::LaunchSpec {
+            group_id: group_id.clone(),
+            actor_id: "bot".into(),
+            runner: RunnerKind::Pty,
+            command: vec!["sh".into(), "-c".into(), "exec sleep 30".into()],
+            cwd: f._temp.path().into(),
+            env: Default::default(),
+            cols: 80,
+            rows: 24,
+        },
+        history,
+        cccc_runtime::ActorLaunch {
+            runtime: ActorRuntime::Custom,
+            submit: cccc_contracts::ActorSubmit::Enter,
+        },
+    )
+    .expect("isolated Grok fixture");
+
+    assert!(f.next().is_null(), "no wake while a push owner runs");
+    let refused = f.response(
+        "grok_webhook_configure",
+        json!({"url":"https://api2.cursor.sh/automations/webhook/replacement","key":"synthetic"}),
+    );
+    assert_eq!(
+        refused.error.expect("refused").code,
+        "actor_must_be_stopped"
+    );
+
+    cccc_runtime::stop(group_id, "bot").expect("isolated Grok fixture");
+    assert!(f.next().is_object(), "the work is offered once it stopped");
+}
+
+#[test]
 fn idle_configuration_preserves_access_and_queued_work_and_retires_old_wakes() {
     let f = Fixture::new();
     let args = json!({"url":"https://api2.cursor.sh/automations/webhook/replacement","key":"synthetic-key"});

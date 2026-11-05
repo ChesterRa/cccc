@@ -15,6 +15,8 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
+mod web_model;
+
 struct Fixture {
     _temp: tempfile::TempDir,
     home: HomeLayout,
@@ -592,14 +594,18 @@ fn an_owner_not_confirmed_stopped_leaves_even_a_native_member_unknown() {
             .cloned()
             .expect("args"),
     };
-    let fence = actor_delivery::fence_actor(&fixture.group_id, "x");
+    let hold = Hold {
+        _browser_work: actor_runtime::hold_browser_work(&fixture.home, &fixture.group_id, "x")
+            .expect("nothing else holds it"),
+        _fence: actor_delivery::fence_actor(&fixture.group_id, "x"),
+    };
 
     let error = incomplete(
         &fixture.home,
         &request,
         &current,
         None,
-        fence,
+        hold,
         OpError::new("stop_failed", "the previous owner did not stop"),
     );
 
@@ -705,10 +711,6 @@ fn refused_switches_leave_the_member_unchanged() {
             "local_session_source_changed",
         ),
         (native_target(&offline), "local_session_offline"),
-        (
-            json!({"kind": "managed", "patch": {"runtime": "web_model"}}),
-            "actor_switch_unsupported",
-        ),
         (
             json!({"kind": "managed", "patch": {"title": "renamed"}}),
             "invalid_args",
@@ -1109,6 +1111,7 @@ fn held_work_follows_the_handoff_once_the_switch_completes() {
         actor: fixture.actor(),
         event: message.clone(),
         claimed: false,
+        transport: "pty",
     }];
 
     let outcome = actor_delivery_worker::process_batch_tracked(
@@ -1220,6 +1223,53 @@ fn a_submission_cut_off_by_the_switch_is_not_repeated_and_queued_work_moves_on()
 
     assert_eq!(result["completion"], "done");
     fixture.assert_cut_off_work_moves_on(&source, &cut, &queued);
+}
+
+/// A terminal that never reads its input, with a large write stopped part way.
+fn terminal_with_a_blocked_write(fixture: &Fixture) -> Event {
+    let command = vec!["sh".to_owned(), "-c".to_owned(), "exec sleep 30".to_owned()];
+    fixture.mutate(|doc| {
+        doc.running = true;
+        let actor = &mut doc.actors[0];
+        actor.runtime = ActorRuntime::Custom;
+        actor.command.clone_from(&command);
+        actor.env.clear();
+    });
+    let started = fixture.request("actor_start", json!({"actor_id": "x"}));
+    assert!(started.ok, "{:?}", started.error);
+    let group = fixture.group();
+    let actor = fixture.actor();
+    let warm = fixture.send(&group, &actor, "first".into());
+    fixture.wait_for_delivery(&warm, "accepted");
+    let cut = fixture.send(&group, &actor, "x".repeat(512 * 1024));
+    fixture.wait_for_delivery(&cut, "claimed");
+    std::thread::sleep(Duration::from_millis(300));
+    cut
+}
+
+#[test]
+fn a_submission_cut_off_by_a_restart_is_not_repeated() {
+    let fixture = Fixture::new();
+    let cut = terminal_with_a_blocked_write(&fixture);
+
+    let restarted = fixture.request("actor_restart", json!({"actor_id": "x"}));
+
+    assert!(restarted.ok, "{:?}", restarted.error);
+    assert_eq!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
+    let stopped = fixture.request("actor_stop", json!({"actor_id": "x"}));
+    assert!(stopped.ok, "{:?}", stopped.error);
+}
+
+#[test]
+fn a_submission_cut_off_by_a_stop_stays_out_of_the_queue() {
+    let fixture = Fixture::new();
+    let cut = terminal_with_a_blocked_write(&fixture);
+
+    let stopped = fixture.request("actor_stop", json!({"actor_id": "x"}));
+
+    assert!(stopped.ok, "{:?}", stopped.error);
+    assert_eq!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
+    assert!(!fixture.pending().contains(&cut.id));
 }
 
 #[test]

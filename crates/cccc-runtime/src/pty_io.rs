@@ -76,34 +76,88 @@ impl Write for PtyIo {
 }
 
 impl crate::pty_input::PtyInput for PtyIo {
-    fn write_all_interruptible(
+    fn write_all_interruptible_tracked(
         &mut self,
         mut data: &[u8],
         cancelled: &dyn Fn() -> bool,
-    ) -> io::Result<bool> {
+    ) -> crate::pty_input::WriteProgress {
+        use crate::pty_input::WriteProgress;
+        let mut written = 0;
         while !data.is_empty() {
             if cancelled() {
-                return Ok(false);
+                return WriteProgress {
+                    written,
+                    result: Ok(false),
+                };
             }
             match self.0.write(data) {
-                Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
-                Ok(written) => data = &data[written..],
+                Ok(0) => {
+                    return WriteProgress {
+                        written,
+                        result: Err(io::ErrorKind::WriteZero.into()),
+                    };
+                }
+                Ok(count) => {
+                    written += count;
+                    data = &data[count..];
+                }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                    if self.wait(POLLOUT, Some(std::time::Duration::from_millis(25)))?
-                        & (POLLHUP | POLLERR)
-                        != 0
-                    {
-                        return Err(io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            "PTY slave closed",
-                        ));
+                    match self.wait(POLLOUT, Some(std::time::Duration::from_millis(25))) {
+                        Ok(events) if events & (POLLHUP | POLLERR) != 0 => {
+                            return WriteProgress {
+                                written,
+                                result: Err(io::Error::new(
+                                    io::ErrorKind::BrokenPipe,
+                                    "PTY slave closed",
+                                )),
+                            };
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            return WriteProgress {
+                                written,
+                                result: Err(error),
+                            };
+                        }
                     }
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error),
+                Err(error) => {
+                    return WriteProgress {
+                        written,
+                        result: Err(error),
+                    };
+                }
             }
         }
-        self.flush()?;
-        Ok(true)
+        WriteProgress {
+            written,
+            result: self.flush().map(|()| true),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pty_input::PtyInput;
+    use std::cell::Cell;
+
+    #[test]
+    fn reports_bytes_written_before_cancellation_on_a_real_pty() {
+        let pair = portable_pty::native_pty_system()
+            .openpty(portable_pty::PtySize::default())
+            .expect("open PTY");
+        let (_, mut writer) = open(pair.master.as_ref()).expect("open PTY writer");
+        // Keep the slave open but do not drain it, so a nonblocking write of a
+        // large payload completes only partially before the next cancellation check.
+        let payload = vec![b'x'; 8 * 1024 * 1024];
+        let calls = Cell::new(0);
+        let progress = writer.write_all_interruptible_tracked(&payload, &|| {
+            calls.set(calls.get() + 1);
+            calls.get() > 1
+        });
+        assert!(matches!(progress.result, Ok(false)));
+        assert!(progress.written > 0 && progress.written < payload.len());
     }
 }

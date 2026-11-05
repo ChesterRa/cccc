@@ -61,7 +61,9 @@ fn prepare(
     let actor = cccc_core::actors::find(&group, &actor_id).ok_or_else(|| {
         DaemonResponse::failure("actor_not_found", format!("actor not found: {actor_id}"))
     })?;
-    if actor.runner == RunnerKind::Headless || crate::ops::actor_runtime::is_structured(actor) {
+    if (actor.runner == RunnerKind::Headless || crate::ops::actor_runtime::is_structured(actor))
+        && !crate::ops::actor_runtime::has_primary_pty(&group_id, &actor_id)
+    {
         let mut response = DaemonResponse::failure(
             "not_pty_actor",
             "terminal attach is only available for PTY actors",

@@ -162,6 +162,29 @@ pub fn with_exclusive_lock<T>(
     result
 }
 
+/// An exclusive advisory lock held until the returned file is dropped, or
+/// `None` while another holder has it. It never waits, and the OS releases it
+/// when its holder exits, however that happens. Holders must not delete the
+/// file: a new file under the same name would be a second, unrelated lock.
+pub fn try_exclusive_lock(path: &Path) -> io::Result<Option<File>> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(file)),
+        Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn sync_dir(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
@@ -186,6 +209,20 @@ pub(crate) fn sync_dir(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::quote_rfc3339_yaml_scalars;
+
+    #[test]
+    fn a_held_lock_answers_busy_to_another_open_until_it_is_dropped() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("nested/work.lock");
+
+        let held = super::try_exclusive_lock(&path)
+            .expect("lock")
+            .expect("free");
+        assert!(super::try_exclusive_lock(&path).expect("lock").is_none());
+
+        drop(held);
+        assert!(super::try_exclusive_lock(&path).expect("lock").is_some());
+    }
 
     #[test]
     fn an_atomic_write_replaces_a_file_another_handle_is_reading() {

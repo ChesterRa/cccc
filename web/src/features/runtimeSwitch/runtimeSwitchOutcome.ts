@@ -27,6 +27,8 @@ export function runtimeSwitchErrorMessage(
   if (error.code === "actor_switch_unknown") return translate("runtimeSwitch.unknown");
   if (error.code === "actor_switch_conflict") return translate("runtimeSwitch.conflict");
   if (error.code === "actor_switch_pending") return translate("runtimeSwitch.previousPending");
+  if (error.code === "actor_browser_busy") return translate("runtimeSwitch.browserBusy");
+  if (error.code === "delivery_unresolved") return translate("runtimeSwitch.deliveryUnresolved");
   if (error.code === "actor_switch_incomplete") {
     const details =
       error.details && typeof error.details === "object"
@@ -35,6 +37,7 @@ export function runtimeSwitchErrorMessage(
     const key =
       {
         native: "runtimeSwitch.incompleteNative",
+        web_model: "runtimeSwitch.incompleteWeb",
         not_running: "runtimeSwitch.incompleteStopped",
         restarted: "runtimeSwitch.incompleteRestarted",
         restart_failed: "runtimeSwitch.incompleteRestartFailed",

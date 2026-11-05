@@ -1,10 +1,11 @@
 use super::{
-    commit_reaped, start, start_with_history, status, stop, stop_all, stop_if_started_at,
-    submit_interruptible, submit_sequence_interruptible, write,
+    commit_reaped, start, start_actor_with_history, start_with_history, status, stop, stop_all,
+    stop_if_started_at, submit_interruptible, submit_sequence_interruptible, write,
 };
 use crate::registry::lookup;
 use crate::test_support::{spec, test_guard};
-use crate::{HistoryConfig, RuntimeError, history, history_since};
+use crate::{ActorLaunch, HistoryConfig, RuntimeError, history, history_since};
+use cccc_contracts::{ActorRuntime, ActorSubmit};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -490,6 +491,41 @@ fn stop_is_bounded_when_a_background_child_keeps_the_pty_open() {
         std::thread::sleep(Duration::from_millis(10));
     }
     panic!("background process {background_pid} survived actor stop");
+}
+
+#[test]
+fn only_an_actor_launch_is_attributed() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let launch = ActorLaunch {
+        runtime: ActorRuntime::Custom,
+        submit: ActorSubmit::Newline,
+    };
+    let group = "g_launch_attribution";
+    let started = start_actor_with_history(
+        spec(&temp, group, "primary", "sleep 30"),
+        HistoryConfig {
+            path: temp.path().join("primary.pty"),
+            max_bytes: 1024 * 1024,
+            hot_bytes: 1024,
+            persist: true,
+        },
+        launch,
+    )
+    .expect("actor launch");
+    assert_eq!(started.launch, Some(launch));
+    assert_eq!(
+        status(group, "primary").expect("status").launch,
+        Some(launch)
+    );
+    assert_eq!(stop(group, "primary").expect("stop").launch, Some(launch));
+    // Internal to the daemon: the status clients read does not change.
+    let public = serde_json::to_value(&started).expect("status json");
+    assert!(public.get("launch").is_none(), "{public}");
+
+    start(spec(&temp, group, "terminal", "sleep 30")).expect("generic terminal");
+    assert_eq!(status(group, "terminal").expect("status").launch, None);
+    stop(group, "terminal").expect("stop terminal");
 }
 
 #[test]

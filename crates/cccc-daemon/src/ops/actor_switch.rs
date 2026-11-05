@@ -73,6 +73,14 @@ struct Plan {
     clear_private_env: bool,
 }
 
+/// Keeps other work off the member until its switch is committed and complete:
+/// browser work in progress ends first, and work that starts next finds the new
+/// owner. Released before anything starts, since a start takes these too.
+struct Hold {
+    _browser_work: std::fs::File,
+    _fence: DeliveryFence,
+}
+
 fn switch(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(request)?;
     let group_id = required_arg(request, "group_id")?;
@@ -107,11 +115,6 @@ fn switch(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     {
         return Err(conflict(
             "This member's session changed after it was shown. Reload it and confirm the switch again.",
-        ));
-    }
-    if current.runtime.is_web_model() {
-        return Err(unsupported(
-            "Web Model members keep their existing save and restart flow in this version.",
         ));
     }
     let plan = match target {
@@ -423,18 +426,16 @@ fn plan_managed(
         .validate(actor.runtime)
         .map_err(OpError::invalid)?;
     actor.normalize_runtime_constraints();
-    if actor.runtime.is_web_model() {
-        return Err(unsupported(
-            "Choosing a Web Model keeps the existing save and restart flow in this version.",
-        ));
-    }
     // An explicit start enables a stopped managed member, as "save and
     // restart" did; a native member whose access was paused stays paused
     // until the user resumes it.
     actor.enabled = start && (current.enabled || !leaving_native);
     // Refused here: at the start, the old owner has already stopped. A stopped
-    // member that follows the Group's directory does not need one yet.
-    if actor.enabled || !actor.default_scope_key.trim().is_empty() {
+    // member that follows the Group's directory does not need one yet, and a
+    // Web Model runs nothing in one.
+    if !actor.runtime.is_web_model()
+        && (actor.enabled || !actor.default_scope_key.trim().is_empty())
+    {
         actor_runtime::working_directory(group, &actor)?;
     }
     actor.updated_at = utc_now();
@@ -466,21 +467,26 @@ fn execute(
         pending: true,
         clear_private_env: plan.clear_private_env,
     };
-    let fence = actor_delivery::fence_actor(&group_id, &actor_id);
+    let hold = Hold {
+        _browser_work: actor_runtime::hold_browser_work(home, &group_id, &actor_id)?,
+        _fence: actor_delivery::fence_actor(&group_id, &actor_id),
+    };
     actor_delivery::shutdown_actor_for(&group_id, &actor_id, ShutdownReason::Replace);
-    let was_running = match actor_runtime::stop_owner_confirmed(group, &actor_id) {
+    let was_running = match actor_runtime::stop_owner_confirmed(home, group, &actor_id) {
         Ok(was_running) => was_running,
         // An owner that cannot be confirmed stopped keeps the member; its
         // state is unknown, so it is neither reported stopped nor restarted.
-        Err(error) => return Err(incomplete(home, request, current, None, fence, error)),
+        Err(error) => return Err(incomplete(home, request, current, None, hold, error)),
     };
-    if let Err(error) = runtime_delivery::settle_replaced_owner_claims(home, group, &actor_id) {
+    if let Err(error) = super::runtime_state::settle_active_turn(home, group, current)
+        .and_then(|()| runtime_delivery::settle_replaced_owner_claims(home, group, &actor_id))
+    {
         return Err(incomplete(
             home,
             request,
             current,
             Some(was_running),
-            fence,
+            hold,
             error,
         ));
     }
@@ -493,7 +499,7 @@ fn execute(
                 request,
                 current,
                 Some(was_running),
-                fence,
+                hold,
                 rejected,
             ));
         }
@@ -508,12 +514,12 @@ fn execute(
                     request,
                     current,
                     Some(was_running),
-                    fence,
+                    hold,
                     OpError::io(error),
                 ));
             }
             _ => {
-                drop(fence);
+                drop(hold);
                 return Err(OpError::new(
                     "actor_switch_unknown",
                     format!(
@@ -524,7 +530,7 @@ fn execute(
         },
     }
     let completed = completion::complete_pending(home, &group_id, &actor_id);
-    drop(fence);
+    drop(hold);
     match completed {
         Ok(completed) => {
             let notice = completed.as_ref().and_then(|done| done.notice.as_ref());
@@ -585,6 +591,9 @@ fn commit(
                 doc.scopes.push(scope.clone());
             }
             doc.actors[index] = plan.actor.clone();
+            if current.runtime != plan.actor.runtime {
+                actors::retire_web_model_browser_target(doc, &current.id)?;
+            }
             replace_conversation_source(doc, &current.external_session_id, source);
             let mut records = runtime_switches::records(doc);
             if !source.is_empty() {
@@ -653,10 +662,10 @@ fn incomplete(
     request: &DaemonRequest,
     current: &Actor,
     was_running: Option<bool>,
-    fence: DeliveryFence,
+    hold: Hold,
     cause: OpError,
 ) -> OpError {
-    drop(fence);
+    drop(hold);
     let group = store(home).and_then(|store| {
         store
             .load(&lifecycle_group_id(request))
@@ -676,6 +685,9 @@ fn incomplete(
                 Err(_) => "restart_failed",
             }
         }
+        // No process says how it stands: its conversation may still be working,
+        // and the credentials it held are already gone.
+        (Ok(_), Some(false)) if current.runtime.is_web_model() => "web_model",
         (Ok(_), Some(false)) => "not_running",
     };
     let mut error = OpError::new(

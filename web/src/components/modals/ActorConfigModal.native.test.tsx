@@ -116,7 +116,12 @@ beforeEach(() => {
   mocks.refresh.mockResolvedValue(undefined);
   mocks.switchRuntime.mockResolvedValue({
     ok: true,
-    result: { completion: "done", start: "stopped" },
+    result: {
+      completion: "done",
+      start: "stopped",
+      from: { runtime: "codex" },
+      to: { runtime: "codex" },
+    },
   });
   config = {
     mode: "edit",

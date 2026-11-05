@@ -302,7 +302,7 @@ fn retire_runtime_state(group: &mut GroupDoc, actor_id: &str) -> Option<Value> {
         .and_then(|states| states.remove(actor_id))
 }
 
-fn retire_web_model_browser_target(
+pub fn retire_web_model_browser_target(
     group: &mut GroupDoc,
     actor_id: &str,
 ) -> io::Result<Option<Value>> {

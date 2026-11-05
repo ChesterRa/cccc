@@ -405,6 +405,7 @@ mod tests {
             actor: peer.clone(),
             event: first.clone(),
             claimed: true,
+            transport: "pty",
         };
         super::super::actor_delivery::withdraw_jobs(std::slice::from_ref(&job), "held");
 

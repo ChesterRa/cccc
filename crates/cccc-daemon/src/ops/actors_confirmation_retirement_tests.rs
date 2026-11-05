@@ -129,6 +129,7 @@ fn explicit_actor_and_group_stop_keep_queued_delivery_from_reopening_confirmatio
             actor: fixture.group.actors[0].clone(),
             event,
             claimed: true,
+            transport: "managed_session",
         }];
         let stopped = fixture.request(operation, Value::Null);
         assert!(stopped.ok, "{:?}", stopped.error);

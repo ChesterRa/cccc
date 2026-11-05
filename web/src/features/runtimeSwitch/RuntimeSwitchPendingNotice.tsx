@@ -3,9 +3,14 @@ import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { completeActorRuntimeSwitch } from "../../services/api/actors";
 import { useGroupStore, useUIStore } from "../../stores";
-import type { Actor } from "../../types";
+import { isWebModelRuntime, type Actor } from "../../types";
+import { actorGenerationIdentity } from "../../utils/actorIdentity";
 import { joinRuntimeSentences, runtimeSwitchStartError } from "./runtimeSwitchOutcome";
-import { hasPendingActorSwitch, refreshRuntimeSwitchGroup } from "./runtimeSwitchState";
+import {
+  hasPendingActorSwitch,
+  openWebSetup,
+  refreshRuntimeSwitchGroup,
+} from "./runtimeSwitchState";
 
 export function RuntimeSwitchPendingNotice({ actor, groupId }: { actor: Actor; groupId: string }) {
   const { t } = useTranslation("actors");
@@ -21,6 +26,7 @@ export function RuntimeSwitchPendingNotice({ actor, groupId }: { actor: Actor; g
     setError("");
     try {
       const response = await completeActorRuntimeSwitch(groupId, actor.id);
+      const notices: string[] = [];
       if (!response.ok) {
         setError(
           response.error.code === "actor_switch_unknown"
@@ -28,16 +34,45 @@ export function RuntimeSwitchPendingNotice({ actor, groupId }: { actor: Actor; g
             : response.error.message,
         );
       } else {
-        const notices: string[] = [];
         if (response.result.start === "error")
           notices.push(runtimeSwitchStartError(response.result.start_error, (key) => t(key)));
         if (response.result.start === "pending") notices.push(t("runtimeSwitch.startPending"));
         if (response.result.start === "stopped") notices.push(t("runtimeSwitch.stopped"));
         if (response.result.access_paused) notices.push(t("runtimeSwitch.accessPaused"));
-        if (notices.length)
-          useUIStore.getState().showNotice({ message: joinRuntimeSentences(notices) });
       }
       await refreshRuntimeSwitchGroup(groupId);
+      if (response.ok && response.result.completion === "done") {
+        const needsWebSetup =
+          response.result.switched &&
+          isWebModelRuntime(response.result.to.runtime) &&
+          response.result.from.runtime !== response.result.to.runtime;
+        if (needsWebSetup) notices.push(t("runtimeSwitch.webConnectionRequired"));
+        if (notices.length) {
+          const expectedRuntime = response.result.switched ? response.result.to.runtime : "";
+          const generation = actorGenerationIdentity(actor);
+          useUIStore.getState().showNotice({
+            message: joinRuntimeSentences(notices),
+            ...(needsWebSetup
+              ? {
+                  actionLabel: t("runtimeSwitch.openWebSetup"),
+                  onAction: () => {
+                    const result = openWebSetup(groupId, actor.id, expectedRuntime, generation);
+                    if (result !== "opened")
+                      useUIStore
+                        .getState()
+                        .showError(
+                          t(
+                            result === "editor_open"
+                              ? "runtimeSwitch.closeEditorFirst"
+                              : "runtimeSwitch.refreshFailed",
+                          ),
+                        );
+                  },
+                }
+              : {}),
+          });
+        }
+      }
     } catch {
       setError(t("runtimeSwitch.refreshFailed"));
     } finally {

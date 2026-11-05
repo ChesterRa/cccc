@@ -84,6 +84,7 @@ fn active(group: &GroupDoc, actor: &Actor) -> bool {
     actor.enabled
         && group.running
         && !matches!(group.state, GroupState::Paused | GroupState::Stopped)
+        && super::runtime_state::pull_admitted(group, actor)
 }
 
 fn binding(connector: &Value, group: &GroupDoc, actor: &Actor) -> Option<Value> {
@@ -221,6 +222,7 @@ fn unresolved(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), 
 fn connect(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     user(request)?;
     let (group, actor) = group_actor(home, request)?;
+    super::actor_switch::refuse_pending(home, &group.group_id, &actor.id)?;
     if super::actor_runtime::actor_is_running(&group, &actor) {
         return Err(OpError::new(
             "actor_must_be_stopped",
@@ -277,6 +279,7 @@ pub(super) fn accept_pairing(home: &HomeLayout, id: &str, pair: &Value) -> OpRes
             .clone(),
     };
     let (group, actor) = group_actor(home, &request)?;
+    super::actor_switch::refuse_pending(home, &group.group_id, &actor.id)?;
     if pair["generation"] != cccc_core::actors::generation_identity(&actor) {
         return Err(OpError::new(
             "pairing_changed",

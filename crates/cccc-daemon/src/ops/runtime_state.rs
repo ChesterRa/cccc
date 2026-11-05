@@ -367,18 +367,40 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
             group.state,
             cccc_contracts::GroupState::Paused | cccc_contracts::GroupState::Stopped
         )
+        || !pull_admitted(&group, actor)
     {
         return object(
             json!({"status":"stopped","turn":null,"instructions":"This CCCC structured actor is stopped."}),
         );
     }
+    let transport = match string_arg(request, "transport") {
+        None => "web_model_pull".to_owned(),
+        Some(value) => match value.trim() {
+            "" | "web_model_pull" => "web_model_pull".to_owned(),
+            "web_model_browser" => "web_model_browser".to_owned(),
+            _ => {
+                return Err(OpError::new(
+                    "invalid_transport",
+                    "transport must be web_model_pull or web_model_browser",
+                ));
+            }
+        },
+    };
     let active_state = actor_state(home, &group.group_id, &actor_id)?;
+    let active_turn = active_state["active_turn_id"].as_str().unwrap_or_default();
+    // A browser that left this batch staged takes the same batch back: new work
+    // would not match the draft already in its composer.
+    let resumed = if transport == "web_model_browser"
+        && !active_turn.is_empty()
+        && string_arg(request, "resume_turn_id").as_deref() == Some(active_turn)
+    {
+        staged_batch(home, &group, &actor_id, &active_state)?
+    } else {
+        None
+    };
     // Status heartbeats do not relinquish a turn. Only its completion clears
     // this identity; the browser may still be submitting its claimed payload.
-    if active_state["active_turn_id"]
-        .as_str()
-        .is_some_and(|value| !value.is_empty())
-    {
+    if resumed.is_none() && !active_turn.is_empty() {
         return object(json!({
             "status":"turn_in_progress",
             "turn":null,
@@ -399,21 +421,13 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
             "runtime delivery does not support Inbox kind filters",
         ));
     }
-    let transport = match string_arg(request, "transport") {
-        None => "web_model_pull".to_owned(),
-        Some(value) => match value.trim() {
-            "" | "web_model_pull" => "web_model_pull".to_owned(),
-            "web_model_browser" => "web_model_browser".to_owned(),
-            _ => {
-                return Err(OpError::new(
-                    "invalid_transport",
-                    "transport must be web_model_pull or web_model_browser",
-                ));
-            }
-        },
+    let candidates = if resumed.is_some() {
+        Vec::new()
+    } else {
+        crate::ops::runtime_delivery::pending_sources(home, &group, actor, limit)?
     };
-    let mut messages = Vec::new();
-    for event in crate::ops::runtime_delivery::pending_sources(home, &group, actor, limit)? {
+    let mut messages = resumed.unwrap_or_default();
+    for event in candidates {
         let claimed = crate::ops::runtime_delivery::latest_state(
             home,
             &group.group_id,
@@ -917,10 +931,11 @@ fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResu
                 &actor_id,
                 source_event_id,
             )?;
-            if latest
-                .as_ref()
-                .is_some_and(|(state, _)| state == runtime_state)
-            {
+            // Work settled as uncertain stays out of the queue, whatever a late
+            // report of the same attempt says.
+            if latest.as_ref().is_some_and(|(state, _)| {
+                state == runtime_state || (state == "ambiguous" && runtime_state == "failed")
+            }) {
                 continue;
             }
             crate::ops::runtime_delivery::append_state(
@@ -937,6 +952,12 @@ fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResu
             && runtime_state == "accepted"
         {
             notice.delivered();
+        }
+        // A failed batch is over: holding its turn would stop everything behind it.
+        if runtime_state == "failed"
+            && actor_state(home, &group.group_id, &actor_id)?["active_turn_id"] == turn_id.as_str()
+        {
+            set_runtime_status(home, &group, &actor_id, "waiting", "", "", &[])?;
         }
     }
     object(json!({"event":event}))
@@ -1128,6 +1149,102 @@ fn set_runtime_status(
         state["updated_at"] = json!(utc_now());
         Ok(())
     })
+}
+
+/// The batch a browser left staged, as it was claimed: the limit of this request
+/// and later Mail state must not change it. Anything that no longer matches
+/// leaves the turn as it is.
+fn staged_batch(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    state: &Value,
+) -> Result<Option<Vec<Event>>, OpError> {
+    let event_ids = state["active_event_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>();
+    for event_id in &event_ids {
+        let claim =
+            crate::ops::runtime_delivery::latest_state(home, &group.group_id, actor_id, event_id)?;
+        if !claim.is_some_and(|(state, transport)| {
+            state == "claimed" && transport == "web_model_browser"
+        }) {
+            return Ok(None);
+        }
+    }
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
+    let batch = ledger::inspect(&ledger_path, |events, _| {
+        event_ids
+            .iter()
+            .map(|id| events.iter().find(|event| event.id == *id).cloned())
+            .collect::<Option<Vec<_>>>()
+    })
+    .map_err(OpError::io)?;
+    Ok(batch.filter(|events| !events.is_empty()))
+}
+
+/// Pull takes work only from an Actor nothing else serves. A push owner running
+/// from before a saved change keeps the work, and a pending switch holds it.
+pub(super) fn pull_admitted(group: &GroupDoc, actor: &Actor) -> bool {
+    cccc_core::runtime_switches::pending_for(group, actor).is_none()
+        && super::actor_runtime::delivery_owner(&group.group_id, &actor.id)
+            .is_ok_and(|owner| owner.is_none())
+}
+
+/// Before a switch commits, close the turn its old owner held. Work that never
+/// left CCCC goes back to the queue. Work that may be with the old owner stays
+/// out of it, for the new owner to review: a browser writes its fence before it
+/// submits, and a pull turn was handed over when claimed. The ledger goes first.
+pub(super) fn settle_active_turn(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> Result<(), OpError> {
+    let state = actor_state(home, &group.group_id, &actor.id)?;
+    let active_turn = state["active_turn_id"].as_str().unwrap_or_default();
+    if active_turn.is_empty() {
+        return Ok(());
+    }
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let targets =
+        integration_state::group_get(&store, &group.group_id, "web_model_browser_targets")
+            .map_err(OpError::io)?;
+    let fenced = targets[&actor.id]["last_delivery_turn_id"].as_str() == Some(active_turn);
+    let event_ids = state["active_event_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    for event_id in event_ids {
+        let Some((delivery, transport)) =
+            crate::ops::runtime_delivery::latest_state(home, &group.group_id, &actor.id, event_id)?
+        else {
+            continue;
+        };
+        let outcome = match delivery.as_str() {
+            "claimed" if !fenced => crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
+                "the member's runtime was switched before this was submitted",
+            ),
+            "claimed" | "accepted" => crate::ops::runtime_delivery::DeliveryOutcome::Ambiguous(
+                "the member's runtime was switched while this was with its previous owner",
+            ),
+            _ => continue,
+        };
+        crate::ops::runtime_delivery::append_state(
+            home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            event_id,
+            &transport,
+            outcome,
+        )?;
+    }
+    set_runtime_status(home, group, &actor.id, "waiting", "", "", &[])
 }
 
 fn turn_event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {

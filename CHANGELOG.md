@@ -6,6 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+
+- An agent can now switch to or from a Web Model, including directly between a Web Model and a
+  native session, or through a Profile. Entering a Web Model starts nothing: connect it to a
+  conversation in its settings, and its messages wait until then. Leaving one retires its
+  connection, so coming back means connecting again. While CCCC is handing a message to the browser,
+  a switch asks you to try again in a moment.
+- An agent can now take up a planned or active task that nobody holds.
+
+### Changed
+
+- The interface moves toward an e-ink look: a soft paper light theme and a graphite dark theme, with
+  text colors retuned for each. Layout, fonts and components are unchanged.
+- Opening a message from a notification now says so when the message cannot be opened, and offers
+  **Try again**, instead of failing silently.
+
+### Fixed
+
+- Messages reach what is actually running. After you save another runtime or Profile for a running
+  agent, its terminal keeps receiving them, with the submit key it launched with, until a launch
+  replaces it. A Profile change takes effect at that launch, and a connector no longer takes work
+  from a terminal that still runs.
+- A message cut off part way into a terminal is kept for review instead of being written again, so
+  a restart or an interrupted write no longer leaves two copies. Work claimed for a terminal that
+  has since stopped moves to the agent's current runtime.
+- A browser delivery that could not finish no longer blocks an agent. Delivery resumes the same
+  batch, and a batch that runs out of retries is kept for review, because the conversation may still
+  hold its draft.
+
 ## [0.4.48]
 
 ### Added

@@ -93,6 +93,79 @@ done"#;
 
 #[cfg(unix)]
 #[test]
+fn a_running_session_takes_messages_whatever_was_saved_since() {
+    let temp = tempfile::tempdir().expect("isolated fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("deepseek owner", "").expect("group");
+    let mut group = cccc_core::group_scope::attach(
+        &store,
+        &group.group_id,
+        cccc_core::scope::detect(temp.path()).expect("scope"),
+    )
+    .expect("attach scope");
+    let script = r#"while IFS= read -r line; do
+if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
+elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
+else
+  rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "${rid:-3}"
+fi
+done"#;
+    let mut actor = Actor::new("deepseek");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.command = vec!["sh".into(), "-c".into(), script.into()];
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save actor");
+    start(&home, &group, &actor, temp.path()).expect("start fake ACP");
+    group.actors[0].runtime = ActorRuntime::Custom;
+    store.save(&group).expect("save the next launch");
+    let mut event = Event::new("chat.message", &group.group_id);
+    event.by = "user".into();
+    event.data = serde_json::json!({"to":["deepseek"],"text":"for the running session"})
+        .as_object()
+        .cloned()
+        .expect("event data");
+    ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &event)
+        .expect("append event");
+    let saved = group.actors[0].clone();
+    assert_eq!(
+        crate::ops::actor_delivery::delivery_transport(&home, &group, &saved).expect("owner"),
+        "deepseek"
+    );
+    crate::ops::runtime_delivery::claim(&home, &group, &saved, &event.id, "deepseek", false)
+        .expect("claim");
+    let job = crate::ops::actor_delivery::DeliveryJob {
+        home: home.clone(),
+        group: group.clone(),
+        actor: saved.clone(),
+        event: event.clone(),
+        claimed: true,
+        transport: "deepseek",
+    };
+
+    let outcome = crate::ops::actor_delivery_worker::process_batch(
+        &mut vec![job],
+        &mut String::new(),
+        &AtomicBool::new(false),
+    );
+
+    assert_eq!(
+        outcome,
+        crate::ops::actor_delivery_worker::BatchOutcome::Delivered
+    );
+    assert_eq!(
+        crate::ops::runtime_delivery::latest_state(&home, &group.group_id, &saved.id, &event.id)
+            .expect("delivery state"),
+        Some(("accepted".to_owned(), "deepseek".to_owned()))
+    );
+    stop(&group.group_id, &saved.id);
+}
+
+#[cfg(unix)]
+#[test]
 fn fake_acp_delivery_persists_update_and_terminal_before_success() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

@@ -151,6 +151,7 @@ mod tests {
                 started_at: "2026-07-27T00:00:00Z".into(),
                 exit_code: Some(1),
                 exit_detail: Some("Terminated by Killed".into()),
+                launch: None,
             }],
         );
         assert!(result.is_ok());
@@ -197,6 +198,7 @@ mod tests {
                 started_at: "2026-08-25T00:00:00Z".into(),
                 exit_code: Some(1),
                 exit_detail: None,
+                launch: None,
             }],
         )
         .expect("reconcile terminal exit");
@@ -251,6 +253,7 @@ mod tests {
                 started_at: "older-session".into(),
                 exit_code: Some(1),
                 exit_detail: None,
+                launch: None,
             }],
         )
         .expect("reconcile stale exit");

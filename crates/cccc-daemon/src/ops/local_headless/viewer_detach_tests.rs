@@ -70,10 +70,11 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
         command: vec![
             "sh".into(),
             "-c".into(),
-            "stty -echo; printf '\\033[?2004h'; exec cat".into(),
+            "stty -echo -icanon; printf '\\033[?2004h'; exec cat".into(),
         ],
         env: BTreeMap::from([("PATH".into(), std::env::var("PATH").unwrap_or_default())]),
         cwd: config.clone(),
+        submit: cccc_contracts::ActorSubmit::Enter,
     };
     let viewer_spec = || cccc_runtime::LaunchSpec {
         group_id: group.group_id.clone(),
@@ -168,7 +169,8 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
     );
     assert!(operations.lock().expect("operations").is_empty());
 
-    // Delivery must also reopen an exited TUI before the reaper has seen it.
+    // Delivery must also reopen an exited TUI before the reaper has seen it, and
+    // submit the way that session launched, whatever was saved since.
     let exited = cccc_runtime::stop(&group.group_id, "claude-1").expect("exit before delivery");
     let mut event = Event::new("chat.message", &group.group_id);
     event.by = "user".into();
@@ -180,13 +182,9 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
         let home = home.clone();
         let group = current_group.clone();
         move || {
-            submit_batch(
-                &home,
-                &group,
-                &group.actors[0],
-                &[event],
-                &AtomicBool::new(false),
-            )
+            let mut saved = group.actors[0].clone();
+            saved.submit = cccc_contracts::ActorSubmit::None;
+            submit_batch(&home, &group, &saved, &[event], &AtomicBool::new(false))
         }
     })
     .await
@@ -195,6 +193,24 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
         delivered,
         super::super::BatchSubmission::Accepted,
         "delivery reconnects the same provider's input channel"
+    );
+    // The terminal echoes the payload byte for byte; only the submit key ends a line.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let submitted = loop {
+        let output =
+            crate::ops::terminal_history_source::retained_full(&home, &group.group_id, "claude-1")
+                .expect("terminal output");
+        if output.data.ends_with('\n') {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    };
+    assert!(
+        submitted,
+        "the viewer keeps the submit key it launched with"
     );
     crate::ops::actor_runtime::reconcile_exited(&home, vec![exited]).expect("late delivery reap");
     assert!(item.has_terminal());

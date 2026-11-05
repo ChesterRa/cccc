@@ -403,6 +403,7 @@ while True:
                 actor: actor.clone(),
                 event,
                 claimed: true,
+                transport: "pty",
             };
             assert!(
                 matches!(
@@ -545,6 +546,7 @@ while True:
                 actor: actor.clone(),
                 event,
                 claimed: true,
+                transport: "pty",
             };
             assert!(matches!(
                 process_batch(&mut vec![job], &mut preamble, &cancelled),

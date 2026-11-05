@@ -27,7 +27,7 @@ pub(crate) use events::{
 pub(crate) use supervisor::{
     cancel_turn, respond_interaction, respond_permission, structured_state,
 };
-pub(crate) use supervisor::{registered_running, registered_workspace};
+pub(crate) use supervisor::{registered_generation, registered_running, registered_workspace};
 
 use cccc_core::HomeLayout;
 use serde::Serialize;
@@ -48,6 +48,10 @@ pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {
 
 pub(crate) fn waiting_for_workspace_trust(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
     workspace_trust_recovery::registered(&(group_id.to_owned(), actor_id.to_owned()))
+}
+
+pub(crate) fn confirmation_terminal_owns(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
+    confirmation_terminal::owns(group_id, actor_id)
 }
 
 pub(crate) fn confirmation_pending_active(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
@@ -139,6 +143,7 @@ struct ViewerLaunch {
     command: Vec<String>,
     env: std::collections::BTreeMap<String, String>,
     cwd: std::path::PathBuf,
+    submit: cccc_contracts::ActorSubmit,
 }
 
 struct Session {

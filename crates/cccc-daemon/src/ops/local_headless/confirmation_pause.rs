@@ -125,6 +125,7 @@ mod tests {
             actor,
             event,
             claimed: true,
+            transport: "managed_session",
         }];
         for _ in 0..3 {
             assert_eq!(

@@ -356,6 +356,44 @@ fn dots_waits_for_explicit_pairing_and_duplicate_setup_does_not_interrupt_a_turn
 }
 
 #[test]
+fn dots_pairing_code_from_before_a_switch_waits_for_it_to_finish() {
+    use cccc_core::runtime_switches::{self, Endpoint, SwitchRecord};
+    let f = Fixture::default_enabled();
+    let setup = f.call("dots_events_connect", json!({}));
+    let key = store::session_key(
+        &f.private(),
+        &json!({"openai/session":"synthetic-dot-session"}),
+    )
+    .expect("host key");
+    GroupStore::new(f.home.clone())
+        .expect("store")
+        .mutate(&f.group.group_id, |doc| {
+            let actor = doc.actors.iter().find(|a| a.id == "dot").expect("Actor");
+            let record = SwitchRecord {
+                op_id: "op".into(),
+                actor_id: "dot".into(),
+                actor_generation: cccc_core::actors::generation_identity(actor),
+                from: Endpoint::of(actor),
+                to: Endpoint::of(actor),
+                at: cccc_contracts::utc_now(),
+                pending: true,
+                clear_private_env: false,
+            };
+            runtime_switches::set_records(doc, &[record]);
+            Ok(())
+        })
+        .expect("pending switch");
+
+    let refused = f.response(
+        "web_model_pairing_accept",
+        json!({"connector_id":f.connector_id,"code":setup["pairing_code"],"session_key":key}),
+    );
+
+    assert_eq!(refused.error.expect("refused").code, "actor_switch_pending");
+    assert_eq!(f.call("dots_events_status", json!({}))["paired"], false);
+}
+
+#[test]
 fn dots_connect_accepts_default_enabled_actor_after_observational_status() {
     let f = Fixture::default_enabled();
     let groups = GroupStore::new(f.home.clone()).expect("group store");

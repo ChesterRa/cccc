@@ -8,7 +8,7 @@ use crate::terminal_attach::{
     AttachmentRegistry, TerminalAttachMode, TerminalAttachOptions, TerminalAttachment,
 };
 use crate::transcript_archive::HistoryConfig;
-use cccc_contracts::{RunnerKind, utc_now};
+use cccc_contracts::{ActorRuntime, ActorSubmit, RunnerKind, utc_now};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -40,6 +40,14 @@ pub struct LaunchSpec {
     pub rows: u16,
 }
 
+/// What the daemon launched an Actor's primary PTY as. Delivery to this process
+/// follows it, not the saved configuration, which applies from the next launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ActorLaunch {
+    pub runtime: ActorRuntime,
+    pub submit: ActorSubmit,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionStatus {
     pub group_id: String,
@@ -63,6 +71,10 @@ pub struct SessionStatus {
     /// also reports `exit_code` 1. The diagnostic is platform dependent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_detail: Option<String>,
+    /// Set only on an Actor's primary PTY; confirmation, viewer and other generic
+    /// terminals have none. Only the daemon reads it.
+    #[serde(skip)]
+    pub launch: Option<ActorLaunch>,
 }
 
 pub struct Session {
@@ -184,6 +196,7 @@ impl Session {
                 started_at: utc_now(),
                 exit_code: None,
                 exit_detail: None,
+                launch: None,
             },
             master: Some(pair.master),
             child,
@@ -194,6 +207,10 @@ impl Session {
             history,
             reader: Some(reader),
         })
+    }
+
+    pub(crate) fn attribute_launch(&mut self, launch: ActorLaunch) {
+        self.status.launch = Some(launch);
     }
 
     pub fn status(&mut self) -> SessionStatus {

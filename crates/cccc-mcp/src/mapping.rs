@@ -117,7 +117,12 @@ pub fn daemon_call(
         "cccc_terminal" => return action(args, actions::terminal),
         "cccc_debug" => return action(args, actions::debug),
         "cccc_im_bind" => "im_bind_chat",
-        "cccc_runtime_wait_next_turn" => "runtime_wait_next_turn",
+        "cccc_runtime_wait_next_turn" => {
+            // Browser delivery calls the daemon itself. A tool caller pulls.
+            args.remove("transport");
+            args.remove("resume_turn_id");
+            "runtime_wait_next_turn"
+        }
         "cccc_runtime_complete_turn" => "runtime_complete_turn",
         "cccc_voice_secretary_task" => "voice_secretary_task",
         _ => return Err(format!("tool is not a daemon operation: {name}")),
@@ -422,6 +427,25 @@ mod tests {
     use super::daemon_call;
     use crate::argument_normalization::normalize_message_author;
     use serde_json::{Map, json};
+
+    #[test]
+    fn a_tool_caller_cannot_take_a_browser_turn_back() {
+        let args = serde_json::json!({
+            "limit":1,"transport":"web_model_browser","resume_turn_id":"turn"
+        })
+        .as_object()
+        .cloned()
+        .expect("arguments");
+        let (op, args) = daemon_call("cccc_runtime_wait_next_turn", args).expect("mapping");
+        assert_eq!(op, "runtime_wait_next_turn");
+        assert_eq!(
+            args,
+            serde_json::json!({"limit":1})
+                .as_object()
+                .cloned()
+                .expect("expected")
+        );
+    }
 
     #[test]
     fn group_set_state_stopped_uses_the_stop_operation_with_authority_intact() {

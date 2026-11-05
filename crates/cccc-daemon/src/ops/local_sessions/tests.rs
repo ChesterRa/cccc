@@ -1970,6 +1970,7 @@ fn native_codex_preflight_preserves_existing_claim_and_terminal_states() {
             actor: actor.clone(),
             event,
             claimed: false,
+            transport: "local_session",
         }];
         assert_eq!(
             super::super::actor_delivery_worker::process_batch(
@@ -2039,6 +2040,7 @@ fn native_queue_failure_is_recorded_once_and_the_same_batch_continues() {
             actor: actor.clone(),
             event,
             claimed: false,
+            transport: "local_session",
         });
     }
     let original = jobs.clone();

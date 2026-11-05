@@ -95,8 +95,9 @@ pub enum ActorAction {
         #[arg(long, default_value = "user")]
         by: String,
     },
-    /// Switch the runtime that runs an agent: another connected native session or
-    /// a CCCC-managed runtime. The agent keeps its identity, tasks and history.
+    /// Switch the runtime that runs an agent: another connected native session, a
+    /// CCCC-managed runtime or a Web Model. The agent keeps its identity, tasks
+    /// and history.
     Switch {
         /// Agent ID within the Group.
         actor_id: String,
@@ -110,7 +111,8 @@ pub enum ActorAction {
             "no_start",
         ])]
         session: Option<String>,
-        /// Managed runtime that will run this agent.
+        /// Managed runtime or Web Model that will run this agent. A Web Model
+        /// connects to its conversation afterwards.
         #[arg(long, conflicts_with = "finish")]
         runtime: Option<String>,
         /// Global Runtime Profile ID for the managed runtime. The Profile sets the

@@ -119,6 +119,84 @@ it("switches a managed provider without first mutating or restarting the old con
     );
     expect(update).not.toHaveBeenCalled();
     expect(restart).not.toHaveBeenCalled();
+
+    // A Grok address is a separate write after the switch. A failed or held
+    // switch must leave that draft available for retry.
+    args.editActorRuntime = "grok_web_model";
+    await act(async () => root.render(<Probe />));
+    const grokResult = {
+      group_id: "g",
+      actor_id: "worker",
+      op_id: "op-grok",
+      switched: true as const,
+      from: { kind: "managed" as const, runtime: "codex" },
+      to: { kind: "managed" as const, runtime: "grok_web_model" },
+      completion: "done" as const,
+      start: "started" as const,
+    };
+    const bind = vi.spyOn(api, "bindGrokBot").mockResolvedValue({ ok: true, result: {} } as never);
+    const botUrl = "https://grok.com/bot/1373170d-9cf2-408c-b597-e243e5884f4a";
+    const grokPayload = {
+      mode: "custom" as const,
+      setVars: {},
+      unsetKeys: [],
+      clear: false,
+      capabilityAutoload: [],
+      grokBotUrl: `${botUrl}?fixture=discard#fragment`,
+      runtimeSwitch: { start: true },
+    };
+    switchRuntime.mockResolvedValueOnce({ ok: true, result: grokResult });
+    await act(async () => actions.handleSaveEditActorAndRestart(grokPayload));
+    expect(bind).toHaveBeenCalledExactlyOnceWith("g", "worker", botUrl);
+    expect(switchRuntime.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      bind.mock.invocationCallOrder[0],
+    );
+
+    bind.mockResolvedValueOnce({ ok: false, error: { code: "network_error", message: "lost" } });
+    switchRuntime.mockResolvedValueOnce({ ok: true, result: grokResult });
+    await act(async () => actions.handleSaveEditActorAndRestart(grokPayload));
+    expect(args.showNotice).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining(`The Bot address is not confirmed: ${botUrl}`),
+        actionLabel: "Set up connection",
+      }),
+    );
+    expect(vi.mocked(args.showNotice).mock.lastCall![0].message).not.toContain("fixture=discard");
+
+    bind.mockClear();
+    const pendingResult = { ...grokResult, completion: "pending" as const, start: "held" as const };
+    switchRuntime.mockResolvedValueOnce({ ok: true, result: pendingResult });
+    await act(async () => actions.handleSaveEditActorAndRestart(grokPayload));
+    expect(bind).not.toHaveBeenCalled();
+    expect(args.showNotice).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining(botUrl),
+        actionLabel: "Set up connection",
+      }),
+    );
+
+    const stop = vi.spyOn(api, "stopActor");
+    update.mockResolvedValueOnce({
+      ok: true,
+      result: { actor: { ...actor, runtime: "grok_web_model" } },
+    } as never);
+    bind.mockResolvedValueOnce({ ok: true, result: {} } as never);
+    await act(async () =>
+      actions.handleSaveEditActorOnly({ ...grokPayload, runtimeSwitch: undefined }),
+    );
+    expect(stop).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledOnce();
+    expect(bind).toHaveBeenCalledExactlyOnceWith("g", "worker", grokPayload.grokBotUrl);
+
+    update.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "delivery_unresolved", message: "unfinished" },
+    });
+    await act(async () => {
+      await expect(
+        actions.handleSaveEditActorOnly({ ...grokPayload, runtimeSwitch: undefined }),
+      ).rejects.toThrow("Wait for it to finish, or choose Save and restart");
+    });
   } finally {
     await act(async () => root.unmount());
     useUIStore.getState().dismissNotice();

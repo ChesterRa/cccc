@@ -38,6 +38,8 @@ mod registry_reconcile;
 mod reme_parity;
 #[path = "suite/reply_requests.rs"]
 mod reply_requests;
+#[path = "suite/running_owner.rs"]
+mod running_owner;
 #[path = "suite/runtime_completion.rs"]
 mod runtime_completion;
 #[path = "suite/runtime_completion_replay.rs"]

@@ -81,6 +81,9 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .iter()
         .find(|a| a.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", "Actor not found"))?;
+    // The switch retires the old routes when it completes, and a route made
+    // before that would go with them.
+    super::actor_switch::refuse_pending(home, &group_id, &actor_id)?;
     if !actor.runtime.is_web_model() || actor.runner != RunnerKind::Headless {
         return Err(OpError::new(
             "invalid_actor_runtime",

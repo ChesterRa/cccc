@@ -77,7 +77,10 @@ fn group_actor(home: &HomeLayout, r: &DaemonRequest) -> Result<(GroupDoc, Actor)
     Ok((g, a))
 }
 fn active(g: &GroupDoc, a: &Actor) -> bool {
-    a.enabled && g.running && !matches!(g.state, GroupState::Paused | GroupState::Stopped)
+    a.enabled
+        && g.running
+        && !matches!(g.state, GroupState::Paused | GroupState::Stopped)
+        && super::runtime_state::pull_admitted(g, a)
 }
 fn connector(home: &HomeLayout, g: &GroupDoc, a: &Actor) -> Result<Option<Value>, OpError> {
     Ok(store::load(home)
@@ -167,8 +170,15 @@ fn project(home: &HomeLayout, g: &GroupDoc, a: &Actor) -> Result<Value, OpError>
 fn configure(home: &HomeLayout, r: &DaemonRequest) -> OpResult {
     user(r)?;
     let (g, a) = group_actor(home, r)?;
+    super::actor_switch::refuse_pending(home, &g.group_id, &a.id)?;
     // GlobalWrite fences claims through validation and the private configuration
     // write. Native Actors need no process restart; preserve their enabled state.
+    if super::actor_runtime::actor_is_running(&g, &a) {
+        return Err(OpError::new(
+            "actor_must_be_stopped",
+            "Stop the previous Actor runtime before configuring Grok delivery",
+        ));
+    }
     if super::runtime_state::actor_state(home, &g.group_id, &a.id)?["active_turn_id"]
         .as_str()
         .is_some_and(|s| !s.is_empty())

@@ -24,7 +24,10 @@ export function useGroupActions() {
     try {
       if (control === "delete") {
         const response = await api.deleteGroup(gid);
-        if (!response.ok) showError(`${title}: ${response.error.message}`);
+        if (!response.ok)
+          showError(
+            `${title}: ${response.error.code === "actor_browser_busy" ? i18n.t("actors:runtimeSwitch.browserBusy") : response.error.message}`,
+          );
         else if (useGroupStore.getState().selectedGroupId === gid) {
           // This setter already clears the selected view and handles its draft.
           useGroupStore.getState().setSelectedGroupId("");

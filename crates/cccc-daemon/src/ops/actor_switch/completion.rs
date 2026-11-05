@@ -36,6 +36,12 @@ pub(super) fn complete_pending(
     let Some(record) = runtime_switches::pending_for(&group, actor) else {
         return Ok(None);
     };
+    // The next owner must not inherit the previous one's pairing. Repeating this
+    // on a retry finds nothing left to retire.
+    if record.from.runtime != record.to.runtime {
+        cccc_core::web_model_connectors::retire_actor(home, group_id, actor_id)
+            .map_err(OpError::io)?;
+    }
     let ledger_path = store.ledger_path(group_id).map_err(OpError::io)?;
     let scope_key = group_scope::effective_scope(&group, Some(actor))
         .map(|scope| scope.scope_key.clone())

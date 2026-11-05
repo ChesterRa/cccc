@@ -2,7 +2,7 @@
 use super::{TERMINAL_REPEAT_SUBMIT_DELAY, TERMINAL_SUBMIT_DELAY, terminal_submit_sequence};
 use crate::ops::local_headless;
 use cccc_contracts::Actor;
-use cccc_runtime::SessionStatus;
+use cccc_runtime::{PtyHandoff, PtyHandoffReason, SessionStatus};
 use std::sync::atomic::AtomicBool;
 
 /// Managed viewers retain their native terminal submission path.
@@ -12,32 +12,61 @@ pub(in crate::ops) fn submit_terminal_text(
     text: &str,
     cancelled: &AtomicBool,
 ) -> bool {
-    submit_terminal_text_inner(group_id, actor, text, cancelled, None)
+    let Some(input) = terminal_input(group_id, actor, text, cancelled) else {
+        return false;
+    };
+    cccc_runtime::submit_sequence_interruptible(
+        group_id,
+        &actor.id,
+        input.payload.as_bytes(),
+        input.submits,
+        input.delay,
+        TERMINAL_REPEAT_SUBMIT_DELAY,
+        cancelled,
+    )
+    .unwrap_or(false)
 }
 
-/// Ordinary delivery may write only to the PTY instance already classified by its worker.
+/// Ordinary delivery may write only to the PTY instance already classified by its
+/// worker, and learns whether a failed attempt left anything in that terminal.
 pub(in crate::ops) fn submit_terminal_text_for_session(
     expected: &SessionStatus,
     actor: &Actor,
     text: &str,
     cancelled: &AtomicBool,
-) -> bool {
+) -> PtyHandoff {
     if actor.id != expected.actor_id {
-        return false;
+        return PtyHandoff::NotWritten(PtyHandoffReason::SessionChanged);
     }
-    submit_terminal_text_inner(&expected.group_id, actor, text, cancelled, Some(expected))
+    let Some(input) = terminal_input(&expected.group_id, actor, text, cancelled) else {
+        return PtyHandoff::NotWritten(PtyHandoffReason::Cancelled);
+    };
+    cccc_runtime::submit_sequence_for_session_with_evidence_interruptible(
+        expected,
+        input.payload.as_bytes(),
+        input.submits,
+        input.delay,
+        TERMINAL_REPEAT_SUBMIT_DELAY,
+        cancelled,
+    )
 }
 
-fn submit_terminal_text_inner(
+struct TerminalInput {
+    payload: String,
+    submits: &'static [&'static [u8]],
+    delay: std::time::Duration,
+}
+
+/// `None` when there is nothing to write or the terminal never became ready.
+fn terminal_input(
     group_id: &str,
     actor: &Actor,
     text: &str,
     cancelled: &AtomicBool,
-    expected: Option<&SessionStatus>,
-) -> bool {
+) -> Option<TerminalInput> {
     let raw = text.trim_end_matches(['\r', '\n']);
     if raw.is_empty() {
-        return false;
+        return None;
     }
     if local_headless::running(group_id, &actor.id)
         && !cccc_runtime::wait_for_input_ready(
@@ -48,7 +77,7 @@ fn submit_terminal_text_inner(
         )
         .unwrap_or(false)
     {
-        return false;
+        return None;
     }
     let bracketed = raw.contains(['\r', '\n'])
         && cccc_runtime::bracketed_paste_enabled(group_id, &actor.id).unwrap_or(false);
@@ -65,24 +94,9 @@ fn submit_terminal_text_inner(
     } else {
         TERMINAL_SUBMIT_DELAY
     };
-    match expected {
-        Some(expected) => cccc_runtime::submit_sequence_for_session_interruptible(
-            expected,
-            payload.as_bytes(),
-            submits,
-            delay,
-            TERMINAL_REPEAT_SUBMIT_DELAY,
-            cancelled,
-        ),
-        None => cccc_runtime::submit_sequence_interruptible(
-            group_id,
-            &actor.id,
-            payload.as_bytes(),
-            submits,
-            delay,
-            TERMINAL_REPEAT_SUBMIT_DELAY,
-            cancelled,
-        ),
-    }
-    .unwrap_or(false)
+    Some(TerminalInput {
+        payload,
+        submits,
+        delay,
+    })
 }
