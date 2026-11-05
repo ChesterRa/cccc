@@ -32,10 +32,12 @@ function Harness({
   mentionMenu = false,
   noMentionSuggestions = false,
   connectMentionStatus,
+  sendInFlight = false,
 }: {
   mentionMenu?: boolean;
   noMentionSuggestions?: boolean;
   connectMentionStatus?: "loading" | "incomplete";
+  sendInFlight?: boolean;
 }) {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -52,6 +54,7 @@ function Harness({
       setDestGroupId={noop}
       composerGroupSettled
       busy=""
+      sendInFlight={sendInFlight}
       replyTarget={null}
       onCancelReply={spies.cancelReply}
       quotedPresentationRef={null}
@@ -224,6 +227,27 @@ it("sends only with Ctrl or Cmd held, never on a bare Enter", async () => {
   expect(await press(textarea, "Enter", { ctrlKey: true })).toBe(true);
   expect(await press(textarea, "Enter", { metaKey: true })).toBe(true);
   expect(spies.send).toHaveBeenCalledTimes(2);
+});
+
+it("shows an in-flight send without blocking draft editing or message options", async () => {
+  useComposerStore.setState({ composerText: "next draft" });
+  await act(async () => root.render(<Harness sendInFlight />));
+  const textarea = host.querySelector("textarea")!;
+  const primary = host.querySelector<HTMLButtonElement>("[data-composer-send-primary]")!;
+  const options = host.querySelector<HTMLButtonElement>("[data-composer-send-options]")!;
+  expect(primary.disabled).toBe(true);
+  expect(primary.getAttribute("aria-label")).toBe("sending");
+  expect(options.disabled).toBe(false);
+  expect(textarea.disabled).toBe(false);
+  await type(textarea, "updated draft");
+  await press(textarea, "Enter", { ctrlKey: true });
+  expect(spies.send).not.toHaveBeenCalled();
+  expect(composerText()).toBe("updated draft");
+
+  await act(async () => root.render(<Harness />));
+  expect(primary.disabled).toBe(false);
+  await press(textarea, "Enter", { ctrlKey: true });
+  expect(spies.send).toHaveBeenCalledOnce();
 });
 
 it.each(COMPOSING)("does not recall history while composing ($label)", async (composing) => {

@@ -295,6 +295,7 @@ export function ChatTab({
 
     // UI state
     busy,
+    sendInFlight,
     showScrollButton,
     chatUnreadCount,
     sendScrollRequest,
@@ -1358,6 +1359,7 @@ export function ChatTab({
                       composerRouteGroups={composerRouteGroups}
                       destGroupScopeLabel={destGroupScopeLabel}
                       busy={busy}
+                      sendInFlight={sendInFlight}
                       recentMessages={chatMessages}
                       suggestionSourceMessages={suggestionSourceMessages}
                       replyTarget={replyTarget}

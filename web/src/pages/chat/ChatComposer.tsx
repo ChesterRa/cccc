@@ -119,6 +119,7 @@ export interface ChatComposerProps {
   selectedGroupActorsHydrating?: boolean;
   destGroupScopeLabel?: string;
   busy: string;
+  sendInFlight: boolean;
   recentMessages?: LedgerEvent[];
   suggestionSourceMessages?: LedgerEvent[];
 
@@ -183,6 +184,7 @@ export function ChatComposer({
   selectedGroupActorsHydrating,
   destGroupScopeLabel: _destGroupScopeLabel,
   busy,
+  sendInFlight,
   recentMessages = [],
   suggestionSourceMessages,
   replyTarget,
@@ -739,13 +741,15 @@ export function ChatComposer({
     !!replyTarget?.toChet,
   );
   const requestReplyRecipientsReady = hasConcreteReplyRecipients(toTokens);
-  const canSend = getComposerCanSend({
-    composerText,
-    composerFilesCount: composerFiles.length,
-    recipientResolutionBusy: selectedGroupActorsHydrating || recipientActorsBusy,
-    messageMode: effectiveMessageMode,
-    toTokens,
-  });
+  const canSend =
+    !sendInFlight &&
+    getComposerCanSend({
+      composerText,
+      composerFilesCount: composerFiles.length,
+      recipientResolutionBusy: selectedGroupActorsHydrating || recipientActorsBusy,
+      messageMode: effectiveMessageMode,
+      toTokens,
+    });
 
   const recentChatExcerpt = useMemo(
     () => buildRecentChatExcerptForVoicePrompt(recentMessages),
@@ -1330,7 +1334,7 @@ export function ChatComposer({
                 onOpenChange={setShowModeMenu}
                 onModeChange={setMessageMode}
                 onSend={onSendMessage}
-                busy={busy === "send"}
+                busy={busy === "send" || sendInFlight}
                 canSend={canSend}
                 modeDisabled={busy === "send" || !selectedGroupId}
                 requestReplyReady={requestReplyRecipientsReady}

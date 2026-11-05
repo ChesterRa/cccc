@@ -99,6 +99,39 @@ function leavingIsBlocked() {
 }
 
 it.each([
+  ["succeeds", { ok: true as const, result: {} }],
+  ["fails", failed],
+])("reports a send in flight across a Group switch until it %s", async (_, result) => {
+  vi.mocked(api.sendMessage).mockResolvedValue({ ok: true, result: {} });
+  const finish = delayedSend();
+  await act(async () => useComposerStore.getState().setComposerText("message A"));
+  let pending!: Promise<void>;
+  await act(async () => {
+    pending = chat.sendMessage();
+  });
+  expect(chat.sendInFlight).toBe(true);
+
+  await act(async () => {
+    useGroupStore.setState({ selectedGroupId: "g-b" });
+    useComposerStore.getState().switchGroup("g-a", "g-b");
+    useComposerStore.getState().setComposerText("message B");
+  });
+  expect(chat.sendInFlight).toBe(true);
+  await act(async () => chat.sendMessage());
+  expect(api.sendMessage).toHaveBeenCalledTimes(1);
+  expect(useComposerStore.getState().composerText).toBe("message B");
+
+  await act(async () => {
+    finish(result);
+    await pending;
+  });
+  expect(chat.sendInFlight).toBe(false);
+  expect(useComposerStore.getState().composerText).toBe("message B");
+  await act(async () => chat.sendMessage());
+  expect(api.sendMessage).toHaveBeenCalledTimes(2);
+});
+
+it.each([
   ["message", "message A"],
   ["slash message", "/install example"],
   ["dynamic tool", "/lookup example"],

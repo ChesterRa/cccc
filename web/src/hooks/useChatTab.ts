@@ -298,6 +298,7 @@ export function useChatTab({
   const enqueueOutbox = useChatOutboxStore((s) => s.enqueue);
   const removeOutbox = useChatOutboxStore((s) => s.remove);
   const sendInFlightRef = useRef(false);
+  const [sendInFlight, setSendInFlight] = useState(false);
 
   // ============ Computed Values ============
 
@@ -1253,6 +1254,7 @@ export function useChatTab({
     try {
       afterClear = applyImmediateComposerFeedback(shouldLockBottomAfterSend && sentMessageVisible);
       sendInFlightRef.current = true;
+      setSendInFlight(true);
       const dispatched = await dispatchPreparedMessage({
         selectedGroupId,
         text: txt,
@@ -1358,6 +1360,7 @@ export function useChatTab({
       showError(describeSendFailure(originGroupId, message));
     } finally {
       sendInFlightRef.current = false;
+      setSendInFlight(false);
       finishPageWork();
     }
   }, [
@@ -1445,6 +1448,7 @@ export function useChatTab({
 
     // UI state
     busy,
+    sendInFlight,
     showScrollButton,
     chatUnreadCount,
     sendScrollRequest,

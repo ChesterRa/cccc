@@ -39,6 +39,7 @@ function Harness({
       setDestGroupId={noop}
       composerGroupSettled
       busy=""
+      sendInFlight={false}
       replyTarget={replyTarget}
       onCancelReply={noop}
       quotedPresentationRef={null}
