@@ -147,7 +147,8 @@ async fn profile_delete(
     .await
 }
 
-fn auth_args(principal: &Principal, mut args: Map<String, Value>) -> Map<String, Value> {
+pub(super) fn auth_args(principal: &Principal, mut args: Map<String, Value>) -> Map<String, Value> {
+    args.insert("by".into(), Value::String("user".into()));
     args.insert("caller_id".into(), Value::String(principal.user_id.clone()));
     args.insert("is_admin".into(), Value::Bool(principal.is_admin));
     args.insert("allowed_groups".into(), json!(principal.allowed_groups));

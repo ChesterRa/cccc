@@ -136,6 +136,263 @@ fn user_profiles_are_isolated_for_list_get_upsert_secrets_and_delete() {
 }
 
 #[test]
+fn actor_requests_cannot_borrow_human_profile_authority() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group_id = call(
+        &home,
+        "group_create",
+        json!({"title":"profile request authority","by":"user"}),
+    )
+    .result["group"]["group_id"]
+        .as_str()
+        .expect("group")
+        .to_owned();
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"lead","enabled":false,"by":"user"}),
+    );
+    for (profile_id, scope, owner) in [
+        ("shared", "global", ""),
+        ("private", "user", "alice"),
+        ("owned", "user", "bob"),
+    ] {
+        call(
+            &home,
+            "actor_profile_upsert",
+            json!({
+                "profile_id":profile_id,
+                "name":profile_id,
+                "scope":scope,
+                "owner_id":owner,
+                "runtime":"custom",
+                "command":["/bin/true"],
+                "by":"user"
+            }),
+        );
+    }
+    call(
+        &home,
+        "actor_profile_upsert",
+        json!({
+            "profile_id":"shared",
+            "name":"private profile sharing the global id",
+            "scope":"user",
+            "owner_id":"alice",
+            "runtime":"custom",
+            "command":["/bin/true"],
+            "by":"user"
+        }),
+    );
+
+    let spoofed_list = raw_call(
+        &home,
+        "actor_profile_list",
+        json!({
+            "group_id":group_id,
+            "by":"lead",
+            "view":"all",
+            "caller_id":"alice",
+            "is_admin":true,
+            "allowed_groups":[group_id]
+        }),
+    );
+    assert_denied(spoofed_list);
+    let visible = call(
+        &home,
+        "actor_profile_list",
+        json!({"group_id":group_id,"by":"lead"}),
+    );
+    assert_eq!(
+        visible.result["profiles"]
+            .as_array()
+            .expect("profiles")
+            .iter()
+            .filter_map(|profile| profile["id"].as_str())
+            .collect::<Vec<_>>(),
+        vec!["shared"]
+    );
+
+    assert_denied(raw_call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"agent-private",
+            "profile_id":"private",
+            "profile_scope":"user",
+            "profile_owner":"alice",
+            "enabled":false,
+            "by":"lead",
+            "caller_id":"alice",
+            "is_admin":true
+        }),
+    ));
+    let global = call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"agent-global",
+            "profile_id":"shared",
+            "enabled":false,
+            "by":"lead"
+        }),
+    );
+    assert_eq!(global.result["actor"]["profile_id"], "shared");
+    let sanitized = call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"agent-global",
+            "patch":{
+                "title":"renamed",
+                "group_id":"other",
+                "actor_id":"other",
+                "by":"lead",
+                "caller_id":"alice",
+                "is_admin":true,
+                "allowed_groups":["other"],
+                "profile_id":"private",
+                "profile_action":"convert_to_custom"
+            },
+            "by":"user",
+            "caller_id":"bob",
+            "is_admin":false,
+            "allowed_groups":[group_id]
+        }),
+    );
+    assert_eq!(sanitized.result["actor"]["title"], "renamed");
+    assert_eq!(
+        sanitized.result["event"]["data"]["patch"],
+        json!({"title":"renamed"})
+    );
+    assert_denied(raw_call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"agent-global",
+            "profile_scope":"user",
+            "profile_owner":"alice",
+            "by":"user",
+            "caller_id":"bob",
+            "is_admin":false,
+            "allowed_groups":[group_id]
+        }),
+    ));
+
+    assert_denied(raw_call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"bob-steals",
+            "profile_id":"private",
+            "profile_scope":"user",
+            "profile_owner":"alice",
+            "enabled":false,
+            "by":"user",
+            "caller_id":"bob",
+            "is_admin":false,
+            "allowed_groups":[group_id]
+        }),
+    ));
+    let owned = call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"bob-owned",
+            "profile_id":"owned",
+            "profile_scope":"user",
+            "profile_owner":"bob",
+            "enabled":false,
+            "by":"user",
+            "caller_id":"bob",
+            "is_admin":false,
+            "allowed_groups":[group_id]
+        }),
+    );
+    assert_eq!(owned.result["actor"]["profile_owner"], "bob");
+
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"plain","enabled":false,"by":"user"}),
+    );
+    let patch_link = call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"plain",
+            "patch":{
+                "profile_id":"private",
+                "profile_scope":"user",
+                "profile_owner":"alice"
+            },
+            "by":"user",
+            "caller_id":"bob",
+            "is_admin":false,
+            "allowed_groups":[group_id]
+        }),
+    );
+    assert_eq!(patch_link.result["actor"]["profile_id"], "");
+    assert_eq!(
+        patch_link.result["event"]["data"]["patch"],
+        json!({"profile_scope":"user","profile_owner":"alice"})
+    );
+    assert_denied(raw_call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"plain",
+            "profile_id":"private",
+            "profile_scope":"user",
+            "profile_owner":"alice",
+            "by":"user",
+            "caller_id":"bob",
+            "is_admin":false,
+            "allowed_groups":[group_id]
+        }),
+    ));
+
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"alice-linked",
+            "profile_id":"private",
+            "profile_scope":"user",
+            "profile_owner":"alice",
+            "enabled":false,
+            "by":"user",
+            "caller_id":"alice",
+            "is_admin":false,
+            "allowed_groups":[group_id]
+        }),
+    );
+    assert_denied(raw_call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"alice-linked",
+            "profile_action":"convert_to_custom",
+            "by":"user",
+            "caller_id":"bob",
+            "is_admin":false,
+            "allowed_groups":[group_id]
+        }),
+    ));
+}
+
+#[test]
 fn only_an_admin_can_copy_voice_analyst_secrets_to_a_runtime_profile() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -154,6 +411,16 @@ fn only_an_admin_can_copy_voice_analyst_secrets_to_a_runtime_profile() {
         &home,
         "actor_profile_copy_voice_analyst_secrets",
         json!({"profile_id":"voice-profile","caller_id":"user-a","is_admin":false}),
+    ));
+    assert_denied(raw_call(
+        &home,
+        "actor_profile_copy_voice_analyst_secrets",
+        json!({
+            "profile_id":"voice-profile",
+            "by":"lead",
+            "caller_id":"user-a",
+            "is_admin":true
+        }),
     ));
     let copied = call(
         &home,

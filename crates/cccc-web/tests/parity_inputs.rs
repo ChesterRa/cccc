@@ -211,6 +211,124 @@ async fn actor_command_uses_shell_quoting_like_python() {
 }
 
 #[tokio::test]
+async fn actor_profile_links_use_the_authenticated_web_principal() {
+    let (_temp, home, group_id, daemon) = running_home("profile link authority").await;
+    let profiles = cccc_core::profiles::ProfileStore::new(home.clone()).expect("profiles");
+    for (profile_id, owner_id) in [("private", "alice"), ("owned", "bob")] {
+        profiles
+            .upsert(
+                json!({
+                    "id":profile_id,
+                    "name":profile_id,
+                    "scope":"user",
+                    "owner_id":owner_id,
+                    "runtime":"custom",
+                    "command":["/bin/true"]
+                })
+                .as_object()
+                .expect("profile")
+                .clone(),
+                None,
+            )
+            .expect("save profile");
+    }
+    let token = cccc_core::access_tokens::AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create(
+            "bob",
+            vec![group_id.clone()],
+            false,
+            Some("profile-link-member-token"),
+        )
+        .expect("member token");
+    let app = cccc_web::app(home.clone());
+
+    let forbidden = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{group_id}/actors"))
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "actor_id":"stolen",
+                        "profile_id":"private",
+                        "profile_scope":"user",
+                        "profile_owner":"alice",
+                        "enabled":false,
+                        "by":"user",
+                        "caller_id":"alice",
+                        "is_admin":true,
+                        "allowed_groups":[]
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let forbidden_status = forbidden.status();
+    let forbidden = response_json(forbidden).await;
+    assert_eq!(forbidden_status, StatusCode::FORBIDDEN);
+    assert_eq!(forbidden["error"]["code"], "permission_denied");
+
+    let owned = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{group_id}/actors"))
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "actor_id":"owned",
+                        "profile_id":"owned",
+                        "profile_scope":"user",
+                        "profile_owner":"bob",
+                        "enabled":false,
+                        "by":"another-actor",
+                        "caller_id":"alice",
+                        "is_admin":true
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let owned_status = owned.status();
+    let owned = response_json(owned).await;
+    let relink = app
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{group_id}/actors/owned"))
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "profile_id":"private",
+                        "profile_scope":"user",
+                        "profile_owner":"alice",
+                        "by":"user",
+                        "caller_id":"alice",
+                        "is_admin":true
+                    })
+                    .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let relink_status = relink.status();
+    let relink = response_json(relink).await;
+    shutdown(home, daemon).await;
+
+    assert_eq!(owned_status, StatusCode::OK);
+    assert_eq!(owned["result"]["actor"]["profile_owner"], "bob");
+    assert_eq!(owned["result"]["event"]["by"], "user");
+    assert_eq!(relink_status, StatusCode::FORBIDDEN);
+    assert_eq!(relink["error"]["code"], "permission_denied");
+}
+
+#[tokio::test]
 async fn reply_request_routes_act_as_the_user_within_the_principals_groups() {
     let (_temp, home, group_id, daemon) = running_home("reply requests").await;
     let other = GroupStore::new(home.clone())

@@ -3789,7 +3789,11 @@ Args:
 Notes:
 - `env_private` is restricted to `by="user"` and values are never returned.
 - If `env_private` is provided (even empty), it is treated as authoritative for this create: it clears any existing private keys for that actor_id, then sets the provided keys.
-- `profile_id` links the actor to a global Actor Profile and applies profile-controlled runtime fields + profile secrets.
+- `profile_id` links the actor to an Actor Profile the authenticated human may
+  read and applies its profile-controlled runtime fields + profile secrets.
+  Actor-originated requests may link global Profiles only. Relinking or converting
+  a linked Actor to custom requires the same Profile read authority because both
+  operations can materialize Profile-controlled configuration and secrets.
 - `default_scope_key` is Actor-local next-start configuration, including for Profile-linked Actors. An empty value follows the Group active scope at startup; a nonempty value must resolve to an attached scope. A running managed owner retains its canonical launch workspace for tools, file sending, bootstrap and prompts until exit or explicit restart, including after saved backend changes, detach or an explicit same-key attachment rebind. Its existing runtime owner holds the snapshot; Group/Actor persistence and copies MUST NOT acquire live workspace authority. An invalid explicit selection MUST remain stored and unavailable after detach/normalization, not silently select another workspace. A live owner's missing root or mismatched generation MUST NOT fall back to saved configuration. Tools resolve the authenticated caller, not a target `actor_id` or caller-supplied identity override; human/no-Actor tools follow the Group active scope. Saving a selection does not restart a running Actor, change the Group active scope, or move an external native process's working directory.
 - MCP `cccc_bootstrap.session.active_scope` continues to describe the Group selection. `session.effective_scope` consumes the caller-scoped `group_show.effective_scope` projection, including `source: "runtime_launch"|"actor_default"|"group_active"`, or `{}` if unavailable. Native Actors without managed owners use CCCC tool configuration; an explicit Group scope change/rebind can change those tool roots without changing the original application's cwd. Neither this projection nor workspace fallback grants human/no-Actor callers access to the agent-only Inbox.
 - MCP `cccc_bootstrap.session.members` is a compact projection of the same authorized `actor_list` result already read by bootstrap: `{ actor_id, runtime, role, enabled, source_id? }[]`. `source_id` is present only for an external native membership. It MUST preserve that listing's Group boundary, internal-Actor visibility and effective roles, without exposing launch commands, environment, process details or credentials. It is a read-only membership snapshot, not receive/execution evidence or a grant of management authority. Ordinary member discovery and message addressing MUST NOT require enabling the Group runtime capability pack.
@@ -4495,6 +4499,11 @@ They are not group-local settings. A Profile's identity is `(scope, owner_id, id
 `scope: "global"` has an empty owner; `scope: "user"` requires an owner.
 Global Profiles are readable by users and writable by administrators; user Profiles
 are readable and writable by their owner or an administrator.
+Human-facing ports MUST bind the caller identity and MUST ignore caller-supplied
+`caller_id`, `is_admin` and `allowed_groups` authority fields. An Actor-originated
+request does not inherit a human Profile owner or administrator: it may list,
+read or link global Profiles only. A local human/CLI request with no remote
+principal keeps the existing local-administrator authority.
 
 Operations addressing a Profile accept `profile_scope?: "global" | "user"` and
 `profile_owner?: string` (aliases: `scope` and `owner_id`), defaulting to `"global"`

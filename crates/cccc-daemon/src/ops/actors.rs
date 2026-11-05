@@ -90,6 +90,7 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 "env_private is profile-controlled for linked actors",
             ));
         }
+        super::profile_access::require_actor_link(home, request, &actor)?;
         actor = actor_profile_runtime::link(home, &actor, &actor.profile_id)?;
     }
     actor.normalize_runtime_constraints();
@@ -188,12 +189,33 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .filter(|(key, _)| {
                     !matches!(
                         key.as_str(),
-                        "group_id" | "actor_id" | "by" | "profile_id" | "profile_action"
+                        "group_id"
+                            | "actor_id"
+                            | "by"
+                            | "caller_id"
+                            | "is_admin"
+                            | "allowed_groups"
+                            | "profile_id"
+                            | "profile_action"
                     )
                 })
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()
         });
+    // These fields select the operation or carry port-bound authority; they are
+    // never Actor state, including when a caller supplies an explicit patch.
+    for key in [
+        "group_id",
+        "actor_id",
+        "by",
+        "caller_id",
+        "is_admin",
+        "allowed_groups",
+        "profile_id",
+        "profile_action",
+    ] {
+        patch.remove(key);
+    }
     if patch.remove("runner").is_some() {
         return Err(OpError::new(
             "unsupported_field",
@@ -219,6 +241,8 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
     let original_actor = current.clone();
+    let profile_reference_patched = !current.profile_id.is_empty()
+        && (patch.contains_key("profile_scope") || patch.contains_key("profile_owner"));
     if !current.external_session_id.is_empty()
         && (!profile_id.is_empty() || !profile_action.is_empty())
     {
@@ -237,8 +261,12 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let patched_preview =
         actors::update(&mut preview_group, &actor_id, &patch).map_err(OpError::invalid)?;
     let mut final_preview = if !profile_id.is_empty() {
+        let mut linked = patched_preview.clone();
+        linked.profile_id.clone_from(&profile_id);
+        super::profile_access::require_actor_link(home, request, &linked)?;
         actor_profile_runtime::link(home, &patched_preview, &profile_id)?
     } else if profile_action == "convert_to_custom" {
+        super::profile_access::require_actor_link(home, request, &patched_preview)?;
         let mut resolved = actor_profile_runtime::resolve(home, &patched_preview)?;
         resolved.env.clear();
         resolved.profile_id.clear();
@@ -246,6 +274,9 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         resolved.profile_owner.clear();
         resolved.profile_revision_applied = 0;
         resolved
+    } else if profile_reference_patched {
+        super::profile_access::require_actor_link(home, request, &patched_preview)?;
+        patched_preview
     } else {
         patched_preview
     };
@@ -1159,7 +1190,14 @@ fn actor_from_args(request: &DaemonRequest) -> Result<Actor, OpError> {
     for (key, item) in &request.args {
         if !matches!(
             key.as_str(),
-            "group_id" | "actor_id" | "by" | "env_private" | "runtime_state_source"
+            "group_id"
+                | "actor_id"
+                | "by"
+                | "caller_id"
+                | "is_admin"
+                | "allowed_groups"
+                | "env_private"
+                | "runtime_state_source"
         ) {
             object.insert(key.clone(), item.clone());
         }

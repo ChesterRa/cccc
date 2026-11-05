@@ -382,7 +382,7 @@ fn copy_profile(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn copy_voice_secrets(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    if !bool_arg(request, "is_admin", false) {
+    if !super::profile_access::explicit_admin(request) {
         return Err(OpError::new(
             "permission_denied",
             "administrator access is required to copy voice runtime secrets",

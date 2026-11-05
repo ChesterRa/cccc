@@ -1,10 +1,11 @@
-use axum::extract::{Path, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Map, Value, json};
 
 use crate::AppState;
 use crate::api::{ApiResult, body_object, call, object};
+use crate::auth::Principal;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -60,16 +61,23 @@ async fn list(
 }
 async fn create(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
     normalize_command(&mut args)?;
     args.insert("group_id".into(), Value::String(group_id));
-    call(&state, "actor_add", args).await
+    call(
+        &state,
+        "actor_add",
+        super::actor_profiles::auth_args(&principal, args),
+    )
+    .await
 }
 async fn update(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
     Path((group_id, actor_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> ApiResult {
@@ -77,7 +85,12 @@ async fn update(
     normalize_command(&mut args)?;
     args.insert("group_id".into(), Value::String(group_id));
     args.insert("actor_id".into(), Value::String(actor_id));
-    call(&state, "actor_update", args).await
+    call(
+        &state,
+        "actor_update",
+        super::actor_profiles::auth_args(&principal, args),
+    )
+    .await
 }
 async fn remove(
     State(state): State<AppState>,

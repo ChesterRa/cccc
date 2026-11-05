@@ -1,4 +1,6 @@
-use cccc_contracts::DaemonRequest;
+use cccc_contracts::{Actor, DaemonRequest};
+use cccc_core::HomeLayout;
+use cccc_core::profiles::ProfileStore;
 use serde_json::Value;
 
 use crate::dispatch::{OpError, bool_arg, string_arg};
@@ -28,6 +30,39 @@ pub(super) fn require_read(request: &DaemonRequest, profile: &Value) -> Result<(
     } else {
         Err(denied())
     }
+}
+
+/// Check the caller before an Actor begins referencing a Profile. Existing links
+/// may still be started by Group members; this gate protects creation, relinking,
+/// and conversion paths that would newly expose Profile-controlled configuration
+/// or private environment to the Group Actor.
+pub(super) fn require_actor_link(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    actor: &Actor,
+) -> Result<(), OpError> {
+    if actor.profile_id.is_empty() {
+        return Ok(());
+    }
+    let profile = ProfileStore::new(home.clone())
+        .map_err(OpError::io)?
+        .get_ref(
+            &actor.profile_id,
+            &actor.profile_scope,
+            &actor.profile_owner,
+        )
+        .map_err(OpError::io)?
+        .ok_or_else(|| OpError::new("profile_not_found", "profile not found"))?;
+    let mut access = request.clone();
+    access.args.insert(
+        "profile_scope".into(),
+        Value::String(actor.profile_scope.clone()),
+    );
+    access.args.insert(
+        "profile_owner".into(),
+        Value::String(actor.profile_owner.clone()),
+    );
+    require_read(&access, &profile)
 }
 
 pub(super) fn require_write(request: &DaemonRequest, profile: &Value) -> Result<(), OpError> {
@@ -76,16 +111,31 @@ pub(super) fn normalize_new(
 
 pub(super) fn require_group(request: &DaemonRequest, group_id: &str) -> Result<(), OpError> {
     if admin(request)
-        || request
-            .args
-            .get("allowed_groups")
-            .and_then(Value::as_array)
-            .is_some_and(|groups| groups.iter().any(|group| group.as_str() == Some(group_id)))
+        || (!actor_origin(request)
+            && request
+                .args
+                .get("allowed_groups")
+                .and_then(Value::as_array)
+                .is_some_and(|groups| groups.iter().any(|group| group.as_str() == Some(group_id))))
     {
         Ok(())
     } else {
         Err(denied())
     }
+}
+
+/// Actor-originated requests never inherit a human Profile owner or administrator.
+/// Runtime ports bind `by` to the authenticated Actor; local human/CLI requests use
+/// the reserved `user` identity and keep the existing local-administrator default.
+pub(super) fn actor_origin(request: &DaemonRequest) -> bool {
+    string_arg(request, "by").is_some_and(|by| {
+        let by = by.trim();
+        !by.is_empty() && by != "user" && by != "system"
+    })
+}
+
+pub(super) fn explicit_admin(request: &DaemonRequest) -> bool {
+    !actor_origin(request) && bool_arg(request, "is_admin", false)
 }
 
 fn require_reference(request: &DaemonRequest, profile: &Value) -> Result<(), OpError> {
@@ -111,11 +161,17 @@ fn require_reference(request: &DaemonRequest, profile: &Value) -> Result<(), OpE
 }
 
 fn caller(request: &DaemonRequest) -> String {
-    string_arg(request, "caller_id").unwrap_or_default()
+    if actor_origin(request) {
+        String::new()
+    } else {
+        string_arg(request, "caller_id").unwrap_or_default()
+    }
 }
 
 fn admin(request: &DaemonRequest) -> bool {
-    if !request.args.contains_key("caller_id") && !request.args.contains_key("is_admin") {
+    if actor_origin(request) {
+        false
+    } else if !request.args.contains_key("caller_id") && !request.args.contains_key("is_admin") {
         true
     } else {
         bool_arg(request, "is_admin", false)

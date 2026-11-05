@@ -52,6 +52,7 @@ pub(crate) async fn call_with_context(
         return Err("This tool requires a host-issued secretary task grant".into());
     }
     crate::tools::apply_default_action(name, &mut arguments);
+    remove_untrusted_authority(&mut arguments);
     add_runtime_context(home, &mut arguments);
     arguments.remove("_cccc_web_binding");
     arguments.remove("_cccc_native_binding");
@@ -776,6 +777,14 @@ fn apply_actor_context(args: &mut Map<String, Value>, actor: Option<&str>) {
     }
 }
 
+fn remove_untrusted_authority(args: &mut Map<String, Value>) {
+    // These fields belong to authenticated human-facing ports. MCP arguments are
+    // model-controlled; Actor authority is supplied separately through `by`.
+    for key in ["caller_id", "is_admin", "allowed_groups"] {
+        args.remove(key);
+    }
+}
+
 fn apply_request_context(name: &str, args: &mut Map<String, Value>, context: RequestContext<'_>) {
     // A remote connector is bound to exactly one actor and group. Its request
     // arguments are model-controlled, so the request-scoped binding is authoritative.
@@ -892,8 +901,8 @@ fn apply_mcp_identity(name: &str, arguments: &mut Map<String, Value>, native: bo
 mod tests {
     use super::{
         apply_actor_context, apply_request_context, help_markdown, is_message_operation,
-        is_task_mail_boundary, postprocess_task_result, prepare_task_arguments, runtime_group_id,
-        with_post_message_context,
+        is_task_mail_boundary, postprocess_task_result, prepare_task_arguments,
+        remove_untrusted_authority, runtime_group_id, with_post_message_context,
     };
     use crate::RequestContext;
     use serde_json::json;
@@ -1295,6 +1304,26 @@ mod tests {
 
         assert_eq!(args["actor_id"], "backend");
         assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn model_arguments_cannot_supply_human_profile_authority() {
+        let mut args = json!({
+            "caller_id":"profile-owner",
+            "is_admin":true,
+            "allowed_groups":["g_other"],
+            "view":"all"
+        })
+        .as_object()
+        .expect("args")
+        .clone();
+
+        remove_untrusted_authority(&mut args);
+
+        assert!(!args.contains_key("caller_id"));
+        assert!(!args.contains_key("is_admin"));
+        assert!(!args.contains_key("allowed_groups"));
+        assert_eq!(args["view"], "all");
     }
 
     #[test]
