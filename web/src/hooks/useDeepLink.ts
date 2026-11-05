@@ -12,6 +12,12 @@ import {
   parsePushMessageTarget,
   type PushMessageTarget,
 } from "../features/pushNotifications/navigation";
+import {
+  beginMessageJumpNavigation,
+  cancelMessageJumpTrace,
+  startMessageJumpTrace,
+  startMessageWindowRequest,
+} from "../features/pushNotifications/messageJumpTrace";
 
 interface UseDeepLinkOptions {
   /** List of available groups */
@@ -56,6 +62,12 @@ export function useDeepLink({
   const urlParsedRef = useRef(false);
   const deepLinkRef = useRef<{ groupId: string; eventId: string } | null>(null);
   const lookupVersionRef = useRef(0);
+  const messageRequestRef = useRef(0);
+  const retryMessageRef = useRef<(groupId: string, eventId: string) => void>(() => {});
+  const jumpNoticeRef = useRef<{
+    groupId: string;
+    notice: NonNullable<ReturnType<typeof useUIStore.getState>["notice"]>;
+  } | null>(null);
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   const selectedGroupRef = useRef(selectedGroupId);
@@ -64,16 +76,81 @@ export function useDeepLink({
   const [urlLookupGroup, setUrlLookupGroup] = useState<string | null>(null);
   const pendingNavigation = useWorkspaceNavigation((state) => state.pending);
 
+  const clearJumpNotice = useCallback(() => {
+    if (jumpNoticeRef.current && useUIStore.getState().notice === jumpNoticeRef.current.notice)
+      useUIStore.getState().dismissNotice();
+    jumpNoticeRef.current = null;
+  }, []);
+
+  const startTrace = useCallback(
+    (groupId: string, eventId: string, source: "worker" | "url" | "retry", startedAt?: number) => {
+      startMessageJumpTrace(groupId, eventId, source, {
+        workerToPageMs:
+          startedAt === undefined ? null : Math.max(0, Math.round(Date.now() - startedAt)),
+        isCurrentGroup: () => selectedGroupRef.current === groupId,
+        isWaitingForUser: () => !!useWorkspaceNavigation.getState().pending,
+      });
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      messageRequestRef.current += 1;
+      cancelMessageJumpTrace();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (jumpNoticeRef.current && jumpNoticeRef.current.groupId !== selectedGroupId)
+      clearJumpNotice();
+  }, [clearJumpNotice, selectedGroupId]);
+
+  const openTarget = useCallback(
+    (groupId: string, eventId: string) => {
+      const request = ++messageRequestRef.current;
+      const finishTrace = startMessageWindowRequest(groupId, eventId);
+      void (async () => {
+        let opened: unknown;
+        try {
+          opened = await openChatWindow(groupId, eventId);
+        } catch {
+          opened = false;
+        }
+        finishTrace?.(opened === false ? "failed" : "resolved");
+        if (opened !== false || messageRequestRef.current !== request) return;
+        const params = new URLSearchParams(window.location.search);
+        if (
+          selectedGroupRef.current !== groupId ||
+          params.get("group") !== groupId ||
+          params.get("event") !== eventId
+        )
+          return;
+        const notice = {
+          message: t("notifications.messageUnavailable"),
+          actionLabel: t("notifications.retryMessage"),
+          onAction: () => retryMessageRef.current(groupId, eventId),
+        };
+        jumpNoticeRef.current = { groupId, notice };
+        useUIStore.getState().showNotice(notice);
+      })();
+    },
+    [openChatWindow, t],
+  );
+
   // Parse URL params on mount
   const parseUrlDeepLink = useCallback(() => {
     lookupVersionRef.current += 1;
+    messageRequestRef.current += 1;
     const params = new URLSearchParams(window.location.search);
     const gid = String(params.get("group") || "").trim();
     const eid = String(params.get("event") || "").trim();
+    if (gid && eid) startTrace(gid, eid, "url");
     deepLinkRef.current = gid ? { groupId: gid, eventId: eid } : null;
     urlParsedRef.current = true;
     setUrlLookupGroup(gid || null);
-  }, []);
+  }, [startTrace]);
 
   // Apply deep link after groups are loaded
   useEffect(() => {
@@ -103,13 +180,16 @@ export function useDeepLink({
     }
 
     setActiveTab("chat");
-    if (eid) void openChatWindow(gid, eid);
+    if (eid) {
+      beginMessageJumpNavigation(gid, eid);
+      openTarget(gid, eid);
+    }
     deepLinkRef.current = null;
     setUrlLookupGroup(null);
   }, [
     getGroupsSnapshot,
     groups,
-    openChatWindow,
+    openTarget,
     selectedGroupId,
     setActiveTab,
     setGroups,
@@ -134,6 +214,9 @@ export function useDeepLink({
   const navigateToMessage = useCallback(
     (gid: string, eid: string) => {
       lookupVersionRef.current += 1;
+      messageRequestRef.current += 1;
+      clearJumpNotice();
+      beginMessageJumpNavigation(gid, eid);
       // On a phone the Group list is a drawer over the chat, which the message must not hide.
       useUIStore.getState().setSidebarOpen(false);
       // Update URL
@@ -146,7 +229,7 @@ export function useDeepLink({
       // If we're already in the target group, jump immediately
       if (selectedGroupRef.current === gid) {
         setActiveTab("chat");
-        void openChatWindow(gid, eid);
+        openTarget(gid, eid);
         deepLinkRef.current = null;
         setUrlLookupGroup(null);
         return;
@@ -157,8 +240,17 @@ export function useDeepLink({
       setUrlLookupGroup(gid);
       setSelectedGroupId(gid);
     },
-    [setActiveTab, openChatWindow, setSelectedGroupId],
+    [clearJumpNotice, setActiveTab, openTarget, setSelectedGroupId],
   );
+
+  retryMessageRef.current = (groupId, eventId) => {
+    const retry = () => {
+      startTrace(groupId, eventId, "retry");
+      navigateToMessage(groupId, eventId);
+    };
+    if (selectedGroupRef.current === groupId) retry();
+    else requestWorkspaceNavigation(retry);
+  };
 
   // Open message window function
   const openMessageWindow = useCallback(
@@ -184,9 +276,11 @@ export function useDeepLink({
       // A click that arrives late, after a newer one, does not take its place.
       if (target.deadline <= latestClick) return;
       latestClick = target.deadline;
+      startTrace(target.groupId, target.eventId, "worker", target.startedAt);
       // Keep the most recent explicit click until groups have loaded and an
       // earlier navigation confirmation, if any, has been resolved.
       lookupVersionRef.current += 1;
+      messageRequestRef.current += 1;
       deepLinkRef.current = null;
       setUrlLookupGroup(null);
       setPushTarget(target);
@@ -194,7 +288,7 @@ export function useDeepLink({
     };
     serviceWorker.addEventListener("message", onMessage);
     return () => serviceWorker.removeEventListener("message", onMessage);
-  }, []);
+  }, [startTrace]);
 
   useEffect(() => {
     const groupId = pushTarget?.groupId || urlLookupGroup;

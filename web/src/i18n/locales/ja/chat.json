@@ -2,7 +2,9 @@
   "notifications": {
     "groupNotFound": "グループが見つかりません：{{groupId}}",
     "groupsUnavailable": "グループを読み込めませんでした。通知をもう一度開いてください。",
-    "groupsUnavailableForLink": "グループを読み込めなかったため、リンクを開けませんでした。もう一度お試しください。"
+    "groupsUnavailableForLink": "グループを読み込めなかったため、リンクを開けませんでした。もう一度お試しください。",
+    "messageUnavailable": "このメッセージを表示できませんでした。",
+    "retryMessage": "再試行"
   },
   "messageActions": "その他",
   "voiceFolderEmpty": "このフォルダーにはドキュメントがありません",

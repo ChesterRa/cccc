@@ -74,7 +74,7 @@ function untilDeadline(promise, deadline) {
   });
 }
 
-function askClient(client, target, deadline) {
+function askClient(client, target, deadline, startedAt) {
   return new Promise((resolve) => {
     const channel = new MessageChannel();
     let done = false;
@@ -95,6 +95,7 @@ function askClient(client, target, deadline) {
           group_id: target.group_id,
           event_id: target.event_id,
           deadline_ms: deadline,
+          started_at_ms: startedAt,
         },
         [channel.port2],
       );
@@ -108,7 +109,7 @@ function askClient(client, target, deadline) {
 // target goes to the page even once the click's time has passed, as long as the page would
 // still act on it: a page or browser slow to respond after the click reads it when it can.
 // The clock is checked each time because a timer can run late in a paused worker.
-async function showInPage(client, target, deadline) {
+async function showInPage(client, target, deadline, startedAt) {
   const current = () => Date.now() <= deadline + LATE_CLICK_MS;
   if (!current()) return;
   try {
@@ -116,11 +117,12 @@ async function showInPage(client, target, deadline) {
   } catch {
     // We can still message an already-open page if focusing is denied.
   }
-  if (target && current()) await askClient(client, target, deadline);
+  if (target && current()) await askClient(client, target, deadline, startedAt);
 }
 
 async function openTarget(target) {
-  const deadline = Date.now() + CLICK_TIMEOUT_MS;
+  const startedAt = Date.now();
+  const deadline = startedAt + CLICK_TIMEOUT_MS;
   const lookup = self.clients.matchAll({ type: "window", includeUncontrolled: true });
   const windows = await untilDeadline(lookup, deadline - 100);
   if (!windows) {
@@ -129,14 +131,14 @@ async function openTarget(target) {
     // the lookup finds later still gets the target.
     const late = await untilDeadline(lookup, deadline + LATE_CLICK_MS);
     const client = late?.find(canReceiveNavigation);
-    if (client) await showInPage(client, target, deadline);
+    if (client) await showInPage(client, target, deadline, startedAt);
     return;
   }
   // matchAll orders windows by most recent focus. An open page never falls back to
   // openWindow, even if focusing it fails: openWindow can reuse that page and discard
   // its unsaved work.
   const client = windows.find(canReceiveNavigation);
-  if (client) return showInPage(client, target, deadline);
+  if (client) return showInPage(client, target, deadline, startedAt);
   await self.clients.openWindow(targetUrl(target));
 }
 

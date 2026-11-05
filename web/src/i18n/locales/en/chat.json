@@ -2,7 +2,9 @@
   "notifications": {
     "groupNotFound": "Group not found: {{groupId}}",
     "groupsUnavailable": "Could not load groups. Please open the notification again.",
-    "groupsUnavailableForLink": "Could not load groups to open this link. Please try again."
+    "groupsUnavailableForLink": "Could not load groups to open this link. Please try again.",
+    "messageUnavailable": "Could not open this message.",
+    "retryMessage": "Try again"
   },
   "messageActions": "More",
   "voiceFolderEmpty": "No documents in this folder",

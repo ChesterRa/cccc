@@ -141,6 +141,9 @@ describe("push-only service worker", () => {
     expect(postMessage.mock.calls[0][0]).toEqual(
       expect.objectContaining({ type: "cccc:push:open", group_id: "g-1", event_id: "event-1" }),
     );
+    const timing = postMessage.mock.calls[0][0] as { started_at_ms: number; deadline_ms: number };
+    expect(timing.started_at_ms).toBeGreaterThan(0);
+    expect(timing.deadline_ms - timing.started_at_ms).toBe(650);
     expect(focus).toHaveBeenCalledOnce();
     expect(focus.mock.invocationCallOrder[0]).toBeLessThan(postMessage.mock.invocationCallOrder[0]);
     expect(w.openWindow).not.toHaveBeenCalled();

@@ -13,7 +13,13 @@ export const PUSH_WORKER_PATH = "/ui/push/sw.js";
  */
 export const LATE_CLICK_MS = 60_000;
 
-export type PushMessageTarget = { groupId: string; eventId: string; deadline: number };
+export type PushMessageTarget = {
+  groupId: string;
+  eventId: string;
+  deadline: number;
+  /** When the worker began handling the click, if supplied by the worker. */
+  startedAt?: number;
+};
 
 export function parsePushMessageTarget(value: unknown): PushMessageTarget | null {
   if (!value || typeof value !== "object") return null;
@@ -38,7 +44,14 @@ export function parsePushMessageTarget(value: unknown): PushMessageTarget | null
     })
   )
     return null;
-  return { groupId, eventId, deadline: data.deadline_ms };
+  const startedAt =
+    typeof data.started_at_ms === "number" &&
+    Number.isFinite(data.started_at_ms) &&
+    data.started_at_ms > 0 &&
+    data.started_at_ms <= data.deadline_ms
+      ? data.started_at_ms
+      : undefined;
+  return { groupId, eventId, deadline: data.deadline_ms, ...(startedAt ? { startedAt } : {}) };
 }
 
 /** Whether `scriptURL` is the dedicated same-origin push worker. */

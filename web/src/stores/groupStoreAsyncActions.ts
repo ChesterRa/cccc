@@ -53,6 +53,7 @@ import type {
 import { useComposerStore } from "./useComposerStore";
 import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
 import { getGroupWarmupRead, startGroupWarmupRead } from "./groupWarmupRead";
+import { recordMessageJumpFailure } from "../features/pushNotifications/messageJumpTrace";
 
 function splitFetchedActors(actors: Actor[]): { actors: Actor[]; internalRuntimeActors: Actor[] } {
   const visibleActors: Actor[] = [];
@@ -704,6 +705,7 @@ export function createGroupStoreAsyncActions(
         // A newer request took over; what it shows is not this one's failure.
         if (!isLatestGroupRequestEpoch(chatWindowRequestEpochByGroup, gid, epoch)) return true;
         if (!resp.ok) {
+          recordMessageJumpFailure(gid, eid, resp.error.httpStatus, resp.error.code);
           set((state) => buildChatBucketPatch(state, gid, { chatWindow: null }) ?? state);
           return false;
         }

@@ -2,7 +2,9 @@
   "notifications": {
     "groupNotFound": "找不到工作组：{{groupId}}",
     "groupsUnavailable": "无法加载工作组，请再次打开通知。",
-    "groupsUnavailableForLink": "无法加载工作组，链接未能打开，请重试。"
+    "groupsUnavailableForLink": "无法加载工作组，链接未能打开，请重试。",
+    "messageUnavailable": "无法定位这条消息。",
+    "retryMessage": "重试"
   },
   "messageActions": "更多",
   "voiceFolderEmpty": "此目录暂无文档",

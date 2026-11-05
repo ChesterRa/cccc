@@ -26,6 +26,7 @@ afterEach(async () => {
   vi.mocked(apiJson).mockReset();
   window.history.replaceState({}, "", "/");
   useWorkspaceNavigation.setState({ owners: new Set(), pending: null });
+  useUIStore.setState({ notice: null });
   if (serviceWorkerDescriptor)
     Object.defineProperty(navigator, "serviceWorker", serviceWorkerDescriptor);
   else Reflect.deleteProperty(navigator, "serviceWorker");
@@ -214,6 +215,130 @@ it("opens a worker notification without discarding unsaved work", async () => {
   expect(useUIStore.getState().sidebarOpen).toBe(false);
   expect(new URLSearchParams(location.search).get("event")).toBe("message-1");
   expect(error).not.toHaveBeenCalled();
+});
+
+it("offers a manual retry when opening a notification's message fails", async () => {
+  const container = new EventTarget();
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: container });
+  window.history.replaceState({}, "", "/?group=a");
+  const message = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  function Probe() {
+    const [id, setId] = useState("a");
+    useDeepLink({
+      groups: [{ group_id: "a" }] as GroupMeta[],
+      groupsLoaded: true,
+      selectedGroupId: id,
+      setSelectedGroupId: setId,
+      setActiveTab: vi.fn(),
+      openChatWindow: message,
+      showError: vi.fn(),
+    });
+    return null;
+  }
+  root = createRoot(document.createElement("div"));
+  await act(async () => root.render(<Probe />));
+  await act(async () => {
+    pushMessage(container, { type: "cccc:push:open", v: 1, group_id: "a", event_id: "message-1" });
+  });
+  const notice = useUIStore.getState().notice;
+  expect(notice?.message).toBe("notifications.messageUnavailable");
+  expect(notice?.actionLabel).toBe("notifications.retryMessage");
+  await act(async () => notice?.onAction?.());
+  expect(message).toHaveBeenCalledTimes(2);
+  expect(message).toHaveBeenLastCalledWith("a", "message-1");
+});
+
+it("does not report an old failure after a newer notification takes over", async () => {
+  const container = new EventTarget();
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: container });
+  window.history.replaceState({}, "", "/?group=a");
+  let failOld!: (result: boolean) => void;
+  const message = vi
+    .fn()
+    .mockReturnValueOnce(new Promise<boolean>((resolve) => (failOld = resolve)))
+    .mockResolvedValueOnce(true);
+  function Probe() {
+    const [id, setId] = useState("a");
+    useDeepLink({
+      groups: [{ group_id: "a" }] as GroupMeta[],
+      groupsLoaded: true,
+      selectedGroupId: id,
+      setSelectedGroupId: setId,
+      setActiveTab: vi.fn(),
+      openChatWindow: message,
+      showError: vi.fn(),
+    });
+    return null;
+  }
+  root = createRoot(document.createElement("div"));
+  await act(async () => root.render(<Probe />));
+  const first = { type: "cccc:push:open", v: 1, group_id: "a", event_id: "old" };
+  const second = { ...first, event_id: "new" };
+  await act(async () => pushMessage(container, first, undefined, Date.now() + 5000));
+  await act(async () => pushMessage(container, second, undefined, Date.now() + 5001));
+  await act(async () => failOld(false));
+  expect(message).toHaveBeenCalledTimes(2);
+  expect(useUIStore.getState().notice).toBeNull();
+});
+
+it("does not report a failure after the reader has switched Groups", async () => {
+  const container = new EventTarget();
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: container });
+  window.history.replaceState({}, "", "/?group=a");
+  let fail!: (result: boolean) => void;
+  let select!: (id: string) => void;
+  const message = vi.fn().mockReturnValue(new Promise<boolean>((resolve) => (fail = resolve)));
+  function Probe() {
+    const [id, setId] = useState("a");
+    select = setId;
+    useDeepLink({
+      groups: [{ group_id: "a" }, { group_id: "b" }] as GroupMeta[],
+      groupsLoaded: true,
+      selectedGroupId: id,
+      setSelectedGroupId: setId,
+      setActiveTab: vi.fn(),
+      openChatWindow: message,
+      showError: vi.fn(),
+    });
+    return null;
+  }
+  root = createRoot(document.createElement("div"));
+  await act(async () => root.render(<Probe />));
+  await act(async () =>
+    pushMessage(container, { type: "cccc:push:open", v: 1, group_id: "a", event_id: "old" }),
+  );
+  await act(async () => select("b"));
+  await act(async () => fail(false));
+  expect(useUIStore.getState().notice).toBeNull();
+});
+
+it("dismisses a message retry notice when the reader leaves its Group", async () => {
+  const container = new EventTarget();
+  Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: container });
+  window.history.replaceState({}, "", "/?group=a");
+  let select!: (id: string) => void;
+  function Probe() {
+    const [id, setId] = useState("a");
+    select = setId;
+    useDeepLink({
+      groups: [{ group_id: "a" }, { group_id: "b" }] as GroupMeta[],
+      groupsLoaded: true,
+      selectedGroupId: id,
+      setSelectedGroupId: setId,
+      setActiveTab: vi.fn(),
+      openChatWindow: vi.fn().mockResolvedValue(false),
+      showError: vi.fn(),
+    });
+    return null;
+  }
+  root = createRoot(document.createElement("div"));
+  await act(async () => root.render(<Probe />));
+  await act(async () =>
+    pushMessage(container, { type: "cccc:push:open", v: 1, group_id: "a", event_id: "old" }),
+  );
+  expect(useUIStore.getState().notice?.message).toBe("notifications.messageUnavailable");
+  await act(async () => select("b"));
+  expect(useUIStore.getState().notice).toBeNull();
 });
 
 it("closes the phone's Group list when a notification opens a message in an open page", async () => {
