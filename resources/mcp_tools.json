@@ -2593,7 +2593,7 @@
         },
         "handoff_to": {
           "type": "string",
-          "description": "Actor the task is handed to. Besides the foreman and the user, only the assignee or the handoff target may update, move, restore or delete a task."
+          "description": "Actor the task is handed to. Besides the foreman and the user, only the assignee or the handoff target may update, move, restore or delete a task; a peer may also claim a planned or active task that has neither by assigning itself."
         },
         "notes": {
           "type": "string",

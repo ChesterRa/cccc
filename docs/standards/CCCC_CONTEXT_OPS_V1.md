@@ -247,7 +247,9 @@ Rules:
 }
 ```
 
-Permission: assignee / handoff target / foreman / user.
+Permission: assignee / handoff target / foreman / user. A peer MAY also claim a
+planned or active task that has neither an assignee nor a handoff target by
+setting `assignee` to itself in this update.
 
 Rules:
 - Partial patch: omitted editable fields stay unchanged, and each provided field replaces its stored value whole. `notes` is not appended to, and `checklist` is not merged item by item.

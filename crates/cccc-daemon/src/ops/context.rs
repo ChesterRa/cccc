@@ -277,7 +277,25 @@ fn authorize(
                         .iter()
                         .any(|field| task.get(*field).and_then(Value::as_str) == Some(by))
                 });
-            if !owns_tasks {
+            // Open work nobody holds can be taken up by a peer, for itself only.
+            // History stays with those who held it.
+            let claims_unowned = name == "task.update"
+                && operation.get("assignee").and_then(Value::as_str) == Some(by)
+                && document
+                    .tasks
+                    .iter()
+                    .filter(|task| task.get("id").and_then(Value::as_str) == Some(task_id))
+                    .all(|task| {
+                        matches!(
+                            task.get("status").and_then(Value::as_str),
+                            Some("planned" | "active")
+                        ) && ["assignee", "handoff_to"].iter().all(|field| {
+                            task.get(*field)
+                                .and_then(Value::as_str)
+                                .is_none_or(|value| value.trim().is_empty())
+                        })
+                    });
+            if !owns_tasks && !claims_unowned {
                 return Err(OpError::new(
                     "permission_denied",
                     format!("{name} requires the assignee, handoff target, foreman, or user"),

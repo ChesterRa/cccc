@@ -171,3 +171,83 @@ fn rejected_actor_removal_preserves_context() {
     assert_eq!(after.tasks, before.tasks);
     assert_eq!(after.agent_states, before.agent_states);
 }
+
+#[test]
+fn a_peer_can_claim_only_a_task_nobody_holds() {
+    let fixture = Fixture::new();
+    let created = fixture.call(
+        "context_sync",
+        json!({"by":"user","ops":[
+            {"op":"task.create","title":"free","status":"planned"},
+            {"op":"task.create","title":"free for notes","status":"planned"},
+            {"op":"task.create","title":"free for another","status":"planned"},
+            {"op":"task.create","title":"held","status":"planned","assignee":"leaving"},
+            {"op":"task.create","title":"handed","status":"planned","handoff_to":"leaving"},
+            {"op":"task.create","title":"finished","status":"planned"},
+            {"op":"task.create","title":"archived","status":"planned"},
+        ]}),
+    );
+    let ids: Vec<&str> = created["changes"]
+        .as_array()
+        .expect("changes")
+        .iter()
+        .map(|change| change["task_id"].as_str().expect("task id"))
+        .collect();
+    let [
+        free,
+        notes_only,
+        for_another,
+        held,
+        handed,
+        finished,
+        archived,
+    ] = ids[..]
+    else {
+        panic!("seven tasks");
+    };
+    fixture.call(
+        "context_sync",
+        json!({"by":"user","ops":[
+            {"op":"task.move","task_id":finished,"status":"done"},
+            {"op":"task.move","task_id":archived,"status":"archived"},
+        ]}),
+    );
+
+    // One request takes the task up and starts it, as the task tool sends both.
+    fixture.call(
+        "context_sync",
+        json!({"by":"staying","ops":[
+            {"op":"task.update","task_id":free,"assignee":"staying","notes":"mine"},
+            {"op":"task.move","task_id":free,"status":"active"},
+        ]}),
+    );
+    let context = fixture.context();
+    let claimed = context
+        .tasks
+        .iter()
+        .find(|task| task["id"] == free)
+        .expect("claimed task");
+    assert_eq!(claimed["assignee"], "staying");
+    assert_eq!(claimed["status"], "active");
+
+    let refused = [
+        json!({"op":"task.update","task_id":notes_only,"notes":"no claim"}),
+        json!({"op":"task.move","task_id":notes_only,"status":"active"}),
+        json!({"op":"task.delete","task_id":notes_only}),
+        json!({"op":"task.update","task_id":for_another,"assignee":"leaving"}),
+        json!({"op":"task.update","task_id":held,"assignee":"staying"}),
+        json!({"op":"task.update","task_id":handed,"assignee":"staying"}),
+        json!({"op":"task.update","task_id":finished,"assignee":"staying"}),
+        json!({"op":"task.update","task_id":archived,"assignee":"staying"}),
+    ];
+    for operation in refused {
+        let response = fixture.request(
+            "context_sync",
+            json!({"by":"staying","ops":[operation.clone()]}),
+        );
+        let error = response
+            .error
+            .unwrap_or_else(|| panic!("allowed: {operation}"));
+        assert_eq!(error.code, "permission_denied", "{operation}");
+    }
+}
