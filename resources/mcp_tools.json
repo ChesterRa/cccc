@@ -2564,7 +2564,7 @@
         },
         "assignee": {
           "type": "string",
-          "description": "With action=list, lists only this actor's tasks."
+          "description": "The actor responsible for the task. On create or update, a peer may assign only itself; the foreman or the user may assign anyone. With action=list, lists only this actor's tasks."
         },
         "priority": {
           "type": "string"
@@ -2592,7 +2592,8 @@
           ]
         },
         "handoff_to": {
-          "type": "string"
+          "type": "string",
+          "description": "Actor the task is handed to. Besides the foreman and the user, only the assignee or the handoff target may update, move, restore or delete a task."
         },
         "notes": {
           "type": "string",

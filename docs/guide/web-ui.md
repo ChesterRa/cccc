@@ -278,6 +278,10 @@ When a filtered list has earlier pages, **Load older results** above the message
 page, even if only a few messages are visible or a page has no matches. A short **All** list offers
 the same action when older messages remain.
 
+When **Waiting for you** has loaded no requests and a fresh count confirms that none are waiting,
+the view returns to **All**. Requests answered or withdrawn during the current visit remain listed
+until you leave it. A failed load or an unknown or stale count does not trigger the switch.
+
 **Pinned** keeps the messages you need to come back to. Choose **Pin message** in a message's menu
 and a small pin follows its time. The **Pinned** tab shows how many the Group has and lists them in
 full, in conversation order, each with **Show in chat**. A message unpinned there stays listed, so
@@ -1070,6 +1074,11 @@ and unsent draft. Use Clear recipients to return to the Group's default routing.
 Reply recipients are temporary: canceling or sending a reply restores the normal selection.
 A temporary cross-group destination does not replace the local Group's remembered recipients;
 after sending, routing returns to the local Group. Reloading the page clears this in-memory state.
+
+If a selected recipient is no longer available, its chip says so and can be removed. Adding another
+ordinary recipient does not silently remove it; resolve the unavailable target before sending the
+message. A reply to a former Group member keeps that member as an unavailable recipient rather than
+silently choosing someone else.
 
 Broadcasts (`@all` and `@peers`, including the Group's default broadcast target) leave
 disabled agents stopped and deliver to enabled recipients. To wake a disabled agent,

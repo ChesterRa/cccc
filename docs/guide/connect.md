@@ -47,6 +47,20 @@ still required. An explicit unlink or access revocation clears that navigation.
 Inactive lists are saved navigation, not live status: their frames and terminals
 close, and opening a Group rechecks access.
 
+An already open remote page can stay in memory while its access proof expires,
+the account directory is temporarily unavailable, or the target Web service
+restarts. Both instances need this version. The entry hides the page and retries;
+it shows the same page again after the account, administrator access and a fresh
+proof are confirmed. **Close this page** asks first when the remote page has
+reported unsent work. That work is held in the page, so closing or reloading can
+still lose it. A change in flight when the connection dropped may already have
+been made; check before retrying because recovery does not resend it.
+
+An account, device or address change, or revoked entry access, closes the old
+page. A target access refusal during recovery also closes it. An older entry
+does not understand a newer remote page's reload request; save any work and
+reload the entry page instead.
+
 A restricted Token keeps the workspace in a single-instance view. It does not
 change the background account/device communication grant. Browser login is
 reused within its partition for the same entry site and target. Distinct HTTPS

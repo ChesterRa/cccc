@@ -55,7 +55,8 @@ cccc attach .
 cccc actor add assistant --runtime claude
 ```
 
-最初の有効なエージェントが、自動的に「foreman」（調整役）になります。
+グループのメンバー一覧で最初の内部用ではないエージェントが「foreman」（調整役）です。
+そのエージェントを無効にしても、別のメンバーが自動的に foreman になることはありません。
 
 この Claude Code セッションでは、CCCC が起動時に CCCC MCP 連携を設定するため、
 別途 `cccc setup` を実行する必要はありません。他のランタイムでは設定が必要な場合があります。

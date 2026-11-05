@@ -113,6 +113,10 @@ wait and preserves any available text in the original Group's composer; audio
 that has not been recognized may be lost. Document recordings do not offer this
 action because completion after disconnect cannot be guaranteed.
 
+While a recording is starting, running or being finalized, the page asks the
+browser to warn before a reload or close. Choosing to stay keeps the recording;
+the warning does not save it and the browser may suppress the warning.
+
 The gear in either workspace scrolls to the corresponding feature tab;
 **Adjust devices** instead focuses the common audio section. Closing settings
 returns without ending a call, recording or task. Recognition choices, document

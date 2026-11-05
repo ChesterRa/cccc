@@ -84,18 +84,23 @@ Run `cccc doctor` to verify these dependencies. CCCC does not install OS package
 
 ### Upgrading from older versions
 
-If you have an older version of cccc-pair installed (e.g., 0.3.x), you must uninstall it first:
+If you have an older version of cccc-pair installed (e.g., 0.3.x), uninstall
+it using the method that installed it. For a pipx installation:
 
 ```bash
-# For pipx users
 pipx uninstall cccc-pair
-
-# For pip users
-pip uninstall cccc-pair
-
-# Remove any leftover binaries if needed
-rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 ```
+
+For a pip installation, use pip in the original Python environment:
+
+```bash
+pip uninstall cccc-pair
+```
+
+If a command remains, check its path and which installation owns it before
+removing any leftover. For example, `command -v cccc` shows the command your
+shell would run; a file at a familiar path may belong to a different or newer
+installation.
 
 ::: warning Version 0.4.x Breaking Changes
 Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.

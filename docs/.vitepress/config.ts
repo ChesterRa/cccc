@@ -75,7 +75,6 @@ export default defineConfig({
   srcExclude: [
     '_archive_local/**',
     'ITERATION_PLAN.md',
-    'guide/agent-framework-coevolution-prd.md',
     'plan/**',
     'review/**',
     'superpowers/**',
@@ -176,7 +175,8 @@ export default defineConfig({
             { text: 'Overview', link: '/standards/' },
             { text: 'CCCS v1', link: '/standards/CCCS_V1' },
             { text: 'Daemon IPC v1', link: '/standards/CCCC_DAEMON_IPC_V1' },
-            { text: 'Context Ops v1', link: '/standards/CCCC_CONTEXT_OPS_V1' }
+            { text: 'Context Ops v1', link: '/standards/CCCC_CONTEXT_OPS_V1' },
+            { text: 'Connect v1', link: '/standards/CCCC_CONNECT_V1' }
           ]
         }
       ],

@@ -4912,9 +4912,9 @@ The immediate response confirms ledger acceptance and echoes the canonical mode;
 it is not transport evidence. Per-recipient delivery truth is reported only by
 daemon-authored `runtime.delivery` events and the corresponding status queries.
 
-After a new local `mail` is appended, its result MAY name the explicitly
-addressed recipients that cannot act on it yet, as read at that moment, in
-`mail_recipient_advisories`. Reasons are `disabled`, `group_paused` and
+After a new local `mail` is appended, its result MAY list, in
+`mail_recipient_advisories`, explicitly addressed recipients in one of the
+following states as read at that moment. Reasons are `disabled`, `group_paused` and
 `group_stopped`; when none applies, `not_running` means the daemon's status
 check reported a recipient whose process CCCC manages as not running.
 `mail_advisory` then states that writing Mail does not start an Actor or resume

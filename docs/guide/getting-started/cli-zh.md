@@ -51,7 +51,8 @@ cccc attach .
 cccc actor add assistant --runtime claude
 ```
 
-第一个启用的智能体会自动成为“foreman”（领班，负责协调工作）。
+工作组成员列表中第一个非内部智能体是“foreman”（领班，负责协调工作）。
+停用它不会自动把其他成员提升为领班。
 
 CCCC 启动这个 Claude Code 会话时会自动注入 CCCC MCP 配置，本例不需要单独执行
 `cccc setup`。其他 Runtime 可能需要额外设置，详见

@@ -1,8 +1,10 @@
 //! Writing Mail never starts an Actor or resumes a Group (CCCS 6.1), so a
 //! sender can hand work to a recipient that will not see it for a while. After
-//! a local Mail is written, its result names the explicitly addressed
-//! recipients that cannot act on it yet, as the daemon reports them at that
-//! moment. Nothing is started, delivered or changed.
+//! a local Mail is written, its result may list the explicitly addressed
+//! recipients that are disabled, reported as not running, or in a paused or
+//! stopped Group, as the daemon reports them at that moment. These are states,
+//! not proof that a recipient cannot read the Mail. Nothing is started,
+//! delivered or changed.
 
 use cccc_contracts::{Actor, Event, GroupState};
 use cccc_core::{GroupDoc, HomeLayout, actors, inbox};
@@ -10,7 +12,7 @@ use serde_json::{Value, json};
 
 pub(super) const NOTE: &str = "Recipient states as the daemon reported them when this Mail was written. Writing Mail does not start an Actor or resume a Group. Send, or cccc_message_deliver for this Mail, can request delivery to an enabled Actor in an active Group.";
 
-/// One entry per named recipient that cannot act on the Mail yet. Mail to a
+/// One entry per named recipient in one of those states. Mail to a
 /// broadcast selector gets none, and an empty list says nothing about whether
 /// the other recipients will read it.
 pub(super) fn advisories(home: &HomeLayout, group: &GroupDoc, mail: &Event) -> Vec<Value> {

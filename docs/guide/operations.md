@@ -160,6 +160,18 @@ Backup `CCCC_HOME`:
 - Prefer explicit recipients over broad broadcast when scope is narrow.
 - Keep automation focused on objective reminders, not chat noise.
 
+A new Mail sent within the same Group to explicitly named agents can return
+`mail_recipient_advisories` with a `mail_advisory` explanation. These report
+the daemon's snapshot when the Mail was written: an agent may be disabled, its
+Group paused or stopped, or its managed runtime reported as not running. Mail
+does not start an agent or resume a Group. Send, or delivery of the existing
+Mail, can request delivery to an enabled agent in an active Group; delivery can
+still fail or remain unconfirmed.
+
+The optional result does not assess the running state of native sessions or Web
+Models, and it is not returned for recipient selectors, retries, cross-Group or
+Connect sends. A result without the field does not mean the Mail was read.
+
 ## 9) Escalation Checklist
 
 If an issue repeats:

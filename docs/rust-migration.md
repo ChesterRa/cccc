@@ -39,8 +39,8 @@ pip from silently selecting a historical Python-only release on an unsupported
 platform. There is no 0.4.36 source distribution, portable wheel, importable
 CCCC Python package, or fallback implementation.
 
-The GitHub Pages scripts pin the product version represented by the current
-documentation build, select the current platform archive, validate `SHA256SUMS`,
+The GitHub Pages scripts install the latest stable release, or the version named
+in `CCCC_VERSION`, select the current platform archive, validate `SHA256SUMS`,
 and install into a user-owned directory. Rust self-updates require the complete
 `.cccc-standalone` ownership marker with the exact value `standalone-v1`, then
 identify their exact current executable to the installer and enter the existing
@@ -54,8 +54,9 @@ Remove a conflicting command, choose another `CCCC_INSTALL_DIR`, or set
 `CCCC_ALLOW_REPLACE_EXISTING=1` only when replacement is intentional. It never
 overrides `pip-v1`: uninstall the pip package before switching that directory to
 the website installer. The hosted
-scripts are rendered with the current documentation release; callers can
-override that concrete pin through `CCCC_VERSION`.
+scripts resolve the latest stable release each time they run and do not select
+prereleases; the copies attached to each GitHub release are bound to that
+release instead. `CCCC_VERSION` overrides either default.
 
 For a website-installer distribution, inspect or apply updates with:
 

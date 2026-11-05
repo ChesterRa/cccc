@@ -4,7 +4,7 @@ Native sessions are Codex, Claude Code, Pi and OpenCode V2 CLI sessions started 
 
 This is an experimental integration for Linux (including WSL), macOS and native Windows. The macOS and native Windows paths still require native-platform acceptance testing; Linux/WSL validation is not a Windows guarantee. It does not import or fork native session history, launch a replacement session, or require provider API keys. Your original runtime retains its account, model, approvals, context and terminal.
 
-Antigravity App/CLI native attachment is deferred; see the [dated assessment and reassessment conditions](../reference/antigravity-native-assessment-2026-10-27).
+Other runtimes, such as the Antigravity App or CLI, cannot be attached yet.
 
 ## Enable once
 

@@ -54,7 +54,8 @@ In CCCC, a Group member running or connected to an agent runtime is called an ag
 cccc actor add assistant --runtime claude
 ```
 
-The first enabled agent automatically becomes the "foreman" (coordinator).
+The first non-internal agent in the Group's member list is the "foreman"
+(coordinator). Disabling that agent does not automatically promote another.
 
 CCCC injects the CCCC MCP integration when it starts this Claude Code session;
 no separate `cccc setup` step is needed for this example. Other runtimes may
