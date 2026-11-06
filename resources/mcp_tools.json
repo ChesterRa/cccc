@@ -1583,33 +1583,6 @@
         "query": {
           "type": "string",
           "default": ""
-        },
-        "kind": {
-          "type": "string",
-          "default": ""
-        },
-        "source_id": {
-          "type": "string",
-          "default": ""
-        },
-        "trust_tier": {
-          "type": "string",
-          "default": ""
-        },
-        "qualification_status": {
-          "type": "string",
-          "default": ""
-        },
-        "limit": {
-          "type": "integer",
-          "default": 30,
-          "minimum": 1,
-          "maximum": 200
-        },
-        "include_external": {
-          "type": "boolean",
-          "default": false,
-          "description": "Reserved. This implementation searches the configured local registry only; it does not query remote sources."
         }
       },
       "required": []

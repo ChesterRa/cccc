@@ -221,10 +221,3 @@ Expected after disconnect:
 
 - Group Space operations may return degraded/disabled provider results.
 - Core CCCC chat, task and agent workflows continue normally.
-
-Optional throughput tuning:
-
-```bash
-export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer
-export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster
-```

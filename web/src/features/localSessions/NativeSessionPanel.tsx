@@ -34,7 +34,7 @@ export function NativeSessionPanel({
       <p role="status" className="font-medium text-[var(--color-text-primary)]">
         {statusText}
       </p>
-      <p>{t("nativeSession.hint")}</p>
+      <p>{t(actor.runtime === "codex" ? "nativeSession.codexHint" : "nativeSession.hint")}</p>
       {isVisible && canAccessRecovery && groupId && actor.external_session_id ? (
         <RecoveryGuidance
           // Private data lives only for this visible, authorized binding.

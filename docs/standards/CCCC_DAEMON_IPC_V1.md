@@ -863,7 +863,11 @@ Result:
 
 #### `capability_search`
 
-Search capability registry records (built-in packs + local curated catalog + cached remote records).
+Search built-in capabilities and locally stored catalog records. Records removed for
+the requested Group are excluded. Search matches every whitespace-separated query
+term, case-insensitively, against the capability ID, name, description and tags.
+It does not query remote registries; previously stored remote records may still
+appear in results.
 
 Args:
 ```ts
@@ -872,62 +876,29 @@ Args:
   actor_id?: string
   by?: string
   query?: string
-  kind?: "mcp_toolpack" | "skill" | ""
-  source_id?: string
-  trust_tier?: string
-  qualification_status?: "qualified" | "unavailable" | "blocked" | ""
-  include_external?: boolean
-  limit?: number
 }
 ```
+
+Previously documented `kind`, `source_id`, `trust_tier`, `qualification_status`,
+`include_external` and `limit` arguments are currently accepted but ignored; they
+do not filter or limit the result.
 
 Result:
 ```ts
 {
-  group_id: string
-  actor_id?: string
-  default_profile: "core"
-  items: Array<{
-    capability_id: string
-    kind: "mcp_toolpack" | "skill"
-    name: string
-    description_short: string
-    source_id: string
-    source_tier: string
-    source_uri?: string
-    trust_tier: string
-    license?: string
-    qualification_status: "qualified" | "unavailable" | "blocked"
-    sync_state?: string
-    enabled: boolean
-    enable_supported: boolean
-    install_mode?: string
-    policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
-    enable_hint?: "enable_now" | "blocked" | "unsupported" | "active"
-    blocked_reason?: string
-    readiness_preview?: {
-      preview_status: "blocked" | "enableable" | "active" | "needs_inspect"
-      next_step: string
-      already_active?: boolean
-    }
-    tags?: string[]
-    tool_count?: number
-    tool_names?: string[]
-  }>
-  count: number
-  sources: Record<string, unknown>
-  applied_filters: {
+  capabilities: Array<{
+    id: string
     kind: string
-    source_id: string
-    trust_tier: string
+    name: string
+    description: string
+    tool_names: string[]
+    tags: string[]
+    capsule_text: string
+    source: string
+    source_uri: string
     qualification_status: string
-  }
-  search_diagnostics?: {
-    remote_augmented: boolean
-    remote_added: number
-    remote_error?: string
-    policy_hidden_count?: number
-  }
+    enable_supported: boolean
+  }>
 }
 ```
 
@@ -1019,12 +990,8 @@ Result:
 }
 ```
 
-Quota notes:
-
-1. `CCCC_CAPABILITY_MAX_ENABLED_PER_ACTOR` (default `20`) limits actor/session enabled non-skill capability count.
-2. `CCCC_CAPABILITY_MAX_ENABLED_PER_GROUP` (default `24`) limits group-scope enabled capability count.
-3. `CCCC_CAPABILITY_MAX_INSTALLATIONS_TOTAL` (default `128`) limits total cached external artifacts.
-4. Quota failures return `ok=true` with `state="failed"` and deterministic `reason` code.
+The implementation does not enforce the previously documented per-actor,
+per-Group, or total-installation capability count quotas.
 
 #### `capability_block`
 
@@ -1215,45 +1182,21 @@ Result:
 
 Operational notes:
 
-1. Capability catalog is daemon-owned local state seeded from allowlist and runtime discoveries.
-2. Search uses local curated catalog + cached remote results; no periodic capability sync loop.
-3. Source gates:
-   - `CCCC_CAPABILITY_SOURCE_MCP_REGISTRY_ENABLED` (default `1`)
-   - `CCCC_CAPABILITY_SOURCE_ANTHROPIC_SKILLS_ENABLED` (default `1`)
-   - `github_skills_curated` is allowlist-curated (no periodic source crawler).
-   - `agent_self_proposed` is for agent-generated procedural skill candidates; default policy keeps MCP
-     toolpacks indexed while allowing capsule skills to be validated and enabled at narrow scope.
-   - `skillsmp_remote` is on-demand SkillsMP remote search (API key mode + proxy fallback).
-   - `clawhub_remote` is on-demand ClawHub remote search (official API).
-   - `openclaw_skills_remote` is on-demand OpenClaw GitHub corpus search.
-   - `clawskills_remote` is on-demand clawskills.co index search.
-4. Dynamic tool exposure is capped by `CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE`
-   (default `32`).
-5. Catalog snapshot size is capped by `CCCC_CAPABILITY_CATALOG_MAX_RECORDS`
-   (default `20000`); prune is applied during explicit sync operations.
-6. Search may perform remote augmentation (MCP + skill) when local hits are insufficient:
-   - `CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK` (default `1`)
-   - `CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK_LIMIT` (default `40`, max `100`)
-   - `CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED` (default `1`)
-   - `CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED` (default `1`)
-   - `CCCC_CAPABILITY_SOURCE_OPENCLAW_SKILLS_REMOTE_ENABLED` (default `1`)
-   - `CCCC_CAPABILITY_SOURCE_CLAWSKILLS_REMOTE_ENABLED` (default `1`)
-   - `CCCC_CAPABILITY_SEARCH_REMOTE_SKILL_LIMIT` (default follows remote fallback limit)
-   - `CCCC_CAPABILITY_SEARCH_REMOTE_SKILLSMP_LIMIT` (default follows remote fallback limit)
-   - `CCCC_CAPABILITY_SEARCH_REMOTE_CLAWHUB_LIMIT` (default follows remote fallback limit)
-   - `CCCC_CAPABILITY_SEARCH_REMOTE_OPENCLAW_LIMIT` (default follows remote fallback limit)
-   - `CCCC_CAPABILITY_SEARCH_REMOTE_CLAWSKILLS_LIMIT` (default follows remote fallback limit)
-   - `CCCC_CAPABILITY_SKILLSMP_PROXY_BASE` (default `https://r.jina.ai/http://skillsmp.com/search`)
-   - `CCCC_CAPABILITY_SKILLSMP_API_BASE` (default `https://skillsmp.com/api/v1/skills/search`)
-   - `CCCC_CAPABILITY_SKILLSMP_API_KEY` (optional; enables direct SkillsMP API)
-   - `CCCC_CAPABILITY_CLAWHUB_API_BASE` (default `https://clawhub.ai/api/v1/skills`)
-   - `CCCC_CAPABILITY_CLAWSKILLS_DATA_URL` (default `https://clawskills.co/skills-data.js`)
-7. Allowlist override env/path compatibility (`CCCC_CAPABILITY_ALLOWLIST_PATH` and
+1. The catalog combines built-in capabilities with locally stored records, including
+   explicit imports and records retained from previous installations. Search does not
+   query remote registries or run a periodic source sync. A source ID on a record
+   identifies its origin, not an active remote-search provider.
+2. `agent_self_proposed` identifies agent-generated procedural skill candidates; default
+   policy keeps MCP toolpacks indexed while allowing capsule skills to be validated and
+   enabled at narrow scope.
+3. Dynamic tool exposure is capped by `CCCC_CAPABILITY_MAX_DYNAMIC_TOOLS_VISIBLE`
+   (default `32`, clamped to `1`–`500`).
+4. Allowlist override env/path compatibility (`CCCC_CAPABILITY_ALLOWLIST_PATH` and
    `CCCC_HOME/config/capability-allowlist.yaml`) is removed. Policy now always uses:
    - packaged default: `crates/cccc-daemon/resources/capability-allowlist.default.yaml`
    - user overlay: `CCCC_HOME/config/capability-allowlist.user.yaml`
    - effective policy: deterministic merge (`default <- overlay`).
-8. The authenticated local user control plane (`actor_id="user"`, `by="user"`) includes
+5. The authenticated local user control plane (`actor_id="user"`, `by="user"`) includes
    `cccc_group` and `cccc_actor` in its baseline visible tools. Actor sessions do not inherit this
    user-only baseline and continue to require `pack:group-runtime` or their existing role/profile
    defaults.

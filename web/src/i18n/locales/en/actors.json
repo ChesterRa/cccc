@@ -388,6 +388,7 @@
     "groupStopped": "Group stopped",
     "removeConfirm": "Remove \"{{name}}\" from this Group? Its unfinished tasks will be unassigned and its collaboration state will not be transferred. Resolve outstanding work first. The native application and session will not be stopped.",
     "hint": "This session runs in its original application. CCCC provides collaboration access; use that application for its terminal.",
+    "codexHint": "This session runs in Codex; view its terminal there. Closing its window may not stop it receiving CCCC work or using model credits. To pause deliveries from this Group, select Pause CCCC access; work already started may continue.",
     "configHint": "Runtime, model, credentials, working directory and session lifecycle belong to the original application. CCCC cannot change the native process’s directory.",
     "recovery": {
       "title": "Native session recovery",

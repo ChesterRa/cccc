@@ -157,6 +157,28 @@ async function expand(open: boolean) {
 }
 
 it.each(["en", "zh", "ja"] as const)(
+  "explains Codex window behavior without changing other native sessions in %s",
+  async (language) => {
+    await act(async () => i18n.changeLanguage(language));
+    const text = locales[language].actors.nativeSession;
+    await render({ canAccessRecovery: false });
+    expect(host.textContent).toContain(text.codexHint);
+    expect(host.textContent).not.toContain(text.hint);
+    expect(mocks.load).not.toHaveBeenCalled();
+
+    const claude: Actor = {
+      ...nativeActor,
+      runtime: "claude",
+      external_session_id: "claude:other-session",
+    };
+    await render({ actor: claude, canAccessRecovery: false });
+    expect(host.textContent).toContain(text.hint);
+    expect(host.textContent).not.toContain(text.codexHint);
+    expect(mocks.load).not.toHaveBeenCalled();
+  },
+);
+
+it.each(["en", "zh", "ja"] as const)(
   "displays and copies both providers' server-returned commands and directories unchanged in %s",
   async (language) => {
     await act(async () => i18n.changeLanguage(language));

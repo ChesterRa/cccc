@@ -119,6 +119,20 @@ mod tests {
             assert_eq!(tool["annotations"]["readOnlyHint"], true, "{name}");
             assert_eq!(tool["annotations"]["openWorldHint"], false, "{name}");
         }
+        let search = catalog
+            .iter()
+            .find(|tool| tool["name"] == "cccc_capability_search")
+            .expect("capability search tool");
+        for name in [
+            "kind",
+            "source_id",
+            "trust_tier",
+            "qualification_status",
+            "limit",
+            "include_external",
+        ] {
+            assert!(search["inputSchema"]["properties"].get(name).is_none());
+        }
         for name in [
             "cccc_file_send",
             "cccc_message_reply",

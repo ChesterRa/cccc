@@ -37,7 +37,7 @@ An enable command configures the integration; it does not confirm that an existi
 
 Ordinary `cccc setup` preserves a recognized Codex native MCP registration, including its enabled state, additional arguments and original `CCCC_HOME`. It can still repair a known ordinary/obsolete entry; a failed or unreadable registry query leaves configuration unchanged. Use `cccc sessions disable --runtime codex` to explicitly return to ordinary MCP mode; rerunning setup is not a disable operation.
 
-Availability means **able to receive**, not proof that a terminal window is open. Codex can keep its native app-server running after its TUI closes. Plain MCP registration alone does not establish a receive channel.
+Availability means **able to receive**, not proof that a terminal window is open. Codex can keep its native app-server running after its TUI closes. It may still receive CCCC work and use model credits even with all Codex windows closed. To pause deliveries to that agent from this Group, select **Pause CCCC access**; work already started may continue. Plain MCP registration alone does not establish a receive channel.
 
 Claude receives a Monitor notification with the Group, receiving agent, role,
 scope key and a `cccc_message_history({"group_id":"…","event_id":"…"})`

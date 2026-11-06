@@ -72,19 +72,19 @@ sources:
     rationale: "Curated third-party skill entries (manual curation, no periodic crawling)."
   - source_id: skillsmp_remote
     enabled: true
-    rationale: "On-demand SkillsMP search (API key if configured; proxy fallback otherwise)."
+    rationale: "Records labeled as originating from SkillsMP."
   - source_id: clawhub_remote
     enabled: true
-    rationale: "On-demand ClawHub remote search via official JSON API."
+    rationale: "Records labeled as originating from ClawHub."
   - source_id: openclaw_skills_remote
     enabled: true
-    rationale: "On-demand OpenClaw skills search from GitHub SKILL.md corpus."
+    rationale: "Records labeled as originating from the OpenClaw skills corpus."
   - source_id: clawskills_remote
     enabled: true
-    rationale: "On-demand clawskills.co skills index search."
+    rationale: "Records labeled as originating from clawskills.co."
   - source_id: mcp_registry_official
     enabled: true
-    rationale: "Primary MCP discovery source (local snapshot + on-demand fallback); indexed by default, with only lightweight verified exceptions promoted."
+    rationale: "Records labeled as originating from the MCP Registry."
 
 mcp_overrides:
   # --------------------------------------------------------------------------

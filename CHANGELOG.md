@@ -18,6 +18,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   **Start Group** no longer looks ignored when an agent exits at once.
 - `cccc doctor` prints a short summary in a terminal. A pipe, a redirect or `--json` still gets the
   full JSON report.
+- The details of a Codex native agent now say that closing its window may not stop it: it can still
+  receive CCCC work and use model credits. **Pause CCCC access** stops new deliveries from the Group.
+- `cccc_capability_search` no longer lists filters that have no effect in this version, and the
+  capability guides no longer promise remote search, which this version does not do. Installing
+  skills from a URL or GitHub remains available.
 - The first screen of a new Group explains Send, Mail, the foreman and tasks in plainer words.
 - The **Auto** theme now follows the light or dark setting of your system. It used to switch by the
   local time of day.
