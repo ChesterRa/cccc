@@ -17,8 +17,11 @@
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/m8wuB7VSJ)
 
 [English](README.md) | [中文](README.zh-CN.md) | **日本語**
+
+[クイックスタート](#クイックスタート) · [ドキュメント](#ドキュメント) · [コミュニティ](#コミュニティ)
 
 </div>
 
@@ -372,9 +375,11 @@ Windows では `x86_64-pc-windows-msvc` ツールチェーンを使い、`powers
 
 ## コミュニティ
 
-📱 Telegram グループに参加する：[t.me/ccccpair](https://t.me/ccccpair)
+ワークフローの共有や質問、ほかの CCCC ユーザーとの交流にご利用ください：
 
-ワークフローの共有や問題の相談、ほかの CCCC ユーザーとの交流にご利用ください。
+- **Discord**：[CCCC の Discord に参加](https://discord.gg/m8wuB7VSJ)
+- **Telegram**：[t.me/ccccpair](https://t.me/ccccpair)
+- **バグ報告・機能提案**：[GitHub Issues](https://github.com/ChesterRa/cccc/issues)
 
 ## コントリビューション
 
