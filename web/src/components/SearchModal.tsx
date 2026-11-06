@@ -5,6 +5,7 @@ import { Actor, LedgerEvent } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { useCopyFeedback } from "../hooks/useCopyFeedback";
+import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { SearchIcon } from "./Icons";
 import { Button } from "./ui/button";
@@ -104,18 +105,12 @@ export function SearchModal({
     return ids;
   }, [actors]);
 
-  // Helper to get display name for actor
-  const getDisplayName = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const actor of actors) {
-      const id = String(actor.id || "");
-      if (id) map.set(id, actor.title || id);
-    }
-    return (id: string) => {
-      if (!id || id === "user") return id;
-      return map.get(id) || id;
-    };
-  }, [actors]);
+  // Display name for an actor id; "user", empty and unknown ids show as given.
+  const displayNameMap = useActorDisplayNameMap(actors);
+  const getDisplayName = (id: string) => {
+    if (!id || id === "user") return id;
+    return displayNameMap.get(id) || id;
+  };
 
   const requestId = useRef(0);
   const lastSearch = useRef<SearchCriteria | null>(null);
