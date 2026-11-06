@@ -190,9 +190,7 @@ fn notice_text(server: &str, daemon: &str, runtime: Option<&str>) -> String {
 /// Mirrors "Upgrade an existing integration" in docs/guide/local-sessions.md.
 fn restart_step(runtime: Option<&str>) -> &'static str {
     match runtime {
-        Some("claude") => {
-            "in Claude Code, open /mcp, select cccc and choose Reconnect, then run /reload-plugins"
-        }
+        Some("claude") => "in Claude Code, let active work finish, quit, and run claude --resume",
         Some("codex") => {
             "in Codex, let active work finish, then choose /daemon > Restart background server > Restart"
         }
@@ -257,7 +255,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("open /mcp, select cccc and choose Reconnect"),
+            text.contains("in Claude Code, let active work finish, quit, and run claude --resume"),
             "{text}"
         );
         // Existing data is untouched; only the key and a trailing text item are added.

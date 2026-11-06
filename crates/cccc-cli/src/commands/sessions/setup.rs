@@ -760,7 +760,7 @@ pub(crate) async fn enable(home: &HomeLayout, runtime: &str) -> Result<SetupResu
     let note = if runtime == "codex" {
         "Configuration saved. After upgrading CCCC in existing Codex CLI sessions, let active and queued work finish, then use Codex /daemon > Restart background server > Restart to load the new MCP process; this affects other chats on that server. Check cccc with /mcp and reload/review hooks in /hooks. Restarting only CCCC does not update a running MCP server."
     } else {
-        "Configuration saved. In existing sessions, reconnect the cccc MCP server to load its current tools and reload the CCCC plugin/Monitor, or resume the original native session. Plugin disable/enable alone may leave an old Monitor running. Monitor availability is required."
+        "Configuration saved. In existing sessions, reconnect the cccc MCP server to load its current tools and reload the CCCC plugin, or resume the original native session. A Claude Monitor that is already running keeps its old executable until the session restarts. Monitor availability is required."
     };
     Ok(SetupResult {
         provider_dir: provider_directory(runtime)?,
