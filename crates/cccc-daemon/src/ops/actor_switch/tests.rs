@@ -1144,6 +1144,7 @@ fn held_work_follows_the_handoff_once_the_switch_completes() {
         &mut String::new(),
         &AtomicBool::new(false),
         &mut HashSet::new(),
+        &mut actor_delivery_worker::WakeBudget::default(),
     );
 
     assert!(matches!(outcome, BatchOutcome::Delivered) && jobs.is_empty());

@@ -6,10 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+
+- A message to an agent that cannot stay up now says so. CCCC tries to start the agent a few times
+  over several seconds, then shows **Delivery failed for** that agent on the message, with the reason
+  and **Retry** in its recipients. After you fix the cause, **Retry** or starting the agent offers it
+  again. If the message may already have reached the agent, its recipients say **Delivery uncertain**
+  and leave the decision to you. Before, CCCC kept restarting the agent for as long as the message
+  waited, and the page showed only that it was stopped.
+- When an agent ends on its own with an error, the page now says so and points to its terminal, so
+  **Start Group** no longer looks ignored when an agent exits at once.
+- `cccc doctor` prints a short summary in a terminal. A pipe, a redirect or `--json` still gets the
+  full JSON report.
+- The first screen of a new Group explains Send, Mail, the foreman and tasks in plainer words.
+
 ### Fixed
 
 - Codex native members now show recovery steps when their background server exits or Codex reports
   the session ended. Sending a message in an open session to try reconnecting starts a model turn.
+- On a phone, the first tap on the members' row no longer gets lost while the message box is open.
+- A conversation that fits on the screen no longer shows "No more messages" above it.
+- The theme choice in English settings no longer cuts off; its third option is now **Auto**.
 
 ## [0.4.49]
 

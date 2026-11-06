@@ -1018,6 +1018,7 @@ export type ObligationStatusPatch = {
   replied?: true;
   cancelled?: true;
   deliveryState?: string;
+  deliveryReason?: string;
 };
 
 export function updateObligationAtIndex(
@@ -1050,13 +1051,15 @@ export function updateObligationAtIndex(
     }
     const previous = obligationStatus[recipientId] as ObligationStatus;
     const updated = { ...previous };
-    if (patch.deliveryState !== undefined && updated.delivery_state !== patch.deliveryState) {
+    if (patch.deliveryState !== undefined) {
       updated.delivery_state = patch.deliveryState;
+      updated.delivery_reason = patch.deliveryReason;
     }
     if ((patch.reply || patch.replied) && !updated.cancelled) updated.replied = true;
     if (patch.cancelled && !updated.replied) updated.cancelled = true;
     if (
       updated.delivery_state === previous.delivery_state &&
+      (updated.delivery_reason || "") === (previous.delivery_reason || "") &&
       updated.replied === previous.replied &&
       updated.cancelled === previous.cancelled
     ) {

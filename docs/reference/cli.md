@@ -102,12 +102,13 @@ it on port 9000.
 Check your environment and diagnose issues.
 
 ```bash
-cccc doctor             # Full environment check
+cccc doctor             # In a terminal: command, daemon, builds, agent CLIs, Web Model browser
+cccc doctor --json      # The full JSON report, which is also what a pipe or redirect gets
 ```
 
 Browser readiness uses the same Chrome/Edge discovery as the projected Web runtime on
 Linux, macOS, and Windows, and may additionally recognize system Chromium.
-On Linux, the report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
+On Linux, the JSON report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
 isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
 isolation; CCCC falls back to its CDP screencast viewer.
 

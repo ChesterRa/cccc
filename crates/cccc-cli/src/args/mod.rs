@@ -80,6 +80,9 @@ pub struct DoctorArgs {
     /// Also list the custom runtime among the detected runtimes.
     #[arg(long)]
     pub all: bool,
+    /// Print the full report as JSON, as it always is when piped.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Parser)]

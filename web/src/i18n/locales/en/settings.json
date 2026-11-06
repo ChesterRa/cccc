@@ -160,7 +160,7 @@
     "useRuntimeDefaultCommand": "Use runtime default command",
     "usingRuntimeDefaultCommand": "Using runtime default command:",
     "default": "Default:",
-    "commandOverrideRequired": "Command override is enabled. Please enter a command.",
+    "commandOverrideRequired": "Enter the command that starts this agent.",
     "customRuntimeCommandRequired": "Custom runtime requires a command.",
     "submit": "Submit Mode",
     "capabilityDefaults": "Capability Defaults",

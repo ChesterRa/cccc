@@ -52,7 +52,9 @@ export function VirtualMessageListEmptyState({
                 key={title}
                 className="flex gap-2 border-t border-[var(--glass-border-subtle)] pt-2"
               >
-                <span className="text-[var(--color-text-secondary)]">{title}</span>
+                <span className="w-28 flex-shrink-0 text-[var(--color-text-secondary)]">
+                  {title}
+                </span>
                 <span>{body}</span>
               </div>
             ))}

@@ -10,6 +10,7 @@ export interface RecipientEntry {
   label?: string;
   cleared: boolean;
   deliveryState: string;
+  deliveryReason?: string;
   read: boolean;
   replied: boolean;
   replyRequested: boolean;
@@ -160,6 +161,15 @@ export function RecipientsModal({
                         {deliveryLabel(entry)}
                       </div>
                     )}
+                    {entry.deliveryReason &&
+                    ["failed", "ambiguous"].includes(entry.deliveryState) ? (
+                      <p
+                        className="mt-1 text-[11px] break-words text-[var(--color-text-secondary)]"
+                        data-recipient-reason
+                      >
+                        {entry.deliveryReason}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-2" data-recipient-controls>
                     {canDeliver ? (

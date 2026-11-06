@@ -12,6 +12,10 @@ use crate::ops::deepseek_runtime::TurnDelivery;
 const PREAMBLE_DELAY: Duration = Duration::from_millis(500);
 const INPUT_MODE_TIMEOUT: Duration = Duration::from_secs(5);
 const ANTIGRAVITY_STARTUP_SETTLE: Duration = Duration::from_millis(1_500);
+/// Automatic starts one batch may use. A program that cannot stay up would
+/// otherwise restart for as long as its work waits, with nothing to show why.
+/// The work stays recoverable: Start, Retry or a new message tries again.
+const WAKES_PER_BATCH: u32 = 6;
 
 #[cfg(all(test, unix))]
 #[path = "actor_delivery_startup_tests.rs"]
@@ -49,18 +53,26 @@ pub fn process_batch(
     preamble_session: &mut String,
     cancelled: &AtomicBool,
 ) -> BatchOutcome {
-    process_batch_tracked(jobs, preamble_session, cancelled, &mut HashSet::new())
+    process_batch_tracked(
+        jobs,
+        preamble_session,
+        cancelled,
+        &mut HashSet::new(),
+        &mut WakeBudget::default(),
+    )
 }
 
 /// As [`process_batch`], adding to `attempted` the event ids of managed work
 /// right before its submission can begin: a PTY payload write, a DeepSeek
 /// request, or a managed session's input. A runtime replacement records work
-/// that stays unconfirmed as ambiguous instead of offering it again.
+/// that stays unconfirmed as ambiguous instead of offering it again. `wakes`
+/// holds the automatic starts this batch has used, across retries.
 pub fn process_batch_tracked(
     jobs: &mut Vec<DeliveryJob>,
     preamble_session: &mut String,
     cancelled: &AtomicBool,
     attempted: &mut HashSet<String>,
+    wakes: &mut WakeBudget,
 ) -> BatchOutcome {
     let Some(job) = jobs.first().cloned() else {
         return BatchOutcome::Retry;
@@ -158,6 +170,7 @@ pub fn process_batch_tracked(
             &current_actor,
             cancelled,
             attempted,
+            wakes,
         );
     }
     let jobs = jobs.as_slice();
@@ -169,9 +182,10 @@ pub fn process_batch_tracked(
             &current_actor,
             cancelled,
             attempted,
+            wakes,
         );
     }
-    let status = match ensure_running(&job.home, &current_group, &current_actor) {
+    let status = match ensure_running(&job.home, &current_group, &current_actor, wakes) {
         Ok(Some(status)) => status,
         Ok(None) => return BatchOutcome::Retry,
         Err(reason) => return BatchOutcome::Terminal(reason),
@@ -533,10 +547,16 @@ fn process_deepseek_batch(
     actor: &Actor,
     cancelled: &AtomicBool,
     attempted: &mut HashSet<String>,
+    wakes: &mut WakeBudget,
 ) -> BatchOutcome {
     if !crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) {
         if crate::ops::deepseek_runtime::manual_restart_required(home, group, actor) {
             return BatchOutcome::Retry;
+        }
+        match wakes.spend(&group.group_id, &actor.id) {
+            Ok(true) => {}
+            Ok(false) => return BatchOutcome::Retry,
+            Err(reason) => return BatchOutcome::Terminal(reason),
         }
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
             Ok(_) if crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) => {}
@@ -576,8 +596,14 @@ fn process_managed_batch(
     actor: &Actor,
     cancelled: &AtomicBool,
     attempted: &mut HashSet<String>,
+    wakes: &mut WakeBudget,
 ) -> BatchOutcome {
     if !crate::ops::local_headless::running(&group.group_id, &actor.id) {
+        match wakes.spend(&group.group_id, &actor.id) {
+            Ok(true) => {}
+            Ok(false) => return BatchOutcome::Retry,
+            Err(reason) => return BatchOutcome::Terminal(reason),
+        }
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
             Ok(None) if crate::ops::local_headless::running(&group.group_id, &actor.id) => {}
             Ok(_) => return BatchOutcome::Retry,
@@ -709,15 +735,56 @@ fn finish_jobs(jobs: &[DeliveryJob]) {
     }
 }
 
+/// The automatic starts a batch has used. The spacing is real time: every new
+/// message ends a deferred wait early, so a count alone would be spent at once
+/// and a program that is only being replaced would never get its few seconds.
+#[derive(Default)]
+pub struct WakeBudget {
+    spent: u32,
+    next: Option<std::time::Instant>,
+}
+
+impl WakeBudget {
+    /// Whether to start now. `Err` says why there will be no other start.
+    fn spend(&mut self, group_id: &str, actor_id: &str) -> Result<bool, String> {
+        if self.spent >= WAKES_PER_BATCH {
+            return Err(stopped_reason(group_id, actor_id));
+        }
+        let now = std::time::Instant::now();
+        if self.next.is_some_and(|next| now < next) {
+            return Ok(false);
+        }
+        self.spent += 1;
+        self.next = Some(now + super::actor_delivery::deferred_retry_delay(self.spent));
+        Ok(true)
+    }
+}
+
+/// Only the exit code: what the program printed stays in its terminal.
+fn stopped_reason(group_id: &str, actor_id: &str) -> String {
+    match cccc_runtime::status(group_id, actor_id)
+        .ok()
+        .and_then(|status| status.exit_code)
+    {
+        Some(code) => format!("The agent exited (code {code}); check its terminal, then retry"),
+        None => "The agent could not be kept running; check its command and terminal, then retry"
+            .to_owned(),
+    }
+}
+
 fn ensure_running(
     home: &cccc_core::HomeLayout,
     group: &cccc_core::GroupDoc,
     actor: &Actor,
+    wakes: &mut WakeBudget,
 ) -> Result<Option<cccc_runtime::SessionStatus>, String> {
     if let Ok(status) = cccc_runtime::status(&group.group_id, &actor.id)
         && status.running
     {
         return Ok(Some(status));
+    }
+    if !wakes.spend(&group.group_id, &actor.id)? {
+        return Ok(None);
     }
     let status = match actor_runtime::apply(home, group, &actor.id, "actor.start") {
         Ok(Some(status)) if status.running => status,
@@ -795,6 +862,33 @@ pub(super) fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) ->
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_new_message_cannot_hurry_the_next_start() {
+        let mut wakes = WakeBudget::default();
+        assert_eq!(wakes.spend("group", "peer1"), Ok(true));
+        assert!(wakes.next.is_some());
+        // Far enough that a paused test run cannot reach it.
+        wakes.next = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        for _ in 0..100 {
+            assert_eq!(wakes.spend("group", "peer1"), Ok(false));
+        }
+        assert_eq!(wakes.spent, 1);
+    }
+
+    #[test]
+    fn the_last_start_is_followed_by_the_reason() {
+        let mut wakes = WakeBudget::default();
+        for _ in 0..WAKES_PER_BATCH {
+            wakes.next = None;
+            assert_eq!(wakes.spend("group", "peer1"), Ok(true));
+        }
+        assert!(
+            wakes
+                .spend("group", "peer1")
+                .is_err_and(|reason| reason.contains("then retry"))
+        );
+    }
+
     use super::*;
     use cccc_contracts::{Actor, ActorRuntime, ActorSubmit, Event};
 
@@ -1099,6 +1193,7 @@ mod tests {
                 &mut String::new(),
                 &AtomicBool::new(false),
                 &mut HashSet::new(),
+                &mut WakeBudget::default(),
             ),
             BatchOutcome::Delivered
         );
@@ -1169,6 +1264,7 @@ mod tests {
                 &mut String::new(),
                 &AtomicBool::new(false),
                 &mut attempted,
+                &mut WakeBudget::default(),
             ),
             BatchOutcome::Delivered
         );

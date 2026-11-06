@@ -81,6 +81,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const refreshPresentation = useGroupStore((s) => s.refreshPresentation);
 
   const incrementChatUnread = useUIStore((s) => s.incrementChatUnread);
+  const showError = useUIStore((s) => s.showError);
   const setSSEStatus = useUIStore((s) => s.setSSEStatus);
   const setSSEError = useUIStore((s) => s.setSSEError);
   const markPresentationSlotAttention = useModalStore((s) => s.markPresentationSlotAttention);
@@ -1167,6 +1168,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           refreshActors,
           refreshPresentation,
           incrementChatUnread,
+          showError,
           markPresentationSlotAttention,
           clearPresentationSlotAttention,
         });

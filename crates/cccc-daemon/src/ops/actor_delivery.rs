@@ -314,6 +314,23 @@ pub(super) fn fail_jobs(jobs: &[DeliveryJob], reason: &str) {
     }
 }
 
+/// Close work that will not be retried on its own. What may have reached the
+/// runtime stays uncertain: calling it undelivered would invite a second copy.
+fn close_jobs(jobs: &[DeliveryJob], attempted: &HashSet<String>, reason: &str) {
+    for job in jobs {
+        if attempted.contains(&job.event.id) {
+            finish_job(
+                job,
+                CompletedDelivery::Ambiguous(format!(
+                    "This delivery may have been submitted before it stopped: {reason}"
+                )),
+            );
+        } else {
+            fail_job(job, reason);
+        }
+    }
+}
+
 pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchReport {
     if !matches!(event.kind.as_str(), "chat.message" | "system.notify")
         || matches!(group.state, GroupState::Paused | GroupState::Stopped)
@@ -814,6 +831,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
         let mut deferred_failures: u32 = 0;
         // Failed turns of the job at the head of the batch, by event id.
         let mut failed_turns = (String::new(), 0_u32);
+        let mut wakes = actor_delivery_worker::WakeBudget::default();
         while !thread_cancelled.load(Ordering::Acquire) {
             let mut batch = if deferred.is_empty() {
                 let Ok(job) = receiver.recv() else {
@@ -859,6 +877,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     &mut preamble_session,
                     &thread_cancelled,
                     &mut attempted,
+                    &mut wakes,
                 ) {
                     actor_delivery_worker::BatchOutcome::Delivered => {
                         delivered = true;
@@ -887,8 +906,14 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 }
             }
             if let Some(reason) = terminal_reason {
-                fail_jobs(&batch, &reason);
+                close_jobs(&batch, &attempted, &reason);
                 deferred_failures = 0;
+                // Work queued behind it takes its turn with the starts already
+                // spent: it would meet the same failure, once per message.
+                match receiver.try_recv() {
+                    Ok(job) => deferred.push(job),
+                    Err(_) => wakes = Default::default(),
+                }
             } else if let Some(reason) = rejected {
                 let head = batch.first().map(|job| job.event.id.clone());
                 if head.as_ref() != Some(&failed_turns.0) {
@@ -906,6 +931,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 deferred_failures = deferred_failures.saturating_add(1);
             } else {
                 deferred_failures = 0;
+                wakes = Default::default();
             }
             attempted.retain(|id| deferred.iter().any(|job: &DeliveryJob| &job.event.id == id));
         }
@@ -953,7 +979,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
     }
 }
 
-fn deferred_retry_delay(failures: u32) -> std::time::Duration {
+pub(super) fn deferred_retry_delay(failures: u32) -> std::time::Duration {
     let exponent = failures.saturating_sub(1).min(4);
     let delay = std::time::Duration::from_millis(250 * (1_u64 << exponent));
     delay.min(DEFERRED_RETRY_MAX)
@@ -961,6 +987,53 @@ fn deferred_retry_delay(failures: u32) -> std::time::Duration {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn closing_work_keeps_what_may_have_been_submitted_uncertain() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("closing work", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let job = |text: &str| {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = "user".into();
+            event.data = json!({"to":["peer1"],"text":text,"message_mode":"send"})
+                .as_object()
+                .expect("data")
+                .clone();
+            DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event,
+                claimed: true,
+                transport: "headless",
+            }
+        };
+        let (submitted, unsubmitted) = (job("maybe sent"), job("never sent"));
+
+        close_jobs(
+            &[submitted.clone(), unsubmitted.clone()],
+            &HashSet::from([submitted.event.id.clone()]),
+            "it stopped",
+        );
+
+        let state = |job: &DeliveryJob| {
+            crate::ops::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &job.event.id,
+            )
+            .expect("state")
+            .map(|(state, _)| state)
+        };
+        assert_eq!(state(&submitted).as_deref(), Some("ambiguous"));
+        assert_eq!(state(&unsubmitted).as_deref(), Some("failed"));
+    }
+
     #[test]
     fn scopeless_worker_records_failure_and_releases_claim() {
         let temp = tempfile::tempdir().expect("tempdir");

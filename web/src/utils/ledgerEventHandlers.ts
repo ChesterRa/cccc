@@ -26,7 +26,7 @@ export function isRuntimeDeliveryEvent(
   ev: unknown,
 ): ev is BaseLedgerEvent & {
   kind: "runtime.delivery";
-  data: { actor_id?: string; source_event_id?: string; state?: string };
+  data: { actor_id?: string; source_event_id?: string; state?: string; reason?: string | null };
 } {
   return (
     ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "runtime.delivery"
@@ -221,6 +221,7 @@ export interface RuntimeDeliveryData {
   actorId: string;
   eventId: string;
   state: string;
+  reason: string;
 }
 
 /**
@@ -240,7 +241,17 @@ export function extractRuntimeDeliveryData(ev: unknown): RuntimeDeliveryData | n
   const eventId = String(ev.data?.source_event_id || "").trim();
   const state = String(ev.data?.state || "").trim();
   if (!actorId || !eventId || !state) return null;
-  return { actorId, eventId, state };
+  return { actorId, eventId, state, reason: String(ev.data?.reason || "").trim() };
+}
+
+/** A member that ended on its own with an error, not one that was stopped or quit. */
+export function extractFailedExit(ev: LedgerEvent): { actorId: string; code: number } | null {
+  if (ev.kind !== "actor.stop") return null;
+  const data = ev.data as { actor_id?: unknown; exit_code?: unknown; reason?: unknown } | undefined;
+  const actorId = String(data?.actor_id || "").trim();
+  const code = data?.exit_code;
+  if (data?.reason !== "process_exit" || !actorId) return null;
+  return typeof code === "number" && code !== 0 ? { actorId, code } : null;
 }
 
 export function extractCancelledSourceEventId(ev: unknown): string {

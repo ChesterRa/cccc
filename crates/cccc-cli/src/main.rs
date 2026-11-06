@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
         Some(CommandKind::Reach { action }) => commands::membership::reach(&client, action).await,
         Some(CommandKind::Status) => commands::status::run(&home, PRODUCT_VERSION).await,
         Some(CommandKind::Doctor(args)) => {
-            commands::doctor::run(&home, PRODUCT_VERSION, args.all).await
+            commands::doctor::run(&home, PRODUCT_VERSION, args.all, args.json).await
         }
         Some(CommandKind::Setup(args)) => {
             // Setup owns synchronous provider commands and the explicit ACP login runtime.

@@ -80,6 +80,24 @@ import {
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 const MENTION_MENU_DESKTOP_WIDTH = 320;
+const COLLAPSE_AFTER_TAP_MS = 350;
+
+/** A tap moves focus just before its click. Collapsing the composer at once
+ *  would slide the controls above it out from under that click. */
+function afterTap(apply: () => void) {
+  window.setTimeout(apply, COLLAPSE_AFTER_TAP_MS);
+}
+
+/** As afterTap, for a press still held: a slow tap is a tap too. */
+function afterRelease(apply: () => void) {
+  const released = () => {
+    window.removeEventListener("pointerup", released, true);
+    window.removeEventListener("pointercancel", released, true);
+    afterTap(apply);
+  };
+  window.addEventListener("pointerup", released, true);
+  window.addEventListener("pointercancel", released, true);
+}
 
 function cleanVoicePromptContextText(value: unknown, maxLen = 240): string {
   const text = String(value || "")
@@ -296,7 +314,7 @@ export function ChatComposer({
       const target = event.target;
       if (!(target instanceof Element) || footerRef.current?.contains(target)) return;
       if (target.closest('[role="dialog"], [role="menu"], [role="listbox"]')) return;
-      setExpandedGroup("");
+      afterRelease(() => setExpandedGroup(""));
     };
     document.addEventListener("pointerdown", closeWhenOutside, true);
     return () => document.removeEventListener("pointerdown", closeWhenOutside, true);
@@ -927,7 +945,7 @@ export function ChatComposer({
           !event.currentTarget.contains(next) &&
           !next.closest('[role="dialog"], [role="menu"], [role="listbox"]')
         ) {
-          setExpandedGroup("");
+          afterTap(() => setExpandedGroup(""));
         }
       }}
       className={classNames(
@@ -1188,7 +1206,9 @@ export function ChatComposer({
                 onScroll={(event) => setComposerScrollTop(event.currentTarget.scrollTop)}
                 onFocus={() => setComposerFocused(true)}
                 onBlur={() => {
-                  setComposerFocused(false);
+                  afterTap(() =>
+                    setComposerFocused(document.activeElement === composerRef.current),
+                  );
                   setTimeout(() => setShowMentionMenu(false), 150);
                 }}
                 aria-label={t("messageInput")}

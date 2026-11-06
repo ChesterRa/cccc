@@ -113,3 +113,81 @@ describe("reply progress summary", () => {
     });
   });
 });
+
+describe("undelivered message", () => {
+  function renderDelivery(
+    states: Record<string, { state: string; reason?: string }>,
+    options: { readOnly?: boolean; mode?: string } = {},
+  ) {
+    const host = document.createElement("div");
+    host.innerHTML = renderToStaticMarkup(
+      <I18nextProvider i18n={i18n}>
+        <MessageBubble
+          actorById={new Map()}
+          actors={[]}
+          displayNameMap={new Map([["peer1", "Reviewer"]])}
+          agentState={null}
+          taskById={new Map()}
+          isDark={false}
+          readOnly={options.readOnly}
+          groupId="g"
+          groupLabelById={{}}
+          onReply={vi.fn()}
+          onShowRecipients={vi.fn()}
+          event={{
+            id: "event-1",
+            kind: "chat.message",
+            by: "user",
+            data: { text: "Hello", to: Object.keys(states), message_mode: options.mode ?? "send" },
+            _obligation_status: Object.fromEntries(
+              Object.entries(states).map(([id, { state, reason }]) => [
+                id,
+                {
+                  replied: false,
+                  reply_requested: false,
+                  cancelled: false,
+                  delivery_state: state,
+                  delivery_reason: reason,
+                },
+              ]),
+            ),
+          }}
+        />
+      </I18nextProvider>,
+    );
+    return Array.from(host.querySelectorAll<HTMLElement>('[data-status-tone="error"]'));
+  }
+
+  it("names who did not get it, keeps the reason to hand and opens the recipients", () => {
+    const [label, ...rest] = renderDelivery({
+      peer1: { state: "failed", reason: "The agent stopped right after starting" },
+      peer2: { state: "accepted" },
+    });
+
+    expect(rest).toEqual([]);
+    expect(label.textContent).toBe("Delivery failed for Reviewer");
+    expect(label.tagName).toBe("BUTTON");
+    expect(label.title).toBe("The agent stopped right after starting");
+  });
+
+  it("stays quiet about delivered, sending and uncertain work", () => {
+    expect(
+      renderDelivery({
+        a: { state: "accepted" },
+        b: { state: "claimed" },
+        c: { state: "ambiguous" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("leaves Mail alone: it stays in the Inbox", () => {
+    expect(renderDelivery({ peer1: { state: "failed" } }, { mode: "mail" })).toEqual([]);
+  });
+
+  it("offers no action in a read-only view", () => {
+    const [label] = renderDelivery({ peer1: { state: "failed" } }, { readOnly: true });
+
+    expect(label.tagName).toBe("SPAN");
+    expect(label.textContent).toBe("Delivery failed for Reviewer");
+  });
+});

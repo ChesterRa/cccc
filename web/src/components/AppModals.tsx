@@ -653,6 +653,7 @@ export function AppModals({
                     ? !!os[id]?.replied || !!os[id]?.cancelled
                     : ["accepted", "ambiguous"].includes(deliveryState),
               deliveryState,
+              deliveryReason: String(os[id]?.delivery_reason || ""),
               read: !!rs?.[id],
               replied: !!os[id]?.replied,
               replyRequested: !!os[id]?.reply_requested,
@@ -694,6 +695,7 @@ export function AppModals({
         label?: string;
         cleared: boolean;
         deliveryState: string;
+        deliveryReason?: string;
         read: boolean;
         replied: boolean;
         replyRequested: boolean;

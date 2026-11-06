@@ -172,6 +172,135 @@ async fn directed_message_restarts_an_actor_after_unexpected_process_exit() {
 }
 
 #[tokio::test]
+async fn a_member_that_cannot_stay_up_stops_being_restarted_and_its_messages_fail() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("start-limit-test", false).await;
+    let starts = temp.path().join("starts");
+    use_command(
+        &client,
+        &group_id,
+        &format!("echo started >> {}; exit 7", starts.display()),
+    )
+    .await;
+    let ledger_path = group_ledger_path(&temp, &group_id);
+
+    // The second waits behind the first: both share one set of starts.
+    let first = send(&client, &group_id, "first").await;
+    let second = send(&client, &group_id, "second").await;
+    let reason = wait_for_delivery_state(&ledger_path, &first, "failed").await;
+    assert!(reason.contains("then retry"), "{reason}");
+    wait_for_delivery_state(&ledger_path, &second, "failed").await;
+    let used = start_count(&starts);
+    assert!((1..=6).contains(&used), "{used} starts");
+
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert_eq!(start_count(&starts), used, "restarted after giving up");
+
+    // A later message may find the problem gone, so it gets its own starts.
+    let third = send(&client, &group_id, "third").await;
+    wait_for_delivery_state(&ledger_path, &third, "failed").await;
+    let later = start_count(&starts) - used;
+    assert!((1..=6).contains(&later), "{later} starts");
+
+    // A repaired member receives what failed, without anyone resending it.
+    use_command(
+        &client,
+        &group_id,
+        "stty -echo; while IFS= read -r line; do :; done",
+    )
+    .await;
+    call(
+        &client,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
+    for source in [&first, &second, &third] {
+        wait_for_delivery_state(&ledger_path, source, "accepted").await;
+    }
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn a_command_that_cannot_run_fails_its_message_instead_of_waiting_forever() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("missing-command-test", false).await;
+    call(
+        &client,
+        "actor_update",
+        json!({
+            "group_id":group_id,"actor_id":"peer1",
+            "patch":{"command":["/nonexistent/cccc-test-command"]},"by":"user"
+        }),
+    )
+    .await;
+    stop_peer(&client, &group_id).await;
+    let source = send(&client, &group_id, "hello").await;
+
+    let reason =
+        wait_for_delivery_state(&group_ledger_path(&temp, &group_id), &source, "failed").await;
+    assert!(reason.contains("then retry"), "{reason}");
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn a_short_outage_heals_while_messages_keep_arriving() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("short-outage-test", false).await;
+    let ready = temp.path().join("ready");
+    use_command(
+        &client,
+        &group_id,
+        &format!(
+            "[ -e {} ] || exit 1; stty -echo; while IFS= read -r line; do :; done",
+            ready.display()
+        ),
+    )
+    .await;
+
+    let mut sources = Vec::new();
+    for index in 0..6 {
+        sources.push(send(&client, &group_id, &format!("message {index}")).await);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+    std::fs::write(&ready, b"").expect("program returns");
+
+    let ledger_path = group_ledger_path(&temp, &group_id);
+    for source in &sources {
+        wait_for_delivery_state(&ledger_path, source, "accepted").await;
+    }
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn a_program_that_exits_once_while_starting_still_gets_the_message() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("second-start-test", false).await;
+    let updated = temp.path().join("updated");
+    use_command(
+        &client,
+        &group_id,
+        &format!(
+            "if [ ! -e {0} ]; then touch {0}; exit 0; fi; stty -echo; while IFS= read -r line; do :; done",
+            updated.display()
+        ),
+    )
+    .await;
+
+    let source = send(&client, &group_id, "hello").await;
+    wait_for_delivery_state(&group_ledger_path(&temp, &group_id), &source, "accepted").await;
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
 async fn request_reply_wakes_an_explicitly_stopped_actor() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("auto-wake-test", true).await;
@@ -695,6 +824,75 @@ fn group_ledger_path(temp: &tempfile::TempDir, group_id: &str) -> std::path::Pat
         .join("rust-home/groups")
         .join(group_id)
         .join("ledger.jsonl")
+}
+
+async fn stop_peer(client: &DaemonClient, group_id: &str) {
+    call(
+        client,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
+}
+
+/// Leave peer1 not running, with `script` as what a start will run.
+async fn use_command(client: &DaemonClient, group_id: &str, script: &str) {
+    stop_peer(client, group_id).await;
+    call(
+        client,
+        "actor_update",
+        json!({
+            "group_id":group_id,"actor_id":"peer1",
+            "patch":{"command":["sh","-c",script]},"by":"user"
+        }),
+    )
+    .await;
+}
+
+async fn send(client: &DaemonClient, group_id: &str, text: &str) -> String {
+    let sent = call(
+        client,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":text,"message_mode":"send"}),
+    )
+    .await;
+    sent.result["event"]["id"]
+        .as_str()
+        .expect("source event id")
+        .to_owned()
+}
+
+fn start_count(path: &std::path::Path) -> usize {
+    std::fs::read_to_string(path).map_or(0, |text| text.lines().count())
+}
+
+/// Waits out a wake's terminal writes; returns the state's reason.
+async fn wait_for_delivery_state(
+    ledger_path: &std::path::Path,
+    source_event_id: &str,
+    state: &str,
+) -> String {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let latest = ledger::read_all(ledger_path)
+            .expect("ledger")
+            .into_iter()
+            .rev()
+            .find(|event| {
+                event.kind == "runtime.delivery"
+                    && event.data["source_event_id"] == source_event_id
+                    && event.data["actor_id"] == "peer1"
+            });
+        if let Some(event) = latest.as_ref().filter(|event| event.data["state"] == state) {
+            return event.data["reason"].as_str().unwrap_or_default().to_owned();
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "delivery never reached {state}: {:?}",
+            latest.map(|event| event.data)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 async fn wait_for_accepted_delivery(ledger_path: &std::path::Path, source_event_id: &str) {

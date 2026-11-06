@@ -1403,8 +1403,11 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const effectiveHighlightEventId = replyJumpHighlightId || arrivalHighlightId || highlightEventId;
   const showManualHistory =
     !contextWindow && !!onLoadMore && hasMoreHistory && (hasActiveFilters || shortForHistory);
+  // A list that fits on the page has nothing above it to run out of.
   const showHistoryStatus =
-    showManualHistory || isLoadingHistory || (!contextWindow && !hasMoreHistory);
+    showManualHistory ||
+    isLoadingHistory ||
+    (!contextWindow && !hasMoreHistory && !shortForHistory);
   const nonVirtualTopMargin = getNonVirtualMessageListTopMargin({ topInset });
   const scrollLatestLabel = t("scrollToBottom");
   const unreadDisplayCount = chatUnreadCount > 99 ? "99+" : String(chatUnreadCount);

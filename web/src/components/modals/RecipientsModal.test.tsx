@@ -88,6 +88,20 @@ describe("RecipientsModal", () => {
     expect(markup).not.toContain("Retry");
   });
 
+  it("says why a delivery failed or is uncertain, and only then", () => {
+    const reason = "The agent exited (code 1); check its terminal, then retry";
+
+    expect(renderModal([entry({ deliveryState: "failed", deliveryReason: reason })])).toContain(
+      reason,
+    );
+    expect(renderModal([entry({ deliveryState: "ambiguous", deliveryReason: reason })])).toContain(
+      reason,
+    );
+    expect(
+      renderModal([entry({ deliveryState: "accepted", deliveryReason: reason })]),
+    ).not.toContain(reason);
+  });
+
   it("labels ambiguous retry explicitly and exposes reply cancellation", () => {
     const markup = renderModal([entry({ deliveryState: "ambiguous" })], {
       statusKind: "reply",

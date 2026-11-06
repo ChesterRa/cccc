@@ -95,7 +95,7 @@ upgrading server-side metadata cannot change that already installed code.
 ### Why does `cccc` still start an older installation after an upgrade?
 
 CCCC does not delete commands owned by another Python environment or installer.
-Run `cccc doctor` and inspect the `Installation` section. It shows the current
+Run `cccc doctor --json` and inspect the `installation` section. It shows the current
 launcher, the first command selected by PATH, and every duplicate. The standalone
 installer never infers ownership from version output. Rust self-update identifies
 its exact current executable only when the containing directory has the complete
@@ -227,6 +227,13 @@ cccc send "Please do X" --to agent-name
 ```
 
 Or in the Web UI, type `@agent-name` in your message.
+
+### A message shows "Delivery failed"?
+
+Open the message's recipients to see why. If the agent would not stay up, CCCC stopped trying
+after a few starts: its terminal tab shows what it printed. After fixing the cause, press
+**Retry** or start the agent, which offers the failed message again. A new message also tries
+again.
 
 ### Agent isn't responding to my messages?
 

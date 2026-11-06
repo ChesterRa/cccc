@@ -69,6 +69,37 @@ describe.each(Object.entries(mergers))("late %s response", (_, merge) => {
     );
   });
 
+  it("keeps a delivery's reason with its state", () => {
+    const failed = updateObligationAtIndex([source], 0, {
+      actorId: "worker",
+      deliveryState: "failed",
+      deliveryReason: "stopped",
+    });
+    expect(failed.next[0]._obligation_status?.worker.delivery_reason).toBe("stopped");
+
+    const failedAgain = updateObligationAtIndex(failed.next, 0, {
+      actorId: "worker",
+      deliveryState: "failed",
+      deliveryReason: "stopped again",
+    });
+    expect(failedAgain.changed).toBe(true);
+    expect(failedAgain.next[0]._obligation_status?.worker.delivery_reason).toBe("stopped again");
+
+    const repeated = updateObligationAtIndex(failedAgain.next, 0, {
+      actorId: "worker",
+      deliveryState: "failed",
+      deliveryReason: "stopped again",
+    });
+    expect(repeated.changed).toBe(false);
+
+    const retried = updateObligationAtIndex(failedAgain.next, 0, {
+      actorId: "worker",
+      deliveryState: "claimed",
+      deliveryReason: "",
+    });
+    expect(retried.next[0]._obligation_status?.worker.delivery_reason).toBe("");
+  });
+
   it("does not freeze retryable runtime delivery state", () => {
     const failed = {
       ...source,

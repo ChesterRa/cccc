@@ -271,6 +271,7 @@ export type ObligationStatus = {
   reply_requested: boolean;
   cancelled: boolean;
   delivery_state: "" | "claimed" | "accepted" | "failed" | "ambiguous" | string;
+  delivery_reason?: string;
 };
 
 // Mail read receipt payload

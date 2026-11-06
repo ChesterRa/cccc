@@ -14,6 +14,15 @@ vi.mock("./LazyVoiceSecretaryComposerControl", () => ({
   LazyVoiceSecretaryComposerControl: () => <button onClick={voice}>voice</button>,
 }));
 
+const tapSettled = () => act(() => new Promise<void>((done) => setTimeout(done, 400)));
+const press = (type: "pointerdown" | "pointerup") =>
+  act(async () => document.body.dispatchEvent(new Event(type, { bubbles: true })));
+async function tapOutside() {
+  await press("pointerdown");
+  await press("pointerup");
+  await tapSettled();
+}
+
 function Harness({
   mode = "send",
   initialTokens = [],
@@ -157,7 +166,7 @@ it("keeps a compact control in place until its first click and preserves recipie
     await act(async () => mic.click());
     expect(voice).toHaveBeenCalledOnce();
     expect(compact()).toBe(false);
-    await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    await tapOutside();
     expect(compact()).toBe(true);
 
     const textarea = host.querySelector("textarea")!;
@@ -171,10 +180,97 @@ it("keeps a compact control in place until its first click and preserves recipie
       recipient.click();
     });
     expect(recipient.getAttribute("aria-pressed")).toBe("true");
+    await tapSettled();
     expect(compact()).toBe(false);
-    await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    await tapOutside();
     expect(compact()).toBe(true);
     expect(host.querySelector(".compact-composer-recipients")?.textContent).toContain("@foreman");
+  } finally {
+    await act(async () => root.unmount());
+    useGroupStore.setState({ refreshSettings: originalRefreshSettings });
+    host.remove();
+  }
+});
+
+it("stays put until a tap outside it has landed", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useComposerStore.setState({ composerText: "" });
+  const originalRefreshSettings = useGroupStore.getState().refreshSettings;
+  useGroupStore.setState({ refreshSettings: async () => {} });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Harness />));
+    const footer = host.querySelector("footer")!;
+    const compact = () => footer.getAttribute("data-composer-compact") === "true";
+    const textarea = host.querySelector("textarea")!;
+    await act(async () => textarea.focus());
+    expect(compact()).toBe(false);
+    // The order a touch produces: pointerdown, then focus leaves, then the click.
+    await act(async () => {
+      document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      document.body.dispatchEvent(new Event("pointerup", { bubbles: true }));
+      textarea.blur();
+    });
+    expect(compact()).toBe(false);
+    await tapSettled();
+    expect(compact()).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    useGroupStore.setState({ refreshSettings: originalRefreshSettings });
+    host.remove();
+  }
+});
+
+it("waits for a slow tap to lift before collapsing", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useComposerStore.setState({ composerText: "" });
+  const originalRefreshSettings = useGroupStore.getState().refreshSettings;
+  useGroupStore.setState({ refreshSettings: async () => {} });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Harness />));
+    const footer = host.querySelector("footer")!;
+    const compact = () => footer.getAttribute("data-composer-compact") === "true";
+    const mic = host.querySelector<HTMLButtonElement>("[data-composer-voice] button")!;
+    await act(async () => mic.click());
+    expect(compact()).toBe(false);
+
+    await press("pointerdown");
+    await tapSettled();
+    expect(compact()).toBe(false);
+    await press("pointerup");
+    await tapSettled();
+    expect(compact()).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    useGroupStore.setState({ refreshSettings: originalRefreshSettings });
+    host.remove();
+  }
+});
+
+it("stays open when focus returns before the tap settles", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useComposerStore.setState({ composerText: "" });
+  const originalRefreshSettings = useGroupStore.getState().refreshSettings;
+  useGroupStore.setState({ refreshSettings: async () => {} });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Harness />));
+    const footer = host.querySelector("footer")!;
+    const textarea = host.querySelector("textarea")!;
+    await act(async () => textarea.focus());
+    await act(async () => {
+      textarea.blur();
+      textarea.focus();
+    });
+    await tapSettled();
+    expect(footer.getAttribute("data-composer-compact")).toBeNull();
   } finally {
     await act(async () => root.unmount());
     useGroupStore.setState({ refreshSettings: originalRefreshSettings });

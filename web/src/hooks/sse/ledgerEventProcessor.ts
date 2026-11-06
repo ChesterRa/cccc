@@ -1,9 +1,11 @@
+import i18n from "../../i18n";
 import { useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { groupMessagesVisible } from "../../stores/useUIStore";
 import type { Actor, ChatMessageData, LedgerEvent } from "../../types";
 import {
   extractMailReadData,
   extractCancelledSourceEventId,
+  extractFailedExit,
   extractRuntimeDeliveryData,
   getActorRefreshMode,
   getRecipientActorIdsForEvent,
@@ -54,6 +56,7 @@ export type LedgerEventProcessorDeps = {
   refreshActors: GroupState["refreshActors"];
   refreshPresentation: GroupState["refreshPresentation"];
   incrementChatUnread: UiState["incrementChatUnread"];
+  showError: UiState["showError"];
   markPresentationSlotAttention: ModalState["markPresentationSlotAttention"];
   clearPresentationSlotAttention: ModalState["clearPresentationSlotAttention"];
 };
@@ -121,7 +124,7 @@ export function processLedgerEvent(
     if (data) {
       deps.updateObligationStatus(
         data.eventId,
-        { actorId: data.actorId, deliveryState: data.state },
+        { actorId: data.actorId, deliveryState: data.state, deliveryReason: data.reason },
         groupId,
       );
     }
@@ -145,6 +148,19 @@ export function processLedgerEvent(
   // A read can beat the live event. appendEvent deduplicates the live list;
   // processed events may have been trimmed and must not be appended again.
   if (!deps.alreadyProcessed) deps.appendEvent(nextEvent, groupId);
+
+  // Nothing else says so: Start Group would just look ignored.
+  const exit = deps.alreadyProcessed ? null : extractFailedExit(nextEvent);
+  if (exit) {
+    const actor = deps.actors.find((item) => item.id === exit.actorId);
+    deps.showError(
+      i18n.t("actors:memberExited", {
+        name: actor?.title || exit.actorId,
+        code: exit.code,
+        defaultValue: "{{name}} stopped (exit code {{code}}). Check its terminal.",
+      }),
+    );
+  }
 
   if (isChatMessageEvent(nextEvent)) {
     const data = nextEvent.data as ChatMessageData;

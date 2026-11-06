@@ -65,6 +65,19 @@ export function MessageFooter({
       ? { state: "queued" as const }
       : undefined);
   const connectCancellation = event._connect_cancellation;
+  // Mail stays in the Inbox whatever became of an extra push. A Web Model shows
+  // its own delivery above, with its way to recover.
+  const isMail = (event.data as ChatMessageData | undefined)?.message_mode === "mail";
+  const undelivered = Object.entries(isMail ? {} : (event._obligation_status ?? {})).filter(
+    ([id, status]) => status.delivery_state === "failed" && id !== webModelDeliveryStatus?.actorId,
+  );
+  const undeliveredLabel = undelivered.length
+    ? t("deliveryFailedFor", {
+        names: undelivered.map(([id]) => displayNameMap.get(id) || id).join(", "),
+      })
+    : "";
+  const undeliveredReason = undelivered.find(([, status]) => status.delivery_reason)?.[1]
+    .delivery_reason;
   const deliveryLabel = webModelDeliveryStatus
     ? t(`webModelDelivery.${webModelDeliveryStatus.state}`)
     : "";
@@ -98,6 +111,7 @@ export function MessageFooter({
     connectDelivery ||
     connectCancellation ||
     webModelDeliveryStatus ||
+    undelivered.length > 0 ||
     obligationSummary ||
     visibleReadStatusEntries.length > 0,
   );
@@ -163,6 +177,23 @@ export function MessageFooter({
             isDark={isDark}
             readOnly={readOnly}
           />
+        ) : null}
+        {undelivered.length > 0 ? (
+          readOnly ? (
+            <span className={STATUS_LABEL_CLASS} data-status-tone="error">
+              <span className="truncate">{undeliveredLabel}</span>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className={classNames("touch-target-sm", STATUS_LABEL_CLASS)}
+              data-status-tone="error"
+              title={undeliveredReason}
+              onClick={onShowRecipients}
+            >
+              <span className="truncate">{undeliveredLabel}</span>
+            </button>
+          )
         ) : null}
         {obligationSummary ? (
           readOnly ? (

@@ -157,7 +157,7 @@
     "useRuntimeDefaultCommand": "使用 runtime 默认命令",
     "usingRuntimeDefaultCommand": "当前使用 runtime 默认命令：",
     "default": "默认：",
-    "commandOverrideRequired": "已关闭默认命令，请填写命令覆盖内容。",
+    "commandOverrideRequired": "请填写启动这个智能体的命令。",
     "customRuntimeCommandRequired": "自定义 runtime 必须填写命令。",
     "submit": "提交方式",
     "capabilityDefaults": "能力默认项",

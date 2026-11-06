@@ -107,7 +107,8 @@ pub(super) fn requester_for_event(
     })
 }
 
-type DeliveryStatuses = HashMap<String, HashMap<String, String>>;
+/// By source event and recipient: the latest delivery state and its reason.
+type DeliveryStatuses = HashMap<String, HashMap<String, (String, String)>>;
 type ReplyPositions = HashMap<String, HashMap<String, usize>>;
 type CancellationPositions = HashMap<String, usize>;
 
@@ -296,18 +297,19 @@ impl StatusSnapshot<'_> {
                     replies.and_then(|actors| actors.get(&actor_id)).copied(),
                     cancellation,
                 );
-                (
-                    actor_id.clone(),
-                    json!({
-                        "replied": replied,
-                        "reply_requested": reply_requested,
-                        "cancelled": reply_requested && cancelled,
-                        "delivery_state":delivery
-                            .and_then(|states| states.get(&actor_id))
-                            .map(String::as_str)
-                            .unwrap_or(""),
-                    }),
-                )
+                let (delivery_state, delivery_reason) = delivery
+                    .and_then(|states| states.get(&actor_id))
+                    .map_or(("", ""), |(state, reason)| (state, reason));
+                let mut status = json!({
+                    "replied": replied,
+                    "reply_requested": reply_requested,
+                    "cancelled": reply_requested && cancelled,
+                    "delivery_state":delivery_state,
+                });
+                if !delivery_reason.is_empty() {
+                    status["delivery_reason"] = json!(delivery_reason);
+                }
+                (actor_id.clone(), status)
             })
             .collect::<Map<_, _>>();
         status.insert("obligation_status".into(), Value::Object(obligation_status));
@@ -455,7 +457,7 @@ fn collect_message_outcomes_from(
     events: &[Event],
     start_position: usize,
 ) -> (DeliveryStatuses, ReplyPositions, CancellationPositions) {
-    let mut deliveries = HashMap::<String, HashMap<String, String>>::new();
+    let mut deliveries = DeliveryStatuses::new();
     let mut replies = HashMap::<String, HashMap<String, usize>>::new();
     let mut cancellations = HashMap::<String, usize>::new();
     for (offset, event) in events.iter().enumerate() {
@@ -506,10 +508,14 @@ fn collect_message_outcomes_from(
             event.data.get("actor_id").and_then(Value::as_str),
             event.data.get("state").and_then(Value::as_str),
         ) {
+            let reason = event.data.get("reason").and_then(Value::as_str);
             deliveries
                 .entry(source_event_id.to_owned())
                 .or_default()
-                .insert(actor_id.to_owned(), state.to_owned());
+                .insert(
+                    actor_id.to_owned(),
+                    (state.to_owned(), reason.unwrap_or_default().to_owned()),
+                );
         }
     }
     (deliveries, replies, cancellations)
@@ -579,14 +585,29 @@ mod tests {
             .as_object()
             .cloned()
             .expect("data");
+        let mut failed = Event::new("runtime.delivery", "g_one");
+        failed.data = json!({
+            "source_event_id":"event-1","actor_id":"peer1","state":"failed","reason":"gone"
+        })
+        .as_object()
+        .cloned()
+        .expect("data");
         let mut accepted = Event::new("runtime.delivery", "g_one");
         accepted.data = json!({"source_event_id":"event-1","actor_id":"peer1","state":"accepted"})
             .as_object()
             .cloned()
             .expect("data");
 
-        let (statuses, _, _) = collect_message_outcomes(&[claimed, accepted]);
-        assert_eq!(statuses["event-1"]["peer1"], "accepted");
+        let (statuses, _, _) = collect_message_outcomes(&[claimed.clone(), failed.clone()]);
+        assert_eq!(
+            statuses["event-1"]["peer1"],
+            ("failed".into(), "gone".into())
+        );
+        let (statuses, _, _) = collect_message_outcomes(&[claimed, failed, accepted]);
+        assert_eq!(
+            statuses["event-1"]["peer1"],
+            ("accepted".into(), String::new())
+        );
     }
 
     #[test]

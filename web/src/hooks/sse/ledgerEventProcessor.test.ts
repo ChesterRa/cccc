@@ -3,7 +3,7 @@ import { useUIStore } from "../../stores/useUIStore";
 import { useGroupStore } from "../../stores/useGroupStore";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import type { ChatMessageData, LedgerEvent } from "../../types";
+import type { Actor, ChatMessageData, LedgerEvent } from "../../types";
 import { processLedgerEvent, type LedgerEventProcessorDeps } from "./ledgerEventProcessor";
 
 function processorDeps() {
@@ -12,6 +12,7 @@ function processorDeps() {
   const updateObligationStatus = vi.fn();
   const updateActorActivity = vi.fn();
   const refreshActors = vi.fn();
+  const showError = vi.fn();
   const noop = vi.fn();
   const deps = {
     actors: [],
@@ -32,6 +33,7 @@ function processorDeps() {
     refreshActors,
     refreshPresentation: noop,
     incrementChatUnread: noop,
+    showError,
     markPresentationSlotAttention: noop,
     clearPresentationSlotAttention: noop,
   } as unknown as LedgerEventProcessorDeps;
@@ -42,6 +44,7 @@ function processorDeps() {
     updateObligationStatus,
     updateActorActivity,
     refreshActors,
+    showError,
   };
 }
 
@@ -227,10 +230,31 @@ describe("processLedgerEvent obligation facts", () => {
 
     expect(updateObligationStatus).toHaveBeenCalledWith(
       "message-1",
-      { actorId: "peer1", deliveryState: "accepted" },
+      { actorId: "peer1", deliveryState: "accepted", deliveryReason: "" },
       "g1",
     );
     expect(appendEvent).not.toHaveBeenCalled();
+  });
+
+  it("says when a member ends on its own with an error, once", () => {
+    const { deps, showError } = processorDeps();
+    const stop = (data: Record<string, unknown>) =>
+      ({ kind: "actor.stop", data: { actor_id: "peer1", ...data } }) as LedgerEvent;
+    const crashed = stop({ reason: "process_exit", exit_code: 3 });
+
+    processLedgerEvent("g1", crashed, { ...deps, alreadyProcessed: true });
+    processLedgerEvent("g1", stop({ reason: "process_exit", exit_code: 0 }), deps);
+    processLedgerEvent("g1", stop({ reason: "process_exit", exit_code: null }), deps);
+    processLedgerEvent("g1", stop({ reason: "user", exit_code: 1 }), deps);
+    expect(showError).not.toHaveBeenCalled();
+
+    processLedgerEvent("g1", crashed, {
+      ...deps,
+      actors: [{ id: "peer1", title: "Reviewer" } as Actor],
+    });
+    expect(showError).toHaveBeenCalledOnce();
+    expect(showError.mock.calls[0][0]).toContain("Reviewer");
+    expect(showError.mock.calls[0][0]).toContain("3");
   });
 
   it("projects reply cancellation onto all source recipients", () => {
