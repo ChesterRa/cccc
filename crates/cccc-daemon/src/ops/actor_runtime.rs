@@ -17,12 +17,12 @@ pub(crate) mod terminal_history;
 mod untrusted_workspace_tests;
 mod workspace;
 pub(crate) use attributed_reap::reap_group;
-pub(super) use confirmation::{
-    AUTOMATIC_LIFECYCLE, actor_response, confirmation_pause_applies, restore_runtime,
-    user_confirmation_retry,
-};
 #[cfg(test)]
-pub(super) use confirmation::{confirmation_required, require_restored_managed_actor};
+pub(super) use confirmation::require_restored_managed_actor;
+pub(super) use confirmation::{
+    AUTOMATIC_LIFECYCLE, actor_response, confirmation_pause_applies, confirmation_required,
+    restore_runtime, user_confirmation_retry,
+};
 pub(crate) use owner::{
     OwnerIdentity, OwnerState, RegisteredOwner, as_launched, delivery_owner, hold_browser_work,
     hold_group_browser_work,

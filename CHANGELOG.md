@@ -34,6 +34,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- While the daemon is starting, `cccc` and `cccc web` now keep checking for its answer for a few
+  seconds before reporting that it is not answering. Before, one failed check was enough, and the
+  report could offer to stop a healthy daemon.
 - Codex native members now show recovery steps when their background server exits or Codex reports
   the session ended. Sending a message in an open session to try reconnecting starts a model turn.
 - On a phone, the first tap on the members' row no longer gets lost while the message box is open.

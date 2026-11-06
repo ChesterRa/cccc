@@ -6,6 +6,9 @@ use serde_json::{Map, Value, json};
 use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// Only saved: these tests end at the restart request, so nothing binds it.
+const DESIRED_PORT: u16 = 18_848;
+
 #[tokio::test]
 async fn supervised_apply_returns_receipt_and_exits_for_restart() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -15,12 +18,10 @@ async fn supervised_apply_returns_receipt_and_exits_for_restart() {
         .expect("access token store")
         .create("admin", Vec::new(), true, None)
         .expect("admin token");
-    let live_port = free_port().await;
-    let desired_port = free_port().await;
     call(
         &home,
         "remote_access_configure",
-        json!({"web_host":"127.0.0.1","web_port":desired_port,"by":"user"}),
+        json!({"web_host":"127.0.0.1","web_port":DESIRED_PORT,"by":"user"}),
     );
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
@@ -29,16 +30,14 @@ async fn supervised_apply_returns_receipt_and_exits_for_restart() {
     command
         .env("CCCC_HOME", home.root())
         .env("CCCC_WEB_HOST", "127.0.0.1")
-        .env("CCCC_WEB_PORT", live_port.to_string())
-        .env("CCCC_WEB_EFFECTIVE_HOST", "127.0.0.1")
-        .env("CCCC_WEB_EFFECTIVE_PORT", live_port.to_string())
+        .env("CCCC_WEB_PORT", "0")
         .env("CCCC_WEB_SUPERVISED", "1")
         .env_remove("CCCC_WEB_ALLOW_UNAUTHENTICATED")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
     let mut child = command.spawn().expect("web child");
-    wait_for_port(live_port).await;
+    let live_port = wait_for_web_port(&home, &mut child).await;
     let response = post_apply(live_port, Some(&admin.token)).await;
     let status = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait())
         .await
@@ -50,7 +49,7 @@ async fn supervised_apply_returns_receipt_and_exits_for_restart() {
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(response.contains(r#""accepted":true"#), "{response}");
     assert!(response.contains(&format!(
-        r#""target_local_url":"http://127.0.0.1:{desired_port}""#
+        r#""target_local_url":"http://127.0.0.1:{DESIRED_PORT}""#
     )));
     assert_eq!(status.code(), Some(75));
 }
@@ -60,12 +59,10 @@ async fn supervised_apply_rejects_remote_binding_without_admin_token() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
-    let live_port = free_port().await;
-    let desired_port = free_port().await;
     call(
         &home,
         "remote_access_configure",
-        json!({"provider":"manual","web_public_url":"https://public.example","web_port":desired_port,"by":"user"}),
+        json!({"provider":"manual","web_public_url":"https://public.example","web_port":DESIRED_PORT,"by":"user"}),
     );
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
@@ -73,9 +70,7 @@ async fn supervised_apply_rejects_remote_binding_without_admin_token() {
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_cccc-web"))
         .env("CCCC_HOME", home.root())
         .env("CCCC_WEB_HOST", "127.0.0.1")
-        .env("CCCC_WEB_PORT", live_port.to_string())
-        .env("CCCC_WEB_EFFECTIVE_HOST", "127.0.0.1")
-        .env("CCCC_WEB_EFFECTIVE_PORT", live_port.to_string())
+        .env("CCCC_WEB_PORT", "0")
         .env("CCCC_WEB_SUPERVISED", "1")
         .env_remove("CCCC_WEB_ALLOW_UNAUTHENTICATED")
         .stdout(Stdio::null())
@@ -83,7 +78,7 @@ async fn supervised_apply_rejects_remote_binding_without_admin_token() {
         .kill_on_drop(true)
         .spawn()
         .expect("web child");
-    wait_for_port(live_port).await;
+    let live_port = wait_for_web_port(&home, &mut child).await;
     let response = post_apply(live_port, None).await;
     child.kill().await.expect("stop web child");
     let _ = child.wait().await;
@@ -110,13 +105,6 @@ fn call(home: &HomeLayout, op: &str, args: Value) -> Value {
     Value::Object(response.result)
 }
 
-async fn free_port() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind port");
-    listener.local_addr().expect("address").port()
-}
-
 async fn wait_for_daemon(home: &HomeLayout) {
     for _ in 0..100 {
         if home.daemon_dir().join("ccccd.addr.json").is_file() {
@@ -127,17 +115,24 @@ async fn wait_for_daemon(home: &HomeLayout) {
     panic!("daemon did not start");
 }
 
-async fn wait_for_port(port: u16) {
-    for _ in 0..100 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_ok()
+/// Web binds a free port itself and records it in this home. A number picked here and
+/// released first can reach another test's server, or nothing, before this Web binds it.
+async fn wait_for_web_port(home: &HomeLayout, web: &mut tokio::process::Child) -> u16 {
+    let runtime = home.daemon_dir().join("web_runtime.json");
+    // Debug builds can take several seconds to start under load.
+    for _ in 0..2_000 {
+        if let Ok(state) = cccc_core::fs::read_json::<Value>(&runtime)
+            && let Some(port) = state["port"].as_u64().filter(|port| *port != 0)
         {
-            return;
+            return u16::try_from(port).expect("web port");
         }
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(
+            web.try_wait().expect("web status").is_none(),
+            "web exited before it was ready"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    panic!("web child did not listen");
+    panic!("web did not report its port");
 }
 
 async fn post_apply(port: u16, token: Option<&str>) -> String {

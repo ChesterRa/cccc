@@ -5,12 +5,13 @@ use super::{
 use crate::PRODUCT_VERSION;
 use crate::daemon_takeover::{LockState, probe_lock};
 use cccc_client::DaemonClient;
-use cccc_contracts::DaemonResponse;
+use cccc_contracts::{DaemonAddress, DaemonResponse, Transport};
 use cccc_core::HomeLayout;
 use fs2::FileExt;
 use serde_json::json;
 use std::fs::{File, OpenOptions};
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::watch;
 
 const ISOLATED_DAEMON_CASE: &str = "CCCC_TEST_ISOLATED_DAEMON_CASE";
@@ -260,6 +261,54 @@ async fn a_held_lock_without_a_daemon_to_ask_is_reported_not_seized() {
     assert!(detail.contains("cccc daemon stop"), "{detail}");
     // The lock is still held: nothing was terminated to get past it.
     assert_eq!(probe_lock(&home).expect("probe"), LockState::Held);
+}
+
+/// A daemon takes the lock before it can answer, so one unanswered ping must
+/// not turn a healthy start into a report that it may be stuck.
+#[tokio::test]
+async fn a_daemon_still_starting_is_adopted_once_it_answers() {
+    let (_temp, home) = home();
+    let _held_lock = hold_daemon_lock(&home);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("daemon listener");
+    let published = DaemonAddress {
+        v: 1,
+        transport: Transport::Tcp,
+        path: String::new(),
+        host: "127.0.0.1".into(),
+        port: listener.local_addr().expect("daemon address").port(),
+        pid: std::process::id(),
+        version: PRODUCT_VERSION.into(),
+        source_id: String::new(),
+        ts: String::new(),
+    };
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::write(
+            daemon_home.daemon_dir().join("ccccd.addr.json"),
+            serde_json::to_vec(&published).expect("address JSON"),
+        )
+        .expect("publish address");
+        let (stream, _) = listener.accept().await.expect("ping connection");
+        let mut stream = BufReader::new(stream);
+        let mut request = String::new();
+        stream.read_line(&mut request).await.expect("ping request");
+        let request = serde_json::from_str(&request).expect("ping JSON");
+        let mut reply = serde_json::to_vec(&cccc_daemon::handle_request(&daemon_home, &request))
+            .expect("ping response");
+        reply.push(b'\n');
+        stream.write_all(&reply).await.expect("ping reply");
+    });
+    let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_millis(500));
+
+    let slot = resolve_slot(&home, &client)
+        .await
+        .expect("a daemon that answers is not stuck");
+
+    daemon.await.expect("starting daemon");
+    assert!(matches!(slot, DaemonSlot::Adopted { .. }), "{slot:?}");
 }
 
 #[tokio::test]

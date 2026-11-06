@@ -3780,6 +3780,10 @@ working/idle state, task completion or delivery acceptance. Managed-session
 state keeps precedence, and reading these fields MUST NOT start runtime work.
 If transcript access is busy, these optional observations MAY be null rather
 than waiting on transcript I/O; a later read can recover the same observation.
+`actor.activity` is appended for an initial non-empty snapshot and when the
+tracked Actor set, a state or a runner changes, not when terminal output does, so
+in that event these two values are as of the event. `actor_list` reads them at
+the time of the request.
 
 #### `actor_add`
 

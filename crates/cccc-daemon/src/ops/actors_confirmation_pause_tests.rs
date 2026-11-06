@@ -12,6 +12,52 @@ fn launches(fixture: &Fixture) -> usize {
 }
 
 #[test]
+fn a_confirmation_the_user_is_answering_spends_no_automatic_start() {
+    if isolated("pause_tests::a_confirmation_the_user_is_answering_spends_no_automatic_start") {
+        return;
+    }
+    let fixture = Fixture::new();
+    let started = fixture.request("actor_start", Value::Null);
+    assert!(started.ok, "{:?}", started.error);
+    assert_eq!(started.result["runtime_confirmation_required"], true);
+    let store = GroupStore::new(fixture.home.clone()).expect("store");
+    let ledger_path = store
+        .ledger_path(&fixture.group.group_id)
+        .expect("ledger path");
+    let mut event = Event::new("chat.message", &fixture.group.group_id);
+    event.by = "user".into();
+    event.data = json!({"to":["claude"],"text":"waits for the answer","message_mode":"send"})
+        .as_object()
+        .expect("message")
+        .clone();
+    ledger::append(&ledger_path, &event).expect("queued message");
+    let mut jobs = vec![DeliveryJob {
+        home: fixture.home.clone(),
+        group: fixture.group.clone(),
+        actor: fixture.group.actors[0].clone(),
+        event,
+        claimed: true,
+        transport: "managed_session",
+    }];
+    let mut wakes = actor_delivery_worker::WakeBudget::default();
+
+    // More rounds than a batch has starts, each with its wait already over.
+    for _ in 0..12 {
+        wakes.elapse();
+        assert_eq!(
+            actor_delivery_worker::process_batch_tracked(
+                &mut jobs,
+                &mut String::new(),
+                &AtomicBool::new(false),
+                &mut std::collections::HashSet::new(),
+                &mut wakes,
+            ),
+            actor_delivery_worker::BatchOutcome::Retry
+        );
+    }
+}
+
+#[test]
 fn pause_projection_tracks_the_effective_runtime_and_is_not_configuration() {
     if isolated(
         "pause_tests::pause_projection_tracks_the_effective_runtime_and_is_not_configuration",

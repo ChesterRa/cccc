@@ -9,7 +9,7 @@ use std::time::Duration;
 
 const GRACEFUL_TERMINATION: Duration = Duration::from_secs(10);
 const FORCED_TERMINATION: Duration = Duration::from_secs(5);
-const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
+pub(crate) const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Whether any process currently owns the daemon lock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

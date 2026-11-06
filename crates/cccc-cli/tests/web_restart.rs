@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use cccc_core::{HomeLayout, access_tokens::AccessTokenStore};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -16,19 +16,16 @@ async fn cli_override_is_replaced_by_saved_binding_when_apply_is_requested() {
         .expect("token store")
         .create("admin", Vec::new(), true, Some(ACCESS_TOKEN))
         .expect("admin token");
-    let live_port = free_port().await;
-    let desired_port = free_port().await;
-
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_cccc"));
     command
-        .arg("--port")
-        .arg(live_port.to_string())
+        .args(["--port", "0"])
         .env("CCCC_HOME", home.root())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
     let mut child = command.spawn().expect("CCCC CLI");
-    wait_for_port(live_port).await;
+    let live_port = wait_for_web_port(&home, &mut child).await;
+    let desired_port = free_port().await;
 
     let configured = request(
         live_port,
@@ -82,6 +79,26 @@ async fn free_port() -> u16 {
         .await
         .expect("bind port");
     listener.local_addr().expect("address").port()
+}
+
+/// Web binds a free port itself and records it in this home. A number picked here and
+/// released first can reach another test's server, or nothing, before this Web binds it.
+async fn wait_for_web_port(home: &HomeLayout, web: &mut tokio::process::Child) -> u16 {
+    let runtime = home.daemon_dir().join("web_runtime.json");
+    // Debug builds can take several seconds to start under load.
+    for _ in 0..2_000 {
+        if let Ok(state) = cccc_core::fs::read_json::<Value>(&runtime)
+            && let Some(port) = state["port"].as_u64().filter(|port| *port != 0)
+        {
+            return u16::try_from(port).expect("web port");
+        }
+        assert!(
+            web.try_wait().expect("web status").is_none(),
+            "web exited before it was ready"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("web did not report its port");
 }
 
 async fn wait_for_port(port: u16) {
@@ -268,24 +285,7 @@ signal.signal(signal.SIGTERM, slow_stop)
     web_command.args(["--host", "127.0.0.1", "--port", "0", "web"]);
     isolated(&mut web_command);
     let mut web = web_command.spawn().expect("isolated Web");
-    let port = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if let Ok(raw) = std::fs::read(home.daemon_dir().join("web_runtime.json"))
-                && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&raw)
-                && let Some(port) = value["port"]
-                    .as_u64()
-                    .and_then(|port| u16::try_from(port).ok())
-                && port != 0
-            {
-                break port;
-            }
-            assert!(web.try_wait().expect("Web status").is_none());
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .expect("Web binding");
-    wait_for_port(port).await;
+    let port = wait_for_web_port(&home, &mut web).await;
     let base = format!("http://127.0.0.1:{port}");
     let client = reqwest::Client::builder()
         .no_proxy()

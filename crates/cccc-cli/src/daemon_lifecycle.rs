@@ -14,8 +14,9 @@ use crate::daemon_takeover::{self, LockState};
 // make shutdown faster -- it just moves the same work to the forced path, which
 // is the one that leaves processes behind.
 pub(crate) const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
-// Long enough for a daemon that is already exiting to drop the lock, short
-// enough that a lock held by a live daemon still reports its own error fast.
+// Long enough for a daemon that is exiting to drop the lock, or one that is
+// starting to answer, short enough that a lock held by a daemon that does
+// neither still reports its own error fast.
 const DAEMON_LOCK_HANDOFF_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(any(not(windows), test))]
 const DAEMON_OWNER_HANDOFF_GRACE: Duration = Duration::from_secs(2);
@@ -38,7 +39,11 @@ pub(crate) async fn resolve_slot(home: &HomeLayout, client: &DaemonClient) -> Re
     if daemon_takeover::probe_lock(home)? == LockState::Free {
         return Ok(DaemonSlot::Vacant);
     }
-    match probe_existing(client).await {
+    let answer = match probe_existing(client).await {
+        Some(response) => Some(response),
+        None => answer_or_release(home, client).await?,
+    };
+    match answer {
         Some(response) if is_compatible(&response) => {
             warn_version_difference(&response);
             Ok(DaemonSlot::Adopted {
@@ -49,16 +54,33 @@ pub(crate) async fn resolve_slot(home: &HomeLayout, client: &DaemonClient) -> Re
             replace(client, home).await?;
             Ok(DaemonSlot::Vacant)
         }
-        None if daemon_takeover::wait_for_lock_release(home, DAEMON_LOCK_HANDOFF_TIMEOUT)
-            .await
-            .is_ok() =>
-        {
-            Ok(DaemonSlot::Vacant)
+        None => Ok(DaemonSlot::Vacant),
+    }
+}
+
+/// A daemon holds the lock before it can answer and after it stops, so one
+/// unanswered ping says neither. An answer or a free lock decides; `None` means
+/// the lock is free, by itself or by a takeover.
+async fn answer_or_release(
+    home: &HomeLayout,
+    client: &DaemonClient,
+) -> Result<Option<cccc_contracts::DaemonResponse>> {
+    let deadline = tokio::time::Instant::now() + DAEMON_LOCK_HANDOFF_TIMEOUT;
+    loop {
+        if daemon_takeover::probe_lock(home)? == LockState::Free {
+            return Ok(None);
         }
-        None => {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
             daemon_takeover::confirm_and_take_over(home).await?;
-            Ok(DaemonSlot::Vacant)
+            return Ok(None);
         }
+        if let Ok(Ok(response)) =
+            tokio::time::timeout(remaining, call(client, "ping", json!({}))).await
+        {
+            return Ok(Some(response));
+        }
+        tokio::time::sleep(daemon_takeover::LOCK_POLL_INTERVAL).await;
     }
 }
 

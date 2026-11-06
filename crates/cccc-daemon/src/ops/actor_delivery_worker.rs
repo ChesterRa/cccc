@@ -602,10 +602,14 @@ fn process_managed_batch(
     wakes: &mut WakeBudget,
 ) -> BatchOutcome {
     if !crate::ops::local_headless::running(&group.group_id, &actor.id) {
-        match wakes.spend(&group.group_id, &actor.id) {
-            Ok(true) => {}
-            Ok(false) => return BatchOutcome::Retry,
-            Err(reason) => return BatchOutcome::Terminal(reason),
+        // While the user answers a confirmation nothing is started, so nothing
+        // is spent: the wait can outlast every start this batch has.
+        if !actor_runtime::confirmation_required(&group.group_id, &actor.id) {
+            match wakes.spend(&group.group_id, &actor.id) {
+                Ok(true) => {}
+                Ok(false) => return BatchOutcome::Retry,
+                Err(reason) => return BatchOutcome::Terminal(reason),
+            }
         }
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
             Ok(None) if crate::ops::local_headless::running(&group.group_id, &actor.id) => {}
@@ -749,6 +753,12 @@ pub struct WakeBudget {
 }
 
 impl WakeBudget {
+    /// Skip the wait before the next start, as if it had passed.
+    #[cfg(test)]
+    pub(super) fn elapse(&mut self) {
+        self.next = None;
+    }
+
     /// Whether to start now. `Err` says why there will be no other start.
     fn spend(&mut self, group_id: &str, actor_id: &str) -> Result<bool, String> {
         if self.spent >= WAKES_PER_BATCH {

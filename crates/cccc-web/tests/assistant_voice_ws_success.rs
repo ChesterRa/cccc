@@ -30,10 +30,9 @@ async fn mock_streaming_recordings_complete_twice_without_poisoning_the_daemon()
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
-    let port = free_port().await;
+    let mut web = spawn_mock_web(&home);
+    let port = wait_for_web_port(&home, &mut web).await;
     let address = format!("127.0.0.1:{port}").parse().expect("web address");
-    let mut web = spawn_mock_web(&home, port);
-    wait_for_port(port).await;
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::AUTHORIZATION,
@@ -68,8 +67,9 @@ async fn mock_streaming_recordings_complete_twice_without_poisoning_the_daemon()
     let restarted_home = home.clone();
     let daemon = tokio::spawn(async move { cccc_daemon::run(restarted_home).await });
     wait_for_daemon(&home).await;
-    let mut web = spawn_mock_web(&home, port);
-    wait_for_port(port).await;
+    let mut web = spawn_mock_web(&home);
+    let port = wait_for_web_port(&home, &mut web).await;
+    let address = format!("127.0.0.1:{port}").parse().expect("web address");
     assert_mock_readiness(&client, address, &group.group_id).await;
     record_and_assert(&client, address, &group.group_id, "tab-two", "session-two").await;
     assert!(
@@ -117,11 +117,11 @@ async fn assert_mock_readiness(
     );
 }
 
-fn spawn_mock_web(home: &HomeLayout, port: u16) -> tokio::process::Child {
+fn spawn_mock_web(home: &HomeLayout) -> tokio::process::Child {
     tokio::process::Command::new(env!("CARGO_BIN_EXE_cccc-web"))
         .env("CCCC_HOME", home.root())
         .env("CCCC_WEB_HOST", "127.0.0.1")
-        .env("CCCC_WEB_PORT", port.to_string())
+        .env("CCCC_WEB_PORT", "0")
         .env("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT", "rust mock transcript")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -321,22 +321,24 @@ async fn wait_for_daemon(home: &HomeLayout) {
     panic!("daemon address was not created");
 }
 
-async fn free_port() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("free port listener");
-    listener.local_addr().expect("free port address").port()
-}
-
-async fn wait_for_port(port: u16) {
-    for _ in 0..200 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_ok()
+/// Web binds a free port itself and records it in this home. A number picked here and
+/// released first can reach another test's server, or nothing, before this Web binds it.
+/// A killed Web leaves its record behind, so only this child's counts.
+async fn wait_for_web_port(home: &HomeLayout, web: &mut tokio::process::Child) -> u16 {
+    let runtime = home.daemon_dir().join("web_runtime.json");
+    // Debug builds can take several seconds to start under load.
+    for _ in 0..2_000 {
+        if let Ok(state) = cccc_core::fs::read_json::<Value>(&runtime)
+            && state["pid"].as_u64() == web.id().map(u64::from)
+            && let Some(port) = state["port"].as_u64().filter(|port| *port != 0)
         {
-            return;
+            return u16::try_from(port).expect("web port");
         }
+        assert!(
+            web.try_wait().expect("web status").is_none(),
+            "web exited before it was ready"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("web port did not open");
+    panic!("web did not report its port");
 }

@@ -160,16 +160,20 @@ impl Fixture {
     }
 
     fn assert_stopped_at(&self, port: u16) {
+        self.assert_services_gone();
+        assert!(
+            std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
+            "Web still listening"
+        );
+    }
+
+    fn assert_services_gone(&self) {
         for filename in ["ccccd.lock", "cccc-web.lock"] {
             assert_lock_free(&self.home.join("daemon").join(filename));
         }
         assert!(
             !self.home.join("daemon/ccccd.addr.json").exists(),
             "daemon descriptor remained"
-        );
-        assert!(
-            std::net::TcpStream::connect(("127.0.0.1", port)).is_err(),
-            "Web still listening"
         );
     }
 
@@ -785,7 +789,7 @@ fn a_deliberate_burst_still_stops_in_conpty() {
 fn failed_web_start_reports_failure_after_stopping_its_daemon() {
     // Keep the reserved port occupied: releasing it and binding again let another
     // socket take it in between.
-    let (fixture, occupied) = Fixture::with_reserved_port();
+    let (fixture, _occupied) = Fixture::with_reserved_port();
     let mut terminal = fixture.start(&[], &[]);
     let deadline = Instant::now() + WAIT;
     let status = loop {
@@ -814,8 +818,8 @@ fn failed_web_start_reports_failure_after_stopping_its_daemon() {
         format!("{:?}", terminal_modes(terminal.master.as_ref())),
         terminal.original_modes
     );
-    drop(occupied);
-    fixture.assert_stopped();
+    // Web never held the port, and a port released here is anyone's to take.
+    fixture.assert_services_gone();
 }
 
 #[test]
