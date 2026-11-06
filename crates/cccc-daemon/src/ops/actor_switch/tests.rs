@@ -1297,11 +1297,10 @@ fn a_submission_cut_off_by_a_stop_stays_out_of_the_queue() {
     assert!(!fixture.pending().contains(&cut.id));
 }
 
-#[test]
-fn a_deepseek_turn_cut_off_by_the_switch_is_not_repeated() {
-    let fixture = Fixture::new();
+/// A DeepSeek member that took the returned message; `answer` is its provider's
+/// shell reply to the prompt.
+fn deepseek_prompted(fixture: &Fixture, answer: &str) -> Event {
     let prompted = fixture.workspace.join("prompted");
-    // Answers the handshake, then keeps the turn open for the switch to cut off.
     let script = format!(
         r#"while IFS= read -r line; do
 if printf '%s' "$line" | grep -q '"method":"initialize"'; then
@@ -1310,6 +1309,7 @@ elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
   printf '%s\n' '{{"jsonrpc":"2.0","id":2,"result":{{"sessionId":"fake-session"}}}}'
 elif printf '%s' "$line" | grep -q '"method":"session/prompt"'; then
   : > '{}'
+  {answer}
 fi
 done"#,
         prompted.display()
@@ -1322,9 +1322,6 @@ done"#,
         actor.env.clear();
         actor.normalize_runtime_constraints();
     });
-    let source = fixture.claude_source();
-    let attached = fixture.request("local_session_receiver_attach", Fixture::receiver(&source));
-    assert!(attached.ok, "{:?}", attached.error);
     let group = fixture.group();
     let actor = fixture.actor();
     crate::ops::deepseek_runtime::start(&fixture.home, &group, &actor, &fixture.workspace)
@@ -1335,10 +1332,89 @@ done"#,
         assert!(Instant::now() < deadline, "the prompt never arrived");
         std::thread::sleep(Duration::from_millis(10));
     }
+    cut
+}
+
+/// A provider that keeps the turn open for the test to cut off.
+fn deepseek_with_an_open_turn(fixture: &Fixture) -> Event {
+    deepseek_prompted(fixture, ":")
+}
+
+#[test]
+fn a_deepseek_turn_cut_off_by_the_switch_is_not_repeated() {
+    let fixture = Fixture::new();
+    let source = fixture.claude_source();
+    let attached = fixture.request("local_session_receiver_attach", Fixture::receiver(&source));
+    assert!(attached.ok, "{:?}", attached.error);
+    let cut = deepseek_with_an_open_turn(&fixture);
+    let group = fixture.group();
+    let actor = fixture.actor();
     let queued = fixture.send(&group, &actor, "queued behind the open turn".into());
 
     let result = fixture.switch(native_target(&source));
 
     assert_eq!(result["completion"], "done");
     fixture.assert_cut_off_work_moves_on(&source, &cut, &queued);
+}
+
+/// What a restart does to the delivery worker, without the provider setup its
+/// launch needs.
+fn stop_worker_for_a_restart(fixture: &Fixture) {
+    let reason = crate::ops::actors::delivery_shutdown_reason(
+        &fixture.home,
+        &fixture.group_id,
+        &fixture.actor(),
+        "actor.restart",
+    )
+    .expect("reason");
+    crate::ops::actor_delivery::shutdown_actor_for(&fixture.group_id, "x", reason);
+    crate::ops::deepseek_runtime::stop(&fixture.group_id, "x");
+}
+
+#[test]
+fn a_deepseek_turn_cut_off_by_a_restart_stays_undelivered() {
+    let fixture = Fixture::new();
+    let cut = deepseek_with_an_open_turn(&fixture);
+
+    stop_worker_for_a_restart(&fixture);
+
+    assert_ne!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
+    assert!(fixture.pending().contains(&cut.id));
+}
+
+#[test]
+fn a_deepseek_turn_that_asks_for_a_restart_stays_undelivered() {
+    let fixture = Fixture::new();
+    let cut = deepseek_prompted(
+        &fixture,
+        r#"rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"This model request failed","data":"maximum context length is 1048576 tokens"}}\n' "${rid:-3}""#,
+    );
+    let group = fixture.group();
+    let actor = fixture.actor();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    // The gate is written before the owner stops running.
+    while !crate::ops::deepseek_runtime::manual_restart_required(&fixture.home, &group, &actor)
+        || crate::ops::deepseek_runtime::running(&fixture.group_id, "x")
+    {
+        assert!(Instant::now() < deadline, "the provider never failed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    stop_worker_for_a_restart(&fixture);
+
+    assert_ne!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
+    assert!(fixture.pending().contains(&cut.id));
+}
+
+#[test]
+fn a_deepseek_turn_cut_off_by_a_restart_onto_another_runtime_is_not_repeated() {
+    let fixture = Fixture::new();
+    let cut = deepseek_with_an_open_turn(&fixture);
+    fixture.mutate(|doc| doc.actors[0].runtime = ActorRuntime::Custom);
+
+    stop_worker_for_a_restart(&fixture);
+
+    assert_eq!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
+    assert!(!fixture.pending().contains(&cut.id));
 }

@@ -993,12 +993,7 @@ pub(super) fn lifecycle_leading(
         None
     };
     if kind != "actor.start" || !runtime_was_running || retry_claude_trust {
-        // A restart replaces the session: what it may hold is not sent again.
-        let reason = if matches!(kind, "actor.restart" | "actor.new_session") {
-            actor_delivery::ShutdownReason::Replace
-        } else {
-            actor_delivery::ShutdownReason::Stop
-        };
+        let reason = delivery_shutdown_reason(home, &group_id, &original_actor, kind)?;
         super::codex_voice_analyst::lifecycle_timing::run_sync("actor.delivery_shutdown", || {
             actor_delivery::shutdown_actor_for(&group_id, &actor_id, reason);
             Ok(())
@@ -1131,6 +1126,30 @@ pub(super) fn lifecycle_leading(
         json!({"runtime_confirmation_required":actor["runtime_confirmation_required"],
         "actor": actor, "event": event, "runtime": status}),
     )
+}
+
+/// A restart replaces the session: what it may hold is not sent again. A DeepSeek
+/// turn is the exception. It runs until the provider answers and its message stays
+/// undelivered until then, so relaunching DeepSeek runs it again, as Stop and Start
+/// do. Moving to another runtime stays a replacement.
+pub(super) fn delivery_shutdown_reason(
+    home: &HomeLayout,
+    group_id: &str,
+    actor: &Actor,
+    kind: &str,
+) -> Result<actor_delivery::ShutdownReason, OpError> {
+    if !matches!(kind, "actor.restart" | "actor.new_session") {
+        return Ok(actor_delivery::ShutdownReason::Stop);
+    }
+    // Registered, not running: a failed turn that asks for a restart still owns its work.
+    let stays_on_deepseek = super::deepseek_runtime::registered_generation(group_id, &actor.id)
+        .is_some()
+        && actor_profile_runtime::resolve(home, actor)?.runtime == ActorRuntime::Deepseek;
+    Ok(if stays_on_deepseek {
+        actor_delivery::ShutdownReason::Stop
+    } else {
+        actor_delivery::ShutdownReason::Replace
+    })
 }
 
 #[derive(Clone, Copy)]
