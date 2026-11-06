@@ -6,6 +6,7 @@ import type { Actor } from "../../types";
 import { useTerminalSignalsStore } from "../../stores";
 import { RuntimeDock } from "./RuntimeDock";
 import type { LiveWorkCard } from "./liveWorkCards";
+import { setUiStylePrefs } from "../../utils/uiStyle";
 
 const mocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -96,6 +97,8 @@ const chips = () => [...host.querySelectorAll<HTMLElement>("[data-lcd-member-chi
 const more = () => host.querySelector<HTMLButtonElement>(".lcd-member-more");
 
 beforeEach(() => {
+  // These existing cases exercise the LCD row's tile motion and overflow.
+  setUiStylePrefs({ style: "lcd" });
   mocks.open.mockReset();
   mocks.add.mockReset();
   mocks.visible = 99;
@@ -115,6 +118,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount());
+  setUiStylePrefs({ style: "classic" });
   host.remove();
   vi.unstubAllGlobals();
   if (offsetTop) Object.defineProperty(HTMLElement.prototype, "offsetTop", offsetTop);

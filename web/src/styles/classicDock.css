@@ -1,0 +1,180 @@
+/* Keep the current overflow, focus and status behavior in the classic round dock. */
+:root[data-ui-style="classic"] .lcd-members {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+:root[data-ui-style="classic"] .lcd-members-row {
+  display: flex;
+  min-width: 0;
+  height: 3.25rem;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  justify-content: center;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+:root[data-ui-style="classic"] .lcd-member-cell {
+  display: flex;
+  min-width: 0;
+}
+
+:root[data-ui-style="classic"] .lcd-member {
+  position: relative;
+  display: inline-flex;
+  min-width: 50px;
+  height: 50px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition:
+    background-color 150ms,
+    transform 150ms;
+}
+
+:root[data-ui-style="classic"] .lcd-member:hover {
+  transform: scale(1.05);
+}
+
+:root[data-ui-style="classic"] .lcd-member[data-listed] {
+  width: 100%;
+  justify-content: flex-start;
+  padding-inline: 0.5rem;
+  border-radius: 0.5rem;
+}
+
+:root[data-ui-style="classic"] .lcd-member[data-listed]:hover {
+  background: var(--glass-bg-hover);
+  transform: none;
+}
+
+:root[data-ui-style="classic"] .lcd-member-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-ui-style="classic"] .lcd-member-tile {
+  position: relative;
+  display: inline-flex;
+}
+
+:root[data-ui-style="classic"] .lcd-member-mark {
+  position: absolute;
+  right: -0.25rem;
+  display: inline-flex;
+  min-width: 1rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+  padding-inline: 0.25rem;
+  border: 1px solid var(--glass-panel-bg);
+  border-radius: 999px;
+  background: var(--color-amber-100);
+  color: var(--color-amber-900);
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1rem;
+  text-align: center;
+}
+
+:root[data-ui-style="classic"] .lcd-member-mark[data-mark="mail"] {
+  top: -0.25rem;
+}
+
+:root[data-ui-style="classic"].dark .lcd-member-mark[data-mark="mail"] {
+  background: var(--color-amber-950);
+  color: var(--color-amber-200);
+}
+:root[data-ui-style="classic"] .lcd-member-mark[data-mark="queue"] {
+  bottom: -0.25rem;
+  background: var(--glass-tab-bg-active);
+  color: var(--color-text-secondary);
+}
+
+:root[data-ui-style="classic"] .lcd-member-more {
+  border: 1px solid var(--glass-border);
+  background: var(--glass-panel-bg);
+}
+
+:root[data-ui-style="classic"] .lcd-member-add {
+  width: 50px;
+  border: 0;
+  background: transparent;
+}
+
+:root[data-ui-style="classic"] .lcd-member-add::before {
+  content: "";
+  position: absolute;
+  width: 37px;
+  height: 37px;
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  background: var(--glass-panel-bg);
+}
+
+:root[data-ui-style="classic"] .lcd-member-add svg {
+  position: relative;
+}
+
+:root[data-ui-style="classic"] .lcd-member[data-active] {
+  transform: scale(1.04);
+}
+
+:root[data-ui-style="classic"] .classic-dock-avatar {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+}
+
+:root[data-ui-style="classic"] .classic-dock-ring {
+  position: absolute;
+  inset: 0;
+  contain: layout style;
+  pointer-events: none;
+}
+
+:root[data-ui-style="classic"] .classic-dock-ring--active {
+  animation: classic-dock-spin 3.6s linear infinite;
+}
+
+:root[data-ui-style="classic"] .classic-dock-ring[data-animating="false"] {
+  animation-play-state: paused;
+}
+
+:root[data-ui-style="classic"] .classic-dock-ring[data-animating="true"] {
+  will-change: transform;
+}
+
+@keyframes classic-dock-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-ui-style="classic"] .classic-dock-ring--active {
+    animation: none;
+    will-change: auto;
+  }
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-style="classic"] .lcd-member {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

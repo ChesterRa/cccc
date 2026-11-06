@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Actor, LedgerEvent } from "../../types";
+import { setUiStylePrefs } from "../../utils/uiStyle";
 import { RuntimeDock } from "./RuntimeDock";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { getRuntimeRingTone } from "./runtimeDockRingTone";
@@ -69,6 +70,8 @@ const badge = () => host.querySelector<HTMLElement>('span[title*="unread mail"]'
 const activity = () => host.querySelector('.lcd-member-ring[data-ring="moving"]');
 
 beforeEach(() => {
+  // These cases inspect the LCD ring and its motion.
+  setUiStylePrefs({ style: "lcd" });
   vi.useFakeTimers();
   vi.setSystemTime(now);
   mocks.events = [];
@@ -81,6 +84,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await act(async () => root.unmount());
+  setUiStylePrefs({ style: "classic" });
   host.remove();
   vi.useRealTimers();
 });

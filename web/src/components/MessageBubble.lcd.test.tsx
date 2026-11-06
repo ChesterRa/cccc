@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MessageBubble } from "./MessageBubble";
 import type { LedgerEvent } from "../types";
+import { setUiStylePrefs } from "../utils/uiStyle";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -23,6 +24,7 @@ let host: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  setUiStylePrefs({ style: "lcd" });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -30,6 +32,7 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  setUiStylePrefs({ style: "classic" });
   host.remove();
 });
 

@@ -118,9 +118,11 @@ describe("header settings menu", () => {
   it("keeps browser preferences usable without granting settings or account access", async () => {
     await mount({ canAccessAccount: false, selectedGroupId: "" });
     const panel = await openMenu();
-    expect(
-      panel.querySelectorAll('[data-appearance-preferences] [role="radiogroup"]'),
-    ).toHaveLength(7);
+    for (const choice of ["theme", "style", "language"]) {
+      expect(
+        panel.querySelector(`[data-appearance-preferences] [data-appearance-choice="${choice}"]`),
+      ).not.toBeNull();
+    }
     expect(buttonByText(panel, "account")).toBeUndefined();
     expect(buttonByText(panel, "allSettings").disabled).toBe(true);
     await act(async () => root.render(<AppHeader {...props} canAccessAccount={false} />));

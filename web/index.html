@@ -1,12 +1,14 @@
 <!doctype html>
-<html lang="en" data-ui-style="lcd">
+<html lang="en" data-ui-style="classic">
   <head>
     <meta charset="UTF-8" />
     <script>
       (() => {
         let stored = null;
+        let style = null;
         try {
           stored = localStorage.getItem("cccc-theme");
+          style = localStorage.getItem("cccc-ui-style-v2");
         } catch {
           // Storage can be unavailable in hardened or private browser contexts.
         }
@@ -14,6 +16,7 @@
         const automatic = hour >= 7 && hour < 19 ? "light" : "dark";
         const theme = stored === "light" || stored === "dark" ? stored : automatic;
         document.documentElement.classList.add(theme);
+        document.documentElement.dataset.uiStyle = style === "lcd" ? "lcd" : "classic";
       })();
     </script>
     <meta

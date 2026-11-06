@@ -16,8 +16,11 @@
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/m8wuB7VSJ)
 
 [English](README.md) | **中文** | [日本語](README.ja.md)
+
+[快速上手](#快速上手) · [文档](#文档) · [社区](#社区)
 
 </div>
 
@@ -42,6 +45,7 @@
 - **Chet** 是一个全局助手，你可以给它发文字，也可以和它语音交谈。
 - **CCCC Connect** 跨机器、跨团队连接工作组，各实例保留自己的状态。
 - **本地优先**：运行时状态保存在 `CCCC_HOME`（默认 `~/.cccc/`）中，不在你的代码仓库里。
+- **界面风格**：Web UI 提供恢复的经典黑白外观和像素终端风格，均支持浅色与深色。
 
 ## 0.4.49 更新内容
 
@@ -371,11 +375,12 @@ cd cccc
 
 ## 社区
 
-📱 加入我们的 Telegram 群组：[t.me/ccccpair](https://t.me/ccccpair)
+欢迎分享工作流、提出问题，并与其他 CCCC 用户交流：
 
-微信：`dodd85`（添加时请备注“CCCC”，人多后会建群）
-
-在这里分享工作流、排查问题，并与其他 CCCC 用户交流。
+- **Discord**：[加入 CCCC 社区](https://discord.gg/m8wuB7VSJ)
+- **Telegram**：[t.me/ccccpair](https://t.me/ccccpair)
+- **微信**：`dodd85`（添加时请备注“CCCC”，人多后会建群）
+- **问题反馈与功能建议**：[GitHub Issues](https://github.com/ChesterRa/cccc/issues)
 
 ## 参与贡献
 

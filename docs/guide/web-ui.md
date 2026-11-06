@@ -133,8 +133,9 @@ whose menu you opened. Only incoming invitations ask which local Group should ac
 the connection.
 **Settings and more** opens with your account, where your access includes it, and the full
 settings entry, then Appearance:
-theme and language stay in view, and **More appearance settings** unfolds body font, message
-area width, motion, ‘Waiting for you’ indicators and text size. The menu opens folded each
+theme, interface style and language stay in view. **More appearance settings** unfolds
+‘Waiting for you’ indicators and text size; the Pixel style also offers body font, message
+area width and motion. The menu opens folded each
 time. A choice applies with one click or tap and keeps the menu open; arrow keys move a
 choice's selection. Narrow headers use the overflow sheet with the same choices and access
 rules; message area width is offered only on screens 768px and wider.
@@ -147,7 +148,7 @@ question still shows it so you can answer in place, without the Waiting for you 
 An answer already being sent keeps its form until it is confirmed, so it can be retried. Browser
 notifications keep their own switch under Settings → This instance → Notifications. The indicators show by default;
 the choice is saved in this browser.
-**Message area width** under Appearance sets how wide the conversation runs on
+In the Pixel style, **Message area width** under Appearance sets how wide the conversation runs on
 screens 768px and wider: **Medium** keeps a centered reading column, **Wide** gives tables and
 code more room and **Full** uses the whole chat area. With **Medium** or **Wide**, the
 conversation's scrollbar sits beside the column, and the mouse wheel scrolls the conversation
@@ -156,7 +157,7 @@ does not appear on narrower screens, where the conversation already has no width
 The members' status floats in a compact centered row above the composer. Text scrolled
 behind the member keys fades out, while messages remain visible and interactive on either
 side; the scrollable tail lets the final message move fully above the member controls.
-Activity and feedback move in whole steps: a busy member's ring of pixel dots, three blinks when
+In the Pixel style, activity and feedback move in whole steps: a busy member's ring of pixel dots, three blinks when
 the page sees a member start needing attention, a pixel spinner for waits longer than a quarter of
 a second, and a block cursor that can follow a headless agent's live text, though not after code
 blocks, tables and some other structures. **Motion** under Appearance stills these and the typing
@@ -1336,7 +1337,12 @@ For end-to-end setup details, see: `Group Space + NotebookLM`.
 
 Switch between Light, Dark, or Automatic theme. Automatic uses light mode from 07:00 to 19:00 in the browser's local time zone and dark mode otherwise.
 
-Both themes use the same pixel-screen look: light mode sets dark ink on a pale screen, dark mode light ink on a dark screen. Surfaces are separated by thin rules rather than shadows, and keyboard focus shows a dashed outline. **Body font** under Appearance sets most text in monospace, the default, or in a pixel font. Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its own sizing.
+**Interface style** under Appearance selects **Classic** or **Pixel**, independently of the
+light/dark theme. Classic is the default and restores the neutral surfaces, rounded message
+cards and system font. Pixel keeps the terminal-screen appearance; its additional body-font,
+width and motion choices are shown while it is selected. The choice is saved in this browser.
+Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its
+own sizing.
 
 ## Mobile Usage
 

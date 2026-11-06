@@ -1,38 +1,48 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * Appearance choices of the LCD look, the Web UI's only style, stored per browser:
- * the body font, the width of the conversation on desktop (a centred reading column,
- * wide, or the full width) and motion. index.html marks the page as LCD before the
- * first paint; these choices are applied as data attributes on the root element.
+ * Appearance choices stored per browser. Classic restores the neutral interface;
+ * the LCD options remain available when the pixel style is selected.
  */
+export type UiStyle = "classic" | "lcd";
 export type LcdBodyFont = "mono" | "pixel";
 export type LcdWidth = "column" | "wide" | "full";
 export type LcdMotion = "on" | "off";
-export type UiStylePrefs = { lcdBody: LcdBodyFont; lcdWidth: LcdWidth; lcdMotion: LcdMotion };
+export type UiStylePrefs = {
+  style: UiStyle;
+  lcdBody: LcdBodyFont;
+  lcdWidth: LcdWidth;
+  lcdMotion: LcdMotion;
+};
 
+// Use a new key so the former preview choice does not override the restored default.
+export const UI_STYLE_STORAGE_KEY = "cccc-ui-style-v2";
 export const LCD_BODY_STORAGE_KEY = "cccc-ui-lcd-body";
 export const LCD_WIDTH_STORAGE_KEY = "cccc-ui-lcd-width";
 export const LCD_MOTION_STORAGE_KEY = "cccc-ui-lcd-motion";
 
 const STORAGE_KEYS: Record<keyof UiStylePrefs, string> = {
+  style: UI_STYLE_STORAGE_KEY,
   lcdBody: LCD_BODY_STORAGE_KEY,
   lcdWidth: LCD_WIDTH_STORAGE_KEY,
   lcdMotion: LCD_MOTION_STORAGE_KEY,
 };
 
 export const DEFAULT_UI_STYLE_PREFS: UiStylePrefs = {
+  style: "classic",
   lcdBody: "mono",
   lcdWidth: "column",
   lcdMotion: "on",
 };
 
 export function normalizeUiStylePrefs(raw: {
+  style?: unknown;
   lcdBody?: unknown;
   lcdWidth?: unknown;
   lcdMotion?: unknown;
 }): UiStylePrefs {
   return {
+    style: raw.style === "lcd" ? "lcd" : "classic",
     lcdBody: raw.lcdBody === "pixel" ? "pixel" : "mono",
     lcdWidth: raw.lcdWidth === "wide" || raw.lcdWidth === "full" ? raw.lcdWidth : "column",
     lcdMotion: raw.lcdMotion === "off" ? "off" : "on",
@@ -58,6 +68,7 @@ function writeStorage(key: string, value: string) {
 export function readStoredUiStylePrefs(): UiStylePrefs {
   if (typeof window === "undefined") return DEFAULT_UI_STYLE_PREFS;
   return normalizeUiStylePrefs({
+    style: readStorage(UI_STYLE_STORAGE_KEY),
     lcdBody: readStorage(LCD_BODY_STORAGE_KEY),
     lcdWidth: readStorage(LCD_WIDTH_STORAGE_KEY),
     lcdMotion: readStorage(LCD_MOTION_STORAGE_KEY),
@@ -76,6 +87,7 @@ function reducedMotionQuery(): MediaQueryList | null {
 export function applyUiStylePrefs(prefs: UiStylePrefs) {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+  root.dataset.uiStyle = prefs.style;
   root.dataset.lcdBody = prefs.lcdBody;
   root.dataset.lcdWidth = prefs.lcdWidth;
   root.dataset.lcdMotion =

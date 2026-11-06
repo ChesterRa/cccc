@@ -17,8 +17,11 @@ One install command. No Rust toolchain, database server, message broker or Docke
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
+[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/m8wuB7VSJ)
 
 **English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
+
+[Quick start](#quick-start) · [Documentation](#documentation) · [Community](#community)
 
 </div>
 
@@ -43,6 +46,7 @@ When several coding agents share work, you need to know who owns a task, whether
 - **Chet**, a global assistant you can write or talk to.
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
+- **Interface styles.** The Web UI offers the restored Classic light/dark appearance and the Pixel terminal style.
 
 ## What's new in 0.4.49
 
@@ -372,9 +376,11 @@ On Windows, use the `x86_64-pc-windows-msvc` toolchain and run `powershell.exe -
 
 ## Community
 
-📱 Join our Telegram group: [t.me/ccccpair](https://t.me/ccccpair)
+Share workflows, ask questions, and connect with other CCCC users:
 
-Share workflows, troubleshoot issues, and connect with other CCCC users.
+- **Discord:** [Join the CCCC server](https://discord.gg/m8wuB7VSJ)
+- **Telegram:** [t.me/ccccpair](https://t.me/ccccpair)
+- **Bug reports and feature requests:** [GitHub Issues](https://github.com/ChesterRa/cccc/issues)
 
 ## Contributing
 

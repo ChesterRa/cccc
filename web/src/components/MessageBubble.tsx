@@ -24,7 +24,7 @@ import { getTaskMessageRefs } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
 import { getMessageInsight } from "../utils/messagePerspective";
 import { getDelegationDisplayText, isDelegationSourceOutbound } from "./messageBubbleDelegation";
-import { MessageActions } from "./messageBubble/MessageActions";
+import { MessageHeadActions, MessageRowFooter } from "./messageBubble/MessageRowActions";
 import {
   QUICK_REPLY_EMOJI,
   QUICK_REPLY_KINDS,
@@ -755,15 +755,14 @@ export const MessageBubble = memo(
               {t("showInConversation")}
             </button>
           ) : null}
-          <MessageActions part="bar" {...messageActionProps} />
-          <MessageActions part="menu" {...messageActionProps} />
+          <MessageHeadActions actions={messageActionProps} />
         </div>
         {agentStateTooltip}
         <div className="lcd-row-body">
           <div className={classNames("lcd-row-content", isStreaming ? "lcd-row-streaming" : "")}>
             {bubbleContent}
           </div>
-          {messageFooter}
+          <MessageRowFooter actions={messageActionProps} status={messageFooter} />
         </div>
       </div>
     );

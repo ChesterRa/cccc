@@ -1,0 +1,143 @@
+/* Neutral surfaces and controls of the original light/dark interface. */
+:root[data-ui-style="classic"] {
+  /* A few shared surfaces use these semantic aliases in both appearances. */
+  --lcd-bg: var(--color-bg-primary);
+  --lcd-panel: var(--glass-panel-bg);
+  --lcd-panel-2: var(--color-bg-secondary);
+  --lcd-rule: var(--color-border-primary);
+  --lcd-link: var(--color-accent-primary);
+  --lcd-ink: var(--color-text-primary);
+  --classic-name-0: var(--color-sky-700);
+  --classic-name-1: var(--color-indigo-700);
+  --classic-name-2: var(--color-violet-700);
+  --classic-name-3: var(--color-fuchsia-700);
+  --classic-name-4: var(--color-cyan-700);
+  --classic-name-5: var(--color-teal-700);
+  --classic-name-6: var(--color-emerald-700);
+  --classic-name-7: var(--color-amber-700);
+}
+
+:root[data-ui-style="classic"].dark {
+  --classic-name-0: var(--color-sky-300);
+  --classic-name-1: var(--color-indigo-300);
+  --classic-name-2: var(--color-violet-300);
+  --classic-name-3: var(--color-fuchsia-300);
+  --classic-name-4: var(--color-cyan-300);
+  --classic-name-5: var(--color-teal-300);
+  --classic-name-6: var(--color-emerald-300);
+  --classic-name-7: var(--color-amber-300);
+}
+
+:root[data-ui-style="classic"] [data-chat-filters] {
+  height: auto;
+  min-height: 2rem;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.1875rem;
+  border: 0;
+  border-radius: 0.625rem;
+  background: var(--glass-tab-bg);
+  box-shadow: none;
+}
+
+:root[data-ui-style="classic"] [data-chat-filters] > button {
+  min-height: 1.625rem;
+  padding: 0.1875rem 0.625rem;
+  border-radius: 0.4375rem;
+  box-shadow: none;
+}
+
+:root[data-ui-style="classic"] [data-chat-filters] > button[aria-pressed="true"] {
+  background: var(--glass-tab-bg-active);
+  box-shadow: 0 1px 3px rgb(15 23 42 / 0.08);
+}
+
+:root[data-ui-style="classic"] [data-group-run-controls] > span {
+  border-color: transparent;
+  background: transparent;
+}
+
+:root[data-ui-style="classic"] [data-group-run-controls]:hover > span,
+:root[data-ui-style="classic"] [data-group-run-controls][aria-expanded="true"] > span {
+  background: var(--glass-tab-bg-hover);
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-style="classic"] [data-chat-filters] > button {
+    min-height: 2.375rem;
+  }
+}
+
+:root[data-ui-style="classic"] .lcd-group-symbol {
+  display: inline-flex;
+  width: 0.625rem;
+  height: 0.625rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--color-text-muted);
+  border-radius: 50%;
+  color: var(--color-accent-danger);
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+:root[data-ui-style="classic"] .lcd-group-symbol[data-lcd-shape="run"] {
+  border-color: var(--color-accent-secondary);
+}
+
+:root[data-ui-style="classic"] .lcd-group-symbol[data-lcd-shape="paused"] {
+  border-color: var(--color-accent-warning);
+  background: var(--color-accent-warning);
+}
+
+:root[data-ui-style="classic"] .lcd-group-symbol[data-lcd-shape="idle"] {
+  border-color: var(--color-accent-secondary);
+  background: var(--color-accent-secondary);
+}
+
+:root[data-ui-style="classic"] .lcd-reconnect-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
+:root[data-ui-style="classic"] .lcd-reconnect-dots i {
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+:root[data-ui-style="classic"] .lcd-spinner {
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: classic-spin 0.8s linear infinite;
+}
+
+:root[data-ui-style="classic"] .lcd-spinner rect {
+  display: none;
+}
+
+:root[data-ui-style="classic"] .chet-head > g:not([data-frame="rest"]),
+:root[data-ui-style="classic"] .chet-head[data-chet-head="working"] > [data-frame="rest"] {
+  display: none;
+}
+
+:root[data-ui-style="classic"] .chet-head[data-chet-head="working"] > [data-frame="work"] {
+  display: inline;
+}
+
+@keyframes classic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-ui-style="classic"] .lcd-spinner {
+    animation: none;
+  }
+}

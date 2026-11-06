@@ -1,17 +1,15 @@
-# LCD style hooks
+# Interface style hooks
 
-LCD is the Web UI's only look. Components still carry the classes of the former classic
-look (comments in this folder call them "classic") and gain `data-*` hooks; the LCD rules
-in this folder read the hooks. When you edit a component, you may drop classic palette
-classes that its hooks already override.
+Classic is the default neutral light/dark appearance; Pixel uses the LCD rules in this
+folder. Shared components carry `data-*` hooks used by both. Keep the classic base
+classes and check both appearances when changing a shared surface.
 
 ## Scope
 
-- `index.html` sets `data-ui-style="lcd"` on `<html>` and `data-lcd-scope` on `<body>`, so
-  the whole page and every layer portalled into the body are in scope from the first
-  paint. Rules start with `:root[data-ui-style="lcd"]`, and rules that restyle shared
-  components add `[data-lcd-scope]`; follow that form in new rules so their specificity
-  matches. The prefix no longer limits where a rule applies.
+- `index.html` applies the stored `data-ui-style` on `<html>` before first paint and
+  `data-lcd-scope` on `<body>`. Pixel rules start with `:root[data-ui-style="lcd"]`;
+  classic compatibility rules start with `:root[data-ui-style="classic"]`. Both cover
+  content portalled into the body.
 - Every colour should resolve to an `--lcd-*` token. A Tailwind palette class
   (`text-rose-600`, `bg-black/5`) needs a hook below; do not add an LCD rule keyed on the
   palette class.

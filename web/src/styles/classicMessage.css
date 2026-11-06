@@ -1,0 +1,218 @@
+/* Restore the former message cards while keeping the current message actions and data. */
+:root[data-ui-style="classic"] [data-message-column] {
+  container: messages / inline-size;
+}
+
+:root[data-ui-style="classic"] .lcd-row {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-block: 0.5rem;
+}
+
+:root[data-ui-style="classic"] .lcd-row[data-lcd-user] {
+  align-items: flex-end;
+}
+
+:root[data-ui-style="classic"] .lcd-row-head {
+  display: flex;
+  max-width: 100%;
+  min-height: 2rem;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+:root[data-ui-style="classic"] .lcd-row[data-lcd-user] .lcd-row-head {
+  justify-content: flex-end;
+}
+
+:root[data-ui-style="classic"] .lcd-row-who {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+:root[data-ui-style="classic"] .lcd-row-who > .lcd-tile {
+  width: 2rem;
+  height: 2rem;
+  flex: none;
+  border-radius: 50%;
+}
+
+:root[data-ui-style="classic"] .lcd-row-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--classic-actor, var(--color-text-primary));
+}
+
+:root[data-ui-style="classic"] .lcd-row-route {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+:root[data-ui-style="classic"] .lcd-row-time {
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-ui-style="classic"] :is(.lcd-tag, .lcd-row-jump) {
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 999px;
+  background: var(--glass-tab-bg);
+  padding: 0.125rem 0.5rem;
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+}
+
+:root[data-ui-style="classic"] .lcd-row-pin {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-secondary);
+}
+
+:root[data-ui-style="classic"] .lcd-row-body {
+  width: fit-content;
+  max-width: min(100% - 2.5rem, 76rem);
+  min-width: 0;
+  margin-inline-start: 2.5rem;
+}
+
+:root[data-ui-style="classic"] .lcd-row[data-lcd-user] .lcd-row-body {
+  margin-inline: 0;
+}
+
+:root[data-ui-style="classic"] .lcd-row-content {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--glass-bubble-border);
+  border-radius: 1rem;
+  border-top-left-radius: 0.375rem;
+  background: var(--glass-bubble-bg);
+  box-shadow: var(--glass-bubble-shadow);
+  color: var(--color-text-primary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+:root[data-ui-style="classic"] .lcd-row[data-lcd-user] .lcd-row-content {
+  border-top-left-radius: 1rem;
+  border-top-right-radius: 0.375rem;
+}
+
+:root[data-ui-style="classic"] .lcd-row-highlighted .lcd-row-content {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+:root[data-ui-style="classic"] .lcd-row-content.lcd-row-streaming {
+  opacity: 0.95;
+}
+
+:root[data-ui-style="classic"] .classic-message-footer {
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+:root[data-ui-style="classic"] .classic-message-footer[data-reader] {
+  flex-direction: row-reverse;
+}
+
+:root[data-ui-style="classic"] .classic-message-actions {
+  display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
+  align-items: center;
+}
+
+:root[data-ui-style="classic"] .classic-message-status {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+:root[data-ui-style="classic"] .classic-message-status > div {
+  margin-top: 0;
+}
+
+:root[data-ui-style="classic"] :is(.classic-message-actions, .classic-message-status):empty {
+  display: none;
+}
+
+:root[data-ui-style="classic"] [data-lcd-accent="0"],
+:root[data-ui-style="classic"] [data-mention-accent="0"] {
+  --classic-actor: var(--classic-name-0);
+}
+:root[data-ui-style="classic"] [data-lcd-accent="1"],
+:root[data-ui-style="classic"] [data-mention-accent="1"] {
+  --classic-actor: var(--classic-name-1);
+}
+:root[data-ui-style="classic"] [data-lcd-accent="2"],
+:root[data-ui-style="classic"] [data-mention-accent="2"] {
+  --classic-actor: var(--classic-name-2);
+}
+:root[data-ui-style="classic"] [data-lcd-accent="3"],
+:root[data-ui-style="classic"] [data-mention-accent="3"] {
+  --classic-actor: var(--classic-name-3);
+}
+:root[data-ui-style="classic"] [data-lcd-accent="4"],
+:root[data-ui-style="classic"] [data-mention-accent="4"] {
+  --classic-actor: var(--classic-name-4);
+}
+:root[data-ui-style="classic"] [data-lcd-accent="5"],
+:root[data-ui-style="classic"] [data-mention-accent="5"] {
+  --classic-actor: var(--classic-name-5);
+}
+:root[data-ui-style="classic"] [data-lcd-accent="6"],
+:root[data-ui-style="classic"] [data-mention-accent="6"] {
+  --classic-actor: var(--classic-name-6);
+}
+:root[data-ui-style="classic"] [data-lcd-accent="7"],
+:root[data-ui-style="classic"] [data-mention-accent="7"] {
+  --classic-actor: var(--classic-name-7);
+}
+
+:root[data-ui-style="classic"] :is([data-message-mention], [data-composer-mention]) {
+  background: color-mix(
+    in srgb,
+    var(--classic-actor, var(--color-accent-primary)) 14%,
+    transparent
+  );
+  border-radius: 0.2em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+:root[data-ui-style="classic"] [data-message-mention] {
+  color: var(--classic-actor, var(--color-text-primary));
+  font-weight: 600;
+}
+
+@media (max-width: 639px) {
+  :root[data-ui-style="classic"] .lcd-row-body {
+    max-width: 100%;
+    margin-inline-start: 0;
+  }
+
+  :root[data-ui-style="classic"] .lcd-row-who > .lcd-tile {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+}
