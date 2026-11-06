@@ -31,6 +31,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - CCCC offers native agents their Group instructions more often: the next delivery after a
   compaction that Claude or Codex reports, after the instructions change, or in a new hour carries
   them or asks for a read. Between those deliveries, an agent works from its own summary.
+- Automation update events in the Group ledger now record the version change and which sections
+  changed, without including rule IDs, rule contents or snippet text. Thanks to
+  [@chriscoveries](https://github.com/chriscoveries) for [#187](https://github.com/ChesterRa/cccc/pull/187).
 
 ### Fixed
 

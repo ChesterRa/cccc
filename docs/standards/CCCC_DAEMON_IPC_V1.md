@@ -3516,6 +3516,15 @@ Result:
 { group_id: string; ruleset: Record<string, unknown>; version: number; event: CCCSEventV1 }
 ```
 
+The returned `group.automation_update` event is also appended to the Group
+ledger. Its `data` contains `previous_version`, `version`, and `changed` (the
+changed sections among `rules`, `snippets`, and `snippet_overrides`). It does
+not include rule IDs, rule bodies, or snippet text. Update, manage, and
+reset-to-baseline writes use the same event summary. Callers receiving the
+write result and ledger readers, including the Web ledger tail, can read the
+raw event; the summary is not filtered by rule ownership. Older events may
+have an empty `data` object.
+
 #### `group_automation_state`
 
 Get effective automation state for a caller.

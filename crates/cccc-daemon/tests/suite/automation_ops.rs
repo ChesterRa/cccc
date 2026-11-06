@@ -46,6 +46,14 @@ fn automation_contract_is_versioned_and_frontend_compatible() {
     assert_eq!(updated.result["ruleset"]["rules"][0]["id"], "reminder");
     assert_eq!(updated.result["event"]["kind"], "group.automation_update");
     assert_eq!(
+        updated.result["event"]["data"],
+        json!({
+            "previous_version":1,
+            "version":2,
+            "changed":["rules"]
+        })
+    );
+    assert_eq!(
         updated.result["supported_vars"],
         json!([
             "interval_minutes",
@@ -134,6 +142,15 @@ fn automation_manage_applies_batched_actions_and_reset_honors_version() {
     assert_eq!(reset.result["version"], 3);
     assert_eq!(reset.result["ruleset"]["rules"][0]["id"], "standup");
     assert_eq!(reset.result["event"]["kind"], "group.automation_update");
+    assert_eq!(
+        reset.result["event"]["data"],
+        json!({"previous_version":2,"version":3,"changed":["rules"]})
+    );
+    assert_eq!(managed.result["event"]["data"]["changed"], json!(["rules"]));
+    assert_eq!(
+        managed.result["event"]["data"],
+        json!({"previous_version":1,"version":2,"changed":["rules"]})
+    );
 }
 
 #[test]
@@ -745,6 +762,19 @@ fn a_peer_manages_its_own_reminders_and_nothing_else() {
         }}]),
     );
     assert!(created.ok, "{:?}", created.error);
+    // Redacted kind/data projection of an observed pre-change ledger event.
+    let captured: Value =
+        serde_json::from_str(include_str!("../fixtures/automation_update_event.json"))
+            .expect("captured event");
+    assert_eq!(captured["kind"], "group.automation_update");
+    assert_eq!(captured["data"], json!({}));
+    let event = &created.result["event"];
+    assert_eq!(event["kind"], captured["kind"]);
+    assert_eq!(
+        event["data"],
+        json!({"previous_version":2,"version":3,"changed":["rules"]})
+    );
+    assert!(!event.to_string().contains("peer2-own"));
     let mine = stored_automation(&home, &group_id)["rules"]
         .as_array()
         .expect("rules")
