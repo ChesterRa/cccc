@@ -10,8 +10,7 @@
         } catch {
           // Storage can be unavailable in hardened or private browser contexts.
         }
-        const hour = new Date().getHours();
-        const automatic = hour >= 7 && hour < 19 ? "light" : "dark";
+        const automatic = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
         const theme = stored === "light" || stored === "dark" ? stored : automatic;
         document.documentElement.classList.add(theme);
       })();

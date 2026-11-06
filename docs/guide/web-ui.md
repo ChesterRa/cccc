@@ -1334,7 +1334,7 @@ For end-to-end setup details, see: `Group Space + NotebookLM`.
 
 ### Theme
 
-Switch between Light, Dark, or Automatic theme. Automatic uses light mode from 07:00 to 19:00 in the browser's local time zone and dark mode otherwise.
+Switch between Light, Dark, or Auto theme. Auto follows the light or dark setting of your system.
 
 Both themes use the same pixel-screen look: light mode sets dark ink on a pale screen, dark mode light ink on a dark screen. Surfaces are separated by thin rules rather than shadows, and keyboard focus shows a dashed outline. **Body font** under Appearance sets most text in monospace, the default, or in a pixel font. Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its own sizing.
 

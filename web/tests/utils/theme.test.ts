@@ -1,20 +1,46 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { getAutomaticTheme, millisecondsUntilNextThemeBoundary } from "../../src/utils/theme";
+import { getAutomaticTheme, subscribeToAutomaticTheme } from "../../src/utils/theme";
+
+function stubSystemScheme(dark: boolean) {
+  const listeners = new Set<() => void>();
+  const scheme = {
+    matches: dark,
+    addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+  };
+  vi.stubGlobal("window", { matchMedia: () => scheme });
+  return {
+    change(nextDark: boolean) {
+      scheme.matches = nextDark;
+      listeners.forEach((listener) => listener());
+    },
+  };
+}
 
 describe("automatic theme", () => {
-  it("uses the browser-local daytime window for the light theme", () => {
-    expect(getAutomaticTheme(new Date(2026, 7, 24, 6, 59))).toBe("dark");
-    expect(getAutomaticTheme(new Date(2026, 7, 24, 7, 0))).toBe("light");
-    expect(getAutomaticTheme(new Date(2026, 7, 24, 18, 59))).toBe("light");
-    expect(getAutomaticTheme(new Date(2026, 7, 24, 19, 0))).toBe("dark");
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
-  it("schedules the next local-time boundary", () => {
-    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 7, 24, 6, 30))).toBe(30 * 60 * 1_000);
-    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 7, 24, 18, 30))).toBe(30 * 60 * 1_000);
-    expect(millisecondsUntilNextThemeBoundary(new Date(2026, 7, 24, 19, 0))).toBe(
-      12 * 60 * 60 * 1_000,
-    );
+  it("follows the system's appearance setting", () => {
+    stubSystemScheme(true);
+    expect(getAutomaticTheme()).toBe("dark");
+    stubSystemScheme(false);
+    expect(getAutomaticTheme()).toBe("light");
+  });
+
+  it("reports a system change until it is unsubscribed", () => {
+    const system = stubSystemScheme(false);
+    const changed = vi.fn();
+    const unsubscribe = subscribeToAutomaticTheme(changed);
+
+    system.change(true);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(getAutomaticTheme()).toBe("dark");
+
+    unsubscribe();
+    system.change(false);
+    expect(changed).toHaveBeenCalledTimes(1);
   });
 });
