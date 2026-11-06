@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { SearchModal } from "./SearchModal";
 import { apiJson } from "../services/api";
 import type { Actor } from "../types";
+import { capturedActors, capturedSenderEvents } from "./senderEvents.fixture";
 vi.mock("../services/api", () => ({ apiJson: vi.fn() }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -163,14 +164,14 @@ it("runs a filtered search immediately when a kind filter is selected before sub
   expect(String(vi.mocked(apiJson).mock.lastCall?.[0])).toContain("q=&kind=notify");
   expect(host.textContent).toContain("notify result");
 });
-it("names result senders from the actor list and keeps its fallback for unknown, special and empty ids", async () => {
+it("names result senders from the actor list and keeps its fallback for user, unknown, special and empty ids", async () => {
   await act(async () =>
     root.render(
       <SearchModal
         isOpen
         groupId="g1"
         groupTitle="Release workspace"
-        actors={[{ id: "worker", title: "Review lead" } as Actor, { id: "bare" } as Actor]}
+        actors={capturedActors}
         isDark={false}
         onClose={() => {}}
         onReply={() => {}}
@@ -178,23 +179,21 @@ it("names result senders from the actor list and keeps its fallback for unknown,
     ),
   );
   expect(host.querySelector("option[value=bare]")!.textContent).toBe("bare");
-  const senders = ["worker", "bare", "ghost", "svc:chet", "@all", ""];
   vi.mocked(apiJson).mockResolvedValueOnce({
     ok: true,
-    result: {
-      events: senders.map((by, idx) => ({
-        id: `e${idx}`,
-        kind: "system.notify",
-        ts: "2026-09-17T00:00:00Z",
-        by,
-        data: { text: `note ${idx}` },
-      })),
-      has_more: false,
-      count: senders.length,
-    },
+    result: { events: capturedSenderEvents, has_more: false, count: capturedSenderEvents.length },
   });
   await query("note");
   await submit();
   const names = [...host.querySelectorAll("article span.font-medium")].map((el) => el.textContent);
-  expect(names).toEqual(["Review lead", "bare", "ghost", "svc:chet", "@all", "—"]);
+  expect(names).toEqual([
+    "Review lead",
+    "bare",
+    "user",
+    "ghost",
+    "svc:chet",
+    "@all",
+    "—",
+    "system",
+  ]);
 });

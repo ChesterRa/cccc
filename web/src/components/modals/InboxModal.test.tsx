@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import { InboxModal } from "./InboxModal";
-import type { Actor } from "../../types";
+import { capturedActors, capturedSenderEvents } from "../senderEvents.fixture";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -70,14 +70,7 @@ it("names senders from the actor list and keeps its fallback for user, unknown, 
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
-  const senders = ["worker", "bare", "user", "ghost", "svc:chet", "@all", ""];
-  const messages = senders.map((by, idx) => ({
-    id: `m${idx}`,
-    kind: "chat.message",
-    by,
-    ts: "2026-01-01T00:00:00Z",
-    data: { text: "Hello" },
-  }));
+  const messages = capturedSenderEvents.filter((ev) => ev.kind === "chat.message");
   try {
     await act(async () =>
       root.render(
@@ -85,7 +78,7 @@ it("names senders from the actor list and keeps its fallback for user, unknown, 
           isOpen
           isDark={false}
           actorId="reviewer"
-          actors={[{ id: "worker", title: "Review lead" } as Actor, { id: "bare" } as Actor]}
+          actors={capturedActors}
           messages={messages}
           busy=""
           onClose={() => {}}
