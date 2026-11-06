@@ -57,6 +57,312 @@ fn rejected_session_guards_do_not_release_the_active_owner() {
 }
 
 #[tokio::test]
+async fn settled_browser_turns_are_reviewed_without_resubmitting_their_drafts() {
+    if crate::system_browser_path().is_none() {
+        return;
+    }
+    let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("restart recovery", "").expect("group");
+    group.running = true;
+    let mut actor = Actor::new("browser-test");
+    actor.runtime = ActorRuntime::WebModel;
+    actor.normalize_runtime_constraints();
+    actor.generation = "fixture-generation".into();
+    actor
+        .env
+        .insert("CCCC_WEB_MODEL_DELIVERY_MODE".into(), "browser".into());
+    group.actors.push(actor);
+    group.extra.insert(
+        super::super::web_model_browser::TARGETS_KEY.into(),
+        json!({}),
+    );
+    store.save(&group).expect("save");
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+    let message = |text: &str| {
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data.insert("message_mode".into(), json!("send"));
+        event.data.insert("to".into(), json!(["browser-test"]));
+        event.data.insert("text".into(), json!(text));
+        ledger::append(&ledger_path, &event).expect("message");
+        event
+    };
+    let first = message("claimed before a target fence");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = cccc_client::DaemonClient::new(home.clone());
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if client
+                .call(&DaemonRequest {
+                    v: 1,
+                    op: "ping".into(),
+                    args: Default::default(),
+                })
+                .await
+                .is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("daemon ready");
+    let call = |op: &'static str, extra: Value| {
+        let client = client.clone();
+        let group_id = group.group_id.clone();
+        async move {
+            let mut args =
+                json!({"group_id":group_id,"actor_id":"browser-test","by":"browser-test"});
+            args.as_object_mut()
+                .expect("args")
+                .extend(extra.as_object().cloned().expect("extra"));
+            let response = client
+                .call(&DaemonRequest {
+                    v: 1,
+                    op: op.into(),
+                    args: args.as_object().expect("args").clone(),
+                })
+                .await
+                .expect("daemon request");
+            assert!(response.ok, "{:?}", response.error);
+            response.result
+        }
+    };
+    let shutdown = tokio::sync::broadcast::channel(1).0;
+    let (_, _, surfaces, state) = crate::app_with_shutdown(
+        home.clone(),
+        shutdown.clone(),
+        crate::WebMode::Normal,
+        None,
+        crate::LiveBinding {
+            host: "127.0.0.1".into(),
+            port: 0,
+        },
+        "restart-recovery-test".into(),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listen");
+    let url = format!("http://{}/", listener.local_addr().expect("address"));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/", get(|| async {
+            Html(r#"<form onsubmit="event.preventDefault();window.attempts++;const t=document.querySelector('textarea');const a=document.createElement('article');a.dataset.messageAuthorRole='user';a.textContent=t.value;document.body.append(a);t.value=''"><textarea id="prompt-textarea" style="width:500px;height:120px"></textarea><button type="submit">Send</button></form><script>window.attempts=0</script>"#)
+        }))).await.expect("serve");
+    });
+    let session_key = key(&group.group_id, "browser-test");
+    surfaces
+        .open(&session_key, &temp.path().join("profile"), &url, 800, 600)
+        .await
+        .expect("browser");
+    let page = surfaces
+        .sessions
+        .lock()
+        .await
+        .get(&session_key)
+        .expect("session")
+        .page
+        .clone();
+    super::login_tests::pair_fixture(&state, &group.group_id, &url);
+    update_target(
+        &state,
+        &group.group_id,
+        "browser-test",
+        json!({"kind":"existing_chat","url":url,"last_delivery_id":"previous",
+               "last_delivery_turn_id":"previous-turn","last_delivery_status":"bound"}),
+    )
+    .expect("target");
+
+    let wait = call(
+        "runtime_wait_next_turn",
+        json!({"transport":"web_model_browser"}),
+    )
+    .await;
+    let turn = &wait["turn"];
+    assert_eq!(turn["event_ids"], json!([first.id]));
+    call(
+        "web_model_browser_delivery_record",
+        json!({"turn_id":turn["turn_id"],"event_ids":turn["event_ids"],"delivery_id":"interrupted",
+               "browser_delivery":{"state":"ambiguous","detail":"daemon restarted"}}),
+    )
+    .await;
+    assert!(matches!(
+        deliver_pending(&state, &group.group_id, "browser-test")
+            .await
+            .expect("recover"),
+        DeliveryOutcome::Ambiguous
+    ));
+    let target = load_target(&state, &group.group_id, "browser-test").expect("target");
+    let expected_id = browser_delivery_id("browser-test", turn["turn_id"].as_str().expect("turn"));
+    assert_eq!(target["last_delivery_status"], "submission_ambiguous");
+    assert_eq!(target["last_delivery_id"], expected_id);
+    assert_eq!(target["last_delivery_turn_id"], turn["turn_id"]);
+    assert_eq!(target["last_delivery_event_ids"], turn["event_ids"]);
+    assert_eq!(
+        call("headless_status", json!({})).await["state"]["active_turn_id"],
+        ""
+    );
+    resume_after_review(&state, &group.group_id, "browser-test", &expected_id)
+        .await
+        .expect("user reviews first turn");
+
+    // An older daemon could record failed without releasing the active turn.
+    // Its staged draft must survive the same conservative recovery.
+    let second = message("legacy failed turn");
+    let wait = call(
+        "runtime_wait_next_turn",
+        json!({"transport":"web_model_browser"}),
+    )
+    .await;
+    let turn = &wait["turn"];
+    assert_eq!(turn["event_ids"], json!([second.id]));
+    let mut failure = Event::new("runtime.delivery", &group.group_id);
+    failure.by = "system".into();
+    failure.data = json!({"actor_id":"browser-test","source_event_id":second.id,
+        "state":"failed","transport":"web_model_browser"})
+    .as_object()
+    .expect("delivery")
+    .clone();
+    ledger::append(&ledger_path, &failure).expect("legacy failure");
+    update_target(
+        &state,
+        &group.group_id,
+        "browser-test",
+        json!({"last_delivery_status":"deferred","last_delivery_turn_id":turn["turn_id"]}),
+    )
+    .expect("staged target");
+    page.evaluate("document.querySelector('textarea').value='staged draft'")
+        .await
+        .expect("stage draft");
+    assert!(matches!(
+        deliver_pending(&state, &group.group_id, "browser-test")
+            .await
+            .expect("recover legacy"),
+        DeliveryOutcome::Ambiguous
+    ));
+    let target = load_target(&state, &group.group_id, "browser-test").expect("target");
+    assert_eq!(target["last_delivery_status"], "submission_ambiguous");
+    assert_eq!(target["last_delivery_turn_id"], turn["turn_id"]);
+    assert_eq!(
+        call("headless_status", json!({})).await["state"]["active_turn_id"],
+        ""
+    );
+    assert_eq!(
+        page.evaluate("document.querySelector('textarea').value")
+            .await
+            .expect("draft")
+            .into_value::<String>()
+            .expect("text"),
+        "staged draft"
+    );
+    assert_eq!(
+        page.evaluate("window.attempts")
+            .await
+            .expect("attempts")
+            .into_value::<u32>()
+            .expect("number"),
+        0
+    );
+    let states =
+        cccc_core::inbox::delivery_states(&home, &group, &["browser-test".into()], &second.id)
+            .expect("states");
+    assert_eq!(states["browser-test"].0, "ambiguous");
+
+    // A still-claimed deferred turn is different: after the user reviews the
+    // old uncertain batch, its own exact staged draft must be submitted once.
+    page.evaluate("document.querySelector('textarea').value=''")
+        .await
+        .expect("clear reviewed draft");
+    let previous_id = target["last_delivery_id"].as_str().expect("review id");
+    resume_after_review(&state, &group.group_id, "browser-test", previous_id)
+        .await
+        .expect("user reviews legacy turn");
+    let third = message("continue the same deferred turn");
+    let wait = call(
+        "runtime_wait_next_turn",
+        json!({"transport":"web_model_browser"}),
+    )
+    .await;
+    let turn = &wait["turn"];
+    assert_eq!(turn["event_ids"], json!([third.id]));
+    let turn_id = turn["turn_id"].as_str().expect("turn");
+    let delivery_id = browser_delivery_id("browser-test", turn_id);
+    let target = load_target(&state, &group.group_id, "browser-test").expect("target");
+    let (prompt, _) =
+        build_browser_prompt(turn, &target, &url, "browser-test", &delivery_id, &third.id)
+            .expect("prompt");
+    update_target(
+        &state,
+        &group.group_id,
+        "browser-test",
+        json!({"last_delivery_status":"deferred","last_delivery_id":delivery_id,
+               "last_delivery_turn_id":turn_id,"last_delivery_event_ids":turn["event_ids"]}),
+    )
+    .expect("staged target");
+    page.evaluate(format!(
+        "document.querySelector('textarea').value={}",
+        json!(prompt)
+    ))
+    .await
+    .expect("stage deferred batch");
+    assert!(matches!(
+        deliver_pending(&state, &group.group_id, "browser-test")
+            .await
+            .expect("resume claimed batch"),
+        DeliveryOutcome::Submitted
+    ));
+    assert_eq!(
+        page.evaluate("window.attempts")
+            .await
+            .expect("attempts")
+            .into_value::<u32>()
+            .expect("number"),
+        1
+    );
+    let states =
+        cccc_core::inbox::delivery_states(&home, &group, &["browser-test".into()], &third.id)
+            .expect("states");
+    assert_eq!(states["browser-test"].0, "accepted");
+    assert_eq!(
+        call("headless_status", json!({})).await["state"]["active_turn_id"],
+        ""
+    );
+    assert!(matches!(
+        deliver_pending(&state, &group.group_id, "browser-test")
+            .await
+            .expect("poll after completed turn"),
+        DeliveryOutcome::Idle
+    ));
+    assert_eq!(
+        page.evaluate("window.attempts")
+            .await
+            .expect("attempts")
+            .into_value::<u32>()
+            .expect("number"),
+        1,
+        "the completed batch must not be submitted again"
+    );
+
+    surfaces.close(&session_key).await.expect("close browser");
+    let _ = shutdown.send(());
+    server.abort();
+    client
+        .call(&DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: Default::default(),
+        })
+        .await
+        .expect("stop daemon");
+    daemon.await.expect("daemon task").expect("daemon stopped");
+}
+
+#[tokio::test]
 async fn verified_legacy_draft_recovers_through_rebuilt_prompt_once() {
     if crate::system_browser_path().is_none() {
         return;

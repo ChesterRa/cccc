@@ -479,9 +479,37 @@ async fn deliver_once(
     let mut wait_args = browser_wait_args(group_id, actor_id);
     if target["last_delivery_status"] == "deferred" {
         // The batch is staged in this composer; only the same batch matches it.
-        wait_args["resume_turn_id"] = target["last_delivery_turn_id"].clone();
+        wait_args.insert(
+            "resume_turn_id".into(),
+            target["last_delivery_turn_id"].clone(),
+        );
     }
     let wait = daemon_call(state, "runtime_wait_next_turn", wait_args).await?;
+    if wait["status"] == "turn_in_progress" && wait["browser_recovery_required"] == true {
+        // The daemon settled this browser's old claims after a restart, or
+        // inherited a failed turn from an older version. Keep the same batch
+        // out of the queue and let the user review the conversation.
+        let turn_id = required(&wait, "active_turn_id")?;
+        let event_ids = wait["event_ids"].clone();
+        if event_ids.as_array().is_none_or(Vec::is_empty) {
+            return Err(ApiError::bad("browser recovery is missing event IDs"));
+        }
+        let delivery_id = browser_delivery_id(actor_id, turn_id);
+        let message = "browser delivery was interrupted and could not be confirmed; check the conversation before resuming. This batch will not be redelivered automatically";
+        return complete_ambiguous_attempt(
+            state,
+            group_id,
+            actor_id,
+            DeliveryAttempt {
+                turn_id,
+                event_ids,
+                delivery_id: &delivery_id,
+            },
+            json!({"submitted":false,"submission_evidence":"interrupted_browser_turn","error":message}),
+            message,
+        )
+        .await;
+    }
     if wait["status"] != "work_available" {
         return Ok(DeliveryOutcome::Idle);
     }
@@ -798,6 +826,7 @@ async fn complete_ambiguous_attempt(
         actor_id,
         json!({
             "last_delivery_status":"submission_ambiguous_completion_pending",
+            "last_delivery_id":attempt.delivery_id,
             "last_delivery_turn_id":attempt.turn_id,
             "last_delivery_event_ids":attempt.event_ids.clone(),
             "last_delivery_reconcile_attempts":0,

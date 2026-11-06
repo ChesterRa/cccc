@@ -8461,7 +8461,8 @@ explicit promotion or a mailbox notice creates direct work.
 Result is one of:
 ```ts
 { status: "stopped"; turn: null }
-{ status: "turn_in_progress"; turn: null; active_turn_id: string; event_ids: string[] }
+{ status: "turn_in_progress"; turn: null; active_turn_id: string; event_ids: string[];
+  browser_recovery_required?: true }
 { status: "idle"; turn: null; suggested_retry_after_ms: number }
 {
   status: "work_available"
@@ -8499,6 +8500,15 @@ events of the turn, in their order, whatever `limit` and later Mail state say; i
 any event is no longer claimed by `web_model_browser`, the result is
 `turn_in_progress` and the turn is unchanged. The MCP tool drops `transport` and
 `resume_turn_id`: a tool caller always pulls.
+For an internal browser wait only, `turn_in_progress` also includes
+`browser_recovery_required: true` when every active event's latest delivery is
+`ambiguous` or `failed` on `web_model_browser`. This covers claims settled by a
+daemon restart and failed turns left by an older version; it does not release
+the turn or authorize automatic resubmission. The browser adapter consumes this
+signal after its ordinary page-readiness checks, while holding its existing
+browser-work lock. It records that exact turn as ambiguous, completes it, and
+asks the user to review the conversation before later deliveries resume.
+Claimed, accepted, mixed-transport and pull turns do not receive the signal.
 `coalesced_text` MUST preserve the complete daemon-rendered batch without a
 secondary character-count truncation. Browser-originated oversized text is
 converted to a `.txt` attachment before daemon delivery; the canonical

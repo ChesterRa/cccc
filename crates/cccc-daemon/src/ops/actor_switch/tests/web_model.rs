@@ -555,6 +555,84 @@ fn a_staged_batch_comes_back_whole_whatever_the_request_or_the_queue_says() {
 }
 
 #[test]
+fn a_settled_browser_turn_is_reported_for_review_without_releasing_it() {
+    let fixture = Fixture::new();
+    fixture.browser_member();
+    let first = fixture.message("first");
+    let second = fixture.message("second");
+    let turn = fixture.claim();
+    let waiting = fixture.wait_next(json!({}));
+    assert_eq!(waiting["status"], "turn_in_progress");
+    assert!(waiting.get("browser_recovery_required").is_none());
+
+    // The daemon settles claims on restart, including a claim made before
+    // the browser could write a target fence.
+    assert_eq!(
+        runtime_delivery::settle_stranded_claims(&fixture.home, &fixture.group()).expect("settle"),
+        2
+    );
+    let waiting = fixture.wait_next(json!({}));
+    assert_eq!(waiting["status"], "turn_in_progress");
+    assert_eq!(waiting["browser_recovery_required"], true);
+    assert_eq!(waiting["active_turn_id"], turn["turn_id"]);
+    assert_eq!(waiting["event_ids"], turn["event_ids"]);
+    assert_eq!(
+        fixture.active_turn(),
+        turn["turn_id"].as_str().expect("turn")
+    );
+
+    // A pull caller cannot use the browser's recovery path.
+    let pull = fixture.wait_next(json!({"transport": "web_model_pull"}));
+    assert_eq!(pull["status"], "turn_in_progress");
+    assert!(pull.get("browser_recovery_required").is_none());
+
+    // A failed browser receipt from an older version also left this turn held.
+    let append = |event: &Event, transport: &str, outcome| {
+        runtime_delivery::append_state(
+            &fixture.home,
+            &fixture.group_id,
+            "x",
+            &fixture.actor().created_at,
+            &event.id,
+            transport,
+            outcome,
+        )
+        .expect("state");
+    };
+    append(&second, BROWSER, DeliveryOutcome::Failed("legacy failure"));
+    assert_eq!(
+        fixture.wait_next(json!({}))["browser_recovery_required"],
+        true
+    );
+
+    // Evidence of acceptance or a different transport never authorizes this
+    // recovery, even if another event in the batch is ambiguous.
+    append(&first, BROWSER, DeliveryOutcome::Accepted);
+    assert!(
+        fixture
+            .wait_next(json!({}))
+            .get("browser_recovery_required")
+            .is_none()
+    );
+    append(&first, BROWSER, DeliveryOutcome::Ambiguous("restart"));
+    append(
+        &second,
+        "web_model_pull",
+        DeliveryOutcome::Failed("pull failure"),
+    );
+    assert!(
+        fixture
+            .wait_next(json!({}))
+            .get("browser_recovery_required")
+            .is_none()
+    );
+    assert_eq!(
+        fixture.active_turn(),
+        turn["turn_id"].as_str().expect("turn")
+    );
+}
+
+#[test]
 fn a_failed_batch_stops_holding_up_the_work_behind_it() {
     let fixture = Fixture::new();
     fixture.browser_member();

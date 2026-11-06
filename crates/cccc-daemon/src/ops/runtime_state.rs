@@ -401,13 +401,19 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
     // Status heartbeats do not relinquish a turn. Only its completion clears
     // this identity; the browser may still be submitting its claimed payload.
     if resumed.is_none() && !active_turn.is_empty() {
-        return object(json!({
+        let mut result = json!({
             "status":"turn_in_progress",
             "turn":null,
             "active_turn_id":active_state["active_turn_id"],
             "event_ids":active_state["active_event_ids"],
             "instructions":"Finish the active turn with cccc_runtime_complete_turn before requesting more work."
-        }));
+        });
+        if transport == "web_model_browser"
+            && browser_turn_needs_review(home, &group, &actor_id, &active_state)?
+        {
+            result["browser_recovery_required"] = json!(true);
+        }
+        return object(result);
     }
     let limit = request
         .args
@@ -1185,6 +1191,38 @@ fn staged_batch(
     })
     .map_err(OpError::io)?;
     Ok(batch.filter(|events| !events.is_empty()))
+}
+
+/// A restart can settle browser claims without releasing their active turn.
+/// Report only batches with exclusively terminal browser evidence: a pull
+/// owner or a browser still holding its claim must finish its own turn.
+fn browser_turn_needs_review(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    state: &Value,
+) -> Result<bool, OpError> {
+    let Some(event_ids) = state["active_event_ids"]
+        .as_array()
+        .filter(|ids| !ids.is_empty())
+    else {
+        return Ok(false);
+    };
+    let actor_ids = [actor_id.to_owned()];
+    for event_id in event_ids {
+        let Some(event_id) = event_id.as_str().filter(|id| !id.is_empty()) else {
+            return Ok(false);
+        };
+        let state = inbox::delivery_states(home, group, &actor_ids, event_id)
+            .map_err(OpError::io)?
+            .remove(actor_id);
+        if !state.is_some_and(|(state, transport)| {
+            transport == "web_model_browser" && matches!(state.as_str(), "ambiguous" | "failed")
+        }) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Pull takes work only from an Actor nothing else serves. A push owner running
