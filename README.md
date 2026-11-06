@@ -44,20 +44,20 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.48
+## What's new in 0.4.49
 
-- **Switch an agent's runtime.** An administrator can move an agent between connected native sessions, from a native session to a CCCC-managed runtime and back, or between managed runtimes and Profiles. The agent keeps its ID, role, tasks, Mail, history and notes. Messages whose delivery is uncertain are listed for the new runtime to check instead of being sent again automatically.
-- **Sends that did not confirm.** A Web send that failed, or whose result never came back, returns to an empty composer or waits under **N sends to restore**; it never overwrites a draft you started meanwhile. An unchanged restored message (not a slash command), sent again from the same open page, reuses its original ID and does not create a duplicate.
-- **Voice keeps recognized words** in more of the ways a recording can end early, and dictation continues your draft. A voice model download that stops partway continues where it stopped when the server supports it.
-- **Connect waits.** A Connect remote workspace keeps its page and unsent work while its access is renewed, for example after the computer slept, instead of closing.
-- **Instruction files.** After `AGENTS.md`, `CLAUDE.md` or a related file in an agent's workspace changes, a later CCCC message to that agent can carry one line asking it to check the current instructions.
-- **Mentions.** `@` and `#` suggestions open at the cursor, also right after Chinese or Japanese text, and messages highlight each agent in the colour of its name.
-- **Mail results can report recipient states**: a named agent that is disabled or reported as not running, or whose Group is paused or stopped. A result without them does not mean the Mail will be read.
-- **Version notice.** The `cccc` MCP server can say when it runs a different version than the daemon, and which one to restart.
+- **Switch to and from a Web Model.** An administrator can move an agent to or from a Web Model like any other runtime, including directly from a native session or through a Profile. Entering one starts nothing: connect it to a conversation in the agent's settings, and its messages wait until then.
+- **Messages reach what is running.** After you save another runtime or Profile for a running agent, its terminal keeps receiving messages until a launch replaces it. A message cut off part way into a terminal is kept for review instead of being written again.
+- **Fewer reads for Claude.** An eligible plain message between agents can now arrive in a Claude session's notification, with no separate read.
+- **An e-ink look.** The interface moves to a soft paper light theme and a graphite dark theme. Layout, fonts and components are unchanged.
+- **Limit a repeating reminder.** A repeating reminder can stop after a chosen number of runs, and the rule list shows its progress.
+- **Stop a stuck upload.** A stop button next to **Send** ends the wait and keeps your draft. The message may already have arrived, so check the conversation before sending it again.
+- **Native foreman.** A native foreman now gets the default foreman capabilities, as a managed one does.
+- **Tasks.** An agent can take up a planned or active task that nobody holds.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, and restore or discard waiting sends: they live only in the open page. Then reload open Web pages. Native-session users should [reload the integration in each app](https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration). A Connect remote workspace waits for its access only when both instances run 0.4.48 or later.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, and restore or discard waiting sends: they live only in the open page. Then reload open Web pages. Native-session users should [reload the integration in each app](https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration); restart an open Claude session (for example `claude --resume`) to load the new receiver. Until then a notification may be cut off and ask it to read the message.
 
-Details: [0.4.48 release notes](https://chesterra.github.io/cccc/release/v0.4.48_release_notes).
+Details: [0.4.49 release notes](https://chesterra.github.io/cccc/release/v0.4.49_release_notes).
 
 ## Quick start
 

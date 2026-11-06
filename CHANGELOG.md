@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.49]
+
 ### Added
 
 - An agent can now switch to or from a Web Model, including directly between a Web Model and a
@@ -27,10 +29,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   text colors retuned for each. Layout, fonts and components are unchanged.
 - Opening a message from a notification now says so when the message cannot be opened, and offers
   **Try again**, instead of failing silently.
-- A plain message between agents now reaches a Claude session in its notification when it fits, so
-  Claude reads fewer messages from the ledger. A message from you, Mail, a long message, one with
-  attachments or its own project path, or one containing `<`, `>` or `&` still asks for a read. An
-  open Claude session gets this once it restarts (`claude --resume`): on Claude Code 2.1.317,
+- An eligible plain message between agents can now arrive in a Claude session's notification, with
+  no separate read. A message from you, Mail, a long message, one with attachments or its own
+  project path, or one containing `<`, `>` or `&` still asks for a read, and so does the next
+  delivery when the Group's instructions are due. An open Claude session gets this once it restarts
+  (for example `claude --resume`): on Claude Code 2.1.317,
   `/reload-plugins` leaves a running Monitor in place, and its notifications can arrive cut off
   with a note to read the message.
 - CCCC offers native agents their Group instructions more often: the next delivery after a
@@ -49,9 +52,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - A message cut off part way into a terminal is kept for review, and CCCC does not automatically
   write it again. Work claimed for a terminal that has since stopped, and never written to it,
   moves to the agent's current runtime.
-- A browser delivery that could not finish no longer blocks an agent. Delivery resumes the same
-  batch, and a batch that runs out of retries is kept for review, because the conversation may still
-  hold its draft.
+- When a browser delivery has to wait, CCCC retries the same batch. If its retries run out, or a
+  daemon restart or upgrade leaves it unconfirmed, CCCC keeps the batch for review once the page is
+  ready, because the conversation may still hold its draft. Later messages wait until you review it.
 - A native foreman now gets the default foreman capabilities, as a managed one does: when it joins
   a running Group, on Start or a daemon restart, and when a switch makes it native. A capability
   you blocked stays blocked.
