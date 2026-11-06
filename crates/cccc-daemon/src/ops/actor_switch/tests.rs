@@ -1210,7 +1210,7 @@ fn a_paused_native_member_stays_paused_on_a_managed_target() {
 #[test]
 fn a_submission_cut_off_by_the_switch_is_not_repeated_and_queued_work_moves_on() {
     let fixture = Fixture::new();
-    let command = vec!["sh".to_owned(), "-c".to_owned(), "exec sleep 60".to_owned()];
+    let command = terminal_that_stops_reading(&fixture);
     fixture.mutate(|doc| {
         doc.running = true;
         let actor = &mut doc.actors[0];
@@ -1221,7 +1221,6 @@ fn a_submission_cut_off_by_the_switch_is_not_repeated_and_queued_work_moves_on()
     let source = fixture.claude_source();
     let attached = fixture.request("local_session_receiver_attach", Fixture::receiver(&source));
     assert!(attached.ok, "{:?}", attached.error);
-    // A managed terminal that never reads its input: a large write blocks.
     cccc_runtime::start(cccc_runtime::LaunchSpec {
         group_id: fixture.group_id.clone(),
         actor_id: "x".into(),
@@ -1233,15 +1232,9 @@ fn a_submission_cut_off_by_the_switch_is_not_repeated_and_queued_work_moves_on()
         rows: 40,
     })
     .expect("managed owner");
+    let cut = a_write_cut_part_way(&fixture);
     let group = fixture.group();
     let actor = fixture.actor();
-    // The first delivery writes the terminal's preamble; after it, a payload
-    // is written as soon as its delivery is claimed.
-    let warm = fixture.send(&group, &actor, "first".into());
-    fixture.wait_for_delivery(&warm, "accepted");
-    let cut = fixture.send(&group, &actor, "x".repeat(512 * 1024));
-    fixture.wait_for_delivery(&cut, "claimed");
-    std::thread::sleep(Duration::from_millis(300));
     let queued = fixture.send(&group, &actor, "queued behind the blocked write".into());
 
     let result = fixture.switch(native_target(&source));
@@ -1250,9 +1243,39 @@ fn a_submission_cut_off_by_the_switch_is_not_repeated_and_queued_work_moves_on()
     fixture.assert_cut_off_work_moves_on(&source, &cut, &queued);
 }
 
-/// A terminal that never reads its input, with a large write stopped part way.
+/// A program that reads into the large message of `a_write_cut_part_way`, says
+/// so, and reads no more: the rest of that write blocks.
+fn terminal_that_stops_reading(fixture: &Fixture) -> Vec<String> {
+    let script = format!(
+        "stty -icanon -echo; head -c 65536 | grep -q {} && : > '{}'; exec sleep 60",
+        "x".repeat(64),
+        fixture.workspace.join("stalled").display()
+    );
+    vec!["sh".to_owned(), "-c".to_owned(), script]
+}
+
+/// A large message whose first bytes have reached the program.
+fn a_write_cut_part_way(fixture: &Fixture) -> Event {
+    let group = fixture.group();
+    let actor = fixture.actor();
+    // The first delivery writes the terminal's preamble.
+    let warm = fixture.send(&group, &actor, "first".into());
+    fixture.wait_for_delivery(&warm, "accepted");
+    let cut = fixture.send(&group, &actor, "x".repeat(512 * 1024));
+    let stalled = fixture.workspace.join("stalled");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !stalled.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "the write never reached the terminal"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    cut
+}
+
 fn terminal_with_a_blocked_write(fixture: &Fixture) -> Event {
-    let command = vec!["sh".to_owned(), "-c".to_owned(), "exec sleep 30".to_owned()];
+    let command = terminal_that_stops_reading(fixture);
     fixture.mutate(|doc| {
         doc.running = true;
         let actor = &mut doc.actors[0];
@@ -1262,14 +1285,7 @@ fn terminal_with_a_blocked_write(fixture: &Fixture) -> Event {
     });
     let started = fixture.request("actor_start", json!({"actor_id": "x"}));
     assert!(started.ok, "{:?}", started.error);
-    let group = fixture.group();
-    let actor = fixture.actor();
-    let warm = fixture.send(&group, &actor, "first".into());
-    fixture.wait_for_delivery(&warm, "accepted");
-    let cut = fixture.send(&group, &actor, "x".repeat(512 * 1024));
-    fixture.wait_for_delivery(&cut, "claimed");
-    std::thread::sleep(Duration::from_millis(300));
-    cut
+    a_write_cut_part_way(fixture)
 }
 
 #[test]
