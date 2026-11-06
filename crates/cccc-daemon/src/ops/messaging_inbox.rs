@@ -65,7 +65,12 @@ pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     let actor_id = required_arg(request, "actor_id")?;
-    authorize(&group, request, &actor_id)?;
+    permissions::require_history(
+        &group,
+        &string_arg(request, "by").unwrap_or_else(|| "user".into()),
+        &actor_id,
+    )
+    .map_err(OpError::invalid)?;
     if request.args.contains_key("event_id") {
         let event_id = required_arg(request, "event_id")?;
         if ["mode", "query", "before_event_id", "limit"]
@@ -293,6 +298,92 @@ mod tests {
                 .cloned()
                 .unwrap_or_else(Map::new),
         }
+    }
+
+    #[test]
+    fn what_a_member_told_only_the_user_stays_out_of_every_other_agents_history() {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path()).expect("layout");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("private", "").expect("group");
+        for id in ["lead", "member", "other"] {
+            actors::add(&mut group, Actor::new(id)).expect("actor");
+        }
+        store.save(&group).expect("save group");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "member".into();
+        event.data = json!({"to":["user"],"text":"private fixture","message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&path, &event).expect("append");
+        let read = |by: &str, actor_id: &str| {
+            history(
+                &home,
+                &DaemonRequest {
+                    v: 1,
+                    op: "message_history".into(),
+                    args: json!({"group_id":group.group_id,"actor_id":actor_id,"by":by})
+                        .as_object()
+                        .expect("args")
+                        .clone(),
+                },
+            )
+        };
+        let found = |result: Map<String, Value>| result["messages"] != json!([]);
+        for by in ["lead", "other"] {
+            for target in ["user", "member"] {
+                assert!(read(by, target).is_err(), "{by} read {target}");
+            }
+            assert!(!found(read(by, by).expect("own history")), "{by}");
+        }
+        assert!(found(
+            read("member", "member").expect("the sender's own history")
+        ));
+        assert!(found(read("user", "user").expect("the user's history")));
+        assert!(found(
+            read("user", "member").expect("the user reads any member")
+        ));
+
+        // The exact read is a separate branch and must agree.
+        let exact = |by: &str, actor_id: &str| {
+            history(
+                &home,
+                &DaemonRequest {
+                    v: 1,
+                    op: "message_history".into(),
+                    args: json!({"group_id":group.group_id,"actor_id":actor_id,"by":by,
+                        "event_id":event.id})
+                    .as_object()
+                    .expect("args")
+                    .clone(),
+                },
+            )
+        };
+        for (by, target) in [
+            ("lead", "user"),
+            ("lead", "member"),
+            ("lead", "lead"),
+            ("other", "user"),
+            ("other", "member"),
+        ] {
+            assert!(exact(by, target).is_err(), "{by} read {target}");
+        }
+        exact("member", "member").expect("the sender reads its message");
+        exact("user", "user").expect("the user reads the message");
+
+        // The Foreman still reads what was sent to it.
+        let mut own = Event::new("chat.message", &group.group_id);
+        own.by = "member".into();
+        own.data = json!({"to":["lead"],"text":"status","message_mode":"send"})
+            .as_object()
+            .expect("data")
+            .clone();
+        ledger::append(&path, &own).expect("append");
+        assert!(found(
+            read("lead", "lead").expect("the Foreman's own history")
+        ));
     }
 
     #[test]

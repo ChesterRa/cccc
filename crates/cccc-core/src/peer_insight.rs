@@ -9,6 +9,10 @@ pub const TEAM_MODE_SEED: &str = "- Work as a thinking teammate, not a delivery 
 
 pub const FOREMAN_TEAM_MODE_SEED: &str = "- Keep independent ready work parallel: assign durable tasks with `cccc_task`, notify the responsible peer with `cccc_message_send`, and integrate accepted results. Keep sequential or cheaper work local.";
 
+pub const TEAM_FEEDBACK_SEED: &str = "- If a teammate or the team setup is materially helping or hurting the work, tell the user privately: what you saw, its effect, your suggestion. Suspicions count; do not hold back to avoid disagreement.";
+
+pub const FOREMAN_TEAM_FIT_SEED: &str = "- On assigning work, a block or a handoff, check who owns what and whether each member's setup fits; adjust tasks within your authority and tell the user privately what needs their decision.";
+
 pub const PEER_INSIGHT_FIELD_DESCRIPTION: &str = "A concise, visible, provisional judgment that helps the recipient assess this work beyond the message itself. Required for agent-facing messages in the MCP profile; optional for replies to the human user. Maximum 1200 characters. Include the conclusion, not private reasoning.";
 
 pub const SUPERVISOR_MAGIC_KERNEL: &str = r#"Silently imagine that a clear-sighted, exacting supervisor with a broader grasp
@@ -178,5 +182,7 @@ mod tests {
         assert!(FOREMAN_TEAM_MODE_SEED.contains("cccc_task"));
         assert!(FOREMAN_TEAM_MODE_SEED.contains("cccc_message_send"));
         assert!(FOREMAN_TEAM_MODE_SEED.split_whitespace().count() <= 45);
+        assert!(TEAM_FEEDBACK_SEED.split_whitespace().count() <= 45);
+        assert!(FOREMAN_TEAM_FIT_SEED.split_whitespace().count() <= 45);
     }
 }

@@ -21,6 +21,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - The first screen of a new Group explains Send, Mail, the foreman and tasks in plainer words.
 - The **Auto** theme now follows the light or dark setting of your system. It used to switch by the
   local time of day.
+- In a Group with several members, agents are now asked to tell you privately when a teammate or
+  the team setup is helping or hurting the work. The foreman is asked to check who owns what and
+  whether each member's setup fits when it assigns work, hits a block or takes a handoff.
+- `cccc_message_history` now shows an agent only its own traffic. A foreman could name another
+  member, or `user`, and read what that member had sent only to you.
+- An agent can now learn that its message may not have got through. When CCCC stops trying to
+  deliver it, the agent that sent it gets a notice that delivery failed or is uncertain. The notice
+  may be late or lost, it can start that agent for one more turn, and deliveries to Web Model
+  members are not covered yet. If a named recipient is disabled, or the Group is paused or stopped,
+  the send result says so at once.
 
 ### Fixed
 

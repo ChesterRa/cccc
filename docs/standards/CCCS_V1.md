@@ -461,7 +461,9 @@ data: {
 - `accepted` means the runtime adapter accepted the payload (queue, PTY,
   headless API, or browser submission boundary). It does not claim that the
   model read, understood, or acted on it.
-- `failed` means the adapter established that handoff did not occur.
+- `failed` means the adapter established that handoff did not occur, or that
+  the runtime ran the turn and it failed after its retries. It does not prove
+  that the model never saw the input.
 - For `transport="local_session"`, a failed attempt MAY carry `retryable=true`
   only when the daemon established that it stopped before native submission
   (for example, a paused worker or a full daemon queue). This work remains

@@ -1,4 +1,7 @@
 use super::*;
+use cccc_contracts::DaemonRequest;
+use cccc_core::{GroupStore, ledger};
+use serde_json::json;
 
 pub(crate) fn pending_group_ids() -> Vec<String> {
     let mut groups = completions()
@@ -10,6 +13,9 @@ pub(crate) fn pending_group_ids() -> Vec<String> {
                 .collect::<HashSet<_>>()
         })
         .unwrap_or_default();
+    if let Ok(notices) = sender_notices().lock() {
+        groups.extend(notices.iter().map(|notice| notice.group_id.clone()));
+    }
     if let Ok(workers) = workers().lock() {
         groups.extend(
             workers
@@ -52,6 +58,7 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
     if let Ok(mut completions) = completions().lock() {
         completions.extend(deferred);
     }
+    tell_senders(home, group_id);
 
     let actors = workers()
         .lock()
@@ -91,6 +98,94 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
             dispatch_unread(home, &group, &actor_id);
         }
     }
+}
+
+/// Runs under the Group's write permit, so the member checked here is the one
+/// the notice reaches. Best effort: what fails is logged and dropped.
+fn tell_senders(home: &HomeLayout, group_id: &str) {
+    let notices = sender_notices()
+        .lock()
+        .map(|mut queue| {
+            let (selected, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut *queue)
+                .into_iter()
+                .partition(|notice| notice.group_id == group_id);
+            *queue = remaining.into();
+            selected
+        })
+        .unwrap_or_default();
+    for notice in notices {
+        if let Err(error) = notify_sender(home, &notice) {
+            tracing::warn!(
+                message = %error.message,
+                event_id = %notice.event_id,
+                "could not tell the sender how its delivery ended"
+            );
+        }
+    }
+}
+
+fn notify_sender(home: &HomeLayout, notice: &SenderNotice) -> Result<(), crate::dispatch::OpError> {
+    use crate::dispatch::OpError;
+    use crate::ops::messaging_status::{Requester, requester_for_event};
+    let (group_id, recipient) = (&notice.group_id, &notice.recipient);
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let group = store.load(group_id).map_err(OpError::io)?;
+    let path = store.ledger_path(group_id).map_err(OpError::io)?;
+    let Some(source) = ledger::find_event(&path, &notice.event_id).map_err(OpError::io)? else {
+        return Ok(());
+    };
+    // A member added since under the same name did not send this.
+    if !cccc_core::actors::visible(&group).any(|actor| actor.id == source.by)
+        || !matches!(
+            requester_for_event(home, group_id, &source)?,
+            Requester::Available
+        )
+    {
+        return Ok(());
+    }
+    // A notice can arrive late, and a daemon restart can pick failed work up
+    // again, so this says what happened, not what holds now. The reason stays
+    // out: it can hold another runtime's own text.
+    let (title, state, advice) = if notice.uncertain {
+        (
+            format!("Delivery to {recipient} was uncertain"),
+            "ambiguous",
+            "It may have reached the agent. Check before sending it again.",
+        )
+    } else {
+        (
+            format!("Delivery to {recipient} failed"),
+            "failed",
+            "Check before you wait for a reply.",
+        )
+    };
+    let client_id = format!("delivery:{state}:{}", notice.delivery_id);
+    if ledger::find_idempotent(&path, "system.notify", "system", &client_id)
+        .map_err(OpError::io)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let request = DaemonRequest {
+        v: 1,
+        op: "system_notify".into(),
+        args: json!({
+            "group_id":group_id,"by":"system","client_id":client_id,"kind":"error",
+            "title":title,
+            "message":format!(
+                "This attempt has stopped, and the result may have changed since. {advice} \
+                 Source event: {}.",
+                source.id
+            ),
+            "to":[source.by],"target_actor_id":source.by,"im_visibility":"internal",
+            "related_event_id":source.id,
+            "context":{"delivery_id":notice.delivery_id,"state":state,"actor_id":recipient},
+        })
+        .as_object()
+        .cloned()
+        .expect("sender notice"),
+    };
+    crate::ops::messaging::send(home, &request, "system.notify").map(|_| ())
 }
 
 fn take_group_completions(group_id: &str) -> Vec<DeliveryCompletion> {

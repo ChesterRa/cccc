@@ -453,6 +453,76 @@ fn native_delivery_reoffers_instruction_notice_after_ambiguous_handoff() {
 }
 
 #[test]
+fn native_rejection_and_uncertain_delivery_reach_the_original_agent_sender() {
+    let fixture = Fixture::new();
+    let group = fixture.conversation();
+    let recipient = &group.actors[0];
+    let receiver = fixture.attach();
+    fixture.call(
+        "actor_add",
+        json!({
+            "group_id":group.group_id,"actor_id":"sender","runtime":"custom",
+            "command":["unused-fixture"],"enabled":false,"by":"user"
+        }),
+    );
+    let path = GroupStore::new(fixture.home.clone())
+        .expect("store")
+        .ledger_path(&group.group_id)
+        .expect("ledger path");
+    for (outcome, state) in [
+        (
+            transport::Outcome::Rejected("private-fixture-reason".into()),
+            "failed",
+        ),
+        (
+            transport::Outcome::Ambiguous("private-fixture-reason".into()),
+            "ambiguous",
+        ),
+    ] {
+        let sent = fixture.call(
+            "message_send",
+            json!({
+                "group_id":group.group_id,"by":"sender","to":[recipient.id],
+                "message_mode":"send","text":"fixture work","insight":"fixture context"
+            }),
+        );
+        let event_id = sent["event"]["id"].as_str().expect("event id").to_owned();
+        let handoff = offered(&fixture.home, &receiver);
+        assert_eq!(handoff.event_ids, [event_id.clone()]);
+        transport::acknowledge(&fixture.home, &receiver, &handoff.handoff_id, outcome)
+            .expect("native acknowledgement");
+        fixture.wait_state(&group, &event_id, state);
+
+        // No daemon scheduler runs in this fixture; drive the same Group
+        // maintenance step once the delivery worker has queued the notice.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            super::super::actor_delivery::drain_group(&fixture.home, &group.group_id);
+            let notices = cccc_core::ledger::read_all(&path)
+                .expect("ledger")
+                .into_iter()
+                .filter(|event| {
+                    event.kind == "system.notify"
+                        && event.data["related_event_id"] == event_id
+                        && event.data["target_actor_id"] == "sender"
+                })
+                .collect::<Vec<_>>();
+            if let Some(notice) = notices.first() {
+                assert_eq!(notices.len(), 1);
+                assert_eq!(notice.data["context"]["state"], state);
+                assert!(!format!("{notice:?}").contains("private-fixture-reason"));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "sender did not receive a {state} notice"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+}
+
+#[test]
 fn claude_compact_notification_recovers_full_message_and_instructions_without_redelivery() {
     let fixture = Fixture::new();
     let group = fixture.conversation();

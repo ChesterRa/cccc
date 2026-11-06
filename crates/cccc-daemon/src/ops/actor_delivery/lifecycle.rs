@@ -64,6 +64,9 @@ pub fn shutdown_all() {
     if let Ok(mut completions) = completions().lock() {
         completions.clear();
     }
+    if let Ok(mut notices) = sender_notices().lock() {
+        notices.clear();
+    }
     if let Ok(mut pending) = in_flight().lock() {
         pending.clear();
     }

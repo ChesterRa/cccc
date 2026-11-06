@@ -548,6 +548,7 @@ fn send_with_audience_policy(
     let scope_key = message_scope(kind, &data);
     let event = append_in_scope(home, &group.group_id, kind, &by, data, scope_key)?;
     let mut advisories = Vec::new();
+    let mut send_advisories = Vec::new();
     if kind == "chat.message"
         && event.data.get("message_mode").and_then(Value::as_str) == Some("mail")
     {
@@ -555,6 +556,9 @@ fn send_with_audience_policy(
         advisories = super::mail_advisory::advisories(home, &group, &event);
     } else {
         let _ = actor_delivery::dispatch(home, &group, &event);
+        if kind == "chat.message" && authority_by != "user" {
+            send_advisories = super::mail_advisory::send_advisories(&group, &event);
+        }
     }
     if kind == "chat.message" {
         let message_mode = event
@@ -566,6 +570,10 @@ fn send_with_audience_policy(
         if !advisories.is_empty() {
             result["mail_recipient_advisories"] = json!(advisories);
             result["mail_advisory"] = json!(super::mail_advisory::NOTE);
+        }
+        if !send_advisories.is_empty() {
+            result["send_recipient_advisories"] = json!(send_advisories);
+            result["send_advisory"] = json!(super::mail_advisory::SEND_NOTE);
         }
         object(result)
     } else {

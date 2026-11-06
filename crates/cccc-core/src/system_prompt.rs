@@ -159,14 +159,13 @@ fn render_with_body(
         lines.push(format!("- Pass group_id=\"{}\" to every Group tool. On cold start or context reset, call cccc_bootstrap({{\"group_id\":\"{}\"}}).", group.group_id, group.group_id));
     }
     if enabled.len() > 1 {
-        lines.push(
-            if role == "foreman" {
-                crate::peer_insight::FOREMAN_TEAM_MODE_SEED
-            } else {
-                crate::peer_insight::TEAM_MODE_SEED
-            }
-            .into(),
-        );
+        if role == "foreman" {
+            lines.push(crate::peer_insight::FOREMAN_TEAM_MODE_SEED.into());
+            lines.push(crate::peer_insight::FOREMAN_TEAM_FIT_SEED.into());
+        } else {
+            lines.push(crate::peer_insight::TEAM_MODE_SEED.into());
+        }
+        lines.push(crate::peer_insight::TEAM_FEEDBACK_SEED.into());
     }
     let header = lines.join("\n").trim_end().to_owned();
     let body = body.trim();
@@ -316,11 +315,15 @@ mod tests {
         assert!(!render(&group, &actor).contains(crate::peer_insight::FOREMAN_TEAM_MODE_SEED));
         group.actors.push(Actor::new("peer1"));
         assert!(render(&group, &actor).contains(crate::peer_insight::FOREMAN_TEAM_MODE_SEED));
+        assert!(render(&group, &actor).contains(crate::peer_insight::FOREMAN_TEAM_FIT_SEED));
+        assert!(render(&group, &actor).contains(crate::peer_insight::TEAM_FEEDBACK_SEED));
         assert!(!render(&group, &actor).contains(crate::peer_insight::TEAM_MODE_SEED));
 
         let peer = group.actors.last().expect("peer");
         assert!(render(&group, peer).contains(crate::peer_insight::TEAM_MODE_SEED));
+        assert!(render(&group, peer).contains(crate::peer_insight::TEAM_FEEDBACK_SEED));
         assert!(!render(&group, peer).contains(crate::peer_insight::FOREMAN_TEAM_MODE_SEED));
+        assert!(!render(&group, peer).contains(crate::peer_insight::FOREMAN_TEAM_FIT_SEED));
     }
 
     #[test]

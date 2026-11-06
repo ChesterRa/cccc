@@ -248,6 +248,110 @@ async fn a_command_that_cannot_run_fails_its_message_instead_of_waiting_forever(
 }
 
 #[tokio::test]
+async fn the_agent_that_sent_a_message_is_told_when_it_fails() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("sender-notice-test", false).await;
+    add_sender(&client, &group_id).await;
+    use_command(&client, &group_id, "exit 7").await;
+    let ledger_path = group_ledger_path(&temp, &group_id);
+    let notices = || {
+        ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .into_iter()
+            .filter(|event| event.kind == "system.notify" && event.data["kind"] == "error")
+            .collect::<Vec<_>>()
+    };
+
+    // The user reads this on the page, and it leaves the member enabled.
+    let from_user = send(&client, &group_id, "from the user").await;
+    wait_for_delivery_state(&ledger_path, &from_user, "failed").await;
+
+    let from_agent = send_from_agent(&client, &group_id).await;
+    let from_agent = from_agent.result["event"]["id"]
+        .as_str()
+        .expect("source event id")
+        .to_owned();
+    wait_for_delivery_state(&ledger_path, &from_agent, "failed").await;
+    // The Group's maintenance sends it, on a five-second tick.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while notices().is_empty() {
+        assert!(tokio::time::Instant::now() < deadline, "no notice");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let notices = notices();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(notices[0].data["target_actor_id"], "sender");
+    assert_eq!(notices[0].data["related_event_id"], from_agent);
+    assert_eq!(notices[0].data["title"], "Delivery to peer1 failed");
+    let text = notices[0].data["message"].as_str().expect("notice text");
+    assert!(text.contains(&from_agent), "{text}");
+
+    // A notice is an ordinary delivery: it starts the sender and reaches it.
+    wait_until(|| {
+        ledger::read_all(&ledger_path)
+            .expect("ledger")
+            .iter()
+            .any(|event| {
+                event.kind == "runtime.delivery"
+                    && event.data["source_event_id"] == notices[0].id
+                    && event.data["actor_id"] == "sender"
+                    && event.data["state"] == "accepted"
+            })
+    })
+    .await;
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn an_agent_is_told_at_once_that_its_recipient_is_stopped() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("stopped-recipient-test", false).await;
+    add_sender(&client, &group_id).await;
+    stop_peer(&client, &group_id).await;
+
+    let sent = send_from_agent(&client, &group_id).await;
+    assert_eq!(
+        sent.result["send_recipient_advisories"],
+        json!([{"actor_id":"peer1","reasons":["disabled"]}])
+    );
+    assert!(
+        sent.result["send_advisory"]
+            .as_str()
+            .is_some_and(|note| note.contains("does not enable a disabled Actor"))
+    );
+
+    // It is not lost: the user's Start delivers it.
+    call(
+        &client,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
+    let source = sent.result["event"]["id"]
+        .as_str()
+        .expect("source event id");
+    wait_for_accepted_delivery(&group_ledger_path(&temp, &group_id), source).await;
+
+    // A running recipient and the user's own message need no such word.
+    let running = send_from_agent(&client, &group_id).await;
+    assert_eq!(running.result.get("send_recipient_advisories"), None);
+    stop_peer(&client, &group_id).await;
+    let from_user = call(
+        &client,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"hi","message_mode":"send"}),
+    )
+    .await;
+    assert_eq!(from_user.result.get("send_recipient_advisories"), None);
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
 async fn a_short_outage_heals_while_messages_keep_arriving() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("short-outage-test", false).await;
@@ -833,6 +937,27 @@ async fn stop_peer(client: &DaemonClient, group_id: &str) {
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     )
     .await;
+}
+
+async fn add_sender(client: &DaemonClient, group_id: &str) {
+    call(
+        client,
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"sender","runtime":"custom",
+            "submit":"newline","command":["sh","-c","sleep 30"],"by":"user"
+        }),
+    )
+    .await;
+}
+
+async fn send_from_agent(client: &DaemonClient, group_id: &str) -> DaemonResponse {
+    call(
+        client,
+        "send",
+        json!({"group_id":group_id,"by":"sender","to":["peer1"],"text":"hello","message_mode":"send"}),
+    )
+    .await
 }
 
 /// Leave peer1 not running, with `script` as what a start will run.

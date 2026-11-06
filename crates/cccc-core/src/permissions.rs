@@ -76,6 +76,20 @@ pub fn require_group_member(group: &GroupDoc, by: &str) -> io::Result<()> {
         .ok_or_else(|| io::Error::other(format!("unknown actor: {who}")))
 }
 
+/// History shows an agent its own traffic. No role reads another agent's, or the
+/// Foreman could read what a member told only the user.
+pub fn require_history(group: &GroupDoc, by: &str, target: &str) -> io::Result<()> {
+    let who = by.trim();
+    if who.is_empty() || who == "user" || who == "system" {
+        return Ok(());
+    }
+    match effective_role(group, who) {
+        Some(_) if who == target => Ok(()),
+        Some(_) => Err(io::Error::other(format!("permission denied: {who}"))),
+        None => Err(io::Error::other(format!("unknown actor: {who}"))),
+    }
+}
+
 pub fn require_inbox(group: &GroupDoc, by: &str, target: &str) -> io::Result<()> {
     let who = by.trim();
     if who.is_empty() || who == "user" || who == "system" {

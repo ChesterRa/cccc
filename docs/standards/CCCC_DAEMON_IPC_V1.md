@@ -4030,6 +4030,20 @@ Notes:
 - A newly created Codex thread MUST be durably resumable before CCCC records a usable receipt or attaches its native TUI. `thread/start` returning an ID and planned rollout path is insufficient. CCCC MUST materialize the empty thread through native metadata operations and verify full-history readability for that exact thread, without submitting a model turn or adding synthetic conversation items. Resumed conversations MUST retain their existing names and history.
 - A provider process exit MUST record `actor.stop` with `by="system"` and `data.reason="process_exit"`, but MUST NOT disable the actor or stop the Group. A user-authored Send or Request Reply explicitly targeting an actor ID, or a Send targeting `@foreman`, is also a wake action: it MUST enable that actor, move a paused or stopped Group to `active`, and start delivery through the normal runtime path whether the prior stop was automatic or user initiated. Broadcast selectors (`@all`, `@peers`, including the materialized default) MUST NOT enable disabled actors; they MAY resume the Group and wake already-enabled recipients. An actor explicitly named alongside a broadcast retains its explicit wake behavior. A broadcast with no enabled recipients MUST NOT resume the Group. This wake policy MUST NOT narrow the message's logical audience or remove it from history. Mail and Actor-authored messages MUST NOT enable disabled actors; Mail and previously queued work MUST NOT independently wake a runtime while a Group remains `paused`.
 - Starts made to deliver waiting work MUST be bounded per delivery batch and spaced in real time, so a short outage can recover; new work MUST NOT bring the next start forward. When a runtime cannot be brought up within that bound, the daemon MUST stop starting it for that work and close the work: `failed` with a reason when no submission can have begun, `ambiguous` when one may have. The reason MAY state an observed exit code and MUST NOT copy terminal output. Work already queued behind a closed batch shares the spent bound and closes without another start; the next batch after the queue empties begins a new bound. Work closed as `failed` stays eligible for explicit recovery: Start, Retry and daemon restart recovery offer it again.
+- When an attempt to deliver a local agent's message ends as `failed` or `ambiguous` in the
+  delivery worker and the worker will not try it again, the daemon SHOULD tell that agent with a
+  `system.notify` of kind `error`, naming the recipient, the outcome and the source event. The
+  worker only records the fact. A later Group maintenance round sends the notice under the Group's
+  write permit and checks the sender at that moment, so it can be delayed. This is best effort: it is
+  tried only when the sender can be shown to be the registration that sent the message, a failed
+  write is only logged, a daemon restart loses what is waiting, and the notice can itself fail. It
+  reports what happened to that attempt, not the state when it is read: recovery after a daemon
+  restart can pick the work up again. It MUST NOT carry the delivery's reason, which can hold
+  another runtime's own text. It MUST keep `failed` and `ambiguous` apart and MUST NOT claim that
+  the recipient never saw the input. Mail, messages sent by the user, `retryable` attempts, work a
+  stopping worker or replaced owner hands back, and Web Model browser reports are excluded. There
+  is one notice per message, recipient and outcome, so a second failure after a Retry adds none,
+  while a failure that turns uncertain does. It can start a managed sender.
 - Process-exit events include `data.exit_code` (nullable) and `data.source`: `"runtime"` for a runtime session's observed child exit, or `"managed_reader"` for managed-reader teardown. Runtime status and its exit event MAY include `exit_detail`, the platform runtime's diagnostic description of the exit. This optional text is not a stable classifier or a portable signal identity; consumers MUST NOT infer a cause from `exit_code=1` alone. Managed-reader teardown without a child status MUST retain a null exit code and omit the diagnostic rather than claiming a confirmed provider exit.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
 - Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
@@ -5090,6 +5104,11 @@ Result:
     reasons: ("disabled" | "group_paused" | "group_stopped" | "not_running")[]
   }[]
   mail_advisory?: string         // fixed note, present with mail_recipient_advisories
+  send_recipient_advisories?: {  // new Send or request_reply from an agent; see below
+    actor_id: string
+    reasons: ("disabled" | "group_paused" | "group_stopped")[]
+  }[]
+  send_advisory?: string         // fixed note, present with send_recipient_advisories
 }
 ```
 
@@ -5146,6 +5165,14 @@ read the Mail. These are never reported: Mail to a broadcast selector, whether a
 native session, a Web Model or another runtime without a CCCC-managed process
 is running, cross-Group and Connect Mail, and a replay by `client_id`. A local
 Mail `reply` reports the same way.
+
+A new local Send or `request_reply` from an agent reports the same way in
+`send_recipient_advisories`, with `disabled`, `group_paused` and `group_stopped`
+only: a message from an agent enables no disabled Actor and resumes no paused or
+stopped Group, so no delivery is attempted and no `runtime.delivery` appears.
+`send_advisory` says so. An enabled Actor that is not running is not listed, because delivery starts
+it. A message from the user gets neither field, and a result without them does
+not mean that every recipient will receive the message.
 
 Every daemon-rendered `chat.message` handed to an actor runtime MUST expose the
 current ledger identity before the message body:
@@ -5978,8 +6005,13 @@ Result:
 ```
 
 Results are newest-first, limited to the actor's current generation, and MUST
-contain only messages sent by or addressed to that actor. The operation is
-read-only and MUST NOT append `mail.read` or mutate any delivery state.
+contain only messages sent by or addressed to that actor. An agent caller MUST
+name itself in `actor_id`: the Foreman's access to a member's Mail does not extend
+to history, so this operation does not show one agent what another sent only to
+the user. It is a boundary of this operation, not of the machine: agents running
+as one OS user can reach the ledger file, and a terminal transcript may show what
+a runtime rendered. The operation is read-only and MUST NOT append `mail.read` or
+mutate any delivery state.
 
 With `event_id`, return exactly that visible `chat.message` or targeted
 `system.notify` from the Actor's current generation, with complete rendered

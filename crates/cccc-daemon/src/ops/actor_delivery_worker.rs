@@ -5,7 +5,9 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crate::ops::actor_delivery::{CompletedDelivery, DeliveryJob, complete_job, finish_job};
+use crate::ops::actor_delivery::{
+    CompletedDelivery, DeliveryJob, complete_job, finish_job, tell_sender,
+};
 use crate::ops::actor_runtime;
 use crate::ops::deepseek_runtime::TurnDelivery;
 
@@ -290,13 +292,10 @@ pub fn process_batch_tracked(
         }
         // Writing it again could leave the terminal with two copies.
         PtyHandoff::Uncertain(reason) => {
-            for job in jobs {
-                finish_job(
-                    job,
-                    CompletedDelivery::Ambiguous(format!(
-                        "the terminal may hold part of this delivery: {reason}"
-                    )),
-                );
+            let reason = format!("the terminal may hold part of this delivery: {reason}");
+            for job in jobs.iter() {
+                finish_job(job, CompletedDelivery::Ambiguous(reason.clone()));
+                tell_sender(job, true);
             }
             BatchOutcome::Delivered
         }
@@ -333,7 +332,6 @@ fn process_external_batch(
     preamble_session: &mut String,
     cancelled: &AtomicBool,
 ) -> BatchOutcome {
-    use super::actor_delivery::{CompletedDelivery, finish_job};
     use super::local_sessions::DeliveryOutcome;
     while let Some(job) = jobs.first_mut() {
         if cancelled.load(Ordering::Acquire) {
@@ -461,6 +459,7 @@ fn process_external_batch(
                     }
                 }
                 finish_job(job, CompletedDelivery::Failed(reason));
+                tell_sender(job, false);
                 jobs.remove(0);
                 continue;
             }
@@ -495,9 +494,13 @@ fn process_external_batch(
                     pending.delivered();
                 }
             }
-            DeliveryOutcome::Rejected(reason) => finish_job(job, CompletedDelivery::Failed(reason)),
+            DeliveryOutcome::Rejected(reason) => {
+                finish_job(job, CompletedDelivery::Failed(reason));
+                tell_sender(job, false);
+            }
             DeliveryOutcome::Ambiguous(reason) => {
-                finish_job(job, CompletedDelivery::Ambiguous(reason))
+                finish_job(job, CompletedDelivery::Ambiguous(reason));
+                tell_sender(job, true);
             }
         }
         // A rejected or uncertain handoff never holds the remaining jobs hostage.
@@ -688,6 +691,8 @@ fn settle_managed_batch(
             );
         }
         crate::ops::local_headless::BatchSubmission::Unconfirmed => {
+            let reason =
+                "ACP prompt receipt was not confirmed; inspect the Actor before an explicit retry";
             for job in jobs {
                 if let Err(error) = crate::ops::runtime_delivery::append_state(
                     home,
@@ -696,15 +701,14 @@ fn settle_managed_batch(
                     &actor.created_at,
                     &job.event.id,
                     job.transport,
-                    crate::ops::runtime_delivery::DeliveryOutcome::Ambiguous(
-                        "ACP prompt receipt was not confirmed; inspect the Actor before an explicit retry",
-                    ),
+                    crate::ops::runtime_delivery::DeliveryOutcome::Ambiguous(reason),
                 ) {
                     // The original durable claim remains unretryable and is
                     // reconciled as ambiguous on daemon restart.
                     tracing::error!(message=%error.message, event_id=%job.event.id, "failed to persist unconfirmed ACP delivery");
                 }
                 super::actor_delivery::release_in_flight(job);
+                tell_sender(job, true);
             }
         }
     }

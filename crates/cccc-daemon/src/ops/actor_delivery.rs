@@ -145,6 +145,21 @@ fn completions() -> &'static Mutex<VecDeque<DeliveryCompletion>> {
     COMPLETIONS.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
+/// How an attempt ended, until the Group's maintenance tells the sender. It keeps
+/// IDs, not the message: a full queue must stay small.
+struct SenderNotice {
+    group_id: String,
+    event_id: String,
+    recipient: String,
+    delivery_id: String,
+    uncertain: bool,
+}
+
+fn sender_notices() -> &'static Mutex<VecDeque<SenderNotice>> {
+    static NOTICES: OnceLock<Mutex<VecDeque<SenderNotice>>> = OnceLock::new();
+    NOTICES.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
 fn in_flight() -> &'static Mutex<HashSet<(String, String, String)>> {
     static IN_FLIGHT: OnceLock<Mutex<HashSet<(String, String, String)>>> = OnceLock::new();
     IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
@@ -311,6 +326,7 @@ pub(super) fn withdraw_jobs(jobs: &[DeliveryJob], reason: &str) {
 pub(super) fn fail_jobs(jobs: &[DeliveryJob], reason: &str) {
     for job in jobs {
         fail_job(job, reason);
+        tell_sender(job, false);
     }
 }
 
@@ -318,7 +334,8 @@ pub(super) fn fail_jobs(jobs: &[DeliveryJob], reason: &str) {
 /// runtime stays uncertain: calling it undelivered would invite a second copy.
 fn close_jobs(jobs: &[DeliveryJob], attempted: &HashSet<String>, reason: &str) {
     for job in jobs {
-        if attempted.contains(&job.event.id) {
+        let uncertain = attempted.contains(&job.event.id);
+        if uncertain {
             finish_job(
                 job,
                 CompletedDelivery::Ambiguous(format!(
@@ -328,6 +345,43 @@ fn close_jobs(jobs: &[DeliveryJob], attempted: &HashSet<String>, reason: &str) {
         } else {
             fail_job(job, reason);
         }
+        tell_sender(job, uncertain);
+    }
+}
+
+/// Leave word for the agent that sent this work how this attempt ended: only the
+/// Web shows that otherwise. Mail is left out, because it stays in the Inbox
+/// whatever became of a push. A worker cannot write to the Group itself: lifecycle
+/// operations hold the Group and wait for the worker.
+pub(super) fn tell_sender(job: &DeliveryJob, uncertain: bool) {
+    let by = job.event.by.as_str();
+    let mode = job.event.data.get("message_mode");
+    let mail = mode.and_then(serde_json::Value::as_str) == Some("mail");
+    if job.event.kind != "chat.message"
+        || mail
+        || matches!(by, "user" | "system")
+        || by == job.actor.id
+    {
+        return;
+    }
+    let notice = SenderNotice {
+        group_id: job.group.group_id.clone(),
+        event_id: job.event.id.clone(),
+        recipient: job.actor.id.clone(),
+        delivery_id: crate::ops::runtime_delivery::delivery_id(
+            &job.group.group_id,
+            &job.actor.id,
+            &job.actor.created_at,
+            &job.event.id,
+        ),
+        uncertain,
+    };
+    if let Ok(mut queue) = sender_notices().lock() {
+        if queue.len() >= COMPLETION_CAPACITY {
+            queue.pop_front();
+            tracing::warn!("sender notice queue reached capacity");
+        }
+        queue.push_back(notice);
     }
 }
 
@@ -921,7 +975,9 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 }
                 failed_turns.1 += 1;
                 if failed_turns.1 > FAILED_TURN_RETRIES && !batch.is_empty() {
-                    fail_job(&batch.remove(0), &reason);
+                    let job = batch.remove(0);
+                    fail_job(&job, &reason);
+                    tell_sender(&job, false);
                     failed_turns = (String::new(), 0);
                 }
                 deferred = batch;
@@ -1032,6 +1088,89 @@ mod tests {
         };
         assert_eq!(state(&submitted).as_deref(), Some("ambiguous"));
         assert_eq!(state(&unsubmitted).as_deref(), Some("failed"));
+    }
+
+    #[test]
+    fn the_sender_hears_how_each_message_ended_once() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("closing work", "").expect("group");
+        let actor = Actor::new("peer1");
+        let sender = Actor::new("sender");
+        group.actors.push(actor.clone());
+        group.actors.push(sender.clone());
+        store.save(&group).expect("save group");
+        let path = store.ledger_path(&group.group_id).expect("ledger path");
+        let job = |by: &str, mode: &str| {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = by.into();
+            event.data = json!({"to":["peer1"],"text":"work","message_mode":mode})
+                .as_object()
+                .expect("data")
+                .clone();
+            ledger::append(&path, &event).expect("message");
+            DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event,
+                claimed: true,
+                transport: "headless",
+            }
+        };
+        // Sent under the same name before this member was added.
+        let from_someone_earlier = job("sender", "send");
+        let mut added = Event::new("actor.add", &group.group_id);
+        added.by = "user".into();
+        added.data = json!({"actor":sender}).as_object().expect("data").clone();
+        ledger::append(&path, &added).expect("actor.add");
+        let (maybe_sent, never_sent) = (job("sender", "send"), job("sender", "request_reply"));
+        let (from_user, mail) = (job("user", "send"), job("sender", "mail"));
+
+        close_jobs(
+            &[
+                from_someone_earlier.clone(),
+                maybe_sent.clone(),
+                never_sent.clone(),
+                from_user.clone(),
+                mail.clone(),
+            ],
+            &HashSet::from([maybe_sent.event.id.clone()]),
+            "a runtime's own text",
+        );
+        drain_group(&home, &group.group_id);
+        // The same outcome after a Retry adds nothing, but failed turning
+        // uncertain is news: it changes what the sender may safely do.
+        tell_sender(&never_sent, false);
+        tell_sender(&maybe_sent, true);
+        tell_sender(&never_sent, true);
+        drain_group(&home, &group.group_id);
+
+        let notices = ledger::read_all(&path)
+            .expect("ledger")
+            .into_iter()
+            .filter(|event| event.kind == "system.notify")
+            .collect::<Vec<_>>();
+        assert_eq!(notices.len(), 3, "{notices:?}");
+        assert!(!format!("{notices:?}").contains("a runtime's own text"));
+        let about = |job: &DeliveryJob, state: &str| {
+            notices
+                .iter()
+                .find(|notice| {
+                    notice.data["related_event_id"] == job.event.id
+                        && notice.data["context"]["state"] == state
+                })
+                .expect("notice")
+        };
+        let uncertain = about(&maybe_sent, "ambiguous");
+        assert_eq!(uncertain.data["target_actor_id"], "sender");
+        assert_eq!(uncertain.data["title"], "Delivery to peer1 was uncertain");
+        let text = uncertain.data["message"].as_str().expect("text");
+        assert!(text.contains("may have reached"), "{text}");
+        let failed = about(&never_sent, "failed");
+        assert_eq!(failed.data["title"], "Delivery to peer1 failed");
+        about(&never_sent, "ambiguous");
     }
 
     #[test]
