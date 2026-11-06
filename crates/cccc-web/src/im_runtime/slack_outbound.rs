@@ -1,6 +1,6 @@
 use super::outbound_attachment::safe_filename;
 use super::outbound_chunks::{fits_message, split_message};
-use super::outbound_stream_state::trim_active;
+use super::outbound_stream_state::{event_string, trim_active};
 use super::{AuthorizedChat, outbound_text};
 use cccc_contracts::Event;
 use cccc_core::HomeLayout;
@@ -340,16 +340,6 @@ impl SlackOutbound {
             .map_err(|error| error.to_string())?;
         decode_api_response(response).await
     }
-}
-
-fn event_string(event: &Event, key: &str) -> String {
-    event
-        .data
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
 }
 
 async fn decode_api_response(response: reqwest::Response) -> Result<Value, String> {
