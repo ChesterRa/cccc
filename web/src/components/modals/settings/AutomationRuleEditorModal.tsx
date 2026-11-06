@@ -4,7 +4,7 @@ import { BodyPortal } from "../../ui/BodyPortal";
 import { GroupCombobox } from "../../GroupCombobox";
 import { SelectCombobox } from "../../SelectCombobox";
 
-import type { AutomationRule, AutomationRuleStatus } from "../../../types";
+import type { AutomationRule, AutomationRuleStatus, AutomationRuleTrigger } from "../../../types";
 import {
   Chip,
   buildCronFromPreset,
@@ -90,6 +90,23 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
   const patchRule = (patch: Partial<AutomationRule>) => {
     onRuleChange({ ...ruleDraft, ...patch });
   };
+  const patchTrigger = (trigger: AutomationRuleTrigger) => {
+    const previous = ruleDraft.trigger;
+    const maxRuns = previous && previous.kind !== "at" ? previous.max_runs : undefined;
+    patchRule({
+      trigger:
+        trigger.kind !== "at" && maxRuns !== undefined
+          ? { ...trigger, max_runs: maxRuns }
+          : trigger,
+    });
+  };
+  const setMaxRuns = (value: string) => {
+    if (!ruleDraft.trigger || ruleDraft.trigger.kind === "at") return;
+    const trigger = { ...ruleDraft.trigger };
+    if (value === "") delete trigger.max_runs;
+    else trigger.max_runs = Number(value);
+    patchRule({ trigger });
+  };
 
   const ruleId = String(ruleDraft.id || "").trim();
   const status = ruleStatus || {};
@@ -123,6 +140,13 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
   const scheduleLockedToOneTime = kind !== "notify";
   const scheduleSelectValue = scheduleLockedToOneTime ? "at" : triggerKind;
   const activeTriggerKind = scheduleLockedToOneTime ? "at" : triggerKind;
+  const maxRuns =
+    ruleDraft.trigger && ruleDraft.trigger.kind !== "at" ? ruleDraft.trigger.max_runs : undefined;
+  // A count belongs to the saved repeating schedule, not a new one-time draft.
+  const completed =
+    activeTriggerKind === "at"
+      ? Boolean(status.completed) && !status.fired_count
+      : maxRuns !== undefined && (status.fired_count || 0) >= maxRuns;
   const operationalActionsEnabled = activeTriggerKind === "at";
   const snippetRef = String(
     kind === "notify" && ruleDraft.action && "snippet_ref" in ruleDraft.action
@@ -197,8 +221,10 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
                 {t("ruleEditor.last")} {status.last_fired_at || "—"} • {t("ruleEditor.next")}{" "}
                 {status.next_fire_at || "—"}{" "}
-                {status.completed
-                  ? `• ${t("ruleEditor.completed")} ${status.completed_at || status.last_fired_at || "—"}`
+                {completed
+                  ? activeTriggerKind === "at"
+                    ? `• ${t("ruleEditor.completed")} ${status.completed_at || status.last_fired_at || "—"}`
+                    : `• ${t("ruleList.completedLabel")}`
                   : ""}{" "}
                 {status.last_error
                   ? `• ${t("ruleEditor.error")} ${status.last_error_at || "—"}`
@@ -212,6 +238,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               <input
                 type="checkbox"
                 checked={enabled}
+                disabled={completed && activeTriggerKind !== "at"}
                 onChange={(e) => patchRule({ enabled: e.target.checked })}
               />
               {t("ruleList.on")}
@@ -279,22 +306,18 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                         weekday: schedule.weekday,
                         dayOfMonth: schedule.dayOfMonth,
                       });
-                      patchRule({
-                        trigger: { kind: "cron", cron: cronExpr || nextCron, timezone: localTz },
-                      });
+                      patchTrigger({ kind: "cron", cron: cronExpr || nextCron, timezone: localTz });
                       return;
                     }
                     if (nextKind === "at") {
                       onSetOneShotMode("after");
-                      patchRule({
-                        trigger: {
-                          kind: "at",
-                          at: atRaw || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
-                        },
+                      patchTrigger({
+                        kind: "at",
+                        at: atRaw || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
                       });
                       return;
                     }
-                    patchRule({ trigger: { kind: "interval", every_seconds: everySeconds } });
+                    patchTrigger({ kind: "interval", every_seconds: everySeconds });
                   }}
                   ariaLabel={t("ruleEditor.scheduleType")}
                   className={inputClass(isDark)}
@@ -329,11 +352,9 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                     min={1}
                     value={Math.max(1, Math.round(everySeconds / 60))}
                     onChange={(e) =>
-                      patchRule({
-                        trigger: {
-                          kind: "interval",
-                          every_seconds: Math.max(1, Number(e.target.value || 1)) * 60,
-                        },
+                      patchTrigger({
+                        kind: "interval",
+                        every_seconds: Math.max(1, Number(e.target.value || 1)) * 60,
                       })
                     }
                     className={inputClass(isDark)}
@@ -359,18 +380,16 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       value={schedule.preset}
                       onChange={(value) => {
                         const preset = String(value || "daily") as SchedulePreset;
-                        patchRule({
-                          trigger: {
-                            kind: "cron",
-                            cron: buildCronFromPreset({
-                              preset,
-                              hour: schedule.hour,
-                              minute: schedule.minute,
-                              weekday: schedule.weekday,
-                              dayOfMonth: schedule.dayOfMonth,
-                            }),
-                            timezone: localTz,
-                          },
+                        patchTrigger({
+                          kind: "cron",
+                          cron: buildCronFromPreset({
+                            preset,
+                            hour: schedule.hour,
+                            minute: schedule.minute,
+                            weekday: schedule.weekday,
+                            dayOfMonth: schedule.dayOfMonth,
+                          }),
+                          timezone: localTz,
                         });
                       }}
                       ariaLabel={t("ruleEditor.pattern")}
@@ -384,18 +403,16 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       value={scheduleTime}
                       onChange={(e) => {
                         const parsed = parseTimeInput(e.target.value);
-                        patchRule({
-                          trigger: {
-                            kind: "cron",
-                            cron: buildCronFromPreset({
-                              preset: schedule.preset,
-                              hour: parsed.hour,
-                              minute: parsed.minute,
-                              weekday: schedule.weekday,
-                              dayOfMonth: schedule.dayOfMonth,
-                            }),
-                            timezone: localTz,
-                          },
+                        patchTrigger({
+                          kind: "cron",
+                          cron: buildCronFromPreset({
+                            preset: schedule.preset,
+                            hour: parsed.hour,
+                            minute: parsed.minute,
+                            weekday: schedule.weekday,
+                            dayOfMonth: schedule.dayOfMonth,
+                          }),
+                          timezone: localTz,
                         });
                       }}
                       className={inputClass(isDark)}
@@ -413,18 +430,16 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       }))}
                       value={String(schedule.weekday)}
                       onChange={(value) =>
-                        patchRule({
-                          trigger: {
-                            kind: "cron",
-                            cron: buildCronFromPreset({
-                              preset: "weekly",
-                              hour: schedule.hour,
-                              minute: schedule.minute,
-                              weekday: Number(value || 1),
-                              dayOfMonth: schedule.dayOfMonth,
-                            }),
-                            timezone: localTz,
-                          },
+                        patchTrigger({
+                          kind: "cron",
+                          cron: buildCronFromPreset({
+                            preset: "weekly",
+                            hour: schedule.hour,
+                            minute: schedule.minute,
+                            weekday: Number(value || 1),
+                            dayOfMonth: schedule.dayOfMonth,
+                          }),
+                          timezone: localTz,
                         })
                       }
                       ariaLabel={t("ruleEditor.weekday")}
@@ -442,24 +457,43 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       max={31}
                       value={schedule.dayOfMonth}
                       onChange={(e) =>
-                        patchRule({
-                          trigger: {
-                            kind: "cron",
-                            cron: buildCronFromPreset({
-                              preset: "monthly",
-                              hour: schedule.hour,
-                              minute: schedule.minute,
-                              weekday: schedule.weekday,
-                              dayOfMonth: Number(e.target.value || 1),
-                            }),
-                            timezone: localTz,
-                          },
+                        patchTrigger({
+                          kind: "cron",
+                          cron: buildCronFromPreset({
+                            preset: "monthly",
+                            hour: schedule.hour,
+                            minute: schedule.minute,
+                            weekday: schedule.weekday,
+                            dayOfMonth: Number(e.target.value || 1),
+                          }),
+                          timezone: localTz,
                         })
                       }
                       className={inputClass(isDark)}
                     />
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+
+            {activeTriggerKind !== "at" ? (
+              <div>
+                <label className={labelClass(isDark)} htmlFor="automation-max-runs">
+                  {t("ruleEditor.maxRuns")}
+                </label>
+                <input
+                  id="automation-max-runs"
+                  type="number"
+                  min={1}
+                  step={1}
+                  max={Number.MAX_SAFE_INTEGER}
+                  value={maxRuns ?? ""}
+                  onChange={(event) => setMaxRuns(event.target.value)}
+                  className={inputClass(isDark)}
+                />
+                <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  {t("ruleEditor.maxRunsHint")}
+                </div>
               </div>
             ) : null}
 

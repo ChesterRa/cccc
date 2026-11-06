@@ -1304,6 +1304,9 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
 
 - **Built-in Automation**: Configure bounded Mail/reply notices and collaboration health loops such as agent idle alerts, keepalive, silence checks, and help nudges.
 - **Rules**: Create scheduled reminders with interval / recurring schedule / one-time schedule.
+  Repeating reminders can have an optional maximum number of runs; leave it blank for no limit.
+  The list shows progress and completed rules. Editing the limit keeps the count; removing it
+  resets the count, so adding a new limit later starts from zero.
 - **Actions**:
   - `Send Reminder` (normal reminder delivery)
   - `Set Group Status` (operational, one-time only)

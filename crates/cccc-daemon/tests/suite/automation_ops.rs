@@ -356,7 +356,7 @@ fn automation_state_filters_other_peers_personal_rules_and_snippets() {
         json!({
             "id":id,"enabled":true,"scope":scope,"owner_actor_id":owner,
             "to":[owner.unwrap_or("@all")],
-            "trigger":{"kind":"interval","every_seconds":60},
+            "trigger":{"kind":"interval","every_seconds":60,"max_runs":10},
             "action":{"kind":"notify","snippet_ref":snippet_ref}
         })
     };
@@ -389,9 +389,9 @@ fn automation_state_filters_other_peers_personal_rules_and_snippets() {
         &json!({
             "v":5,
             "rules":{
-                "group-rule":{"last_fired_at":"2026-08-11T00:00:00Z"},
-                "peer1-rule":{"last_error_at":"2026-08-11T00:01:00Z","last_error":"delivery failed"},
-                "peer2-rule":{"last_error_at":"2026-08-11T00:02:00Z","last_error":"private failure"}
+                "group-rule":{"last_fired_at":"2026-08-11T00:00:00Z","fired_count":2},
+                "peer1-rule":{"last_error_at":"2026-08-11T00:01:00Z","last_error":"delivery failed","fired_count":3},
+                "peer2-rule":{"last_error_at":"2026-08-11T00:02:00Z","last_error":"private failure","fired_count":9}
             }
         }),
     )
@@ -422,6 +422,8 @@ fn automation_state_filters_other_peers_personal_rules_and_snippets() {
         state.result["status"]["peer1-rule"]["last_error"],
         "delivery failed"
     );
+    assert_eq!(state.result["status"]["group-rule"]["fired_count"], 2);
+    assert_eq!(state.result["status"]["peer1-rule"]["fired_count"], 3);
     assert!(state.result["status"].get("peer2-rule").is_none());
 
     let unknown = raw(
@@ -1180,6 +1182,52 @@ fn a_change_keeps_every_saved_rule_or_saves_nothing() {
         json!({"group_id":group_id,"ruleset":{"rules":[rule("twin")]}}),
     );
     assert_eq!(stored_ids(&home, group_id), ["twin"]);
+}
+
+#[test]
+fn repeating_rule_limits_must_be_positive_integers() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let created = ok(&home, "group_create", json!({"title":"automation limits"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    let triggers = [
+        json!({"kind":"interval","every_seconds":60,"max_runs":0}),
+        json!({"kind":"interval","every_seconds":60,"max_runs":-1}),
+        json!({"kind":"interval","every_seconds":60,"max_runs":1.5}),
+        json!({"kind":"cron","cron":"0 * * * *","max_runs":"2"}),
+        json!({"kind":"cron","cron":"0 * * * *","max_runs":null}),
+        json!({"kind":"at","at":"2030-01-01T00:00:00Z","max_runs":1}),
+    ];
+    for trigger in triggers {
+        let response = raw(
+            &home,
+            "group_automation_update",
+            json!({
+                "group_id":group_id,
+                "expected_version":1,
+                "ruleset":{"rules":[{
+                    "id":"repeat","trigger":trigger,"to":["@foreman"],
+                    "action":{"kind":"notify","message":"hello"}
+                }],"snippets":{}}
+            }),
+        );
+        assert!(!response.ok, "invalid limit was saved: {trigger}");
+        assert_eq!(
+            response.error.expect("validation error").code,
+            "group_automation_manage_failed"
+        );
+        assert_eq!(
+            ok(
+                &home,
+                "group_automation_state",
+                json!({"group_id":group_id})
+            )
+            .result["version"],
+            1
+        );
+    }
 }
 
 fn assert_cron_rejected(response: DaemonResponse) {

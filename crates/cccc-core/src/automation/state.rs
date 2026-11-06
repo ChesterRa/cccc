@@ -12,6 +12,8 @@ pub(super) struct RuntimeState {
     #[serde(default)]
     pub last_rule: BTreeMap<String, i64>,
     #[serde(default)]
+    pub fired_count: BTreeMap<String, u64>,
+    #[serde(default)]
     pub last_nudge: BTreeMap<String, i64>,
 }
 
@@ -26,6 +28,9 @@ pub(super) fn load(store: &GroupStore, group_id: &str) -> io::Result<RuntimeStat
         let doc: Value = read_json(&canonical)?;
         if let Some(rules) = doc.get("rules").and_then(Value::as_object) {
             for (rule_id, entry) in rules {
+                if let Some(count) = entry.get("fired_count").and_then(Value::as_u64) {
+                    state.fired_count.insert(rule_id.clone(), count);
+                }
                 if let Some(timestamp) = entry
                     .get("last_fired_at")
                     .and_then(Value::as_str)
@@ -98,6 +103,10 @@ pub(super) fn save(store: &GroupStore, group_id: &str, state: &RuntimeState) -> 
         let entry = object(rules.entry(rule_id.clone()).or_insert_with(|| json!({})));
         entry.insert("last_fired_at".into(), json!(format_timestamp(*timestamp)));
     }
+    for (rule_id, count) in &state.fired_count {
+        let entry = object(rules.entry(rule_id.clone()).or_insert_with(|| json!({})));
+        entry.insert("fired_count".into(), json!(count));
+    }
     let actors = object(root.entry("actors").or_insert_with(|| json!({})));
     for (key, timestamp) in &state.last_nudge {
         let Some((actor_id, event_id)) = key.split_once(':') else {
@@ -143,6 +152,14 @@ pub(super) fn reconcile_rules(
         let Some(entry) = rules_state.get_mut(&rule_id).and_then(Value::as_object_mut) else {
             continue;
         };
+        let has_limit = |rule: &Value| {
+            rule.get("trigger")
+                .and_then(|trigger| trigger.get("max_runs"))
+                .is_some()
+        };
+        if previous.get(&rule_id).is_some_and(|old| has_limit(old)) && !has_limit(rule) {
+            changed |= entry.remove("fired_count").is_some();
+        }
         let current_kind = trigger_text(rule, "kind");
         if current_kind != "at" {
             changed |= entry.remove("at_fired").is_some();

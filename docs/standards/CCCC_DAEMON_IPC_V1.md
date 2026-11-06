@@ -3492,8 +3492,8 @@ Args:
       owner_actor_id?: string | null
       to?: string[]
       trigger:
-        | { kind: "interval"; every_seconds: number }
-        | { kind: "cron"; cron: string; timezone?: string }
+        | { kind: "interval"; every_seconds: number; max_runs?: number } // positive integer
+        | { kind: "cron"; cron: string; timezone?: string; max_runs?: number } // positive integer
         | { kind: "at"; at: string } // RFC3339
       action?:
         | {
@@ -3547,6 +3547,7 @@ Result:
     last_error_at: string
     last_error: string
     next_fire_at: string
+    fired_count: number
     completed: boolean
     completed_at: string
   }>
@@ -3606,6 +3607,14 @@ Notes:
 - The first tick of a newly enabled interval rule establishes its clock and
   does not fire immediately. A paused or stopped group runs no automation. An
   idle group runs user rules but suppresses the built-in `standup` rule.
+- An interval or cron rule with `max_runs` completes after that many notification
+  firings. Only firings while the limit is set count toward it; changing the
+  limit, editing other fields or disabling the rule retains the count. Removing
+  the limit clears the count as part of the save, so adding one later starts at
+  zero. Deleting the rule also removes its count. The status `fired_count` is
+  filtered by rule visibility like the rest of the status. A repeating rule's
+  `completed_at` is empty: changing its limit can make it complete without a
+  new firing, so the last firing time is not necessarily the completion time.
 - Resume never catches up missed work: interval and cron clocks are rebased,
   missed one-time rules are completed without execution, and future one-time
   rules remain eligible.

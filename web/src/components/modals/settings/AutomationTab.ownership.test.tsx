@@ -72,8 +72,9 @@ vi.mock("./AutomationRuleList", () => ({
     visibleRules,
     rulesBusy,
     onEditRule,
+    completedRuleIds,
   }: ComponentProps<typeof AutomationRuleList>) => (
-    <output data-rules-busy={String(rulesBusy)}>
+    <output data-rules-busy={String(rulesBusy)} data-completed-rules={completedRuleIds.join(",")}>
       {visibleRules.map((rule) => (
         <button key={rule.id} disabled={rulesBusy} onClick={() => onEditRule(rule.id)}>
           {rule.id}
@@ -188,6 +189,21 @@ describe("AutomationTab group ownership fencing", () => {
     await act(async () => root.unmount());
     host.remove();
     vi.unstubAllGlobals();
+  });
+
+  it("classifies a completed repeating rule with the other completed rules", async () => {
+    const response = makeAutomationResponse("limited", "/path/a");
+    response.result.ruleset.rules[0].trigger = {
+      kind: "interval",
+      every_seconds: 600,
+      max_runs: 2,
+    };
+    response.result.status = { limited: { completed: true, fired_count: 2 } };
+    mocks.fetchAutomation.mockResolvedValue(response);
+
+    await renderTab("g_a");
+    expect(host.querySelector("output")?.textContent).toBe("");
+    expect(host.querySelector("output")?.getAttribute("data-completed-rules")).toBe("limited");
   });
 
   it("clears previous Group rules immediately on switch and ignores late Group A responses", async () => {

@@ -2269,7 +2269,7 @@
   },
   {
     "name": "cccc_automation",
-    "description": "Scheduled reminders for this Group: action=state|manage. state lists the rules you can see, their timing status and the version. manage applies actions in order and saves all of them or none. A peer manages only its own reminders (scope personal, owner_actor_id and to set to itself; these are the defaults when it leaves them out). The foreman manages every notify rule. Scheduled group_state and actor_control rules belong to the user; a request that would change, remove or reorder them is refused.",
+    "description": "Scheduled reminders for this Group: action=state|manage. state lists the rules you can see, their timing status, fired_count and the version. manage applies actions in order and saves all of them or none. A peer manages only its own reminders (scope personal, owner_actor_id and to set to itself; these are the defaults when it leaves them out). The foreman manages every notify rule. Scheduled group_state and actor_control rules belong to the user; a request that would change, remove or reorder them is refused.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2294,7 +2294,7 @@
           "items": {
             "type": "object"
           },
-          "description": "manage only. Items: {type:create_rule|update_rule, rule}, {type:set_rule_enabled, rule_id, enabled}, {type:delete_rule, rule_id}, {type:replace_all_rules, ruleset:{rules, snippets}}. A rule is {id, enabled?, scope?: group|personal, owner_actor_id?, to?: [recipient], trigger: {kind:interval, every_seconds} | {kind:cron, cron, timezone?} | {kind:at, at:RFC3339}, action: {kind:notify, message or snippet_ref, title?, priority?: low|normal|high|urgent}}. A one-time reminder to yourself: {type:create_rule, rule:{id:check-ci, trigger:{kind:at, at:<RFC3339 time after server_now from state>}, action:{kind:notify, message:Check CI}}}. A fired one-time rule is disabled; an interval or cron rule keeps firing until it is disabled or deleted."
+          "description": "manage only. Items: {type:create_rule|update_rule, rule}, {type:set_rule_enabled, rule_id, enabled}, {type:delete_rule, rule_id}, {type:replace_all_rules, ruleset:{rules, snippets}}. A rule is {id, enabled?, scope?: group|personal, owner_actor_id?, to?: [recipient], trigger: {kind:interval, every_seconds, max_runs?} | {kind:cron, cron, timezone?, max_runs?} | {kind:at, at:RFC3339}, action: {kind:notify, message or snippet_ref, title?, priority?: low|normal|high|urgent}}. A one-time reminder to yourself: {type:create_rule, rule:{id:check-ci, trigger:{kind:at, at:<RFC3339 time after server_now from state>}, action:{kind:notify, message:Check CI}}}. A fired one-time rule is disabled. An interval or cron rule repeats until disabled or deleted, or until its optional positive integer max_runs is reached. Changing the limit or disabling the rule retains its count; removing the limit resets it."
         },
         "expected_version": {
           "type": "integer",

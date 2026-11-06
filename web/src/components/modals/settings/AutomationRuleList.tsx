@@ -20,7 +20,7 @@ interface AutomationRuleListProps {
   status: Record<string, AutomationRuleStatus>;
   rulesBusy: boolean;
   showCompletedRules: boolean;
-  completedOneTimeRuleIds: string[];
+  completedRuleIds: string[];
   onToggleShowCompleted: (value: boolean) => void;
   onClearCompleted: () => void;
   onToggleRuleEnabled: (ruleId: string, enabled: boolean) => void;
@@ -34,7 +34,7 @@ export function AutomationRuleList({
   status,
   rulesBusy,
   showCompletedRules,
-  completedOneTimeRuleIds,
+  completedRuleIds,
   onToggleShowCompleted,
   onClearCompleted,
   onToggleRuleEnabled,
@@ -62,10 +62,10 @@ export function AutomationRuleList({
           type="button"
           className={secondaryButtonClass("sm")}
           onClick={onClearCompleted}
-          disabled={rulesBusy || completedOneTimeRuleIds.length === 0}
+          disabled={rulesBusy || completedRuleIds.length === 0}
           title={t("ruleList.clearCompletedTitle")}
         >
-          {t("ruleList.clearCompleted", { count: completedOneTimeRuleIds.length })}
+          {t("ruleList.clearCompleted", { count: completedRuleIds.length })}
         </button>
       </div>
 
@@ -186,7 +186,9 @@ export function AutomationRuleList({
         }
 
         const hasError = Boolean(ruleStatus.last_error);
-        const completed = Boolean(ruleStatus.completed) && triggerKind === "at";
+        const completed = Boolean(ruleStatus.completed);
+        const maxRuns =
+          rule.trigger && rule.trigger.kind !== "at" ? rule.trigger.max_runs : undefined;
         const completedAt = String(ruleStatus.completed_at || "").trim();
 
         return (
@@ -199,6 +201,9 @@ export function AutomationRuleList({
                 <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
                   {scheduleLabel} • {enabled ? t("ruleList.on") : t("ruleList.off")}{" "}
                   {completed ? `• ${t("ruleList.completedLabel")}` : ""}
+                  {maxRuns !== undefined
+                    ? ` • ${t("ruleList.runProgress", { done: ruleStatus.fired_count || 0, max: maxRuns })}`
+                    : ""}
                 </div>
               </div>
 
@@ -207,6 +212,12 @@ export function AutomationRuleList({
                   <input
                     type="checkbox"
                     checked={enabled}
+                    disabled={completed && triggerKind !== "at"}
+                    title={
+                      completed && triggerKind !== "at"
+                        ? t("ruleList.completedLimitHint")
+                        : undefined
+                    }
                     onChange={(e) => onToggleRuleEnabled(ruleId, e.target.checked)}
                   />
                   {t("ruleList.on")}
@@ -236,7 +247,7 @@ export function AutomationRuleList({
               {t("ruleList.lastShort")}: {lastFireAt || "—"} • {t("ruleList.nextShort")}:{" "}
               {nextFireAt || "—"}
             </div>
-            {completed ? (
+            {completed && triggerKind === "at" ? (
               <div
                 data-status-tone="ok"
                 className="mt-1 text-xs text-emerald-700 dark:text-emerald-300"

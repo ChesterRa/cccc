@@ -213,13 +213,12 @@ export function AutomationTab(props: AutomationTabProps) {
     return out;
   }, [props.devActors]);
 
-  const completedOneTimeRuleIds = useMemo(() => {
+  const completedRuleIds = useMemo(() => {
     return draft.rules
       .filter((rule) => {
         const rid = String(rule.id || "").trim();
-        const triggerKind = String(rule.trigger?.kind || "");
         const st = status[rid] || {};
-        return Boolean(rid) && triggerKind === "at" && Boolean(st.completed);
+        return Boolean(rid) && Boolean(st.completed);
       })
       .map((rule) => String(rule.id || "").trim());
   }, [draft.rules, status]);
@@ -228,9 +227,8 @@ export function AutomationTab(props: AutomationTabProps) {
     if (showCompletedRules) return draft.rules;
     return draft.rules.filter((rule) => {
       const rid = String(rule.id || "").trim();
-      const triggerKind = String(rule.trigger?.kind || "");
       const st = status[rid] || {};
-      return !(triggerKind === "at" && Boolean(st.completed));
+      return !st.completed;
     });
   }, [draft.rules, status, showCompletedRules]);
 
@@ -417,6 +415,11 @@ export function AutomationTab(props: AutomationTabProps) {
       } else {
         return t("automation.validationTriggerUnsupported", { id, kind: triggerKind });
       }
+      if (rule.trigger && rule.trigger.kind !== "at" && rule.trigger.max_runs !== undefined) {
+        const maxRuns = rule.trigger.max_runs;
+        if (!Number.isSafeInteger(maxRuns) || maxRuns < 1)
+          return t("automation.validationMaxRuns", { id });
+      }
 
       const scope = String(rule.scope || "group");
       if (scope !== "group" && scope !== "personal")
@@ -559,16 +562,16 @@ export function AutomationTab(props: AutomationTabProps) {
 
   const clearCompletedRules = async () => {
     if (!props.groupId) return;
-    if (completedOneTimeRuleIds.length <= 0) {
+    if (completedRuleIds.length <= 0) {
       setRulesErr(t("automation.noCompletedToClear"));
       return;
     }
     const ok = window.confirm(
-      t("automation.clearCompletedConfirm", { count: completedOneTimeRuleIds.length }),
+      t("automation.clearCompletedConfirm", { count: completedRuleIds.length }),
     );
     if (!ok) return;
 
-    const removing = new Set(completedOneTimeRuleIds);
+    const removing = new Set(completedRuleIds);
     const nextDraft: AutomationRuleSet = {
       ...draft,
       rules: draft.rules.filter((rule) => !removing.has(String(rule.id || "").trim())),
@@ -727,7 +730,7 @@ export function AutomationTab(props: AutomationTabProps) {
           status={status}
           rulesBusy={rulesBusy}
           showCompletedRules={showCompletedRules}
-          completedOneTimeRuleIds={completedOneTimeRuleIds}
+          completedRuleIds={completedRuleIds}
           onToggleShowCompleted={setShowCompletedRules}
           onClearCompleted={clearCompletedRules}
           onToggleRuleEnabled={(ruleId, enabled) => updateRule(ruleId, { enabled })}

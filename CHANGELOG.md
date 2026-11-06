@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - While a message with attachments is uploading, a stop button next to **Send** ends the wait and
   keeps your draft for recovery. The message may already have arrived, so check the conversation
   before sending it again.
+- Repeating reminders can stop after a chosen number of runs. The rule editor accepts an optional
+  limit, and the list shows its progress and completion. Thanks to
+  [@chriscoveries](https://github.com/chriscoveries) for [#193](https://github.com/ChesterRa/cccc/pull/193).
 
 ### Changed
 

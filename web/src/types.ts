@@ -1453,9 +1453,18 @@ export type GroupSpaceSyncResult = {
   errors?: Array<Record<string, unknown>>;
 };
 
-export type AutomationRuleTriggerInterval = { kind: "interval"; every_seconds: number };
+export type AutomationRuleTriggerInterval = {
+  kind: "interval";
+  every_seconds: number;
+  max_runs?: number;
+};
 
-export type AutomationRuleTriggerCron = { kind: "cron"; cron: string; timezone?: string };
+export type AutomationRuleTriggerCron = {
+  kind: "cron";
+  cron: string;
+  timezone?: string;
+  max_runs?: number;
+};
 
 export type AutomationRuleTriggerAt = { kind: "at"; at: string };
 
@@ -1498,6 +1507,7 @@ export type AutomationRuleStatus = {
   last_error_at?: string;
   last_error?: string;
   next_fire_at?: string;
+  fired_count?: number;
   completed?: boolean;
   completed_at?: string;
 };
