@@ -111,7 +111,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             binary: target/aarch64-apple-darwin/release/cccc
             platform_tag: macosx_11_0_arm64
@@ -233,7 +233,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             verifier: unix
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
             verifier: unix
           - os: windows-2022
