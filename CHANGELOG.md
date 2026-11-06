@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+
+- Codex native members now show recovery steps when their background server exits or Codex reports
+  the session ended. Sending a message in an open session to try reconnecting starts a model turn.
+
 ## [0.4.49]
 
 ### Added

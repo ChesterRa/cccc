@@ -230,24 +230,68 @@ it.each([
   const hints = enActors.nativeSession.recovery.hints;
   expect(host.textContent).toContain(enActors.nativeSession.recovery.states[state]);
   expect(host.textContent).toContain(
-    state === "disconnected" ? hints.disconnectedCodex : hints[state],
+    state === "disconnected"
+      ? hints.disconnectedCodex
+      : state === "host_exited"
+        ? hints.hostExitedCodex
+        : state === "session_ended"
+          ? hints.sessionEndedCodex
+          : hints[state],
   );
   expect(host.textContent).toContain(enActors.nativeSession.recovery.admissionHint);
   expect(host.querySelector("pre code")?.textContent).toBe(originalCommand);
 });
 
-it("routes a disconnected Codex session back to the shared app-server, other runtimes generically", async () => {
-  const hints = enActors.nativeSession.recovery.hints;
-  mocks.load.mockResolvedValue(recoveryResponse({ state: "disconnected" }));
-  await render();
-  expect(host.textContent).toContain(hints.disconnectedCodex);
-  expect(host.textContent).not.toContain(hints.disconnected);
-  const actor = { ...nativeActor, runtime: "claude", external_session_id: "claude:original-host" };
-  mocks.load.mockResolvedValue(recoveryResponse({ state: "disconnected" }, actor));
-  await render({ actor });
-  expect(host.textContent).toContain(hints.disconnected);
-  expect(host.textContent).not.toContain(hints.disconnectedCodex);
-});
+it.each(["disconnected", "host_exited", "session_ended"] as const)(
+  "offers Codex-specific recovery for %s and keeps other runtimes generic",
+  async (state) => {
+    const hints = enActors.nativeSession.recovery.hints;
+    const codexHint =
+      state === "disconnected"
+        ? hints.disconnectedCodex
+        : state === "host_exited"
+          ? hints.hostExitedCodex
+          : hints.sessionEndedCodex;
+    mocks.load.mockResolvedValue(recoveryResponse({ state }));
+    await render();
+    expect(host.textContent).toContain(codexHint);
+    expect(host.textContent).not.toContain(hints[state]);
+    const actor = {
+      ...nativeActor,
+      runtime: "claude",
+      external_session_id: "claude:original-host",
+    };
+    mocks.load.mockResolvedValue(recoveryResponse({ state }, actor));
+    await render({ actor });
+    expect(host.textContent).toContain(hints[state]);
+    expect(host.textContent).not.toContain(codexHint);
+  },
+);
+
+it.each(["en", "zh", "ja"] as const)(
+  "keeps Codex recovery steps visible after refresh in %s",
+  async (language) => {
+    await act(async () => i18n.changeLanguage(language));
+    const text = locales[language].actors.nativeSession.recovery;
+    const exited = recoveryResponse({ state: "host_exited" });
+    exited.result.refresh_status = "not_checked";
+    mocks.load.mockResolvedValueOnce(exited);
+    await render();
+    expect(host.textContent).toContain(text.hints.hostExitedCodex);
+
+    const ended = recoveryResponse({ state: "session_ended" });
+    ended.result.refresh_status = "not_checked";
+    mocks.refresh.mockResolvedValueOnce(ended);
+    await clickButton(text.refresh);
+    expect(host.textContent).toContain(text.hints.sessionEndedCodex);
+
+    mocks.refresh.mockResolvedValueOnce(recoveryResponse({ state: "disconnected" }));
+    await clickButton(text.refresh);
+    expect(host.textContent).toContain(text.refreshUnavailableCodex);
+    expect(host.textContent).toContain(text.hints.disconnectedCodex);
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+  },
+);
 
 it.each(["CCCC access paused", "Group paused", "Group stopped", "Available to receive"])(
   "keeps %s separate from a connected native integration",
@@ -558,6 +602,7 @@ it("keeps the validated snapshot when qualification is inconclusive, without a s
   expect(host.querySelector('[role="alert"]')?.textContent).toBe(
     enActors.nativeSession.recovery.refreshFailed,
   );
+  expect(host.textContent).toContain(enActors.nativeSession.recovery.hints.disconnectedCodex);
   expect(mocks.load).toHaveBeenCalledOnce();
   expect(mocks.refresh).toHaveBeenCalledOnce();
 });
@@ -725,6 +770,7 @@ it("reports a negative refresh without re-enabling access or retrying automatica
   await render();
   await clickButton("Refresh status");
   expect(host.textContent).toContain(enActors.nativeSession.recovery.refreshUnavailableCodex);
+  expect(host.textContent).toContain(enActors.nativeSession.recovery.hints.disconnectedCodex);
   expect(host.textContent).not.toContain(enActors.nativeSession.recovery.refreshUnavailable);
   expect(host.querySelector('[role="status"]')?.textContent).toBe("CCCC access paused");
   await advance(60000);
