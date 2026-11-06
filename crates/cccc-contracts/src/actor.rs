@@ -91,6 +91,35 @@ pub enum ActorRuntime {
 }
 
 impl ActorRuntime {
+    /// The wire name: the same string serde uses for this runtime.
+    #[must_use]
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Amp => "amp",
+            Self::Antigravity => "antigravity",
+            Self::Auggie => "auggie",
+            Self::Claude => "claude",
+            Self::Cline => "cline",
+            Self::Codex => "codex",
+            Self::Deepseek => "deepseek",
+            Self::Copilot => "copilot",
+            Self::Cursor => "cursor",
+            Self::Devin => "devin",
+            Self::Kiro => "kiro",
+            Self::Kilo => "kilo",
+            Self::Droid => "droid",
+            Self::Grok => "grok",
+            Self::Hermes => "hermes",
+            Self::Kimi => "kimi",
+            Self::Opencode => "opencode",
+            Self::Pi => "pi",
+            Self::WebModel => "web_model",
+            Self::ChatgptDots => "chatgpt_dots",
+            Self::GrokWebModel => "grok_web_model",
+            Self::Custom => "custom",
+        }
+    }
+
     #[must_use]
     pub const fn supports_acp_mode(self) -> bool {
         matches!(
@@ -327,6 +356,41 @@ mod tests {
         assert_eq!(actor.runner, RunnerKind::Headless);
         assert!(actor.command.is_empty());
         assert!(ActorRuntime::WebModel.is_browser_web_model());
+    }
+
+    const ALL_RUNTIMES: [ActorRuntime; 22] = [
+        ActorRuntime::Amp,
+        ActorRuntime::Antigravity,
+        ActorRuntime::Auggie,
+        ActorRuntime::Claude,
+        ActorRuntime::Cline,
+        ActorRuntime::Codex,
+        ActorRuntime::Deepseek,
+        ActorRuntime::Copilot,
+        ActorRuntime::Cursor,
+        ActorRuntime::Devin,
+        ActorRuntime::Kiro,
+        ActorRuntime::Kilo,
+        ActorRuntime::Droid,
+        ActorRuntime::Grok,
+        ActorRuntime::Hermes,
+        ActorRuntime::Kimi,
+        ActorRuntime::Opencode,
+        ActorRuntime::Pi,
+        ActorRuntime::WebModel,
+        ActorRuntime::ChatgptDots,
+        ActorRuntime::GrokWebModel,
+        ActorRuntime::Custom,
+    ];
+
+    #[test]
+    fn wire_name_matches_serde_for_every_runtime() {
+        for runtime in ALL_RUNTIMES {
+            let wire = serde_json::to_value(runtime).expect("serialize");
+            assert_eq!(wire.as_str(), Some(runtime.wire_name()), "{runtime:?}");
+            let parsed: ActorRuntime = serde_json::from_value(wire).expect("deserialize");
+            assert_eq!(parsed, runtime);
+        }
     }
 
     #[test]

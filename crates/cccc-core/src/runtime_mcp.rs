@@ -34,30 +34,7 @@ pub const fn is_auto_managed(runtime: ActorRuntime) -> bool {
 
 #[must_use]
 pub const fn name(runtime: ActorRuntime) -> &'static str {
-    match runtime {
-        ActorRuntime::Amp => "amp",
-        ActorRuntime::Antigravity => "antigravity",
-        ActorRuntime::Auggie => "auggie",
-        ActorRuntime::Claude => "claude",
-        ActorRuntime::Cline => "cline",
-        ActorRuntime::Codex => "codex",
-        ActorRuntime::Deepseek => "deepseek",
-        ActorRuntime::Copilot => "copilot",
-        ActorRuntime::Cursor => "cursor",
-        ActorRuntime::Devin => "devin",
-        ActorRuntime::Kiro => "kiro",
-        ActorRuntime::Kilo => "kilo",
-        ActorRuntime::Droid => "droid",
-        ActorRuntime::Grok => "grok",
-        ActorRuntime::Hermes => "hermes",
-        ActorRuntime::Kimi => "kimi",
-        ActorRuntime::Opencode => "opencode",
-        ActorRuntime::Pi => "pi",
-        ActorRuntime::WebModel => "web_model",
-        ActorRuntime::ChatgptDots => "chatgpt_dots",
-        ActorRuntime::GrokWebModel => "grok_web_model",
-        ActorRuntime::Custom => "custom",
-    }
+    runtime.wire_name()
 }
 
 #[must_use]

@@ -354,7 +354,7 @@ pub fn detect_runtimes() -> Vec<RuntimeProbe> {
         }
         let path =
             resolve_executable_in_path(&command, discovery_env.get("PATH").map(String::as_str));
-        let name = runtime_name(runtime).to_owned();
+        let name = runtime.wire_name().to_owned();
         RuntimeProbe {
             display_name: display_name(runtime).to_owned(),
             recommended_command: recommended.join(" "),
@@ -392,33 +392,6 @@ fn prepend_deepseek_bin(env: &mut BTreeMap<String, String>) {
     }
     if let Ok(path) = std::env::join_paths(paths) {
         env.insert("PATH".into(), path.to_string_lossy().into_owned());
-    }
-}
-
-const fn runtime_name(runtime: ActorRuntime) -> &'static str {
-    match runtime {
-        ActorRuntime::Amp => "amp",
-        ActorRuntime::Antigravity => "antigravity",
-        ActorRuntime::Auggie => "auggie",
-        ActorRuntime::Claude => "claude",
-        ActorRuntime::Cline => "cline",
-        ActorRuntime::Codex => "codex",
-        ActorRuntime::Deepseek => "deepseek",
-        ActorRuntime::Copilot => "copilot",
-        ActorRuntime::Cursor => "cursor",
-        ActorRuntime::Devin => "devin",
-        ActorRuntime::Kiro => "kiro",
-        ActorRuntime::Kilo => "kilo",
-        ActorRuntime::Droid => "droid",
-        ActorRuntime::Grok => "grok",
-        ActorRuntime::Hermes => "hermes",
-        ActorRuntime::Kimi => "kimi",
-        ActorRuntime::Opencode => "opencode",
-        ActorRuntime::Pi => "pi",
-        ActorRuntime::WebModel => "web_model",
-        ActorRuntime::ChatgptDots => "chatgpt_dots",
-        ActorRuntime::GrokWebModel => "grok_web_model",
-        ActorRuntime::Custom => "custom",
     }
 }
 
