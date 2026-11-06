@@ -55,7 +55,7 @@ export function RuntimeSwitchControls({
   onSaveCurrentProfile,
   onOutcomeUnknown,
   onSwitched,
-  onOpenWebSetup,
+  onWebSetupReady,
   onCurrentSourceDirectory,
   scopes = [],
   activeScopeKey,
@@ -73,7 +73,7 @@ export function RuntimeSwitchControls({
   onSaveCurrentProfile?: () => Promise<boolean>;
   onOutcomeUnknown?: () => void;
   onSwitched?: () => void;
-  onOpenWebSetup?: (runtime: string) => void;
+  onWebSetupReady?: (runtime: string) => void;
   onCurrentSourceDirectory?: (directory: string) => void;
   scopes?: NonNullable<GroupDoc["scopes"]>;
   activeScopeKey?: string;
@@ -251,6 +251,7 @@ export function RuntimeSwitchControls({
       return;
     setBusy(true);
     setError("");
+    let setupRuntime = "";
     try {
       const response = await api.switchActorRuntime(groupId, actor.id, {
         expected_actor_generation: generation,
@@ -269,6 +270,12 @@ export function RuntimeSwitchControls({
       } else {
         setResult(response.result);
         onSwitched?.();
+        if (
+          response.result.completion === "done" &&
+          isWebModelRuntime(response.result.to.runtime) &&
+          response.result.from.runtime !== response.result.to.runtime
+        )
+          setupRuntime = response.result.to.runtime;
       }
     } catch {
       setBlocked(true);
@@ -277,6 +284,7 @@ export function RuntimeSwitchControls({
     } finally {
       try {
         await refreshRuntimeSwitchGroup(groupId);
+        if (setupRuntime) onWebSetupReady?.(setupRuntime);
       } catch {
         setMessage(t("runtimeSwitch.refreshFailed"));
       }
@@ -425,20 +433,7 @@ export function RuntimeSwitchControls({
           {result.completion === "done" &&
           isWebModelRuntime(result.to.runtime) &&
           result.from.runtime !== result.to.runtime ? (
-            <>
-              <p>{t("runtimeSwitch.webConnectionRequired")}</p>
-              {onOpenWebSetup ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => onOpenWebSetup(result.to.runtime)}
-                >
-                  {t("runtimeSwitch.openWebSetup")}
-                </Button>
-              ) : null}
-            </>
+            <p>{t("runtimeSwitch.webConnectionRequired")}</p>
           ) : null}
         </div>
       ) : (

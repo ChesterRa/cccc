@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   uploadAvatar: vi.fn(),
   switchRuntime: vi.fn(),
   refresh: vi.fn(),
+  openWebSetup: vi.fn(),
 }));
 vi.mock("react-i18next", async (original) => ({
   ...(await original<typeof import("react-i18next")>()),
@@ -31,6 +32,7 @@ vi.mock("../../services/api", async (original) => ({
 vi.mock("../../features/runtimeSwitch/runtimeSwitchState", async (original) => ({
   ...(await original<typeof import("../../features/runtimeSwitch/runtimeSwitchState")>()),
   refreshRuntimeSwitchGroup: mocks.refresh,
+  openWebSetup: mocks.openWebSetup,
 }));
 vi.mock("../SelectCombobox", () => ({
   SelectCombobox: ({
@@ -114,6 +116,7 @@ beforeEach(() => {
   mocks.fetchActors.mockResolvedValue({ ok: true, result: { actors: [actor] } });
   mocks.fetchSecrets.mockResolvedValue({ ok: true, result: { keys: [] } });
   mocks.refresh.mockResolvedValue(undefined);
+  mocks.openWebSetup.mockReturnValue("opened");
   mocks.switchRuntime.mockResolvedValue({
     ok: true,
     result: {
@@ -222,6 +225,61 @@ it("switches a native member to a managed session using an explicit isolated tar
   );
   expect(config.onSave).not.toHaveBeenCalled();
   expect(config.onSaveAndRestart).not.toHaveBeenCalled();
+});
+
+it("keeps connection setup usable outside the locked editor after a native-to-Web switch", async () => {
+  mocks.switchRuntime.mockResolvedValue({
+    ok: true,
+    result: {
+      completion: "done",
+      start: "started",
+      from: { runtime: "codex" },
+      to: { runtime: "web_model" },
+    },
+  });
+  await render();
+  await act(async () => button("runtimeSwitch.web").click());
+  await act(async () => button("runtimeSwitch.switch").click());
+  await act(async () => button("runtimeSwitch.confirm").click());
+
+  expect(host.querySelector("fieldset")?.disabled).toBe(true);
+  const setup = button("runtimeSwitch.openWebSetup");
+  expect(setup.closest("fieldset")).toBeNull();
+  expect(setup.disabled).toBe(false);
+  await act(async () => {
+    setup.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(config.onCancel).toHaveBeenCalledOnce();
+  expect(mocks.openWebSetup).toHaveBeenCalledWith("g", "codex-1", "web_model", "generation-1");
+});
+
+it("does not offer an old switch's setup in a different editor after a delayed refresh", async () => {
+  let finishRefresh!: () => void;
+  mocks.refresh.mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      finishRefresh = resolve;
+    }),
+  );
+  mocks.switchRuntime.mockResolvedValue({
+    ok: true,
+    result: {
+      completion: "done",
+      start: "started",
+      from: { runtime: "codex" },
+      to: { runtime: "web_model" },
+    },
+  });
+  await render();
+  await act(async () => button("runtimeSwitch.web").click());
+  await act(async () => button("runtimeSwitch.switch").click());
+  await act(async () => button("runtimeSwitch.confirm").click());
+  config = { ...config, isOpen: false };
+  await render();
+  config = { ...config, isOpen: true, actorId: "other", savedActor: { ...actor, id: "other" } };
+  await render();
+  await act(async () => finishRefresh());
+  expect(button("runtimeSwitch.openWebSetup")).toBeUndefined();
 });
 
 it("waits for notes and blocks avatar or switch actions while completion is pending", async () => {

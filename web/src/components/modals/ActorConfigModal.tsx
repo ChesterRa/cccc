@@ -1075,6 +1075,7 @@ function EditActorConfigModal({
   const [managedProfileMessage, setManagedProfileMessage] = useState("");
   const [managedSwitchBlocked, setManagedSwitchBlocked] = useState(false);
   const [managedSwitchDone, setManagedSwitchDone] = useState(false);
+  const [webSetupRuntime, setWebSetupRuntime] = useState("");
   const savedDefaultScopeKey = savedActor?.default_scope_key || "";
   const [defaultScopeKey, setDefaultScopeKey] = useState(savedDefaultScopeKey);
   const [directoryBusy, setDirectoryBusy] = useState(false);
@@ -1451,6 +1452,7 @@ function EditActorConfigModal({
     setManagedSwitchPayload(null);
     setManagedSwitchBlocked(false);
     setManagedSwitchDone(false);
+    setWebSetupRuntime("");
     setDefaultScopeKey(savedDefaultScopeKey);
     secretFetchSeqRef.current += 1;
     setEditMode(hasLinked ? "profile" : "custom");
@@ -1820,11 +1822,30 @@ function EditActorConfigModal({
     if (busy === "actor-update" || secretsBusy || connectionBusy || avatarBusy !== "") return;
     onCancel();
   }
+  function openSwitchedWebSetup(runtime: string) {
+    if (!savedActor) return;
+    const expected = actorGenerationIdentity(savedActor);
+    onCancel();
+    window.setTimeout(() => {
+      const result = openWebSetup(groupId, actorId, runtime, expected);
+      if (result !== "opened")
+        useUIStore
+          .getState()
+          .showNotice({
+            message: t(
+              result === "editor_open"
+                ? "runtimeSwitch.closeEditorFirst"
+                : "runtimeSwitch.refreshFailed",
+            ),
+          });
+    }, 0);
+  }
   const normalizedGroupRole = normalizeGroupRole(groupRole);
   const groupRoleLabel =
     normalizedGroupRole === "foreman"
       ? t("groupRoleForeman", { defaultValue: "Foreman" })
       : t("groupRolePeer", { defaultValue: "Peer" });
+  const switchVisit = avatarVisitRef.current;
   const renderSwitchControls = (targetKind: "native" | "managed" | "web") =>
     savedActor && canSwitch ? (
       <RuntimeSwitchControls
@@ -1846,22 +1867,8 @@ function EditActorConfigModal({
           setManagedSwitchBlocked(true);
           setManagedSwitchDone(true);
         }}
-        onOpenWebSetup={(runtime) => {
-          const expected = actorGenerationIdentity(savedActor);
-          onCancel();
-          window.setTimeout(() => {
-            const result = openWebSetup(groupId, actorId, runtime, expected);
-            if (result !== "opened")
-              useUIStore
-                .getState()
-                .showNotice({
-                  message: t(
-                    result === "editor_open"
-                      ? "runtimeSwitch.closeEditorFirst"
-                      : "runtimeSwitch.refreshFailed",
-                  ),
-                });
-          }, 0);
+        onWebSetupReady={(runtime) => {
+          if (avatarVisitRef.current === switchVisit) setWebSetupRuntime(runtime);
         }}
         runtimes={runtimes}
         profiles={actorProfiles}
@@ -1918,6 +1925,22 @@ function EditActorConfigModal({
               role="status"
             >
               {String(localNotice || inlineNotice || "").trim()}
+            </div>
+          ) : null}
+
+          {webSetupRuntime ? (
+            <div className="mb-3 flex sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full sm:w-auto"
+                disabled={
+                  busy === "actor-update" || secretsBusy || connectionBusy || avatarBusy !== ""
+                }
+                onClick={() => openSwitchedWebSetup(webSetupRuntime)}
+              >
+                {t("runtimeSwitch.openWebSetup")}
+              </Button>
             </div>
           ) : null}
 

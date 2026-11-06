@@ -384,8 +384,14 @@ it("can switch to a stopped managed configuration without sending private values
   );
 });
 
-it("switches a native member to Web Model and offers connection setup", async () => {
-  const openSetup = vi.fn();
+it("offers Web Model connection setup only after the switched member is refreshed", async () => {
+  const setupReady = vi.fn();
+  let finishRefresh!: () => void;
+  mocks.refresh.mockReturnValueOnce(
+    new Promise<void>((resolve) => {
+      finishRefresh = resolve;
+    }),
+  );
   mocks.switchActorRuntime.mockResolvedValue({
     ok: true,
     result: {
@@ -407,7 +413,7 @@ it("switches a native member to Web Model and offers connection setup", async ()
         runtimes={[]}
         profiles={[]}
         profilesBusy={false}
-        onOpenWebSetup={openSetup}
+        onWebSetupReady={setupReady}
       />,
     ),
   );
@@ -422,8 +428,9 @@ it("switches a native member to Web Model and offers connection setup", async ()
     }),
   );
   expect(host.textContent).toContain("runtimeSwitch.webConnectionRequired");
-  await act(async () => button("runtimeSwitch.openWebSetup").click());
-  expect(openSetup).toHaveBeenCalledOnce();
+  expect(setupReady).not.toHaveBeenCalled();
+  await act(async () => finishRefresh());
+  expect(setupReady).toHaveBeenCalledWith("web_model");
 });
 
 it("warns about a previous Web conversation before switching to native", async () => {
