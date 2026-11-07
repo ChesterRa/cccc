@@ -274,3 +274,15 @@
   color: var(--mention);
   font-weight: 600;
 }
+
+/* Browsers draw the player as a rounded, tinted pill; frame it like the file chips. */
+:root[data-ui-style="lcd"] [data-lcd-scope] audio[controls] {
+  box-sizing: border-box;
+  border: 1px solid var(--lcd-rule);
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] audio[controls]::-webkit-media-controls-enclosure,
+:root[data-ui-style="lcd"] [data-lcd-scope] audio[controls]::-webkit-media-controls-panel {
+  border-radius: 0;
+  background: transparent;
+}

@@ -2,11 +2,13 @@ import type { MessageAttachment } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
 import {
+  isAudioAttachment,
   isImageAttachment,
   isSvgAttachment,
   isVideoAttachment,
 } from "../../utils/messageAttachments";
 import { FileIcon } from "../Icons";
+import { AudioAttachments } from "./AudioAttachments";
 import { ImagePreview } from "./ImagePreview";
 import { VideoPreview } from "./VideoPreview";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
@@ -28,8 +30,12 @@ export function MessageAttachments({
 }) {
   const imageAttachments = attachments.filter((attachment) => isImageAttachment(attachment));
   const videoAttachments = attachments.filter((attachment) => isVideoAttachment(attachment));
+  const audioAttachments = attachments.filter((attachment) => isAudioAttachment(attachment));
   const fileAttachments = attachments.filter(
-    (attachment) => !isImageAttachment(attachment) && !isVideoAttachment(attachment),
+    (attachment) =>
+      !isImageAttachment(attachment) &&
+      !isVideoAttachment(attachment) &&
+      !isAudioAttachment(attachment),
   );
   const useImageGrid = imageAttachments.length > 1;
 
@@ -105,11 +111,28 @@ export function MessageAttachments({
           })}
         </div>
       )}
+      {audioAttachments.length > 0 && (
+        <div
+          className={classNames(
+            (imageAttachments.length > 0 || videoAttachments.length > 0) && "mt-3",
+          )}
+        >
+          <AudioAttachments
+            attachments={audioAttachments}
+            blobGroupId={blobGroupId}
+            attachmentKeyPrefix={attachmentKeyPrefix}
+            downloadTitle={downloadTitle}
+          />
+        </div>
+      )}
       {fileAttachments.length > 0 && (
         <div
           className={classNames(
             "flex max-w-full flex-wrap items-start gap-2",
-            (imageAttachments.length > 0 || videoAttachments.length > 0) && "mt-3",
+            (imageAttachments.length > 0 ||
+              videoAttachments.length > 0 ||
+              audioAttachments.length > 0) &&
+              "mt-3",
           )}
         >
           {fileAttachments.map((attachment, index) => {

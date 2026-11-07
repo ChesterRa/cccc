@@ -32,6 +32,33 @@ describe("MessageAttachments download contract", () => {
     expect(markup).toContain(">quarterly report.txt</span>");
   });
 
+  it("offers audio a player beside its download, and leaves other files as chips", () => {
+    const markup = renderToStaticMarkup(
+      <MessageAttachments
+        attachments={[
+          { kind: "file", path: "state/blobs/a-hash", title: "voice.mp3", mime_type: "" },
+          { kind: "file", path: "state/blobs/b-hash", title: "memo.webm", mime_type: "audio/webm" },
+          { kind: "file", path: "state/blobs/c-hash", title: "clip.webm", mime_type: "video/webm" },
+          { kind: "file", path: "state/blobs/d-hash", title: "notes.txt", mime_type: "text/plain" },
+        ]}
+        blobGroupId="g1"
+        isUserMessage={false}
+        isDark={false}
+        attachmentKeyPrefix="event-audio"
+        downloadTitle={(name) => `Download ${name}`}
+      />,
+    );
+
+    expect(markup.match(/<audio/g)).toHaveLength(1);
+    expect(markup.match(/data-message-audio="true"/g)).toHaveLength(2);
+    expect(markup).toContain('download="voice.mp3"');
+    expect(markup).toContain('download="memo.webm"');
+    expect(markup).toContain('download="notes.txt"');
+    // Each file appears in exactly one group.
+    expect(markup.match(/voice\.mp3<\/span>/g)).toHaveLength(1);
+    expect(markup).toContain("playVideo");
+  });
+
   it("uses the named preview URL for images without forcing attachment disposition", () => {
     const markup = renderToStaticMarkup(
       <MessageAttachments

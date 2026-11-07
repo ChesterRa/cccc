@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+
+- Audio files in a message can now be played in the browser. Each keeps its download and gains a
+  play button. A message has one player, so you can switch between several clips to compare them.
+  Playback stops if the message scrolls far out of view.
+
 ### Changed
 
 - A message to an agent that cannot stay up now says so. CCCC tries to start the agent a few times

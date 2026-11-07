@@ -115,7 +115,7 @@ it("pauses another playing video when one starts", () => {
   open("a.mp4");
   open("b.mp4");
   const [first, second] = [
-    ...document.querySelectorAll<HTMLVideoElement>("video[data-message-video]"),
+    ...document.querySelectorAll<HTMLVideoElement>("video[data-message-media]"),
   ];
   Object.defineProperty(first, "paused", { configurable: true, get: () => false });
   const pauseFirst = vi.spyOn(first, "pause").mockImplementation(() => undefined);

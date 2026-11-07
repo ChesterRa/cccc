@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { DownloadIcon, FileIcon, PlayIcon } from "../Icons";
 import { MediaLightbox } from "./MediaLightbox";
+import { pauseOtherMessageMedia } from "./messageMedia";
 
 /**
  * A video attachment shown as its first frame. The frame loads only once the
  * message is on screen; playback happens in a dialog opened by a click, where
- * the player fetches in byte ranges. Starting one video pauses the others, and
+ * the player fetches in byte ranges. Starting one pauses other message media, and
  * a format the browser cannot decode falls back to the download chip.
  */
 export function VideoPreview({
@@ -125,8 +126,8 @@ export function VideoPreview({
           autoPlay
           playsInline
           preload="auto"
-          data-message-video
-          onPlay={pauseOtherVideos}
+          data-message-media
+          onPlay={pauseOtherMessageMedia}
           aria-label={label}
           className="h-full w-full bg-black object-contain"
           onError={fail}
@@ -134,14 +135,4 @@ export function VideoPreview({
       </MediaLightbox>
     </figure>
   );
-}
-
-/** One message video plays at a time. */
-function pauseOtherVideos(event: SyntheticEvent<HTMLVideoElement>) {
-  const current = event.currentTarget;
-  for (const video of current.ownerDocument.querySelectorAll<HTMLVideoElement>(
-    "video[data-message-video]",
-  )) {
-    if (video !== current && !video.paused) video.pause();
-  }
 }

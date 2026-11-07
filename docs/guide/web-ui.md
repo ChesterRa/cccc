@@ -1111,6 +1111,13 @@ Escape or Close returns to the message. Downloads remain available when the
 browser cannot decode a video. Confirmed uploads play and download from the
 Group's stored blob, so they remain available after the local upload preview expires.
 
+Audio files keep their download chip and gain a play button. A message has one player,
+which appears below its files; choosing another file switches to it, so you can compare
+several clips. Starting audio pauses other message audio and video, and starting a video
+pauses audio. Playback stops if the message scrolls far out of view or you change Group.
+Which formats play depends on the browser. A file that fails to play shows a note; you can
+try it again, and its download remains available.
+
 ### Message diagrams
 
 In Chat and Inbox messages, a fenced code block labeled `mermaid` is rendered as a diagram after
