@@ -32,7 +32,7 @@ function TypingText({ words, focused }: { words: string[]; focused: boolean }) {
   useEffect(() => {
     if (!playing) return;
     const complete = frame.count === characters.length;
-    const delay = frame.deleting ? 30 : complete ? 3000 : 60;
+    const delay = frame.deleting ? 30 : complete ? 5000 : 60;
     const timer = window.setTimeout(() => {
       setFrame((current) => {
         if (current.deleting) {

@@ -15,6 +15,8 @@ pub const DEEPSEEK_ACP_APP_VERSION: &str = DEEPSEEK_RELEASE_VERSION;
 pub const DEEPSEEK_LLM_ADAPTER_PACKAGE: &str = "@deepseek-ai/dsh-llm-deepseek";
 pub const DEEPSEEK_LLM_ADAPTER_VERSION: &str = DEEPSEEK_RELEASE_VERSION;
 pub const DEEPSEEK_NODE_RANGE: &str = "^22.19.0 || >=24.0.0";
+pub const DEEPSEEK_MODEL_ENV: &str = "DEEPSEEK_MODEL";
+pub const DEEPSEEK_DEFAULT_MODEL: &str = "deepseek-v4-1-flash";
 pub const DEEPSEEK_PROTOCOL_VERSION: u64 = 1;
 /// ACP SDK baseline locked for this preview wire contract.
 pub const DEEPSEEK_ACP_SDK_VERSION: &str = "0.25.1";

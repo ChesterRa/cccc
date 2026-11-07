@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
+mod receiver;
 mod web_model;
 
 struct Fixture {
@@ -1238,10 +1239,12 @@ fn a_submission_cut_off_by_the_switch_is_not_repeated_and_queued_work_moves_on()
     let actor = fixture.actor();
     let queued = fixture.send(&group, &actor, "queued behind the blocked write".into());
 
-    let result = fixture.switch(native_target(&source));
+    receiver::while_connected(&fixture, &source, || {
+        let result = fixture.switch(native_target(&source));
 
-    assert_eq!(result["completion"], "done");
-    fixture.assert_cut_off_work_moves_on(&source, &cut, &queued);
+        assert_eq!(result["completion"], "done");
+        fixture.assert_cut_off_work_moves_on(&source, &cut, &queued);
+    });
 }
 
 /// A program that reads into the large message of `a_write_cut_part_way`, says

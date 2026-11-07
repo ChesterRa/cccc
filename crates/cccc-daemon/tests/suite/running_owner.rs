@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
 /// Reads CCCC's first line and the message after it, each ended by the submit key.
-const READER: &str = "stty -echo; IFS= read -r preamble; IFS= read -r message; \
+const READER: &str = "stty -icanon -echo; IFS= read -r preamble; IFS= read -r message; \
     printf '%s\\n' \"$message\" > received; exec sleep 30";
 
 struct Fixture {

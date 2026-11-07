@@ -7,7 +7,7 @@ export const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   cline: "cline --tui --auto-approve true",
   codex:
     "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search",
-  deepseek: "deepseek",
+  deepseek: "dsh-acp-demo",
   copilot: "copilot --allow-all",
   cursor: "cursor-agent --yolo --approve-mcps",
   devin: "devin --permission-mode dangerous",

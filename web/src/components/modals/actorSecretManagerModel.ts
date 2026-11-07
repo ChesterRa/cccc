@@ -101,3 +101,12 @@ export function buildActorSecretSaveChanges(changes: ActorSecretChanges): ActorS
   }
   return { setVars: { ...changes.setVars }, unsetKeys: [...changes.unsetKeys], clear: false };
 }
+
+export function applyActorSecretSaveChanges(
+  values: Record<string, string>,
+  changes?: ActorSecretSaveChanges,
+): Record<string, string> {
+  const next = changes?.clear ? {} : { ...values };
+  for (const key of changes?.unsetKeys || []) delete next[key];
+  return { ...next, ...changes?.setVars };
+}

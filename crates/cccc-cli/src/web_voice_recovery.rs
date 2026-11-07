@@ -147,6 +147,32 @@ mod tests {
         use cccc_runtime::process_recovery::RecoveryError;
         use cccc_web::VoiceRecoveryRequest;
 
+        // Other CLI tests fork processes that can briefly inherit owner locks.
+        // Run the original lock/revision assertions in their own process.
+        const CASE: &str = "web_voice_recovery::tests::offline_daemon_review_holds_the_owner_lock_and_checks_the_revision";
+        const CHILD: &str = "CCCC_TEST_VOICE_RECOVERY_CHILD";
+        if std::env::var_os(CHILD).as_deref() != Some(std::ffi::OsStr::new(CASE)) {
+            let output =
+                std::process::Command::new(std::env::current_exe().expect("test executable"))
+                    .args(["--exact", CASE, "--nocapture", "--test-threads=1"])
+                    .env(CHILD, CASE)
+                    .env_remove("CCCC_GROUP_ID")
+                    .env_remove("CCCC_ACTOR_ID")
+                    .output()
+                    .expect("run isolated lock fixture");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success(),
+                "isolated lock fixture failed:\n{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                stdout.contains("1 passed"),
+                "lock fixture did not run: {stdout}"
+            );
+            return;
+        }
+
         let temp = tempfile::tempdir().expect("temporary home");
         let home = HomeLayout::from_path(temp.path()).expect("home");
         home.initialize().expect("initialize");

@@ -1018,9 +1018,29 @@ Open an existing Agent to inspect its Runtime and use its available lifecycle
 actions. The Group status button controls the whole Group's enabled Agents and
 message delivery; pausing delivery does not stop work already in progress.
 
+DeepSeek has a **DeepSeek connection** form in its Runtime settings. Enter an API
+base URL, the exact model ID supplied by the service, and its API key, then use
+**Save and restart**. The defaults are `https://api.deepseek.com` and
+`deepseek-v4-1-flash`; compatible gateways may use their own model IDs. A URL ending
+in `/chat/completions` is converted to its base URL. The same fields are available
+when creating an Agent, and saving it as a Runtime Profile includes these values.
+All three fields use the existing write-only private environment store: saved
+values are marked **Configured**, blank fields preserve them, and a new value
+replaces the saved one. **Use default** explicitly restores the official address
+or default model. The launch command remains available under advanced details.
+Pending connection edits show their own **Save** and **Save & Restart** actions
+beside the fields. Restarting from the Agent inspector does not commit an open
+configuration draft. A missing or rejected DeepSeek credential pauses automatic
+delivery until an explicit launch/restart; pending messages remain retryable.
+Custom gateways must support DeepSeek streaming Chat Completions and tool calls.
+The Agent editor keeps labels, the effective working directory, and actionable
+status messages visible. DeepSeek's URL, model, and key explanations are under
+**Connection help**, collapsed by default; pending changes keep their save actions.
+
 Switch to **Terminals** for the paged multi-Agent view, or open one Agent's
 inspector from its entry. Runtime restart and session-reset actions have different
 semantics; use the action's explanation before discarding a session.
+Use the Runtime terminal's native scrolling to review earlier output.
 
 ### Claude workspace trust
 

@@ -239,7 +239,7 @@ pub fn is_canonical_deepseek_config(config: &str) -> bool {
         Some("  name: '@deepseek-ai/dsh-acp-demo'"),
         Some("  config:"),
         Some("    provider: deepseek-official"),
-        Some("    model: deepseek-v4-flash"),
+        Some("    model: !!js process.env.DEEPSEEK_MODEL"),
         Some("    workspaceContext: false"),
         Some("    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT"),
         Some("- id: cccc-mcp"),
@@ -729,7 +729,7 @@ mod tests {
         std::fs::write(
             profile.join("cordis.yml"),
             format!(
-                "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n  config:\n    maxTokens: {}\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: deepseek-v4-flash\n    workspaceContext: false\n    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n",
+                "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n  config:\n    maxTokens: {}\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: !!js process.env.DEEPSEEK_MODEL\n    workspaceContext: false\n    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n",
                 super::DEEPSEEK_MAX_OUTPUT_TOKENS,
                 dsh.display()
             ),

@@ -18,7 +18,7 @@ interface ActorWorkingDirectoryProps {
   onScopeAttached?: (groupId: string, scope: api.AttachScopeResult["scope"]) => void;
   onBusyChange: (busy: boolean) => void;
   disabled: boolean;
-  hint: string;
+  hint?: string;
 }
 
 export function ActorWorkingDirectory({
@@ -156,7 +156,7 @@ export function ActorWorkingDirectory({
           ? t("workingDirectoryEffective", { directory: selectedScope.url })
           : t("workingDirectoryUnavailable")}
       </div>
-      <div className="text-[10px] text-[var(--color-text-muted)]">{hint}</div>
+      {hint ? <div className="text-[10px] text-[var(--color-text-muted)]">{hint}</div> : null}
       {groupId && onScopeAttached && !picker.open ? (
         <Button
           type="button"

@@ -35,7 +35,6 @@ async function render(
         onLaunch={vi.fn()}
         onReconnect={vi.fn()}
         onTakeover={vi.fn()}
-        onHistory={vi.fn()}
         onNewSession={vi.fn()}
         onRestart={vi.fn()}
         onStop={onStop}

@@ -1,4 +1,8 @@
-# Terminal history
+# Terminal output retention
+
+The Web terminal uses the Runtime's own scrollback for reviewing earlier output.
+Retained PTY output supports reconnects, stopped-output summaries, and diagnostic
+API queries.
 
 Touch scrolling follows the active xterm mode. Ordinary buffers with mouse
 tracking disabled or X10 tracking scroll local history directly; X10 reports
@@ -67,9 +71,9 @@ Normal stop and natural process exit drain the PTY reader before the transcript 
 
 The `terminal/clear` operation advances the absolute cursor and clears the hot buffer, active durable transcript, and the in-memory screen mirror used for future snapshots. It does not reset the cursor to zero, which keeps reconnect semantics unambiguous and prevents a fresh attach from restoring cleared scrollback.
 
-## Browsing repainted output
+## Rendered diagnostic history
 
-The history panel preserves inferred screens before backward cursor moves, line
+Diagnostic history rendering preserves inferred screens before backward cursor moves, line
 or screen erasure, carriage-return redraws, and alternate-screen switches.
 Frames appear in chronological order separated by a blank line. They are inferred
 from terminal controls, not timestamped screenshots; partial redraws can produce
@@ -89,12 +93,10 @@ scrollback shares the 50 MB display budget and explicit omission marker with
 inferred frames; newline-heavy output is stored in chunks rather than one
 allocation per blank line.
 
-Short or control-only pages do not automatically scan the retained archive. Use
-**Load older history** to continue; scrolling to the top of scrollable content
-also loads an older page. Errors pause automatic loading until an explicit retry.
-If retention or a terminal clear overtakes the pinned snapshot, paging stops
-with an expired-history notice and keeps the text already displayed. Reopen
-history to capture the current retained output.
+Diagnostic clients can page older output through `/terminal/history` using a
+backward cursor and a pinned end cursor. If retention or a terminal clear
+overtakes that range, the API reports `cursor_expired`; clients must obtain a
+fresh retained range before continuing.
 
 When a second Ctrl-C or the launcher's normal-shutdown deadline forces exit,
 the launcher terminates registered OS process trees directly. This path does not

@@ -293,12 +293,29 @@ done"#;
 
 #[cfg(unix)]
 #[test]
-fn missing_credential_is_structured_secret_free_and_stops_runtime() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    let store = GroupStore::new(home.clone()).expect("store");
-    let mut group = store.create("deepseek credential", "").expect("group");
-    let script = r#"while IFS= read -r line; do
+fn credential_failure_is_structured_secret_free_and_stops_runtime() {
+    for (message, code, expected) in [
+        (
+            "no API key for DEEPSEEK_API_KEY",
+            "credential_unavailable",
+            "DeepSeek API credential is not configured",
+        ),
+        (
+            "Internal error: turn failed: Invalid token",
+            "credential_rejected",
+            "DeepSeek API credential was rejected",
+        ),
+        (
+            "Incorrect API key provided for DEEPSEEK_API_KEY",
+            "credential_rejected",
+            "DeepSeek API credential was rejected",
+        ),
+    ] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("deepseek credential", "").expect("group");
+        let script = r#"while IFS= read -r line; do
 if printf '%s' "$line" | grep -q '"method":"initialize"'; then
   printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
 elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
@@ -307,41 +324,42 @@ else
   rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
   printf '{"jsonrpc":"2.0","id":%s,"error":{"message":"no API key for DEEPSEEK_API_KEY; diagnostic=should-not-leak"}}\n' "${rid:-3}"
 fi
-done"#;
-    let mut actor = Actor::new("deepseek");
-    actor.runtime = ActorRuntime::Deepseek;
-    actor.command = vec!["sh".into(), "-c".into(), script.into()];
-    group.actors.push(actor.clone());
-    store.save(&group).expect("save");
-    start(&home, &group, &actor, temp.path()).expect("start");
-    let mut event = Event::new("chat.message", &group.group_id);
-    event.by = "user".into();
-    event.data = serde_json::json!({"to":["deepseek"],"text":"hello"})
-        .as_object()
-        .cloned()
-        .expect("event data");
+done"#.replace("no API key for DEEPSEEK_API_KEY", message);
+        let mut actor = Actor::new("deepseek");
+        actor.runtime = ActorRuntime::Deepseek;
+        actor.command = vec!["sh".into(), "-c".into(), script];
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save");
+        start(&home, &group, &actor, temp.path()).expect("start");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = serde_json::json!({"to":["deepseek"],"text":"hello"})
+            .as_object()
+            .cloned()
+            .expect("event data");
 
-    assert!(!deliver(
-        &home,
-        &group,
-        &actor,
-        &event,
-        &AtomicBool::new(false),
-    ));
-    assert!(!running(&group.group_id, &actor.id));
-    assert!(manual_restart_required(&home, &group, &actor));
-    let events = std::fs::read_to_string(
-        store
-            .state_dir(&group.group_id)
-            .expect("state")
-            .join("headless/events.jsonl"),
-    )
-    .expect("headless events");
-    assert!(events.contains("credential_unavailable"));
-    assert!(events.contains("environment"));
-    assert!(events.contains("DeepSeek API credential is not configured"));
-    assert!(!events.contains("should-not-leak"));
-    stop(&group.group_id, &actor.id);
+        assert!(!deliver(
+            &home,
+            &group,
+            &actor,
+            &event,
+            &AtomicBool::new(false),
+        ));
+        assert!(!running(&group.group_id, &actor.id));
+        assert!(manual_restart_required(&home, &group, &actor));
+        let events = std::fs::read_to_string(
+            store
+                .state_dir(&group.group_id)
+                .expect("state")
+                .join("headless/events.jsonl"),
+        )
+        .expect("headless events");
+        assert!(events.contains(code));
+        assert!(events.contains("environment"));
+        assert!(events.contains(expected));
+        assert!(!events.contains("should-not-leak"));
+        stop(&group.group_id, &actor.id);
+    }
 }
 
 #[cfg(unix)]

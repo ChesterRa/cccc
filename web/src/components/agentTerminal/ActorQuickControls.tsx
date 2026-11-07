@@ -21,7 +21,6 @@ export function ActorQuickControls({
   onLaunch,
   onReconnect,
   onTakeover,
-  onHistory,
   onNewSession,
   onRestart,
   onStop,
@@ -46,7 +45,6 @@ export function ActorQuickControls({
   onLaunch: () => void;
   onReconnect: () => void;
   onTakeover: () => void;
-  onHistory: () => void;
   onNewSession: () => void;
   onRestart: () => void;
   onStop: () => void;
@@ -127,7 +125,7 @@ export function ActorQuickControls({
           </button>
         )
       ) : null}
-      {!readOnly || hasTerminal ? (
+      {!readOnly ? (
         <Popover
           open={open}
           onOpenChange={(value) => {
@@ -170,64 +168,55 @@ export function ActorQuickControls({
             <div className="truncate border-b border-[var(--glass-border-subtle)] px-2 py-1.5 text-xs font-semibold">
               {actorTitle}
             </div>
-            {hasTerminal ? (
-              <button className={item} onClick={() => run(onHistory, true)}>
-                {t("terminalHistory")}
+            {running && hasTerminal ? (
+              <button
+                className={item}
+                disabled={!connected || !writable || busy}
+                onClick={() => run(onInterrupt)}
+              >
+                {t("sendInterruptLabel")}
               </button>
             ) : null}
-            {!readOnly ? (
-              <>
-                {running && hasTerminal ? (
-                  <button
-                    className={item}
-                    disabled={!connected || !writable || busy}
-                    onClick={() => run(onInterrupt)}
-                  >
-                    {t("sendInterruptLabel")}
-                  </button>
-                ) : null}
-                {!running ? (
-                  <button className={item} disabled={busy} onClick={() => run(onLaunch)}>
-                    {t(startLabel)}
-                  </button>
-                ) : null}
-                {canStartNewSession ? (
-                  <button className={item} disabled={busy} onClick={() => run(onNewSession)}>
-                    {t("newSession")}
-                  </button>
-                ) : null}
-                {running && !pauseCcccAccess ? (
-                  <button className={item} disabled={busy} onClick={() => run(onRestart)}>
-                    {t("relaunch")}
-                  </button>
-                ) : null}
-                <button className={item} disabled={busy} onClick={() => run(onEdit, true)}>
-                  {t("editAgentConfig")}
-                </button>
-                <button className={item} onClick={() => run(onInbox, true)}>
-                  {t("inbox")}
-                  {unreadCount > 0 ? ` · ${unreadCount > 99 ? "99+" : unreadCount}` : ""}
-                </button>
-                <div className="my-1 border-t border-[var(--glass-border-subtle)]" />
-                {running ? (
-                  <button
-                    className={item}
-                    disabled={busy}
-                    title={pauseCcccAccess ? t("dotsPauseHint") : undefined}
-                    onClick={() => run(onStop)}
-                  >
-                    {t(pauseCcccAccess ? "dotsPause" : "quitAgent")}
-                  </button>
-                ) : null}
-                <button
-                  className={`${item} destructive-key text-rose-600 dark:text-rose-400`}
-                  disabled={busy}
-                  onClick={() => run(onRemove)}
-                >
-                  {t("removeAgent")}
-                </button>
-              </>
+            {!running ? (
+              <button className={item} disabled={busy} onClick={() => run(onLaunch)}>
+                {t(startLabel)}
+              </button>
             ) : null}
+            {canStartNewSession ? (
+              <button className={item} disabled={busy} onClick={() => run(onNewSession)}>
+                {t("newSession")}
+              </button>
+            ) : null}
+            {running && !pauseCcccAccess ? (
+              <button className={item} disabled={busy} onClick={() => run(onRestart)}>
+                {t("relaunch")}
+              </button>
+            ) : null}
+            <button className={item} disabled={busy} onClick={() => run(onEdit, true)}>
+              {t("editAgentConfig")}
+            </button>
+            <button className={item} onClick={() => run(onInbox, true)}>
+              {t("inbox")}
+              {unreadCount > 0 ? ` · ${unreadCount > 99 ? "99+" : unreadCount}` : ""}
+            </button>
+            <div className="my-1 border-t border-[var(--glass-border-subtle)]" />
+            {running ? (
+              <button
+                className={item}
+                disabled={busy}
+                title={pauseCcccAccess ? t("dotsPauseHint") : undefined}
+                onClick={() => run(onStop)}
+              >
+                {t(pauseCcccAccess ? "dotsPause" : "quitAgent")}
+              </button>
+            ) : null}
+            <button
+              className={`${item} destructive-key text-rose-600 dark:text-rose-400`}
+              disabled={busy}
+              onClick={() => run(onRemove)}
+            >
+              {t("removeAgent")}
+            </button>
           </PopoverContent>
         </Popover>
       ) : null}

@@ -38,6 +38,9 @@ import { Textarea } from "../ui/textarea";
 import { ActorWorkingDirectory } from "./ActorWorkingDirectory";
 import { ActorConfigTabs } from "./ActorConfigTabs";
 import { ActorSecretManager } from "./ActorSecretManager";
+import { DeepSeekCommandDetails, DeepSeekConnectionFields } from "./DeepSeekConnectionFields";
+import { deepSeekSettingsError, normalizeDeepSeekSettings } from "./deepseekSettingsModel";
+import { parsePrivateEnvSetText } from "../../utils/privateEnvInput";
 import {
   OpenCodeManagedModelHint,
   RuntimeCommandControl,
@@ -46,6 +49,7 @@ import {
 } from "./RuntimeProfileControls";
 import {
   buildActorSecretSaveChanges,
+  applyActorSecretSaveChanges,
   emptyActorSecretChanges,
   normalizeLoadedActorSecretKeys,
   type ActorSecretChanges,
@@ -179,6 +183,7 @@ export interface CreateActorConfigProps extends ActorConfigBaseProps {
     avatarFile?: File | null,
     runtimeMode?: RuntimeMode,
     defaultScopeKey?: string,
+    environment?: ActorSecretSaveChanges,
   ) => Promise<boolean> | boolean;
   onSelectGroup?: (groupId: string) => void;
 }
@@ -336,6 +341,8 @@ function CreateActorConfigModal({
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [capabilitiesPrimed, setCapabilitiesPrimed] = useState(false);
   const [advancedTab, setAdvancedTab] = useState<AdvancedTabId>("environment");
+  const [deepSeekChanges, setDeepSeekChanges] =
+    useState<ActorSecretChanges>(emptyActorSecretChanges);
   const avatarPreviewUrl = useMemo(
     () => (avatarFile ? URL.createObjectURL(avatarFile) : null),
     [avatarFile],
@@ -345,6 +352,7 @@ function CreateActorConfigModal({
     if (!isOpen) {
       setRuntimeMode("default");
       setLocalDialogOpen(false);
+      setDeepSeekChanges(emptyActorSecretChanges());
     }
   }, [isOpen]);
 
@@ -391,9 +399,17 @@ function CreateActorConfigModal({
   const showRuntimeSetup = !useProfile && runtime === "custom";
   const webModelSetupIsActorBound = !useProfile && isWebModelRuntime(runtime);
   const secretsPlaceholder = (SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER).set;
+  const parsedSecrets = parsePrivateEnvSetText(secretsSetText);
+  const initialSecrets = parsedSecrets.ok ? parsedSecrets.setVars : {};
+  const deepSeekSaveChanges = buildActorSecretSaveChanges(
+    normalizeDeepSeekSettings(deepSeekChanges),
+  );
+  const deepSeekError =
+    runtime === "deepseek" && !useProfile
+      ? deepSeekSettingsError(applyActorSecretSaveChanges(initialSecrets, deepSeekSaveChanges))
+      : "";
   const sectionCardClass = "min-w-0 rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
-  const sectionHintClass = "mt-1 text-xs text-[var(--color-text-muted)]";
   const createAdvancedTabIds: AdvancedTabId[] = [
     ...(showRuntimeSetup ? ["connection" as const] : []),
     ...(!useProfile && !isWebModelRuntime(runtime) ? ["environment" as const] : []),
@@ -411,6 +427,10 @@ function CreateActorConfigModal({
 
   const handleSubmit = async () => {
     if (scopeUnavailable || directoryBusy) return;
+    if (deepSeekError) {
+      onChangeError(t(`deepseek.${deepSeekError}`));
+      return;
+    }
     if (String(secretsSetText || "").trim() && (useProfile || isWebModelRuntime(runtime))) {
       onChangeError(t("secretDraftNotApplied"));
       return;
@@ -421,7 +441,13 @@ function CreateActorConfigModal({
     }
     try {
       const ok = await Promise.resolve(
-        onCreate(avatarFile, supportsAcpMode(runtime) ? runtimeMode : "default", defaultScopeKey),
+        runtime === "deepseek" && !useProfile
+          ? onCreate(avatarFile, "default", defaultScopeKey, deepSeekSaveChanges)
+          : onCreate(
+              avatarFile,
+              supportsAcpMode(runtime) ? runtimeMode : "default",
+              defaultScopeKey,
+            ),
       );
       if (ok) setAvatarFile(null);
     } catch (e) {
@@ -445,7 +471,6 @@ function CreateActorConfigModal({
           <div className="text-lg font-semibold text-[var(--color-text-primary)]">
             {t("addAiAgent")}
           </div>
-          <div className="text-sm mt-1 text-[var(--color-text-muted)]">{t("addActorSubtitle")}</div>
         </div>
       }
       closeAriaLabel={t("common:close")}
@@ -488,7 +513,9 @@ function CreateActorConfigModal({
                   type="button"
                   className="w-full font-semibold"
                   onClick={() => void handleSubmit()}
-                  disabled={!canSubmit || scopeUnavailable || directoryBusy}
+                  disabled={
+                    !canSubmit || scopeUnavailable || directoryBusy || Boolean(deepSeekError)
+                  }
                 >
                   {busy === "actor-add"
                     ? t("adding")
@@ -567,7 +594,6 @@ function CreateActorConfigModal({
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
                 <Surface className={sectionCardClass}>
                   <div className={sectionTitleClass}>{t("sectionBasics")}</div>
-                  <div className={sectionHintClass}>{t("addSectionBasicsHint")}</div>
 
                   <div className="mt-4 space-y-4">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
@@ -596,12 +622,6 @@ function CreateActorConfigModal({
                             placeholder={suggestedActorId}
                             disabled={busy === "actor-add"}
                           />
-                          <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                            {t("leaveEmptyToUse")}{" "}
-                            <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-                              {suggestedActorId}
-                            </code>
-                          </div>
                         </div>
 
                         <div>
@@ -635,9 +655,11 @@ function CreateActorConfigModal({
                               {t("foremanRole")}
                             </Button>
                           </div>
-                          <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                            {hasForeman ? t("foremanLeads") : t("firstAgentForeman")}
-                          </div>
+                          {!hasForeman ? (
+                            <div className="text-xs mt-1.5 text-[var(--color-text-muted)]">
+                              {t("firstAgentForeman")}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -653,12 +675,13 @@ function CreateActorConfigModal({
                         onScopeAttached={onScopeAttached}
                         onBusyChange={setDirectoryBusy}
                         disabled={busy === "actor-add"}
-                        hint={t("workingDirectoryHint")}
+                        hint={defaultScopeKey ? t("workingDirectoryHint") : undefined}
                       />
                     ) : null}
 
                     <div>
                       <RolePresetPicker
+                        showDescription={false}
                         draftValue={actorNotes}
                         onChangeDraft={onChangeActorNotes}
                         disabled={busy === "actor-add"}
@@ -674,9 +697,6 @@ function CreateActorConfigModal({
                         spellCheck={false}
                         disabled={busy === "actor-add"}
                       />
-                      <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                        {t("newActorNotesHint")}
-                      </div>
                     </div>
                   </div>
                 </Surface>
@@ -685,7 +705,6 @@ function CreateActorConfigModal({
                   <div className={sectionTitleClass}>
                     {t("sectionRuntime", "Runtime & Profile")}
                   </div>
-                  <div className={sectionHintClass}>{t("sectionRuntimeHint")}</div>
 
                   <div className="mt-4">
                     <RuntimeConfigurationModePicker
@@ -719,6 +738,7 @@ function CreateActorConfigModal({
                             {t("runtime")}
                           </label>
                           <RuntimeSelector
+                            showHint={false}
                             className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
                             value={runtime}
                             runtimeMode={runtimeMode}
@@ -747,15 +767,25 @@ function CreateActorConfigModal({
                           )}
                         </div>
 
-                        <RuntimeCommandControl
-                          runtime={runtime}
-                          command={command}
-                          defaultCommand={defaultCommand}
-                          useDefaultCommand={useDefaultCommand}
-                          disabled={busy === "actor-add"}
-                          onCommandChange={onChangeCommand}
-                          onUseDefaultCommandChange={onChangeUseDefaultCommand}
-                        />
+                        {runtime === "deepseek" ? (
+                          <DeepSeekConnectionFields
+                            changes={deepSeekChanges}
+                            initialValues={initialSecrets}
+                            onChange={setDeepSeekChanges}
+                            disabled={busy === "actor-add"}
+                          />
+                        ) : null}
+                        <DeepSeekCommandDetails runtime={runtime}>
+                          <RuntimeCommandControl
+                            runtime={runtime}
+                            command={command}
+                            defaultCommand={defaultCommand}
+                            useDefaultCommand={useDefaultCommand}
+                            disabled={busy === "actor-add"}
+                            onCommandChange={onChangeCommand}
+                            onUseDefaultCommandChange={onChangeUseDefaultCommand}
+                          />
+                        </DeepSeekCommandDetails>
 
                         {webModelSetupIsActorBound ? (
                           <div
@@ -791,7 +821,6 @@ function CreateActorConfigModal({
 
               <Surface className={sectionCardClass}>
                 <div className={sectionTitleClass}>{t("sectionAdvanced")}</div>
-                <div className={sectionHintClass}>{t("sectionAdvancedHint")}</div>
                 <div className="mt-4">
                   <ActorConfigTabs
                     ariaLabel={t("sectionAdvanced")}
@@ -894,11 +923,15 @@ function CreateActorConfigModal({
                                     variant="secondary"
                                     onClick={() =>
                                       void onSaveAsProfile(
-                                        undefined,
+                                        runtime === "deepseek" ? deepSeekSaveChanges : undefined,
                                         supportsAcpMode(runtime) ? runtimeMode : "default",
                                       )
                                     }
-                                    disabled={busy === "actor-profile-save" || busy === "actor-add"}
+                                    disabled={
+                                      busy === "actor-profile-save" ||
+                                      busy === "actor-add" ||
+                                      Boolean(deepSeekError)
+                                    }
                                   >
                                     {busy === "actor-profile-save"
                                       ? t("savingProfile")
@@ -1508,6 +1541,10 @@ function EditActorConfigModal({
   const rtInfo = runtimes.find((r) => r.name === runtime);
   const available = rtInfo?.available ?? false;
   const defaultCommand = rtInfo?.recommended_command || "";
+  const deepSeekError =
+    runtime === "deepseek" && editMode === "custom"
+      ? deepSeekSettingsError(secretChanges.setVars)
+      : "";
   const requireCommand =
     !effectiveLinked &&
     editMode === "custom" &&
@@ -1529,6 +1566,10 @@ function EditActorConfigModal({
   };
 
   const saveAsProfile = async () => {
+    if (deepSeekError) {
+      setSecretsError(t(`deepseek.${deepSeekError}`));
+      return;
+    }
     if (secretEditorOpen) {
       setSecretsError(t("secretEditorIncomplete"));
       return;
@@ -1543,7 +1584,11 @@ function EditActorConfigModal({
     try {
       const result = await onSaveAsProfile(
         buildActorSecretSaveChanges(
-          isWebModelRuntime(runtime) ? emptyActorSecretChanges() : secretChanges,
+          isWebModelRuntime(runtime)
+            ? emptyActorSecretChanges()
+            : runtime === "deepseek"
+              ? normalizeDeepSeekSettings(secretChanges)
+              : secretChanges,
         ),
         supportsAcpMode(runtime) ? runtimeMode : "default",
       );
@@ -1625,6 +1670,10 @@ function EditActorConfigModal({
   const submit = async (restart: boolean) => {
     if (!groupId || !actorId) return;
     if (busy === "actor-update" || scopeUnavailable || directoryBusy) return;
+    if (deepSeekError) {
+      setSecretsError(t(`deepseek.${deepSeekError}`));
+      return;
+    }
     if (secretEditorOpen) {
       setSecretsError(t("secretEditorIncomplete"));
       return;
@@ -1766,7 +1815,11 @@ function EditActorConfigModal({
 
     setSecretsError("");
     const secretSaveChanges = buildActorSecretSaveChanges(
-      isWebModelRuntime(runtime) ? emptyActorSecretChanges() : secretChanges,
+      isWebModelRuntime(runtime)
+        ? emptyActorSecretChanges()
+        : runtime === "deepseek"
+          ? normalizeDeepSeekSettings(secretChanges)
+          : secretChanges,
     );
 
     setSecretsBusy(true);
@@ -1802,8 +1855,8 @@ function EditActorConfigModal({
 
   const sectionCardClass = "min-w-0 rounded-2xl p-4 sm:p-5 glass-panel";
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
-  const sectionHintClass = "mt-1 text-xs text-[var(--color-text-muted)]";
   const saveDisabled =
+    Boolean(deepSeekError) ||
     connectionBusy ||
     busy === "actor-update" ||
     avatarBusy !== "" ||
@@ -1900,7 +1953,6 @@ function EditActorConfigModal({
           <div className="text-lg font-semibold text-[var(--color-text-primary)]">
             {t("editAgent", { actorId })}
           </div>
-          <div className="text-sm mt-1 text-[var(--color-text-muted)]">{t("changeSettings")}</div>
         </div>
       }
       closeAriaLabel={t("common:close")}
@@ -2043,12 +2095,6 @@ function EditActorConfigModal({
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.92fr)] xl:items-start">
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionBasics", "Basics")}</div>
-              <div className={sectionHintClass}>
-                {t(
-                  "sectionBasicsHint",
-                  "Edit the agent label, group role, behavior preset, and agent notes here.",
-                )}
-              </div>
 
               <div className="mt-4 space-y-4">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-[88px_minmax(0,1fr)] sm:items-start">
@@ -2078,9 +2124,6 @@ function EditActorConfigModal({
                       onChange={(e) => onChangeTitle(e.target.value)}
                       placeholder={actorId}
                     />
-                    <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                      {t("leaveEmptyForId")}
-                    </div>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <span className="text-xs font-medium text-[var(--color-text-muted)]">
                         {t("groupRole", { defaultValue: "Group role" })}
@@ -2120,12 +2163,17 @@ function EditActorConfigModal({
                     onScopeAttached={onScopeAttached}
                     onBusyChange={setDirectoryBusy}
                     disabled={busy === "actor-update"}
-                    hint={t("workingDirectoryEditHint")}
+                    hint={
+                      defaultScopeKey !== savedDefaultScopeKey
+                        ? t("workingDirectoryEditHint")
+                        : undefined
+                    }
                   />
                 ) : null}
 
                 <div>
                   <RolePresetPicker
+                    showDescription={false}
                     draftValue={actorNotes}
                     onChangeDraft={onChangeActorNotes}
                     disabled={actorNotesBusy || actorNotesError || busy === "actor-update"}
@@ -2141,9 +2189,6 @@ function EditActorConfigModal({
                     spellCheck={false}
                     disabled={actorNotesBusy || actorNotesError}
                   />
-                  <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                    {t("actorNotesHint")}
-                  </div>
                   {actorNotesBusy ? (
                     <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">
                       {t("loadingActorNotes")}
@@ -2163,10 +2208,10 @@ function EditActorConfigModal({
 
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionRuntime", "Runtime & Profile")}</div>
-              {category !== "native" ? (
-                <div className={sectionHintClass}>
-                  {t("sectionRuntimeHint", "Choose a runtime profile or custom runtime config.")}
-                </div>
+              {category !== currentCategory && category !== "native" ? (
+                <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                  {t("sectionRuntimeHint")}
+                </p>
               ) : null}
 
               <div className="mt-4">
@@ -2261,6 +2306,7 @@ function EditActorConfigModal({
                             {t("runtime")}
                           </label>
                           <RuntimeSelector
+                            showHint={false}
                             className="w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
                             value={runtime}
                             runtimeMode={runtimeMode}
@@ -2317,32 +2363,47 @@ function EditActorConfigModal({
                           </div>
                         ) : null}
 
-                        {!isWebModelRuntime(runtime) && (
-                          <div>
-                            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
-                              {t("command")}
-                            </label>
-                            <Input
-                              className="font-mono"
-                              value={command}
-                              onChange={(e) => onChangeCommand(e.target.value)}
-                              placeholder={defaultCommand || t("enterCommand")}
-                            />
-                            {isRunning ? (
-                              <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                                {t("runtimeChangesNote")}
-                              </div>
-                            ) : null}
-                            {defaultCommand.trim() ? (
-                              <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
-                                {t("default")}{" "}
-                                <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
-                                  {defaultCommand}
-                                </code>
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
+                        {runtime === "deepseek" ? (
+                          <DeepSeekConnectionFields
+                            keys={secretKeys}
+                            changes={secretChanges}
+                            onChange={setSecretChanges}
+                            disabled={busy === "actor-update" || secretsBusy}
+                            loading={secretsRefreshing}
+                            loadFailed={secretKeysLoadFailed}
+                            onSave={() => void submit(false)}
+                            onSaveAndRestart={() => void submit(true)}
+                            saveDisabled={saveDisabled || switchPending || managedSwitchBlocked}
+                          />
+                        ) : null}
+                        <DeepSeekCommandDetails runtime={runtime}>
+                          {!isWebModelRuntime(runtime) && (
+                            <div>
+                              <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+                                {t("command")}
+                              </label>
+                              <Input
+                                className="font-mono"
+                                value={command}
+                                onChange={(e) => onChangeCommand(e.target.value)}
+                                placeholder={defaultCommand || t("enterCommand")}
+                              />
+                              {isRunning ? (
+                                <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                                  {t("runtimeChangesNote")}
+                                </div>
+                              ) : null}
+                              {defaultCommand.trim() ? (
+                                <div className="text-[10px] mt-1.5 text-[var(--color-text-muted)]">
+                                  {t("default")}{" "}
+                                  <code className="px-1 rounded bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
+                                    {defaultCommand}
+                                  </code>
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+                        </DeepSeekCommandDetails>
                       </div>
                     )}
                     {stagingGrok && (
@@ -2441,12 +2502,6 @@ function EditActorConfigModal({
           {!isNativeActor && category !== "native" ? (
             <Surface className={sectionCardClass}>
               <div className={sectionTitleClass}>{t("sectionAdvanced", "Advanced")}</div>
-              <div className={sectionHintClass}>
-                {t(
-                  "sectionAdvancedHint",
-                  "Keep low-frequency configuration here so the main edit path stays short.",
-                )}
-              </div>
               <div className="mt-4">
                 <ActorConfigTabs
                   ariaLabel={t("sectionAdvanced", "Advanced")}

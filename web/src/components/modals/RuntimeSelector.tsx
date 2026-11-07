@@ -19,6 +19,7 @@ export function RuntimeSelector({
   ariaLabel,
   className,
   allowedRuntimes,
+  showHint = true,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -28,6 +29,7 @@ export function RuntimeSelector({
   ariaLabel?: string;
   className?: string;
   allowedRuntimes?: readonly string[];
+  showHint?: boolean;
 }) {
   const { t } = useTranslation("actors");
   const runtimes = useGroupStore((s) => s.runtimes);
@@ -38,7 +40,12 @@ export function RuntimeSelector({
   }, [status, refresh]);
   const selectedInfo = runtimes.find((item) => item.name === value);
   const selectedKey = runtimeDetectionKey(value, selectedInfo, status, runtimeMode);
-  const captionKey = status === "error" ? "failed" : selectedKey;
+  const captionKey =
+    status === "error"
+      ? "failed"
+      : value === "deepseek" && selectedKey === "detected" && !selectedInfo?.path
+        ? "automaticSetup"
+        : selectedKey;
   const checking = status === "idle" || status === "loading";
   const modeLabel = supportsAcpMode(value)
     ? runtimeMode === "acp"
@@ -120,10 +127,12 @@ export function RuntimeSelector({
           {t("runtimeDetection.recheck")}
         </Button>
       </div>
-      <p className="text-[11px] leading-4 text-[var(--color-text-muted)]">
-        {t("runtimeDetection.scope")}
-        {value === "pi" ? ` ${t("piRuntimeHint")}` : ""}
-      </p>
+      {showHint || value === "pi" ? (
+        <p className="text-[11px] leading-4 text-[var(--color-text-muted)]">
+          {showHint ? t("runtimeDetection.scope") : null}
+          {value === "pi" ? ` ${t("piRuntimeHint")}` : ""}
+        </p>
+      ) : null}
     </div>
   );
 }

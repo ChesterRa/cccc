@@ -30,7 +30,10 @@ import { canonicalGrokBotUrl, isGrokBotUrl } from "../../utils/webModelTargetDra
 import type { CreatedNativeActorNavigation } from "../../hooks/useAppTabState";
 import type { EditActorSavePayload, SaveActorProfileResult } from "./ActorConfigModal";
 import { resolveNewActorId } from "./actorCreateModel";
-import type { ActorSecretSaveChanges } from "./actorSecretManagerModel";
+import {
+  applyActorSecretSaveChanges,
+  type ActorSecretSaveChanges,
+} from "./actorSecretManagerModel";
 import { formatRuntimeCommand } from "./runtimeProfileControlsModel";
 import { revealRuntimeConfirmation } from "../../hooks/runtimeConfirmation";
 
@@ -953,6 +956,7 @@ export function useAppModalActorActions(args: {
     avatarFile?: File | null,
     runtimeMode?: "default" | "acp",
     defaultScopeKey = "",
+    environment?: ActorSecretSaveChanges,
   ): Promise<boolean> => {
     if (!selectedGroupId) return false;
     const creationGroupId = selectedGroupId;
@@ -978,7 +982,7 @@ export function useAppModalActorActions(args: {
         setAddActorError(parsedSecrets.error);
         return false;
       }
-      secretsSetVars = parsedSecrets.setVars;
+      secretsSetVars = applyActorSecretSaveChanges(parsedSecrets.setVars, environment);
     }
 
     setBusy("actor-add");
@@ -1082,7 +1086,7 @@ export function useAppModalActorActions(args: {
   };
 
   const handleSaveNewActorAsProfile = async (
-    _secrets?: ActorSecretSaveChanges,
+    secrets?: ActorSecretSaveChanges,
     runtimeMode?: "default" | "acp",
   ) => {
     if (newActorUseProfile) return;
@@ -1093,6 +1097,7 @@ export function useAppModalActorActions(args: {
       setAddActorError(parsed.error);
       return;
     }
+    const setVars = applyActorSecretSaveChanges(parsed.setVars, secrets);
     const suggested = String(newActorId || `${newActorRuntime}-profile`).trim();
     const name =
       newProfileSaveRef.current?.name || window.prompt(t("profileNamePrompt"), suggested);
@@ -1127,14 +1132,9 @@ export function useAppModalActorActions(args: {
       const profileId = String(resp.result?.profile?.id || "").trim();
       if (profileId) {
         newProfileSaveRef.current = resp.result.profile;
-        const hasSecrets = Object.keys(parsed.setVars).length > 0;
+        const hasSecrets = Object.keys(setVars).length > 0;
         if (hasSecrets) {
-          const secretResp = await api.updateActorProfilePrivateEnv(
-            profileId,
-            parsed.setVars,
-            [],
-            false,
-          );
+          const secretResp = await api.updateActorProfilePrivateEnv(profileId, setVars, [], false);
           if (!secretResp.ok) {
             setAddActorError(secretResp.error?.message || t("failedToSaveActorProfile"));
             return;

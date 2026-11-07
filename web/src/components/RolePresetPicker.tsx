@@ -12,6 +12,7 @@ import { GroupCombobox } from "./GroupCombobox";
 type RolePresetPickerProps = {
   draftValue: string;
   disabled?: boolean;
+  showDescription?: boolean;
   onChangeDraft: (value: string) => void;
 };
 
@@ -20,6 +21,7 @@ const NO_PRESET_VALUE = "__no_actor_preset__";
 export function RolePresetPicker({
   draftValue,
   disabled = false,
+  showDescription = true,
   onChangeDraft,
 }: RolePresetPickerProps) {
   const { t } = useTranslation("actors");
@@ -74,7 +76,11 @@ export function RolePresetPicker({
         <div className="text-xs font-semibold text-[var(--color-text-primary)]">
           {t("rolePreset")}
         </div>
-        <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("rolePresetHint")}</div>
+        {showDescription ? (
+          <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+            {t("rolePresetHint")}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -128,9 +134,11 @@ export function RolePresetPicker({
         </Button>
       </div>
 
-      <div className="text-[10px] leading-5 text-[var(--color-text-muted)]">
-        {selectedPreset ? selectedPreset.summary : t("rolePresetSelectPrompt")}
-      </div>
+      {showDescription ? (
+        <div className="text-[10px] leading-5 text-[var(--color-text-muted)]">
+          {selectedPreset ? selectedPreset.summary : t("rolePresetSelectPrompt")}
+        </div>
+      ) : null}
 
       {visibleNotice ? (
         <div className="rounded-xl border border-black/10 bg-[rgb(245,245,245)] px-3 py-2 text-xs text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">

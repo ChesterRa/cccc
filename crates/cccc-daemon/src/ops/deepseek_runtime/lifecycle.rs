@@ -1,7 +1,7 @@
 use super::{running, start, stop};
 use crate::dispatch::OpError;
 use crate::ops::{actor_profile_runtime, actor_runtime, actor_secrets};
-use cccc_contracts::{Actor, ActorRuntime};
+use cccc_contracts::{Actor, ActorRuntime, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_MODEL_ENV};
 use cccc_core::{GroupDoc, HomeLayout};
 use std::collections::BTreeMap;
 
@@ -65,6 +65,23 @@ fn launch_env_from(
 ) -> BTreeMap<String, String> {
     let mut env = base.into_iter().collect::<BTreeMap<_, _>>();
     env.extend(actor.env.clone());
+    let model = env
+        .get(DEEPSEEK_MODEL_ENV)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEEPSEEK_DEFAULT_MODEL)
+        .to_owned();
+    env.insert(DEEPSEEK_MODEL_ENV.into(), model);
+    if let Some(base) = env.get_mut("DEEPSEEK_BASE_URL") {
+        *base = base
+            .trim()
+            .trim_end_matches('/')
+            .trim_end_matches("/chat/completions")
+            .to_owned();
+        if base.is_empty() {
+            env.remove("DEEPSEEK_BASE_URL");
+        }
+    }
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),
@@ -130,6 +147,37 @@ mod tests {
         assert_eq!(env.get("PATH").map(String::as_str), Some("/actor/bin"));
         assert_eq!(env.get("DSH_HOME").map(String::as_str), Some("/daemon/dsh"));
         assert_eq!(env.get("HOME").map(String::as_str), Some("/daemon/home"));
+        assert_eq!(
+            env.get("DEEPSEEK_MODEL").map(String::as_str),
+            Some("deepseek-v4-1-flash")
+        );
+        actor
+            .env
+            .insert("DEEPSEEK_MODEL".into(), " channel/custom-model ".into());
+        actor.env.insert(
+            "DEEPSEEK_BASE_URL".into(),
+            " https://gateway.example/v1/chat/completions/ ".into(),
+        );
+        let custom = launch_env_from(
+            [("DEEPSEEK_MODEL".into(), "daemon-model".into())],
+            &home,
+            &group,
+            &actor,
+        );
+        assert_eq!(
+            custom.get("DEEPSEEK_MODEL").map(String::as_str),
+            Some("channel/custom-model")
+        );
+        assert_eq!(
+            custom.get("DEEPSEEK_BASE_URL").map(String::as_str),
+            Some("https://gateway.example/v1")
+        );
+        actor.env.insert("DEEPSEEK_MODEL".into(), "  ".into());
+        let defaults = launch_env_from([], &home, &group, &actor);
+        assert_eq!(
+            defaults.get("DEEPSEEK_MODEL").map(String::as_str),
+            Some("deepseek-v4-1-flash")
+        );
         assert_eq!(
             env.get("CCCC_ACTOR_ID").map(String::as_str),
             Some("deepseek")

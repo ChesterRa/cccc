@@ -83,7 +83,7 @@ describe("composer typing placeholder", () => {
       expect(text()).toBe(word[0]);
       await tick(60);
       expect(text()).toBe(word);
-      await tick(2999);
+      await tick(4999);
       expect(text()).toBe(word);
       await tick(1);
       expect(text()).toBe(word);
@@ -106,7 +106,7 @@ describe("composer typing placeholder", () => {
     await tick(60);
     expect(text()).toBe("ab");
     expect(caret()).toBe("hold");
-    await tick(3000);
+    await tick(5000);
     expect(caret()).toBe("typing");
   });
 

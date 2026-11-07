@@ -98,6 +98,20 @@ cccc setup --runtime antigravity
 
 DeepSeek Harness is an upstream developer preview, so CCCC owns and isolates the tested ACP composition. On first use, it installs only the four required packages (`dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek`) under `CCCC_HOME/runtimes/deepseek/<release>`. Exact direct versions plus an npm release cutoff keep every transitive `@deepseek-ai/dsh*` package on the same validated preview release. The managed LLM adapter caps output at 65,536 tokens so prompt and MCP tool context retain headroom inside the model window. Setup also prunes the obsolete direct `dsh` bundle and its managed profile patch from earlier preview installs. CCCC does not modify `~/.dsh` or a project `package.json`; the legacy one-shot `dsh --profile cccc-acp` path and its unused bundle profile are not used. Concurrent starts share one setup lock, and a failed installation remains retryable. Running `cccc setup --runtime deepseek` performs the same idempotent setup eagerly. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
 
+DeepSeek's connection form writes `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and
+`DEEPSEEK_MODEL` to the Agent's existing private environment. Runtime Profiles can
+carry the same variables. The base URL defaults to `https://api.deepseek.com`, and
+the model defaults to `deepseek-v4-1-flash`; custom model IDs are passed unchanged
+after trimming surrounding whitespace. The shared managed ACP config reads the
+model from each launched process's environment, so changing one Agent does not
+change other Agents. Save and restart the Agent to apply connection changes.
+Custom gateways must support DeepSeek streaming Chat Completions and tool calls;
+an OpenAI-compatible label alone does not establish that compatibility.
+Missing API keys and provider authentication rejections such as `Invalid token`
+stop the current DeepSeek process and pause automatic delivery. Correct the saved
+connection settings and explicitly launch/restart the Agent to retry its pending
+messages. Editing a draft or using a separate inspector restart does not save it.
+
 Prompt-assisted runtimes print an idempotent setup prompt or contract that you run inside that runtime:
 
 ```bash
@@ -726,7 +740,7 @@ Use a mixed group when different agents are good at different roles:
 
 Each agent can have its own Runtime, command override, and private environment. CCCC derives the interaction surface from the selected Runtime. Runtime state stays in `CCCC_HOME`, not in your repository.
 
-Native terminal output always uses bounded memory and can optionally persist a bounded per-agent transcript. See [Terminal history](terminal-history.md) for opt-in persistence, retention, cursor, restart, and security behavior.
+Native terminal output always uses bounded memory and can optionally persist a bounded per-agent transcript. See [Terminal output retention](terminal-history.md) for opt-in persistence, retention, cursor, restart, and security behavior.
 
 ## Git worktrees and long-lived agents {#git-worktrees-and-long-lived-actors}
 

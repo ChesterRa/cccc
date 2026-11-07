@@ -626,6 +626,7 @@ export type RuntimeInfo = {
   display_name: string;
   recommended_command?: string;
   available: boolean;
+  path?: string | null;
   mode_availability?: Partial<Record<RuntimeMode, boolean>>;
 };
 

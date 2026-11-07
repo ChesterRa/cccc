@@ -21,6 +21,26 @@ pub(super) struct TurnProjection<'a> {
 
 pub(super) fn normalize_turn_error(error: Value) -> (Value, bool) {
     let searchable = error.to_string().to_ascii_lowercase();
+    if [
+        "invalid token",
+        "invalid api key",
+        "invalid_api_key",
+        "incorrect api key",
+        "authentication failed",
+        "authentication_error",
+    ]
+    .into_iter()
+    .any(|message| searchable.contains(message))
+    {
+        return (
+            json!({
+                "code": "credential_rejected",
+                "category": "environment",
+                "message": "DeepSeek API credential was rejected; update the saved API key and restart the actor"
+            }),
+            true,
+        );
+    }
     if searchable.contains("no api key") || searchable.contains("deepseek_api_key") {
         return (
             json!({
