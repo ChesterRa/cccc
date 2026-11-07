@@ -1,8 +1,8 @@
-/* CSS imports must stay at the top for PostCSS. */
 @import "./styles/markdown.css";
 @import "./styles/chatMessage.css";
 @import "./styles/chatComposer.css";
 @import "./styles/lcd.css";
+@import "./styles/lcdMobileMessages.css";
 @import "./styles/lcdMotion.css";
 @import "./styles/lcdIcons.css";
 @import "./styles/lcdComposer.css";

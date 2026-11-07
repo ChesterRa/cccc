@@ -87,7 +87,8 @@ between messages, and a Markdown rule inside a message is a short mark in the te
 Images and files sent with a message follow its text with no rule between them, and the sender's
 insight follows both. Messages have no background, and pointing at one changes only its actions.
 Sender, recipients, Mail mode and time share a compact header; delivery failures and reply/read
-status stay visible.
+status stay visible. On a phone, the sender, time and actions sit above the route, the message
+uses the available width, and the sender's insight is set apart below it.
 A reply shows up to two lines of the message it answers; clicking or tapping that
 quote, or pressing Enter on it, opens the original message. With a mouse or trackpad
 and enough room in the message column, **Reply**, **Forward** and a copy icon appear
@@ -107,7 +108,8 @@ header, the filter row and the runtime dock out of view. They return when you sc
 tap the messages, reach the newest message or touch the composer. A deliberate touch scroll
 of the messages can also take the focus out of the message box, so the keyboard can close;
 a draft stays, and text an input method is still composing is left alone. The **More**
-button sits beside each message. Phones in landscape also use the single-row composer.
+button sits beside each message. When both are visible, **Back to latest** sits beside the
+members at the bottom of the log. Phones in landscape also use the single-row composer.
 
 The header uses its existing Group status dot for page-connection health: red
 means disconnected, pulsing amber means reconnecting, and a connected page uses
@@ -334,7 +336,7 @@ button reads **Back to filtered conversation**, and both return to the filtered 
 
 Message search shows the current Group name and sender display names. Enter or **Search** submits the keywords; changing a filter reruns the submitted query. Typing new keywords does not change existing highlights or pagination until you submit again. Initial guidance, loading, no matches and failed requests are separate states. **Open** returns to the message context; reply and copying the event ID remain available.
 
-Settings keeps **This group** and **This instance** separate. The ⓘ beside the switch explains both scopes, including why **This instance** may be locked, and says so when no Group is open. Section forms share a plain work surface, while independent configurations and authorization states retain their own boundaries. Under **Branding**, save the product name explicitly; icon uploads and resets apply immediately. The product name changes the Web sidebar, sign-in screen and browser tab, not the instance name shown in Connect.
+Settings keeps **This group** and **This instance** separate. On phones, the ⓘ beside the switch explains both scopes, including why **This instance** may be locked, and says so when no Group is open. Section forms share a plain work surface, while independent configurations and authorization states retain their own boundaries. Under **Branding**, save the product name explicitly; icon uploads and resets apply immediately. The product name changes the Web sidebar, sign-in screen and browser tab, not the instance name shown in Connect.
 
 Related fields use headings and spacing rather than nested cards. Section actions stay beside their heading when space allows and wrap on narrow screens. Settings help text follows the text-size preference. Switches support keyboard focus and Space, with a larger click/touch target around the compact track. These visual conventions do not change which settings save immediately or require a Save action.
 

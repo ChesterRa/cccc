@@ -2,6 +2,17 @@ import type { VirtualItem, Virtualizer } from "@tanstack/react-virtual";
 
 type MessageListVirtualizer = Virtualizer<HTMLDivElement, Element>;
 
+/** Convert a DOM scroll position to the virtualizer's layout coordinate. */
+export function getLayoutOffsetForScrollTop(
+  virtualizer: MessageListVirtualizer,
+  scrollTop: number,
+): number {
+  const first = virtualizer.getVirtualItems()[0];
+  const measured = first ? virtualizer.measurementsCache[first.index] : undefined;
+  const held = first && measured ? measured.start - first.start : 0;
+  return Math.max(0, scrollTop + held);
+}
+
 /**
  * Replacement for the virtualizer's default "keep the view still" rule when a
  * row's measured height changes: shift the scroll only for rows above it.
@@ -41,7 +52,8 @@ function effectiveScrollOffset(virtualizer: MessageListVirtualizer): number {
 }
 
 /**
- * Drops the scroll shift the virtualizer is holding back for iOS.
+ * Drops a held iOS shift in the old virtualizer. The current version keeps
+ * rendered rows aligned while holding the shift and has no such accumulator.
  *
  * On iOS (and Mac browsers reporting touch points) the virtualizer does not
  * move the scroll while the list is scrolling or touched; it accumulates row

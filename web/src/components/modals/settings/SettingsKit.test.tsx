@@ -171,7 +171,7 @@ describe("settings pages on the kit", () => {
     expect(danger.disabled).toBe(true);
   });
 
-  it("navigation: the scope switch is a pressed-button group that names what it applies to", async () => {
+  it("navigation: the scope switch keeps its pressed state and access controls", async () => {
     const onScope = vi.fn();
     const renderNav = (globalEnabled: boolean) =>
       render(
@@ -195,17 +195,17 @@ describe("settings pages on the kit", () => {
     const buttons = () => [...scopeSwitch.querySelectorAll<HTMLButtonElement>("button")];
     expect(buttons().map((b) => b.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
     expect(buttons()[1].disabled).toBe(true);
-    expect(host.textContent).toContain("navigation.appliesToGroup");
     await click(buttons()[1]);
     expect(onScope).not.toHaveBeenCalled();
-    // Desktop and phone each put one help key beside the switch, never inside a scope
-    // key, so a tap on it cannot switch scope and a disabled key does not hide it.
+    // The phone help key is separate from the switch and remains available when locked.
     const switches = [...host.querySelectorAll<HTMLElement>("[data-settings-scope-switch]")];
     expect(switches).toHaveLength(2);
     for (const group of switches) {
       expect(group.querySelector("button button, [data-scope-help-trigger]")).toBeNull();
-      expect(group.parentElement?.querySelectorAll("[data-scope-help-trigger]")).toHaveLength(1);
     }
+    expect(switches[1].parentElement?.querySelectorAll("[data-scope-help-trigger]")).toHaveLength(
+      1,
+    );
     // The help explains both scopes, including why the instance is locked.
     await click(host.querySelector<HTMLButtonElement>("[data-scope-help-trigger]")!);
     const help = document.querySelector<HTMLElement>("[data-scope-help-popup]")!;
