@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.50]
+
 ### Added
 
 - **Run now** in **Automation** sends a reminder rule's notification once without waiting for its

@@ -47,20 +47,21 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.49
+## What's new in 0.4.50
 
-- **Switch to and from a Web Model.** An administrator can move an agent to or from a Web Model like any other runtime, including directly from a native session or through a Profile. Entering one starts nothing: connect it to a conversation in the agent's settings, and its messages wait until then.
-- **Messages reach what is running.** After you save another runtime or Profile for a running agent, its terminal keeps receiving messages until a launch replaces it. A message cut off part way into a terminal is kept for review instead of being written again.
-- **Fewer reads for Claude.** An eligible plain message between agents can now arrive in a Claude session's notification, with no separate read.
-- **An e-ink look.** The interface moves to a soft paper light theme and a graphite dark theme. Layout, fonts and components are unchanged.
-- **Limit a repeating reminder.** A repeating reminder can stop after a chosen number of runs, and the rule list shows its progress.
-- **Stop a stuck upload.** A stop button next to **Send** ends the wait and keeps your draft. The message may already have arrived, so check the conversation before sending it again.
-- **Native foreman.** A native foreman now gets the default foreman capabilities, as a managed one does.
-- **Tasks.** An agent can take up a planned or active task that nobody holds.
+- **Failures say so.** A message to an agent that cannot stay up now shows **Delivery failed for** that agent, with the reason and **Retry**; one that may already have arrived says **Delivery uncertain**. The agent that sent it may also get a notice that delivery failed or is uncertain.
+- **Audio plays in the message.** Supported audio attachments keep their download and gain a play button; whether a clip plays depends on your browser. A message has one player, so you can switch between clips to compare them.
+- **Files and links open in the page.** Markdown, PDF and common text files open when you click their name, with the download next to it. Links to images, audio and video, to Group files that can be previewed, and to Markdown or text on `raw.githubusercontent.com` open in the same preview; whether a file from another site shows depends on that site and your browser. A path such as `docs/guide/web-ui.md` opens in Files.
+- **Messages on a phone.** The sender, time and actions sit above the route, the text uses the full width, and **Back to latest** no longer covers a message.
+- **Skills reach agents again.** `cccc_capability_use` returns a skill's rules, and `cccc_bootstrap` lists the skills assigned to or enabled for an agent.
+- **Team rules come first; Group memory is removed.** An agent that starts or resumes gets the Group's constraints before the rest of its recovery context, up to six, as the budget allows. Keep shared rules in **Constraints** in the Context panel.
+- **A team review and a team stand-up.** `/cccc-self-evolution` asks the foreman to look back at what you said and bring you at most three proposals, each on its own card. The built-in stand-up is still off by default; its default interval is now two hours, and its text asks the foreman whether the work serves your goals, where the team met friction, whether what you had to repeat went better and whether a better way would pay off. Each run may use model credits.
+- **Automation you can try at once.** **Run now** sends a reminder rule's notification without waiting for its schedule; it does not count toward the rule's maximum runs or change the schedule, and it may use model credits. The last and next run show in your local time, the last run is when the rule really ran, and a Group's menu opens its **Automation**.
+- **Settings that did nothing are gone**, among them **Collaboration Follow-ups**, **Include tail in idle notifications** and **Log level**.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, and restore or discard waiting sends: they live only in the open page. Then reload open Web pages. Native-session users should [reload the integration in each app](https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration); restart an open Claude session (for example `claude --resume`) to load the new receiver. Until then a notification may be cut off and ask it to read the message.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft, restored ones included, and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. Native-session users should [reload the integration in each app](https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration); until a session reconnects, `cccc_capability_use` does not return a skill's rules there. Group memory files stay in `CCCC_HOME/groups/<group_id>/state/memory/` and are no longer searched or updated. A stand-up rule you saved keeps its schedule; if it uses the built-in stand-up text, it now sends the longer new text, so check its interval if you turned it on.
 
-Details: [0.4.49 release notes](https://chesterra.github.io/cccc/release/v0.4.49_release_notes).
+Details: [0.4.50 release notes](https://chesterra.github.io/cccc/release/v0.4.50_release_notes).
 
 ## Quick start
 
