@@ -10,15 +10,6 @@ use crate::fs::{read_yaml, with_exclusive_lock, write_yaml, write_yaml_committed
 use crate::home::HomeLayout;
 use crate::registry::{GroupMeta, Registry};
 
-pub const AUTOMATION_TIMING_KEYS: &[&str] = &[
-    "actor_idle_timeout_seconds",
-    "keepalive_delay_seconds",
-    "keepalive_max_per_actor",
-    "silence_timeout_seconds",
-    "help_nudge_interval_seconds",
-    "help_nudge_min_messages",
-];
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Scope {
     pub scope_key: String,

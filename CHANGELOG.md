@@ -37,6 +37,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   members are not covered yet. If a named recipient is disabled, or the Group is paused or stopped,
   the send result says so at once.
 
+### Removed
+
+- Settings no longer offer options that could be saved but did nothing in this version:
+  **Collaboration Follow-ups** under Automation (keepalive, help refresh, agent idle alert and group
+  silence check), **Include tail in idle notifications** under Transcript, and **Log level** under
+  Developer. Values already saved in a Group stay there and are ignored. For a recurring reminder,
+  use an automation rule.
+- The capability center's Sources page no longer has an on/off switch for a source or a search box.
+  The switch could be saved but did not change search results in this version, and the search box
+  did not filter the sources.
+
 ### Fixed
 
 - While the daemon is starting, `cccc` and `cccc web` now keep checking for its answer for a few

@@ -305,68 +305,36 @@ describe("CapabilityCenter model", () => {
 
   it("only allows deleting user-owned capability sources", () => {
     expect(
-      capabilityCenterSourceRemovalAction({
-        source_id: "manual_import",
-        enabled: true,
-        record_count: 3,
-      }),
+      capabilityCenterSourceRemovalAction({ source_id: "manual_import", record_count: 3 }),
     ).toBe("delete");
     expect(
-      capabilityCenterSourceRemovalAction({
-        source_id: "github_import",
-        enabled: true,
-        record_count: 2,
-      }),
+      capabilityCenterSourceRemovalAction({ source_id: "github_import", record_count: 2 }),
+    ).toBe("delete");
+    expect(capabilityCenterSourceRemovalAction({ source_id: "url_import", record_count: 1 })).toBe(
+      "delete",
+    );
+    expect(
+      capabilityCenterSourceRemovalAction({ source_id: "local_import", record_count: 1 }),
     ).toBe("delete");
     expect(
-      capabilityCenterSourceRemovalAction({
-        source_id: "url_import",
-        enabled: true,
-        record_count: 1,
-      }),
+      capabilityCenterSourceRemovalAction({ source_id: "agent_self_proposed", record_count: 1 }),
     ).toBe("delete");
     expect(
-      capabilityCenterSourceRemovalAction({
-        source_id: "local_import",
-        enabled: true,
-        record_count: 1,
-      }),
-    ).toBe("delete");
-    expect(
-      capabilityCenterSourceRemovalAction({
-        source_id: "agent_self_proposed",
-        enabled: true,
-        record_count: 1,
-      }),
-    ).toBe("delete");
-    expect(
-      capabilityCenterSourceRemovalAction({
-        source_id: "github_skills_curated",
-        enabled: true,
-        record_count: 49,
-      }),
+      capabilityCenterSourceRemovalAction({ source_id: "github_skills_curated", record_count: 49 }),
     ).toBe("none");
     expect(
       capabilityCenterSourceRemovalAction({
         source_id: "mcp_registry_official",
-        enabled: true,
         record_count: 1450,
       }),
     ).toBe("none");
     expect(
-      capabilityCenterSourceRemovalAction({
-        source_id: "cccc_builtin",
-        enabled: true,
-        record_count: 34,
-      }),
+      capabilityCenterSourceRemovalAction({ source_id: "cccc_builtin", record_count: 34 }),
     ).toBe("none");
   });
 
-  it("reserves a stable actions column for source rows with and without delete", () => {
-    const gridClass = capabilityCenterSourcesGridClass();
-
-    expect(gridClass).toContain("_76px]");
-    expect(gridClass).toContain("md:grid-cols");
+  it("gives source rows a name column and room for the delete action", () => {
+    expect(capabilityCenterSourcesGridClass()).toContain("grid-cols-[minmax(0,1fr)_auto]");
   });
 
   it("keeps the page shell viewport-bound so only the center content scrolls", () => {

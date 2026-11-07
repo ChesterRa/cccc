@@ -111,7 +111,7 @@ const sectionItems: Array<{
 }> = [
   { id: "skill", icon: BookOpen, glyph: "book-open", label: "Skills", hint: "Procedural skills" },
   { id: "mcp", icon: Plug, glyph: "plug", label: "MCP", hint: "Tool servers" },
-  { id: "sources", icon: Boxes, glyph: "package", label: "Sources", hint: "Feeds and origins" },
+  { id: "sources", icon: Boxes, glyph: "package", label: "Sources", hint: "Capability origins" },
 ];
 
 function statusBadgeClass(kind: "neutral" | "good" | "warn" | "danger") {
@@ -238,8 +238,8 @@ export function CapabilityCenterWorkspace({
     isOpen,
     pageIndex,
     pageSize,
-    query: debouncedQuery,
-    stateFilter,
+    query: section === "sources" ? "" : debouncedQuery,
+    stateFilter: scopedStateFilter,
     typeFilter: scopedTypeFilter,
   });
   const hiddenIds = useMemo(() => capabilityCenterHiddenIds(state), [state]);
@@ -587,38 +587,6 @@ export function CapabilityCenterWorkspace({
     [executeDisableCapability, executeEnableCapability, groupId, state, t],
   );
 
-  const toggleSource = useCallback(
-    async (sourceId: string, nextEnabled: boolean) => {
-      const sid = String(sourceId || "").trim();
-      if (!sid) return;
-      setBusyKey(`source:${sid}`);
-      setErr("");
-      try {
-        const patchSources = Object.values(sources || {})
-          .map((row) => ({
-            source_id: String(row.source_id || "").trim(),
-            enabled:
-              String(row.source_id || "").trim() === sid ? nextEnabled : Boolean(row.enabled),
-            rationale: String(row.rationale || ""),
-          }))
-          .filter((row) => row.source_id);
-        if (!patchSources.some((row) => row.source_id === sid)) {
-          patchSources.push({ source_id: sid, enabled: nextEnabled, rationale: "" });
-        }
-        const resp = await api.updateCapabilityAllowlist({ patch: { sources: patchSources } });
-        if (!resp.ok) {
-          setErr(resp.error?.message || t("capabilityCenter.sources.toggleFailed"));
-          return;
-        }
-        await refresh();
-        publishCapabilityChanged(groupId);
-      } finally {
-        setBusyKey("");
-      }
-    },
-    [groupId, refresh, setErr, sources, t],
-  );
-
   const deleteSource = useCallback(
     async (source: CapabilitySourceState) => {
       const sourceId = String(source.source_id || "").trim();
@@ -861,79 +829,84 @@ export function CapabilityCenterWorkspace({
 
           <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
             <section className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-r border-[var(--glass-border-subtle)]">
-              <div className="min-w-0 border-b border-[var(--glass-border-subtle)] px-3 py-2 sm:px-4 sm:py-3 lg:px-6">
+              <div
+                className={`min-w-0 border-[var(--glass-border-subtle)] ${
+                  section === "sources" && !err
+                    ? "sm:border-b sm:px-4 sm:py-3 lg:px-6"
+                    : "border-b px-3 py-2 sm:px-4 sm:py-3 lg:px-6"
+                }`}
+              >
                 <div className="hidden grid-cols-2 gap-2 sm:grid sm:grid-cols-4">
                   <Stat label={t("capabilityCenter.stats.skills")} value={stats.skills} />
                   <Stat label={t("capabilityCenter.stats.mcp")} value={stats.mcp} />
                   <Stat label={t("capabilityCenter.stats.packs")} value={stats.packs} />
                   <Stat label={t("capabilityCenter.stats.enabled")} value={stats.enabled} />
                 </div>
-                <div className="flex items-center gap-2 sm:hidden">
-                  <button
-                    type="button"
-                    className="inline-flex min-h-[36px] items-center gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 text-xs font-medium text-[var(--color-text-secondary)]"
-                    aria-expanded={mobileControlsOpen}
-                    onClick={() => setMobileControlsOpen((value) => !value)}
-                    data-lcd-key
-                  >
-                    <LcdIcon
-                      icon={SlidersHorizontal}
-                      glyph="sliders-horizontal"
-                      size={14}
-                      aria-hidden="true"
-                    />
-                    <span>{t("capabilityCenter.stateFilter")}</span>
-                  </button>
-                  <span className="min-w-0 truncate text-xs text-[var(--color-text-muted)]">
-                    {section === "sources"
-                      ? t("capabilityCenter.sections.sources.label")
-                      : `${t(`capabilityCenter.stateOptions.${scopedStateFilter}`)} · ${pageRange.total || totalCount || stats.total}`}
-                  </span>
-                </div>
-                <div
-                  className={`${mobileControlsOpen ? "mt-2 flex" : "hidden"} flex-col gap-2 sm:mt-3 sm:flex xl:flex-row xl:items-center`}
-                  data-capability-filters
-                >
-                  <div className="relative min-w-0 flex-1">
-                    <LcdIcon
-                      icon={Search}
-                      glyph="search"
-                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
-                      size={15}
-                      aria-hidden="true"
-                    />
-                    <input
-                      className="h-9 w-full rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] pl-9 pr-3 text-sm outline-none focus:border-[rgba(59,130,246,0.42)] sm:h-10"
-                      data-lcd-field
-                      value={query}
-                      placeholder={t("capabilityCenter.searchPlaceholder")}
-                      onChange={(event) => setQuery(event.target.value)}
-                    />
-                  </div>
-                  <div className="flex min-w-0 items-center gap-2">
-                    <SegmentedControl
-                      label={t("capabilityCenter.stateFilter")}
-                      value={scopedStateFilter}
-                      options={localizedStateFilters}
-                      disabled={section === "sources"}
-                      onChange={(value) => setStateFilter(value as CapabilityCenterStateFilter)}
-                    />
-                    {section !== "sources" ? (
+                {section !== "sources" ? (
+                  <>
+                    <div className="flex items-center gap-2 sm:hidden">
                       <button
                         type="button"
-                        className={`min-h-[36px] self-start rounded-lg border px-3 text-xs font-medium sm:h-9 ${
-                          showSystem
-                            ? "border-[rgba(59,130,246,0.35)] bg-[var(--glass-bg-active)] text-[var(--color-text-primary)]"
-                            : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-bg-hover)]"
-                        }`}
-                        aria-pressed={showSystem}
-                        onClick={() => setShowSystem((value) => !value)}
+                        className="inline-flex min-h-[36px] items-center gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 text-xs font-medium text-[var(--color-text-secondary)]"
+                        aria-expanded={mobileControlsOpen}
+                        onClick={() => setMobileControlsOpen((value) => !value)}
+                        data-lcd-key
                       >
-                        {t("capabilityCenter.showSystem")}
+                        <LcdIcon
+                          icon={SlidersHorizontal}
+                          glyph="sliders-horizontal"
+                          size={14}
+                          aria-hidden="true"
+                        />
+                        <span>{t("capabilityCenter.stateFilter")}</span>
                       </button>
-                    ) : null}
-                  </div>
-                </div>
+                      <span className="min-w-0 truncate text-xs text-[var(--color-text-muted)]">
+                        {`${t(`capabilityCenter.stateOptions.${scopedStateFilter}`)} · ${pageRange.total || totalCount || stats.total}`}
+                      </span>
+                    </div>
+                    <div
+                      className={`${mobileControlsOpen ? "mt-2 flex" : "hidden"} flex-col gap-2 sm:mt-3 sm:flex xl:flex-row xl:items-center`}
+                      data-capability-filters
+                    >
+                      <div className="relative min-w-0 flex-1">
+                        <LcdIcon
+                          icon={Search}
+                          glyph="search"
+                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
+                          size={15}
+                          aria-hidden="true"
+                        />
+                        <input
+                          className="h-9 w-full rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] pl-9 pr-3 text-sm outline-none focus:border-[rgba(59,130,246,0.42)] sm:h-10"
+                          data-lcd-field
+                          value={query}
+                          placeholder={t("capabilityCenter.searchPlaceholder")}
+                          onChange={(event) => setQuery(event.target.value)}
+                        />
+                      </div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <SegmentedControl
+                          label={t("capabilityCenter.stateFilter")}
+                          value={scopedStateFilter}
+                          options={localizedStateFilters}
+                          onChange={(value) => setStateFilter(value as CapabilityCenterStateFilter)}
+                        />
+                        <button
+                          type="button"
+                          className={`min-h-[36px] self-start rounded-lg border px-3 text-xs font-medium sm:h-9 ${
+                            showSystem
+                              ? "border-[rgba(59,130,246,0.35)] bg-[var(--glass-bg-active)] text-[var(--color-text-primary)]"
+                              : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-bg-hover)]"
+                          }`}
+                          aria-pressed={showSystem}
+                          onClick={() => setShowSystem((value) => !value)}
+                        >
+                          {t("capabilityCenter.showSystem")}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
                 {err ? (
                   <div
                     className="mt-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300"
@@ -949,7 +922,6 @@ export function CapabilityCenterWorkspace({
                   sources={sources}
                   sourceInstances={sourceInstances}
                   busyKey={busyKey}
-                  onToggle={toggleSource}
                   onDelete={confirmDeleteSource}
                   onDeleteInstance={confirmDeleteSourceInstance}
                 />
@@ -988,7 +960,7 @@ export function CapabilityCenterWorkspace({
             </section>
 
             {section === "sources" ? (
-              <SourcesSummary sources={sources} sourceInstances={sourceInstances} />
+              <SourcesSummary sources={sources} />
             ) : (
               <CapabilityDetails
                 item={selected}

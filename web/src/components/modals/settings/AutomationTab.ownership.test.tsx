@@ -22,7 +22,6 @@ vi.mock("../../../services/api", () => ({
   resetAutomationBaseline: (...args: unknown[]) => mocks.resetAutomationBaseline(...args),
 }));
 
-vi.mock("./AutomationPoliciesSection", () => ({ AutomationPoliciesSection: () => null }));
 vi.mock("./AutomationRuleEditorModal", () => ({
   AutomationRuleEditorModal: ({
     ruleDraft,
@@ -136,28 +135,7 @@ describe("AutomationTab group ownership fencing", () => {
 
   const renderTab = async (groupId?: string) => {
     await act(async () => {
-      root.render(
-        <AutomationTab
-          isDark={false}
-          groupId={groupId}
-          devActors={[]}
-          busy={false}
-          idleSeconds={0}
-          setIdleSeconds={vi.fn()}
-          keepaliveSeconds={120}
-          setKeepaliveSeconds={vi.fn()}
-          keepaliveMax={3}
-          setKeepaliveMax={vi.fn()}
-          silenceSeconds={0}
-          setSilenceSeconds={vi.fn()}
-          helpNudgeIntervalSeconds={600}
-          setHelpNudgeIntervalSeconds={vi.fn()}
-          helpNudgeMinMessages={10}
-          setHelpNudgeMinMessages={vi.fn()}
-          onSavePolicies={vi.fn()}
-          onResetPolicies={vi.fn()}
-        />,
-      );
+      root.render(<AutomationTab isDark={false} groupId={groupId} devActors={[]} />);
     });
   };
 

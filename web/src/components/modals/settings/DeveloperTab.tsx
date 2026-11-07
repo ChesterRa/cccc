@@ -25,8 +25,6 @@ interface DeveloperTabProps {
   runtimeInfoErr: string;
   developerMode: boolean;
   setDeveloperMode: (v: boolean) => void;
-  logLevel: "INFO" | "DEBUG";
-  setLogLevel: (v: "INFO" | "DEBUG") => void;
   terminalBacklogMiB: number;
   setTerminalBacklogMiB: (v: number) => void;
   terminalScrollbackLines: number;
@@ -76,8 +74,6 @@ export function DeveloperTab({
   runtimeInfoErr,
   developerMode,
   setDeveloperMode,
-  logLevel,
-  setLogLevel,
   terminalBacklogMiB,
   setTerminalBacklogMiB,
   terminalScrollbackLines,
@@ -126,7 +122,6 @@ export function DeveloperTab({
 
   const ids = {
     developerMode: useId(),
-    logLevel: useId(),
     peerRuntime: useId(),
     assistantRuntime: useId(),
     ptyBacklog: useId(),
@@ -255,18 +250,6 @@ export function DeveloperTab({
             checked={developerMode}
             onChange={setDeveloperMode}
             labelledBy={ids.developerMode}
-          />
-        </SettingsRow>
-        <SettingsRow label={t("developer.logLevel")} labelId={ids.logLevel}>
-          <SegmentedChoice
-            fill={false}
-            labelledBy={ids.logLevel}
-            value={logLevel}
-            options={[
-              { value: "INFO", label: "INFO" },
-              { value: "DEBUG", label: "DEBUG" },
-            ]}
-            onChange={setLogLevel}
           />
         </SettingsRow>
       </SettingsCard>

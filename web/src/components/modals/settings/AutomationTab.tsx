@@ -1,4 +1,4 @@
-// AutomationTab configures built-in automation loops and user-authored scheduled rules.
+// AutomationTab configures scheduled rules.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -20,7 +20,6 @@ import {
   isValidId,
   nowId,
 } from "./automationUtils";
-import { AutomationPoliciesSection } from "./AutomationPoliciesSection";
 import { AutomationRuleEditorModal } from "./AutomationRuleEditorModal";
 import { AutomationRuleList } from "./AutomationRuleList";
 import { AutomationSnippetModal } from "./AutomationSnippetModal";
@@ -30,23 +29,6 @@ interface AutomationTabProps {
   isDark: boolean;
   groupId?: string;
   devActors: Actor[];
-  busy: boolean;
-
-  idleSeconds: number;
-  setIdleSeconds: (v: number) => void;
-  keepaliveSeconds: number;
-  setKeepaliveSeconds: (v: number) => void;
-  keepaliveMax: number;
-  setKeepaliveMax: (v: number) => void;
-  silenceSeconds: number;
-  setSilenceSeconds: (v: number) => void;
-
-  helpNudgeIntervalSeconds: number;
-  setHelpNudgeIntervalSeconds: (v: number) => void;
-  helpNudgeMinMessages: number;
-  setHelpNudgeMinMessages: (v: number) => void;
-  onSavePolicies: () => void;
-  onResetPolicies: () => void;
 }
 
 type PersistCopy = { failureMessage: string; versionConflictMessage: string };
@@ -646,25 +628,6 @@ export function AutomationTab(props: AutomationTabProps) {
           .
         </p>
       </div>
-
-      <AutomationPoliciesSection
-        isDark={isDark}
-        busy={props.busy}
-        keepaliveSeconds={props.keepaliveSeconds}
-        setKeepaliveSeconds={props.setKeepaliveSeconds}
-        keepaliveMax={props.keepaliveMax}
-        setKeepaliveMax={props.setKeepaliveMax}
-        helpNudgeIntervalSeconds={props.helpNudgeIntervalSeconds}
-        setHelpNudgeIntervalSeconds={props.setHelpNudgeIntervalSeconds}
-        helpNudgeMinMessages={props.helpNudgeMinMessages}
-        setHelpNudgeMinMessages={props.setHelpNudgeMinMessages}
-        idleSeconds={props.idleSeconds}
-        setIdleSeconds={props.setIdleSeconds}
-        silenceSeconds={props.silenceSeconds}
-        setSilenceSeconds={props.setSilenceSeconds}
-        onSavePolicies={props.onSavePolicies}
-        onResetPolicies={props.onResetPolicies}
-      />
 
       <Section
         isDark={isDark}

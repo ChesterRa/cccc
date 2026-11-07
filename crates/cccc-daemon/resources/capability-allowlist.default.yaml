@@ -45,47 +45,6 @@ defaults:
     - trading
     - payment_write
 
-sources:
-  - source_id: cccc_builtin
-    enabled: true
-    rationale: "Core CCCC packs; always available."
-  - source_id: manual_import
-    enabled: true
-    rationale: "Agent/user imported records from arbitrary external references."
-  - source_id: agent_self_proposed
-    enabled: true
-    rationale: "Agent-proposed procedural skill candidates; MCP toolpacks stay indexed unless policy explicitly promotes them."
-  - source_id: github_import
-    enabled: true
-    rationale: "User-installed GitHub skill repositories imported through the CCCC capability lifecycle."
-  - source_id: url_import
-    enabled: true
-    rationale: "User-installed remote SKILL.md URLs imported through the CCCC capability lifecycle."
-  - source_id: local_import
-    enabled: true
-    rationale: "User-installed local SKILL.md files or directories imported through the CCCC capability lifecycle."
-  - source_id: anthropic_skills
-    enabled: true
-    rationale: "Official Anthropic skill source."
-  - source_id: github_skills_curated
-    enabled: true
-    rationale: "Curated third-party skill entries (manual curation, no periodic crawling)."
-  - source_id: skillsmp_remote
-    enabled: true
-    rationale: "Records labeled as originating from SkillsMP."
-  - source_id: clawhub_remote
-    enabled: true
-    rationale: "Records labeled as originating from ClawHub."
-  - source_id: openclaw_skills_remote
-    enabled: true
-    rationale: "Records labeled as originating from the OpenClaw skills corpus."
-  - source_id: clawskills_remote
-    enabled: true
-    rationale: "Records labeled as originating from clawskills.co."
-  - source_id: mcp_registry_official
-    enabled: true
-    rationale: "Records labeled as originating from the MCP Registry."
-
 mcp_overrides:
   # --------------------------------------------------------------------------
   # Tier A: lightweight default-mounted MCP exceptions

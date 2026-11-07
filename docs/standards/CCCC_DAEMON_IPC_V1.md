@@ -840,14 +840,7 @@ Result:
   query: string
   sources: Record<string, {
     source_id: string
-    enabled: boolean
-    source_level: "indexed" | "mounted" | "enabled" | "pinned"
-    rationale?: string
-    sync_state: string
-    last_synced_at?: string
-    staleness_seconds: number
     record_count: number
-    error?: string
   }>
   blocked_capabilities: Array<{
     capability_id: string
@@ -2031,7 +2024,7 @@ Result:
 
 #### `group_settings_update`
 
-Update group-scoped messaging/automation/delivery/transcript settings.
+Update group-scoped messaging/delivery/transcript settings.
 
 Args:
 ```ts
@@ -2044,11 +2037,7 @@ Patch keys used by CCCC include:
   `mail_notice_idle_after_seconds` (default 60, zero disables only the early idle notice),
   `mail_notice_repeat_seconds` (default 0, zero keeps single-notice behavior),
   `reply_notice_after_seconds` (default 900, zero disables)
-- Automation: `actor_idle_timeout_seconds`, `keepalive_delay_seconds`,
-  `keepalive_max_per_actor`,
-  `silence_timeout_seconds`, `help_nudge_interval_seconds`,
-  `help_nudge_min_messages`
-- Terminal transcript: `terminal_transcript_visibility`, `terminal_transcript_notify_tail`, `terminal_transcript_notify_lines`
+- Terminal transcript: `terminal_transcript_visibility`
 
 Result:
 ```ts

@@ -4,18 +4,13 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 
 import type { AutomationRule, AutomationRuleAction } from "../../../types";
-import { BellIcon as AppBellIcon, SparklesIcon } from "../../Icons";
+import { SparklesIcon } from "../../Icons";
 import {
-  inputClass,
-  labelClass,
   settingsWorkspaceShellClass,
   settingsWorkspaceHeaderClass,
   settingsWorkspaceBodyClass,
 } from "./types";
 
-export const BellIcon = ({ className }: { className?: string }) => (
-  <AppBellIcon className={className} />
-);
 export const SparkIcon = ({ className }: { className?: string }) => (
   <SparklesIcon className={className} />
 );
@@ -67,53 +62,6 @@ export const Section = ({
     <div className={settingsWorkspaceBodyClass}>{children}</div>
   </section>
 );
-
-export const NumberInputRow = ({
-  label,
-  value,
-  onChange,
-  isDark,
-  min = 0,
-  helperText,
-  formatValue = true,
-  onAutoSave,
-}: {
-  label: string;
-  value: number;
-  onChange: (val: number) => void;
-  isDark?: boolean;
-  min?: number;
-  helperText?: React.ReactNode;
-  formatValue?: boolean;
-  onAutoSave?: () => void;
-}) => {
-  const { t } = useTranslation("settings");
-  return (
-    <div className="w-full">
-      <label className={labelClass(isDark)}>{label}</label>
-      <div className="relative">
-        <input
-          type="number"
-          min={min}
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
-          onBlur={() => onAutoSave?.()}
-          className={inputClass(isDark)}
-        />
-        {formatValue ? (
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono pointer-events-none transition-opacity duration-200 text-[var(--color-text-muted)]">
-            {formatDuration(value, t)}
-          </div>
-        ) : null}
-      </div>
-      {helperText && (
-        <div className="mt-1.5 text-xs leading-snug text-[var(--color-text-muted)]">
-          {helperText}
-        </div>
-      )}
-    </div>
-  );
-};
 
 export const Chip = ({
   label,

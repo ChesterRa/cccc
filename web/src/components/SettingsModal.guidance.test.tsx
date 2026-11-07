@@ -38,7 +38,7 @@ vi.mock("../services/api", async (original) => ({
   }),
   fetchObservability: async () => ({
     ok: true,
-    result: { observability: { developer_mode: false, log_level: "INFO" } },
+    result: { observability: { developer_mode: false } },
   }),
 }));
 

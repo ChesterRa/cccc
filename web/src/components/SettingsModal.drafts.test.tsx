@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { SettingsModal } from "./SettingsModal";
 import type { MessagingTab } from "./modals/settings/MessagingTab";
 import type { DeliveryTab } from "./modals/settings/DeliveryTab";
+import type { TranscriptTab } from "./modals/settings/TranscriptTab";
 import type { GroupSettings } from "../types";
 import { useModalStore } from "../stores";
 import { writeSettingsLastLocation } from "./modals/settings/settingsLastLocation";
@@ -12,6 +13,7 @@ import { writeSettingsLastLocation } from "./modals/settings/settingsLastLocatio
 const tabs = vi.hoisted(() => ({
   messaging: null as ComponentProps<typeof MessagingTab> | null,
   delivery: null as ComponentProps<typeof DeliveryTab> | null,
+  transcript: null as ComponentProps<typeof TranscriptTab> | null,
 }));
 vi.mock("./modals/settings/MessagingTab", () => ({
   MessagingTab: (props: ComponentProps<typeof MessagingTab>) => {
@@ -23,6 +25,12 @@ vi.mock("./modals/settings/DeliveryTab", () => ({
   DeliveryTab: (props: ComponentProps<typeof DeliveryTab>) => {
     tabs.delivery = props;
     return <button onClick={() => void props.onSave()}>Save delivery</button>;
+  },
+}));
+vi.mock("./modals/settings/TranscriptTab", () => ({
+  TranscriptTab: (props: ComponentProps<typeof TranscriptTab>) => {
+    tabs.transcript = props;
+    return <button onClick={() => void props.onSaveTranscriptSettings()}>Save transcript</button>;
   },
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -40,18 +48,10 @@ vi.mock("../services/api", async (original) => ({
 
 const settings: GroupSettings = {
   default_send_to: "foreman",
-  actor_idle_timeout_seconds: 0,
-  keepalive_delay_seconds: 120,
-  keepalive_max_per_actor: 3,
-  silence_timeout_seconds: 0,
-  help_nudge_interval_seconds: 600,
-  help_nudge_min_messages: 10,
   mail_notice_after_seconds: 1800,
   mail_notice_idle_after_seconds: 60,
   reply_notice_after_seconds: 900,
   terminal_transcript_visibility: "foreman",
-  terminal_transcript_notify_tail: false,
-  terminal_transcript_notify_lines: 20,
 };
 
 describe("settings draft and save continuity", () => {
@@ -132,6 +132,28 @@ describe("settings draft and save continuity", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toBe("saveFeedback.failed");
     expect(host.querySelector('[role="status"]')).toBeNull();
     expect(tabs.messaging!.defaultSendTo).toBe("broadcast");
+  });
+
+  it("saves only transcript visibility while keeping another tab's draft", async () => {
+    await render();
+    await act(async () => tabs.messaging!.setDefaultSendTo("broadcast"));
+    await act(async () =>
+      useModalStore.getState().openSettingsTarget({ scope: "group", tab: "transcript" }),
+    );
+    await vi.waitFor(() => expect(host.textContent).toContain("Save transcript"));
+    await act(async () => tabs.transcript!.setTerminalVisibility("all"));
+    await act(async () => tabs.transcript!.onSaveTranscriptSettings());
+    expect(save).toHaveBeenCalledWith({ terminal_transcript_visibility: "all" });
+    await act(async () =>
+      useModalStore.getState().openSettingsTarget({ scope: "group", tab: "messaging" }),
+    );
+    await vi.waitFor(() => expect(host.textContent).toContain("Save messaging"));
+    expect(tabs.messaging!.defaultSendTo).toBe("broadcast");
+    await act(async () =>
+      useModalStore.getState().openSettingsTarget({ scope: "group", tab: "transcript" }),
+    );
+    await vi.waitFor(() => expect(host.textContent).toContain("Save transcript"));
+    expect(tabs.transcript!.terminalVisibility).toBe("all");
   });
 
   it("retains server errors for retry and ignores a previous Group's late result", async () => {

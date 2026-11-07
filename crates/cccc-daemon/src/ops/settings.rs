@@ -3,7 +3,6 @@ use super::operation::{
     Policy::{Read, Write},
 };
 use cccc_contracts::{DaemonRequest, Event};
-use cccc_core::group::AUTOMATION_TIMING_KEYS;
 use cccc_core::ledger;
 use cccc_core::permissions;
 use cccc_core::settings;
@@ -39,17 +38,6 @@ const SECTION_SETTING_KEYS: &[(&str, &str, &str)] = &[
         "terminal_transcript",
         "visibility",
     ),
-    (
-        "terminal_transcript_notify_tail",
-        "terminal_transcript",
-        "notify_tail",
-    ),
-    (
-        "terminal_transcript_notify_lines",
-        "terminal_transcript",
-        "notify_lines",
-    ),
-    ("panorama_enabled", "features", "panorama_enabled"),
 ];
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
@@ -84,18 +72,14 @@ fn group_settings(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
             promote_legacy_group_settings(doc, &mut flat);
 
-            let mut automation_patch = Map::new();
             let mut flat_patch = Map::new();
             for (key, value) in &patch {
-                if AUTOMATION_TIMING_KEYS.contains(&key.as_str()) {
-                    automation_patch.insert(key.clone(), value.clone());
-                } else if let Some((section, canonical)) = section_target(key) {
+                if let Some((section, canonical)) = section_target(key) {
                     set_section_value(doc, section, canonical, value.clone());
                 } else {
                     flat_patch.insert(key.clone(), value.clone());
                 }
             }
-            settings::merge(&mut doc.automation, &automation_patch);
             settings::merge(&mut flat, &flat_patch);
             if !flat.is_empty() {
                 doc.extra
@@ -149,11 +133,6 @@ fn set_section_value(doc: &mut GroupDoc, section: &str, key: &str, value: Value)
 }
 
 fn promote_legacy_group_settings(doc: &mut GroupDoc, flat: &mut Map<String, Value>) {
-    for key in AUTOMATION_TIMING_KEYS {
-        if let Some(legacy) = flat.remove(*key) {
-            doc.automation.entry(*key).or_insert(legacy);
-        }
-    }
     for (legacy_key, section, canonical_key) in SECTION_SETTING_KEYS {
         if let Some(legacy) = flat.remove(*legacy_key) {
             section_mut(doc, section)
@@ -164,11 +143,6 @@ fn promote_legacy_group_settings(doc: &mut GroupDoc, flat: &mut Map<String, Valu
 }
 
 fn effective_group_settings(doc: &GroupDoc, mut flat: Map<String, Value>) -> Map<String, Value> {
-    for key in AUTOMATION_TIMING_KEYS {
-        if let Some(value) = doc.automation.get(*key) {
-            flat.insert((*key).into(), value.clone());
-        }
-    }
     for (legacy_key, section, canonical_key) in SECTION_SETTING_KEYS {
         if let Some(value) = doc
             .extra
@@ -308,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn group_settings_promote_legacy_automation_timing_to_canonical_storage() {
+    fn group_settings_promote_legacy_sections_and_leave_retired_timing_keys_unread() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
@@ -321,7 +295,6 @@ mod tests {
                 group.extra.insert(
                     "settings".into(),
                     json!({
-                        "actor_idle_timeout_seconds":999,
                         "help_nudge_interval_seconds":777,
                         "default_send_to":"broadcast",
                         "native_extension":{"keep":true}
@@ -339,11 +312,7 @@ mod tests {
             args: json!({
                 "group_id":group.group_id,
                 "by":"user",
-                "patch":{
-                    "keepalive_delay_seconds":456,
-                    "terminal_transcript_visibility":"all",
-                    "panorama_enabled":true
-                }
+                "patch":{"terminal_transcript_visibility":"all"}
             })
             .as_object()
             .cloned()
@@ -357,15 +326,15 @@ mod tests {
             .expect("flat settings object");
 
         assert_eq!(stored.automation["actor_idle_timeout_seconds"], json!(123));
-        assert_eq!(stored.automation["help_nudge_interval_seconds"], json!(777));
-        assert_eq!(stored.automation["keepalive_delay_seconds"], json!(456));
+        assert!(
+            !stored
+                .automation
+                .contains_key("help_nudge_interval_seconds")
+        );
         assert_eq!(
             Value::Object(flat.clone()),
-            json!({"native_extension":{"keep":true}})
+            json!({"help_nudge_interval_seconds":777,"native_extension":{"keep":true}})
         );
-        for key in AUTOMATION_TIMING_KEYS {
-            assert!(!flat.contains_key(*key));
-        }
         assert_eq!(
             stored.extra["messaging"]["default_send_to"],
             json!("foreman")
@@ -374,12 +343,15 @@ mod tests {
             stored.extra["terminal_transcript"]["visibility"],
             json!("all")
         );
-        assert_eq!(stored.extra["features"]["panorama_enabled"], json!(true));
-        assert_eq!(
-            response["settings"]["actor_idle_timeout_seconds"],
-            json!(123)
+        assert!(
+            response["settings"]
+                .get("actor_idle_timeout_seconds")
+                .is_none()
         );
-        assert_eq!(response["settings"]["keepalive_delay_seconds"], json!(456));
+        assert_eq!(
+            response["settings"]["help_nudge_interval_seconds"],
+            json!(777)
+        );
         assert_eq!(response["settings"]["default_send_to"], json!("foreman"));
         assert_eq!(response["group_id"], json!(group.group_id));
         assert_eq!(response["event"]["kind"], json!("group.settings_update"));

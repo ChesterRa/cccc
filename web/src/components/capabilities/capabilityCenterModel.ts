@@ -85,7 +85,7 @@ export function capabilityCenterSourceRemovalAction(
 }
 
 export function capabilityCenterSourcesGridClass(): string {
-  return "grid grid-cols-[minmax(0,1fr)_76px] items-start gap-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3 text-sm md:grid-cols-[minmax(220px,1fr)_110px_110px_minmax(150px,1fr)_76px] md:items-center md:py-2";
+  return "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3 text-sm md:py-2";
 }
 
 export function capabilityCenterRootClass(surface: CapabilityCenterSurface): string {

@@ -15,8 +15,6 @@ const baseProps = (): Props => ({
   runtimeInfoErr: "",
   developerMode: false,
   setDeveloperMode: vi.fn(),
-  logLevel: "INFO",
-  setLogLevel: vi.fn(),
   terminalBacklogMiB: 10,
   setTerminalBacklogMiB: vi.fn(),
   terminalScrollbackLines: 8000,
@@ -94,13 +92,10 @@ it("offers two- and three-way choices as one-tap segments", async () => {
     [...group.querySelectorAll('[role="radio"]')].map((radio) => radio.textContent),
   );
   expect(labels).toEqual([
-    ["INFO", "DEBUG"],
     ["developer.visible", "developer.hidden"],
     ["developer.hidden", "developer.visible"],
     ["daemon", "developer.daemonDiagnostics", "web", "im"],
   ]);
-  await act(async () => button("DEBUG").click());
-  expect(props.setLogLevel).toHaveBeenCalledWith("DEBUG");
   await act(async () => button("developer.daemonDiagnostics").click());
   expect(props.setLogComponent).toHaveBeenCalledWith("daemon_diagnostics");
   await act(async () => button("im").click());

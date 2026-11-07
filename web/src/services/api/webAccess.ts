@@ -16,7 +16,6 @@ import {
 
 export interface Observability {
   developer_mode?: boolean;
-  log_level?: string;
   terminal_transcript?: {
     enabled?: boolean;
     per_actor_bytes?: number;
@@ -46,7 +45,6 @@ export async function fetchObservability() {
 
 export async function updateObservability(args: {
   developerMode: boolean;
-  logLevel: "INFO" | "DEBUG";
   terminalTranscriptPerActorBytes?: number;
   terminalUiScrollbackLines?: number;
   peerRuntimeVisibility?: "hidden" | "visible";
@@ -59,7 +57,6 @@ export async function updateObservability(args: {
       body: JSON.stringify({
         by: "user",
         developer_mode: args.developerMode,
-        log_level: args.logLevel,
         terminal_transcript_per_actor_bytes: args.terminalTranscriptPerActorBytes,
         terminal_ui_scrollback_lines: args.terminalUiScrollbackLines,
         peer_runtime_visibility: args.peerRuntimeVisibility,

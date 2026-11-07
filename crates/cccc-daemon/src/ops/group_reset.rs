@@ -1,5 +1,4 @@
 use cccc_contracts::{DaemonRequest, GroupState};
-use cccc_core::group::AUTOMATION_TIMING_KEYS;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, Registry, active, permissions};
 use serde_json::{Map, Value, json};
 
@@ -166,17 +165,6 @@ fn reset_automation(group: &GroupDoc) -> Map<String, Value> {
             automation.insert(key.into(), value.clone());
         }
     }
-    for key in AUTOMATION_TIMING_KEYS {
-        if let Some(value) = group.automation.get(*key).or_else(|| {
-            group
-                .extra
-                .get("settings")
-                .and_then(Value::as_object)
-                .and_then(|settings| settings.get(*key))
-        }) {
-            automation.insert((*key).into(), value.clone());
-        }
-    }
     automation
 }
 
@@ -276,9 +264,10 @@ mod tests {
         assert_eq!(replacement.automation["version"], json!(7));
         assert_eq!(replacement.automation["rules"], json!([{"id":"keep-rule"}]));
         assert!(!replacement.automation.contains_key("nudge_after_seconds"));
-        assert_eq!(
-            replacement.automation["help_nudge_interval_seconds"],
-            json!(777)
+        assert!(
+            !replacement
+                .automation
+                .contains_key("help_nudge_interval_seconds")
         );
         assert!(!replacement.automation.contains_key("runtime_last_tick"));
         assert_eq!(

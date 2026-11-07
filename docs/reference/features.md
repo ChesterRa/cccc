@@ -443,21 +443,16 @@ Notes:
 - Notifications are durable ledger events for enabled matching recipients, so
   the recipient runtime does not need to be running when the rule fires.
 
-### Built-in Delivery and Automation
+### Built-in Delivery Notices
 
 | Behavior | Config | Default | Description |
 |----------|--------|---------|-------------|
 | Mail notice | `delivery.mail_notice_after_seconds` | 1800s | One content-free Inbox reminder for a concrete pending Mail batch; no repeat or escalation |
 | Reply notice | `delivery.reply_notice_after_seconds` | 900s | One content-free reminder after an accepted `request_reply` remains unanswered |
-| Actor idle | `actor_idle_timeout_seconds` | 0s | Optional actor idle notification to foreman; `0` disables it by default |
-| Keepalive | `keepalive_delay_seconds` | 0s | Optional follow-up after an actor declares a next step and then goes quiet |
-| Silence check | `silence_timeout_seconds` | 0s | Optional group-level silence review and idle transition; `0` disables it |
-| Help nudge | `help_nudge_interval_seconds` / `help_nudge_min_messages` | 0s / 0 | Optional prompt to revisit `cccc_help` |
 
-These are defaults written for newly created groups. Heuristic steering stays
-off by default. Mail and reply notices are bounded delivery semantics, not
-periodic automation: paused/stopped actors are not woken, notices never include
-message bodies, and no universal runtime-idle detector is assumed.
+Mail and reply notices are bounded delivery semantics, not periodic automation:
+paused/stopped actors are not woken, notices never include message bodies, and
+no universal runtime-idle detector is assumed.
 
 Runtime handoff and Inbox read are separate facts. A successful
 `runtime.delivery` never advances the Inbox cursor.

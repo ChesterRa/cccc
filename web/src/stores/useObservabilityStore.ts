@@ -16,7 +16,6 @@ const DEFAULT_PTY_BACKLOG_MIB = 10;
 interface ObservabilityState {
   loaded: boolean;
   developerMode: boolean;
-  logLevel: "INFO" | "DEBUG";
   terminalBacklogMiB: number;
   terminalScrollbackLines: number;
   peerRuntimeVisibility: RuntimeVisibilityMode;
@@ -28,14 +27,12 @@ interface ObservabilityState {
 }
 
 const _fromObs = (obs: Observability) => {
-  const lvl = String(obs.log_level || "INFO").toUpperCase();
   const perActorBytes = Number(obs.terminal_transcript?.per_actor_bytes || 0);
   const scrollbackLines = Number(obs.terminal_ui?.scrollback_lines || 0);
   const runtimeVisibility = obs.runtime_visibility || {};
   return {
     loaded: true,
     developerMode: Boolean(obs.developer_mode),
-    logLevel: (lvl === "DEBUG" ? "DEBUG" : "INFO") as "INFO" | "DEBUG",
     terminalBacklogMiB:
       Number.isFinite(perActorBytes) && perActorBytes > 0
         ? Math.max(1, Math.round(perActorBytes / (1024 * 1024)))
@@ -58,7 +55,6 @@ const _fromObs = (obs: Observability) => {
 export const useObservabilityStore = create<ObservabilityState>((set) => ({
   loaded: false,
   developerMode: false,
-  logLevel: "INFO",
   terminalBacklogMiB: DEFAULT_PTY_BACKLOG_MIB,
   terminalScrollbackLines: DEFAULT_SCROLLBACK_LINES,
   peerRuntimeVisibility: DEFAULT_PEER_RUNTIME_VISIBILITY,

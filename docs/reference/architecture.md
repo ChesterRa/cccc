@@ -313,7 +313,7 @@ A message addresses either the human user or one or more actors, never both.
 
 - **Foreman = Coordinator + Worker**
   - Does actual work, not just task assignment
-  - Extra coordination duties (receives actor_idle and quiet-review `silence_check` notifications)
+  - Extra coordination duties (by default receives messages sent without a target)
   - Can add/start/stop any actor
 
 - **Peer = Independent Expert**

@@ -410,30 +410,6 @@ export async function fetchCapabilityAllowlist() {
   }>(`/api/v1/capabilities/allowlist?by=user`);
 }
 
-export async function updateCapabilityAllowlist(args: {
-  patch?: Record<string, unknown>;
-  overlay?: Record<string, unknown>;
-  mode?: "patch" | "replace";
-  expectedRevision?: string;
-}) {
-  const body: Record<string, unknown> = { by: "user", mode: args.mode || "patch" };
-  if (args.patch) body.patch = args.patch;
-  if (args.overlay) body.overlay = args.overlay;
-  if (String(args.expectedRevision || "").trim()) {
-    body.expected_revision = String(args.expectedRevision || "").trim();
-  }
-  return apiJson<{
-    updated: boolean;
-    revision: string;
-    default: Record<string, unknown>;
-    overlay: Record<string, unknown>;
-    effective: Record<string, unknown>;
-    policy_source?: string;
-    policy_error?: string;
-    external_capability_safety_mode?: string;
-  }>(`/api/v1/capabilities/allowlist`, { method: "PUT", body: JSON.stringify(body) });
-}
-
 export async function blockCapabilityGlobal(
   capabilityId: string,
   blocked: boolean,

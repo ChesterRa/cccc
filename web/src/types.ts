@@ -482,17 +482,7 @@ export type CapabilityOverviewItem = {
   tool_names?: string[];
 };
 
-export type CapabilitySourceState = {
-  source_id: string;
-  enabled: boolean;
-  source_level?: string;
-  rationale?: string;
-  sync_state?: string;
-  last_synced_at?: string;
-  staleness_seconds?: number;
-  record_count?: number;
-  error?: string;
-};
+export type CapabilitySourceState = { source_id: string; record_count?: number };
 
 export type CapabilitySourceInstance = {
   source_instance_key: string;
@@ -820,19 +810,11 @@ export type AgentsMdInfo = {
 
 export type GroupSettings = {
   default_send_to: "foreman" | "broadcast";
-  actor_idle_timeout_seconds: number;
-  keepalive_delay_seconds: number;
-  keepalive_max_per_actor: number;
-  silence_timeout_seconds: number;
-  help_nudge_interval_seconds: number;
-  help_nudge_min_messages: number;
   mail_notice_after_seconds: number;
   mail_notice_idle_after_seconds: number;
   reply_notice_after_seconds: number;
 
   terminal_transcript_visibility: "off" | "foreman" | "all";
-  terminal_transcript_notify_tail: boolean;
-  terminal_transcript_notify_lines: number;
 };
 
 export type BuiltinAssistantPolicy = {

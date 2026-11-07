@@ -159,10 +159,8 @@ async fn observability_update(State(state): State<AppState>, Json(body): Json<Va
 
 fn observability_patch(body: &Value) -> serde_json::Map<String, Value> {
     let mut patch = serde_json::Map::new();
-    for key in ["developer_mode", "log_level", "logger_levels"] {
-        if let Some(value) = body.get(key) {
-            patch.insert(key.into(), value.clone());
-        }
+    if let Some(value) = body.get("developer_mode") {
+        patch.insert("developer_mode".into(), value.clone());
     }
     for (request_key, section, nested_key) in [
         (
@@ -314,6 +312,7 @@ mod tests {
         let patch = observability_patch(&json!({
             "by": "user",
             "developer_mode": false,
+            "log_level": "DEBUG",
             "terminal_transcript_per_actor_bytes": 10485760,
             "terminal_ui_scrollback_lines": 8000,
             "peer_runtime_visibility": "visible",

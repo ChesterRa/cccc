@@ -141,16 +141,10 @@ export function SettingsModal({
     if (!isOpen) setWebModelFocusTarget(undefined);
   }, [isOpen]);
 
-  // Automation + delivery settings state
+  // Delivery settings state
   const [mailNoticeAfterSeconds, setMailNoticeAfterSeconds] = useState(1800);
   const [mailNoticeIdleAfterSeconds, setMailNoticeIdleAfterSeconds] = useState(60);
   const [replyNoticeAfterSeconds, setReplyNoticeAfterSeconds] = useState(900);
-  const [idleSeconds, setIdleSeconds] = useState(0);
-  const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
-  const [keepaliveMax, setKeepaliveMax] = useState(3);
-  const [silenceSeconds, setSilenceSeconds] = useState(0);
-  const [helpNudgeIntervalSeconds, setHelpNudgeIntervalSeconds] = useState(600);
-  const [helpNudgeMinMessages, setHelpNudgeMinMessages] = useState(10);
 
   // Messaging policy
   const [defaultSendTo, setDefaultSendTo] = useState<"foreman" | "broadcast">("foreman");
@@ -159,8 +153,6 @@ export function SettingsModal({
   const [terminalVisibility, setTerminalVisibility] = useState<"off" | "foreman" | "all">(
     "foreman",
   );
-  const [terminalNotifyTail, setTerminalNotifyTail] = useState(false);
-  const [terminalNotifyLines, setTerminalNotifyLines] = useState(20);
 
   const {
     tailActorId,
@@ -182,8 +174,6 @@ export function SettingsModal({
     devActors,
     developerMode,
     setDeveloperMode,
-    logLevel,
-    setLogLevel,
     terminalBacklogMiB,
     setTerminalBacklogMiB,
     terminalScrollbackLines,
@@ -317,32 +307,6 @@ export function SettingsModal({
         settings.reply_notice_after_seconds ?? 900,
       ),
     );
-    setIdleSeconds((current) =>
-      sync(current, previous?.actor_idle_timeout_seconds, settings.actor_idle_timeout_seconds),
-    );
-    setKeepaliveSeconds((current) =>
-      sync(current, previous?.keepalive_delay_seconds, settings.keepalive_delay_seconds),
-    );
-    setKeepaliveMax((current) =>
-      sync(current, previous?.keepalive_max_per_actor ?? 3, settings.keepalive_max_per_actor ?? 3),
-    );
-    setSilenceSeconds((current) =>
-      sync(current, previous?.silence_timeout_seconds, settings.silence_timeout_seconds),
-    );
-    setHelpNudgeIntervalSeconds((current) =>
-      sync(
-        current,
-        previous?.help_nudge_interval_seconds ?? 600,
-        settings.help_nudge_interval_seconds ?? 600,
-      ),
-    );
-    setHelpNudgeMinMessages((current) =>
-      sync(
-        current,
-        previous?.help_nudge_min_messages ?? 10,
-        settings.help_nudge_min_messages ?? 10,
-      ),
-    );
     setDefaultSendTo((current) =>
       sync(current, previous?.default_send_to || "foreman", settings.default_send_to || "foreman"),
     );
@@ -351,20 +315,6 @@ export function SettingsModal({
         current,
         previous?.terminal_transcript_visibility || "foreman",
         settings.terminal_transcript_visibility || "foreman",
-      ),
-    );
-    setTerminalNotifyTail((current) =>
-      sync(
-        current,
-        Boolean(previous?.terminal_transcript_notify_tail),
-        Boolean(settings.terminal_transcript_notify_tail),
-      ),
-    );
-    setTerminalNotifyLines((current) =>
-      sync(
-        current,
-        Number(previous?.terminal_transcript_notify_lines || 20),
-        Number(settings.terminal_transcript_notify_lines || 20),
       ),
     );
     previousSettings.current = { groupId, value: settings };
@@ -427,16 +377,8 @@ export function SettingsModal({
     mailNoticeAfterSeconds,
     mailNoticeIdleAfterSeconds,
     replyNoticeAfterSeconds,
-    idleSeconds,
-    keepaliveSeconds,
-    keepaliveMax,
-    silenceSeconds,
-    helpNudgeIntervalSeconds,
-    helpNudgeMinMessages,
     defaultSendTo,
     terminalVisibility,
-    terminalNotifyTail,
-    terminalNotifyLines,
   ]);
   const saveContextRef = useRef(saveContext);
   saveContextRef.current = saveContext;
@@ -477,32 +419,8 @@ export function SettingsModal({
     });
   };
 
-  const handleSaveAutomationSettings = async () => {
-    await saveGroupSettings({
-      actor_idle_timeout_seconds: idleSeconds,
-      keepalive_delay_seconds: keepaliveSeconds,
-      keepalive_max_per_actor: keepaliveMax,
-      silence_timeout_seconds: silenceSeconds,
-      help_nudge_interval_seconds: helpNudgeIntervalSeconds,
-      help_nudge_min_messages: helpNudgeMinMessages,
-    });
-  };
-
-  const handleResetAutomationSettingsDraft = () => {
-    setIdleSeconds(0);
-    setKeepaliveSeconds(120);
-    setKeepaliveMax(3);
-    setSilenceSeconds(0);
-    setHelpNudgeIntervalSeconds(600);
-    setHelpNudgeMinMessages(10);
-  };
-
   const handleSaveTranscriptSettings = async () => {
-    await saveGroupSettings({
-      terminal_transcript_visibility: terminalVisibility,
-      terminal_transcript_notify_tail: terminalNotifyTail,
-      terminal_transcript_notify_lines: terminalNotifyLines,
-    });
+    await saveGroupSettings({ terminal_transcript_visibility: terminalVisibility });
   };
 
   const handleSaveMessagingSettings = async () => {
@@ -747,26 +665,7 @@ export function SettingsModal({
                     </section>
                   )}
                 {activeTab === "automation" && (
-                  <AutomationTab
-                    isDark={isDark}
-                    groupId={groupId}
-                    devActors={devActors}
-                    busy={busy}
-                    idleSeconds={idleSeconds}
-                    setIdleSeconds={setIdleSeconds}
-                    keepaliveSeconds={keepaliveSeconds}
-                    setKeepaliveSeconds={setKeepaliveSeconds}
-                    keepaliveMax={keepaliveMax}
-                    setKeepaliveMax={setKeepaliveMax}
-                    silenceSeconds={silenceSeconds}
-                    setSilenceSeconds={setSilenceSeconds}
-                    helpNudgeIntervalSeconds={helpNudgeIntervalSeconds}
-                    setHelpNudgeIntervalSeconds={setHelpNudgeIntervalSeconds}
-                    helpNudgeMinMessages={helpNudgeMinMessages}
-                    setHelpNudgeMinMessages={setHelpNudgeMinMessages}
-                    onSavePolicies={handleSaveAutomationSettings}
-                    onResetPolicies={handleResetAutomationSettingsDraft}
-                  />
+                  <AutomationTab isDark={isDark} groupId={groupId} devActors={devActors} />
                 )}
 
                 {activeTab === "delivery" && (
@@ -845,10 +744,6 @@ export function SettingsModal({
                     devActors={devActors}
                     terminalVisibility={terminalVisibility}
                     setTerminalVisibility={setTerminalVisibility}
-                    terminalNotifyTail={terminalNotifyTail}
-                    setTerminalNotifyTail={setTerminalNotifyTail}
-                    terminalNotifyLines={terminalNotifyLines}
-                    setTerminalNotifyLines={setTerminalNotifyLines}
                     onSaveTranscriptSettings={handleSaveTranscriptSettings}
                     tailActorId={tailActorId}
                     setTailActorId={setTailActorId}
@@ -985,8 +880,6 @@ export function SettingsModal({
                     runtimeInfoErr={runtimeInfoErr}
                     developerMode={developerMode}
                     setDeveloperMode={setDeveloperMode}
-                    logLevel={logLevel}
-                    setLogLevel={setLogLevel}
                     terminalBacklogMiB={terminalBacklogMiB}
                     setTerminalBacklogMiB={setTerminalBacklogMiB}
                     terminalScrollbackLines={terminalScrollbackLines}

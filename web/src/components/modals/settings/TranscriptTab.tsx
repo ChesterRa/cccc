@@ -10,7 +10,6 @@ import {
   SettingsPage,
   SettingsRow,
   SettingsSaveBar,
-  SettingsSwitch,
 } from "./SettingsKit";
 
 interface TranscriptTabProps {
@@ -21,10 +20,6 @@ interface TranscriptTabProps {
   // Policy settings
   terminalVisibility: "off" | "foreman" | "all";
   setTerminalVisibility: (v: "off" | "foreman" | "all") => void;
-  terminalNotifyTail: boolean;
-  setTerminalNotifyTail: (v: boolean) => void;
-  terminalNotifyLines: number;
-  setTerminalNotifyLines: (v: number) => void;
   onSaveTranscriptSettings: () => void;
   // Tail viewer
   tailActorId: string;
@@ -51,10 +46,6 @@ export function TranscriptTab({
   devActors,
   terminalVisibility,
   setTerminalVisibility,
-  terminalNotifyTail,
-  setTerminalNotifyTail,
-  terminalNotifyLines,
-  setTerminalNotifyLines,
   onSaveTranscriptSettings,
   tailActorId,
   setTailActorId,
@@ -74,7 +65,7 @@ export function TranscriptTab({
   onClearTail,
 }: TranscriptTabProps) {
   const { t } = useTranslation("settings");
-  const ids = { visibility: useId(), notifyTail: useId(), notifyLines: useId(), maxChars: useId() };
+  const ids = { visibility: useId(), maxChars: useId() };
   const ghost = secondaryButtonClass("sm");
 
   return (
@@ -111,23 +102,6 @@ export function TranscriptTab({
               className={inputClass()}
             />
           </div>
-        </SettingsRow>
-        <SettingsRow label={t("transcript.includeTail")} labelId={ids.notifyTail}>
-          <SettingsSwitch
-            checked={terminalNotifyTail}
-            onChange={setTerminalNotifyTail}
-            labelledBy={ids.notifyTail}
-          />
-        </SettingsRow>
-        <SettingsRow label={t("transcript.notificationLines")} htmlFor={ids.notifyLines}>
-          <SettingsNumberInput
-            id={ids.notifyLines}
-            value={terminalNotifyLines}
-            min={1}
-            max={80}
-            disabled={!terminalNotifyTail}
-            onChange={(value) => setTerminalNotifyLines(value || 20)}
-          />
         </SettingsRow>
       </SettingsCard>
 

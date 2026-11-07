@@ -173,8 +173,6 @@ fn source_counts(catalog: &[Capability]) -> BTreeMap<String, Value> {
                 source_id.clone(),
                 json!({
                     "source_id":source_id,
-                    "enabled":true,
-                    "sync_state":"synced",
                     "record_count":record_count,
                 }),
             )

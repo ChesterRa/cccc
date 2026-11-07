@@ -168,8 +168,8 @@ Ctrl/⌘ + wheel or a pinch, while the plain wheel keeps scrolling; see
 [Inspect images and diagrams](#inspect-images-and-diagrams).
 
 In Group settings, refreshing data or saving a different section preserves edited fields and
-updates fields you have not changed. Delivery, Automation, Messaging and Transcript display
-save results in the current settings view; a failed save leaves your changes available for retry.
+updates fields you have not changed. Delivery, Messaging and Transcript display save results
+in the current settings view; a failed save leaves your changes available for retry.
 Notebook refresh also preserves a pending notebook choice. Changing Groups starts from that
 Group's saved settings. Closing settings still discards unsaved form edits.
 Web Access refresh preserves the selected access goal together with edited connection fields.
@@ -1302,7 +1302,6 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
 
 ### Automation
 
-- **Built-in Automation**: Configure bounded Mail/reply notices and collaboration health loops such as agent idle alerts, keepalive, silence checks, and help nudges.
 - **Rules**: Create scheduled reminders with interval / recurring schedule / one-time schedule.
   Repeating reminders can have an optional maximum number of runs; leave it blank for no limit.
   The list shows progress and completed rules. Editing the limit keeps the count; removing it

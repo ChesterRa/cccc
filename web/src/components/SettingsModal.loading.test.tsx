@@ -44,7 +44,7 @@ vi.mock("../services/api", async (original) => ({
   fetchIMConfig: vi.fn(),
   fetchObservability: vi.fn(async () => ({
     ok: true,
-    result: { observability: { developer_mode: false, log_level: "INFO" } },
+    result: { observability: { developer_mode: false } },
   })),
   fetchPing: vi.fn(async () => ({ ok: true, result: { version: "fixture" } })),
   previewRegistryReconcile: vi.fn(async () => ({
@@ -189,14 +189,14 @@ describe("settings read ownership", () => {
       useModalStore.getState().openSettingsTarget({ scope: "global", tab: "developer" }),
     );
     expect(api.fetchObservability).toHaveBeenCalledTimes(1);
-    expect(developer.props?.logLevel).toBe("INFO");
-    await act(async () => developer.props!.setLogLevel("DEBUG"));
+    expect(developer.props?.terminalBacklogMiB).toBe(10);
+    await act(async () => developer.props!.setTerminalBacklogMiB(15));
     await tab("guidance");
     await act(async () =>
       useModalStore.getState().openSettingsTarget({ scope: "global", tab: "developer" }),
     );
     expect(api.fetchObservability).toHaveBeenCalledTimes(1);
-    expect(developer.props?.logLevel).toBe("DEBUG");
+    expect(developer.props?.terminalBacklogMiB).toBe(15);
   });
   it("keeps an IM draft across tab visits without rehydrating it", async () => {
     await render();
