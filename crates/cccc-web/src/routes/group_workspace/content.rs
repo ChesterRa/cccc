@@ -68,7 +68,7 @@ pub(super) async fn read(
         // Native PDF viewers require plugin/document support, which CSP sandbox blocks.
         // PDF is served with its exact MIME and nosniff, never interpreted as HTML.
         HeaderValue::from_static(if pdf && preview {
-            "default-src 'none'; object-src 'self'; style-src 'unsafe-inline'"
+            super::super::file_response::PDF_PREVIEW_CSP
         } else {
             "sandbox; default-src 'none'; style-src 'unsafe-inline'"
         }),

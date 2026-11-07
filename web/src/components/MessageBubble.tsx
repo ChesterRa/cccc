@@ -25,6 +25,7 @@ import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
 import { getMessageInsight } from "../utils/messagePerspective";
 import { getDelegationDisplayText, isDelegationSourceOutbound } from "./messageBubbleDelegation";
 import { MessageActions } from "./messageBubble/MessageActions";
+import { MessagePathContext, messagePathTarget } from "./messageBubble/messagePathContext";
 import {
   QUICK_REPLY_EMOJI,
   QUICK_REPLY_KINDS,
@@ -266,6 +267,10 @@ export const MessageBubble = memo(
         ? String(msgData.source_platform || "").trim()
         : "";
     const isRemoteSource = isCrossInstanceInboundMessage(ev.by, msgData);
+    const messagePaths = messagePathTarget(useContext(MessagePathContext), {
+      scopeKey: String(ev.scope_key || ""),
+      foreign: !!srcGroupId || isRemoteSource,
+    });
     const blobAttachments = rawAttachments
       .filter((a): a is MessageAttachment => a != null && typeof a === "object")
       .map((a) => ({
@@ -610,6 +615,7 @@ export const MessageBubble = memo(
               shouldRenderMarkdown={shouldRenderMarkdown}
               isDark={isDark}
               mentionTokens={mentionTokens}
+              paths={messagePaths}
             />
           }
           isUserMessage={isUserMessage}

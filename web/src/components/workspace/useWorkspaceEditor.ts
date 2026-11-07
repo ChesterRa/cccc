@@ -22,7 +22,9 @@ export function useWorkspaceEditor(
   const [fileLoading, setFileLoading] = useState(false);
   const [fileError, setFileError] = useState("");
   const [pathLoading, setPathLoading] = useState(false);
-  const [pathError, setPathError] = useState("");
+  const [pathFailure, setPathFailure] = useState<{ message: string; missingPath: string } | null>(
+    null,
+  );
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
@@ -56,7 +58,7 @@ export function useWorkspaceEditor(
     setFileError("");
     setFileLoading(false);
     setPathLoading(false);
-    setPathError("");
+    setPathFailure(null);
     setConflict(false);
     setSaving(false);
     setReloadVersion(0);
@@ -87,7 +89,7 @@ export function useWorkspaceEditor(
     async (path: string, options?: WorkspaceOpenFileOptions) => {
       if (entryChange.current || (options?.reload && pendingSaves.current.has(path))) return null;
       setPathLoading(false);
-      setPathError("");
+      setPathFailure(null);
       const destination = options?.fragment ? { fragment: options.fragment } : null;
       if (!options?.reload && file?.path === path) {
         if (pathLoading || selectedPath !== path || destination) {
@@ -152,13 +154,16 @@ export function useWorkspaceEditor(
       const request = ++fileRequest.current;
       setFileLoading(false);
       setPathLoading(true);
-      setPathError("");
+      setPathFailure(null);
       setSelectedPath(file?.path ?? "");
       const response = await api.resolveWorkspacePath(groupId, path, scopeKey, scopeUrl);
       if (request !== fileRequest.current) return;
       setPathLoading(false);
       if (!response.ok) {
-        setPathError(response.error.message);
+        setPathFailure({
+          message: response.error.message,
+          missingPath: response.error.code === "NOT_FOUND" ? path : "",
+        });
         return;
       }
       if (response.result.is_dir) {
@@ -174,7 +179,7 @@ export function useWorkspaceEditor(
   const closeFile = useCallback(() => {
     fileRequest.current += 1;
     setPathLoading(false);
-    setPathError("");
+    setPathFailure(null);
     setFile(null);
     setNavigation(null);
     updateDraft("");
@@ -315,7 +320,8 @@ export function useWorkspaceEditor(
     fileLoading,
     fileError,
     pathLoading,
-    pathError,
+    pathError: pathFailure?.message ?? "",
+    missingPath: pathFailure?.missingPath ?? "",
     locatePath,
     saving,
     conflict,

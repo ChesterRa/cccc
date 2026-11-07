@@ -1113,12 +1113,34 @@ Escape or Close returns to the message. Downloads remain available when the
 browser cannot decode a video. Confirmed uploads play and download from the
 Group's stored blob, so they remain available after the local upload preview expires.
 
+Markdown, PDF and common text files open in the page when you click their name; their
+download sits next to it. Markdown is rendered, and text and logs stay plain. A long file
+shows its first 1 MiB. PDF uses the browser's own viewer. Where it cannot show one, download
+it or, unless CCCC is embedded through Connect, open it in a new tab. Other files stay
+downloads.
+
 Audio files keep their download chip and gain a play button. A message has one player,
 which appears below its files; choosing another file switches to it, so you can compare
 several clips. Starting audio pauses other message audio and video, and starting a video
 pauses audio. Playback stops if the message scrolls far out of view or you change Group.
 Which formats play depends on the browser. A file that fails to play shows a note; you can
 try it again, and its download remains available.
+
+### Links and file paths in messages
+
+An address that starts with `http://`, `https://` or `www.` is a link. A link to an image, audio
+or video file opens in the same preview and loads only when you click it. Whether it shows depends on the source and the
+browser, so the preview keeps a way to open the original in a new tab. Markdown and text open
+there too when they come from `raw.githubusercontent.com` or `gist.githubusercontent.com`, and
+a link to one of this Group's files opens there with its download. Other links, including a PDF
+on another site, open in a new tab. Ctrl, ⌘, Shift and the middle button keep their usual
+behavior.
+
+A path with a directory, such as `docs/guide/web-ui.md` or `src/main.rs:12`, opens a supported file
+in **Files**, as it is now rather than when the message was sent, and so does a Markdown link to a
+file in the workspace. A path in inline code may contain spaces or non-ASCII names. Paths
+outside the Group's active scope stay plain text, and so do paths in a relayed message or a message
+from another scope, where the same path would mean a different file.
 
 ### Message diagrams
 

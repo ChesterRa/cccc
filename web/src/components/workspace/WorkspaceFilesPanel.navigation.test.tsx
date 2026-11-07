@@ -187,7 +187,7 @@ it("shows lookup errors beside the path even with an open draft, and allows retr
     error: { code: "NOT_FOUND", message: "Path not found: gone" },
   });
   await enterPath("gone");
-  expect(panel().querySelector('[role="alert"]')?.textContent).toContain("Path not found: gone");
+  expect(panel().querySelector('[role="alert"]')?.textContent).toContain("workspacePathNotFound");
   expect(mainArea().querySelector("textarea")?.value).toBe("unsaved work");
   await enterPath("build");
   expect(panel().querySelector('[role="alert"]')).toBeNull();

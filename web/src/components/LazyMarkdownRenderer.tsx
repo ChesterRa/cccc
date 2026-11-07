@@ -15,6 +15,7 @@ type LazyMarkdownRendererProps = {
   resolveUrl?: (url: string, kind: "image" | "link") => string;
   onRendered?: () => void;
   mentionTokens?: readonly MessageMentionToken[];
+  pathRoot?: string;
 };
 
 export function LazyMarkdownRenderer({
@@ -27,6 +28,7 @@ export function LazyMarkdownRenderer({
   resolveUrl,
   onRendered,
   mentionTokens,
+  pathRoot,
 }: LazyMarkdownRendererProps) {
   return (
     <Suspense fallback={fallback}>
@@ -39,6 +41,7 @@ export function LazyMarkdownRenderer({
         resolveUrl={resolveUrl}
         onRendered={onRendered}
         mentionTokens={mentionTokens}
+        pathRoot={pathRoot}
       />
     </Suspense>
   );

@@ -8,6 +8,10 @@ use tokio::io::AsyncReadExt;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
 const MAX_DOWNLOAD_FILENAME_CHARS: usize = 180;
 
+// Native PDF viewers need document/plugin support; do not apply CSP sandbox here.
+pub(super) const PDF_PREVIEW_CSP: &str =
+    "default-src 'none'; object-src 'self'; style-src 'unsafe-inline'";
+
 /// Reduce a caller-supplied name to a safe leaf: no directories, no control
 /// characters, no quotes that would break out of the header parameter.
 pub fn sanitize_filename(raw: &str) -> String {

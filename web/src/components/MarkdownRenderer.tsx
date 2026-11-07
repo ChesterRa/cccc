@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import MarkdownIt from "markdown-it";
 import markdownItCjkFriendly from "markdown-it-cjk-friendly";
 import { markdownMentions } from "./markdownMentions";
+import { markdownPaths } from "./markdownPaths";
 import { renderToStaticMarkup } from "react-dom/server";
 import { useTranslation } from "react-i18next";
 import { CheckIcon, CloseIcon, CopyIcon, ExpandIcon } from "./Icons";
@@ -165,6 +166,8 @@ interface MarkdownRendererProps {
   onRendered?: () => void;
   /** References to mark in text, as `getMessageMentionTokens` returns them. */
   mentionTokens?: readonly MessageMentionToken[];
+  /** Only message text with a validated workspace scope may expose path actions. */
+  pathRoot?: string;
 }
 
 export function MarkdownRenderer({
@@ -176,6 +179,7 @@ export function MarkdownRenderer({
   resolveUrl,
   onRendered,
   mentionTokens,
+  pathRoot,
 }: MarkdownRendererProps) {
   const { t } = useTranslation(["chat", "common"]);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -218,11 +222,11 @@ export function MarkdownRenderer({
     const instance = new MarkdownIt({
       html: false, // Security: Disable raw HTML to prevent XSS
       linkify: true,
-      typographer: true,
       breaks: true,
     })
       .use(markdownItCjkFriendly)
-      .use(markdownMentions);
+      .use(markdownMentions)
+      .use(markdownPaths);
     if (resolveUrl) {
       instance.renderer.rules.heading_open = (tokens, index, options, env, renderer) => {
         const title =
@@ -393,8 +397,8 @@ export function MarkdownRenderer({
   ]);
 
   const htmlContent = useMemo(() => {
-    return md.render(content || "", mentionTokens?.length ? { mentionTokens } : {});
-  }, [md, content, mentionTokens]);
+    return md.render(content || "", { mentionTokens, pathRoot });
+  }, [md, content, mentionTokens, pathRoot]);
   // Mermaid renders into this subtree imperatively. Keep the prop object stable so unrelated parent
   // renders do not make React replace the subtree and reset completed diagrams back to "pending".
   const renderedHtml = useMemo(() => ({ __html: htmlContent }), [htmlContent]);

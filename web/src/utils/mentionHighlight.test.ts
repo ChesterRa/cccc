@@ -1,6 +1,24 @@
 import { expect, it } from "vite-plus/test";
 import { getActorAccentIndex, type Actor } from "../types";
-import { findMessageMentionRanges, getMessageMentionTokens } from "./mentionHighlight";
+import {
+  findMessageLinkRanges,
+  findMessageMentionRanges,
+  getMessageMentionTokens,
+} from "./mentionHighlight";
+
+it("keeps URL punctuation and balanced parentheses in the right places", () => {
+  const text = "看 https://example.test/a(b)?q=1，另看 (https://example.test/end).";
+  expect(findMessageLinkRanges(text).map((range) => text.slice(range.start, range.end))).toEqual([
+    "https://example.test/a(b)?q=1",
+    "https://example.test/end",
+  ]);
+  expect(findMessageLinkRanges("alice@www.example.test https:// invalid://example.test")).toEqual(
+    [],
+  );
+  const long = "https://example.test/path" + ")".repeat(10_000);
+  const [link] = findMessageLinkRanges(long);
+  expect(long.slice(link.start, link.end)).toBe("https://example.test/path");
+});
 
 const actors = [
   { id: "claude-1", title: "Claude" },

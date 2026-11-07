@@ -30,10 +30,15 @@ pub(super) async fn download(
         .map(sanitize_filename)
         .filter(|value| !value.is_empty());
     let content_type = blob_content_type(filename.as_deref().unwrap_or(&blob_name), &prefix);
-    let disposition = query
-        .download
-        .unwrap_or(false)
-        .then(|| content_disposition("attachment", filename.as_deref().unwrap_or("download")));
+    let download = query.download.unwrap_or(false);
+    let disposition = if download || content_type == "application/pdf" {
+        Some(content_disposition(
+            if download { "attachment" } else { "inline" },
+            filename.as_deref().unwrap_or("download"),
+        ))
+    } else {
+        None
+    };
     // ServeFile answers byte ranges, which media players need to start and seek.
     // Serve the full representation where a range must be ignored: HEAD, an
     // If-Range (blobs expose no strong validator to match), or an empty blob.
@@ -62,6 +67,12 @@ pub(super) async fn download(
         header::CACHE_CONTROL,
         HeaderValue::from_static("private, no-cache"),
     );
+    if content_type == "application/pdf" && !download {
+        response.headers_mut().insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(super::file_response::PDF_PREVIEW_CSP),
+        );
+    }
     if let Some(value) = disposition {
         response.headers_mut().insert(
             header::CONTENT_DISPOSITION,
@@ -83,13 +94,15 @@ fn covers_whole_file(range: Option<&HeaderValue>, length: u64) -> bool {
 
 fn blob_content_type(filename: &str, bytes: &[u8]) -> String {
     let guessed = mime_guess::from_path(filename).first_or_octet_stream();
-    // Only trust the display filename for inert plain text. Raster images are
+    // Only trust the display filename for inert plain text. PDF and media are
     // identified by signature below; active HTML/SVG content must not become
     // same-origin executable content merely because of a query parameter.
     if guessed == mime_guess::mime::TEXT_PLAIN {
         return guessed.essence_str().to_owned();
     }
-    let detected = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+    let detected = if bytes.starts_with(b"%PDF-") {
+        "application/pdf"
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         "image/png"
     } else if bytes.starts_with(b"\xff\xd8\xff") {
         "image/jpeg"
@@ -124,6 +137,14 @@ mod tests {
     #[test]
     fn uses_the_display_filename_for_text_and_binary_signature_for_images() {
         assert_eq!(blob_content_type("notes.txt", b"hello"), "text/plain");
+        assert_eq!(
+            blob_content_type("report.pdf", b"%PDF-1.7\n"),
+            "application/pdf"
+        );
+        assert_eq!(
+            blob_content_type("fake.pdf", b"<script>alert(1)</script>"),
+            "application/octet-stream"
+        );
         assert_eq!(
             blob_content_type("content-address", b"\x89PNG\r\n\x1a\nbody"),
             "image/png"

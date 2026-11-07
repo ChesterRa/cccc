@@ -1,4 +1,5 @@
 import { FloatingPortal } from "@floating-ui/react";
+import { ExternalLink } from "lucide-react";
 import { useId } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -6,7 +7,7 @@ import { useModalA11y } from "../../hooks/useModalA11y";
 import { classNames } from "../../utils/classNames";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { ModalFocusGuard } from "../ModalFocusGuard";
-import { CloseIcon, DownloadIcon } from "../Icons";
+import { CloseIcon, DownloadIcon, LcdIcon } from "../Icons";
 import { buttonVariants } from "../ui/button-variants";
 import "./mediaLightbox.css";
 
@@ -18,6 +19,7 @@ export function MediaLightbox({
   title,
   downloadHref,
   downloadName,
+  openHref,
   image = false,
   children,
 }: {
@@ -25,8 +27,11 @@ export function MediaLightbox({
   onClose: () => void;
   dialogLabel: string;
   title: string;
-  downloadHref: string;
-  downloadName: string;
+  /** Left out for an address on another site, where a download link would replace CCCC. */
+  downloadHref?: string;
+  downloadName?: string;
+  /** Hands the file to the browser's own viewer, for what the page cannot show well. */
+  openHref?: string;
   image?: boolean;
   children: ReactNode;
 }) {
@@ -77,16 +82,35 @@ export function MediaLightbox({
             </div>
 
             <div className="flex shrink-0 items-center gap-2" data-media-actions>
-              <AuthenticatedDownloadLink
-                href={downloadHref}
-                download={downloadName}
-                className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`}
-                title={t("download", { name: title })}
-                aria-label={t("download", { name: title })}
-                data-lcd-key
-              >
-                <DownloadIcon size={18} aria-hidden="true" />
-              </AuthenticatedDownloadLink>
+              {openHref ? (
+                <a
+                  href={openHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`}
+                  title={t("workspaceOpenSeparate")}
+                  aria-label={t("workspaceOpenSeparate")}
+                  data-lcd-key
+                >
+                  <LcdIcon
+                    icon={ExternalLink}
+                    glyph="external-link"
+                    className="h-[18px] w-[18px]"
+                  />
+                </a>
+              ) : null}
+              {downloadHref ? (
+                <AuthenticatedDownloadLink
+                  href={downloadHref}
+                  download={downloadName}
+                  className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`}
+                  title={t("download", { name: title })}
+                  aria-label={t("download", { name: title })}
+                  data-lcd-key
+                >
+                  <DownloadIcon size={18} aria-hidden="true" />
+                </AuthenticatedDownloadLink>
+              ) : null}
 
               <button
                 type="button"

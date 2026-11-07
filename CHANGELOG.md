@@ -18,6 +18,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Audio files in a message can now be played in the browser. Each keeps its download and gains a
   play button. A message has one player, so you can switch between several clips to compare them.
   Playback stops if the message scrolls far out of view.
+- Markdown, PDF and common text files in a message now open in the page when you click their name,
+  with their download next to it. PDF uses the browser's own viewer.
+- An address that starts with `http://`, `https://` or `www.` is now a link in a plain message too.
+  A link to an image, audio or video file opens in the same preview, as does a link to one of the
+  Group's files, and Markdown and text from `raw.githubusercontent.com` or
+  `gist.githubusercontent.com`. A preview loads when you click its link, and other links open in a
+  new tab.
+- A path with a directory, such as `docs/guide/web-ui.md`, opens a supported file in Files, as it is
+  now rather than when the message was sent. So does a Markdown link to a file in the workspace.
 
 ### Changed
 
@@ -70,6 +79,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- A file name such as `AGENTS.md` or `build.rs` in a formatted message is no longer a link to a
+  website, and formatted messages no longer rewrite `..` as an ellipsis or `(c)` as a symbol.
 - An agent that starts or resumes now gets the Group's constraints first. Before, the rest of its
   recovery context could crowd them out, leaving a few of them or only a note that they were omitted.
 - Skills reach the agent again in this version. A skill chosen from the `/` menu sent the agent to

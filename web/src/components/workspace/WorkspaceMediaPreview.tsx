@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type SyntheticEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 /** The browser owns playback, seeking, volume and fullscreen. No eager download or autoplay. */
@@ -6,10 +6,16 @@ export function WorkspaceMediaPreview({
   src,
   name,
   audio = false,
+  failedText,
+  onPlay,
 }: {
   src: string;
   name: string;
   audio?: boolean;
+  /** Replaces the advice to download, for a preview that has no download. */
+  failedText?: string;
+  /** Given in a message, where one piece of media plays at a time. */
+  onPlay?: (event: SyntheticEvent<HTMLMediaElement>) => void;
 }) {
   const { t } = useTranslation("chat");
   const [failed, setFailed] = useState(false);
@@ -17,7 +23,7 @@ export function WorkspaceMediaPreview({
     <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto p-3">
       {failed ? (
         <p role="alert" className="max-w-md text-center text-sm text-[var(--color-text-secondary)]">
-          {t(audio ? "workspaceAudioUnavailable" : "workspaceVideoUnavailable")}
+          {failedText ?? t(audio ? "workspaceAudioUnavailable" : "workspaceVideoUnavailable")}
         </p>
       ) : audio ? (
         <audio
@@ -25,6 +31,8 @@ export function WorkspaceMediaPreview({
           aria-label={name}
           controls
           preload="metadata"
+          data-message-media={onPlay ? true : undefined}
+          onPlay={onPlay}
           onError={() => setFailed(true)}
           className="w-full max-w-lg"
         />
@@ -36,6 +44,8 @@ export function WorkspaceMediaPreview({
           controls
           playsInline
           preload="metadata"
+          data-message-media={onPlay ? true : undefined}
+          onPlay={onPlay}
           onError={() => setFailed(true)}
         />
       )}

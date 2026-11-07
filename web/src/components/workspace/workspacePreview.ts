@@ -17,6 +17,16 @@ export function workspacePreviewKind(file: WorkspaceFile) {
   return "text";
 }
 
+/** A URL a document may use as it stands, or null when it is relative to the document. */
+export function absoluteDocumentUrl(href: string, target: "image" | "link"): string | null {
+  if (href.startsWith("#")) return target === "link" ? href : "";
+  if (/^https?:\/\//i.test(href)) return href;
+  if (target === "link" && /^mailto:/i.test(href)) return href;
+  if (target === "image" && /^data:image\/(png|gif|jpeg|webp|svg\+xml)[;,]/i.test(href))
+    return href;
+  return null;
+}
+
 /** Resolve document URLs without converting literal POSIX backslashes to separators. */
 export function workspaceLink(
   filePath: string,

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { WorkspaceFile } from "../../types";
 import { workspaceContentUrl } from "../../services/api/workspace";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
-import { parseWorkspaceTable, workspaceLink } from "./workspacePreview";
+import { absoluteDocumentUrl, parseWorkspaceTable, workspaceLink } from "./workspacePreview";
 
 import { staticWorkspaceHtml } from "./workspaceHtml";
 import { scrollWorkspaceFragment } from "./workspaceFragment";
@@ -46,11 +46,8 @@ export function WorkspaceDocumentPreview({
   const resourceEndpoint = endpoint.origin + endpoint.pathname;
   const resolveUrl = useCallback(
     (href: string, target: "image" | "link") => {
-      if (href.startsWith("#")) return target === "link" ? href : "";
-      if (/^https?:\/\//i.test(href)) return href;
-      if (target === "link" && /^mailto:/i.test(href)) return href;
-      if (target === "image" && /^data:image\/(png|gif|jpeg|webp|svg\+xml)[;,]/i.test(href))
-        return href;
+      const absolute = absoluteDocumentUrl(href, target);
+      if (absolute !== null) return absolute;
       const local = workspaceLink(file.path, href);
       return local ? workspaceContentUrl(groupId, { ...file, path: local.path }) + local.hash : "";
     },

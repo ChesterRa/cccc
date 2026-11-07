@@ -12,11 +12,49 @@ export type MessageMentionRange = {
   accent?: number;
 };
 
+export type MessageLinkRange = { start: number; end: number; href: string };
+
 /** The selectors the composer suggests next to this Group's agents. */
 const SELECTOR_MENTIONS = ["@all", "@foreman", "@peers", CHET_SELECTOR];
 
 // Links may contain @ or # after punctuation.
-const LINK = /(?:https?:\/\/|www\.)[^\s<>"']+/giu;
+const LINK = /(?:https?:\/\/|www\.)[^\s<>"'`，。！？；：“”‘’【】《》（）、]+/giu;
+
+/** Bare web links in plain messages. Trailing prose punctuation stays outside the link. */
+export function findMessageLinkRanges(text: string): MessageLinkRange[] {
+  const ranges: MessageLinkRange[] = [];
+  for (const match of text.matchAll(LINK)) {
+    const start = match.index;
+    if (start > 0 && /[A-Za-z0-9_@]/u.test(text[start - 1])) continue;
+    let value = match[0].replace(/[.,!?;:]+$/u, "");
+    for (const [open, close] of [
+      ["(", ")"],
+      ["[", "]"],
+    ]) {
+      let openings = 0;
+      let closings = 0;
+      for (const character of value) {
+        if (character === open) openings += 1;
+        else if (character === close) closings += 1;
+      }
+      let end = value.length;
+      while (end > 0 && value[end - 1] === close && closings > openings) {
+        end -= 1;
+        closings -= 1;
+      }
+      value = value.slice(0, end);
+    }
+    const href = /^www\./iu.test(value) ? `http://${value}` : value;
+    try {
+      const parsed = new URL(href);
+      if (!value || !["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) continue;
+    } catch {
+      continue;
+    }
+    ranges.push({ start, end: start + value.length, href });
+  }
+  return ranges;
+}
 
 /**
  * The references a message can show as highlighted: this Group's current agents by id or title,
@@ -82,10 +120,7 @@ export function findMessageMentionRanges(
     .filter((token) => /^[@#]\S/u.test(token.text))
     .sort((a, b) => b.text.length - a.text.length);
   if (!candidates.length) return [];
-  const links = [...text.matchAll(LINK)].map((match) => ({
-    start: match.index,
-    end: match.index + match[0].length,
-  }));
+  const links = findMessageLinkRanges(text);
   const ranges: MessageMentionRange[] = [];
   let link = 0;
   for (const match of text.matchAll(/[@#]/gu)) {

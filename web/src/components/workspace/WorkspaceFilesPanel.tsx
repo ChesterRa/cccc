@@ -229,7 +229,10 @@ function FilesPanel({ files, isDark, readOnly, onClose, onAttachPath, onPinPath 
           </form>
           {(pathError || files.pathError) && (
             <p role="alert" className="px-3 py-2 text-xs text-rose-600" data-status-tone="error">
-              {pathError || files.pathError}
+              {pathError ||
+                (files.missingPath
+                  ? t("workspacePathNotFound", { path: files.missingPath })
+                  : files.pathError)}
             </p>
           )}
 

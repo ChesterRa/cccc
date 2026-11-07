@@ -5345,9 +5345,10 @@ byte ranges (206/416), streams rather than buffers the whole file, and rechecks
 Group access for each request, including conditional cache reads. Responses use
 `Cache-Control: private, no-cache`. A supplied `If-Range` returns the full current
 representation. `download=true` adds a safe attachment filename; otherwise inert
-image/video types are detected from the stored bytes, not trusted filename
-extensions. Unrecognized content remains `application/octet-stream` (plain text
-may use its display filename).
+image, video and PDF types are detected from the stored bytes, not trusted filename
+extensions. A PDF is served inline under the same CSP as workspace PDFs, without a
+sandbox, so the browser's own viewer can show it. Unrecognized content remains
+`application/octet-stream` (plain text may use its display filename).
 
 #### `reply`
 

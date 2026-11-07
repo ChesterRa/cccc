@@ -12,6 +12,98 @@ use tower::ServiceExt;
 const MP4: &[u8] = b"\0\0\0\x20ftypisom\0\0\x02\0isomiso2mp41-payload-bytes";
 
 #[tokio::test]
+async fn pdf_blob_preview_is_typed_and_restricted_without_changing_downloads() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("pdf", "")
+        .expect("group");
+    let pdf = b"%PDF-1.7\nfixture contents";
+    let blob = cccc_core::blobs::store(&home, &group.group_id, pdf).expect("blob");
+    let url = format!(
+        "/api/v1/groups/{}/blobs/{}?filename=report.pdf",
+        group.group_id, blob.sha256
+    );
+    let app = auth_support::authenticated_app(home.clone());
+
+    let preview = app
+        .clone()
+        .oneshot(
+            Request::get(&url)
+                .header(header::RANGE, "bytes=0-4")
+                .body(Body::empty())
+                .expect("range request"),
+        )
+        .await
+        .expect("range response");
+    assert_eq!(preview.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(preview.headers()[header::CONTENT_TYPE], "application/pdf");
+    assert_eq!(preview.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+    assert!(
+        preview.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .expect("inline disposition")
+            .starts_with("inline;")
+    );
+    assert!(
+        preview
+            .headers()
+            .get_all(header::CONTENT_SECURITY_POLICY)
+            .iter()
+            .any(|value| value
+                .to_str()
+                .expect("preview CSP")
+                .contains("default-src 'none'; object-src 'self'"))
+    );
+    assert_eq!(
+        preview
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+        &pdf[..5]
+    );
+
+    let download = app
+        .clone()
+        .oneshot(
+            Request::get(format!("{url}&download=true"))
+                .body(Body::empty())
+                .expect("download request"),
+        )
+        .await
+        .expect("download response");
+    assert_eq!(download.headers()[header::CONTENT_TYPE], "application/pdf");
+    assert!(
+        download.headers()[header::CONTENT_DISPOSITION]
+            .to_str()
+            .expect("attachment disposition")
+            .starts_with("attachment;")
+    );
+
+    let html = cccc_core::blobs::store(&home, &group.group_id, b"<script>alert(1)</script>")
+        .expect("HTML blob");
+    let fake = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/groups/{}/blobs/{}?filename=fake.pdf",
+                group.group_id, html.sha256
+            ))
+            .body(Body::empty())
+            .expect("fake PDF request"),
+        )
+        .await
+        .expect("fake PDF response");
+    assert_eq!(
+        fake.headers()[header::CONTENT_TYPE],
+        "application/octet-stream"
+    );
+    assert_eq!(fake.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+}
+
+#[tokio::test]
 async fn video_blobs_play_inline_with_byte_ranges() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

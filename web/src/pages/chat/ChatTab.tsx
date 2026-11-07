@@ -26,6 +26,7 @@ import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { getReadingTopAnchorOffset } from "../../components/virtualMessageListAnchorRestore";
 import { PendingReplyEditingContext } from "../../components/messageBubble/PendingReplyEditingContext";
 import { LivePendingStatusContext } from "../../features/pendingReplies/liveStatusContext";
+import { MessagePathContext } from "../../components/messageBubble/messagePathContext";
 import { useWaitingFilterIndicator } from "../../features/pendingReplies/useWaitingFilterIndicator";
 import { useLivePendingStatuses } from "../../features/pendingReplies/useLivePendingStatuses";
 import { NotificationPrompt } from "../../features/pushNotifications/NotificationPrompt";
@@ -622,6 +623,36 @@ export function ChatTab({
     [groupPresentation, readOnly, selectedGroupId, setPresentationPin],
   );
 
+  const { setMode: setWorkspaceMode, locatePath: locateWorkspacePath } = workspaceFiles;
+  const openMessagePath = useCallback(
+    (path: string) => {
+      if (!selectedGroupId) return;
+      if (isSmallScreen) setChatMobileSurface(selectedGroupId, "files");
+      else if (activeSidePanel !== "files") selectSidePanel("files");
+      setWorkspaceMode("files");
+      void locateWorkspacePath(path);
+    },
+    [
+      activeSidePanel,
+      isSmallScreen,
+      locateWorkspacePath,
+      selectSidePanel,
+      selectedGroupId,
+      setChatMobileSurface,
+      setWorkspaceMode,
+    ],
+  );
+  const scopeKey = workspaceScope?.scope_key || "";
+  const scopeRoot = workspaceScope?.url || "";
+  // An exhibit has no workspace, and a Group without a project folder has nothing to open.
+  const messagePaths = useMemo(
+    () =>
+      readOnly || !scopeKey || !scopeRoot
+        ? null
+        : { scopeKey, rootPath: scopeRoot, open: openMessagePath },
+    [openMessagePath, readOnly, scopeKey, scopeRoot],
+  );
+
   const closeMobileFiles = useCallback(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return;
@@ -1138,108 +1169,110 @@ export function ChatTab({
                       <LivePendingStatusContext.Provider
                         value={pendingActive ? null : livePendingStatuses}
                       >
-                        <VirtualMessageList
-                          messages={chatMessages}
-                          actors={actors}
-                          agentStates={agentStates}
-                          taskById={taskById}
-                          isDark={isDark}
-                          readOnly={readOnly}
-                          groupId={selectedGroupId}
-                          groupLabelById={messageGroupLabelById}
-                          webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
-                          viewKey={chatViewKey}
-                          topInsetPx={overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0}
-                          followOnViewChangeKey={projectionActive ? undefined : chatViewKey}
-                          initialScrollTargetId={
-                            projectionActive ? undefined : chatInitialScrollTargetId
-                          }
-                          // Waiting for you and Pinned open at their newest message unless given
-                          // a message to keep. A message given no height starts at the reading top.
-                          initialScrollAnchorId={
-                            projectionActive
-                              ? chatInitialScrollAnchorId || chatMessages.at(-1)?.id
-                              : chatInitialScrollAnchorId
-                          }
-                          initialScrollAnchorOffsetPx={
-                            chatInitialScrollAnchorOffsetPx ??
-                            getReadingTopAnchorOffset(
-                              overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0,
-                            )
-                          }
-                          initialScrollOffsetPx={chatInitialScrollOffsetPx}
-                          highlightInitialScrollAnchor={chatInitialScrollHighlight}
-                          highlightEventId={chatHighlightEventId}
-                          liveJumpActive={liveJumpActive}
-                          contextWindow={!!chatWindowProps}
-                          className={
-                            // Room to scroll the last message clear of the members over the
-                            // list. It stays while reading hides them, so hiding them never
-                            // moves the list, and goes only for a keyboard (chatMessage.css).
-                            !chatWindowProps && runtimeActors.length > 0 && !hideDockForKeyboard
-                              ? classNames(
-                                  "chat-list-over-dock",
-                                  !reading.hidden && "chat-dock-shown",
-                                )
-                              : undefined
-                          }
-                          scrollRef={scrollRef}
-                          onReply={startReply}
-                          onShowRecipients={showRecipients}
-                          onCopyLink={copyMessageLink}
-                          onTogglePin={toggleMessagePin}
-                          onViewContext={
-                            hasChatFilter && !chatWindowProps ? showInConversation : undefined
-                          }
-                          onRelay={relayMessage}
-                          onOpenSource={openSourceMessage}
-                          onOpenPresentationRef={openPresentationRef}
-                          onOpenTaskRef={openTaskRef}
-                          // The jump key floats over the list's corner; while an answer is being
-                          // written it would cover that card's send key, so it waits.
-                          showScrollButton={
-                            showScrollButton &&
-                            !(pendingActive && isSmallScreen) &&
-                            inlineReplyEditor === null
-                          }
-                          onScrollButtonClick={handleScrollButtonClick}
-                          chatUnreadCount={chatUnreadCount}
-                          sendScrollRequest={sendScrollRequest}
-                          onSendScrollRequestConsumed={consumeSendScrollRequest}
-                          onScrollChange={handleScrollChange}
-                          onContextReady={onContextReady}
-                          onReachedContextEnd={onReachedContextEnd}
-                          onLoadNewerContext={onLoadNewerContext}
-                          isLoadingNewerContext={chatWindowProps?.isLoadingAfter}
-                          newerContextError={chatWindowProps?.afterError}
-                          onScrollSnapshot={handleScrollSnapshot}
-                          isLoadingHistory={listIsLoadingHistory}
-                          hasMoreHistory={listHasMoreHistory}
-                          hasActiveFilters={hasChatFilter && !chatWindowProps}
-                          isFilteredEmpty={isFilteredEmptyState}
-                          emptyMessage={
-                            !selectedGroupId
-                              ? t(
-                                  readOnly
-                                    ? "noGroupSelectedReadOnly"
-                                    : canCreateGroup
-                                      ? "noGroupSelected"
-                                      : "noGroupSelectedNoCreate",
-                                )
-                              : pendingActive
-                                ? t(
-                                    pendingDaemonUnsupported
-                                      ? "pendingReply.daemonUnsupported"
-                                      : pendingPageError
-                                        ? "pendingReply.loadFailed"
-                                        : "pendingReply.empty",
+                        <MessagePathContext.Provider value={messagePaths}>
+                          <VirtualMessageList
+                            messages={chatMessages}
+                            actors={actors}
+                            agentStates={agentStates}
+                            taskById={taskById}
+                            isDark={isDark}
+                            readOnly={readOnly}
+                            groupId={selectedGroupId}
+                            groupLabelById={messageGroupLabelById}
+                            webModelDeliveryStatusByEventId={webModelDeliveryStatusByEventId}
+                            viewKey={chatViewKey}
+                            topInsetPx={overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0}
+                            followOnViewChangeKey={projectionActive ? undefined : chatViewKey}
+                            initialScrollTargetId={
+                              projectionActive ? undefined : chatInitialScrollTargetId
+                            }
+                            // Waiting for you and Pinned open at their newest message unless given
+                            // a message to keep. A message given no height starts at the reading top.
+                            initialScrollAnchorId={
+                              projectionActive
+                                ? chatInitialScrollAnchorId || chatMessages.at(-1)?.id
+                                : chatInitialScrollAnchorId
+                            }
+                            initialScrollAnchorOffsetPx={
+                              chatInitialScrollAnchorOffsetPx ??
+                              getReadingTopAnchorOffset(
+                                overlayMobileChrome ? MOBILE_READING_CHROME_HEIGHT_PX : 0,
+                              )
+                            }
+                            initialScrollOffsetPx={chatInitialScrollOffsetPx}
+                            highlightInitialScrollAnchor={chatInitialScrollHighlight}
+                            highlightEventId={chatHighlightEventId}
+                            liveJumpActive={liveJumpActive}
+                            contextWindow={!!chatWindowProps}
+                            className={
+                              // Room to scroll the last message clear of the members over the
+                              // list. It stays while reading hides them, so hiding them never
+                              // moves the list, and goes only for a keyboard (chatMessage.css).
+                              !chatWindowProps && runtimeActors.length > 0 && !hideDockForKeyboard
+                                ? classNames(
+                                    "chat-list-over-dock",
+                                    !reading.hidden && "chat-dock-shown",
                                   )
-                                : pinnedActive && pinnedEmpty
-                                  ? t(pinnedEmpty)
-                                  : undefined
-                          }
-                          onLoadMore={loadMoreHistory}
-                        />
+                                : undefined
+                            }
+                            scrollRef={scrollRef}
+                            onReply={startReply}
+                            onShowRecipients={showRecipients}
+                            onCopyLink={copyMessageLink}
+                            onTogglePin={toggleMessagePin}
+                            onViewContext={
+                              hasChatFilter && !chatWindowProps ? showInConversation : undefined
+                            }
+                            onRelay={relayMessage}
+                            onOpenSource={openSourceMessage}
+                            onOpenPresentationRef={openPresentationRef}
+                            onOpenTaskRef={openTaskRef}
+                            // The jump key floats over the list's corner; while an answer is being
+                            // written it would cover that card's send key, so it waits.
+                            showScrollButton={
+                              showScrollButton &&
+                              !(pendingActive && isSmallScreen) &&
+                              inlineReplyEditor === null
+                            }
+                            onScrollButtonClick={handleScrollButtonClick}
+                            chatUnreadCount={chatUnreadCount}
+                            sendScrollRequest={sendScrollRequest}
+                            onSendScrollRequestConsumed={consumeSendScrollRequest}
+                            onScrollChange={handleScrollChange}
+                            onContextReady={onContextReady}
+                            onReachedContextEnd={onReachedContextEnd}
+                            onLoadNewerContext={onLoadNewerContext}
+                            isLoadingNewerContext={chatWindowProps?.isLoadingAfter}
+                            newerContextError={chatWindowProps?.afterError}
+                            onScrollSnapshot={handleScrollSnapshot}
+                            isLoadingHistory={listIsLoadingHistory}
+                            hasMoreHistory={listHasMoreHistory}
+                            hasActiveFilters={hasChatFilter && !chatWindowProps}
+                            isFilteredEmpty={isFilteredEmptyState}
+                            emptyMessage={
+                              !selectedGroupId
+                                ? t(
+                                    readOnly
+                                      ? "noGroupSelectedReadOnly"
+                                      : canCreateGroup
+                                        ? "noGroupSelected"
+                                        : "noGroupSelectedNoCreate",
+                                  )
+                                : pendingActive
+                                  ? t(
+                                      pendingDaemonUnsupported
+                                        ? "pendingReply.daemonUnsupported"
+                                        : pendingPageError
+                                          ? "pendingReply.loadFailed"
+                                          : "pendingReply.empty",
+                                    )
+                                  : pinnedActive && pinnedEmpty
+                                    ? t(pinnedEmpty)
+                                    : undefined
+                            }
+                            onLoadMore={loadMoreHistory}
+                          />
+                        </MessagePathContext.Provider>
                       </LivePendingStatusContext.Provider>
                     </PendingReplyEditingContext.Provider>
                   )}

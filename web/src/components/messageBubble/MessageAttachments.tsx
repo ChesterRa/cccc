@@ -2,6 +2,7 @@ import type { MessageAttachment } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
 import {
+  attachmentDocumentKind,
   isAudioAttachment,
   isImageAttachment,
   isSvgAttachment,
@@ -9,6 +10,7 @@ import {
 } from "../../utils/messageAttachments";
 import { FileIcon } from "../Icons";
 import { AudioAttachments } from "./AudioAttachments";
+import { DocumentAttachment } from "./DocumentAttachment";
 import { ImagePreview } from "./ImagePreview";
 import { VideoPreview } from "./VideoPreview";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
@@ -143,6 +145,21 @@ export function MessageAttachments({
               localPreviewUrl: attachment.local_preview_url,
               fallbackLabel: "file",
             });
+            const documentKind = attachmentDocumentKind(attachment);
+            if (documentKind) {
+              return (
+                <DocumentAttachment
+                  key={`file:${attachmentKeyPrefix}:${index}`}
+                  kind={documentKind}
+                  href={links.previewHref}
+                  downloadHref={links.downloadHref}
+                  downloadName={links.downloadName}
+                  label={links.label}
+                  downloadTitle={downloadTitle(links.label)}
+                  isDark={isDark}
+                />
+              );
+            }
             return (
               <AuthenticatedDownloadLink
                 key={`file:${attachmentKeyPrefix}:${index}`}

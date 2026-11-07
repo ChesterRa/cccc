@@ -291,6 +291,7 @@ export type LedgerEvent = {
   ts?: string;
   kind?: string;
   group_id?: string;
+  scope_key?: string;
   by?: string;
   data?: LedgerEventData;
   _streaming?: boolean;
