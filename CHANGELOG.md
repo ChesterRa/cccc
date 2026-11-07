@@ -75,6 +75,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   whether each member's setup fits when it assigns work, hits a block or takes a handoff.
 - `cccc_message_history` now shows an agent only its own traffic. A foreman could name another
   member, or `user`, and read what that member had sent only to you.
+- An exact `cccc_message_history` read no longer repeats a system notice's text that its delivery
+  text already shows, and `mcp_omitted_fields` names any field it left out.
 - An agent can now learn that its message may not have got through. When CCCC stops trying to
   deliver it, the agent that sent it gets a notice that delivery failed or is uncertain. The notice
   may be late or lost, it can start that agent for one more turn, and deliveries to Web Model

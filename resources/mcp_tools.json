@@ -76,7 +76,7 @@
   },
   {
     "name": "cccc_message_history",
-    "description": "Inspect actor-visible chat history without changing Mail read state. Pass event_id from a native notification to read that exact message or system notice: delivery_text has its full text and instructions, and message has the event without a text or insight already shown there. Do not combine event_id with filters or pagination. Otherwise list past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
+    "description": "Inspect actor-visible chat history without changing Mail read state. Pass event_id from a native notification to read that exact message or system notice: delivery_text has its full text and instructions, and message has the event; mcp_omitted_fields lists fields omitted because they are already shown there. Do not combine event_id with filters or pagination. Otherwise list past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,

@@ -2,10 +2,9 @@ use serde_json::{Map, Value};
 
 /// An exact `cccc_message_history` read (`event_id`) already shows the message
 /// as the Actor receives it in `delivery_text`. Return its event once, as
-/// `message`, and omit a chat `text` or `insight` from it only when that
-/// complete value appears in `delivery_text`. Whatever the rendering leaves
-/// out or abbreviates (an `/install` command's own text, an unrenderable
-/// insight, quotes, attachments, source fields) stays in the event.
+/// `message`, and omit a chat `text`/`insight` or notice `message` only when
+/// that complete value appears in `delivery_text`. Mark omitted fields, and
+/// keep everything the rendering leaves out or abbreviates.
 pub(crate) fn apply(
     tool_name: &str,
     result: &mut Map<String, Value>,
@@ -26,8 +25,11 @@ pub(crate) fn apply(
         .get("delivery_text")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    let is_chat = event.get("kind").and_then(Value::as_str) == Some("chat.message");
+    let is_notice = event.get("kind").and_then(Value::as_str) == Some("system.notify");
+    let mut omitted = Vec::new();
     if !delivery_text.is_empty()
-        && event.get("kind").and_then(Value::as_str) == Some("chat.message")
+        && is_chat
         && let Some(data) = event.get_mut("data").and_then(Value::as_object_mut)
     {
         // Compare the values as the renderer shows them: text without its
@@ -38,6 +40,7 @@ pub(crate) fn apply(
             .is_some_and(|text| delivery_text.contains(text.trim_end_matches(['\r', '\n'])))
         {
             data.remove("text");
+            omitted.push("text");
         }
         if cccc_core::peer_insight::normalize(data.get("insight"))
             .ok()
@@ -45,11 +48,28 @@ pub(crate) fn apply(
             .is_some_and(|insight| delivery_text.contains(&insight))
         {
             data.remove("insight");
+            omitted.push("insight");
         }
+    } else if !delivery_text.is_empty()
+        && is_notice
+        && let Some(data) = event.get_mut("data").and_then(Value::as_object_mut)
+        && data
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|message| !message.is_empty() && delivery_text.contains(message))
+    {
+        data.remove("message");
+        omitted.push("message");
     }
     result.remove("messages");
     result.remove("has_more");
     result.insert("message".into(), event);
+    if !omitted.is_empty() {
+        result.insert(
+            "mcp_omitted_fields".into(),
+            serde_json::json!({"message":omitted}),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -92,6 +112,7 @@ mod tests {
         let data = json!({
             "to":["peer1"],"message_mode":"request_reply","reply_to":"e0","quote_text":QUOTE,
             "text":format!("{TEXT}\n"),"insight":INSIGHT,
+            "question":{"prompt":"choose","options":[{"id":"A","label":"first"}]},
             "attachments":[{"path":"state/blobs/a.txt","title":"a.txt","bytes":3}],
             "refs":[{"kind":"task","task_id":"T1"}],
             "src_instance_id":"inst1","src_group_id":"g_remote","src_event_id":"e_remote",
@@ -111,7 +132,8 @@ mod tests {
         expected_data.remove("insight");
         assert_eq!(
             Value::Object(projected.clone()),
-            json!({"delivery_text":delivery_text,"message":expected})
+            json!({"delivery_text":delivery_text,"message":expected,
+                "mcp_omitted_fields":{"message":["text","insight"]}})
         );
         let payload = serde_json::to_string(&projected).expect("payload");
         let encoded = |value: &str| serde_json::to_string(value).expect("encoded");
@@ -160,17 +182,47 @@ mod tests {
     }
 
     #[test]
-    fn system_notice_data_is_kept_as_recorded() {
-        let mut event = chat_event(json!({"kind":"info","title":"Notice","text":"restart"}));
+    fn system_notice_omits_only_the_complete_rendered_message() {
+        let mut event = chat_event(json!({
+            "kind":"info","title":"Notice","message":TEXT,
+            "context":{"source_event_ids":["e0"]}
+        }));
         event["kind"] = json!("system.notify");
         let mut projected = result(
             event.clone(),
-            json!("[cccc] SYSTEM (info) [sent=2026-10-28T01:45:03Z]: Notice\nrestart"),
+            json!(format!("[cccc] SYSTEM: Notice\n{TEXT}")),
         );
 
         apply("cccc_message_history", &mut projected, &exact());
 
+        event["data"]
+            .as_object_mut()
+            .expect("data")
+            .remove("message");
         assert_eq!(projected["message"], event);
+        assert_eq!(
+            projected["mcp_omitted_fields"]["message"],
+            json!(["message"])
+        );
+        let payload = serde_json::to_string(&projected).expect("payload");
+        let encoded = serde_json::to_string(TEXT).expect("encoded");
+        assert_eq!(payload.matches(encoded.trim_matches('"')).count(), 1);
+    }
+
+    #[test]
+    fn system_notice_keeps_a_missing_or_abbreviated_message() {
+        let mut event = chat_event(json!({"kind":"info","title":"Notice","message":TEXT}));
+        event["kind"] = json!("system.notify");
+        for delivery in [
+            json!("Notice: Check the dependency"),
+            Value::Null,
+            json!(""),
+        ] {
+            let mut projected = result(event.clone(), delivery);
+            apply("cccc_message_history", &mut projected, &exact());
+            assert_eq!(projected["message"], event);
+            assert!(!projected.contains_key("mcp_omitted_fields"));
+        }
     }
 
     #[test]

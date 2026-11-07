@@ -6075,10 +6075,12 @@ The MCP `cccc_message_history` tool presents an exact read as
 `{ delivery_text, message }`, where `message` is the single returned event. From
 a `chat.message`, it omits `data.text` (compared without trailing line breaks)
 and the normalized `data.insight` only when that complete value appears in
-`delivery_text`; all other fields, including `quote_text`, attachments,
-references and source fields, are kept. A `system.notify` and an event without
-rendered text are returned whole. The IPC result above and history lists are
-unchanged.
+`delivery_text`. From a `system.notify`, it omits a non-empty `data.message`
+only when the complete value appears in `delivery_text`. When any fields are
+omitted, `mcp_omitted_fields.message` lists their names. All other fields,
+including a question, `quote_text`, attachments, references and source fields,
+are kept. An event without rendered text is returned whole. The IPC result above
+and history lists are unchanged.
 
 ### 8.8 Context and Tasks
 
