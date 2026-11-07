@@ -384,11 +384,13 @@ CCCC no longer provides a dedicated tool to search or update those files.
 
 ## Automation
 
-Automation in CCCC combines built-in automation and user-defined rules.
+Automation uses scheduled reminders and operational actions, with snippets as reusable message
+templates. In a Group without a saved rules list, the built-in stand-up example is disabled and
+configured to remind the foreman at two-hour intervals to check collaboration and follow up on
+adopted improvements. Enabling it may wake an agent and use model credits.
 
-Built-in automation covers system-managed follow-ups and collaboration health loops.
-
-Rules cover scheduled reminders and operational actions, with snippets as reusable message templates.
+A rule that references the built-in stand-up snippet uses its current text unless a custom
+override is present; the override takes precedence.
 
 ### Rule Triggers
 

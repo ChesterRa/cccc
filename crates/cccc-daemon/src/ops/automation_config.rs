@@ -340,9 +340,9 @@ fn payload(home: &HomeLayout, group: &GroupDoc, by: &str) -> Result<Value, OpErr
 fn baseline_rules() -> Vec<Value> {
     vec![json!({
         "id":"standup","enabled":false,"scope":"group","owner_actor_id":null,
-        "to":["@foreman"],"trigger":{"kind":"interval","every_seconds":900},
+        "to":["@foreman"],"trigger":{"kind":"interval","every_seconds":7200},
         "action":{"kind":"notify","priority":"normal",
-            "title":"Stand-up reminder","snippet_ref":"standup","message":""}
+            "title":"Team stand-up","snippet_ref":"standup","message":""}
     })]
 }
 

@@ -14,7 +14,42 @@ use crate::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
 mod state;
 use state::RuntimeState;
 
-pub const STANDUP_SNIPPET: &str = "{{interval_minutes}} minutes have passed. Stand-up checkpoint (foreman only).\n\nUse MCP chat for any visible update. Keep this short.";
+/// The built-in stand-up text. It names no interval, since a rule may also run
+/// on a schedule, where `{{interval_minutes}}` is 0.
+pub const STANDUP_SNIPPET: &str = "Stand-up for the foreman: a short look at how the team works \
+against the user's current goals, not just at task status. Act on what your authority covers and \
+do not ask members for status reports. If the user asked to hear about this check, report \
+briefly even when nothing needs action; otherwise end without a message when nothing needs \
+anyone.\n\
+\n\
+What you need may already be in view. If not: cccc_task(action=\"list\") lists open tasks in \
+pages, with owner, waiting_on and updated_at where set; cccc_message_history(mode=\"all\", \
+limit=10) shows recent messages you can see, and adding sender=\"user\" shows only the user's. \
+Neither shows everything, so do not claim you saw everything.\n\
+\n\
+1. Direction: does the open work still serve the user's current goals and outstanding requests, \
+including their latest corrections, in the order they care about? The brief may be out of date; \
+go by the user's own words, and check with the user when unsure rather than dropping work they \
+approved. Look for work that is off course or done for its own sake, and for work that is \
+blocked, waiting, unowned or not moving. An old updated_at alone does not prove work stopped: \
+find out why before you unblock or reassign it, and never close a task for waiting or age alone.\n\
+2. Friction: where did members wait on each other, redo or duplicate work, hand off unclearly or \
+misread each other, and what caused it? Is anyone overloaded or left without work, and do the \
+members, their setup and the team's size still fit the work? Judge from the work itself, not \
+from an idle state, a message count or an old timestamp.\n\
+3. The user's worries: what has the user had to say twice, or kept coming back to, and did a \
+later case of the same kind go better? A worry may have no task yet. If an adopted change has an \
+open optimization task and work it applies to came up, read the task by task_id and add the \
+result to its notes, keeping the existing notes and passing the if_task_rev you read. No later \
+case, or the user saying nothing, does not prove it improved.\n\
+4. A better way: if a practical change to how the team works would clearly pay off, propose it \
+with its evidence. Do not invent a problem or a proposal.\n\
+\n\
+Fix causes within your authority, tell the user about routine changes, and message only a member \
+who has to act. Bring the user at most one decision, on a question card, such as a standing rule \
+or a member change, and do not repeat what is already in front of them unless it changed. A \
+change the user adopts becomes an optimization task with its evidence and how to undo it. Keep \
+anything from a message addressed only to you, its ID included, out of shared tasks.";
 
 #[derive(Debug, Clone)]
 pub enum ScheduledAction {

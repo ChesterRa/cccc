@@ -30,6 +30,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Changed
 
+- The built-in stand-up example now asks the foreman whether work serves the user's current goals
+  and outstanding requests; where waiting, rework, duplication, unclear handoffs or
+  misunderstandings cause friction and whether the team fits the work; whether repeated user
+  concerns have been addressed and adopted improvements have helped; and whether there is a better
+  way to collaborate. It asks for a brief report when the user requests one and otherwise for
+  silence when nothing needs attention.
+  It remains off by default; its default interval is now two hours instead of 15 minutes. Existing
+  rules keep their schedule, recipients and enabled state; those using the built-in stand-up snippet
+  without an override receive its new text, while custom text stays in place. When enabled, the
+  notification may wake an agent and use model credits.
 - On a phone, a message's sender, time and actions sit above its route, its text uses the full width,
   and the sender's insight is set apart below it. **Back to latest** sits beside the members at the
   bottom of the log, so it no longer covers a message.

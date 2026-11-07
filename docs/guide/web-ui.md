@@ -1333,6 +1333,14 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
 
 ### Automation
 
+- **Stand-up**: The built-in example is off by default. Its default schedule reminds the foreman
+  at two-hour intervals to review whether work serves the user's current goals and outstanding
+  requests; where waiting, rework, duplication, unclear handoffs or misunderstandings cause friction
+  and whether the team fits the work; whether repeated user concerns have been addressed and adopted
+  improvements have helped; and whether there is a better way to collaborate. It asks for a brief
+  report when the user requests one and otherwise for silence when nothing needs attention. The
+  notification may wake an agent and use model credits; you can edit its schedule, recipients and
+  snippet to fit your team.
 - **Rules**: Create scheduled reminders with interval / recurring schedule / one-time schedule.
   Repeating reminders can have an optional maximum number of runs; leave it blank for no limit.
   The list shows progress and completed rules. Editing the limit keeps the count; removing it
@@ -1352,7 +1360,9 @@ Configure Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or [Mattermost](./i
 
 Connect the provider account and bind the Group's work and memory notebooks.
 The Web page shows a connection summary; source ingestion, queries and jobs use
-agent-facing tools or the CLI. Automatic two-way synchronization is retired.
+agent-facing tools or the CLI. The provider-backed memory notebook is separate from the former
+local Group memory files; CCCC no longer automatically uploads those files. Automatic two-way
+synchronization is retired.
 
 For end-to-end setup details, see: `Group Space + NotebookLM`.
 

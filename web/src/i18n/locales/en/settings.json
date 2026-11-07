@@ -741,7 +741,7 @@
     "configPathFallback": "CCCC_HOME/.../group.yaml",
     "openFromGroup": "Open this tab from a group.",
     "rulesTitle": "Rules & Snippets",
-    "rulesDescription": "Define scheduled reminders, operational actions, and reusable message snippets.",
+    "rulesDescription": "Define scheduled reminders, operational actions, and reusable message snippets. The built-in stand-up is off by default. When enabled, notifications may wake the receiving agent and use model credits.",
     "newRule": "New Rule",
     "snippets": "Snippets",
     "resetToDefaults": "Reset to Defaults",

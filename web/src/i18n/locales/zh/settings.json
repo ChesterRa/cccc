@@ -738,7 +738,7 @@
     "configPathFallback": "CCCC_HOME/…/group.yaml",
     "openFromGroup": "请从工作组中打开此标签页。",
     "rulesTitle": "规则与模板",
-    "rulesDescription": "定义定时提醒、操作动作以及可复用的消息模板。",
+    "rulesDescription": "定义定时提醒、操作动作以及可复用的消息模板。内置站会默认关闭；启用后，通知可能唤醒接收的智能体并消耗模型额度。",
     "newRule": "新建规则",
     "snippets": "消息模板",
     "resetToDefaults": "恢复默认",

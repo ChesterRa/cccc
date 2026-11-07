@@ -19,11 +19,22 @@ fn automation_contract_is_versioned_and_frontend_compatible() {
         json!({"group_id":group_id}),
     );
     assert!(initial.result["ruleset"]["rules"].is_array());
-    assert!(
-        initial.result["ruleset"]["snippets"]["standup"]
-            .as_str()
-            .is_some_and(|value| value.contains("{{interval_minutes}}"))
+    assert_eq!(
+        initial.result["ruleset"]["snippets"]["standup"],
+        cccc_core::automation::STANDUP_SNIPPET
     );
+    // The built-in stand-up is off, reaches the foreman alone and is
+    // configured for a two-hour interval.
+    let standup = &initial.result["ruleset"]["rules"][0];
+    assert_eq!(standup["id"], "standup");
+    assert_eq!(standup["enabled"], false);
+    assert_eq!(standup["to"], json!(["@foreman"]));
+    assert_eq!(
+        standup["trigger"],
+        json!({"kind":"interval","every_seconds":7200})
+    );
+    assert_eq!(standup["action"]["title"], "Team stand-up");
+    assert_eq!(standup["action"]["snippet_ref"], "standup");
     assert_eq!(initial.result["version"], 1);
 
     let updated = ok(
