@@ -41,8 +41,8 @@ export function SettingsNavigation({
     ? t("navigation.globalScopeContent")
     : t("navigation.globalLockedContent");
   const groupTarget = scopeRootUrl || groupId;
-  // One explanation of both scopes beside the switch, not on its keys: a disabled
-  // key cannot carry why the instance is locked.
+  // On phones the explanation stays beside the switch so a disabled key can
+  // still be explained.
   const scopeHelp = (
     <ScopeTooltip
       title={t("navigation.targetScope")}
@@ -80,7 +80,7 @@ export function SettingsNavigation({
         className="hidden min-h-0 w-64 shrink-0 flex-col border-r border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] sm:flex"
         data-settings-nav
       >
-        <div className="flex flex-col gap-3 px-3 pt-4 pb-2">
+        <div className="px-3 pt-4 pb-2">
           <div
             role="group"
             aria-label={t("navigation.targetScope")}
@@ -108,16 +108,6 @@ export function SettingsNavigation({
                 {label}
               </button>
             ))}
-          </div>
-          <div className="flex items-center gap-1 px-2 text-xs text-[var(--color-text-muted)]">
-            <span className="min-w-0 truncate" data-settings-applies-to>
-              {scope === "group"
-                ? t("navigation.appliesToGroup", {
-                    name: groupTitle || scopeRootUrl || groupId || "—",
-                  })
-                : t("navigation.appliesToGlobal")}
-            </span>
-            {scopeHelp}
           </div>
         </div>
 

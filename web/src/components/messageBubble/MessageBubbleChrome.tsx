@@ -105,6 +105,7 @@ export function MessageFooter({
 
   return (
     <div
+      data-message-footer
       className={classNames(
         "mt-1 flex w-full min-w-0 flex-wrap items-center gap-2 px-1 text-xs",
         event.by === "user" ? "flex-row-reverse" : "justify-start",

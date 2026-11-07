@@ -43,6 +43,7 @@ import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
 import {
   discardDeferredScrollAdjustment,
   getFreshVirtualOffsetForIndex,
+  getLayoutOffsetForScrollTop,
   shouldAdjustScrollForResizedRow,
 } from "./virtualMessageList/virtualOffset";
 import {
@@ -399,7 +400,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   const scrollToVirtualOffset = useCallback(
     (offsetPx: number) => {
-      virtualizer.scrollToOffset(offsetPx, { align: "start", behavior: "auto" });
+      virtualizer.scrollToOffset(getLayoutOffsetForScrollTop(virtualizer, offsetPx), {
+        align: "start",
+        behavior: "auto",
+      });
     },
     [virtualizer],
   );

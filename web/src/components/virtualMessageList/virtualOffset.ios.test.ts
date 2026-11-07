@@ -1,93 +1,98 @@
 // @vitest-environment happy-dom
 
 import { Virtualizer, type VirtualizerOptions } from "@tanstack/react-virtual";
-import { beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { discardDeferredScrollAdjustment, shouldAdjustScrollForResizedRow } from "./virtualOffset";
+import { getLayoutOffsetForScrollTop, shouldAdjustScrollForResizedRow } from "./virtualOffset";
 
-// The virtualizer caches its iOS detection per module, so this file runs as an
-// iPhone from the start: row shifts are held back while the list is scrolling.
 beforeAll(() => {
   Object.defineProperty(window.navigator, "userAgent", {
     configurable: true,
     value: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
   });
 });
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
 
 const ROW_PX = 100;
 const VIEWPORT_PX = 600;
 const READER_OFFSET = 2_000;
+const ANCHOR_INDEX = 20;
 
 function createScrollingVirtualizer() {
-  const scrollElement = document.createElement("div");
-  Object.defineProperty(scrollElement, "scrollHeight", { configurable: true, value: 100_000 });
-  Object.defineProperty(scrollElement, "clientHeight", { configurable: true, value: VIEWPORT_PX });
-  const scrollWrites: Array<{ offset: number; adjustments?: number }> = [];
-  let reportOffset: (offset: number, isScrolling: boolean) => void = () => {};
+  const element = document.createElement("div");
+  Object.defineProperty(element, "scrollHeight", { configurable: true, value: 100_000 });
+  Object.defineProperty(element, "clientHeight", { configurable: true, value: VIEWPORT_PX });
+  element.scrollTop = READER_OFFSET;
+  const writes: number[] = [];
+  let report: (offset: number, isScrolling: boolean) => void = () => {};
   const options: VirtualizerOptions<HTMLDivElement, Element> = {
     count: 50,
-    getScrollElement: () => scrollElement,
+    getScrollElement: () => element,
     estimateSize: () => ROW_PX,
-    scrollToFn: (offset, { adjustments }) => scrollWrites.push({ offset, adjustments }),
+    scrollToFn: (offset, { adjustments }) => {
+      element.scrollTop = offset + (adjustments ?? 0);
+      writes.push(element.scrollTop);
+    },
     observeElementRect: (_instance, cb) => cb({ width: 390, height: VIEWPORT_PX }),
     observeElementOffset: (_instance, cb) => {
-      reportOffset = cb;
-      cb(READER_OFFSET, true);
+      report = cb;
+      cb(element.scrollTop, false);
     },
   };
   const virtualizer = new Virtualizer(options);
   virtualizer._willUpdate();
   virtualizer.getTotalSize();
-  scrollWrites.length = 0;
-  return {
-    virtualizer,
-    scrollWrites,
-    /** The list stops scrolling; the virtualizer applies what it held back. */
-    settle: () => reportOffset(READER_OFFSET, false),
+  writes.length = 0;
+  const drag = () => {
+    element.dispatchEvent(new Event("touchstart"));
+    element.scrollTop = READER_OFFSET - 50;
+    report(element.scrollTop, true);
   };
+  const settle = () => {
+    element.dispatchEvent(new Event("touchend"));
+    report(element.scrollTop, false);
+    vi.advanceTimersByTime(500);
+    report(element.scrollTop, false);
+  };
+  const anchorTop = () => {
+    const row = virtualizer.getVirtualItems().find((item) => item.index === ANCHOR_INDEX);
+    if (!row) throw new Error("anchor not rendered");
+    return row.start - element.scrollTop;
+  };
+  return { virtualizer, element, writes, report, drag, settle, anchorTop };
 }
 
-describe("discardDeferredScrollAdjustment", () => {
-  it("holds back a row shift while scrolling and applies it once scrolling settles", () => {
-    // Pins the virtualizer behavior the discard targets; fails if it changes.
-    const { virtualizer, scrollWrites, settle } = createScrollingVirtualizer();
+describe("iOS virtual message positioning", () => {
+  it("keeps the visible anchor still while a measured row changes above it", () => {
+    const { virtualizer, writes, drag, settle, anchorTop } = createScrollingVirtualizer();
+    drag();
+    const before = anchorTop();
     virtualizer.resizeItem(5, ROW_PX + 300);
-    expect(scrollWrites).toEqual([]);
-
+    expect(writes).toEqual([]);
+    expect(anchorTop()).toBe(before);
     settle();
-    expect(scrollWrites.at(-1)?.adjustments).toBe(300);
+    expect(anchorTop()).toBe(before);
   });
 
-  it("drops the held-back shift after the anchor was corrected against the DOM", () => {
-    const { virtualizer, scrollWrites, settle } = createScrollingVirtualizer();
+  it("keeps an explicitly corrected anchor after held measurements settle", () => {
+    const { virtualizer, element, report, drag, settle, anchorTop } = createScrollingVirtualizer();
+    drag();
     virtualizer.resizeItem(5, ROW_PX + 300);
-
-    // The anchor correction already moved the reader to the right place.
-    discardDeferredScrollAdjustment(virtualizer);
+    virtualizer.scrollToOffset(getLayoutOffsetForScrollTop(virtualizer, READER_OFFSET));
+    report(element.scrollTop, true);
     settle();
-    expect(scrollWrites.filter((write) => write.adjustments)).toEqual([]);
-
-    // Rows measured after the correction are still held back and applied.
-    virtualizer.isScrolling = true;
-    virtualizer.resizeItem(6, ROW_PX + 120);
-    settle();
-    expect(scrollWrites.at(-1)?.adjustments).toBe(120);
+    expect(anchorTop()).toBe(0);
   });
-});
 
-describe("shouldAdjustScrollForResizedRow on iOS", () => {
-  it("counts shifts already written to the list but not yet reported back", () => {
-    const { virtualizer, scrollWrites, settle } = createScrollingVirtualizer();
+  it("keeps the anchor stable across later measurements above the viewport", () => {
+    const { virtualizer, drag, settle, anchorTop } = createScrollingVirtualizer();
     virtualizer.shouldAdjustScrollPositionOnItemSizeChange = shouldAdjustScrollForResizedRow;
+    drag();
+    const before = anchorTop();
     virtualizer.resizeItem(5, ROW_PX + 300);
-    // Scrolling stops: the held-back 300 is written to the list, while the
-    // reported offset stays at 2000 until the next scroll event.
     settle();
-    expect(scrollWrites.at(-1)?.adjustments).toBe(300);
-
-    // Row 18 now starts at 2100: above the reader at 2300, so its growth
-    // must be compensated too, or the reader is pushed down by it.
-    virtualizer.resizeItem(18, ROW_PX + 100);
-    expect(scrollWrites.at(-1)?.adjustments).toBe(400);
+    virtualizer.resizeItem(6, ROW_PX + 100);
+    expect(anchorTop()).toBe(before);
   });
 });
