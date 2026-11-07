@@ -8,6 +8,6 @@ mod task_revision;
 mod yaml_files;
 mod yaml_storage;
 
-pub use model::{ContextDoc, ContextSyncResult};
+pub use model::{ContextDoc, ContextSyncResult, SyncMode};
 pub use store::ContextStore;
 pub use task_revision::TaskConflict;

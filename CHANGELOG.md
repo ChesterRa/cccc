@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Added
 
+- `/cccc-self-evolution` is now a short team review. It reads what you said and how many messages,
+  scheduled reminders and open tasks each member has, then brings you at most three proposals, each on its
+  own card with its evidence. Standing rules and changes to members wait for your pick. Before, it
+  read the whole history
+  and kept a checkpoint in Group memory. When 10 more top-level tasks are finished, the foreman's next
+  task update carries a one-line reminder to run it; nobody is woken, and turning the skill off silences
+  it. `cccc_message_history` gains `sender`, and `cccc_group` gains `activity`.
 - Audio files in a message can now be played in the browser. Each keeps its download and gains a
   play button. A message has one player, so you can switch between several clips to compare them.
   Playback stops if the message scrolls far out of view.
@@ -48,6 +55,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Removed
 
+- The Group memory tools and their automatic recall prompt have been removed. Existing files remain
+  in `CCCC_HOME/groups/<group_id>/state/memory/` and are included when copying a Group; CCCC no
+  longer provides a dedicated tool to search or update them. Shared team rules can be kept in the
+  Context panel's **Working Summary** constraints.
 - Settings no longer offer options that could be saved but did nothing in this version:
   **Collaboration Follow-ups** under Automation (keepalive, help refresh, agent idle alert and group
   silence check), **Include tail in idle notifications** under Transcript, and **Log level** under
@@ -59,6 +70,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- An agent that starts or resumes now gets the Group's constraints first. Before, the rest of its
+  recovery context could crowd them out, so it might see one of five.
 - Skills reach the agent again in this version. A skill chosen from the `/` menu sent the agent to
   look for its rules in a place that no longer held them, and a skill assigned to an agent was never
   mentioned to that agent. `cccc_capability_use` now returns a skill's rules, and `cccc_bootstrap`

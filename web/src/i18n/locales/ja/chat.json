@@ -1067,6 +1067,6 @@
   "presentation": "Presentation",
   "slashDescriptions": {
     "install": "Skill、MCP ツールパック、能力、URL、リポジトリ、ローカルパスをインストールまたは有効化します。",
-    "selfEvolution": "CCCC グループの見える範囲の履歴全体を確認し、プロンプト、構造化コンテキスト、ワークフロー、Harness、オプティマイザーの各レベルで確認済みの改善を提案します。"
+    "selfEvolution": "チームの協働を振り返り、改善案を最大 3 件提案します。採否はあなたが決めます。"
   }
 }

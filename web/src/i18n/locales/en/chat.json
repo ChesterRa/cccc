@@ -1067,6 +1067,6 @@
   "presentation": "Presentation",
   "slashDescriptions": {
     "install": "Install or enable a skill, MCP toolpack, capability, URL, repo, or local path.",
-    "selfEvolution": "Review complete visible CCCC group history and propose confirmed improvements at the prompt, structured-context, workflow, Harness, or optimizer level."
+    "selfEvolution": "Review how the team works and propose up to three changes for you to choose."
   }
 }

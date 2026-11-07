@@ -1,8 +1,67 @@
 use cccc_contracts::utc_now;
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 use std::io;
 
 use super::model::ContextDoc;
+
+const FINISHED_SINCE_REVIEW: &str = "finished_since_review_reminder";
+
+fn is_done(task: &Map<String, Value>) -> bool {
+    task.get("status").and_then(Value::as_str) == Some("done")
+}
+
+/// Top-level tasks that were not done before this write and are now. Restoring
+/// an archived task that was done is not new work.
+fn newly_finished_tasks(before: &ContextDoc, after: &ContextDoc) -> u64 {
+    let was_done = before
+        .tasks
+        .iter()
+        .filter(|task| {
+            is_done(task) || task.get("archived_from").and_then(Value::as_str) == Some("done")
+        })
+        .filter_map(|task| task.get("id").and_then(Value::as_str))
+        .collect::<HashSet<_>>();
+    after
+        .tasks
+        .iter()
+        .filter(|task| {
+            is_done(task)
+                && task
+                    .get("parent_id")
+                    .and_then(Value::as_str)
+                    .is_none_or(str::is_empty)
+                && task
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !was_done.contains(id))
+        })
+        .count() as u64
+}
+
+/// Adds the top-level tasks this write finished, whoever wrote it. A write that
+/// takes reminders (`every`) and reaches the count restarts it and returns it.
+/// Archiving or deleting finished tasks leaves the count alone.
+pub(super) fn count_finished_tasks(
+    before: &ContextDoc,
+    document: &mut ContextDoc,
+    every: Option<u64>,
+) -> Option<u64> {
+    let previous = document
+        .meta
+        .get(FINISHED_SINCE_REVIEW)
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let count = previous + newly_finished_tasks(before, document);
+    let due = every.is_some_and(|every| count >= every);
+    let next = if due { 0 } else { count };
+    if next != previous {
+        document
+            .meta
+            .insert(FINISHED_SINCE_REVIEW.into(), Value::from(next));
+    }
+    due.then_some(count)
+}
 
 pub fn apply_all(
     document: &mut ContextDoc,

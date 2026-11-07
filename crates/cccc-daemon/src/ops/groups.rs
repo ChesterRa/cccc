@@ -35,6 +35,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
             actor_notes_write(home, request, true)
         }),
         "group_resolve" => Operation::new(Read, resolve),
+        "group_activity" => Operation::new(Read, super::group_activity::activity),
         "group_update" => Operation::new(GlobalWrite, update),
         "group_delete" => Operation::new(GlobalWrite, delete),
         "group_reset" => Operation::new(Write, super::group_reset::reset),

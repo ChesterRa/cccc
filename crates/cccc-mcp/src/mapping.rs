@@ -91,8 +91,6 @@ pub fn daemon_call(
         "cccc_coordination" => return context_action(args, "coordination"),
         "cccc_task" => return context_action(args, "task"),
         "cccc_agent_state" => return context_action(args, "agent_state"),
-        "cccc_memory" => return action(args, actions::memory),
-        "cccc_memory_admin" => return action(args, actions::memory_admin),
         "cccc_automation" => return action(args, actions::automation),
         "cccc_notify" => {
             // The tool's `actor_id` names the caller, as for every Actor tool, but a
@@ -718,31 +716,6 @@ mod tests {
             assert_eq!(op, expected);
             assert_eq!(args["by"], "backend");
             assert_eq!(args["source_event_id"], "event-1");
-        }
-    }
-
-    #[test]
-    fn memory_actions_map_to_reme_operations() {
-        for (tool, action, expected) in [
-            ("cccc_memory", "layout_get", "memory_reme_layout_get"),
-            ("cccc_memory", "search", "memory_reme_search"),
-            ("cccc_memory", "get", "memory_reme_get"),
-            ("cccc_memory", "write", "memory_reme_write"),
-            ("cccc_memory_admin", "index_sync", "memory_reme_index_sync"),
-            (
-                "cccc_memory_admin",
-                "context_check",
-                "memory_reme_context_check",
-            ),
-            (
-                "cccc_memory_admin",
-                "daily_flush",
-                "memory_reme_daily_flush",
-            ),
-        ] {
-            let args = json!({"action":action}).as_object().cloned().expect("args");
-            let (op, _) = daemon_call(tool, args).expect("mapping");
-            assert_eq!(op, expected);
         }
     }
 

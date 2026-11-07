@@ -121,7 +121,7 @@ In the Web structured Help editor, these untagged sections are surfaced as `Comm
 
 Agents access help content through MCP tools:
 
-1. **`cccc_bootstrap`** - Returns the lean recovery packet (`session`, `recovery`, `inbox_preview`, `memory_recall_gate`, `next_calls`)
+1. **`cccc_bootstrap`** - Returns the lean recovery packet (`session`, `recovery`, `inbox_preview`, `next_calls`)
    Coordination constraints are included as complete entries within the recovery budget. If the packet reports omitted constraints, read the full list with `cccc_context_get` before acting.
 2. **`cccc_help`** - Returns help content on demand
 
@@ -247,6 +247,18 @@ Periodically check:
 - Is everyone aligned on the goal?
 - Any blockers?
 - Any conflicting changes?
+
+### Review How the Team Works
+
+`/cccc-self-evolution` asks the foreman for a short review. It reads what you said and how many
+messages, scheduled reminders and open tasks each member has, then sends you at most three proposals,
+each on its own card with its evidence. Standing rules and changes to members wait for your pick;
+the foreman may still adjust routine work and tell you. When 10 more top-level tasks are finished,
+the foreman's next task update also reminds it to consider a review.
+
+Standing team rules go into **Constraints** in the Context panel. An agent reads them through
+`cccc_bootstrap` when it starts or resumes: up to six as the budget allows, with a note when any are
+left out. A long rule, or one about the project only, belongs in `AGENTS.md`.
 
 ## Troubleshooting Tips
 

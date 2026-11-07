@@ -400,7 +400,7 @@ fn block(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     object(result)
 }
-fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+pub(super) fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = string_arg(request, "group_id").unwrap_or_default();
     let actor_id = string_arg(request, "actor_id").unwrap_or_else(|| "user".into());
     let by = string_arg(request, "by").unwrap_or_else(|| actor_id.clone());

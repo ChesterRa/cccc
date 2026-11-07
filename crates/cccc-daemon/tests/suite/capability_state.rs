@@ -1072,6 +1072,78 @@ fn target_install_is_the_only_daemon_operation_name() {
 }
 
 #[test]
+fn builtin_catalog_entries_survive_stale_records_and_reject_imports() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("built-in catalog", "")
+        .expect("group");
+    let path = home.root().join("state/capabilities/catalog.json");
+    cccc_core::fs::write_json(
+        &path,
+        &json!({"records":{
+            (SELF_EVOLUTION_CAPABILITY_ID): {
+                "capability_id":SELF_EVOLUTION_CAPABILITY_ID,"kind":"skill",
+            "name":"Old review","capsule_text":"old rules","source_id":"cccc_builtin",
+            "qualification_status":"blocked","enable_supported":false,
+            "install_mode":"npm","install_spec":{"package":"must-not-run"}
+            }
+        }}),
+    )
+    .expect("old catalog");
+    let saved = std::fs::read(&path).expect("catalog");
+
+    for dry_run in [true, false] {
+        let rejected = response(
+            &home,
+            "capability_import",
+            json!({
+                "group_id":group.group_id,"by":"user","dry_run":dry_run,
+                "record":{"capability_id":SELF_EVOLUTION_CAPABILITY_ID,"kind":"skill",
+                          "name":"Replacement","capsule_text":"new rules"}
+            }),
+        );
+        assert_eq!(
+            rejected.error.expect("reserved id").code,
+            "capability_import_invalid"
+        );
+        assert_eq!(std::fs::read(&path).expect("catalog"), saved);
+    }
+    let enabled = response(
+        &home,
+        "capability_install_target",
+        json!({
+            "group_id":group.group_id,"by":"user","scope":"group",
+            "target":SELF_EVOLUTION_CAPABILITY_ID
+        }),
+    );
+    assert!(enabled.ok, "{:?}", enabled.error);
+    let state = call(
+        &home,
+        "capability_state",
+        json!({
+            "group_id":group.group_id,"actor_id":"user","by":"user"
+        }),
+    );
+    let skill = state["active_capsule_skills"]
+        .as_array()
+        .expect("skills")
+        .iter()
+        .find(|skill| skill["capability_id"] == SELF_EVOLUTION_CAPABILITY_ID)
+        .expect("current skill");
+    let expected = cccc_core::capabilities::CapabilityStore::new(home.clone())
+        .require(SELF_EVOLUTION_CAPABILITY_ID)
+        .expect("built-in skill")
+        .capsule_text
+        .chars()
+        .take(240)
+        .collect::<String>();
+    assert_eq!(skill["capsule_preview"], expected);
+    assert_eq!(std::fs::read(&path).expect("catalog"), saved);
+}
+
+#[test]
 fn capability_import_dry_run_and_invalid_install_do_not_persist() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

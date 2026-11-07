@@ -1328,15 +1328,9 @@ Configure Telegram, Slack, Discord, Feishu, DingTalk, WeCom, or [Mattermost](./i
 
 ### Group Space
 
-Configure provider-backed shared memory per group:
-
-- Provider credential (masked metadata only)
-- Health check
-- Binding (`remote_space_id`, optional auto-create)
-- `Sync Now` two-way reconcile button:
-  - local `repo/space/` resources -> provider,
-  - provider source/artifact projection -> local `repo/space/`
-- Ingest/query/jobs controls
+Connect the provider account and bind the Group's work and memory notebooks.
+The Web page shows a connection summary; source ingestion, queries and jobs use
+agent-facing tools or the CLI. Automatic two-way synchronization is retired.
 
 For end-to-end setup details, see: `Group Space + NotebookLM`.
 

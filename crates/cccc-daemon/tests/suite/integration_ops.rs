@@ -1199,53 +1199,43 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         invalid_query_option.error.expect("invalid option").code,
         "invalid_args"
     );
+}
 
-    let memory_layout = call(
-        &home,
-        "memory_reme_layout_get",
-        json!({"group_id":group_id}),
-    );
-    assert!(memory_layout.result["memory_root"].is_string());
-    assert!(memory_layout.result["today_daily_file"].is_string());
-    assert_eq!(memory_layout.result["backend"]["name"], "local");
+#[test]
+fn retired_group_memory_operations_leave_existing_files_untouched() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"legacy memory"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let root = store.state_dir(group_id).expect("state dir").join("memory");
+    std::fs::create_dir_all(root.join("daily")).expect("memory dir");
+    let main = root.join("MEMORY.md");
+    let daily = root.join("daily").join("2026-11-07__legacy.md");
+    std::fs::write(&main, "retained memory").expect("main memory");
+    std::fs::write(&daily, "retained daily record").expect("daily memory");
 
-    let missing_date = raw_call(
-        &home,
+    for op in [
+        "memory_reme_search",
         "memory_reme_write",
-        json!({"group_id":group_id,"target":"daily","content":"entry"}),
+        "memory_reme_daily_flush",
+    ] {
+        let response = raw_call(&home, op, json!({"group_id":group_id}));
+        assert_eq!(
+            response.error.as_ref().map(|e| e.code.as_str()),
+            Some("unknown_op")
+        );
+    }
+    call(&home, "context_get", json!({"group_id":group_id}));
+    assert_eq!(
+        std::fs::read_to_string(main).expect("main memory"),
+        "retained memory"
     );
-    assert!(!missing_date.ok);
-    let memory_write = call(
-        &home,
-        "memory_reme_write",
-        json!({"group_id":group_id,"target":"memory","content":"durable fact","mode":"append","idempotency_key":"memory-1"}),
-    );
-    assert_eq!(memory_write.result["status"], "written");
-    let memory_dedup = call(
-        &home,
-        "memory_reme_write",
-        json!({"group_id":group_id,"target":"memory","content":"changed payload","idempotency_key":"memory-1"}),
-    );
-    assert_eq!(memory_dedup.result["reason"], "persistence_idempotency_key");
-    let memory_replace = call(
-        &home,
-        "memory_reme_write",
-        json!({"group_id":group_id,"target":"memory","content":"replacement","mode":"replace"}),
-    );
-    assert_eq!(memory_replace.result["status"], "written");
-    let index = call(
-        &home,
-        "memory_reme_index_sync",
-        json!({"group_id":group_id,"mode":"scan"}),
-    );
-    assert!(index.result["indexed_files"].as_u64().unwrap_or(0) >= 2);
-    assert!(index.result["indexed_chunks"].as_u64().unwrap_or(0) >= 1);
-    assert!(
-        index.result["watched_paths"]
-            .as_array()
-            .is_some_and(|paths| paths
-                .iter()
-                .all(|path| path.as_str().is_some_and(|path| path.ends_with(".md"))))
+    assert_eq!(
+        std::fs::read_to_string(daily).expect("daily memory"),
+        "retained daily record"
     );
 }
 

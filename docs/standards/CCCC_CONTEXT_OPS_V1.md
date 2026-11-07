@@ -64,10 +64,7 @@ reference mapping; ambiguous recovery MUST fail before changing existing files
 or recording migration success.
 
 `context_sync` only mutates the Context v3 stores named by its operations. It
-MUST NOT implicitly write the separate durable memory store. Callers that want
-to retain a decision or outcome beyond the bounded Context projections MUST use
-the explicit `memory_reme_write` daemon operation after a successful
-`context_sync` receipt.
+MUST NOT implicitly write the separate legacy Group memory files.
 
 ## 2. Operation Item Shape
 
@@ -398,6 +395,15 @@ If `context_sync.args.dry_run == true`, the daemon MUST NOT persist changes and 
 
 A `task.create` entry also carries `task_id`: the task the operation created or,
 for a replayed `client_request_id`, the existing task, with `replayed: true`.
+
+A Foreman's write that holds a task operation also carries `review_reminder: string`
+once at least 10 top-level tasks have been finished since the last reminder. The
+daemon adds every write's newly finished top-level tasks, by anyone, to
+`meta.finished_since_review_reminder` and restarts it in the write that returns the
+reminder, so the Foreman hears it once. Archiving or deleting tasks leaves the count
+alone, and `meta.merge` cannot set that key. A dry run returns no reminder and
+records nothing. While `skill:cccc:self-evolution` is blocked, removed, disabled or
+hidden for that Foreman, a due reminder is dropped and the count restarts.
 
 When Group Space is enabled and a curated context change is detected, the daemon MAY also return:
 

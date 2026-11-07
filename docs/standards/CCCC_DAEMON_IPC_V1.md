@@ -1261,7 +1261,9 @@ Notes:
 10. For low-risk, syntax-valid `agent_self_proposed` capsule skills, direct import is allowed. Use `dry_run=true`
    first when enabling immediately, scope/risk is unclear, or probe diagnostics are useful; high-risk candidates
    should be recorded as `qualification_status=blocked` with explicit `qualification_reasons`.
-11. Re-importing the same `capability_id` updates the catalog record. Agents should use that path for stale,
+11. Built-in capability IDs are reserved: current built-in definitions take precedence over any persisted
+    copies, and importing a record with a built-in ID fails before writing. Installing or enabling an existing
+    built-in by ID remains supported. Re-importing any other `capability_id` updates the catalog record. Agents should use that path for stale,
     incomplete, wrong, or duplicative `agent_self_proposed` skills instead of creating near-duplicates or silently
     deleting records.
 12. Import results use `import_action`, `record_changed`, `already_active`, and `active_after_import` to distinguish
@@ -1651,6 +1653,40 @@ configuration applies. An invalid pin, missing root or mismatched live Actor
 generation MUST yield an unavailable projection rather than another workspace.
 For a Native Actor without a managed owner, this describes CCCC tools only,
 not the original application's physical working directory.
+
+#### `group_activity`
+
+Per-member counts from the ledger and the task board for a team review. The
+Foreman and the user may read them. They are leads for a reviewer, not a measure
+of a member's value. An Actor counts only the messages it may read in its current
+generation, so the counts reveal no private exchange between the user and another
+member; the user counts every message. An event before a member's current
+generation counts for no one.
+
+Args:
+```ts
+{ group_id: string; days?: number; by?: string } // days: 1 to 365, default 14
+```
+
+Result:
+```ts
+type Counts = {
+  messages_sent: number
+  messages_to_user: number
+  scheduled_notices: number // automation `system.notify` events; not proof of delivery or a model turn
+  last_message_at: string // "" when none in the window
+}
+
+{
+  days: number
+  since: string // RFC 3339
+  user: Counts
+  members: Array<Counts & {
+    actor_id: string
+    tasks_open: number // assigned and planned or active now
+  }>
+}
+```
 
 #### `group_preamble_get`
 
@@ -5935,6 +5971,7 @@ Args:
   by?: string
   mode?: "all" | "send" | "request_reply" | "mail"
   query?: string
+  sender?: string // only messages from this Actor ID or "user"
   before_event_id?: string
   event_id?: string // exact visible message/notice; exclusive with filters/pagination
   limit?: number
@@ -6149,237 +6186,6 @@ revision rejects the batch with `task_conflict` and details naming the task,
 expected revision and actual revision. Unrelated context changes leave this
 token usable. `if_version` remains an independent whole-context guard. See
 `CCCC_CONTEXT_OPS_V1.md` for revision, no-op and batch semantics.
-
-#### `memory_reme_layout_get`
-
-Args:
-```ts
-{ group_id: string }
-```
-
-Result:
-```ts
-{
-  group_label: string
-  memory_root: string
-  memory_file: string
-  daily_dir: string
-  today_daily_file: string
-  backend: { name: "local"; vector_enabled: false; fts_enabled: true }
-}
-```
-
-#### `memory_reme_index_sync`
-
-Args:
-```ts
-{
-  group_id: string
-  mode?: "scan" | "rebuild"   // default "scan"
-}
-```
-
-Result:
-```ts
-{
-  indexed_files: number
-  indexed_chunks: number
-  watched_paths: string[]
-  last_sync_at: string
-}
-```
-
-#### `memory_reme_search`
-
-Args:
-```ts
-{
-  group_id: string
-  query: string
-  max_results?: number           // 1..50, default 5
-  min_score?: number             // 0..1, default 0.1
-  sources?: string[]             // default ["memory"]
-  vector_weight?: number         // 0..1 (optional)
-  candidate_multiplier?: number  // 1..20 (optional)
-}
-```
-
-Result:
-```ts
-{
-  hits: Array<{
-    path: string
-    start_line: number
-    end_line: number
-    score: number
-    snippet: string
-    source: string
-    raw_metric?: number
-    metadata: Record<string, unknown>
-  }>
-  count: number
-  took_ms: number
-}
-```
-
-#### `memory_reme_get`
-
-Args:
-```ts
-{
-  group_id: string
-  path: string
-  offset?: number   // 1-indexed, default 1
-  limit?: number    // default 200
-}
-```
-
-Result:
-```ts
-{
-  path: string
-  offset: number
-  limit: number
-  total_lines: number
-  content: string
-}
-```
-
-#### `memory_reme_context_check`
-
-Args:
-```ts
-{
-  group_id: string
-  messages: Array<{ role: string; name?: string; content: string }>
-  context_window_tokens?: number
-  reserve_tokens?: number
-  keep_recent_tokens?: number
-}
-```
-
-Result:
-```ts
-{
-  needs_compaction: boolean
-  token_count: number
-  threshold: number
-  messages_to_summarize: Array<Record<string, unknown>>
-  turn_prefix_messages: Array<Record<string, unknown>>
-  left_messages: Array<Record<string, unknown>>
-  is_split_turn: boolean
-  cut_index: number
-}
-```
-
-#### `memory_reme_compact`
-
-Args:
-```ts
-{
-  group_id: string
-  messages_to_summarize: Array<{ role: string; name?: string; content: string }>
-  turn_prefix_messages?: Array<{ role: string; name?: string; content: string }>
-  previous_summary?: string
-  language?: string
-  return_prompt?: boolean
-}
-```
-
-Result:
-```ts
-{ summary: string } | { prompt: Record<string, string> }
-```
-
-#### `memory_reme_daily_flush`
-
-Args:
-```ts
-{
-  group_id: string
-  messages: Array<{ role: string; name?: string; content: string }>
-  date?: string               // YYYY-MM-DD
-  version?: string            // default "default"
-  language?: string           // default "en"
-  return_prompt?: boolean
-  signal_pack?: Record<string, unknown>
-  signal_pack_token_budget?: number // default 320
-  dedup_intent?: "new" | "update" | "supersede" | "silent" // default "new"
-  dedup_query?: string
-}
-```
-
-Result:
-```ts
-{
-  status: "written" | "silent"
-  reason?: "empty_summary" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
-  target_file: string
-  content_hash: string
-  bytes_written: number
-  signal_pack?: {
-    schema: string
-    token_budget: number
-    token_estimate: number
-    truncated: boolean
-  }
-  dedup?: {
-    intent: "new" | "update" | "supersede" | "silent"
-    query: string
-    candidate_count: number
-    top_score: number
-    precheck_decision: "new" | "update" | "supersede" | "silent"
-    final_decision: "new" | "update" | "supersede" | "silent"
-    final_reason: "accepted" | "empty_summary" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
-    decision: "new" | "update" | "supersede" | "silent" // alias of final_decision
-    hits: Array<{ path: string; start_line: number; score: number }>
-    error?: string
-  }
-}
-```
-
-#### `memory_reme_write`
-
-Args:
-```ts
-{
-  group_id: string
-  target: "memory" | "daily"
-  content: string
-  date?: string               // required when target="daily"
-  mode?: "append" | "replace" // default "append"
-  idempotency_key?: string
-  actor_id?: string
-  source_refs?: string[]
-  tags?: string[]
-  supersedes?: string[]
-  dedup_intent?: "new" | "update" | "supersede" | "silent" // default "new"
-  dedup_query?: string
-}
-```
-
-Result:
-```ts
-{
-  file_path: string
-  line_count: number
-  content_hash: string
-  status: "written" | "silent"
-  reason?: "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
-  dedup?: {
-    intent: "new" | "update" | "supersede" | "silent"
-    query: string
-    candidate_count: number
-    top_score: number
-    precheck_decision: "new" | "update" | "supersede" | "silent"
-    final_decision: "new" | "update" | "supersede" | "silent"
-    final_reason: "accepted" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
-    decision: "new" | "update" | "supersede" | "silent" // alias of final_decision
-    hits: Array<{ path: string; start_line: number; score: number }>
-    error?: string
-  }
-}
-```
 
 #### `task_list`
 
@@ -7684,7 +7490,9 @@ Provider failures MUST NOT block core collaboration flows (chat/context/actors).
 
 NotebookLM is modeled as two fixed daemon-owned lanes:
 - `lane="work"`: project/shared external knowledge, repo `space/` sync, artifacts, general ingest/query.
-- `lane="memory"`: finalized daily memory recall only; daemon syncs `state/memory/daily/*.md` asynchronously.
+- `lane="memory"`: query an existing provider-backed memory notebook and inspect
+  its historical synchronization status. Automatic daily-memory synchronization
+  is retired; CCCC does not automatically create or upload Group memory files.
 
 Normative lane rules:
 - Agent-facing surfaces SHOULD pass `lane` explicitly for mutating or lane-targeted actions.
@@ -7822,7 +7630,7 @@ Result:
     oversize_error_code: string
   }
   ingest: {
-    kinds: Array<"context_sync" | "resource_ingest" | "memory_daily_sync">
+    kinds: Array<"context_sync" | "resource_ingest">
     resource_ingest: {
       source_types: string[]
       required_fields: Record<string, string[]>
@@ -7959,7 +7767,6 @@ Args:
 Validation notes:
 - `options` only supports `source_ids`.
 - `options.language` / `options.lang` are invalid for `group_space_query` because NotebookLM query API does not provide a language parameter.
-- Recommended recall order is local memory first, then `lane="memory"` for deep recall.
 
 Result:
 ```ts

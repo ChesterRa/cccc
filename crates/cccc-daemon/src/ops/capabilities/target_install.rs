@@ -217,10 +217,18 @@ pub(super) fn enable(
             "blocked_reason":block.get("reason").and_then(Value::as_str).unwrap_or("")
         }));
     }
-    let record = store.catalog_record(capability_id).map_err(OpError::io)?;
-    if let Some(record) = record.as_ref() {
-        validate_enableable(record, capability_id)?;
-        package_install::ensure_installed(home, capability_id, record)?;
+    let builtin = CapabilityStore::builtin(capability_id);
+    if let Some(builtin) = builtin {
+        // Persisted copies may describe an old or external installer. The
+        // current built-in definition owns both readiness and execution.
+        validate_enableable(
+            &json!({"enable_supported":builtin.enable_supported,
+                    "qualification_status":builtin.qualification_status}),
+            capability_id,
+        )?;
+    } else if let Some(record) = store.catalog_record(capability_id).map_err(OpError::io)? {
+        validate_enableable(&record, capability_id)?;
+        package_install::ensure_installed(home, capability_id, &record)?;
     }
     let already_enabled = store
         .is_enabled_for(capability_id, group_id, actor_id, scope)

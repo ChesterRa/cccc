@@ -1067,6 +1067,6 @@
   "presentation": "展示区",
   "slashDescriptions": {
     "install": "安装或启用 Skill、MCP 工具包、能力、URL、仓库或本地路径。",
-    "selfEvolution": "回顾 CCCC 工作组完整的可见历史，在提示词、结构化上下文、工作流、Harness 或优化器层面提出经过确认的改进。"
+    "selfEvolution": "回顾团队的协作情况，提出最多三条改进建议，由你决定。"
   }
 }

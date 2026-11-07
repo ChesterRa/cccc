@@ -4,12 +4,12 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use std::fs;
-use std::time::Duration;
 
 use crate::ToolCallError;
 use crate::router::daemon;
 
 const RECOVERY_TOKEN_BUDGET: usize = 1_100;
+const MAX_RECOVERY_CONSTRAINTS: usize = 6;
 const STALE_AFTER_SECONDS: i64 = 20 * 60;
 const MIND_HOT_ONLY_UPDATE_THRESHOLD: u64 = 3;
 const MAX_LISTED_SKILLS: usize = 8;
@@ -81,15 +81,6 @@ pub(crate) async fn build(
         .get("context_hygiene")
         .cloned()
         .unwrap_or_else(|| missing_hygiene(&actor_id));
-    let memory_recall_gate = build_memory_recall_gate(
-        client,
-        &group_id,
-        &actor_id,
-        &recovery_pack,
-        binding,
-        native_binding,
-    )
-    .await;
 
     let mut payload = assemble_payload(
         build_session(
@@ -104,7 +95,6 @@ pub(crate) async fn build(
         build_recovery(&recovery_pack),
         build_inbox_preview(&inbox, inbox_limit),
         context_hygiene,
-        memory_recall_gate,
     );
     if let Ok(store) = cccc_core::GroupStore::new(home.clone())
         && let Ok(group) = store.load(&group_id)
@@ -171,21 +161,18 @@ fn assemble_payload(
     recovery: Value,
     inbox_preview: Value,
     context_hygiene: Value,
-    memory_recall_gate: Value,
 ) -> Value {
     json!({
         "session": session,
         "recovery": recovery,
         "inbox_preview": inbox_preview,
         "context_hygiene": context_hygiene,
-        "memory_recall_gate": memory_recall_gate,
         "next_calls": {
             "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
             "context_get": "cccc_context_get(detail=\"overview\")  # brief, recent decisions and handoffs, agent states",
             "tasks": "cccc_task()  # open tasks, one row each; pass task_id to read one in full",
             "connect": "cccc_connect()  # discover accessible remote Groups/Actors; use both instance_id and target_group_id for an external_groups entry",
             "inbox_read": "cccc_inbox_read()",
-            "memory_search": "cccc_capability_use(tool_name=\"cccc_memory\", tool_arguments={\"action\":\"search\",\"query\":\"...\"})",
         }
     })
 }
@@ -311,7 +298,7 @@ fn build_recovery_pack(
         now,
     );
 
-    let mut pack = json!({
+    let pack = json!({
         "agent_state": {
             "id": actor_state.and_then(|state| state.get("id")).cloned().unwrap_or_else(|| Value::String(actor_id.to_owned())),
             "hot": hot,
@@ -337,19 +324,23 @@ fn build_recovery_pack(
         "recent_handoffs": recent_notes(coordination, "recent_handoffs"),
         "context_hygiene": hygiene,
     });
-    let constraints = brief.and_then(|value| value.get("constraints"));
-    // Reserve a small explicit omission notice while trimming the other context.
-    // Never turn a partial constraint into an apparently complete instruction.
-    set_constraints(&mut pack, full_constraints(constraints, 0));
-    shrink_recovery_pack(&mut pack);
-    for count in 1..=6 {
-        let previous = pack["coordination_brief"]["constraints"].clone();
-        set_constraints(&mut pack, full_constraints(constraints, count));
-        if estimate_tokens(&pack) > RECOVERY_TOKEN_BUDGET {
-            pack["coordination_brief"]["constraints"] = previous;
-            break;
+    fit_constraints(pack, brief.and_then(|value| value.get("constraints")))
+}
+
+/// Standing rules outrank the rest of the pack, which is trimmed to keep them.
+/// Rules that still do not fit leave whole, behind an explicit omission notice:
+/// never turn a partial constraint into an apparently complete instruction.
+fn fit_constraints(mut pack: Value, constraints: Option<&Value>) -> Value {
+    for count in (1..=MAX_RECOVERY_CONSTRAINTS).rev() {
+        let mut candidate = pack.clone();
+        set_constraints(&mut candidate, full_constraints(constraints, count));
+        shrink_recovery_pack(&mut candidate);
+        if estimate_tokens(&candidate) <= RECOVERY_TOKEN_BUDGET {
+            return candidate;
         }
     }
+    set_constraints(&mut pack, full_constraints(constraints, 0));
+    shrink_recovery_pack(&mut pack);
     pack
 }
 
@@ -628,159 +619,6 @@ fn build_inbox_preview(inbox: &Map<String, Value>, limit: usize) -> Value {
         })
         .collect::<Vec<_>>();
     json!({"messages": preview, "truncated": messages.len() > limit})
-}
-
-async fn build_memory_recall_gate(
-    client: &DaemonClient,
-    group_id: &str,
-    actor_id: &str,
-    recovery_pack: &Value,
-    binding: Option<&Value>,
-    native_binding: Option<&Value>,
-) -> Value {
-    let query = memory_recall_query(recovery_pack);
-    let mut args = request_args(group_id, actor_id, binding, native_binding);
-    args.insert("query".into(), Value::String(query.clone()));
-    args.insert("max_results".into(), json!(3));
-    args.insert("min_score".into(), json!(0.1));
-    let result = tokio::time::timeout(
-        Duration::from_secs(4),
-        daemon(client, "memory_reme_search", args),
-    )
-    .await;
-    let mut gate = json!({
-        "required": true,
-        "status": "empty",
-        "query": query,
-        "hits": [],
-        "note": "Recall gate: read this before planning or implementation. If it is empty, expand with local cccc_memory(search/get).",
-    });
-    match result {
-        Ok(Ok(response)) => {
-            let hits = response
-                .get("hits")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_object)
-                .take(3)
-                .map(|item| {
-                    json!({
-                        "path": string_value(item.get("path")).unwrap_or_default(),
-                        "start_line": item.get("start_line").and_then(Value::as_u64).unwrap_or(1),
-                        "score": item.get("score").and_then(Value::as_f64).unwrap_or(0.0),
-                        "snippet": trim_text(item.get("snippet").and_then(Value::as_str).unwrap_or_default(), 220),
-                    })
-                })
-                .collect::<Vec<_>>();
-            gate["status"] = Value::String(if hits.is_empty() { "empty" } else { "ready" }.into());
-            gate["hits"] = Value::Array(hits);
-        }
-        Ok(Err(error)) => {
-            gate["status"] = Value::String("error".into());
-            gate["error"] = Value::String(error.to_string());
-        }
-        Err(_) => {
-            gate["status"] = Value::String("error".into());
-            gate["error"] = Value::String("memory recall timed out after 4 seconds".into());
-        }
-    }
-    gate
-}
-
-fn memory_recall_query(pack: &Value) -> String {
-    let agent_state = pack.get("agent_state").and_then(Value::as_object);
-    let hot = agent_state
-        .and_then(|value| value.get("hot"))
-        .and_then(Value::as_object);
-    let warm = agent_state
-        .and_then(|value| value.get("warm"))
-        .and_then(Value::as_object);
-    let mini = agent_state
-        .and_then(|value| value.get("mind_context_mini"))
-        .and_then(Value::as_object);
-    let brief = pack.get("coordination_brief").and_then(Value::as_object);
-    let tasks = pack.get("tasks").and_then(Value::as_object);
-    let mut ranked = Vec::new();
-    let mut seen = HashSet::new();
-    let mut add = |priority: usize, value: Option<&Value>, max_chars: usize| {
-        let text = trim_text(&string_value(value).unwrap_or_default(), max_chars);
-        if !text.is_empty() && seen.insert(text.to_lowercase()) {
-            ranked.push((priority, text));
-        }
-    };
-    add(0, hot.and_then(|value| value.get("active_task_id")), 48);
-    add(1, hot.and_then(|value| value.get("focus")), 120);
-    add(2, hot.and_then(|value| value.get("next_action")), 120);
-    add(3, brief.and_then(|value| value.get("current_focus")), 120);
-    if let Some(task) = tasks
-        .and_then(|value| value.get("assigned_active"))
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(Value::as_object)
-    {
-        add(4, task.get("title"), 100);
-        add(5, task.get("outcome"), 120);
-    }
-    add(6, warm.and_then(|value| value.get("what_changed")), 120);
-    for value in warm
-        .and_then(|value| value.get("open_loops"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .take(2)
-    {
-        add(7, Some(value), 120);
-    }
-    if let Some(task) = tasks
-        .and_then(|value| value.get("attention"))
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(Value::as_object)
-    {
-        add(8, task.get("title"), 100);
-    }
-    for value in warm
-        .and_then(|value| value.get("commitments"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .take(2)
-    {
-        add(8, Some(value), 120);
-    }
-    add(9, brief.and_then(|value| value.get("objective")), 120);
-    add(
-        10,
-        warm.and_then(|value| value.get("environment_summary"))
-            .or_else(|| mini.and_then(|value| value.get("environment_summary"))),
-        100,
-    );
-    add(
-        11,
-        warm.and_then(|value| value.get("user_model"))
-            .or_else(|| mini.and_then(|value| value.get("user_model"))),
-        100,
-    );
-    add(
-        12,
-        warm.and_then(|value| value.get("persona_notes"))
-            .or_else(|| mini.and_then(|value| value.get("persona_notes"))),
-        100,
-    );
-    if ranked.is_empty() {
-        return "recent decisions constraints preferences".into();
-    }
-    ranked.sort_by_key(|item| item.0);
-    trim_text(
-        &ranked
-            .into_iter()
-            .take(6)
-            .map(|(_, text)| text)
-            .collect::<Vec<_>>()
-            .join(" | "),
-        240,
-    )
 }
 
 fn evaluate_hygiene(
@@ -1229,6 +1067,32 @@ mod tests {
     }
 
     #[test]
+    fn standing_rules_outrank_the_rest_of_the_pack() {
+        let rules = json!([
+            "Only the user pushes",
+            "Relay messages sent only to the foreman",
+            "Do not restart the user's services",
+            "GitHub actions are the user's",
+            "A parked task stays parked",
+        ]);
+        // Many small notes sit just under the budget, as for a busy agent. Trimming
+        // only for the omission notice would free too little for any rule.
+        let note = json!({"summary": "n"});
+        let mut pack = json!({"coordination_brief": {}, "recent_handoffs": []});
+        while estimate_tokens(&pack) + estimate_tokens(&note) < RECOVERY_TOKEN_BUDGET {
+            pack["recent_handoffs"]
+                .as_array_mut()
+                .expect("valid test fixture")
+                .push(note.clone());
+        }
+
+        let pack = fit_constraints(pack, Some(&rules));
+
+        assert_eq!(pack["coordination_brief"]["constraints"], rules);
+        assert!(estimate_tokens(&pack) <= RECOVERY_TOKEN_BUDGET);
+    }
+
+    #[test]
     fn long_constraints_respect_budget_without_cutting_individual_rules() {
         for rule in ["r".repeat(1_200), "条件を守る。".repeat(400)] {
             let mut context = fixture_context();
@@ -1278,26 +1142,12 @@ mod tests {
     }
 
     #[test]
-    fn recall_query_prioritizes_live_execution_state() {
-        let now = Utc
-            .with_ymd_and_hms(2026, 8, 9, 5, 1, 0)
-            .single()
-            .expect("timestamp");
-        let pack = build_recovery_pack(&fixture_context(), "peer1", &Map::new(), now);
-        let query = memory_recall_query(&pack);
-
-        assert!(query.starts_with("bootstrap semantic conformance | compare packets"));
-        assert!(query.chars().count() <= 240);
-    }
-
-    #[test]
-    fn public_payload_has_only_the_six_cold_start_sections() {
+    fn public_payload_has_only_the_five_cold_start_sections() {
         let payload = assemble_payload(
             json!({}),
             json!({}),
             json!({"messages": [], "truncated": false}),
             json!({}),
-            json!({"required": true, "status": "empty", "query": "q", "hits": []}),
         );
         let mut keys = payload
             .as_object()
@@ -1311,7 +1161,6 @@ mod tests {
             [
                 "context_hygiene",
                 "inbox_preview",
-                "memory_recall_gate",
                 "next_calls",
                 "recovery",
                 "session",
@@ -1372,7 +1221,7 @@ mod tests {
 
     #[test]
     fn next_calls_point_at_the_compact_context_and_task_reads() {
-        let payload = assemble_payload(json!({}), json!({}), json!({}), json!({}), json!({}));
+        let payload = assemble_payload(json!({}), json!({}), json!({}), json!({}));
         let calls = &payload["next_calls"];
         assert!(
             calls["context_get"]

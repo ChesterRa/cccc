@@ -35,7 +35,6 @@ const WEB_MODEL_EXTRA_TOOL_NAMES: &[&str] = &[
     "cccc_tracked_send",
     "cccc_repo",
     "cccc_presentation",
-    "cccc_memory",
     "cccc_runtime_wait_next_turn",
     "cccc_runtime_complete_turn",
     "cccc_code_exec",
@@ -91,16 +90,9 @@ pub fn all() -> Vec<Capability> {
         skill(
             SELF_EVOLUTION_CAPABILITY_ID,
             "cccc-self-evolution",
-            "Review complete visible CCCC group history and propose confirmed improvements at the prompt, structured-context, workflow, Harness, or optimizer level.",
+            "Review how the team works from the user's words and ledger counts, then propose up to three changes for the user to choose.",
             SELF_EVOLUTION_CAPSULE,
-            &[
-                "self-evolution",
-                "learning",
-                "workflow",
-                "harness",
-                "optimizer",
-                "cccc-glue",
-            ],
+            &["self-evolution", "team-review", "workflow", "cccc-glue"],
         ),
         pack(
             "pack:group-runtime",
@@ -134,13 +126,8 @@ pub fn all() -> Vec<Capability> {
         pack(
             "pack:context-advanced",
             "Extended Context + Delegation",
-            &[
-                "cccc_tracked_send",
-                "cccc_context_sync",
-                "cccc_memory",
-                "cccc_memory_admin",
-            ],
-            &["context", "delegation", "memory"],
+            &["cccc_tracked_send", "cccc_context_sync"],
+            &["context", "delegation"],
         ),
         pack(
             "pack:headless-notify",

@@ -828,7 +828,7 @@
     "copiedLines": "最後の{{n}}行をコピーしました",
     "failedToLoadTranscript": "ターミナルログの読み込みに失敗しました",
     "failedToClearTranscript": "ターミナルログのクリアに失敗しました",
-    "resetGuidanceConfirm": "{{kind}}をリセットしますか？接続済み project scope の {{filename}} が削除されます。元に戻せません。",
+    "resetGuidanceConfirm": "{{kind}}をリセットしますか？このグループのディレクトリにある {{filename}} が削除されます。元に戻せません。",
     "removeRegistryConfirm": "欠損しているグループエントリを {{count}} 件レジストリから削除しますか？"
   },
   "ruleEditor": {
@@ -1100,7 +1100,7 @@
   "guidance": {
     "commonAndRolesTitle": "共有スコープ",
     "openFromGroup": "グループからこのタブを開きます。",
-    "overridesHint": "ガイダンスファイルは接続済み project scope に保存されます。",
+    "overridesHint": "ガイダンスファイルはこのグループのディレクトリに保存されます。",
     "preambleTitle": "ブートストラップ (プリアンブル)",
     "preambleHint": "起動/再起動後の最初の配信前に自動的に挿入されます。",
     "helpTitle": "ヘルプ（参考）",
@@ -1118,7 +1118,6 @@
     "failedToSave": "{{kind}} を保存できませんでした",
     "failedToReset": "{{kind}} をリセットできませんでした",
     "expandTitle": "全画面エディタを開く",
-    "saveOverrideTitle": "接続済み project scope にガイダンスを保存",
     "helpEditorTitle": "ヘルプエディタ",
     "helpEditorHint": "構造化モードでは common / role / エージェントノートを編集し、Raw モードでは全文 Markdown を直接編集できます。",
     "structuredView": "構造化",
@@ -1140,8 +1139,7 @@
     "orphanActorRole": "グループ外",
     "orphanActorNotePlaceholder": "既に存在しないエージェントに対する残存ノートです。保持するか整理できます……",
     "scopedNoteConfigured": "設定済み",
-    "unknownRole": "不明な役割",
-    "noScopeWarning": "ガイダンスを読み書きする前に project scope を接続してください。"
+    "unknownRole": "不明な役割"
   },
   "copyGroups": {
     "openFromGroup": "グループからこのタブを開きます。",

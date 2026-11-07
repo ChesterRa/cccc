@@ -825,7 +825,7 @@
     "copiedLines": "已复制最后 {{n}} 行",
     "failedToLoadTranscript": "加载终端日志失败",
     "failedToClearTranscript": "清除终端日志失败",
-    "resetGuidanceConfirm": "重置 {{kind}}？这将删除已绑定项目作用域中的 {{filename}}。此操作无法撤销。",
+    "resetGuidanceConfirm": "重置 {{kind}}？这将删除本工作组目录中的 {{filename}}。此操作无法撤销。",
     "removeRegistryConfirm": "从注册表中移除 {{count}} 个缺失的工作组条目？"
   },
   "ruleEditor": {
@@ -1097,7 +1097,7 @@
   "guidance": {
     "commonAndRolesTitle": "共享范围",
     "openFromGroup": "请从工作组中打开此标签页。",
-    "overridesHint": "引导文件存储在已绑定的项目作用域中。",
+    "overridesHint": "引导文件存储在本工作组目录中。",
     "preambleTitle": "启动引导（Preamble）",
     "preambleHint": "在启动/重启后的首次投递前自动注入。",
     "helpTitle": "帮助（参考）",
@@ -1115,7 +1115,6 @@
     "failedToSave": "保存 {{kind}} 失败",
     "failedToReset": "重置 {{kind}} 失败",
     "expandTitle": "打开全屏编辑器",
-    "saveOverrideTitle": "保存引导文件到已绑定项目作用域",
     "helpEditorTitle": "帮助编辑器",
     "helpEditorHint": "结构化模式编辑通用/角色/智能体提示词，Raw 模式保留整份 Markdown 的完全控制。",
     "structuredView": "结构化",
@@ -1137,8 +1136,7 @@
     "orphanActorRole": "已不在工作组中",
     "orphanActorNotePlaceholder": "这里是遗留给已不存在智能体的提示词，你可以保留或清理……",
     "scopedNoteConfigured": "已配置",
-    "unknownRole": "未知角色",
-    "noScopeWarning": "请先绑定项目作用域，再读取或保存引导文件。"
+    "unknownRole": "未知角色"
   },
   "copyGroups": {
     "openFromGroup": "请从工作组中打开此标签页。",

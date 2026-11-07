@@ -73,7 +73,7 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     .map_err(OpError::invalid)?;
     if request.args.contains_key("event_id") {
         let event_id = required_arg(request, "event_id")?;
-        if ["mode", "query", "before_event_id", "limit"]
+        if ["mode", "query", "sender", "before_event_id", "limit"]
             .iter()
             .any(|name| request.args.contains_key(*name))
         {
@@ -96,6 +96,7 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let query = string_arg(request, "query")
         .unwrap_or_default()
         .to_lowercase();
+    let sender = string_arg(request, "sender").unwrap_or_default();
     let before = string_arg(request, "before_event_id").unwrap_or_default();
     let limit = history_limit(request)?;
     let path = crate::dispatch::store(home)?
@@ -135,6 +136,9 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if mode != "all" && event_mode != mode {
+                continue;
+            }
+            if !sender.is_empty() && event.by != sender {
                 continue;
             }
             if !query.is_empty() {

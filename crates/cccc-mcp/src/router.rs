@@ -1075,7 +1075,7 @@ mod tests {
             skill["structuredContent"]["capsule_text"]
                 .as_str()
                 .expect("skill rules")
-                .contains("## Procedure")
+                .contains("## Review")
         );
 
         let pack = super::call_with_context(
@@ -1195,10 +1195,12 @@ mod tests {
             &home,
             &client,
             "cccc_capability_use",
-            json!({"tool_name":"cccc_memory","tool_arguments":{"action":"layout_get"}})
-                .as_object()
-                .cloned()
-                .expect("call args"),
+            json!({"tool_name":"cccc_context_sync","tool_arguments":{
+                "dry_run":true,"ops":[{"op":"coordination.brief.update","current_focus":"fixture"}]
+            }})
+            .as_object()
+            .cloned()
+            .expect("call args"),
             context,
             false,
         )
@@ -1209,7 +1211,10 @@ mod tests {
             "pack:context-advanced"
         );
         assert_eq!(called["structuredContent"]["tool_called"], true);
-        assert_eq!(called["structuredContent"]["tool_name"], "cccc_memory");
+        assert_eq!(
+            called["structuredContent"]["tool_name"],
+            "cccc_context_sync"
+        );
 
         daemon_task.abort();
     }

@@ -292,7 +292,7 @@ cccc im start                # also: stop, status
 
 ## For integrators
 
-**MCP tools.** Agents always see a compact core: `cccc_bootstrap`, `cccc_help`, capability search and use, Inbox, messaging, files, `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state` and `cccc_connect`. Other built-in tools, such as `cccc_tracked_send`, `cccc_memory`, `cccc_group`, `cccc_actor`, `cccc_repo`, `cccc_terminal` and `cccc_automation`, are available through `cccc_capability_use`. Native sessions also get `cccc_session` to list, message and group other sessions.
+**MCP tools.** Agents always see a compact core: `cccc_bootstrap`, `cccc_help`, capability search and use, Inbox, messaging, files, `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state` and `cccc_connect`. Other built-in tools, such as `cccc_tracked_send`, `cccc_group`, `cccc_actor`, `cccc_repo`, `cccc_terminal` and `cccc_automation`, are available through `cccc_capability_use`. Native sessions also get `cccc_session` to list, message and group other sessions.
 
 **SDK.** The [Python, TypeScript and Rust clients](https://github.com/ChesterRa/cccc-sdk) connect to a running `cccc`; they contain no daemon.
 

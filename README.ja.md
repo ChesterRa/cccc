@@ -292,7 +292,7 @@ cccc im start                # ほかに stop、status
 
 ## 連携する開発者向け
 
-**MCP ツール**：エージェントには、常にコンパクトなコアが見えています。`cccc_bootstrap`、`cccc_help`、機能の検索と利用、Inbox、メッセージ、ファイル、`cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state`、`cccc_connect` です。`cccc_tracked_send`、`cccc_memory`、`cccc_group`、`cccc_actor`、`cccc_repo`、`cccc_terminal`、`cccc_automation` などのほかの組み込みツールは、`cccc_capability_use` から使えます。ネイティブセッションには、ほかのセッションの一覧表示、メッセージ送信、グループ化を行う `cccc_session` もあります。
+**MCP ツール**：エージェントには、常にコンパクトなコアが見えています。`cccc_bootstrap`、`cccc_help`、機能の検索と利用、Inbox、メッセージ、ファイル、`cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state`、`cccc_connect` です。`cccc_tracked_send`、`cccc_group`、`cccc_actor`、`cccc_repo`、`cccc_terminal`、`cccc_automation` などのほかの組み込みツールは、`cccc_capability_use` から使えます。ネイティブセッションには、ほかのセッションの一覧表示、メッセージ送信、グループ化を行う `cccc_session` もあります。
 
 **SDK**：[Python、TypeScript、Rust のクライアント](https://github.com/ChesterRa/cccc-sdk)は、実行中の `cccc` に接続します。daemon は含まれていません。
 

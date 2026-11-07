@@ -1,9 +1,9 @@
 use serde_json::{Map, Value};
 use std::io;
 
-use super::apply::apply_all;
+use super::apply::{apply_all, count_finished_tasks};
 use super::migration::migrate_legacy_json;
-use super::model::{ContextDoc, ContextSyncResult};
+use super::model::{ContextDoc, ContextSyncResult, SyncMode};
 use super::yaml_storage::{self, ContextPaths};
 use crate::fs::with_exclusive_lock;
 use crate::{GroupStore, HomeLayout};
@@ -51,7 +51,11 @@ impl ContextStore {
         by: &str,
         dry_run: bool,
     ) -> io::Result<ContextSyncResult> {
-        self.sync_checked(group_id, operations, if_version, by, dry_run, |_, _| Ok(()))
+        let mode = SyncMode {
+            dry_run,
+            review_every: None,
+        };
+        self.sync_checked(group_id, operations, if_version, by, mode, |_, _| Ok(()))
     }
 
     /// Authorize each operation against the preceding operations' in-memory
@@ -62,7 +66,7 @@ impl ContextStore {
         operations: &[Map<String, Value>],
         if_version: Option<&str>,
         by: &str,
-        dry_run: bool,
+        mode: SyncMode,
         authorize: impl FnMut(&ContextDoc, &Map<String, Value>) -> io::Result<()>,
     ) -> io::Result<ContextSyncResult> {
         let paths = self.paths(group_id)?;
@@ -84,8 +88,9 @@ impl ContextStore {
                     io::Error::new(io::ErrorKind::InvalidInput, error)
                 }
             })?;
+            let review_due = count_finished_tasks(&before, &mut document, mode.review_every);
             yaml_storage::touch_updated_at(&mut document);
-            let version = if dry_run {
+            let version = if mode.dry_run {
                 current_version
             } else {
                 let state = yaml_storage::persist_diff(&paths, &before, &document)?;
@@ -97,7 +102,8 @@ impl ContextStore {
                 context: document,
                 version,
                 changes,
-                dry_run,
+                dry_run: mode.dry_run,
+                review_due,
             })
         })
     }

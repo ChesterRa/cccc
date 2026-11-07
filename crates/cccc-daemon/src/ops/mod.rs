@@ -39,6 +39,7 @@ mod diagnostics;
 pub(crate) mod dots_events;
 mod event_prefix;
 mod grok_webhook;
+mod group_activity;
 mod group_copy;
 mod group_create_rollback;
 mod group_creation;
@@ -63,7 +64,6 @@ mod mail_advisory;
 mod mcp_identity_notice;
 mod membership_account;
 mod membership_cloudflared;
-mod memory;
 mod message_idempotency;
 mod message_metadata;
 mod message_pins;
@@ -134,7 +134,6 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         maintenance::resolve_operation,
         owned_process_recovery::resolve_operation,
         im::resolve_operation,
-        memory::resolve_operation,
         context::resolve_operation,
         settings::resolve_operation,
         web_model_connectors::resolve_operation,

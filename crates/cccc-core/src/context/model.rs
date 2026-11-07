@@ -66,4 +66,16 @@ pub struct ContextSyncResult {
     pub version: String,
     pub changes: Vec<Value>,
     pub dry_run: bool,
+    /// Top-level tasks finished since the last reminder, when this write found
+    /// a team review due.
+    pub review_due: Option<u64>,
+}
+
+/// How one context write runs.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SyncMode {
+    pub dry_run: bool,
+    /// Top-level tasks to finish between two team review reminders. `None`
+    /// means this write takes no reminder; its finished tasks still count.
+    pub review_every: Option<u64>,
 }

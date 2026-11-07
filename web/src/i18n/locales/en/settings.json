@@ -828,7 +828,7 @@
     "copiedLines": "Copied last {{n}} lines",
     "failedToLoadTranscript": "Failed to load terminal transcript",
     "failedToClearTranscript": "Failed to clear terminal transcript",
-    "resetGuidanceConfirm": "Reset {{kind}}? This will delete {{filename}} from the attached project scope. This cannot be undone.",
+    "resetGuidanceConfirm": "Reset {{kind}}? This will delete {{filename}} from this Group's directory. This cannot be undone.",
     "removeRegistryConfirm": "Remove {{count}} missing group entries from registry?"
   },
   "ruleEditor": {
@@ -1100,7 +1100,7 @@
   "guidance": {
     "commonAndRolesTitle": "Shared Scopes",
     "openFromGroup": "Open this tab from a group.",
-    "overridesHint": "Guidance files are stored in the attached project scope.",
+    "overridesHint": "Guidance files are stored in this Group's directory.",
     "preambleTitle": "Bootstrap (Preamble)",
     "preambleHint": "Injected automatically before the first delivery after start/restart.",
     "helpTitle": "Help (Reference)",
@@ -1118,7 +1118,6 @@
     "failedToSave": "Failed to save {{kind}}",
     "failedToReset": "Failed to reset {{kind}}",
     "expandTitle": "Open full-screen editor",
-    "saveOverrideTitle": "Save guidance in the attached project scope",
     "helpEditorTitle": "Help editor",
     "helpEditorHint": "Structured mode edits common, role, and agent notes; raw mode keeps full-file control.",
     "structuredView": "Structured",
@@ -1140,8 +1139,7 @@
     "orphanActorRole": "No longer in group",
     "orphanActorNotePlaceholder": "Keep or clean this leftover note for an agent that no longer exists…",
     "scopedNoteConfigured": "Configured",
-    "unknownRole": "Unknown",
-    "noScopeWarning": "Attach a project scope before reading or saving guidance files."
+    "unknownRole": "Unknown"
   },
   "copyGroups": {
     "openFromGroup": "Open this tab from a group.",

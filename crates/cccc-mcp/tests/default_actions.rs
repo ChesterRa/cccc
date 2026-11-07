@@ -40,8 +40,6 @@ async fn optional_actions_use_the_published_default_before_routing() {
         }
     });
     for (tool, action, op) in [
-        ("cccc_memory", "search", "memory_reme_search"),
-        ("cccc_memory_admin", "index_sync", "memory_reme_index_sync"),
         ("cccc_notify", "send", "system_notify"),
         ("cccc_terminal", "tail", "terminal_tail"),
         ("cccc_debug", "snapshot", "debug_snapshot"),

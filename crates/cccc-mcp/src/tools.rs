@@ -76,7 +76,7 @@ mod tests {
             .filter_map(|tool| tool["name"].as_str())
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(catalog.len(), 52);
+        assert_eq!(catalog.len(), 50);
         assert!(names.contains("cccc_voice_secretary_task"));
         for retired in [
             "cccc_voice_secretary_document",
@@ -88,7 +88,8 @@ mod tests {
         assert!(names.contains("cccc_connect"));
         assert_eq!(names.len(), catalog.len());
         assert!(names.contains("cccc_code_exec"));
-        assert!(names.contains("cccc_memory_admin"));
+        assert!(!names.contains("cccc_memory"));
+        assert!(!names.contains("cccc_memory_admin"));
     }
 
     #[test]

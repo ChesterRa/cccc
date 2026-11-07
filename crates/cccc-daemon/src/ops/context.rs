@@ -3,12 +3,14 @@ use super::operation::{
     Policy::{Read, Write},
 };
 use cccc_contracts::{ActorRole, DaemonRequest, Event};
-use cccc_core::context::{ContextDoc, ContextStore};
+use cccc_core::context::{ContextDoc, ContextStore, SyncMode};
 use cccc_core::ledger;
-use cccc_core::{GroupDoc, HomeLayout, actors};
+use cccc_core::{GroupDoc, HomeLayout, SELF_EVOLUTION_CAPABILITY_ID, actors};
 use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, store, string_arg};
+
+const TEAM_REVIEW_EVERY_FINISHED_TASKS: u64 = 10;
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
@@ -129,6 +131,10 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             )
         })?)
     };
+    let dry_run = bool_arg(request, "dry_run", false);
+    let review_every =
+        (!dry_run && role == Some(ActorRole::Foreman) && operations.iter().any(is_task_operation))
+            .then_some(TEAM_REVIEW_EVERY_FINISHED_TASKS);
     let mut denied = None;
     let result = contexts
         .sync_checked(
@@ -136,7 +142,10 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             &operations,
             string_arg(request, "if_version").as_deref(),
             &by,
-            bool_arg(request, "dry_run", false),
+            SyncMode {
+                dry_run,
+                review_every,
+            },
             |document, operation| {
                 authorize(role, document, operation, &by).map_err(|error| {
                     denied = Some(error);
@@ -161,7 +170,7 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         })?;
     if !result.dry_run && !result.changes.is_empty() {
         let mut event = Event::new("context.sync", &group_id);
-        event.by = by;
+        event.by = by.clone();
         event.data = json!({"version": &result.version, "changes": &result.changes})
             .as_object()
             .cloned()
@@ -172,12 +181,58 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         )
         .map_err(OpError::io)?;
     }
-    object(json!({
+    let mut response = json!({
         "success": true,
         "dry_run": result.dry_run,
         "changes": result.changes,
         "version": result.version,
-    }))
+    });
+    if let Some(finished) = result.review_due
+        && team_review_offered(home, &group_id, &by)
+    {
+        response["review_reminder"] = Value::String(team_review_reminder(finished));
+    }
+    object(response)
+}
+
+fn is_task_operation(operation: &Map<String, Value>) -> bool {
+    operation
+        .get("op")
+        .and_then(Value::as_str)
+        .is_some_and(|name| name.starts_with("task."))
+}
+
+/// The reminder offers the skill, so it follows the user's choice: a skill that
+/// is blocked, removed, switched off or hidden from this foreman is not offered.
+/// A failed read must not fail the task write, and only costs this reminder.
+fn team_review_offered(home: &HomeLayout, group_id: &str, foreman: &str) -> bool {
+    let request = DaemonRequest {
+        v: 1,
+        op: "capability_state".into(),
+        args: Map::from_iter([
+            ("group_id".into(), Value::from(group_id)),
+            ("actor_id".into(), Value::from(foreman)),
+            ("by".into(), Value::from(foreman)),
+        ]),
+    };
+    super::capabilities::state(home, &request).is_ok_and(|state| {
+        state["active_capsule_skills"]
+            .as_array()
+            .is_some_and(|skills| {
+                skills
+                    .iter()
+                    .any(|skill| skill["capability_id"] == SELF_EVOLUTION_CAPABILITY_ID)
+            })
+    })
+}
+
+fn team_review_reminder(finished: u64) -> String {
+    format!(
+        "{finished} top-level tasks have been finished since the last reminder. If the team has \
+         not looked at how it works lately, cccc_capability_use(capability_id=\
+         \"{SELF_EVOLUTION_CAPABILITY_ID}\") returns the rules for a short review. This is a \
+         reminder only."
+    )
 }
 
 pub(super) fn load_group(home: &HomeLayout, group_id: &str) -> Result<GroupDoc, OpError> {

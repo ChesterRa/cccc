@@ -61,7 +61,8 @@ In **Memory Notebook**:
 1. Choose an existing notebook from the selector, or
 2. Click **Create and bind new**.
 
-Use `Memory Notebook` for finalized memory recall.
+Use `Memory Notebook` to query an existing notebook. CCCC no longer creates or
+automatically synchronizes Group memory files to it.
 
 Expected result:
 

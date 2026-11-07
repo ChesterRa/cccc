@@ -16,7 +16,7 @@
   },
   {
     "name": "cccc_bootstrap",
-    "description": "Cold-start bootstrap for the authenticated caller: session + recovery + inbox_preview + context_hygiene + memory_recall_gate + next_calls. session.members lists this Group's recipients (Actor ID, runtime, role, enabled access and optional native source_id); use those Actor IDs with ordinary message tools. session.active_scope is the Group selection; session.effective_scope is your tool workspace, retaining the running managed launch directory until exit or restart. Use it first on cold start or resume. Call cccc_help only when a CCCC route or state boundary is unclear; follow next_calls for colder detail because hidden tools are routed through cccc_capability_use.",
+    "description": "Cold-start bootstrap for the authenticated caller: session + recovery + inbox_preview + context_hygiene + next_calls. session.members lists this Group's recipients (Actor ID, runtime, role, enabled access and optional native source_id); use those Actor IDs with ordinary message tools. session.active_scope is the Group selection; session.effective_scope is your tool workspace, retaining the running managed launch directory until exit or restart. Use it first on cold start or resume. Call cccc_help only when a CCCC route or state boundary is unclear; follow next_calls for colder detail because hidden tools are routed through cccc_capability_use.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -108,6 +108,10 @@
         "query": {
           "type": "string",
           "description": "Optional case-insensitive text search."
+        },
+        "sender": {
+          "type": "string",
+          "description": "Only messages from this sender: an Actor ID or user."
         },
         "before_event_id": {
           "type": "string",
@@ -1346,7 +1350,7 @@
   },
   {
     "name": "cccc_group",
-    "description": "Group operations: action=info|list|resolve|set_state. Use resolve to turn natural #group/title tokens into a real group_id before cross-group messaging.",
+    "description": "Group operations: action=info|list|resolve|set_state|activity. Use resolve to turn natural #group/title tokens into a real group_id before cross-group messaging. activity (foreman only) counts the messages you may read, scheduled reminders and open tasks per member for a team review; counts are leads, not verdicts.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1364,7 +1368,8 @@
             "info",
             "list",
             "resolve",
-            "set_state"
+            "set_state",
+            "activity"
           ],
           "default": "info"
         },
@@ -1381,6 +1386,13 @@
             "stopped"
           ],
           "description": "Required when action=set_state. stopped calls group_stop to stop managed runtimes and Group delivery."
+        },
+        "days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365,
+          "default": 14,
+          "description": "action=activity only: how many days back to count."
         }
       },
       "required": []
@@ -2716,252 +2728,6 @@
         "by": {
           "type": "string",
           "description": "Caller actor id override (normally auto-resolved)"
-        }
-      },
-      "required": []
-    },
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true,
-      "idempotentHint": false,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "cccc_memory",
-    "description": "Local shared Markdown memory: action=layout_get|search|get|write. Search uses lexical matching, not embeddings; use get to read the matching source lines.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "layout_get",
-            "search",
-            "get",
-            "write"
-          ],
-          "default": "search"
-        },
-        "query": {
-          "type": "string"
-        },
-        "max_results": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 50,
-          "default": 5
-        },
-        "min_score": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1,
-          "default": 0.1
-        },
-        "sources": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "vector_weight": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Accepted for existing clients; the local lexical backend does not use this value."
-        },
-        "candidate_multiplier": {
-          "type": "number",
-          "minimum": 1,
-          "maximum": 20
-        },
-        "path": {
-          "type": "string"
-        },
-        "offset": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "limit": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 5000
-        },
-        "target": {
-          "type": "string",
-          "enum": [
-            "memory",
-            "daily"
-          ]
-        },
-        "content": {
-          "type": "string"
-        },
-        "date": {
-          "type": "string",
-          "description": "YYYY-MM-DD (required when target=daily)"
-        },
-        "mode": {
-          "type": "string",
-          "enum": [
-            "append",
-            "replace"
-          ],
-          "default": "append"
-        },
-        "idempotency_key": {
-          "type": "string"
-        },
-        "actor_id": {
-          "type": "string"
-        },
-        "source_refs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "tags": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "supersedes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "dedup_intent": {
-          "type": "string",
-          "enum": [
-            "new",
-            "update",
-            "supersede",
-            "silent"
-          ],
-          "default": "new"
-        },
-        "dedup_query": {
-          "type": "string"
-        }
-      },
-      "required": []
-    },
-    "annotations": {
-      "readOnlyHint": false,
-      "destructiveHint": true,
-      "idempotentHint": false,
-      "openWorldHint": false
-    }
-  },
-  {
-    "name": "cccc_memory_admin",
-    "description": "Local memory helpers: index_sync scans file counts without building a persistent index; context_check estimates tokens; compact returns a bounded excerpt or a summarization prompt, not an LLM summary. daily_flush writes a bounded daily-memory extract from supplied messages, or returns a prompt. Use cccc_memory for normal search/read/write.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "group_id": {
-          "type": "string",
-          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "action": {
-          "type": "string",
-          "enum": [
-            "index_sync",
-            "context_check",
-            "compact",
-            "daily_flush"
-          ],
-          "default": "index_sync"
-        },
-        "mode": {
-          "type": "string",
-          "enum": [
-            "scan",
-            "rebuild"
-          ],
-          "default": "scan"
-        },
-        "messages": {
-          "type": "array",
-          "items": {
-            "type": "object"
-          }
-        },
-        "messages_to_summarize": {
-          "type": "array",
-          "items": {
-            "type": "object"
-          },
-          "description": "Input for compact. The default summary is a bounded excerpt and can omit later facts; set return_prompt=true to obtain a prompt for the calling model to summarize."
-        },
-        "turn_prefix_messages": {
-          "type": "array",
-          "items": {
-            "type": "object"
-          }
-        },
-        "previous_summary": {
-          "type": "string"
-        },
-        "context_window_tokens": {
-          "type": "integer",
-          "minimum": 1024
-        },
-        "reserve_tokens": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "keep_recent_tokens": {
-          "type": "integer",
-          "minimum": 256
-        },
-        "return_prompt": {
-          "type": "boolean",
-          "default": false
-        },
-        "date": {
-          "type": "string",
-          "description": "YYYY-MM-DD"
-        },
-        "version": {
-          "type": "string",
-          "default": "default"
-        },
-        "language": {
-          "type": "string",
-          "default": "en"
-        },
-        "actor_id": {
-          "type": "string"
-        },
-        "signal_pack": {
-          "type": "object"
-        },
-        "signal_pack_token_budget": {
-          "type": "integer",
-          "minimum": 64,
-          "maximum": 4096,
-          "default": 320
-        },
-        "dedup_intent": {
-          "type": "string",
-          "enum": [
-            "new",
-            "update",
-            "supersede",
-            "silent"
-          ],
-          "default": "new"
-        },
-        "dedup_query": {
-          "type": "string"
         }
       },
       "required": []

@@ -62,7 +62,7 @@ an uncertain send, rather than creating another message.
 - The daemon and append-only group ledger are the source of truth.
 - `cccc_context_get` reads the current brief, tasks, handoffs, and actor state; `detail="overview"` leaves the task list out.
 - `cccc_task()` lists open tasks one row each; list a task by `task_id` for its notes, checklist and outcome before updating them.
-- Coordination and task tools are direct; project and memory tools are on demand. Do not mirror every local todo.
+- Coordination and task tools are direct; project tools are on demand. Do not mirror every local todo.
 
 ### State Layers
 
@@ -77,10 +77,10 @@ an uncertain send, rather than creating another message.
 - Task lifecycle uses `move`; use `update` only when changing other task fields too.
 - A coordination interrupt is not automatically a task switch; resume the recorded task unless priority actually changed; do not replace active state with the interrupt itself.
 
-### Recovery and Recall
+### Recovery
 
-- `cccc_bootstrap` returns recovery state, tasks, recent decisions, a Mail preview, and the recall gate.
-- It is a snapshot, not proof of current external state; verify at the execution boundary and recall on demand.
+- `cccc_bootstrap` returns recovery state, tasks, recent decisions, and a Mail preview.
+- It is a snapshot, not proof of current external state; verify at the execution boundary.
 
 ### Inbox
 
@@ -96,8 +96,7 @@ an uncertain send, rather than creating another message.
 ## Capabilities
 
 - `cccc_capability_use(tool_name="...", tool_arguments={...})` invokes hidden tools without exposing the full pack.
-- Hidden tools include `cccc_tracked_send` and `cccc_memory`; pass their arguments in `tool_arguments`.
-- Memory recall example: `cccc_capability_use(tool_name="cccc_memory", tool_arguments={"action":"search","query":"..."})`, followed by `action="get"` for exact lines.
+- Hidden tools include `cccc_tracked_send`; pass their arguments in `tool_arguments`.
 - `cccc_capability_use(capability_id="skill:...")` returns that skill's rules in `capsule_text`, ready to follow.
 - Use `cccc_capability_search` only when the capability or tool name is unknown.
 - When a capability that adds tools reports `activation_pending` or `refresh_required=true`, relist or reconnect. On failure, inspect `diagnostics` and `resolution_plan`.

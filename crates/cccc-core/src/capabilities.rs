@@ -59,6 +59,13 @@ impl CapabilityStore {
         Self { home }
     }
 
+    #[must_use]
+    pub fn builtin(id: &str) -> Option<Capability> {
+        capability_builtin::all()
+            .into_iter()
+            .find(|capability| capability.id == id)
+    }
+
     pub fn load(&self) -> io::Result<CapabilityState> {
         self.migrate_legacy()?;
         let path = self.path();
@@ -96,10 +103,12 @@ impl CapabilityStore {
     pub fn catalog(&self) -> io::Result<Vec<Capability>> {
         self.migrate_legacy()?;
         let mut items = BTreeMap::new();
-        for capability in capability_builtin::all()
+        for capability in crate::capability_legacy::catalog(&self.home)?
             .into_iter()
-            .chain(crate::capability_legacy::catalog(&self.home)?)
             .chain(self.load()?.custom.into_values())
+            // The versioned implementation owns built-in IDs; saved catalog
+            // copies can be older than the running binary.
+            .chain(capability_builtin::all())
             // Persisted catalogs must not re-advertise the retired built-in tool pack.
             .filter(|capability| capability.id != "pack:group_bridge")
         {
@@ -197,6 +206,15 @@ impl CapabilityStore {
     pub fn validate_record(&self, record: &Value) -> io::Result<Capability> {
         let capability = capability_from_record(record)?;
         validate_id(&capability.id)?;
+        if Self::builtin(&capability.id).is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "capability id is reserved for a built-in: {}",
+                    capability.id
+                ),
+            ));
+        }
         Ok(capability)
     }
 
@@ -1135,6 +1153,56 @@ mod tests {
         assert!(catalog.iter().any(|entry| entry.id == "skill:test"));
         assert!(!catalog.iter().any(|entry| entry.id == "pack:group_bridge"));
         assert!(store.set_enabled("pack:group_bridge", true).is_err());
+    }
+
+    #[test]
+    fn builtin_ids_are_reserved_and_override_older_persisted_records() {
+        let (_temp, store) = store();
+        let builtins = capability_builtin::all();
+        let records = builtins
+            .iter()
+            .map(|capability| {
+                (
+                    capability.id.clone(),
+                    json!({
+                        "capability_id": capability.id,
+                        "kind": capability.kind,
+                        "name":"old name",
+                        "capsule_text":"old rules",
+                        "tool_names":["cccc_memory"],
+                        "source_id":"cccc_builtin"
+                    }),
+                )
+            })
+            .collect::<Map<String, Value>>();
+        crate::fs::write_json(&store.catalog_path(), &json!({"records":records}))
+            .expect("old catalog");
+        let saved = std::fs::read(store.catalog_path()).expect("catalog bytes");
+        for expected in &builtins {
+            assert_eq!(
+                &store.require(&expected.id).expect("resolved builtin"),
+                expected
+            );
+            let error = store
+                .import_record(json!({
+                    "capability_id":expected.id,"kind":"skill","name":"replacement"
+                }))
+                .expect_err("built-in id is reserved");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+        assert_eq!(
+            std::fs::read(store.catalog_path()).expect("catalog bytes"),
+            saved
+        );
+        store.import_record(json!({"capability_id":"skill:test:custom","kind":"skill", "name":"custom", "capsule_text":"custom rules"})).expect("custom import");
+        store.import_record(json!({"capability_id":"skill:test:custom","kind":"skill", "name":"custom", "capsule_text":"updated rules"})).expect("custom update");
+        assert_eq!(
+            store
+                .require("skill:test:custom")
+                .expect("custom")
+                .capsule_text,
+            "updated rules"
+        );
     }
 
     #[test]

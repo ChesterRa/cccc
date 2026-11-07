@@ -34,8 +34,6 @@ mod presentation_ops;
 mod profile_access;
 #[path = "suite/registry_reconcile.rs"]
 mod registry_reconcile;
-#[path = "suite/reme_parity.rs"]
-mod reme_parity;
 #[path = "suite/reply_requests.rs"]
 mod reply_requests;
 #[path = "suite/running_owner.rs"]
@@ -50,3 +48,5 @@ mod runtime_lifecycle;
 mod runtime_state_ops;
 #[path = "suite/sdk_compatibility.rs"]
 mod sdk_compatibility;
+#[path = "suite/team_review.rs"]
+mod team_review;

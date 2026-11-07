@@ -291,7 +291,7 @@ cccc im start                # 另有：stop、status
 
 ## 面向集成开发者
 
-**MCP 工具**：智能体始终能看到一组精简的核心工具，包括 `cccc_bootstrap`、`cccc_help`、能力搜索与调用、收件箱、消息、文件、`cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state` 和 `cccc_connect`。其他内置工具，例如 `cccc_tracked_send`、`cccc_memory`、`cccc_group`、`cccc_actor`、`cccc_repo`、`cccc_terminal` 和 `cccc_automation`，可通过 `cccc_capability_use` 使用。原生会话还会获得 `cccc_session`，用于列出其他会话、给它们发消息，以及把它们编入工作组。
+**MCP 工具**：智能体始终能看到一组精简的核心工具，包括 `cccc_bootstrap`、`cccc_help`、能力搜索与调用、收件箱、消息、文件、`cccc_context_get`、`cccc_coordination`、`cccc_task`、`cccc_agent_state` 和 `cccc_connect`。其他内置工具，例如 `cccc_tracked_send`、`cccc_group`、`cccc_actor`、`cccc_repo`、`cccc_terminal` 和 `cccc_automation`，可通过 `cccc_capability_use` 使用。原生会话还会获得 `cccc_session`，用于列出其他会话、给它们发消息，以及把它们编入工作组。
 
 **SDK**：[Python、TypeScript 和 Rust 客户端](https://github.com/ChesterRa/cccc-sdk)连接到正在运行的 `cccc`，本身不包含 daemon。
 

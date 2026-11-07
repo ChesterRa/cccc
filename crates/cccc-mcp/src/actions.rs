@@ -4,6 +4,7 @@ pub fn group(value: &str) -> Option<&'static str> {
         "list" => "groups",
         "info" | "get" | "show" => "group_show",
         "resolve" => "group_resolve",
+        "activity" => "group_activity",
         "update" => "group_update",
         "delete" => "group_delete",
         "reset" => "group_reset",
@@ -35,26 +36,6 @@ pub fn actor_notes(value: &str) -> Option<&'static str> {
         "get" => "actor_notes_get",
         "set" => "actor_notes_set",
         "clear" => "actor_notes_clear",
-        _ => return None,
-    })
-}
-pub fn memory(value: &str) -> Option<&'static str> {
-    Some(match value {
-        "layout_get" => "memory_reme_layout_get",
-        "search" => "memory_reme_search",
-        "get" | "read" => "memory_reme_get",
-        "write" => "memory_reme_write",
-        "profile" => "memory_profile_get",
-        "health" => "memory_health",
-        _ => return None,
-    })
-}
-pub fn memory_admin(value: &str) -> Option<&'static str> {
-    Some(match value {
-        "index_sync" | "index" | "sync" => "memory_reme_index_sync",
-        "context_check" => "memory_reme_context_check",
-        "compact" => "memory_reme_compact",
-        "daily_flush" | "flush" => "memory_reme_daily_flush",
         _ => return None,
     })
 }
