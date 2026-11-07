@@ -59,10 +59,7 @@ export function SlashCommandMenu(props: {
         const displayKind = slashCommandDisplayKind(item);
         const isSelected = idx === selectedIndex;
         const descriptionKey = BUILTIN_SLASH_DESCRIPTION_KEYS.get(item.capabilityId || "");
-        const description =
-          descriptionKey && item.description === t(descriptionKey, { lng: "en" })
-            ? t(descriptionKey)
-            : item.description;
+        const description = descriptionKey ? t(descriptionKey) : item.description;
         return (
           <button
             key={`${item.sourceType}:${item.command}`}

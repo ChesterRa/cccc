@@ -71,7 +71,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ### Fixed
 
 - An agent that starts or resumes now gets the Group's constraints first. Before, the rest of its
-  recovery context could crowd them out, so it might see one of five.
+  recovery context could crowd them out, leaving a few of them or only a note that they were omitted.
 - Skills reach the agent again in this version. A skill chosen from the `/` menu sent the agent to
   look for its rules in a place that no longer held them, and a skill assigned to an agent was never
   mentioned to that agent. `cccc_capability_use` now returns a skill's rules, and `cccc_bootstrap`

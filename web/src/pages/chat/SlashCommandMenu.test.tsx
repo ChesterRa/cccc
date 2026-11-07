@@ -26,21 +26,13 @@ it("describes CCCC's own skills in the reader's language, and any other skill as
     resources: { en: { chat: chatEn }, zh: { chat: chatZh } },
     interpolation: { escapeValue: false },
   });
-  const selfEvolution = chatEn.slashDescriptions.selfEvolution;
   const suggestions: SlashCommandItem[] = [
     BUILTIN_SLASH_COMMANDS[0],
+    // The daemon's own wording need not match the locale text: the id decides.
     {
       name: "cccc-self-evolution",
       command: "/cccc-self-evolution",
-      description: selfEvolution,
-      capabilityId: "skill:cccc:self-evolution",
-      sourceType: "capsule_skill",
-    },
-    // A skill imported under a built-in id, with a description of its own, keeps it.
-    {
-      name: "retro",
-      command: "/retro",
-      description: "Our team's retro checklist.",
+      description: "Description as the daemon words it.",
       capabilityId: "skill:cccc:self-evolution",
       sourceType: "capsule_skill",
     },
@@ -75,7 +67,6 @@ it("describes CCCC's own skills in the reader's language, and any other skill as
   expect(descriptions).toEqual([
     chatZh.slashDescriptions.install,
     chatZh.slashDescriptions.selfEvolution,
-    "Our team's retro checklist.",
     "Run the team's linter.",
   ]);
 });

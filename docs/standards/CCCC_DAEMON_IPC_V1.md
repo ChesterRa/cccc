@@ -6003,8 +6003,8 @@ characters that matches no event exactly is a short ID, such as the
 current generation whose ID starts with it. When several such events match, the
 read fails with `event_id_ambiguous`, naming only those events; events the
 Actor cannot read never match. Exact reads cannot be combined with `mode`,
-`query`, `before_event_id` or `limit`. They remain non-consuming and do not
-acknowledge execution, create a delivery or replay a handoff.
+`query`, `sender`, `before_event_id` or `limit`. They remain non-consuming and
+do not acknowledge execution, create a delivery or replay a handoff.
 
 For a successful exact read by a native Actor of its own message, the daemon
 MAY prepend a diagnostic when the client does not report `_cccc_mcp_identity`.

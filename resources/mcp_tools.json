@@ -119,7 +119,7 @@
         },
         "event_id": {
           "type": "string",
-          "description": "Read this exact visible message or system notice, returned as full delivery_text plus message. Exclusive with mode, query, before_event_id and limit."
+          "description": "Read this exact visible message or system notice, returned as full delivery_text plus message. Exclusive with mode, query, sender, before_event_id and limit."
         },
         "limit": {
           "type": "integer",

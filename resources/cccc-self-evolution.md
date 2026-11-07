@@ -6,11 +6,11 @@ A short review of how this team works, ending in at most three proposals for the
 
 ## Review
 
-1. Read what the user said lately: `cccc_message_history(mode="all", sender="user", limit=100)`. Page further with `before_event_id` only if the user asks for a wider look, and say how far back you read. You see only what reached you.
-2. Read the numbers: `cccc_capability_use(tool_name="cccc_group", tool_arguments={"action":"activity"})`. Counts cover what you may read, and a scheduled notice is not proof of a model turn. They are leads, not verdicts: read what a number stands for before concluding anything about a member.
-3. Check earlier changes first: page through the open `cccc_task` rows, pick those with `task_type` `optimization`, and read each by `task_id`. Was the change used in the next similar work? What happened, at what cost? If the user repeated the point, it failed. If nothing similar came up or the user said nothing, the result is unknown, not success. Write down what you know, and close the task once the outcome is clear.
+1. Read the user's last 100 messages in two pages: `cccc_message_history(mode="all", sender="user", limit=50)`. If `has_more` is true, repeat with `before_event_id` set to the `id` of the last message returned, which is the oldest. Go further back only if the user asks, and say how far you read. You see only what reached you.
+2. Read the numbers: `cccc_capability_use(tool_name="cccc_group", tool_arguments={"action":"activity"})`. Message counts cover only what you may read. Scheduled notices cover the whole Group and prove neither delivery nor a model turn. All of them are leads, not verdicts: read what a number stands for before concluding anything about a member.
+3. Check earlier changes first: page through the open `cccc_task` rows, pick those with `task_type` `optimization`, and read each by `task_id`. Was the change used in the next similar work? What happened, at what cost? If the user had to repeat the point, it failed. If nothing similar came up or the user said nothing, the result is unknown, not success. Write down what you know, and close the task once the outcome is clear.
 4. Look for what the user had to say more than once, where work stalled or was redone, and where roles, members or settings do not fit the work.
-5. Drop anything an existing rule, task or tool already covers.
+5. Drop what an existing rule, task or tool already handles, unless the user still corrected the same thing or kept asking the same question after it existed. Then find out why and propose a fix.
 
 ## Propose
 
