@@ -97,17 +97,9 @@ export function usePrependCompensationController(input: {
   getMessageRowById: (eventId: string) => HTMLDivElement | null;
   isVirtualized: boolean;
   scrollToVirtualOffset: (offsetPx: number) => void;
-  /** Called after the anchor was checked against its real on-screen position. */
-  onAnchorVerified?: () => void;
 }) {
-  const {
-    parentRef,
-    lastScrollTopRef,
-    getMessageRowById,
-    isVirtualized,
-    scrollToVirtualOffset,
-    onAnchorVerified,
-  } = input;
+  const { parentRef, lastScrollTopRef, getMessageRowById, isVirtualized, scrollToVirtualOffset } =
+    input;
   const pendingRef = useRef<PendingPrependCompensation | null>(null);
   const isCompensatingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
@@ -186,9 +178,6 @@ export function usePrependCompensationController(input: {
             stableFrames += 1;
           }
           lastScrollTopRef.current = el.scrollTop;
-          // The real position covers every shift measured so far; nothing that
-          // was held back before this check may be applied on top of it.
-          onAnchorVerified?.();
         } else {
           // Virtual rows above the anchor are measured only once they render.
           // The virtualizer usually shifts the scroll by their real heights and
@@ -209,15 +198,7 @@ export function usePrependCompensationController(input: {
 
       rafRef.current = window.requestAnimationFrame(correctAnchor);
     },
-    [
-      cancelCorrection,
-      finish,
-      getMessageRowById,
-      lastScrollTopRef,
-      onAnchorVerified,
-      parentRef,
-      scrollToOffset,
-    ],
+    [cancelCorrection, finish, getMessageRowById, lastScrollTopRef, parentRef, scrollToOffset],
   );
 
   return useMemo(

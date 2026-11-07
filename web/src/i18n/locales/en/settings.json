@@ -63,6 +63,8 @@
   },
   "navigation": {
     "targetScope": "Target Scope",
+    "appliesToGroup": "Applies to group {{name}}",
+    "appliesToGlobal": "Applies to the whole CCCC instance (daemon + Web)",
     "thisGroup": "This group",
     "global": "This instance",
     "groupScopeTitle": "Group Scope",

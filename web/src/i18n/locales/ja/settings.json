@@ -63,6 +63,8 @@
   },
   "navigation": {
     "targetScope": "対象範囲",
+    "appliesToGroup": "ワークグループ {{name}} に適用",
+    "appliesToGlobal": "CCCC インスタンス全体（デーモン + Web）に適用",
     "thisGroup": "この作業グループ",
     "global": "このインスタンス",
     "groupScopeTitle": "作業グループ範囲",

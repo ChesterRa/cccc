@@ -14,6 +14,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Changed
 
+- On a phone, a message's sender, time and actions sit above its route, its text uses the full width,
+  and the sender's insight is set apart below it. **Back to latest** sits beside the members at the
+  bottom of the log, so it no longer covers a message.
 - A message to an agent that cannot stay up now says so. CCCC tries to start the agent a few times
   over several seconds, then shows **Delivery failed for** that agent on the message, with the reason
   and **Retry** in its recipients. After you fix the cause, **Retry** or starting the agent offers it

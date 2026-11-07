@@ -41,7 +41,6 @@ import { useMessageTailAutoFollow } from "./virtualMessageList/useMessageTailAut
 import { usePendingReplyFollow } from "./virtualMessageList/usePendingReplyFollow";
 import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
 import {
-  discardDeferredScrollAdjustment,
   getFreshVirtualOffsetForIndex,
   getLayoutOffsetForScrollTop,
   shouldAdjustScrollForResizedRow,
@@ -419,17 +418,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     [displayMessages, shouldVirtualize, virtualizer],
   );
 
-  const discardDeferredVirtualScroll = useCallback(() => {
-    if (shouldVirtualize) discardDeferredScrollAdjustment(virtualizer);
-  }, [shouldVirtualize, virtualizer]);
-
   const prependCompensation = usePrependCompensationController({
     parentRef,
     lastScrollTopRef,
     getMessageRowById,
     isVirtualized: shouldVirtualize,
     scrollToVirtualOffset,
-    onAnchorVerified: discardDeferredVirtualScroll,
   });
   const getAnchorTop = useCallback(
     (anchorId: string) => {

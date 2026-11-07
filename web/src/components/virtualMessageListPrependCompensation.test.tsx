@@ -21,13 +21,11 @@ const view = { offsetPx: 0, anchorTop: 0, anchorRendered: true };
 function Probe({
   scrollToMessageAnchor,
   revealMessageAnchor,
-  onAnchorVerified,
   onLoadMore = () => {},
   onReady,
 }: {
   scrollToMessageAnchor: (eventId: string, offsetPx?: number) => boolean;
   revealMessageAnchor?: (eventId: string) => void;
-  onAnchorVerified?: () => void;
   onLoadMore?: () => void | false | Promise<void | false>;
   onReady: (
     coordinator: Coordinator,
@@ -48,7 +46,6 @@ function Probe({
     },
     isVirtualized: false,
     scrollToVirtualOffset: () => {},
-    onAnchorVerified,
   });
   const coordinator = useTopHistoryLoadCoordinator({
     compensation,
@@ -430,52 +427,5 @@ describe("useTopHistoryLoadCoordinator", () => {
     view.anchorTop = 117;
     vi.advanceTimersToNextFrame();
     expect(scrollEl!.scrollTop).toBe(19_170);
-  });
-
-  it("reports each check of the anchor against the DOM so held-back shifts can be dropped", async () => {
-    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
-    const onAnchorVerified = vi.fn();
-    let coordinator: Coordinator | null = null;
-    let scrollEl: HTMLDivElement | null = null;
-    await act(async () =>
-      root.render(
-        <Probe
-          scrollToMessageAnchor={() => true}
-          onAnchorVerified={onAnchorVerified}
-          onReady={(next, el) => {
-            coordinator = next;
-            scrollEl = el;
-          }}
-        />,
-      ),
-    );
-
-    view.offsetPx = -50;
-    view.anchorTop = 167;
-    coordinator!.handleTopHistoryScroll({
-      ...SCROLL_PARAMS,
-      scrollTop: 0,
-      isLoadingHistory: false,
-    });
-    coordinator!.applyPendingPrependCompensation({ isLoadingHistory: false });
-    scrollEl!.scrollTop = 15_568;
-
-    // Not rendered yet: nothing was checked against the DOM.
-    view.anchorRendered = false;
-    vi.advanceTimersToNextFrame();
-    expect(onAnchorVerified).not.toHaveBeenCalled();
-
-    // Rendered off by 56px: corrected, and the check is reported.
-    view.anchorRendered = true;
-    view.anchorTop = 111;
-    vi.advanceTimersToNextFrame();
-    expect(scrollEl!.scrollTop).toBe(15_512);
-    expect(onAnchorVerified).toHaveBeenCalledTimes(1);
-
-    // In place on the following frames: still reported until the correction settles.
-    view.anchorTop = 167;
-    vi.advanceTimersToNextFrame();
-    vi.advanceTimersToNextFrame();
-    expect(onAnchorVerified).toHaveBeenCalledTimes(3);
   });
 });

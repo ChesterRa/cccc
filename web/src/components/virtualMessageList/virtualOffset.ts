@@ -34,41 +34,9 @@ export function shouldAdjustScrollForResizedRow(
   const start = virtualizer.measurementsCache[item.index]?.start ?? item.start;
   const firstMeasurement = !virtualizer.itemSizeCache.has(item.key);
   return (
-    start < effectiveScrollOffset(virtualizer) &&
+    start < (virtualizer.scrollOffset ?? 0) &&
     (firstMeasurement || virtualizer.scrollDirection !== "backward")
   );
-}
-
-/**
- * Where the list is scrolled to once the shifts already written to it land.
- * After the virtualizer applies held-back iOS shifts, the scroll element has
- * moved but `scrollOffset` only catches up on the next scroll event; until then
- * the pending shifts sit in `scrollAdjustments`, which the default rule adds
- * too. Like the iOS accumulator below it is not public API; the tests pin it.
- */
-function effectiveScrollOffset(virtualizer: MessageListVirtualizer): number {
-  const pending = (virtualizer as unknown as { scrollAdjustments?: unknown }).scrollAdjustments;
-  return (virtualizer.scrollOffset ?? 0) + (typeof pending === "number" ? pending : 0);
-}
-
-/**
- * Drops a held iOS shift in the old virtualizer. The current version keeps
- * rendered rows aligned while holding the shift and has no such accumulator.
- *
- * On iOS (and Mac browsers reporting touch points) the virtualizer does not
- * move the scroll while the list is scrolling or touched; it accumulates row
- * height shifts and applies them once scrolling settles. After an anchor was
- * corrected against its real on-screen position, everything measured so far
- * is already accounted for, so applying the held-back shift would push the
- * reader away by the same amount again. Shifts from later measurements are
- * still held back and applied as usual.
- *
- * The accumulator is not public API; the test pins this contract so that a
- * virtualizer upgrade that renames it fails loudly instead of silently.
- */
-export function discardDeferredScrollAdjustment(virtualizer: MessageListVirtualizer): void {
-  const internals = virtualizer as unknown as { _iosDeferredAdjustment?: unknown };
-  if (typeof internals._iosDeferredAdjustment === "number") internals._iosDeferredAdjustment = 0;
 }
 
 /**

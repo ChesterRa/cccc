@@ -1,3 +1,4 @@
+/* CSS imports must stay at the top for PostCSS. */
 @import "./styles/markdown.css";
 @import "./styles/chatMessage.css";
 @import "./styles/chatComposer.css";
