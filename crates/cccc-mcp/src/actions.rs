@@ -44,6 +44,7 @@ pub fn automation(value: &str) -> Option<&'static str> {
         "get" | "state" => "group_automation_state",
         "update" => "group_automation_update",
         "manage" => "group_automation_manage",
+        "run_now" => "group_automation_run_now",
         "reset" => "group_automation_reset_baseline",
         _ => return None,
     })
@@ -104,6 +105,14 @@ pub fn debug(value: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn automation_run_now_routes_to_the_daemon_operation() {
+        assert_eq!(
+            super::automation("run_now"),
+            Some("group_automation_run_now")
+        );
+    }
+
     #[test]
     fn notify_accepts_only_the_current_send_action() {
         assert_eq!(super::notify("send"), Some("system_notify"));

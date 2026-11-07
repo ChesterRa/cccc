@@ -28,6 +28,7 @@ import { cardClass, dangerButtonClass, primaryButtonClass, secondaryButtonClass 
 interface AutomationTabProps {
   isDark: boolean;
   groupId?: string;
+  groupState?: string;
   devActors: Actor[];
 }
 
@@ -57,6 +58,13 @@ export function AutomationTab(props: AutomationTabProps) {
   const [rulesBusy, setRulesBusy] = useState(false);
   const [rulesErr, setRulesErr] = useState("");
   const [ruleset, setRuleset] = useState<AutomationRuleSet | null>(null);
+  // The rules as last loaded: `ruleset` doubles as the unsaved draft.
+  const [savedRuleset, setSavedRuleset] = useState<AutomationRuleSet | null>(null);
+  const [runNotice, setRunNotice] = useState<{
+    ruleId: string;
+    text: string;
+    tone: "ok" | "warning";
+  } | null>(null);
   const [snippetCatalog, setSnippetCatalog] = useState<AutomationSnippetCatalog>({
     built_in: {},
     built_in_overrides: {},
@@ -104,6 +112,7 @@ export function AutomationTab(props: AutomationTabProps) {
         return;
       }
       setRuleset(resp.result.ruleset);
+      setSavedRuleset(resp.result.ruleset);
       setSnippetCatalog(
         resp.result.snippet_catalog || { built_in: {}, built_in_overrides: {}, custom: {} },
       );
@@ -123,6 +132,8 @@ export function AutomationTab(props: AutomationTabProps) {
   useEffect(() => {
     const visit = groupVisit.current;
     setRuleset(null);
+    setSavedRuleset(null);
+    setRunNotice(null);
     setSnippetCatalog({ built_in: {}, built_in_overrides: {}, custom: {} });
     setRulesVersion(undefined);
     setStatus({});
@@ -542,6 +553,51 @@ export function AutomationTab(props: AutomationTabProps) {
     if (editingRuleSourceId === ruleId) closeRuleEditor();
   };
 
+  // Runs the saved rule once. Only the status is refreshed afterwards, so
+  // unsaved edits elsewhere in the list stay; a run is never retried.
+  const runRuleNow = async (ruleId: string) => {
+    if (!props.groupId) return;
+    const drafted = draft.rules.find((rule) => rule.id === ruleId);
+    const saved = savedRuleset?.rules.find((rule) => rule.id === ruleId);
+    if (!drafted || !saved || JSON.stringify(drafted) !== JSON.stringify(saved)) {
+      setRunNotice({ ruleId, text: t("automation.runSaveFirst"), tone: "warning" });
+      return;
+    }
+    const groupId = props.groupId;
+    const isCurrent = beginOperation();
+    setRunNotice(null);
+    let notice: { text: string; tone: "ok" | "warning" };
+    try {
+      const resp = await api.runAutomationRule(groupId, ruleId, rulesVersion);
+      if (!isCurrent()) return;
+      if (resp.ok) {
+        const recipients = resp.result.notified.join(", ");
+        notice = { text: t("automation.runSent", { recipients }), tone: "ok" };
+      } else {
+        const code = String(resp.error?.code || "").trim();
+        const known: Record<string, string> = {
+          group_paused: "automation.runPaused",
+          group_stopped: "automation.runStopped",
+          no_notification: "automation.runNothingSent",
+          version_conflict: "automation.runConflict",
+        };
+        notice = { text: t(known[code] || "automation.runUnknown"), tone: "warning" };
+      }
+    } catch {
+      if (!isCurrent()) return;
+      notice = { text: t("automation.runUnknown"), tone: "warning" };
+    }
+    setRunNotice({ ruleId, ...notice });
+    try {
+      const refreshed = await api.fetchAutomation(groupId);
+      if (isCurrent() && refreshed.ok) setStatus(refreshed.result.status || {});
+    } catch {
+      // The notice already says what is known; the status refreshes on reopen.
+    } finally {
+      if (isCurrent()) setRulesBusy(false);
+    }
+  };
+
   const clearCompletedRules = async () => {
     if (!props.groupId) return;
     if (completedRuleIds.length <= 0) {
@@ -689,6 +745,7 @@ export function AutomationTab(props: AutomationTabProps) {
 
         <AutomationRuleList
           isDark={isDark}
+          groupState={props.groupState}
           visibleRules={visibleRules}
           status={status}
           rulesBusy={rulesBusy}
@@ -698,6 +755,8 @@ export function AutomationTab(props: AutomationTabProps) {
           onClearCompleted={clearCompletedRules}
           onToggleRuleEnabled={(ruleId, enabled) => updateRule(ruleId, { enabled })}
           onEditRule={openExistingRule}
+          onRunRule={(ruleId) => void runRuleNow(ruleId)}
+          runNotice={runNotice}
           onDeleteRule={removeRule}
         />
 

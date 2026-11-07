@@ -21,6 +21,10 @@ pub fn routes() -> Router<AppState> {
             post(automation_manage),
         )
         .route(
+            "/api/v1/groups/{group_id}/automation/run",
+            post(automation_run_now),
+        )
+        .route(
             "/api/v1/groups/{group_id}/automation/reset_baseline",
             post(automation_reset),
         )
@@ -166,6 +170,29 @@ async fn automation_reset(
     call(&state, "group_automation_reset_baseline", args).await
 }
 
+async fn automation_run_now(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    call(
+        &state,
+        "group_automation_run_now",
+        automation_run_now_args(group_id, body)?,
+    )
+    .await
+}
+
+fn automation_run_now_args(
+    group_id: String,
+    body: Value,
+) -> Result<serde_json::Map<String, Value>, crate::api::ApiError> {
+    let mut args = body_object(body)?;
+    args.insert("group_id".into(), Value::String(group_id));
+    args.insert("by".into(), Value::String("user".into()));
+    Ok(args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,5 +246,20 @@ mod tests {
         assert_eq!(args["expected_version"], json!(7));
         assert_eq!(args["by"], json!("user"));
         assert!(args.get("patch").is_none());
+    }
+
+    #[test]
+    fn automation_run_binds_the_user_and_requested_group() {
+        let args = automation_run_now_args(
+            "g_real".into(),
+            json!({
+                "group_id":"g_other", "by":"peer", "rule_id":"standup", "expected_version":7
+            }),
+        )
+        .expect("arguments");
+        assert_eq!(args["group_id"], "g_real");
+        assert_eq!(args["by"], "user");
+        assert_eq!(args["rule_id"], "standup");
+        assert_eq!(args["expected_version"], 7);
     }
 }

@@ -734,6 +734,253 @@ fn stored_automation(home: &HomeLayout, group_id: &str) -> Value {
     Value::Object(store.load(group_id).expect("load group").automation)
 }
 
+fn run_now_fixture(home: &HomeLayout) -> String {
+    use cccc_contracts::{Actor, GroupState};
+    use cccc_core::{GroupStore, actors};
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("run now", "").expect("group");
+    store
+        .mutate(&group.group_id, |group| {
+            group.state = GroupState::Idle;
+            for id in ["lead", "peer1", "peer2"] {
+                let mut actor = Actor::new(id);
+                // A non-existent native session never launches a provider process.
+                actor.external_session_id = format!("fixture-{id}");
+                actors::add(group, actor)?;
+            }
+            group.automation = json!({"version":7,"rules":[
+                {"id":"standup","enabled":true,"scope":"group","to":["lead"],
+                 "trigger":{"kind":"interval","every_seconds":60,"max_runs":1},
+                 "action":{"kind":"notify","message":"check in"}},
+                reminder("peer1-own", "peer1"),
+                reminder("peer2-own", "peer2"),
+                operation("control", json!({"kind":"group_state","state":"paused"})),
+                {"id":"empty","enabled":false,"to":["lead"],
+                 "trigger":{"kind":"interval","every_seconds":60},
+                 "action":{"kind":"notify","message":""}},
+            {"id":"no-target","enabled":false,"to":["missing"],
+             "trigger":{"kind":"interval","every_seconds":60},
+             "action":{"kind":"notify","message":"nobody"}},
+                {"id":"future","enabled":false,"to":["lead"],
+                 "trigger":{"kind":"at","at":"2099-01-01T00:00:00Z"},
+                 "action":{"kind":"notify","message":"future"}}
+            ]})
+            .as_object()
+            .expect("automation")
+            .clone();
+            Ok(())
+        })
+        .expect("fixture group");
+    group.group_id
+}
+
+#[test]
+fn manual_notification_preserves_schedule_and_records_real_runs() {
+    use cccc_contracts::GroupState;
+    use cccc_core::{GroupStore, automation, ledger};
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let group_id = run_now_fixture(&home);
+    let store = GroupStore::new(home.clone()).expect("store");
+    let path = store
+        .state_dir(&group_id)
+        .expect("state dir")
+        .join("automation.json");
+    cccc_core::fs::write_json(
+        &path,
+        &json!({"rules":{
+            "standup":{"last_fired_at":"2020-01-01T00:00:00Z","fired_count":0}
+        }}),
+    )
+    .expect("old baseline");
+    let status = || {
+        ok(
+            &home,
+            "group_automation_state",
+            json!({"group_id":group_id}),
+        )
+    };
+    let before = status();
+    assert_eq!(
+        before.result["status"]["standup"]["last_run_at"],
+        Value::Null
+    );
+    assert_eq!(
+        before.result["status"]["standup"]["last_run_kind"],
+        Value::Null
+    );
+    assert_eq!(
+        before.result["status"]["standup"]["suppressed_reason"],
+        "idle_standup"
+    );
+    assert_eq!(before.result["status"]["standup"]["next_fire_at"], "");
+
+    let sent = ok(
+        &home,
+        "group_automation_run_now",
+        json!({
+            "group_id":group_id,"rule_id":"standup","by":"lead","expected_version":7
+        }),
+    );
+    assert_eq!(sent.result["notified"], json!(["lead"]));
+    assert!(sent.result["run_at"].as_str().is_some());
+    let after = status();
+    assert_eq!(after.result["version"], 7);
+    let baseline = |response: &DaemonResponse| {
+        chrono::DateTime::parse_from_rfc3339(
+            response.result["status"]["standup"]["last_fired_at"]
+                .as_str()
+                .expect("baseline"),
+        )
+        .expect("RFC3339 baseline")
+    };
+    assert_eq!(baseline(&after), baseline(&before));
+    assert_eq!(after.result["status"]["standup"]["fired_count"], 0);
+    assert_eq!(after.result["status"]["standup"]["last_run_kind"], "manual");
+    assert!(
+        after.result["status"]["standup"]["last_run_at"]
+            .as_str()
+            .is_some()
+    );
+    assert_eq!(after.result["ruleset"]["rules"][0]["enabled"], true);
+    let events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger")).expect("events");
+    assert!(
+        events
+            .iter()
+            .any(|event| event.data["context"]["run_kind"] == "manual")
+    );
+
+    // Disabled and future one-time rules can be tried without enabling or completing them.
+    store
+        .mutate(&group_id, |group| {
+            group.automation["rules"][0]["enabled"] = json!(false);
+            Ok(())
+        })
+        .expect("disable");
+    ok(
+        &home,
+        "group_automation_run_now",
+        json!({"group_id":group_id,"rule_id":"standup"}),
+    );
+    ok(
+        &home,
+        "group_automation_run_now",
+        json!({"group_id":group_id,"rule_id":"future"}),
+    );
+    let disabled = status();
+    assert_eq!(disabled.result["ruleset"]["rules"][0]["enabled"], false);
+    assert_eq!(disabled.result["status"]["standup"]["fired_count"], 0);
+    assert_eq!(disabled.result["status"]["future"]["completed"], false);
+
+    // A later scheduled firing is still due and is identified separately.
+    store
+        .mutate(&group_id, |group| {
+            group.state = GroupState::Active;
+            group.automation["rules"][0]["enabled"] = json!(true);
+            Ok(())
+        })
+        .expect("enable");
+    let tick = automation::tick_group(&home, &group_id, false).expect("scheduled tick");
+    assert!(
+        tick.notifications
+            .iter()
+            .any(|event| event.data["context"]["run_kind"] == "scheduled")
+    );
+    let scheduled = status();
+    assert_eq!(
+        scheduled.result["status"]["standup"]["last_run_kind"],
+        "scheduled"
+    );
+    assert_eq!(scheduled.result["status"]["standup"]["fired_count"], 1);
+    store
+        .mutate(&group_id, |group| {
+            group.automation["rules"][0]["enabled"] = json!(false);
+            Ok(())
+        })
+        .expect("disable completed rule");
+    ok(
+        &home,
+        "group_automation_run_now",
+        json!({"group_id":group_id,"rule_id":"standup"}),
+    );
+    let completed = status();
+    assert_eq!(completed.result["status"]["standup"]["completed"], true);
+    assert_eq!(completed.result["status"]["standup"]["fired_count"], 1);
+    assert_eq!(completed.result["ruleset"]["rules"][0]["enabled"], false);
+}
+
+#[test]
+fn run_now_checks_roles_versions_states_and_action_without_writing_on_failure() {
+    use cccc_contracts::GroupState;
+    use cccc_core::{GroupStore, ledger};
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let group_id = run_now_fixture(&home);
+    let store = GroupStore::new(home.clone()).expect("store");
+    let ledger_path = store.ledger_path(&group_id).expect("ledger path");
+    let count = || ledger::read_all(&ledger_path).expect("events").len();
+    let before = count();
+    for (by, rule, version, code) in [
+        ("peer1", "standup", 7, "permission_denied"),
+        ("peer1", "peer2-own", 7, "not_found"),
+        ("user", "control", 7, "unsupported_action"),
+        ("user", "standup", 6, "version_conflict"),
+        ("user", "empty", 7, "no_notification"),
+        ("user", "no-target", 7, "no_notification"),
+        ("user", "missing", 7, "not_found"),
+    ] {
+        let response = raw(
+            &home,
+            "group_automation_run_now",
+            json!({
+                "group_id":group_id,"by":by,"rule_id":rule,"expected_version":version
+            }),
+        );
+        assert_eq!(response.error.expect("error").code, code, "{by}/{rule}");
+        assert_eq!(count(), before, "{by}/{rule} wrote an event");
+    }
+    for (state, code) in [
+        (GroupState::Paused, "group_paused"),
+        (GroupState::Stopped, "group_stopped"),
+    ] {
+        store
+            .mutate(&group_id, |group| {
+                group.state = state;
+                Ok(())
+            })
+            .expect("set state");
+        let response = raw(
+            &home,
+            "group_automation_run_now",
+            json!({"group_id":group_id,"rule_id":"standup"}),
+        );
+        assert_eq!(response.error.expect("error").code, code);
+        let status = ok(
+            &home,
+            "group_automation_state",
+            json!({"group_id":group_id}),
+        );
+        assert_eq!(
+            status.result["status"]["standup"]["suppressed_reason"],
+            code
+        );
+        assert_eq!(status.result["status"]["standup"]["next_fire_at"], "");
+        assert_eq!(count(), before);
+    }
+    store
+        .mutate(&group_id, |group| {
+            group.state = GroupState::Idle;
+            Ok(())
+        })
+        .expect("idle");
+    let own = ok(
+        &home,
+        "group_automation_run_now",
+        json!({"group_id":group_id,"rule_id":"peer1-own","by":"peer1"}),
+    );
+    assert_eq!(own.result["notified"], json!(["peer1"]));
+}
+
 fn stored_ids(home: &HomeLayout, group_id: &str) -> Vec<String> {
     stored_automation(home, group_id)["rules"]
         .as_array()

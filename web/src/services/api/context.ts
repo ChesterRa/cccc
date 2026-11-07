@@ -1,5 +1,6 @@
 import type {
   AutomationRuleSet,
+  AutomationRunResult,
   CapabilityBlockEntry,
   CapabilityImportRecord,
   CapabilityOverviewItem,
@@ -711,6 +712,17 @@ export async function manageAutomation(
   }
   return apiJson<GroupAutomation>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/automation/manage`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export async function runAutomationRule(groupId: string, ruleId: string, expectedVersion?: number) {
+  const body: Record<string, unknown> = { rule_id: ruleId, by: "user" };
+  if (typeof expectedVersion === "number" && Number.isFinite(expectedVersion)) {
+    body.expected_version = Math.trunc(expectedVersion);
+  }
+  return apiJson<AutomationRunResult>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/automation/run`,
     { method: "POST", body: JSON.stringify(body) },
   );
 }

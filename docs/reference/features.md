@@ -401,7 +401,11 @@ override is present; the override takes precedence.
 | One-time schedule | Countdown / Exact time | `at` | One-off reminders and operations |
 
 Notes:
-- Web UI intentionally hides raw cron expression editing by default.
+- Web UI intentionally hides raw cron expression editing by default. A saved expression the
+  daily, weekly and monthly patterns cannot express is shown as written and kept until another
+  pattern is chosen.
+- A recurring rule runs in its saved `timezone`, or UTC without one. Web shows that zone when it
+  differs from the browser's, and editing the rule keeps it.
 - Operational actions are intentionally constrained to one-time trigger.
 
 ### Rule Actions
@@ -414,8 +418,10 @@ Notes:
 
 ### One-Time Completion Semantics
 
-- One-time rules auto-mark as completed after firing.
-- Completed one-time rules are disabled (no repeated fire).
+- A one-time rule is marked completed and disabled after it fires, so it does
+  not fire again.
+- A one-time rule whose time passed while the Group was paused or stopped is not
+  run late. It may also show as completed although no notification was sent.
 - UI supports clearing completed items for cleanup.
 
 ### Scheduling and Lifecycle Semantics
@@ -428,6 +434,21 @@ Notes:
   one-time rules remain scheduled.
 - Notifications are durable ledger events for enabled matching recipients, so
   the recipient runtime does not need to be running when the rule fires.
+- A rule's status reports its last run only once a notification of the rule has
+  reached the ledger, and whether it was scheduled or started with Run now.
+  State saved before this version has no such record. When a rule will not fire
+  now, its status gives the reason (a paused or stopped Group, or the built-in
+  stand-up in an idle Group) instead of a next time.
+
+### Run Now
+
+Run now sends a saved `notify` rule's notification once, outside its schedule,
+through the same delivery as a scheduled run. It works on a rule that is off or
+completed, does not count toward `max_runs`, and changes neither the schedule nor
+the rule. An idle Group allows it, even for the built-in stand-up; a paused or
+stopped Group refuses it. Operational actions cannot be run this way. A request
+whose outcome is unknown is not retried: the notification may already have gone
+out, possibly to only some recipients.
 
 ### Built-in Delivery Notices
 
@@ -478,12 +499,14 @@ CCCC Web supports Copy Groups export/import for durable group copy, migration, a
 ```text
 cccc_automation(action=state)
 cccc_automation(action=manage, actions=[create_rule|update_rule|set_rule_enabled|delete_rule|replace_all_rules, ...])
+cccc_automation(action=run_now, rule_id=..., expected_version=...)
 ```
 
 `cccc_automation` is how agents manage reminders. A `manage` request saves all of its actions or none of them:
 - A peer can manage its own reminders, which reach only itself. A rule it creates without `scope`, `owner_actor_id` or `to` is such a reminder.
 - The foreman can manage every notify reminder, including peers' reminders, and can replace the whole list.
 - Scheduled operations (`group_state`, `actor_control`) stay with the user in the Web UI. An agent's request that would change, disable, remove or reorder one is refused.
+- `run_now` follows the same ownership: a peer can run its own reminders and the foreman any notify reminder.
 
 ## Web UI
 

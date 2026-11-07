@@ -348,6 +348,100 @@ async fn daemon_error_details_survive_the_native_mcp_boundary() {
 }
 
 #[tokio::test]
+async fn automation_run_now_reaches_the_daemon_with_the_bound_actor() {
+    if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+        module_path!(),
+        "::",
+        "automation_run_now_reaches_the_daemon_with_the_bound_actor"
+    )) {
+        return;
+    }
+    let temp = tempfile::tempdir().expect("isolated automation home");
+    let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("automation MCP", "").expect("group");
+    group.state = cccc_contracts::GroupState::Idle;
+    for id in ["lead", "peer"] {
+        let mut actor = cccc_contracts::Actor::new(id);
+        // The fake native session prevents the fixture from launching a provider.
+        actor.external_session_id = format!("fixture-{id}");
+        cccc_core::actors::add(&mut group, actor).expect("add actor");
+    }
+    group.automation = json!({"version":7,"rules":[{
+        "id":"team","enabled":false,"scope":"group","to":["lead"],
+        "trigger":{"kind":"interval","every_seconds":3600,"max_runs":1},
+        "action":{"kind":"notify","message":"check in"}
+    }]})
+    .as_object()
+    .expect("automation")
+    .clone();
+    store.save(&group).expect("save group");
+
+    let daemon_home = home.clone();
+    let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = cccc_client::DaemonClient::new(home.clone());
+    let mut ready = false;
+    for _ in 0..100 {
+        if client
+            .call(&cccc_contracts::DaemonRequest {
+                v: 1,
+                op: "group_list".into(),
+                args: serde_json::Map::new(),
+            })
+            .await
+            .is_ok()
+        {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    assert!(ready, "isolated daemon did not start");
+
+    let call = |action: &str| {
+        json!({
+            "jsonrpc":"2.0","id":1,"method":"tools/call",
+            "params":{"name":"cccc_capability_use","arguments":{
+                "tool_name":"cccc_automation",
+                "tool_arguments":{"action":action,"rule_id":"team","expected_version":7,"by":"user"}
+            }}
+        })
+    };
+    let response =
+        crate::handle_request_for_actor(&home, &call("run_now"), &group.group_id, "lead").await;
+    let result = &response["result"]["structuredContent"];
+    assert_eq!(result["tool_called"], true, "{response}");
+    assert_eq!(result["tool_result"]["notified"], json!(["lead"]));
+    assert!(result["tool_result"]["run_at"].is_string());
+
+    let status =
+        crate::handle_request_for_actor(&home, &call("state"), &group.group_id, "lead").await;
+    let rules = &status["result"]["structuredContent"]["tool_result"];
+    assert_eq!(rules["version"], 7, "{status}");
+    assert_eq!(rules["status"]["team"]["last_run_kind"], "manual");
+    assert_eq!(rules["status"]["team"]["fired_count"], 0);
+    assert_eq!(rules["ruleset"]["rules"][0]["enabled"], false);
+
+    // A peer cannot turn the nested model-supplied `by` into user authority.
+    let denied =
+        crate::handle_request_for_actor(&home, &call("run_now"), &group.group_id, "peer").await;
+    assert_eq!(denied["result"]["isError"], true, "{denied}");
+    assert_eq!(
+        denied["result"]["structuredContent"]["error"]["code"],
+        "permission_denied"
+    );
+    let events = cccc_core::ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
+        .expect("events");
+    let notifications = events
+        .iter()
+        .filter(|event| event.kind == "system.notify")
+        .collect::<Vec<_>>();
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications[0].data["context"]["run_kind"], "manual");
+    daemon_task.abort();
+}
+
+#[tokio::test]
 async fn daemon_error_details_survive_nested_code_mode_calls() {
     if crate::lib_tests::isolate_embedded_daemon_test(concat!(
         module_path!(),

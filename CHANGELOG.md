@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Added
 
+- **Run now** in **Automation** sends a reminder rule's notification once without waiting for its
+  schedule. It runs the saved rule, also when the rule is off, does not count toward the rule's
+  maximum runs and does not change its schedule. A paused or stopped Group has to be resumed
+  first, and the notification may wake its recipients and use model credits. Agents can do the
+  same with `cccc_automation(action=run_now)`.
+- A Group's menu in the sidebar opens that Group's **Automation** settings.
 - `/cccc-self-evolution` is now a short team review. It reads what you said and how many messages,
   scheduled reminders and open tasks each member has, then brings you at most three proposals, each on its
   own card with its evidence. Standing rules and changes to members wait for your pick. Before, it
@@ -111,6 +117,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - On a phone, the first tap on the members' row no longer gets lost while the message box is open.
 - A conversation that fits on the screen no longer shows "No more messages" above it.
 - The theme choice in English settings no longer cuts off; its third option is now **Auto**.
+- **Automation** shows the last and next run in your browser's local time with the time zone,
+  instead of a UTC timestamp. The last run now shows when the rule last ran and created its
+  notification, marked when the run came from **Run now**; before, it could show when the rule's
+  clock started, even for a rule that never ran, and runs from before this version are not shown.
+  A rule that will not run now says why instead of showing a next time: the Group is paused or
+  stopped, or it is idle and the rule is the built-in stand-up. A recurring rule saved in another
+  time zone shows that zone and keeps it when edited, and a schedule the daily, weekly and monthly
+  patterns cannot express shows as written instead of as daily at 09:00.
 
 ## [0.4.49]
 

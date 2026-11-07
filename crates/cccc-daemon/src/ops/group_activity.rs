@@ -120,8 +120,15 @@ fn count_events(
                 .entry(event.by.clone())
                 .or_default()
                 .record_message(event),
+            // Automation notices written before manual runs have no run_kind.
             "system.notify"
-                if event.data.get("kind").and_then(Value::as_str) == Some("automation") =>
+                if event.data.get("kind").and_then(Value::as_str) == Some("automation")
+                    && event
+                        .data
+                        .get("context")
+                        .and_then(|context| context.get("run_kind"))
+                        .and_then(Value::as_str)
+                        != Some("manual") =>
             {
                 if let Some(target) = event
                     .data

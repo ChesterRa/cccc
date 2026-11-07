@@ -268,6 +268,27 @@ fn activity_counts_each_member_inside_the_window() {
 }
 
 #[test]
+fn activity_scheduled_notices_exclude_manual_runs_and_keep_legacy_notices() {
+    let fixture = Fixture::new();
+    for run_kind in [None, Some("scheduled"), Some("manual")] {
+        let mut notice = Event::new("system.notify", &fixture.group_id);
+        let mut data = json!({
+            "kind":"automation", "target_actor_id":"peer", "context":{"rule_id":"review"}
+        });
+        if let Some(kind) = run_kind {
+            data["context"]["run_kind"] = json!(kind);
+        }
+        notice.data = data.as_object().expect("data").clone();
+        fixture.append(&notice);
+    }
+
+    for reader in ["user", "lead"] {
+        let result = fixture.call("group_activity", json!({"by":reader}));
+        assert_eq!(member(&result, "peer")["scheduled_notices"], 2);
+    }
+}
+
+#[test]
 fn activity_counts_only_messages_the_reader_may_see() {
     let fixture = Fixture::new();
     fixture.append(&fixture.message("peer", &["user"], "private to the user"));

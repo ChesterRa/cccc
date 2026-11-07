@@ -2,7 +2,7 @@ use super::operation::{
     Operation,
     Policy::{Read, Write},
 };
-use cccc_contracts::{ActorRole, DaemonRequest, Event, utc_now};
+use cccc_contracts::{ActorRole, DaemonRequest, Event, GroupState, utc_now};
 use cccc_core::automation::STANDUP_SNIPPET;
 use cccc_core::fs::read_json;
 use cccc_core::{GroupDoc, HomeLayout};
@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 
 use super::automation_manage::{Ruleset, split_snippets};
 use super::automation_rule_access::{
-    authorize_change, expected_version, validate as validate_rule,
+    authorize_change, authorize_run, expected_version, validate as validate_rule,
 };
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 
@@ -19,6 +19,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "group_automation_update" => Operation::new(Write, update),
         "group_automation_state" => Operation::new(Read, state),
         "group_automation_manage" => Operation::new(Write, manage),
+        "group_automation_run_now" => Operation::new(Write, run_now),
         "group_automation_reset_baseline" => Operation::new(Write, reset),
         _ => return None,
     })
@@ -81,6 +82,98 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(payload(home, &load(home, request)?, &caller(request))?)
+}
+
+fn run_now(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group = load(home, request)?;
+    let by = caller(request);
+    let role = caller_role(&group, &by)?;
+    let rule_id = required_arg(request, "rule_id")?;
+    let saved = saved_ruleset(&group)?;
+    let rule = saved
+        .rules
+        .iter()
+        .find(|rule| rule.get("id").and_then(Value::as_str) == Some(rule_id.as_str()))
+        .ok_or_else(|| OpError::new("not_found", "automation rule not found"))?;
+    if role == Some(ActorRole::Peer)
+        && rule.get("scope").and_then(Value::as_str) == Some("personal")
+        && rule.get("owner_actor_id").and_then(Value::as_str) != Some(by.as_str())
+    {
+        return Err(OpError::new("not_found", "automation rule not found"));
+    }
+    authorize_run(rule, &by, role)?;
+    let kind = rule
+        .get("action")
+        .and_then(|action| action.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or("notify");
+    if kind != "notify" {
+        return Err(OpError::new(
+            "unsupported_action",
+            "only notification rules can be run now",
+        ));
+    }
+    let current = group
+        .automation
+        .get("version")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    if expected_version(&request.args)?.is_some_and(|expected| expected != current) {
+        return Err(OpError::new(
+            "version_conflict",
+            "automation version changed; reload before running",
+        ));
+    }
+    match group.state {
+        GroupState::Paused => {
+            return Err(OpError::new(
+                "group_paused",
+                "resume the Group before running a rule",
+            ));
+        }
+        GroupState::Stopped => {
+            return Err(OpError::new(
+                "group_stopped",
+                "start the Group before running a rule",
+            ));
+        }
+        _ => {}
+    }
+    let rule = rule
+        .as_object()
+        .ok_or_else(|| OpError::new("group_automation_state_invalid", "rule must be an object"))?;
+    let outcome = cccc_core::automation::notify_rule_now(home, &group, &rule_id, rule)
+        .map_err(OpError::io)?;
+    let notified = outcome
+        .notifications
+        .iter()
+        .filter_map(|event| {
+            event
+                .data
+                .get("target_actor_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    let run_at = outcome.notifications.first().map(|event| event.ts.clone());
+    for event in &outcome.notifications {
+        super::actor_delivery::dispatch(home, &group, event);
+    }
+    if let Some(error) = outcome.failure {
+        let message = if notified.is_empty() {
+            format!("could not write notification: {error}")
+        } else {
+            format!("notifications may already have been created for some recipients: {error}")
+        };
+        return Err(OpError::new("io_error", message));
+    }
+    let run_at = run_at.ok_or_else(|| {
+        OpError::new(
+            "no_notification",
+            "no enabled recipient or nonempty message",
+        )
+    })?;
+    object(json!({"rule_id":rule_id, "run_at":run_at, "notified":notified}))
 }
 
 fn manage(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -264,21 +357,42 @@ fn payload(home: &HomeLayout, group: &GroupDoc, by: &str) -> Result<Value, OpErr
                     .and_then(|trigger| trigger.get("max_runs"))
                     .and_then(Value::as_u64)
                     .is_some_and(|limit| fired_count >= limit);
-            let next_fire_at = (enabled && !completed)
+            let suppressed_reason = if enabled && !completed {
+                match group.state {
+                    GroupState::Paused => Some("group_paused"),
+                    GroupState::Stopped => Some("group_stopped"),
+                    GroupState::Idle if id == "standup" => Some("idle_standup"),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let next_fire_at = (enabled && !completed && suppressed_reason.is_none())
                 .then(|| cccc_core::automation::next_rule_fire_at(trigger, last_fired, now))
                 .flatten()
                 .map(|value| value.to_rfc3339())
                 .unwrap_or_default();
+            let is_notify = rule.get("action").and_then(|action| action.get("kind"))
+                .and_then(Value::as_str).unwrap_or("notify") == "notify";
+            let last_run = is_notify.then_some(entry).flatten().and_then(|entry| {
+                let at = entry.get("last_run_at")?.as_str()?;
+                chrono::DateTime::parse_from_rfc3339(at).ok()?;
+                let kind = entry.get("last_run_kind")?.as_str()?;
+                matches!(kind, "manual" | "scheduled").then_some((at, kind))
+            });
             Some((
                 id.to_owned(),
                 json!({
                     "last_fired_at":last_fired_at,
+                    "last_run_at":last_run.map(|(at, _)| at),
+                    "last_run_kind":last_run.map(|(_, kind)| kind),
+                    "suppressed_reason":suppressed_reason,
                     "last_error_at":entry.and_then(|entry|entry.get("last_error_at")).and_then(Value::as_str).unwrap_or_default(),
                     "last_error":entry.and_then(|entry|entry.get("last_error")).and_then(Value::as_str).unwrap_or_default(),
                     "next_fire_at":next_fire_at,
                     "fired_count":fired_count,
                     "completed":completed,
-                    "completed_at":if completed && trigger_kind == "at" { last_fired_at } else { "" },
+                    "completed_at":"",
                 }),
             ))
         })

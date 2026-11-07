@@ -1487,14 +1487,22 @@ export type AutomationSnippetCatalog = {
 };
 
 export type AutomationRuleStatus = {
+  /** The scheduler's clock base, written on resume too; not evidence of a run. */
   last_fired_at?: string;
   last_error_at?: string;
   last_error?: string;
-  next_fire_at?: string;
+  next_fire_at?: string | null;
   fired_count?: number;
   completed?: boolean;
   completed_at?: string;
+  /** When a notification of this rule last reached the ledger; null when unknown. */
+  last_run_at?: string | null;
+  last_run_kind?: "scheduled" | "manual" | null;
+  /** Why the rule will not fire now, from the daemon's own Group state. */
+  suppressed_reason?: "group_paused" | "group_stopped" | "idle_standup" | null;
 };
+
+export type AutomationRunResult = { rule_id: string; run_at: string; notified: string[] };
 
 export type GroupAutomation = {
   ruleset: AutomationRuleSet;

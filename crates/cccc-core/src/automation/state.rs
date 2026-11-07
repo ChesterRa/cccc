@@ -7,10 +7,18 @@ use crate::fs::{read_json, write_json};
 use cccc_contracts::utc_now;
 use serde_json::{Map, Value, json};
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct RunRecord {
+    pub at: i64,
+    pub kind: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub(super) struct RuntimeState {
     #[serde(default)]
     pub last_rule: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub last_run: BTreeMap<String, RunRecord>,
     #[serde(default)]
     pub fired_count: BTreeMap<String, u64>,
     #[serde(default)]
@@ -37,6 +45,22 @@ pub(super) fn load(store: &GroupStore, group_id: &str) -> io::Result<RuntimeStat
                     .and_then(parse_timestamp)
                 {
                     state.last_rule.insert(rule_id.clone(), timestamp);
+                }
+                if let (Some(at), Some(kind)) = (
+                    entry
+                        .get("last_run_at")
+                        .and_then(Value::as_str)
+                        .and_then(parse_timestamp),
+                    entry.get("last_run_kind").and_then(Value::as_str),
+                ) && matches!(kind, "scheduled" | "manual")
+                {
+                    state.last_run.insert(
+                        rule_id.clone(),
+                        RunRecord {
+                            at,
+                            kind: kind.into(),
+                        },
+                    );
                 }
             }
         }
@@ -106,6 +130,11 @@ pub(super) fn save(store: &GroupStore, group_id: &str, state: &RuntimeState) -> 
     for (rule_id, count) in &state.fired_count {
         let entry = object(rules.entry(rule_id.clone()).or_insert_with(|| json!({})));
         entry.insert("fired_count".into(), json!(count));
+    }
+    for (rule_id, run) in &state.last_run {
+        let entry = object(rules.entry(rule_id.clone()).or_insert_with(|| json!({})));
+        entry.insert("last_run_at".into(), json!(format_timestamp(run.at)));
+        entry.insert("last_run_kind".into(), json!(run.kind));
     }
     let actors = object(root.entry("actors").or_insert_with(|| json!({})));
     for (key, timestamp) in &state.last_nudge {

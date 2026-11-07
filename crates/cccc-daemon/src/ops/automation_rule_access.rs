@@ -217,6 +217,26 @@ fn own_reminder(rule: &Value, by: &str) -> bool {
             .is_some_and(|to| to.len() == 1 && to[0].as_str() == Some(by))
 }
 
+pub(super) fn authorize_run(
+    rule: &Value,
+    by: &str,
+    role: Option<ActorRole>,
+) -> Result<(), OpError> {
+    let allowed = match role {
+        None => true,
+        Some(ActorRole::Foreman) => notifies(rule),
+        Some(ActorRole::Peer) => own_reminder(rule, by),
+    };
+    if allowed {
+        Ok(())
+    } else {
+        Err(OpError::new(
+            "permission_denied",
+            "cannot run this automation rule",
+        ))
+    }
+}
+
 pub(super) fn expected_version(args: &Map<String, Value>) -> Result<Option<u64>, OpError> {
     let Some(value) = args.get("expected_version") else {
         return Ok(None);

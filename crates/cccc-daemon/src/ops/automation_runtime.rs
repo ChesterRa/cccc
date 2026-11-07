@@ -162,6 +162,9 @@ fn notify_idle_mail_recipients_with(
 }
 
 fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
+    if let Some(error) = &result.rule_failure {
+        tracing::warn!(%error, "automation rule pass failed; committed notifications retained for delivery");
+    }
     if let Some(error) = &result.unread_failure {
         // An unread discovery or write failure must not discard earlier notices.
         tracing::warn!(%error, "unread notice pass failed; committed notifications retained for delivery");

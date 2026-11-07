@@ -48,6 +48,7 @@
   "workingGroups": "作業グループ",
   "archivedGroups": "アーカイブ",
   "groupActions": "グループ操作",
+  "groupAutomation": "自動化",
   "reorderWithKeyboard": "Alt+↑ または Alt+↓ でこのグループを移動します。",
   "archiveGroup": "アーカイブ",
   "restoreGroup": "戻す",

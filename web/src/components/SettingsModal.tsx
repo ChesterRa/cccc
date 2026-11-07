@@ -665,7 +665,16 @@ export function SettingsModal({
                     </section>
                   )}
                 {activeTab === "automation" && (
-                  <AutomationTab isDark={isDark} groupId={groupId} devActors={devActors} />
+                  <AutomationTab
+                    isDark={isDark}
+                    groupId={groupId}
+                    groupState={
+                      groupDoc && groupDoc.group_id === groupId
+                        ? groupDoc.runtime_status?.lifecycle_state || groupDoc.state
+                        : undefined
+                    }
+                    devActors={devActors}
+                  />
                 )}
 
                 {activeTab === "delivery" && (

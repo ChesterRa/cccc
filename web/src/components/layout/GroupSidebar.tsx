@@ -14,6 +14,7 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ClockIcon,
   GroupDeleteIcon,
   PlusIcon,
 } from "../Icons";
@@ -60,6 +61,8 @@ export interface GroupSidebarProps {
   onArchiveGroup: (groupId: string) => void;
   onRestoreGroup: (groupId: string) => void;
   onOpenGroupConnections?: (groupId: string) => void;
+  /** Open a group's Automation settings from its menu; omitted for read-only viewers. */
+  onOpenGroupAutomation?: (groupId: string) => void;
   /** Launch/pause/stop a group from its menu; omitted for read-only viewers. */
   onControlGroup?: (groupId: string, control: GroupControl) => void;
   /** Delete a group from its menu; the handler owns the confirmation. */
@@ -88,6 +91,7 @@ export function GroupSidebar({
   onArchiveGroup,
   onRestoreGroup,
   onOpenGroupConnections,
+  onOpenGroupAutomation,
   onControlGroup,
   onDeleteGroup,
 }: GroupSidebarProps) {
@@ -191,16 +195,30 @@ export function GroupSidebar({
 
   const runActionsFor = useCallback(
     (group: GroupMeta) => {
-      if (!onControlGroup || readOnly) return [];
+      if (readOnly) return [];
       const gid = String(group.group_id || "");
-      return groupRunMenuActions(
-        getGroupStatusFromSource(group).key,
-        t,
-        (control) => onControlGroup(gid, control),
-        controlsBusy,
-      );
+      const runActions = onControlGroup
+        ? groupRunMenuActions(
+            getGroupStatusFromSource(group).key,
+            t,
+            (control) => onControlGroup(gid, control),
+            controlsBusy,
+          )
+        : [];
+      // Automation schedules what the group runs, so it sits with the run controls.
+      const automation = onOpenGroupAutomation
+        ? [
+            {
+              label: t("groupAutomation"),
+              icon: <ClockIcon size={15} />,
+              section: "automation",
+              onClick: () => onOpenGroupAutomation(gid),
+            },
+          ]
+        : [];
+      return [...runActions, ...automation];
     },
-    [onControlGroup, readOnly, t, controlsBusy],
+    [onControlGroup, onOpenGroupAutomation, readOnly, t, controlsBusy],
   );
 
   const trailingActionsFor = useCallback(

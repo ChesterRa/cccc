@@ -12,6 +12,9 @@ import {
   defaultActorControlAction,
   defaultGroupStateAction,
   defaultNotifyAction,
+  formatAutomationLastRun,
+  formatAutomationNext,
+  formatAutomationTime,
   formatDuration,
   formatTimeInput,
   getActorOperationCopy,
@@ -19,6 +22,7 @@ import {
   getWeekdayOptions,
   isoToLocalDatetimeInput,
   localDatetimeInputToIso,
+  cronTimeZone,
   localTimeZone,
   parseCronToPreset,
   parseTimeInput,
@@ -201,7 +205,10 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
   const enabled = ruleDraft.enabled !== false;
   const scope = String(ruleDraft.scope || "group") === "personal" ? "personal" : "group";
   const ownerActorId = String(ruleDraft.owner_actor_id || "").trim();
+  const lastRun = formatAutomationLastRun(status, t);
   const localTz = localTimeZone();
+  // Editing keeps a cron rule's own zone; only a rule that becomes cron takes the browser's.
+  const cronTz = triggerKind === "cron" ? cronTimeZone(ruleDraft.trigger) : localTz;
   const schedule = parseCronToPreset(cronExpr);
   const scheduleTime = formatTimeInput(schedule.hour, schedule.minute);
   const atInput = isoToLocalDatetimeInput(atRaw);
@@ -219,15 +226,11 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             </div>
             {!isNewRule ? (
               <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                {t("ruleEditor.last")} {status.last_fired_at || "—"} • {t("ruleEditor.next")}{" "}
-                {status.next_fire_at || "—"}{" "}
-                {completed
-                  ? activeTriggerKind === "at"
-                    ? `• ${t("ruleEditor.completed")} ${status.completed_at || status.last_fired_at || "—"}`
-                    : `• ${t("ruleList.completedLabel")}`
-                  : ""}{" "}
+                {lastRun ? `${t("ruleEditor.last")} ${lastRun} • ` : ""}
+                {t("ruleEditor.next")} {formatAutomationNext(status, t)}{" "}
+                {completed ? `• ${t("ruleList.completedLabel")}` : ""}{" "}
                 {status.last_error
-                  ? `• ${t("ruleEditor.error")} ${status.last_error_at || "—"}`
+                  ? `• ${t("ruleEditor.error")} ${formatAutomationTime(status.last_error_at)}`
                   : ""}
               </div>
             ) : null}
@@ -306,7 +309,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                         weekday: schedule.weekday,
                         dayOfMonth: schedule.dayOfMonth,
                       });
-                      patchTrigger({ kind: "cron", cron: cronExpr || nextCron, timezone: localTz });
+                      patchTrigger({ kind: "cron", cron: cronExpr || nextCron, timezone: cronTz });
                       return;
                     }
                     if (nextKind === "at") {
@@ -376,10 +379,14 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                         { value: "daily", label: t("ruleEditor.daily") },
                         { value: "weekly", label: t("ruleEditor.weekly") },
                         { value: "monthly", label: t("ruleEditor.monthly") },
+                        ...(schedule.preset === "custom"
+                          ? [{ value: "custom", label: cronExpr }]
+                          : []),
                       ]}
                       value={schedule.preset}
                       onChange={(value) => {
                         const preset = String(value || "daily") as SchedulePreset;
+                        if (preset === "custom") return;
                         patchTrigger({
                           kind: "cron",
                           cron: buildCronFromPreset({
@@ -389,35 +396,42 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                             weekday: schedule.weekday,
                             dayOfMonth: schedule.dayOfMonth,
                           }),
-                          timezone: localTz,
+                          timezone: cronTz,
                         });
                       }}
                       ariaLabel={t("ruleEditor.pattern")}
                       className={inputClass(isDark)}
                     />
                   </div>
-                  <div>
-                    <label className={labelClass(isDark)}>{t("ruleEditor.time")}</label>
-                    <input
-                      type="time"
-                      value={scheduleTime}
-                      onChange={(e) => {
-                        const parsed = parseTimeInput(e.target.value);
-                        patchTrigger({
-                          kind: "cron",
-                          cron: buildCronFromPreset({
-                            preset: schedule.preset,
-                            hour: parsed.hour,
-                            minute: parsed.minute,
-                            weekday: schedule.weekday,
-                            dayOfMonth: schedule.dayOfMonth,
-                          }),
-                          timezone: localTz,
-                        });
-                      }}
-                      className={inputClass(isDark)}
-                    />
-                  </div>
+                  {schedule.preset !== "custom" ? (
+                    <div>
+                      <label className={labelClass(isDark)}>{t("ruleEditor.time")}</label>
+                      <input
+                        type="time"
+                        value={scheduleTime}
+                        onChange={(e) => {
+                          const parsed = parseTimeInput(e.target.value);
+                          patchTrigger({
+                            kind: "cron",
+                            cron: buildCronFromPreset({
+                              preset: schedule.preset,
+                              hour: parsed.hour,
+                              minute: parsed.minute,
+                              weekday: schedule.weekday,
+                              dayOfMonth: schedule.dayOfMonth,
+                            }),
+                            timezone: cronTz,
+                          });
+                        }}
+                        className={inputClass(isDark)}
+                      />
+                      {cronTz !== localTz ? (
+                        <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                          {t("ruleEditor.timeZone", { zone: cronTz })}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 {schedule.preset === "weekly" ? (
@@ -439,7 +453,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                             weekday: Number(value || 1),
                             dayOfMonth: schedule.dayOfMonth,
                           }),
-                          timezone: localTz,
+                          timezone: cronTz,
                         })
                       }
                       ariaLabel={t("ruleEditor.weekday")}
@@ -466,7 +480,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                             weekday: schedule.weekday,
                             dayOfMonth: Number(e.target.value || 1),
                           }),
-                          timezone: localTz,
+                          timezone: cronTz,
                         })
                       }
                       className={inputClass(isDark)}

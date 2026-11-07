@@ -1688,6 +1688,10 @@ type Counts = {
 }
 ```
 
+`scheduled_notices` excludes automation notifications explicitly marked
+`data.context.run_kind = "manual"`. Older notices without `run_kind` count as
+scheduled. These counts do not prove delivery or model execution.
+
 #### `group_preamble_get`
 
 Read the effective group startup preamble. A non-empty group override replaces
@@ -3518,7 +3522,10 @@ Result:
     snippets: Record<string, string>
   }
   status: Record<string, {
-    last_fired_at: string
+    last_fired_at: string // scheduling baseline, not proof of a previous run
+    last_run_at: string | null // RFC3339; notification committed to ledger
+    last_run_kind: "scheduled" | "manual" | null
+    suppressed_reason: "group_paused" | "group_stopped" | "idle_standup" | null
     last_error_at: string
     last_error: string
     next_fire_at: string
@@ -3597,6 +3604,16 @@ Notes:
   been appended durably for an enabled matching recipient. Recipient delivery
   does not require a currently running actor process. A successfully completed
   one-time rule is disabled.
+- `last_fired_at` is the scheduling baseline and can be set without an actual
+  firing. `last_run_at` and `last_run_kind` name the latest notification firing
+  with at least one ledger event, or are both null when unknown. They do not
+  prove delivery or model execution. Old state is not inferred from the baseline.
+  `completed` may include a missed one-time rule; `completed_at` is empty when
+  no actual completion time can be established.
+- An enabled, incomplete rule reports `suppressed_reason` and no `next_fire_at`
+  while the Group is paused or stopped, or while the built-in `standup` is
+  suppressed by an idle Group. This uses the daemon Group state, not the Web
+  activity projection. Disabled or completed rules have no suppression reason.
 - `group.yaml:automation` and `state/automation.json` are the shared config and
   runtime authorities. The single-daemon process lock owns scheduling; engine
   handoff consumes these files and does not introduce a second scheduler lease
@@ -3627,7 +3644,7 @@ Result:
 {
   group_id: string
   ruleset: Record<string, unknown>
-  status: Record<string, Record<string, string>>
+  status: Record<string, Record<string, unknown>>
   supported_vars: string[]
   version: number
   server_now: string
@@ -3636,6 +3653,42 @@ Result:
   event?: CCCSEventV1 | null
 }
 ```
+
+#### `group_automation_run_now`
+
+Immediately run the saved notification action once. This writes and offers
+real notices for delivery and may wake members or use model credits.
+
+Args:
+```ts
+{ group_id: string; by?: string; rule_id: string; expected_version?: number }
+```
+
+Result:
+```ts
+{ rule_id: string; run_at: string; notified: string[] }
+```
+
+`notified` names the Actor IDs whose notifications were appended, not actors
+confirmed to have received them. A stale version returns `version_conflict`.
+The same permission rules as automation management apply to the saved rule,
+and are checked first: a `group_state` or `actor_control` rule returns
+`permission_denied` to an actor, which cannot manage it, and
+`unsupported_action` to the user or the system. A paused or stopped Group returns
+`group_paused` or `group_stopped`; an idle Group accepts a manual stand-up.
+A disabled or completed notification rule can be run without enabling it.
+Empty content or no enabled recipient returns `no_notification`.
+
+Running manually does not change rule configuration, the schedule, the count
+against `max_runs`, or a one-time rule's completion. A later scheduled firing
+may therefore produce another notice. Manual notices have
+`data.context.run_kind = "manual"`; scheduled notices use `"scheduled"`.
+If a later recipient's ledger append fails, earlier committed notices remain
+eligible for delivery, the last-run record reflects the firing when it can be
+saved, and the operation returns `io_error` stating that notifications may
+already have been created for some recipients. A lost or interrupted response can also leave the
+result unknown. This operation does not deduplicate retries; callers must not
+silently retry an uncertain request.
 
 #### `group_automation_reset_baseline`
 

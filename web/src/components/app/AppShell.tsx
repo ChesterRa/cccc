@@ -215,6 +215,7 @@ export function AppShell({
       : getSidebarWidthCssValue(sidebarWidth),
   } as CSSProperties;
   const setGroupConnections = useModalStore((state) => state.setGroupConnections);
+  const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [workControlsHost, setWorkControlsHost] = useState<HTMLDivElement | null>(null);
   const [sidePanelControlsHost, setSidePanelControlsHost] = useState<HTMLDivElement | null>(null);
   const [mobileReadingHidden, setMobileReadingHidden] = useState(false);
@@ -235,6 +236,22 @@ export function AppShell({
       });
     },
     [onSelectGroup, onCloseSidebar],
+  );
+  const openGroupAutomation = useCallback(
+    (groupId: string) => {
+      const open = () => {
+        onCloseSidebar();
+        openSettingsTarget({ scope: "group", tab: "automation" });
+      };
+      // Group settings follow the selected Group, so select it first.
+      if (!remoteWorkspace && groupId === selectedGroupId) open();
+      else
+        requestWorkspaceNavigation(() => {
+          onSelectGroup(groupId);
+          open();
+        });
+    },
+    [onCloseSidebar, onSelectGroup, openSettingsTarget, remoteWorkspace, selectedGroupId],
   );
   useVoiceViewedMessages(
     contentRef,
@@ -278,6 +295,7 @@ export function AppShell({
             onOpenGroupConnections={
               !webReadOnly && canAccessAccount ? setGroupConnections : undefined
             }
+            onOpenGroupAutomation={webReadOnly ? undefined : openGroupAutomation}
           />
         ) : null}
 

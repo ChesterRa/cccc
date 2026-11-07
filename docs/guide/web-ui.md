@@ -1333,6 +1333,30 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
 
 ### Automation
 
+Open a Group's menu in the sidebar and choose **Automation**, or open **Settings and
+more**, choose **All settings**, select **This group** and open **Automation**.
+
+Each rule shows its last run and its next planned run in your browser's local time,
+as of when the page opened; saving or reopening the page refreshes them. The last run
+appears once the rule has run and created its notification, marked when the run came
+from **Run now**;
+runs from before this version are not shown. Instead of a next time, a rule shows why
+it will not run: a paused or stopped Group runs no automation, and a Group set to idle
+does not run the built-in stand-up. Resuming a Group restarts the interval and
+recurring clocks, so the next run can move. A recurring rule saved in another time zone
+shows that zone, and editing it keeps the zone. A schedule the daily, weekly and
+monthly patterns cannot express shows as written; it stays as it is until you pick one
+of those patterns.
+
+**Run now** sends a reminder rule's notification once, without waiting for its
+schedule. It runs the saved rule, so save your changes first; it also works on a rule
+that is off. It does not count toward the maximum number of runs and does not change
+the schedule, so a scheduled run may still follow soon after. A paused or stopped Group has
+to be resumed first. The notification may wake its recipients and use model credits.
+If the page cannot tell whether the run went out, it says so and does not try again:
+reopen Automation and check the last run before running the rule again. An unchanged last
+run does not prove that nothing went out.
+
 - **Stand-up**: The built-in example is off by default. Its default schedule reminds the foreman
   at two-hour intervals to review whether work serves the user's current goals and outstanding
   requests; where waiting, rework, duplication, unclear handoffs or misunderstandings cause friction
@@ -1350,7 +1374,7 @@ Use **Copy Groups** when you need to duplicate, migrate, or back up a working gr
   - `Set Group Status` (operational, one-time only)
   - `Control Agent Runtimes` (operational, one-time only)
 - **Snippets**: Reusable message templates managed alongside rules.
-- **One-time behavior**: One-time rules auto-complete after firing, then can be cleaned up from completed list.
+- **One-time behavior**: A one-time rule completes and turns off after it fires, and can then be cleared from the completed list. A one-time rule whose time passed while the Group was paused or stopped does not run late, and it may also show as completed without having sent anything.
 
 ### IM Bridge
 

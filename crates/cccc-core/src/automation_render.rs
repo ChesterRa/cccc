@@ -10,6 +10,7 @@ pub fn notify_events(
     rule: &Map<String, Value>,
     action: Option<&Map<String, Value>>,
     scheduled_at: &str,
+    run_kind: &str,
 ) -> Vec<Event> {
     let template = snippet(group, action).or_else(|| {
         action
@@ -79,7 +80,7 @@ pub fn notify_events(
                 "to": [actor.id.as_str()],
                 "im_visibility": "public",
                 "priority": action.and_then(|action| action.get("priority")).cloned().unwrap_or_else(|| json!("normal")),
-                "context": {"rule_id": rule_id},
+                "context": {"rule_id": rule_id, "run_kind": run_kind},
             })
             .as_object()
             .cloned()
