@@ -447,7 +447,7 @@ async fn capability_use(
         .unwrap_or(&requested_scope)
         .to_owned();
     if !enabled || tool_name.is_empty() {
-        return Ok(tool_result(json!({
+        let mut result = json!({
             "group_id":group_id,
             "actor_id":actor_id,
             "capability_id":capability_id,
@@ -461,7 +461,15 @@ async fn capability_use(
                 .unwrap_or(false),
             "enable_result":enable_result,
             "tool_called":false,
-        })));
+        });
+        // A skill has no tool to call: its rules are what the caller came for.
+        if enabled && capability_id.starts_with("skill:") {
+            let skill = cccc_core::capabilities::CapabilityStore::new(home.clone())
+                .require(&capability_id)
+                .map_err(|error| error.to_string())?;
+            result["capsule_text"] = Value::String(skill.capsule_text);
+        }
+        return Ok(tool_result(result));
     }
 
     let mut tool_arguments = arguments
@@ -1004,6 +1012,111 @@ mod tests {
                 .expect_err("peer capability administration must fail"),
             "cccc_capability_import is not available to peer actors"
         );
+    }
+
+    #[tokio::test]
+    async fn capability_use_returns_the_rules_of_a_skill() {
+        if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+            module_path!(),
+            "::",
+            "capability_use_returns_the_rules_of_a_skill"
+        )) {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let group = cccc_core::GroupStore::new(home.clone())
+            .and_then(|store| store.create("skill use", ""))
+            .expect("group");
+        let daemon_home = home.clone();
+        let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        let client = cccc_client::DaemonClient::new(home.clone());
+        for _ in 0..100 {
+            if client
+                .call(&cccc_contracts::DaemonRequest {
+                    v: 1,
+                    op: "group_list".into(),
+                    args: serde_json::Map::new(),
+                })
+                .await
+                .is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        let context = |group_id| {
+            Some(RequestContext {
+                native_binding: None,
+                binding: None,
+                group_id,
+                actor_id: "user",
+            })
+        };
+        let args = |capability_id: &str| {
+            json!({"capability_id":capability_id,"scope":"session"})
+                .as_object()
+                .cloned()
+                .expect("use args")
+        };
+
+        let skill = super::call_with_context(
+            &home,
+            &client,
+            "cccc_capability_use",
+            args("skill:cccc:self-evolution"),
+            context(&group.group_id),
+            false,
+        )
+        .await
+        .expect("use skill");
+        assert_eq!(skill["structuredContent"]["enabled"], true);
+        assert!(
+            skill["structuredContent"]["capsule_text"]
+                .as_str()
+                .expect("skill rules")
+                .contains("## Procedure")
+        );
+
+        let pack = super::call_with_context(
+            &home,
+            &client,
+            "cccc_capability_use",
+            args("pack:space"),
+            context(&group.group_id),
+            false,
+        )
+        .await
+        .expect("use pack");
+        assert!(pack["structuredContent"].get("capsule_text").is_none());
+
+        super::daemon(
+            &client,
+            "capability_block",
+            json!({
+                "group_id":group.group_id,"actor_id":"user","by":"user",
+                "capability_id":"skill:cccc:self-evolution","scope":"group","blocked":true,
+            })
+            .as_object()
+            .cloned()
+            .expect("block args"),
+        )
+        .await
+        .expect("block skill");
+        let blocked = super::call_with_context(
+            &home,
+            &client,
+            "cccc_capability_use",
+            args("skill:cccc:self-evolution"),
+            context(&group.group_id),
+            false,
+        )
+        .await
+        .expect("use blocked skill");
+        assert_eq!(blocked["structuredContent"]["enabled"], false);
+        assert!(blocked["structuredContent"].get("capsule_text").is_none());
+
+        daemon_task.abort();
     }
 
     #[tokio::test]

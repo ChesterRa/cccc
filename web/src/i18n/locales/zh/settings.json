@@ -314,7 +314,7 @@
     "manageActorAssignmentsFailed": "保存智能体适用范围失败。",
     "manageActorActivationFailed": "未能为选中的智能体启用这个 skill。",
     "manageActorActivationFailedWithReason": "未能为选中的智能体启用这个 skill：{{reason}}",
-    "manageAutoloadHint": "用下面的复选框选择会自动使用这个 skill 的智能体。来自 profile 的适用只在这里提示，需要到“智能体配置库”里管理。",
+    "manageAutoloadHint": "用下面的复选框选择拿到这个 skill 的智能体：它们启动时能查到它，并可以读取其中的规则。来自 profile 的适用只在这里提示，需要到“智能体配置库”里管理。",
     "manageProvenanceTitle": "来源与记录",
     "manageProvenanceHint": "显示这个生成 skill 的来源、最近导入时间，以及智能体当前是否可以使用它。",
     "manageProvenanceSource": "来源",

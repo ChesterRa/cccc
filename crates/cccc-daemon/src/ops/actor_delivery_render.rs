@@ -136,15 +136,16 @@ fn protocol_lines(group: &GroupDoc, event: &Event) -> Vec<String> {
     lines
 }
 
+/// Covers what senders can send in one message: ten files, or sixteen over Connect.
+const MAX_LISTED_ATTACHMENTS: usize = 16;
+
 fn attachment_lines(event: &Event) -> Vec<String> {
     let attachments = event
         .data
         .get("attachments")
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .take(8)
-        .collect::<Vec<_>>();
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     if attachments.is_empty() {
         return Vec::new();
     }
@@ -152,7 +153,7 @@ fn attachment_lines(event: &Event) -> Vec<String> {
         "[cccc] Attachments: use cccc_file(action=\"read\", group_id=\"{}\", rel_path=...) for text, PNG/JPEG/WebP images, PDF and PPTX; use action=\"info\" for other file metadata.",
         event.group_id
     )];
-    for item in attachments {
+    for item in attachments.iter().take(MAX_LISTED_ATTACHMENTS) {
         let path = item.get("path").and_then(Value::as_str).unwrap_or_default();
         let title = item
             .get("title")
@@ -163,6 +164,13 @@ fn attachment_lines(event: &Event) -> Vec<String> {
         lines.push(format!(
             "- {} ({bytes} bytes) [{path}]",
             compact(title, 120)
+        ));
+    }
+    if attachments.len() > MAX_LISTED_ATTACHMENTS {
+        lines.push(format!(
+            "- {} more: cccc_message_history(event_id=\"{}\") lists all in message.data.attachments",
+            attachments.len() - MAX_LISTED_ATTACHMENTS,
+            event.id
         ));
     }
     lines
@@ -328,6 +336,33 @@ mod tests {
     }
 
     #[test]
+    fn attachments_are_all_listed_up_to_the_largest_message_a_sender_can_send() {
+        let event = |count: usize| {
+            let mut event = Event::new("chat.message", "g_test");
+            event.id = "event-123".into();
+            event.data = json!({
+                "attachments":(0..count)
+                    .map(|index| json!({"path":format!("state/blobs/{index}"),"title":"f","bytes":1}))
+                    .collect::<Vec<_>>(),
+            })
+            .as_object()
+            .cloned()
+            .expect("object");
+            event
+        };
+
+        let listed = attachment_lines(&event(MAX_LISTED_ATTACHMENTS));
+        assert_eq!(listed.len(), MAX_LISTED_ATTACHMENTS + 1);
+        assert!(listed.last().expect("last").contains("state/blobs/15"));
+
+        let over = attachment_lines(&event(MAX_LISTED_ATTACHMENTS + 2));
+        assert_eq!(over.len(), MAX_LISTED_ATTACHMENTS + 2);
+        let note = over.last().expect("note");
+        assert!(note.starts_with("- 2 more: "));
+        assert!(note.contains("cccc_message_history(event_id=\"event-123\")"));
+    }
+
+    #[test]
     fn renders_complete_delivery_contract() {
         let mut event = Event::new("chat.message", "g_test");
         event.id = "event-123".into();
@@ -475,7 +510,7 @@ mod tests {
 
         let rendered = render_batch(&test_group(), &[event]).expect("rendered");
         assert!(rendered.contains("[cccc] Slash command: /install"));
-        assert!(rendered.contains("skill:cccc:install"));
+        assert!(!rendered.contains("skill:cccc:install"));
         assert!(rendered.contains("cccc_capability_install"));
         assert!(rendered.contains("owner/repo"));
         assert!(!rendered.contains("]: /install owner/repo"));

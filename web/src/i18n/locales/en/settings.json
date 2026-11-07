@@ -317,7 +317,7 @@
     "manageActorAssignmentsFailed": "Failed to save agent assignments.",
     "manageActorActivationFailed": "Failed to activate this skill for the selected agent.",
     "manageActorActivationFailedWithReason": "Failed to activate this skill for the selected agent: {{reason}}",
-    "manageAutoloadHint": "Use the checkboxes below to choose which agents will automatically use this skill. Profile-inherited use is shown for awareness and managed in Agent Profiles.",
+    "manageAutoloadHint": "Use the checkboxes below to choose which agents get this skill: they can find it when they start and read its rules. Profile-inherited use is shown for awareness and managed in Agent Profiles.",
     "manageProvenanceTitle": "Provenance",
     "manageProvenanceHint": "Where this generated skill came from, when it was last imported, and whether agents may use it.",
     "manageProvenanceSource": "Source",

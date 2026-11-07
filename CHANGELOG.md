@@ -56,6 +56,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- Skills reach the agent again in this version. A skill chosen from the `/` menu sent the agent to
+  look for its rules in a place that no longer held them, and a skill assigned to an agent was never
+  mentioned to that agent. `cccc_capability_use` now returns a skill's rules, and `cccc_bootstrap`
+  lists the skills an agent may use. The settings text no longer says an assigned agent uses a skill
+  automatically: the agent can find the skill and read its rules.
+- `/install` now tells the agent which tool to use instead of naming a skill that no longer exists,
+  a Voice Secretary request no longer sends the agent to an inbox that does not hold it, and a
+  reminder about due replies names the messages.
+- An agent shown a message with more than eight files used to see only the first eight, with no sign
+  of the rest. It now sees up to sixteen, and how many more there are.
 - While the daemon is starting, `cccc` and `cccc web` now keep checking for its answer for a few
   seconds before reporting that it is not answering. Before, one failed check was enough, and the
   report could offer to stop a healthy daemon.

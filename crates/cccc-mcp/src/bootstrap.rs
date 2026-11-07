@@ -12,6 +12,8 @@ use crate::router::daemon;
 const RECOVERY_TOKEN_BUDGET: usize = 1_100;
 const STALE_AFTER_SECONDS: i64 = 20 * 60;
 const MIND_HOT_ONLY_UPDATE_THRESHOLD: u64 = 3;
+const MAX_LISTED_SKILLS: usize = 8;
+
 pub(crate) async fn build(
     home: &HomeLayout,
     client: &DaemonClient,
@@ -110,8 +112,58 @@ pub(crate) async fn build(
     {
         payload["mail_pending"] = pending;
     }
+    // Bootstrap must survive a failed read; the agent only misses the list of skills.
+    let capabilities = daemon(
+        client,
+        "capability_state",
+        request_args(&group_id, &actor_id, binding, native_binding),
+    )
+    .await
+    .unwrap_or_default();
+    if let Some(skills) = available_skills(&capabilities) {
+        payload["available_skills"] = skills;
+    }
     crate::local_tools::revalidate(home, &args)?;
     Ok(payload)
+}
+
+/// The skills this agent may use, assigned ones first. An assigned skill counts before
+/// the agent restarts, since using it enables it. The agent is told only that they
+/// exist: their rules can be long, and most tasks need none of them.
+fn available_skills(capabilities: &Map<String, Value>) -> Option<Value> {
+    let mut seen = std::collections::BTreeSet::new();
+    let skills = ["autoload_skills", "active_capsule_skills"]
+        .iter()
+        .filter_map(|key| capabilities.get(*key).and_then(Value::as_array))
+        .flatten()
+        .filter(|skill| seen.insert(skill["capability_id"].to_string()))
+        .collect::<Vec<_>>();
+    if skills.is_empty() {
+        return None;
+    }
+    let listed = skills
+        .iter()
+        .take(MAX_LISTED_SKILLS)
+        .map(|skill| {
+            let description = skill["description_short"].as_str().unwrap_or_default();
+            json!({
+                "capability_id": skill["capability_id"],
+                "name": skill["name"],
+                "description": description.chars().take(160).collect::<String>(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut result = json!({
+        "skills": listed,
+        "note": "For the tasks they fit. cccc_capability_use(capability_id=...) returns a skill's rules in capsule_text.",
+    });
+    if skills.len() > MAX_LISTED_SKILLS {
+        result["omitted"] = json!({
+            "count": skills.len() - MAX_LISTED_SKILLS,
+            "list": "cccc_capability_use(tool_name=\"cccc_capability_state\")",
+        });
+    }
+    Some(result)
 }
 
 fn assemble_payload(
@@ -1267,6 +1319,55 @@ mod tests {
         );
         assert!(payload.get("group").is_none());
         assert!(payload.get("context").is_none());
+    }
+
+    #[test]
+    fn available_skills_lists_assigned_ones_first_without_their_rules() {
+        let skill = |id: &str| {
+            json!({
+                "capability_id": id,
+                "name": id,
+                "description_short": "d".repeat(200),
+                "capsule_text": "rules",
+                "capsule_preview": "rules",
+            })
+        };
+        let state = json!({
+            "autoload_skills": [skill("skill:assigned")],
+            "active_capsule_skills": [skill("skill:group"), skill("skill:assigned")],
+        });
+
+        let result = available_skills(state.as_object().expect("state")).expect("skills");
+        let skills = result["skills"].as_array().expect("list");
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill["capability_id"].as_str().expect("id"))
+                .collect::<Vec<_>>(),
+            ["skill:assigned", "skill:group"]
+        );
+        assert_eq!(skills[0]["description"].as_str().expect("text").len(), 160);
+        assert!(skills[0].get("capsule_text").is_none());
+        assert!(skills[0].get("capsule_preview").is_none());
+        assert!(result.get("omitted").is_none());
+    }
+
+    #[test]
+    fn available_skills_says_how_many_it_left_out() {
+        let many = (0..20)
+            .map(|index| json!({"capability_id":format!("skill:{index}"),"name":"n"}))
+            .collect::<Vec<_>>();
+        let state = json!({"active_capsule_skills":many});
+
+        let result = available_skills(state.as_object().expect("state")).expect("skills");
+
+        assert_eq!(
+            result["skills"].as_array().expect("list").len(),
+            MAX_LISTED_SKILLS
+        );
+        assert_eq!(result["omitted"]["count"], 12);
+        assert!(available_skills(&Map::new()).is_none());
     }
 
     #[test]

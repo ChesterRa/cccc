@@ -48,15 +48,14 @@ pub(crate) fn delivery_text(event: &Event) -> Option<String> {
         .and_then(Value::as_str)
         .unwrap_or("unspecified");
     Some(format!(
-        "[cccc] Slash command: /install\n[cccc] Capability: {CAPABILITY_ID}\n\n\
-Use the CCCC install skill to route the request through the CCCC capability lifecycle.\n\
-Default action: call cccc_capability_install for the target with scope=group.\n\
+        "[cccc] Slash command: /install\n\n\
+Install the target through the CCCC capability lifecycle.\n\
+Default action: cccc_capability_use(tool_name=\"cccc_capability_install\", tool_arguments={{\"target\":\"...\",\"scope\":\"group\"}}). Only the foreman can use group scope; if it is refused, say so.\n\
 The install operation must import registry records from capability ids, repos, URLs, or local SKILL.md paths; enable group scope; and return use-ready capability ids.\n\
 Any activate, assign, autoload, or use step must operate on the imported CCCC capability record.\n\
 Do not bypass the registry by installing into Codex's local skills directory.\n\n\
 Request:\n- Raw arguments: {}\n- Primary target: {}\n- Parser target hint: {target_kind}\n\n\
-Route this request through {CAPABILITY_ID}. The skill definition is the source of truth for classification, install path, policy checks, and verification.\n\
-Treat the parser target hint as non-authoritative; re-classify the request from the skill instructions.",
+Treat the parser target hint as non-authoritative; classify the request yourself.",
         if args.is_empty() { "(none)" } else { args },
         if target.is_empty() { "(none)" } else { target },
     ))
@@ -177,5 +176,7 @@ mod tests {
         assert!(text.contains("imported CCCC capability record"));
         assert!(text.contains("Codex's local skills directory"));
         assert!(text.contains("Treat the parser target hint as non-authoritative"));
+        assert!(text.contains("tool_name=\"cccc_capability_install\""));
+        assert!(!text.contains(CAPABILITY_ID), "no such skill exists");
     }
 }

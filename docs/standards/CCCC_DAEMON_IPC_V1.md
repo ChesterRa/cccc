@@ -1230,6 +1230,13 @@ capsule command such as `/cccc-self-evolution`, it sends the canonical task
 keeps the existing daemon validation contract compatible across independently restarted Web and
 daemon processes.
 
+The daemon turns the dispatch into a hidden actor turn that names the command and capability. The
+actor reads the skill's rules from MCP `cccc_capability_use`, which returns them as `capsule_text`
+for an enabled `skill:*` capability. `cccc_bootstrap.available_skills` lists up to eight skills
+assigned to the caller or active for it, without their rules, and counts any it left out. It is
+absent when there are none or the capability state could not be read. An assigned skill is listed
+before the actor restarts, because `cccc_capability_use` enables it when used.
+
 #### `capability_import`
 
 Import one normalized capability record prepared by the caller (agent-driven parsing), then optionally enable it.
@@ -1263,8 +1270,8 @@ Notes:
     in the comparison. `import_action` is the primary create/update/unchanged signal; `record_changed` only compares
     existing records. `already_active` is pre-import state; `active_after_import` is the post-import runnable binding.
 13. If `readiness_preview.preview_status=active` or `active_after_import=true`, agents must not re-enable the same skill
-    just to refresh its capsule text. Use `capability_state.active_capsule_skills[].capsule_text` for full post-import
-    verification; `capsule_preview` is only a compact display summary.
+    just to refresh its capsule text. Use `capability_state` to confirm it is active and `capability_search` by ID to
+    read the full registered text; `capsule_preview` is only a compact display summary.
 
 Args:
 ```ts

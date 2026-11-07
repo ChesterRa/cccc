@@ -317,7 +317,7 @@
     "manageActorAssignmentsFailed": "エージェント割り当ての保存に失敗しました。",
     "manageActorActivationFailed": "選択したエージェントでこの skill を有効化できませんでした。",
     "manageActorActivationFailedWithReason": "選択したエージェントでこの skill を有効化できませんでした: {{reason}}",
-    "manageAutoloadHint": "下のチェックボックスでこの skill を自動使用するエージェントを選びます。プロファイル経由の適用はここでは表示のみで、エージェントプロファイルで管理します。",
+    "manageAutoloadHint": "下のチェックボックスでこの skill を渡すエージェントを選びます。エージェントは起動時にこの skill を確認でき、ルールを読むことができます。プロファイル経由の適用はここでは表示のみで、エージェントプロファイルで管理します。",
     "manageProvenanceTitle": "出所と記録",
     "manageProvenanceHint": "この生成 skill の source、最後の import 時刻、エージェントが使用できるかどうかを表示します。",
     "manageProvenanceSource": "Source",

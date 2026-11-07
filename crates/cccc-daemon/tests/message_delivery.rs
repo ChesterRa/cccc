@@ -1212,7 +1212,7 @@ fn slash_skill_dispatch_persists_hidden_control_contract_and_replays_by_client_i
     assert!(text.starts_with("[CCCC] INTERNAL CONTROL"));
     assert!(text.contains("skill_command: /using-superpowers"));
     assert!(text.contains("capability_id: skill:test:using-superpowers"));
-    assert!(text.contains("run `cccc_help` first"));
+    assert!(text.contains("call `cccc_capability_use` with this capability_id"));
     assert!(text.ends_with("User task:\n开始执行"));
     assert_eq!(event.data["attachments"], json!([]));
     assert!(event.data.get("task_text").is_none());

@@ -120,9 +120,8 @@ fn render_actor_turn(task_text: &str, command: &str, capability_id: &str) -> Str
         format!("skill_command: {command}"),
         format!("capability_id: {capability_id}"),
         concat!(
-            "Procedure: run `cccc_help` first to refresh Active Skills (Runtime); if needed, ",
-            "check `cccc_capability_state` to confirm active_capsule_skills; then execute the ",
-            "user task per that CCCC skill's runtime rules."
+            "Procedure: call `cccc_capability_use` with this capability_id; it returns the ",
+            "skill's rules in `capsule_text`. Then carry out the user task by those rules."
         )
         .to_owned(),
         format!("User task:\n{task_text}"),
@@ -135,7 +134,7 @@ mod tests {
     use super::render_actor_turn;
 
     #[test]
-    fn renders_python_compatible_actor_control_turn() {
+    fn the_actor_turn_says_where_the_skill_rules_are() {
         let rendered = render_actor_turn(
             "开始执行",
             "/using-superpowers",
@@ -144,7 +143,8 @@ mod tests {
         assert!(rendered.starts_with("[CCCC] INTERNAL CONTROL"));
         assert!(rendered.contains("skill_command: /using-superpowers"));
         assert!(rendered.contains("capability_id: skill:agent_self_proposed:using-superpowers"));
-        assert!(rendered.contains("run `cccc_help` first"));
+        assert!(rendered.contains("call `cccc_capability_use` with this capability_id"));
+        assert!(rendered.contains("`capsule_text`"));
         assert!(rendered.ends_with("User task:\n开始执行"));
     }
 }
