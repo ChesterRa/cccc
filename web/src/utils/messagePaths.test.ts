@@ -14,6 +14,68 @@ it("finds relative and in-scope absolute files, leaving line numbers outside", (
   ]);
 });
 
+it("finds non-ASCII path components without taking adjacent prose", () => {
+  const examples = [
+    {
+      root: "/home/dodd/dev/maniau",
+      text: "WSL 里的路径：/home/dodd/dev/maniau/.local/video-prep-20261107/to-maker/全片-v8c.mp4",
+      paths: [".local/video-prep-20261107/to-maker/全片-v8c.mp4"],
+    },
+    { root: "/home/项目", text: "看/home/项目/文件/说明.md里的内容", paths: ["文件/说明.md"] },
+    { root: "/repo", text: "改了docs/说明.md里的说明", paths: ["docs/说明.md"] },
+    { root: "/repo", text: "docs/a.md和docs/b.md", paths: ["docs/a.md", "docs/b.md"] },
+    { root: "/repo", text: "更新了CHANGELOG和docs/guide.md", paths: ["docs/guide.md"] },
+    { root: "/repo", text: "foo.md/视频.mp4", paths: ["foo.md/视频.mp4"] },
+    { root: "C:\\Repo", text: "C:\\Repo\\视频\\全片.mp4", paths: ["视频/全片.mp4"] },
+  ];
+  for (const { root, text, paths } of examples) {
+    const ranges = findMessagePathRanges(text, root);
+    expect(
+      ranges.map((range) => range.path),
+      text,
+    ).toEqual(paths);
+  }
+});
+
+it("does not misidentify Unicode path fragments, extended names, or URLs", () => {
+  for (const text of [
+    "docs/全片.mp4x",
+    "视频/全片.mp4",
+    "/other/目录/全片.mp4",
+    "../docs/全片.mp4",
+    "~/.cccc/说明.md",
+    "https://example.test/docs/说明.md",
+  ]) {
+    expect(findMessagePathRanges(text, "/repo"), text).toEqual([]);
+  }
+});
+
+it("leaves a Windows network path as text in a POSIX workspace", () => {
+  const text = String.raw`电脑上直接打开：\\wsl.localhost\Ubuntu-24.04\home\dodd\dev\maniau.local\video-prep-20261107\to-maker\全片-v8c.mp4`;
+  expect(findMessagePathRanges(text, "/home/dodd/dev/maniau")).toEqual([]);
+});
+
+it("ends a Unicode path before fullwidth parentheses", () => {
+  const text =
+    "其他：文件：.local/video-prep-20261107/remotion/out/to-maker/全片-v8c.mp4（2 分 59.5 秒，在 3 分钟以内）";
+  const ranges = findMessagePathRanges(text, "/home/dodd/dev/maniau");
+  expect(ranges.map((range) => [text.slice(range.start, range.end), range.path])).toEqual([
+    [
+      ".local/video-prep-20261107/remotion/out/to-maker/全片-v8c.mp4",
+      ".local/video-prep-20261107/remotion/out/to-maker/全片-v8c.mp4",
+    ],
+  ]);
+});
+
+it("uses the exact Unicode path bounds and leaves line numbers and prose outside", () => {
+  const text = "😀看docs/𠮷野/说明.md:9和/repo/视频/全片.mp4的结果";
+  const ranges = findMessagePathRanges(text, "/repo");
+  expect(ranges.map((range) => [text.slice(range.start, range.end), range.path])).toEqual([
+    ["docs/𠮷野/说明.md", "docs/𠮷野/说明.md"],
+    ["/repo/视频/全片.mp4", "视频/全片.mp4"],
+  ]);
+});
+
 it("leaves URLs, outside paths, traversal and unsupported names as text", () => {
   const text =
     "https://example.test/docs/a.md /other/a.md ../secrets/a.md ~/.cccc/a.md name.md docs/data.exe";

@@ -31,8 +31,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   Group's files, and Markdown and text from `raw.githubusercontent.com` or
   `gist.githubusercontent.com`. A preview loads when you click its link, and other links open in a
   new tab.
-- A path with a directory, such as `docs/guide/web-ui.md`, opens a supported file in Files, as it is
-  now rather than when the message was sent. So does a Markdown link to a file in the workspace.
+- A path with a directory, such as `docs/guide/web-ui.md` or `out/全片.mp4`, opens a supported file in
+  Files, as it is now rather than when the message was sent. So does a Markdown link to a file in the
+  workspace. Names may use letters in any language. Put a path in inline code when a name has spaces
+  or symbols other than `.`, `-` and `_`, or when a relative path starts with a folder named in
+  letters other than A to Z; otherwise it may be missed or only partly marked.
 
 ### Changed
 

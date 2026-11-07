@@ -1136,10 +1136,13 @@ a link to one of this Group's files opens there with its download. Other links, 
 on another site, open in a new tab. Ctrl, ⌘, Shift and the middle button keep their usual
 behavior.
 
-A path with a directory, such as `docs/guide/web-ui.md` or `src/main.rs:12`, opens a supported file
-in **Files**, as it is now rather than when the message was sent, and so does a Markdown link to a
-file in the workspace. A path in inline code may contain spaces or non-ASCII names. Paths
-outside the Group's active scope stay plain text, and so do paths in a relayed message or a message
+A path with a directory, such as `docs/guide/web-ui.md`, `out/全片.mp4` or `src/main.rs:12`, opens a
+supported file in **Files**, as it is now rather than when the message was sent, and so does a
+Markdown link to a file in the workspace. Names may use letters and digits of any language. Put a
+path in inline code when a name has spaces or symbols other than `.`, `-` and `_`, or when a relative
+path starts with a folder named in letters other than A to Z; otherwise it may be missed or only
+partly marked.
+Paths outside the Group's active scope stay plain text, and so do paths in a relayed message or a message
 from another scope, where the same path would mean a different file.
 
 ### Message diagrams
