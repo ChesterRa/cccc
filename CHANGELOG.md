@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.51]
+
 ### Added
 
 - DeepSeek Agents have a **DeepSeek connection** form for the API address, the model and the API
@@ -40,7 +42,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 - Workspace files, message attachments and Presentation slots now open as tabs in one resource
   panel. It replaces the file editor over the messages, the full-window image, video and document
-  preview, and the side-by-side Presentation viewer. Opening something already open selects its tab.
+  preview, and the docked Presentation viewer. Opening something already open selects its tab.
   The panel sits in the right column or over the message list, a choice this browser remembers; it
   can be maximized, and collapsing it keeps its tabs, with their number on the header's resource
   button. Many tabs scroll sideways; **All** lists them with a filter and the recently closed ones,
@@ -126,9 +128,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - Help and the Automation editor said an idle Group stops all automation. Only the built-in
   stand-up's scheduled runs pause; other rules run as configured, and **Run now** still works.
 - A message whose only Markdown is simple bold text now shows the bold instead of the asterisks.
-- Messages from other participants that arrive while a full-screen diagram or another window that
-  covers the chat, such as Settings, Search or Context, now count as unread, as they already did
-  while a workspace file was open. On phones this includes dialogs that fill the screen.
+- Messages from other participants now count as unread when they arrive while a full-screen diagram
+  or another window covers the chat, such as Settings, Search or Context, as they already did while
+  a workspace file was open. On phones this includes dialogs that fill the screen.
 
 ### Security
 
@@ -151,9 +153,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   proxy. CCCC turns on Node's built-in proxy support for the DeepSeek process unless
   `NODE_USE_ENV_PROXY` is set, so on a Node version that has it, with `HTTP_PROXY` or `HTTPS_PROXY`
   set (in either case) and no loopback exclusion in `NO_PROXY`, a request to a gateway on this
-  machine, API key included, could go through the proxy. CCCC now adds that host to the `NO_PROXY` list the process
-  actually uses, keeping the list's other entries; a list of `*` already bypasses every proxy, and
-  other addresses keep your proxy settings.
+  machine, API key included, could go through the proxy. CCCC now adds that host to the `NO_PROXY`
+  list the process actually uses, keeping the list's other entries; a list of `*` already bypasses
+  every proxy, and other addresses keep your proxy settings.
 - When a DeepSeek turn fails, each private value the Agent was started with, and a
   `DEEPSEEK_API_KEY` taken from the daemon's environment, is replaced by `[redacted]` wherever it
   appears in full before the error is saved. Before, a gateway that repeated the key in its error
