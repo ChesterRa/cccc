@@ -310,6 +310,16 @@ fn credential_failure_is_structured_secret_free_and_stops_runtime() {
             "credential_rejected",
             "DeepSeek API credential was rejected",
         ),
+        (
+            "Internal error: turn failed: Authentication Fails, Your api key: fixture-key is invalid",
+            "credential_rejected",
+            "DeepSeek API credential was rejected",
+        ),
+        (
+            "Internal error: turn failed: Unauthorized",
+            "credential_rejected",
+            "DeepSeek API credential was rejected",
+        ),
     ] {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -322,7 +332,7 @@ elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
 else
   rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  printf '{"jsonrpc":"2.0","id":%s,"error":{"message":"no API key for DEEPSEEK_API_KEY; diagnostic=should-not-leak"}}\n' "${rid:-3}"
+  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"no API key for DEEPSEEK_API_KEY","data":"diagnostic=should-not-leak"}}\n' "${rid:-3}"
 fi
 done"#.replace("no API key for DEEPSEEK_API_KEY", message);
         let mut actor = Actor::new("deepseek");
@@ -358,8 +368,110 @@ done"#.replace("no API key for DEEPSEEK_API_KEY", message);
         assert!(events.contains("environment"));
         assert!(events.contains(expected));
         assert!(!events.contains("should-not-leak"));
+        assert!(!events.contains("fixture-key"));
         stop(&group.group_id, &actor.id);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn unknown_provider_error_keeps_diagnostic_but_redacts_launch_secrets() {
+    let temp = tempfile::tempdir().expect("isolated fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("deepseek diagnostic", "").expect("group");
+    let script = r#"attempt=0
+while IFS= read -r line; do
+if printf '%s' "$line" | grep -q '"method":"initialize"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fake"}}}'
+elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
+else
+  rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  attempt=$((attempt + 1))
+  if [ "$attempt" -eq 1 ]; then
+    printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"HTTP 404 model fixture_private_model was not found; key fixture_old_key","data":{"nested":["fixture_private_model", "fixture_old_key"]}}}\n' "${rid:-3}"
+  else
+    printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"max_tokens","detail":"fixture_old_key"}}\n' "${rid:-3}"
+  fi
+fi
+done"#;
+    let mut actor = Actor::new("deepseek");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.command = vec!["sh".into(), "-c".into(), script.into()];
+    actor
+        .env
+        .insert("DEEPSEEK_API_KEY".into(), "fixture_old_key".into());
+    actor
+        .env
+        .insert("DEEPSEEK_MODEL".into(), "fixture_private_model".into());
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save");
+    start_with_private_values(
+        &home,
+        &group,
+        &actor,
+        temp.path(),
+        vec!["fixture_private_model".into()],
+    )
+    .expect("start fake ACP");
+    crate::ops::actor_secrets::replace(
+        &home,
+        &group.group_id,
+        &actor.id,
+        [("DEEPSEEK_API_KEY".into(), "fixture_new_key".into())].into(),
+    )
+    .expect("change saved key while actor runs");
+    let mut event = Event::new("chat.message", &group.group_id);
+    event.by = "user".into();
+    event.data = serde_json::json!({"to":["deepseek"],"text":"hello"})
+        .as_object()
+        .cloned()
+        .expect("event data");
+    let reason = match super::deliver(&home, &group, &actor, &event, &AtomicBool::new(false)) {
+        TurnDelivery::Failed(reason) => reason,
+        other => panic!("expected provider failure, got {other:?}"),
+    };
+    assert!(reason.contains("HTTP 404 model"));
+    assert!(reason.contains("was not found"));
+    assert!(reason.contains("[redacted]"));
+    assert!(!manual_restart_required(&home, &group, &actor));
+    assert!(running(&group.group_id, &actor.id));
+    crate::ops::runtime_delivery::append_state(
+        &home,
+        &group.group_id,
+        &actor.id,
+        &actor.created_at,
+        &event.id,
+        "deepseek",
+        crate::ops::runtime_delivery::DeliveryOutcome::Failed(&reason),
+    )
+    .expect("write delivery reason");
+    assert!(matches!(
+        super::deliver(&home, &group, &actor, &event, &AtomicBool::new(false)),
+        TurnDelivery::Failed(_)
+    ));
+    let journal = std::fs::read_to_string(
+        store
+            .state_dir(&group.group_id)
+            .expect("state")
+            .join("headless/events.jsonl"),
+    )
+    .expect("headless events");
+    assert!(journal.contains("max_tokens"));
+    for path in [
+        store
+            .state_dir(&group.group_id)
+            .expect("state")
+            .join("headless/events.jsonl"),
+        store.ledger_path(&group.group_id).expect("ledger"),
+    ] {
+        let contents = std::fs::read_to_string(path).expect("persisted events");
+        assert!(contents.contains("HTTP 404 model"));
+        assert!(!contents.contains("fixture_old_key"));
+        assert!(!contents.contains("fixture_private_model"));
+    }
+    stop(&group.group_id, &actor.id);
 }
 
 #[cfg(unix)]

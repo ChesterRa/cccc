@@ -1,7 +1,7 @@
 import type { ActorSecretChanges } from "./actorSecretManagerModel";
 
 export const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
-export const DEEPSEEK_MODEL = "deepseek-v4-1-flash";
+export const DEEPSEEK_MODEL = "deepseek-flash";
 export const DEEPSEEK_SETTING_KEYS = [
   "DEEPSEEK_BASE_URL",
   "DEEPSEEK_MODEL",
@@ -16,6 +16,13 @@ export function normalizeDeepSeekSettings(changes: ActorSecretChanges): ActorSec
       .replace(/\/chat\/completions$/, "");
   }
   if (setVars.DEEPSEEK_MODEL !== undefined) setVars.DEEPSEEK_MODEL = setVars.DEEPSEEK_MODEL.trim();
+  // A pasted key often carries a trailing newline, which the provider rejects.
+  if (setVars.DEEPSEEK_API_KEY !== undefined)
+    setVars.DEEPSEEK_API_KEY = setVars.DEEPSEEK_API_KEY.trim();
+  // A field left blank keeps the saved value, so one that trims to nothing is not a new value.
+  for (const key of DEEPSEEK_SETTING_KEYS) {
+    if (setVars[key] !== undefined && !setVars[key]) delete setVars[key];
+  }
   return { ...changes, setVars };
 }
 

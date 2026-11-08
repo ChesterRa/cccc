@@ -8,6 +8,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Added
 
+- DeepSeek Agents have a **DeepSeek connection** form for the API address, the model and the API
+  key, both when an Agent is created and in its Runtime settings; a Runtime Profile saved from the
+  form carries the same values. They go into the Agent's write-only private environment. Without a
+  saved value, an Agent uses `DEEPSEEK_BASE_URL` and `DEEPSEEK_MODEL` from the environment it starts
+  with (its own environment settings first, then the daemon's), and otherwise
+  `https://api.deepseek.com` and `deepseek-flash`, the name DeepSeek's API documentation gives for
+  its current Flash model. CCCC used to send `deepseek-v4-flash`, an older name DeepSeek says it
+  still routes to that model for now. **Use default** removes the Agent's saved address or model. An
+  address ending in `/chat/completions` is turned into its base URL, and a key pasted with spaces or
+  a newline around it is trimmed. A missing API key, or an authentication failure CCCC recognizes
+  (such as DeepSeek rejecting the key), stops the DeepSeek process and pauses automatic delivery
+  until you launch or restart the Agent; its pending messages are tried again after a successful
+  start. Custom gateways must support DeepSeek's streaming Chat Completions and tool calls.
 - A question's card lets you add a note to the option you choose: **+ Add a note (optional)** beside
   **Send answer** opens a box, and the requester receives the choice and your words in one reply,
   the choice line, a blank line and `Note:` with your text as written. A blank note sends the choice
@@ -82,6 +95,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - The Capability Center and the member and profile pickers describe CCCC's built-in capabilities in
   English, Chinese or Japanese. Their names stay as they are, so search still finds them.
 
+### Removed
+
+- The **Terminal history** button and panel on each Agent's terminal are removed. To look back, use
+  the Runtime terminal's own scrolling; a runtime that redraws its screen in place may keep no
+  earlier output there. Agents can still read retained terminal output through `cccc_terminal`,
+  within what the Group's terminal visibility allows.
+
 ### Fixed
 
 - After CCCC is updated, an open page that fails to load one of its parts no longer reloads itself
@@ -127,6 +147,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   `state/capabilities/catalog.json` and were visible through the capability overview and to agents
   in other Groups through capability search. If you installed a skill that way, replace those
   credentials; entries saved before stay on disk as they are.
+- A DeepSeek Agent whose API address is a literal loopback address now reaches it without a system
+  proxy. CCCC turns on Node's built-in proxy support for the DeepSeek process unless
+  `NODE_USE_ENV_PROXY` is set, so on a Node version that has it, with `HTTP_PROXY` or `HTTPS_PROXY`
+  set (in either case) and no loopback exclusion in `NO_PROXY`, a request to a gateway on this
+  machine, API key included, could go through the proxy. CCCC now adds that host to the `NO_PROXY` list the process
+  actually uses, keeping the list's other entries; a list of `*` already bypasses every proxy, and
+  other addresses keep your proxy settings.
+- When a DeepSeek turn fails, each private value the Agent was started with, and a
+  `DEEPSEEK_API_KEY` taken from the daemon's environment, is replaced by `[redacted]` wherever it
+  appears in full before the error is saved. Before, a gateway that repeated the key in its error
+  message could have it saved in the Agent's run records and in the Group's history. The rest of
+  the error is kept, so the reason can usually still be read.
 
 ## [0.4.50]
 

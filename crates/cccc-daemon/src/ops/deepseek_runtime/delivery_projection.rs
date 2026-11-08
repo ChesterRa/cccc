@@ -19,18 +19,30 @@ pub(super) struct TurnProjection<'a> {
     pub(super) message_text: &'a str,
 }
 
-pub(super) fn normalize_turn_error(error: Value) -> (Value, bool) {
+pub(super) fn normalize_turn_error(error: Value, private_values: &[String]) -> (Value, bool) {
+    if error.is_null() {
+        return (error, false);
+    }
     let searchable = error.to_string().to_ascii_lowercase();
-    if [
-        "invalid token",
-        "invalid api key",
-        "invalid_api_key",
-        "incorrect api key",
-        "authentication failed",
-        "authentication_error",
-    ]
-    .into_iter()
-    .any(|message| searchable.contains(message))
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    let gateway_unauthorized = message.eq_ignore_ascii_case("turn failed: unauthorized")
+        || message.eq_ignore_ascii_case("internal error: turn failed: unauthorized");
+    if gateway_unauthorized
+        || [
+            "invalid token",
+            "invalid api key",
+            "invalid_api_key",
+            "incorrect api key",
+            "authentication failed",
+            "authentication fails",
+            "authentication_error",
+        ]
+        .into_iter()
+        .any(|message| searchable.contains(message))
     {
         return (
             json!({
@@ -69,7 +81,56 @@ pub(super) fn normalize_turn_error(error: Value) -> (Value, bool) {
             true,
         );
     }
-    (error, false)
+    (redact_private_values(error, private_values), false)
+}
+
+fn redact_private_values(value: Value, private_values: &[String]) -> Value {
+    fn redact(text: String, private_values: &[String]) -> String {
+        private_values
+            .iter()
+            .filter(|value| !value.is_empty())
+            .fold(text, |text, value| text.replace(value, "[redacted]"))
+    }
+
+    match value {
+        Value::String(text) => Value::String(redact(text, private_values)),
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|item| redact_private_values(item, private_values))
+                .collect(),
+        ),
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(key, value)| {
+                    (
+                        redact(key, private_values),
+                        redact_private_values(value, private_values),
+                    )
+                })
+                .collect(),
+        ),
+        Value::Number(number) => {
+            let text = number.to_string();
+            let redacted = redact(text.clone(), private_values);
+            if redacted == text {
+                Value::Number(number)
+            } else {
+                Value::String(redacted)
+            }
+        }
+        Value::Bool(boolean) => {
+            let text = boolean.to_string();
+            let redacted = redact(text.clone(), private_values);
+            if redacted == text {
+                Value::Bool(boolean)
+            } else {
+                Value::String(redacted)
+            }
+        }
+        other => other,
+    }
 }
 
 pub(super) fn agent_message_text(update: &Value) -> Option<&str> {
@@ -124,17 +185,23 @@ pub(super) fn persist_terminal(
             false,
         )
     } else {
-        normalize_turn_error(frame.get("error").cloned().unwrap_or(Value::Null))
+        normalize_turn_error(
+            frame.get("error").cloned().unwrap_or(Value::Null),
+            &holder.private_values,
+        )
+    };
+    let result = frame.get("result").cloned().unwrap_or(Value::Null);
+    let result = if failed {
+        redact_private_values(result, &holder.private_values)
+    } else {
+        result
     };
     let data = Map::from_iter([
         ("event_id".into(), json!(projection.event.id)),
         ("turn_id".into(), json!(projection.turn_id)),
         ("session_id".into(), json!(projection.session_id)),
         ("request_id".into(), json!(projection.request_id)),
-        (
-            "result".into(),
-            frame.get("result").cloned().unwrap_or(Value::Null),
-        ),
+        ("result".into(), result),
         ("error".into(), error),
         (
             "status".into(),
@@ -213,5 +280,45 @@ pub(super) fn persist_terminal(
         (false, _) => TurnDelivery::Completed,
         (true, true) => TurnDelivery::Incomplete,
         (true, false) => TurnDelivery::Failed(reason),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_turn_error;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn error_redaction_keeps_structure_and_covers_nested_values() {
+        let private = vec![
+            "long-token".to_owned(),
+            "token".to_owned(),
+            "12345".to_owned(),
+        ];
+        let (result, restart) = normalize_turn_error(
+            json!({
+                "code": -32603,
+                "message": "HTTP 404 from long-token: model not found",
+                "data": {"token": ["long-token", 12345]}
+            }),
+            &private,
+        );
+        assert!(!restart);
+        assert_eq!(result["code"], -32603);
+        assert_eq!(
+            result["message"],
+            "HTTP 404 from [redacted]: model not found"
+        );
+        assert_eq!(result["data"]["[redacted]"][0], "[redacted]");
+        assert_eq!(result["data"]["[redacted]"][1], "[redacted]");
+        assert_eq!(
+            normalize_turn_error(Value::Null, &private),
+            (Value::Null, false)
+        );
+        let (_, restart) = normalize_turn_error(
+            json!({"message":"Internal error: turn failed: Unauthorized tool action"}),
+            &[],
+        );
+        assert!(!restart);
     }
 }

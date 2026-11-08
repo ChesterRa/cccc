@@ -28,6 +28,8 @@ pub(super) struct RuntimeEntry {
     pub(super) running: AtomicBool,
     pub(super) manual_restart_required: AtomicBool,
     pub(super) generation: String,
+    // Values passed to this particular child, held only by its runtime entry.
+    pub(super) private_values: Vec<String>,
     workspace: super::actor_runtime::LaunchWorkspace,
 }
 
@@ -41,11 +43,22 @@ fn cancel_flags() -> &'static RwLock<HashMap<Key, Arc<AtomicBool>>> {
     FLAGS.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+#[cfg(test)]
 pub fn start(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
     cwd: &Path,
+) -> std::io::Result<()> {
+    start_with_private_values(home, group, actor, cwd, Vec::new())
+}
+
+fn start_with_private_values(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    cwd: &Path,
+    mut private_values: Vec<String>,
 ) -> std::io::Result<()> {
     let cwd = cwd.canonicalize()?;
     let instruction_snapshot = super::instruction_files::Snapshot::read(&cwd);
@@ -73,6 +86,12 @@ pub fn start(
         "CCCC_DEEPSEEK_SESSION_ROOT".into(),
         session_root.to_string_lossy().into_owned(),
     );
+    if let Some(key) = env.get("DEEPSEEK_API_KEY") {
+        private_values.push(key.clone());
+    }
+    private_values.retain(|value| !value.is_empty());
+    private_values.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
+    private_values.dedup();
     let command = launch_command::resolve(actor, &env)?;
     let env = env.into_iter().collect::<Vec<_>>();
     supervisor
@@ -103,6 +122,7 @@ pub fn start(
                 running: AtomicBool::new(true),
                 manual_restart_required: AtomicBool::new(false),
                 generation: generation.clone(),
+                private_values,
                 workspace: super::actor_runtime::LaunchWorkspace::capture(group, actor, &cwd),
             }),
         );

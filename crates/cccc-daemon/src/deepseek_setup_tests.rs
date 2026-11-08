@@ -181,6 +181,112 @@ fn explicit_node_proxy_setting_is_preserved() {
 }
 
 #[test]
+fn loopback_base_extends_the_effective_node_proxy_exclusions() {
+    for (base, initial, key, expected) in [
+        ("http://127.0.0.2:8000/v1", vec![], "NO_PROXY", "127.0.0.2"),
+        (
+            "http://localhost.:8000",
+            vec![("NO_PROXY", "internal.example")],
+            "NO_PROXY",
+            "internal.example,localhost.",
+        ),
+        (
+            "http://[::1]:8000",
+            vec![("NO_PROXY", "upper.example"), ("no_proxy", "lower.example")],
+            "no_proxy",
+            "lower.example,[::1]",
+        ),
+        (
+            "http://[::ffff:127.0.0.1]:8000",
+            vec![],
+            "NO_PROXY",
+            "[::ffff:7f00:1]",
+        ),
+        (
+            "http://127.0.0.1:8000",
+            vec![("NO_PROXY", "upper.example"), ("no_proxy", "")],
+            "no_proxy",
+            "127.0.0.1",
+        ),
+        (
+            "http://127.0.0.1:8000",
+            vec![("NO_PROXY", "*")],
+            "NO_PROXY",
+            "*",
+        ),
+        (
+            "http://[::1]:8000",
+            vec![("NO_PROXY", "upper.example"), ("no_proxy", "*")],
+            "no_proxy",
+            "*",
+        ),
+    ] {
+        let mut env = initial
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect::<BTreeMap<_, _>>();
+        env.insert("DEEPSEEK_BASE_URL".into(), base.into());
+        let before = env.clone();
+        bypass_proxy_for_loopback_base(&mut env);
+        assert_eq!(env.get(key).map(String::as_str), Some(expected), "{base}");
+        for (name, value) in before.iter().filter(|(name, _)| name.as_str() != key) {
+            assert_eq!(env.get(name), Some(value), "{name} changed for {base}");
+        }
+        let once = env.clone();
+        bypass_proxy_for_loopback_base(&mut env);
+        assert_eq!(env, once, "duplicate exclusion for {base}");
+    }
+}
+
+#[test]
+fn setup_passes_the_loopback_exclusion_to_the_runtime() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = test_home(temp.path());
+    let mut env = test_env(temp.path());
+    env.insert(
+        "DEEPSEEK_BASE_URL".into(),
+        "http://127.0.0.2:8000/v1".into(),
+    );
+    env.insert("NO_PROXY".into(), "internal.example".into());
+    ensure_with(
+        &home,
+        &mut env,
+        &cccc_executable(temp.path()),
+        |_home, _env| Err("installer must not run".into()),
+        |_command, env| {
+            assert_eq!(
+                env.get("NO_PROXY").map(String::as_str),
+                Some("internal.example,127.0.0.2")
+            );
+            Ok(())
+        },
+        |_command, _env| Ok(()),
+    )
+    .expect("setup");
+}
+
+#[test]
+fn remote_or_missing_base_does_not_change_proxy_exclusions() {
+    for base in [
+        None,
+        Some("https://api.deepseek.com"),
+        Some("http://localhost.example.com"),
+        Some("invalid URL"),
+    ] {
+        let mut env = BTreeMap::from([
+            ("NO_PROXY".into(), "upper.example".into()),
+            ("no_proxy".into(), "lower.example".into()),
+        ]);
+        if let Some(base) = base {
+            env.insert("DEEPSEEK_BASE_URL".into(), base.into());
+        }
+        let before = env.clone();
+        bypass_proxy_for_loopback_base(&mut env);
+        assert_eq!(env, before);
+    }
+}
+
+#[test]
 fn upgrades_three_package_managed_profile_to_full_acp_composition() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = test_home(temp.path());

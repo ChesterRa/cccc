@@ -773,6 +773,7 @@ function CreateActorConfigModal({
                           <DeepSeekConnectionFields
                             changes={deepSeekChanges}
                             initialValues={initialSecrets}
+                            creating
                             onChange={setDeepSeekChanges}
                             disabled={busy === "actor-add"}
                           />
@@ -2374,9 +2375,6 @@ function EditActorConfigModal({
                             disabled={busy === "actor-update" || secretsBusy}
                             loading={secretsRefreshing}
                             loadFailed={secretKeysLoadFailed}
-                            onSave={() => void submit(false)}
-                            onSaveAndRestart={() => void submit(true)}
-                            saveDisabled={saveDisabled || switchPending || managedSwitchBlocked}
                           />
                         ) : null}
                         <DeepSeekCommandDetails runtime={runtime}>

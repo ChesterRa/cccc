@@ -154,12 +154,33 @@ pub fn effective_values(
     group_id: &str,
     actor: &cccc_contracts::Actor,
 ) -> Result<BTreeMap<String, String>, OpError> {
+    Ok(merge_private_values(
+        actor,
+        private_values(home, group_id, actor)?,
+    ))
+}
+
+pub(super) fn private_values(
+    home: &HomeLayout,
+    group_id: &str,
+    actor: &cccc_contracts::Actor,
+) -> Result<BTreeMap<String, String>, OpError> {
     if !actor.profile_id.is_empty() {
         return super::actor_profile_runtime::profile_secrets(home, actor);
     }
+    values(home, group_id, &actor.id)
+}
+
+pub(super) fn merge_private_values(
+    actor: &cccc_contracts::Actor,
+    private: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    if !actor.profile_id.is_empty() {
+        return private;
+    }
     let mut env = actor.env.clone();
-    env.extend(values(home, group_id, &actor.id)?);
-    Ok(env)
+    env.extend(private);
+    env
 }
 
 pub fn replace(

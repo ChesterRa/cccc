@@ -1,4 +1,4 @@
-use super::{running, start, stop};
+use super::{running, start_with_private_values, stop};
 use crate::dispatch::OpError;
 use crate::ops::{actor_profile_runtime, actor_runtime, actor_secrets};
 use cccc_contracts::{Actor, ActorRuntime, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_MODEL_ENV};
@@ -24,7 +24,7 @@ pub fn apply(
 }
 
 fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
-    let mut actor = resolve_launch_actor(home, group, actor)?;
+    let (mut actor, private_env) = resolve_launch_actor(home, group, actor)?;
     actor.normalize_runtime_constraints();
     if actor.command.is_empty() {
         actor.command = cccc_runtime::default_command(actor.runtime);
@@ -40,17 +40,27 @@ fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(),
     std::fs::create_dir_all(session_root).map_err(OpError::io)?;
     preflight(&actor)?;
     let cwd = actor_runtime::working_directory(group, &actor)?;
-    start(home, group, &actor, &cwd).map_err(OpError::io)
+    let private_values = private_env
+        .values()
+        .cloned()
+        .chain(
+            private_env
+                .keys()
+                .filter_map(|key| actor.env.get(key).cloned()),
+        )
+        .collect();
+    start_with_private_values(home, group, &actor, &cwd, private_values).map_err(OpError::io)
 }
 
 fn resolve_launch_actor(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
-) -> Result<Actor, OpError> {
+) -> Result<(Actor, BTreeMap<String, String>), OpError> {
     let mut actor = actor_profile_runtime::resolve(home, actor)?;
-    actor.env = actor_secrets::effective_values(home, &group.group_id, &actor)?;
-    Ok(actor)
+    let private = actor_secrets::private_values(home, &group.group_id, &actor)?;
+    actor.env = actor_secrets::merge_private_values(&actor, private.clone());
+    Ok((actor, private))
 }
 
 fn launch_env(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> BTreeMap<String, String> {
@@ -121,9 +131,9 @@ fn setup_required(message: impl Into<String>) -> OpError {
 
 #[cfg(test)]
 mod tests {
-    use super::launch_env_from;
+    use super::{launch_env_from, resolve_launch_actor};
     use cccc_contracts::{Actor, ActorRuntime};
-    use cccc_core::{GroupStore, HomeLayout};
+    use cccc_core::{GroupStore, HomeLayout, profiles::ProfileStore};
 
     #[test]
     fn launch_environment_inherits_daemon_values_and_applies_actor_overrides() {
@@ -149,7 +159,7 @@ mod tests {
         assert_eq!(env.get("HOME").map(String::as_str), Some("/daemon/home"));
         assert_eq!(
             env.get("DEEPSEEK_MODEL").map(String::as_str),
-            Some("deepseek-v4-1-flash")
+            Some("deepseek-flash")
         );
         actor
             .env
@@ -176,7 +186,7 @@ mod tests {
         let defaults = launch_env_from([], &home, &group, &actor);
         assert_eq!(
             defaults.get("DEEPSEEK_MODEL").map(String::as_str),
-            Some("deepseek-v4-1-flash")
+            Some("deepseek-flash")
         );
         assert_eq!(
             env.get("CCCC_ACTOR_ID").map(String::as_str),
@@ -193,5 +203,66 @@ mod tests {
                     .as_ref()
             )
         );
+    }
+
+    #[test]
+    fn launch_retains_private_keys_for_custom_and_profile_actors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("deepseek private env", "").expect("group");
+        let mut actor = Actor::new("deepseek");
+        actor.runtime = ActorRuntime::Deepseek;
+        actor.env.insert("PUBLIC_SETTING".into(), "visible".into());
+        crate::ops::actor_secrets::replace(
+            &home,
+            &group.group_id,
+            &actor.id,
+            [("CUSTOM_TOKEN".into(), "fixture_private_value".into())].into(),
+        )
+        .expect("custom private env");
+        let (custom, private) = resolve_launch_actor(&home, &group, &actor).expect("custom actor");
+        assert_eq!(
+            private.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["CUSTOM_TOKEN"]
+        );
+        assert_eq!(
+            custom.env.get("PUBLIC_SETTING").map(String::as_str),
+            Some("visible")
+        );
+        assert_eq!(
+            custom.env.get("CUSTOM_TOKEN").map(String::as_str),
+            Some("fixture_private_value")
+        );
+
+        let profiles = ProfileStore::new(home.clone()).expect("profiles");
+        profiles
+            .upsert(
+                serde_json::json!({"id":"fixture-profile","runtime":"deepseek"})
+                    .as_object()
+                    .expect("profile")
+                    .clone(),
+                None,
+            )
+            .expect("profile");
+        profiles
+            .replace_secrets(
+                "fixture-profile",
+                [("PROFILE_TOKEN".into(), "fixture_profile_value".into())].into(),
+            )
+            .expect("profile private env");
+        actor.profile_id = "fixture-profile".into();
+        actor.profile_scope = "global".into();
+        let (linked, private) = resolve_launch_actor(&home, &group, &actor).expect("profile actor");
+        assert_eq!(
+            private.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["PROFILE_TOKEN"]
+        );
+        assert_eq!(
+            linked.env.get("PROFILE_TOKEN").map(String::as_str),
+            Some("fixture_profile_value")
+        );
+        assert!(!linked.env.contains_key("CUSTOM_TOKEN"));
+        assert!(!linked.env.contains_key("PUBLIC_SETTING"));
     }
 }

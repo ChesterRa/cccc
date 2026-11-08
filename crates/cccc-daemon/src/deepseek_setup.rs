@@ -61,6 +61,7 @@ fn ensure_with(
     // enabled. Preserve an explicit actor or user value when one exists.
     env.entry(NODE_USE_ENV_PROXY.into())
         .or_insert_with(|| "1".into());
+    bypass_proxy_for_loopback_base(env);
     prepend_local_bin(env, &dsh_home);
     let command = vec!["dsh-acp-demo".into()];
     if let Err(error) = external_preflight(&command, env)
@@ -111,6 +112,40 @@ fn ensure_with(
         })
     })
     .map_err(|error| error.to_string())
+}
+
+fn bypass_proxy_for_loopback_base(env: &mut BTreeMap<String, String>) {
+    let Some(url) = env
+        .get("DEEPSEEK_BASE_URL")
+        .and_then(|base| url::Url::parse(base).ok())
+        .filter(cccc_core::local_network::is_loopback_url)
+    else {
+        return;
+    };
+    let Some(host) = url.host_str() else {
+        return;
+    };
+    // Node prefers lowercase no_proxy whenever it is present, even when empty.
+    // Updating only the effective list preserves its other exclusions.
+    let key = if env.contains_key("no_proxy") {
+        "no_proxy"
+    } else {
+        "NO_PROXY"
+    };
+    let exclusions = env.entry(key.into()).or_default();
+    // Node treats a bare `*` as bypass-all, but not `*,other-host`.
+    if exclusions.as_str() == "*" {
+        return;
+    }
+    if !exclusions
+        .split(',')
+        .any(|entry| entry.trim().eq_ignore_ascii_case(host))
+    {
+        if !exclusions.is_empty() {
+            exclusions.push(',');
+        }
+        exclusions.push_str(host);
+    }
 }
 
 fn prepend_local_bin(env: &mut BTreeMap<String, String>, dsh_home: &Path) {

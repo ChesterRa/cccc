@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SecretValueInput } from "./SecretValueInput";
-import { DeepSeekPendingChanges } from "./DeepSeekPendingChanges";
 import {
   type ActorSecretChanges,
   stageActorSecretSet,
@@ -26,10 +25,9 @@ interface DeepSeekConnectionFieldsProps {
   disabled?: boolean;
   loading?: boolean;
   loadFailed?: boolean;
+  /** In the new-Agent form, the values are saved when the Agent is added. */
+  creating?: boolean;
   onChange: (changes: ActorSecretChanges) => void;
-  onSave?: () => void;
-  onSaveAndRestart?: () => void;
-  saveDisabled?: boolean;
 }
 
 export function DeepSeekConnectionFields({
@@ -39,10 +37,8 @@ export function DeepSeekConnectionFields({
   disabled = false,
   loading = false,
   loadFailed = false,
+  creating = false,
   onChange,
-  onSave,
-  onSaveAndRestart,
-  saveDisabled = false,
 }: DeepSeekConnectionFieldsProps) {
   const { t } = useTranslation("actors");
   const id = useId();
@@ -58,8 +54,17 @@ export function DeepSeekConnectionFields({
         Object.prototype.hasOwnProperty.call(changes.setVars, key) ||
         changes.unsetKeys.includes(key),
     );
+  const hasSaved = (key: string) =>
+    keys.includes(key) || Object.prototype.hasOwnProperty.call(initialValues, key);
+  // Use default removes the Agent's saved address or model rather than writing
+  // today's default into it, so a later default reaches the Agent too.
+  const resetToDefault = (key: string) => {
+    const cleared = undoActorSecretSet(undoActorSecretUnset(changes, key), key);
+    return hasSaved(key) ? stageActorSecretUnset(cleared, key) : cleared;
+  };
   const update = (key: string, value: string) => {
-    const next = value
+    // Spaces alone are not a value: a blank field keeps what is saved.
+    const next = value.trim()
       ? stageActorSecretSet(changes, key, value)
       : Object.prototype.hasOwnProperty.call(initialValues, key)
         ? stageActorSecretUnset(changes, key)
@@ -144,8 +149,13 @@ export function DeepSeekConnectionFields({
                       variant="ghost"
                       size="sm"
                       className="min-h-[44px] shrink-0 px-2 text-xs sm:min-h-[32px]"
-                      disabled={controlsDisabled}
-                      onClick={() => onChange(stageActorSecretSet(changes, key, fallback))}
+                      disabled={
+                        controlsDisabled ||
+                        (!hasSaved(key) &&
+                          !Object.prototype.hasOwnProperty.call(changes.setVars, key)) ||
+                        changes.unsetKeys.includes(key)
+                      }
+                      onClick={() => onChange(resetToDefault(key))}
                     >
                       {t("deepseek.useDefault")}
                     </Button>
@@ -184,7 +194,13 @@ export function DeepSeekConnectionFields({
                   autoCapitalize="none"
                   spellCheck={false}
                   disabled={controlsDisabled}
-                  placeholder={configured ? t("deepseek.keepSaved") : fallback}
+                  // An example, not the value in effect: the Agent's or the daemon's
+                  // environment may set another one.
+                  placeholder={
+                    configured
+                      ? t("deepseek.keepSaved")
+                      : t("deepseek.example", { value: fallback })
+                  }
                   className="font-mono"
                   onChange={(event) => update(key, event.target.value)}
                   aria-invalid={Boolean(
@@ -200,12 +216,10 @@ export function DeepSeekConnectionFields({
         <option value={DEEPSEEK_MODEL} />
         <option value="deepseek-v4-pro" />
       </datalist>
-      {hasPendingChanges ? (
-        <DeepSeekPendingChanges
-          disabled={disabled || loading || loadFailed || saveDisabled || Boolean(error)}
-          onSave={onSave}
-          onSaveAndRestart={onSaveAndRestart}
-        />
+      {creating && hasPendingChanges ? (
+        <p role="status" className="text-xs text-[var(--color-text-muted)]">
+          {t("deepseek.createPendingHint")}
+        </p>
       ) : null}
       {loading ? (
         <p role="status" className="text-xs text-[var(--color-text-muted)]">
@@ -222,6 +236,7 @@ export function DeepSeekConnectionFields({
         <div className="mt-2 space-y-2 leading-5">
           <p>{t("deepseek.hostHint")}</p>
           <p>{t("deepseek.modelHint")}</p>
+          <p>{t("deepseek.defaultHint")}</p>
           <p>{t("deepseek.keyHint")}</p>
           <p>{t("deepseek.savedHint")}</p>
           <p>{t("deepseek.compatibilityHint")}</p>

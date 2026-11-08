@@ -1245,9 +1245,8 @@ mod tests {
         assert_eq!(states, ["claimed", "failed"]);
     }
 
-    /// The provider answers every turn with the error a DeepSeek actor got
-    /// for each of its turns while its API key was rejected, copied from that
-    /// actor's runtime journal with the key suffix and request id redacted.
+    /// A non-credential provider failure is retried, then the next delivery
+    /// gets its turn instead of waiting behind the failed one forever.
     #[cfg(unix)]
     #[test]
     fn a_failed_provider_turn_releases_the_next_delivery_after_its_retry_limit() {
@@ -1266,7 +1265,7 @@ else
   if printf '%s' "$line" | grep -q NEXT_READY; then
     printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$rid"
   else
-    printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"Internal error: turn failed: Authentication Fails, Your api key: ****[redacted] is invalid (request_id: [redacted])"}}\n' "$rid"
+    printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"Internal error: turn failed: upstream stream ended (HTTP 503)"}}\n' "$rid"
   fi
 fi
 done"#;
@@ -1381,7 +1380,7 @@ done"#;
             .filter_map(|event| event.data.get("reason").and_then(serde_json::Value::as_str))
             .collect();
         assert_eq!(failures.len(), 1);
-        assert!(failures[0].contains("Authentication Fails"));
+        assert!(failures[0].contains("upstream stream ended (HTTP 503)"));
     }
 
     #[test]

@@ -1,8 +1,9 @@
 # Terminal output retention
 
-The Web terminal uses the Runtime's own scrollback for reviewing earlier output.
-Retained PTY output supports reconnects, stopped-output summaries, and diagnostic
-API queries.
+The Web terminal uses the Runtime's own scrollback for reviewing earlier output;
+a runtime that redraws its screen in place may keep no earlier output there.
+Retained PTY output supports reconnects, stopped-output summaries, and
+diagnostic API queries.
 
 Touch scrolling follows the active xterm mode. Ordinary buffers with mouse
 tracking disabled or X10 tracking scroll local history directly; X10 reports
