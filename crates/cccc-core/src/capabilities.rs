@@ -29,10 +29,23 @@ pub struct Capability {
     pub source: String,
     #[serde(default)]
     pub source_uri: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sync_state: String,
     #[serde(default = "default_qualification_status")]
     pub qualification_status: String,
     #[serde(default = "default_enable_supported")]
     pub enable_supported: bool,
+}
+
+impl Capability {
+    /// Historical search snapshots can contain a title and capsule from a
+    /// different result. An explicit import is a separate action.
+    #[must_use]
+    pub fn is_unverified_remote_search(&self) -> bool {
+        self.source == "skillsmp_remote"
+            && self.tags.iter().any(|tag| tag == "remote_search")
+            && self.sync_state != "imported"
+    }
 }
 
 fn default_qualification_status() -> String {
@@ -41,6 +54,57 @@ fn default_qualification_status() -> String {
 
 const fn default_enable_supported() -> bool {
     true
+}
+
+/// Return a source URL safe to save or show alongside a skill.
+/// Local paths and non-URL identifiers retain their existing meaning.
+#[must_use]
+pub fn public_skill_source(value: &str) -> String {
+    let candidate = value.trim();
+    let looks_http = candidate
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http:"))
+        || candidate
+            .get(..6)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https:"));
+    let Ok(mut url) = url::Url::parse(candidate) else {
+        return if looks_http {
+            String::new()
+        } else {
+            value.to_owned()
+        };
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return value.to_owned();
+    }
+    if url.set_password(None).is_err() || url.set_username("").is_err() {
+        return String::new();
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    url.into()
+}
+
+/// Strip URL credentials from the public source fields of skill records.
+pub fn redact_skill_source_record(record: &mut Value) {
+    let kind = record.get("kind").and_then(Value::as_str).unwrap_or("");
+    let is_skill = kind == "skill"
+        || (kind.is_empty()
+            && record
+                .get("capability_id")
+                .or_else(|| record.get("id"))
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.starts_with("skill:")));
+    if !is_skill {
+        return;
+    }
+    if let Some(fields) = record.as_object_mut() {
+        for key in ["source_uri", "source_record_id"] {
+            if let Some(Value::String(value)) = fields.get_mut(key) {
+                *value = public_skill_source(value);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +167,7 @@ impl CapabilityStore {
     pub fn catalog(&self) -> io::Result<Vec<Capability>> {
         self.migrate_legacy()?;
         let mut items = BTreeMap::new();
-        for capability in crate::capability_legacy::catalog(&self.home)?
+        for mut capability in crate::capability_legacy::catalog(&self.home)?
             .into_iter()
             .chain(self.load()?.custom.into_values())
             // The versioned implementation owns built-in IDs; saved catalog
@@ -112,6 +176,11 @@ impl CapabilityStore {
             // Persisted catalogs must not re-advertise the retired built-in tool pack.
             .filter(|capability| capability.id != "pack:group_bridge")
         {
+            if capability.kind == "skill"
+                || (capability.kind.is_empty() && capability.id.starts_with("skill:"))
+            {
+                capability.source_uri = public_skill_source(&capability.source_uri);
+            }
             items.insert(capability.id.clone(), capability);
         }
         Ok(items.into_values().collect())
@@ -166,6 +235,7 @@ impl CapabilityStore {
             "capsule_text":capability.capsule_text,
             "source_id":if capability.source.is_empty(){"manual_import"}else{&capability.source},
             "source_uri":capability.source_uri,
+            "sync_state":capability.sync_state,
             "qualification_status":capability.qualification_status,
             "enable_supported":capability.enable_supported
         });
@@ -174,6 +244,11 @@ impl CapabilityStore {
     }
 
     pub fn import_record(&self, mut record: Value) -> io::Result<Capability> {
+        redact_skill_source_record(&mut record);
+        self.write_record(record)
+    }
+
+    fn write_record(&self, mut record: Value) -> io::Result<Capability> {
         let capability = self.validate_record(&record)?;
         let record = record
             .as_object_mut()
@@ -188,6 +263,11 @@ impl CapabilityStore {
         record
             .entry("enable_supported")
             .or_insert_with(|| json!(true));
+        self.store_record(&capability.id, Value::Object(record.clone()))?;
+        Ok(capability)
+    }
+
+    fn store_record(&self, id: &str, record: Value) -> io::Result<()> {
         let path = self.catalog_path();
         with_exclusive_lock(&path.with_extension("json.lock"), || {
             let mut raw = if path.exists() {
@@ -196,11 +276,9 @@ impl CapabilityStore {
                 json!({"v":1,"created_at":utc_now(),"sources":{},"records":{}})
             };
             raw["updated_at"] = json!(utc_now());
-            object_field(&mut raw, "records")
-                .insert(capability.id.clone(), Value::Object(record.clone()));
+            object_field(&mut raw, "records").insert(id.to_owned(), record);
             write_json(&path, &raw)
-        })?;
-        Ok(capability)
+        })
     }
 
     pub fn validate_record(&self, record: &Value) -> io::Result<Capability> {
@@ -220,12 +298,16 @@ impl CapabilityStore {
 
     pub fn restore_record(&self, id: &str, record: Option<Value>) -> io::Result<()> {
         match record {
-            Some(mut record) => {
-                record
+            Some(record) => {
+                // A rollback restores the snapshot exactly, including legacy
+                // source metadata. Public catalog views redact it separately.
+                let mut validation = record.clone();
+                validation
                     .as_object_mut()
                     .ok_or_else(|| io::Error::other("capability record must be an object"))?
                     .insert("capability_id".into(), json!(id));
-                self.import_record(record).map(|_| ())
+                self.validate_record(&validation)?;
+                self.store_record(id, record)
             }
             None => self.remove_record(id).map(|_| ()),
         }
@@ -1082,6 +1164,11 @@ fn capability_from_record(record: &Value) -> io::Result<Capability> {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned(),
+        sync_state: record
+            .get("sync_state")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
         qualification_status: record
             .get("qualification_status")
             .and_then(Value::as_str)
@@ -1120,6 +1207,77 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
         (temp, CapabilityStore::new(home))
+    }
+
+    #[test]
+    fn skill_source_urls_remove_credentials_query_and_fragment_without_touching_mcp() {
+        let original = "https://fixture:secret@example.test/skill.md?token=fixture_query#private";
+        let expected = "https://example.test/skill.md";
+        assert_eq!(public_skill_source(original), expected);
+        assert_eq!(public_skill_source("/tmp/skill.md"), "/tmp/skill.md");
+        assert_eq!(public_skill_source("https://fixture:secret@"), "");
+        assert_eq!(public_skill_source("  https://fixture:secret@  "), "");
+        assert_eq!(
+            public_skill_source(
+                r"http:\\fixture:secret@example.test\skill.md?token=fixture_query#private"
+            ),
+            "http://example.test/skill.md"
+        );
+
+        let (_temp, store) = store();
+        let skill = json!({"capability_id":"skill:test:url","kind":"skill","name":"fixture",
+            "source_uri":original,"source_record_id":original,"capsule_text":"Fixture"});
+        store.import_record(skill).expect("import skill");
+        let stored = store
+            .catalog_record("skill:test:url")
+            .expect("catalog")
+            .expect("skill");
+        assert_eq!(stored["source_uri"], expected);
+        assert_eq!(stored["source_record_id"], expected);
+
+        let mcp = json!({"capability_id":"mcp:test:url","kind":"mcp_toolpack","name":"fixture",
+            "source_uri":original,"source_record_id":original});
+        store.import_record(mcp).expect("import MCP");
+        let stored = store
+            .catalog_record("mcp:test:url")
+            .expect("catalog")
+            .expect("MCP");
+        assert_eq!(stored["source_uri"], original);
+        assert_eq!(stored["source_record_id"], original);
+    }
+
+    #[test]
+    fn rollback_restores_old_skill_record_while_catalog_projection_hides_its_url_secrets() {
+        let (_temp, store) = store();
+        let original = "https://fixture:secret@example.test/skill.md?token=fixture_query#private";
+        let legacy = json!({"id":"skill:test:old-url","kind":"skill","name":"fixture",
+            "source_uri":original,"source_record_id":original,"capsule_text":"Old text"});
+        crate::fs::write_json(
+            &store.catalog_path(),
+            &json!({"records":{"skill:test:old-url":legacy}}),
+        )
+        .expect("old record");
+        let snapshot = store
+            .catalog_record("skill:test:old-url")
+            .expect("read")
+            .expect("record");
+        store.import_record(json!({"capability_id":"skill:test:old-url","kind":"skill",
+            "name":"fixture","source_uri":"https://example.test/skill.md","capsule_text":"New text"}))
+            .expect("replace");
+        store
+            .restore_record("skill:test:old-url", Some(snapshot.clone()))
+            .expect("restore");
+        assert_eq!(
+            store.catalog_record("skill:test:old-url").expect("read"),
+            Some(snapshot)
+        );
+        let projected = store
+            .catalog()
+            .expect("catalog")
+            .into_iter()
+            .find(|capability| capability.id == "skill:test:old-url")
+            .expect("projected skill");
+        assert_eq!(projected.source_uri, "https://example.test/skill.md");
     }
 
     #[test]

@@ -12,9 +12,16 @@ use crate::dispatch::OpError;
 
 #[cfg(test)]
 mod legacy_read_watermark;
+mod stranded_claims;
 
 #[cfg(test)]
 use legacy_read_watermark::LegacyReadWatermark;
+use stranded_claims::read_stranded_claims;
+
+#[cfg(test)]
+pub(super) fn reduced_stranded_claim_events() -> usize {
+    stranded_claims::reduced_events()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimResult {
@@ -183,55 +190,6 @@ pub fn claim_deliveries(
         Ok((true, states))
     })
     .map_err(OpError::io)
-}
-
-fn read_stranded_claims(path: &Path) -> std::io::Result<HashMap<(String, String), String>> {
-    // Startup recovery needs only unresolved claims. Building the generic
-    // Event index here would retain history before IPC even becomes ready.
-    let mut pending = HashMap::<(String, String), String>::new();
-    ledger::visit_snapshot_oldest_first(path, |event| {
-        if event.kind == "actor.add" {
-            let actor = event
-                .data
-                .get("actor")
-                .and_then(Value::as_object)
-                .and_then(|actor| actor.get("id"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if !actor.is_empty() {
-                pending.retain(|(id, _), _| id != actor);
-            }
-        } else if event.kind == "runtime.delivery" {
-            let actor = event
-                .data
-                .get("actor_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let source = event
-                .data
-                .get("source_event_id")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            if !actor.is_empty() && !source.is_empty() {
-                let key = (actor.to_owned(), source.to_owned());
-                if event.data.get("state").and_then(Value::as_str) == Some("claimed") {
-                    pending.insert(
-                        key,
-                        event
-                            .data
-                            .get("transport")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_owned(),
-                    );
-                } else {
-                    pending.remove(&key);
-                }
-            }
-        }
-        std::ops::ControlFlow::Continue(())
-    })?;
-    Ok(pending)
 }
 
 pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usize, OpError> {

@@ -40,6 +40,7 @@ import type {
 import { CapabilityControlsPanel } from "./CapabilityControlsPanel";
 import { SourcesSummary, SourcesView } from "./CapabilitySourcesView";
 import {
+  capabilityCenterDescription,
   capabilityCenterDisplayName,
   capabilityCenterEnabledIds,
   capabilityCenterFilterItemsForSystemVisibility,
@@ -135,14 +136,17 @@ function statusBadgeTone(kind: "neutral" | "good" | "warn" | "danger") {
 function MiniBadge({
   children,
   kind = "neutral",
+  title,
 }: {
   children: React.ReactNode;
   kind?: "neutral" | "good" | "warn" | "danger";
+  title?: string;
 }) {
   return (
     <span
-      className={`inline-flex h-6 items-center rounded border px-2 text-[11px] font-medium ${statusBadgeClass(kind)}`}
+      className={`inline-flex min-h-6 max-w-full items-center rounded border px-2 text-[11px] font-medium ${statusBadgeClass(kind)}`}
       data-status-tone={statusBadgeTone(kind)}
+      title={title}
     >
       {children}
     </span>
@@ -1146,13 +1150,21 @@ function CapabilityTable(props: {
                   {enabled ? (
                     <MiniBadge kind="good">{t("capabilityCenter.status.enabled")}</MiniBadge>
                   ) : null}
+                  {row.legacy_search_unverified ? (
+                    <MiniBadge
+                      kind="warn"
+                      title={t("capabilityCenter.status.legacySearchUnverifiedHint")}
+                    >
+                      {t("capabilityCenter.status.legacySearchUnverified")}
+                    </MiniBadge>
+                  ) : null}
                   {blocked ? (
                     <MiniBadge kind="danger">{t("capabilityCenter.status.blocked")}</MiniBadge>
                   ) : needsSetup ? (
                     <MiniBadge kind="warn">{t("capabilityCenter.status.setup")}</MiniBadge>
-                  ) : (
+                  ) : !row.legacy_search_unverified ? (
                     <MiniBadge>{t("capabilityCenter.status.ready")}</MiniBadge>
-                  )}
+                  ) : null}
                 </div>
                 <div className="truncate text-xs text-[var(--color-text-secondary)]">
                   {row.source_id || "-"}
@@ -1223,15 +1235,28 @@ function CapabilityTable(props: {
                 {enabled ? (
                   <MiniBadge kind="good">{t("capabilityCenter.status.enabled")}</MiniBadge>
                 ) : null}
+                {row.legacy_search_unverified ? (
+                  <MiniBadge
+                    kind="warn"
+                    title={t("capabilityCenter.status.legacySearchUnverifiedHint")}
+                  >
+                    {t("capabilityCenter.status.legacySearchUnverified")}
+                  </MiniBadge>
+                ) : null}
                 {blocked ? (
                   <MiniBadge kind="danger">{t("capabilityCenter.status.blocked")}</MiniBadge>
                 ) : needsSetup ? (
                   <MiniBadge kind="warn">{t("capabilityCenter.status.setup")}</MiniBadge>
-                ) : (
+                ) : !row.legacy_search_unverified ? (
                   <MiniBadge>{t("capabilityCenter.status.ready")}</MiniBadge>
-                )}
+                ) : null}
                 {row.source_id ? <MiniBadge>{row.source_id}</MiniBadge> : null}
               </div>
+              {row.legacy_search_unverified && selected ? (
+                <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
+                  {t("capabilityCenter.status.legacySearchUnverifiedHint")}
+                </p>
+              ) : null}
               <CapabilityRowActions
                 row={row}
                 enabled={enabled}
@@ -1622,20 +1647,32 @@ function CapabilityDetails(props: {
           </h3>
           <p className="mt-1 break-all text-xs text-[var(--color-text-muted)]">{capId}</p>
         </div>
-        <MiniBadge kind={blocked ? "danger" : needsSetup ? "warn" : enabled ? "good" : "neutral"}>
-          {blocked
-            ? t("capabilityCenter.status.blocked")
-            : needsSetup
-              ? t("capabilityCenter.status.needsSetup")
-              : enabled
-                ? t("capabilityCenter.status.enabled")
-                : t("capabilityCenter.status.ready")}
-        </MiniBadge>
+        <div className="flex flex-wrap justify-end gap-1">
+          {blocked ? (
+            <MiniBadge kind="danger">{t("capabilityCenter.status.blocked")}</MiniBadge>
+          ) : needsSetup ? (
+            <MiniBadge kind="warn">{t("capabilityCenter.status.needsSetup")}</MiniBadge>
+          ) : enabled ? (
+            <MiniBadge kind="good">{t("capabilityCenter.status.enabled")}</MiniBadge>
+          ) : !row.legacy_search_unverified ? (
+            <MiniBadge>{t("capabilityCenter.status.ready")}</MiniBadge>
+          ) : null}
+          {row.legacy_search_unverified ? (
+            <MiniBadge kind="warn" title={t("capabilityCenter.status.legacySearchUnverifiedHint")}>
+              {t("capabilityCenter.status.legacySearchUnverified")}
+            </MiniBadge>
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-5 space-y-4">
+        {row.legacy_search_unverified ? (
+          <p className="text-xs text-[var(--color-text-secondary)]">
+            {t("capabilityCenter.status.legacySearchUnverifiedHint")}
+          </p>
+        ) : null}
         <DetailBlock title={t("capabilityCenter.details.description")}>
-          {row.description_short || t("capabilityCenter.details.noDescription")}
+          {capabilityCenterDescription(row, t) || t("capabilityCenter.details.noDescription")}
         </DetailBlock>
         <DetailBlock title={t("capabilityCenter.details.source")}>
           {row.source_id || t("capabilityCenter.emptyDash")}
@@ -1643,7 +1680,11 @@ function CapabilityDetails(props: {
         </DetailBlock>
         <DetailBlock title={t("capabilityCenter.details.policy")}>
           {row.policy_level || t("capabilityCenter.emptyDash")}
-          {row.qualification_status ? ` · ${row.qualification_status}` : ""}
+          {row.legacy_search_unverified
+            ? ` · ${t("capabilityCenter.status.legacySearchUnverified")}`
+            : row.qualification_status
+              ? ` · ${row.qualification_status}`
+              : ""}
         </DetailBlock>
         {preview ? (
           <DetailBlock title={t("capabilityCenter.details.readiness")}>

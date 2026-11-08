@@ -39,8 +39,8 @@ misread each other, and what caused it? Is anyone overloaded or left without wor
 members, their setup and the team's size still fit the work? Judge from the work itself, not \
 from an idle state, a message count or an old timestamp.\n\
 3. The user's worries: what has the user had to say twice, or kept coming back to, and did a \
-later case of the same kind go better? A worry may have no task yet. If an adopted change has an \
-open optimization task and work it applies to came up, read the task by task_id and add the \
+later case of the same kind go better? A worry may have no task yet. If a change has an open \
+optimization task and work it applies to came up, read the task by task_id and add the \
 result to its notes, keeping the existing notes and passing the if_task_rev you read. No later \
 case, or the user saying nothing, does not prove it improved.\n\
 4. A better way: if a practical change to how the team works would clearly pay off, propose it \
@@ -49,8 +49,24 @@ with its evidence. Do not invent a problem or a proposal.\n\
 Fix causes within your authority, tell the user about routine changes, and message only a member \
 who has to act. Bring the user at most one decision, on a question card, such as a standing rule \
 or a member change, and do not repeat what is already in front of them unless it changed. A \
-change the user adopts becomes an optimization task with its evidence and how to undo it. Keep \
-anything from a message addressed only to you, its ID included, out of shared tasks.";
+change the user adopts, or one within your authority that is worth checking later, becomes an \
+optimization task with its evidence, when it applies, what to look at next time and how to undo \
+it; a one-off fix needs none. For a message addressed only to you, share only what the user \
+authorized and the team's work needs, in your own words, and honor any confidentiality limits. \
+Do not include its ID unless the user specifically agreed.\n\
+\n\
+When a problem needs a deeper look across rounds, add a line starting with \"Review:\" to the \
+notes of a related open optimization task, keeping the existing notes and passing the \
+if_task_rev you read; if there is none, create one planned optimization task whose title starts \
+with \"Review:\", whose notes start by saying it authorizes no change, and which holds only facts \
+the Group can see or the user allowed you to share. When the work already sits in another task \
+or handoff, point to it instead of copying it. Something merely noticed needs no task. You may \
+propose a scoped team review, but do not run the review \
+skill from here. A Group that creates few tasks may wait long for the review's task reminder: only \
+with current, reliable information that the skill is available to you, and when a review would \
+clearly pay off, your one decision may be whether to run it now; when unsure, do not ask. Do not \
+check capability state just to decide this, and do not ask when the user has already asked for a \
+review.";
 
 #[derive(Debug, Clone)]
 pub enum ScheduledAction {
@@ -1103,6 +1119,29 @@ pub(crate) fn notice_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The text asks the stand-up to hand a deeper look to the team review
+    /// rather than run it, and not to probe capability state to decide.
+    #[test]
+    fn the_standup_leaves_the_review_to_the_user_and_its_reminder() {
+        for promise in [
+            "share only what the user authorized and the team's work needs",
+            "honor any confidentiality limits",
+            "Do not include its ID unless the user specifically agreed.",
+            "facts the Group can see or the user allowed you to share",
+            "a one-off fix needs none",
+            "add a line starting with \"Review:\"",
+            "whose title starts with \"Review:\"",
+            "start by saying it authorizes no change",
+            "point to it instead of copying it",
+            "when unsure, do not ask",
+            "Something merely noticed needs no task.",
+            "do not run the review skill from here",
+            "Do not check capability state just to decide this",
+        ] {
+            assert!(STANDUP_SNIPPET.contains(promise), "{promise}");
+        }
+    }
 
     fn two_recipient_rule() -> (tempfile::TempDir, HomeLayout, GroupStore, GroupDoc, Value) {
         let temp = tempfile::tempdir().expect("tempdir");

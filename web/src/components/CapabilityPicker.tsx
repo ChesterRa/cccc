@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import * as api from "../services/api";
 import { CapabilityOverviewItem } from "../types";
 import { normalizeCapabilityIdList } from "../utils/capabilityAutoload";
+import { capabilityCenterDescription } from "./capabilities/capabilityCenterModel";
 import { Input } from "./ui/input";
 import { Surface } from "./ui/surface";
 
@@ -235,9 +236,9 @@ export function CapabilityPicker({
                   <div className="text-[11px] truncate text-[var(--color-text-tertiary)]">
                     {capId}
                   </div>
-                  {String(row.description_short || "").trim() ? (
+                  {capabilityCenterDescription(row, t) ? (
                     <div className="text-[11px] mt-0.5 text-[var(--color-text-tertiary)]">
-                      {String(row.description_short || "")}
+                      {capabilityCenterDescription(row, t)}
                     </div>
                   ) : null}
                   {recommendationMeta.length ? (
@@ -256,6 +257,15 @@ export function CapabilityPicker({
                     </div>
                   ) : null}
                   <div className="flex flex-wrap gap-1 mt-1">
+                    {row.legacy_search_unverified ? (
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[10px] text-amber-700 dark:text-amber-300"
+                        data-status-tone="warning"
+                        title={t("capabilityCenter.status.legacySearchUnverifiedHint")}
+                      >
+                        {t("capabilityCenter.status.legacySearchUnverified")}
+                      </span>
+                    ) : null}
                     {row.kind ? (
                       <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>
                         {row.kind}

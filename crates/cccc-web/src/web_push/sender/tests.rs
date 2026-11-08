@@ -140,10 +140,30 @@ async fn redirects_are_not_followed_and_answers_decide_what_happens_next() {
         assert_eq!(outcome, expected, "{status}");
         assert_eq!(seen.lock().expect("seen").len(), 1, "{status} was followed");
     }
-    // Nothing listening is worth another try.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("port");
+    // A closed connection is worth another try. Hold the port until the request
+    // completes so another process cannot receive the fixture POST.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
     let closed = format!("http://{}/push", listener.local_addr().expect("address"));
-    drop(listener);
+    let (release, released) = tokio::sync::oneshot::channel();
+    let closer =
+        tokio::spawn(async move {
+            let accepted =
+                match tokio::time::timeout(std::time::Duration::from_secs(5), listener.accept())
+                    .await
+                {
+                    Ok(Ok((stream, _))) => {
+                        drop(stream);
+                        Ok(())
+                    }
+                    Ok(Err(error)) => Err(format!("accept request: {error}")),
+                    Err(_) => Err("request deadline".to_owned()),
+                };
+            let _ = released.await;
+            drop(listener);
+            accepted.expect("fixture accepted the request");
+        });
     let outcome = Sender::new()
         .expect("sender")
         .post(
@@ -152,6 +172,8 @@ async fn redirects_are_not_followed_and_answers_decide_what_happens_next() {
             Vec::new(),
         )
         .await;
+    release.send(()).expect("release listener");
+    closer.await.expect("close fixture connection");
     assert_eq!(outcome, Outcome::Retry);
 }
 

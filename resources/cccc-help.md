@@ -130,9 +130,9 @@ Role and actor sections below are additive overlays selected by `cccc_help`.
 | State | Meaning | Automation | Delivery to PTY |
 | --- | --- | --- | --- |
 | `active` | normal work | configured policy | chat + notifications |
-| `idle` | waiting or done for now | disabled | chat + notifications |
+| `idle` | waiting or done for now | configured policy, except scheduled `standup` runs | chat + notifications |
 | `paused` | user paused group | disabled | no runtime delivery; direct work stays pending |
-| `stopped` | runtimes stopped | n/a | no actor runtime delivery |
+| `stopped` | runtimes stopped | disabled | no actor runtime delivery |
 
 ### Permissions
 

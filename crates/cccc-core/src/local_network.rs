@@ -1,6 +1,20 @@
 //! Local interface suggestions, not remote reachability checks or discovery traffic.
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, UdpSocket};
 
+/// Whether a URL names a loopback address without resolving DNS.
+pub fn is_loopback_url(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => {
+            host.trim_end_matches('.').eq_ignore_ascii_case("localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => {
+            ip.is_loopback() || ip.to_ipv4_mapped().is_some_and(|ip| ip.is_loopback())
+        }
+        None => false,
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct LocalAddress {
     pub interface: String,
@@ -64,6 +78,36 @@ pub fn wildcard(ip: IpAddr) -> IpAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loopback_urls_are_decided_from_the_parsed_host_without_dns() {
+        for raw in [
+            "http://127.0.0.1:8848",
+            "http://127.0.0.2",
+            "http://[::1]",
+            "http://[::ffff:127.0.0.1]",
+            "http://localhost",
+            "http://LOCALHOST",
+            "http://localhost.",
+        ] {
+            assert!(
+                is_loopback_url(&url::Url::parse(raw).expect("URL")),
+                "{raw}"
+            );
+        }
+        for raw in [
+            "http://example.com",
+            "http://127.0.0.1.nip.io",
+            "http://localhost.example.com",
+            "http://0.0.0.0",
+            "http://[::]",
+        ] {
+            assert!(
+                !is_loopback_url(&url::Url::parse(raw).expect("URL")),
+                "{raw}"
+            );
+        }
+    }
 
     #[test]
     fn local_addresses_keep_vpn_and_ipv6_but_exclude_unshareable_addresses() {

@@ -50,6 +50,14 @@ query remote registries or run a periodic source sync. Source identifiers in exi
 records describe their origin; they do not imply that automatic search of that source
 is available.
 
+Unimported results saved from the retired SkillsMP remote search are left out of
+search, because their name and content may not match. They are not deleted: existing bindings keep
+working, they can still be used by ID, and the Capability Center and the member and
+profile pickers list them as **Unverified old search result**. To rely on one, find a
+trusted original source and import it with a supported method; when that source is
+gone, the skill may not be recoverable. An explicit import records where it came from;
+it does not verify the content.
+
 A user or agent can still explicitly install a supported local path, URL, or GitHub
 target, subject to the applicable policy. Explicit remote installation may use the
 network; it is separate from catalog search.

@@ -25,6 +25,13 @@ async fn cli_override_is_replaced_by_saved_binding_when_apply_is_requested() {
         .kill_on_drop(true);
     let mut child = command.spawn().expect("CCCC CLI");
     let live_port = wait_for_web_port(&home, &mut child).await;
+    let initial_runtime: Value =
+        cccc_core::fs::read_json(&home.daemon_dir().join("web_runtime.json"))
+            .expect("initial Web runtime");
+    let initial_id = initial_runtime["runtime_id"]
+        .as_str()
+        .expect("initial runtime id")
+        .to_owned();
     let desired_port = free_port().await;
 
     let configured = request(
@@ -53,8 +60,10 @@ async fn cli_override_is_replaced_by_saved_binding_when_apply_is_requested() {
     assert!(applied.starts_with("HTTP/1.1 200"), "{applied}");
     assert!(applied.contains(r#""accepted":true"#), "{applied}");
 
-    wait_for_port(desired_port).await;
-    wait_for_port_to_close(live_port).await;
+    // The desired port was released before Web could bind it. Wait for this
+    // isolated Home to report its new runtime before sending a request there.
+    wait_for_rebound_web(&home, &mut child, desired_port, &initial_id).await;
+    let _old_port = hold_released_port(live_port).await;
     assert!(child.try_wait().expect("CLI status").is_none());
 
     let state = request(
@@ -101,30 +110,38 @@ async fn wait_for_web_port(home: &HomeLayout, web: &mut tokio::process::Child) -
     panic!("web did not report its port");
 }
 
-async fn wait_for_port(port: u16) {
-    for _ in 0..200 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_ok()
+async fn wait_for_rebound_web(
+    home: &HomeLayout,
+    web: &mut tokio::process::Child,
+    port: u16,
+    previous_id: &str,
+) {
+    let runtime = home.daemon_dir().join("web_runtime.json");
+    let pid = u64::from(web.id().expect("Web process id"));
+    for _ in 0..2_000 {
+        if let Ok(state) = cccc_core::fs::read_json::<Value>(&runtime)
+            && state["port"].as_u64() == Some(u64::from(port))
+            && state["pid"].as_u64() == Some(pid)
+            && state["runtime_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty() && id != previous_id)
         {
             return;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        assert!(web.try_wait().expect("web status").is_none(), "web exited");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    panic!("Web did not listen on port {port}");
+    panic!("Web did not report its new runtime on port {port}");
 }
 
-async fn wait_for_port_to_close(port: u16) {
+async fn hold_released_port(port: u16) -> tokio::net::TcpListener {
     for _ in 0..200 {
-        if tokio::net::TcpStream::connect(("127.0.0.1", port))
-            .await
-            .is_err()
-        {
-            return;
+        if let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+            return listener;
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    panic!("old Web listener on port {port} stayed open");
+    panic!("old Web port {port} could not be reserved");
 }
 
 async fn request(port: u16, method: &str, path: &str, body: &str, token: &str) -> String {

@@ -208,11 +208,13 @@ fn probe_stdio(capability_id: &str, command: &[String]) -> Result<Vec<Value>, Op
 }
 
 fn probe_http(capability_id: &str, url: &str) -> Result<Vec<Value>, OpError> {
-    let client = reqwest::blocking::Client::builder()
+    let mut builder = reqwest::blocking::Client::builder()
         .timeout(timeout())
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(install_error)?;
+        .redirect(reqwest::redirect::Policy::none());
+    if reqwest::Url::parse(url).is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url)) {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build().map_err(install_error)?;
     let initialize = client
         .post(url)
         .header(reqwest::header::ACCEPT, "application/json")

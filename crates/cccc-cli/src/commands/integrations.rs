@@ -175,7 +175,13 @@ async fn web_call(
     path: &str,
     value: Value,
 ) -> Result<Value> {
-    let client = reqwest::Client::new();
+    let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    if reqwest::Url::parse(endpoint)
+        .is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url))
+    {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build()?;
     let mut request = client.request(method.clone(), format!("{endpoint}{path}"));
     if let Some(token) = AccessTokenStore::new(home.clone())?
         .list()?

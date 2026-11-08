@@ -61,10 +61,13 @@ pub(crate) async fn call_with_context(
         &mut arguments,
         context.is_some_and(|context| context.native_binding.is_some()),
     );
-    if name == "cccc_message_send"
-        && context.is_some_and(|context| context.native_binding.is_some())
-    {
-        arguments.entry("mode").or_insert(json!("send"));
+    if matches!(name, "cccc_message_send" | "cccc_file_send") {
+        crate::argument_normalization::check_recipients(&arguments)?;
+        if !arguments.contains_key("mode") {
+            let native = context.is_some_and(|context| context.native_binding.is_some());
+            let mode = crate::argument_normalization::default_new_message_mode(&arguments, native);
+            arguments.insert("mode".into(), json!(mode));
+        }
     }
     if let Some(context) = context {
         if let Some(binding) = context.native_binding {

@@ -108,6 +108,9 @@ impl Context {
                                 .entry("required").or_insert(json!([])).as_array_mut().expect("required array");
                             if !required.contains(&json!("group_id")) { required.push(json!("group_id")); }
                         }
+                        if tool["name"] == "cccc_file_send" {
+                            tool["inputSchema"]["properties"]["mode"]["default"] = json!("send");
+                        }
                         if tool["name"] == "cccc_message_send" {
                             tool["description"] = json!("Send a new message in this native collaboration Group. Defaults to mode=send for timely collaboration; choose mail explicitly for asynchronous Inbox work, or request_reply when a concrete reply is required. When the user's decision or information is needed, send request_reply to user alone with a question they answer in place. For an existing event, use cccc_message_reply with its event_id. Choose recipients deliberately; keep user and agent audiences separate, and avoid routine noise. Pass the explicit group_id from the received message or cccc_session list.");
                             tool["inputSchema"]["properties"]["mode"]["default"] = json!("send");
@@ -171,8 +174,9 @@ impl Context {
             args.remove("by");
             let action = session_action(&args)?;
             let mode = if action == "send" {
+                let default = crate::argument_normalization::default_new_message_mode(&args, true);
                 Some(crate::argument_normalization::message_mode(
-                    &mut args, "send",
+                    &mut args, default,
                 )?)
             } else {
                 None
@@ -1101,14 +1105,27 @@ mod tests {
             history["inputSchema"]["properties"]["event_id"]["type"], "string",
             "fresh MCP discovery must declare the exact read used by Monitor"
         );
-        let ordinary = super::tools::catalog()
-            .into_iter()
-            .find(|tool| tool["name"] == "cccc_message_send")
-            .expect("ordinary send");
+        let file_send = tools
+            .iter()
+            .find(|tool| tool["name"] == "cccc_file_send")
+            .expect("native file send");
         assert_eq!(
-            ordinary["inputSchema"]["properties"]["mode"]["default"],
-            "mail"
+            file_send["inputSchema"]["properties"]["mode"]["default"],
+            "send"
         );
+        // The ordinary default depends on the recipient, so the shared schema states none.
+        for name in ["cccc_message_send", "cccc_file_send"] {
+            let ordinary = super::tools::catalog()
+                .into_iter()
+                .find(|tool| tool["name"] == name)
+                .expect("ordinary tool");
+            assert!(
+                ordinary["inputSchema"]["properties"]["mode"]
+                    .get("default")
+                    .is_none(),
+                "{name}"
+            );
+        }
         for tool in tools.iter().filter(|tool| tool["name"] != "cccc_session") {
             assert!(
                 tool["inputSchema"]["properties"].get("group_id").is_some(),
@@ -1180,6 +1197,17 @@ mod tests {
         recipient.runtime = ActorRuntime::Claude;
         recipient.external_session_id = "claude:offline-fixture".into();
         cccc_core::actors::add(&mut member_group, recipient).expect("offline recipient");
+        // A workspace with a file, for the native file sends below.
+        let project = temp.path().join("native-project");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::write(project.join("native-note.txt"), "native file").expect("fixture file");
+        member_group.scopes.push(cccc_core::group::Scope {
+            scope_key: "native-project".into(),
+            url: project.to_string_lossy().into(),
+            label: String::new(),
+            git_remote: String::new(),
+        });
+        member_group.active_scope_key = "native-project".into();
         groups.save(&member_group).expect("save Group");
         let mut paused = member_group.clone();
         paused.group_id = groups
@@ -1343,6 +1371,48 @@ mod tests {
                 payload["event"]["data"]["message_mode"],
                 explicit_mode.unwrap_or("send")
             );
+        }
+        // A file takes the same native default as a message, on the whole route: to an agent or
+        // the user, directly and through capability_use; explicit Mail stays Mail.
+        for (to, explicit_mode, nested) in [
+            (recipient_id.as_str(), None, false),
+            ("user", None, false),
+            (recipient_id.as_str(), Some("mail"), false),
+            (recipient_id.as_str(), None, true),
+        ] {
+            let mut args = json!({"group_id":member_group.group_id,"to":[to],"path":"native-note.txt","text":"Synthetic native file","insight":"Synthetic native file verification"});
+            if let Some(mode) = explicit_mode {
+                args["mode"] = json!(mode);
+            }
+            let (tool, args) = if nested {
+                (
+                    "cccc_capability_use",
+                    json!({"group_id":member_group.group_id,"capability_id":"core","tool_name":"cccc_file_send","tool_arguments":args}),
+                )
+            } else {
+                ("cccc_file_send", args)
+            };
+            let sent = context
+                .handle(
+                    &home,
+                    &client,
+                    &json!({"id":9,"method":"tools/call","params":{"name":tool,"arguments":args}}),
+                )
+                .await;
+            assert_ne!(sent["result"]["isError"], true, "{to}: {sent}");
+            let payload = &sent["result"]["structuredContent"];
+            let payload = if nested {
+                &payload["tool_result"]
+            } else {
+                payload
+            };
+            let event = &payload["result"]["event"];
+            assert_eq!(
+                event["data"]["message_mode"],
+                explicit_mode.unwrap_or("send"),
+                "{to}"
+            );
+            assert_eq!(event["data"]["attachments"][0]["bytes"], 11, "{to}");
         }
         let ledger_path = groups.ledger_path(&member_group.group_id).expect("ledger");
         let message_count = || {

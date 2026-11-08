@@ -220,8 +220,13 @@ pub async fn create_realtime_answer(config: &RealtimeCallConfig, offer: &str) ->
         "{}/realtime/calls?intent=quicksilver&architecture=avas",
         config.base_url.trim_end_matches('/')
     );
-    let mut response = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
+    if reqwest::Url::parse(&endpoint)
+        .is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url))
+    {
+        builder = builder.no_proxy();
+    }
+    let mut response = builder
         .build()?
         .post(endpoint)
         .bearer_auth(token)

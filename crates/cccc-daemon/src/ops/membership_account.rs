@@ -184,12 +184,7 @@ impl AccountClient {
             })
             .unwrap_or(DEFAULT_TIMEOUT_SECONDS)
             .max(0.2);
-        let loopback = parsed.host_str().is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost")
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|address| address.is_loopback())
-        });
+        let loopback = cccc_core::local_network::is_loopback_url(&parsed);
         if parsed.scheme() == "http" && !loopback {
             return Err(AccountError::new(
                 "membership_unavailable",

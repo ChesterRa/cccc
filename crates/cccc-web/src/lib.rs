@@ -128,7 +128,7 @@ pub use web_assets::{WebAssetsInfo, web_assets_info};
 #[derive(Clone)]
 pub(crate) struct AppState {
     connect_frames: Arc<connect_frames::ConnectFrames>,
-    connect_http: Result<reqwest::Client, String>,
+    connect_http: Result<connect_frames::HttpClients, String>,
     client: DaemonClient,
     home: HomeLayout,
     browser_surfaces: Arc<browser_surface::BrowserSurfaces>,
@@ -277,9 +277,7 @@ fn app_with_shutdown_and_recovery(
     }
     let state = AppState {
         connect_frames: Arc::new(connect_frames::ConnectFrames::default()),
-        connect_http: connect_frames::http_client()
-            .build()
-            .map_err(|error| error.to_string()),
+        connect_http: connect_frames::HttpClients::new().map_err(|error| error.to_string()),
         client: DaemonClient::new(home.clone()).without_voice_origin(),
         home,
         browser_surfaces: Arc::clone(&browser_surfaces),

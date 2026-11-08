@@ -88,11 +88,16 @@ impl Fixture {
         .expect("args")
         .clone();
         arguments.extend(extra.as_object().expect("extra").clone());
+        self.call(Value::Object(arguments)).await
+    }
+
+    /// The tool called by `worker` with exactly these arguments.
+    async fn call(&self, arguments: Value) -> Result<Value, crate::ToolCallError> {
         crate::router::call_with_context(
             &self.home,
             &self.client,
             "cccc_file_send",
-            arguments,
+            arguments.as_object().expect("args").clone(),
             Some(crate::RequestContext {
                 native_binding: None,
                 binding: None,
@@ -102,6 +107,14 @@ impl Fixture {
             false,
         )
         .await
+    }
+
+    fn blobs(&self, group_id: &str) -> usize {
+        let state = GroupStore::new(self.home.clone())
+            .expect("store")
+            .state_dir(group_id)
+            .expect("state");
+        std::fs::read_dir(state.join("blobs")).map_or(0, Iterator::count)
     }
 
     fn messages(&self, group_id: &str) -> usize {
@@ -176,6 +189,63 @@ async fn file_send_carries_several_files_in_one_message_after_checking_all() {
         .expect("one file");
     assert_eq!(single["structuredContent"]["attachment"]["kind"], "image");
     assert_eq!(fixture.messages(&group), 3);
+}
+
+#[tokio::test]
+async fn a_file_without_a_mode_is_sent_to_the_user_and_mailed_to_agents() {
+    let fixture = Fixture::new().await;
+    let group = fixture.group_id.clone();
+    let file = |path: &str, to: Value| json!({"path":path,"to":to,"text":"Screens","insight":"The default mode follows the recipient."});
+    let mode = |sent: &Value| {
+        let result = &sent["structuredContent"]["result"];
+        result
+            .get("dst_event")
+            .filter(|event| !event.is_null())
+            .unwrap_or(&result["event"])["data"]["message_mode"]
+            .clone()
+    };
+    // The user has no Inbox: without a mode, a file for the user is sent, in this Group or another.
+    for to in [json!(["user"]), json!("@user")] {
+        let sent = fixture.call(file("shots/phone.png", to.clone())).await;
+        assert_eq!(mode(&sent.expect("file for the user")), "send", "{to}");
+    }
+    let mut elsewhere = file("shots/phone.png", json!(["user"]));
+    elsewhere["dst_group_id"] = json!(fixture.destination_id);
+    let sent = fixture
+        .call(elsewhere)
+        .await
+        .expect("file for the user elsewhere");
+    assert_eq!(mode(&sent), "send");
+    // A managed member's file for agents keeps Mail as the default.
+    let sent = fixture.call(file("shots/phone.png", json!(["lead"]))).await;
+    assert_eq!(mode(&sent.expect("file for an agent")), "mail");
+
+    // Refused calls send and store nothing; the file is one not stored yet.
+    let (messages, blobs) = (fixture.messages(&group), fixture.blobs(&group));
+    let mut mail = file("shots/tablet.png", json!(["user"]));
+    mail["mode"] = json!("mail");
+    let mut null_mode = file("shots/tablet.png", json!(["lead"]));
+    null_mode["mode"] = Value::Null;
+    let mut paths = file("shots/tablet.png", json!(["user"]));
+    paths["paths"] = json!(["shots/desktop.png"]);
+    // A malformed list is refused even beside an explicit mode.
+    let mut named_send = file("shots/tablet.png", json!(["lead", 42]));
+    named_send["mode"] = json!("send");
+    for (arguments, code) in [
+        (mail, "mail_requires_actor_recipient"),
+        (
+            file("shots/tablet.png", json!(["user", 42])),
+            "invalid_recipient",
+        ),
+        (named_send, "invalid_recipient"),
+        (null_mode, "invalid_args"),
+        (paths, "invalid_args"),
+    ] {
+        let error = fixture.call(arguments.clone()).await.expect_err("refused");
+        assert_eq!(error.error_value()["code"], code, "{arguments}");
+    }
+    assert_eq!(fixture.messages(&group), messages);
+    assert_eq!(fixture.blobs(&group), blobs);
 }
 
 #[tokio::test]

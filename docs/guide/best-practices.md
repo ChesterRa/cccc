@@ -252,9 +252,19 @@ Periodically check:
 
 `/cccc-self-evolution` asks the foreman for a short review. It reads what you said and how many
 messages, scheduled reminders and open tasks each member has, then sends you at most three proposals,
-each on its own card with its evidence. Standing rules and changes to members wait for your pick;
-the foreman may still adjust routine work and tell you. When 10 more top-level tasks are finished,
-the foreman's next task update also reminds it to consider a review.
+each on its own card with its evidence. Standing rules, their removal and changes to members wait
+for your pick; the foreman may still adjust routine work and tell you. When 10 more top-level tasks
+are finished, the foreman's next task update also reminds it to consider a review.
+
+The review text also asks the foreman to check earlier changes recorded as `optimization` tasks:
+whether each was used the next time it applied and what happened. A rule that applied in real cases
+without the intended effect may come back as a proposal to revise or remove it. The stand-up text
+asks the foreman to suggest a review rather than run one, and to mark a question that needs a
+deeper look with `Review:` in a related `optimization` task, or in a new planned one that
+authorizes no change and points to any task or handoff that already holds the work. In a Group with
+few tasks the stand-up may ask you whether to run a review now. When you ask for a review and
+nothing needs your decision, the foreman is asked to say briefly what it read. These are
+instructions to the model, not checks CCCC enforces.
 
 Standing team rules go into **Constraints** in the Context panel. An agent reads them through
 `cccc_bootstrap` when it starts or resumes: up to six as the budget allows, with a note when any are

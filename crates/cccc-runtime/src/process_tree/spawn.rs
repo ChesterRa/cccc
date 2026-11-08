@@ -247,7 +247,13 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
             match std::fs::read_to_string(format!("/proc/{}/stat", fixture.1)) {
-                Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+                // Reaping after open but before read makes procfs return ESRCH.
+                Err(error)
+                    if error.kind() == io::ErrorKind::NotFound
+                        || error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) =>
+                {
+                    break;
+                }
                 Ok(stat)
                     if stat
                         .rsplit_once(')')

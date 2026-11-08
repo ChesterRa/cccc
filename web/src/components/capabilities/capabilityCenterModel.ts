@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import type {
   CapabilityOverviewItem,
   CapabilitySourceState,
@@ -159,6 +160,28 @@ export function capabilityCenterTypeLabel(type: "skill" | "mcp" | "pack"): strin
   if (type === "mcp") return "MCP";
   if (type === "pack") return "Pack";
   return "Skill";
+}
+
+/** CCCC's own capabilities, described in the reader's language. Their ids are reserved.
+ *  Names stay as the daemon gives them: they are what the reader searches for and types. */
+export const BUILTIN_CAPABILITY_DESCRIPTION_KEYS: ReadonlyMap<string, string> = new Map([
+  ["skill:cccc:self-evolution", "chat:slashDescriptions.selfEvolution"],
+  ["pack:group-runtime", "capabilityCenter.builtin.groupRuntime"],
+  ["pack:file-im", "capabilityCenter.builtin.imBind"],
+  ["pack:space", "capabilityCenter.builtin.space"],
+  ["pack:automation", "capabilityCenter.builtin.automation"],
+  ["pack:context-advanced", "capabilityCenter.builtin.contextDelegation"],
+  ["pack:headless-notify", "capabilityCenter.builtin.headlessNotify"],
+  ["pack:diagnostics", "capabilityCenter.builtin.workspaceUtilities"],
+  ["pack:capability-admin", "capabilityCenter.builtin.capabilityAdmin"],
+]);
+
+export function capabilityCenterDescription(
+  row: Pick<CapabilityOverviewItem, "description_short" | "capability_id">,
+  t: TFunction,
+): string {
+  const key = BUILTIN_CAPABILITY_DESCRIPTION_KEYS.get(String(row.capability_id || "").trim());
+  return key ? t(key) : String(row.description_short || "").trim();
 }
 
 export function capabilityCenterDisplayName(

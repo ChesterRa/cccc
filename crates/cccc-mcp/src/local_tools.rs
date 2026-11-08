@@ -374,6 +374,12 @@ const MAX_FILES_PER_SEND: usize = 10;
 /// with one caption, so a set of screenshots arrives as one message. The flag
 /// is whether the caller passed a list, which decides the receipt's shape.
 fn send_paths(args: &Map<String, Value>) -> Result<(Vec<&str>, bool), String> {
+    // Refused even beside path, so no caller thinks a second set of files was sent.
+    if args.contains_key("paths") {
+        return Err(format!(
+            "invalid_args: use path, not paths; path takes a file path or a list of 1 to {MAX_FILES_PER_SEND} file paths"
+        ));
+    }
     let Some(Value::Array(values)) = args.get("path") else {
         return first_non_blank(args, &["path", "rel_path"])
             .map(|raw| (vec![raw], false))
@@ -419,9 +425,10 @@ async fn send_files(
     args: &Map<String, Value>,
 ) -> Result<Value, ToolCallError> {
     let (raws, listed) = send_paths(args)?;
-    let message_mode = file_message_mode(args)?;
     let mut request = args.clone();
-    for key in ["action", "path", "rel_path", "mode"] {
+    let default = crate::argument_normalization::default_new_message_mode(args, false);
+    let message_mode = crate::argument_normalization::message_mode(&mut request, default)?;
+    for key in ["action", "path", "rel_path"] {
         request.remove(key);
     }
     request.insert("message_mode".into(), Value::String(message_mode));
@@ -552,18 +559,6 @@ fn first_non_blank<'a>(args: &'a Map<String, Value>, names: &[&str]) -> Option<&
 fn action(args: &Map<String, Value>) -> &str {
     args.get("action").and_then(Value::as_str).unwrap_or("read")
 }
-fn file_message_mode(args: &Map<String, Value>) -> Result<String, String> {
-    let mode = args
-        .get("mode")
-        .and_then(Value::as_str)
-        .unwrap_or("mail")
-        .trim();
-    if matches!(mode, "mail" | "send" | "request_reply") {
-        Ok(mode.to_owned())
-    } else {
-        Err("mode must be mail, send, or request_reply".into())
-    }
-}
 fn timeout(args: &Map<String, Value>) -> u64 {
     args.get("timeout_s")
         .or_else(|| args.get("timeout_seconds"))
@@ -574,7 +569,7 @@ fn timeout(args: &Map<String, Value>) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{command, file_message_mode, timeout};
+    use super::{command, send_paths, timeout};
     use crate::local_patch::apply as apply_codex_patch;
     use serde_json::json;
 
@@ -867,25 +862,35 @@ mod tests {
     }
 
     #[test]
-    fn file_send_maps_the_tool_mode_to_the_canonical_message_mode() {
-        let omitted = json!({}).as_object().cloned().expect("omitted arguments");
-        assert_eq!(file_message_mode(&omitted).expect("default mode"), "mail");
-        let explicit = json!({"mode":"request_reply"})
-            .as_object()
-            .cloned()
-            .expect("explicit arguments");
+    fn file_send_refuses_paths_and_parses_mode_like_message_send() {
+        let args = |value: serde_json::Value| value.as_object().cloned().expect("arguments");
+        for value in [
+            json!({"paths":["a.png"]}),
+            json!({"path":"a.png","paths":["b.png"]}),
+            json!({"path":["a.png"],"paths":["b.png"]}),
+        ] {
+            assert!(
+                send_paths(&args(value.clone()))
+                    .expect_err("paths")
+                    .starts_with("invalid_args: use path, not paths;"),
+                "{value}"
+            );
+        }
+        let mode = |value: serde_json::Value| {
+            crate::argument_normalization::message_mode(&mut args(value), "mail")
+        };
         assert_eq!(
-            file_message_mode(&explicit).expect("explicit mode"),
+            mode(json!({"mode":"request_reply"})).expect("explicit"),
             "request_reply"
         );
-        let invalid = json!({"mode":"attention"})
-            .as_object()
-            .cloned()
-            .expect("invalid arguments");
-        assert_eq!(
-            file_message_mode(&invalid).expect_err("invalid mode"),
-            "mode must be mail, send, or request_reply"
-        );
+        for value in [
+            json!({"mode":"attention"}),
+            json!({"mode":null}),
+            json!({"mode":3}),
+            json!({"message_mode":"send"}),
+        ] {
+            assert!(mode(value.clone()).is_err(), "{value}");
+        }
     }
 
     #[test]

@@ -814,6 +814,40 @@ fn native_scheduler_settles_legacy_claims_after_interrupted_configuration() {
 }
 
 #[test]
+fn idle_native_scheduler_reuses_claims_and_settles_new_legacy_claims() {
+    let f = Fixture::new();
+    f.start();
+    assert!(f.next().is_null());
+    let before = super::super::runtime_delivery::reduced_stranded_claim_events();
+    assert!(f.next().is_null());
+    assert_eq!(
+        super::super::runtime_delivery::reduced_stranded_claim_events(),
+        before,
+        "idle polling does not re-decode the claim history"
+    );
+
+    let source = legacy_browser_claim(&f);
+    assert!(f.next().is_null());
+    assert_eq!(
+        super::super::runtime_delivery::latest_state(&f.home, &f.group.group_id, "bot", &source)
+            .expect("old handoff")
+            .expect("old claim")
+            .0,
+        "ambiguous"
+    );
+    assert!(super::super::runtime_delivery::reduced_stranded_claim_events() > before);
+    // The ambiguity receipt was appended after the preceding snapshot.
+    assert!(f.next().is_null());
+    let settled = super::super::runtime_delivery::reduced_stranded_claim_events();
+    assert!(f.next().is_null());
+    assert_eq!(
+        super::super::runtime_delivery::reduced_stranded_claim_events(),
+        settled,
+        "the settled ledger becomes idle again"
+    );
+}
+
+#[test]
 fn connector_revocation_does_not_hide_or_strand_an_accepted_turn() {
     let f = Fixture::new();
     f.start();

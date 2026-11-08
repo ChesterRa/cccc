@@ -12,6 +12,8 @@ mod capability_install_events;
 mod capability_install_events_support;
 #[path = "suite/capability_state.rs"]
 mod capability_state;
+#[path = "suite/capability_url_privacy.rs"]
+mod capability_url_privacy;
 #[path = "suite/chet_obligations.rs"]
 mod chet_obligations;
 #[path = "suite/cross_group_attachments.rs"]

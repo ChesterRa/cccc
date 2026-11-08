@@ -490,7 +490,9 @@ fn normalize_record(raw: &Value) -> Result<Value, OpError> {
         "requires_capabilities".into(),
         json!(string_list(raw.get("requires_capabilities"), 32)),
     );
-    Ok(Value::Object(record))
+    let mut record = Value::Object(record);
+    cccc_core::capabilities::redact_skill_source_record(&mut record);
+    Ok(record)
 }
 
 fn probe_record(home: &HomeLayout, record: &Value, enabled: bool) -> (Value, Vec<Value>) {

@@ -282,5 +282,32 @@ async fn connect_tools_use_local_actor_context_and_canonical_queue_through_ipc()
         .is_err(),
         "another Group's scope must not be readable"
     );
+    // Without a mode, the file for the remote agents above was Mail; text and files for the
+    // remote user, who has no Inbox, are sent.
+    assert_eq!(
+        file_sent["structuredContent"]["result"]["source_event"]["data"]["dst_message_mode"],
+        "mail"
+    );
+    let text = call(
+        "cccc_message_send",
+        json!({"dst_instance_id":remote.peer_id,"dst_group_id":group.group_id,"to":["user"],"text":"For the remote user","idempotency_key":"user-text","insight":"The default mode follows the recipient."}),
+    )
+    .await
+    .expect("text for the remote user");
+    assert_eq!(
+        text["structuredContent"]["source_event"]["data"]["dst_message_mode"],
+        "send"
+    );
+    std::fs::write(worker_root.join("user.txt"), "user payload").expect("file");
+    let file = call(
+        "cccc_file_send",
+        json!({"path":"user.txt","dst_instance_id":remote.peer_id,"dst_group_id":group.group_id,"to":["user"],"idempotency_key":"user-file","insight":"The default mode follows the recipient."}),
+    )
+    .await
+    .expect("file for the remote user");
+    assert_eq!(
+        file["structuredContent"]["result"]["source_event"]["data"]["dst_message_mode"],
+        "send"
+    );
     server.abort();
 }

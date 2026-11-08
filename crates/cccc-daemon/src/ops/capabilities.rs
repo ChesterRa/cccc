@@ -254,7 +254,9 @@ fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .search(&query)
         .map_err(OpError::io)?
         .into_iter()
-        .filter(|capability| !removed.contains(&capability.id))
+        .filter(|capability| {
+            !removed.contains(&capability.id) && !capability.is_unverified_remote_search()
+        })
         .collect::<Vec<_>>();
     object(json!({"capabilities":capabilities}))
 }

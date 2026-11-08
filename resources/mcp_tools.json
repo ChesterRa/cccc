@@ -220,8 +220,7 @@
             "send",
             "request_reply"
           ],
-          "default": "mail",
-          "description": "mail stores for agent Inbox without an immediate prompt and cannot target user; a new Mail's result may list named recipients that cannot act on it yet in mail_recipient_advisories, and no list does not mean every recipient will read it; send requests best-effort prompt delivery now, and its result may list named recipients it cannot reach for now in send_recipient_advisories; request_reply uses the same delivery path and creates a reply obligation for concrete recipients. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
+          "description": "If omitted: send when a recipient is the user, who has no Inbox, or the caller is a native session; otherwise mail. mail stores for agent Inbox without an immediate prompt and cannot target user; a new Mail's result may list named recipients that cannot act on it yet in mail_recipient_advisories, and no list does not mean every recipient will read it; send requests best-effort prompt delivery now, and its result may list named recipients it cannot reach for now in send_recipient_advisories; request_reply uses the same delivery path and creates a reply obligation for concrete recipients. Use mode in MCP calls; message_mode is an IPC field and is rejected here, including when both fields are present."
         },
         "idempotency_key": {
           "type": "string",
@@ -702,8 +701,7 @@
             "send",
             "request_reply"
           ],
-          "default": "mail",
-          "description": "mail stores in an agent Inbox without an immediate prompt and cannot target user; send uses best-effort immediate Push; request_reply adds a concrete reply request."
+          "description": "If omitted: send when a recipient is the user, who has no Inbox, or the caller is a native session; otherwise mail. mail stores in an agent Inbox without an immediate prompt and cannot target user; send uses best-effort immediate Push; request_reply adds a concrete reply request. Use mode in MCP calls; message_mode is an IPC field and is rejected here."
         },
         "dst_instance_id": {
           "type": "string",
@@ -1580,7 +1578,7 @@
   },
   {
     "name": "cccc_capability_search",
-    "description": "Search the configured local and built-in capability registry. Returns matching capabilities without enabling, installing or executing them.",
+    "description": "Search the configured local and built-in capability registry. Returns matching capabilities without enabling, installing or executing them. Unverified historical SkillsMP search snapshots are excluded; saved records and existing bindings are not changed.",
     "inputSchema": {
       "type": "object",
       "properties": {

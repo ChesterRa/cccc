@@ -17,21 +17,56 @@ use tokio::{task::JoinSet, time::Instant};
 
 #[derive(Clone)]
 pub(crate) struct PeerClient {
-    pub(crate) http: Option<reqwest::Client>,
+    pub(crate) http: Option<PeerHttp>,
     pub(crate) direct: crate::direct_channel::Channels,
 }
+
+#[derive(Clone)]
+pub(crate) struct PeerHttp {
+    remote: reqwest::Client,
+    loopback: reqwest::Client,
+}
+
+impl PeerHttp {
+    fn new() -> Result<Self, reqwest::Error> {
+        let builder = || {
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(Duration::from_secs(5))
+        };
+        Ok(Self {
+            remote: builder().build()?,
+            loopback: builder().no_proxy().build()?,
+        })
+    }
+
+    fn for_origin(&self, origin: &str) -> &reqwest::Client {
+        if reqwest::Url::parse(origin)
+            .is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url))
+        {
+            &self.loopback
+        } else {
+            &self.remote
+        }
+    }
+}
+
 impl From<reqwest::Client> for PeerClient {
     fn from(http: reqwest::Client) -> Self {
         Self {
-            http: Some(http),
+            http: Some(PeerHttp {
+                remote: http.clone(),
+                loopback: http,
+            }),
             direct: Default::default(),
         }
     }
 }
 impl PeerClient {
-    fn http(&self) -> Result<&reqwest::Client, String> {
+    fn http(&self, origin: &str) -> Result<&reqwest::Client, String> {
         self.http
             .as_ref()
+            .map(|http| http.for_origin(origin))
             .ok_or_else(|| "Account HTTP transport is unavailable".into())
     }
 }
@@ -57,11 +92,7 @@ struct PeerSchedule {
 pub(crate) mod delivery;
 
 pub(crate) async fn run(home: HomeLayout, locks: crate::dispatch_concurrency::DispatchLocks) {
-    let client = match reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(5))
-        .build()
-    {
+    let client = match PeerHttp::new() {
         Ok(client) => Some(client),
         Err(_) => {
             tracing::warn!(
@@ -271,7 +302,7 @@ async fn confirm_peer_scoped(
     let nonce = uuid::Uuid::new_v4().to_string();
     let proof: ConnectIdentityProof = read_json(
         client
-            .http()?
+            .http(origin)?
             .get(format!("{origin}/api/v1/connect/identity"))
             .query(&[("nonce", &nonce)])
             .send()
@@ -332,7 +363,7 @@ async fn exchange(
     let envelope = connect_peer::sign_request(home, &binding.remote.instance_id, operation)?;
     let response: serde_json::Value = read_json(
         client
-            .http()?
+            .http(origin)?
             .post(format!("{origin}/api/v1/connect/peer"))
             .header(
                 cccc_contracts::connect::CONNECT_PROOF_HEADER,

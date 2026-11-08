@@ -1380,14 +1380,16 @@ If the page cannot tell whether the run went out, it says so and does not try ag
 reopen Automation and check the last run before running the rule again. An unchanged last
 run does not prove that nothing went out.
 
-- **Stand-up**: The built-in example is off by default. Its default schedule reminds the foreman
-  at two-hour intervals to review whether work serves the user's current goals and outstanding
-  requests; where waiting, rework, duplication, unclear handoffs or misunderstandings cause friction
-  and whether the team fits the work; whether repeated user concerns have been addressed and adopted
-  improvements have helped; and whether there is a better way to collaborate. It asks for a brief
-  report when the user requests one and otherwise for silence when nothing needs attention. The
-  notification may wake an agent and use model credits; you can edit its schedule, recipients and
-  snippet to fit your team.
+- **Stand-up**: The built-in example is off by default. Its default schedule reminds the foreman at
+  two-hour intervals to review whether work serves the user's current goals and outstanding
+  requests; where waiting, rework, duplication, unclear handoffs or misunderstandings cause
+  friction and whether the team fits the work; whether repeated user concerns have been addressed
+  and adopted improvements have helped; and whether there is a better way to collaborate. For a
+  question that needs a deeper look, it asks the foreman to mark it `Review:` in a related
+  optimization task, or in a new planned one that authorizes no change, and to suggest a team
+  review rather than run one. It asks for a brief report when the user requests one and otherwise
+  for silence when nothing needs attention. The notification may wake an agent and use model
+  credits; you can edit its schedule, recipients and snippet to fit your team.
 - **Rules**: Create scheduled reminders with interval / recurring schedule / one-time schedule.
   Repeating reminders can have an optional maximum number of runs; leave it blank for no limit.
   The list shows progress and completed rules. Editing the limit keeps the count; removing it

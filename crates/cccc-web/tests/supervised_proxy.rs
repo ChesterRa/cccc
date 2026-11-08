@@ -1,6 +1,7 @@
 use cccc_core::HomeLayout;
 use cccc_core::access_tokens::AccessTokenStore;
 use reqwest::header::{AUTHORIZATION, COOKIE, HOST, ORIGIN, SET_COOKIE};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn supervised_loopback_web_trusts_forwarded_https_for_auth_and_security() {
@@ -11,28 +12,31 @@ async fn supervised_loopback_web_trusts_forwarded_https_for_auth_and_security() 
         .expect("tokens")
         .create("admin", Vec::new(), true, None)
         .expect("admin token");
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("reserve port");
-    let port = listener.local_addr().expect("address").port();
-    drop(listener);
+    let (address_tx, mut address_rx) = tokio::sync::mpsc::unbounded_channel();
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let server_home = home.clone();
     let server = tokio::spawn(async move {
         cccc_web::serve_until_mode_supervised(
             server_home,
             "127.0.0.1",
-            port,
+            0,
             cccc_web::WebMode::Normal,
             async move {
                 let _ = shutdown_rx.await;
             },
-            None,
+            Some(Arc::new(move |address| {
+                let _ = address_tx.send(address);
+            })),
         )
         .await
     });
+    let address = tokio::time::timeout(std::time::Duration::from_secs(5), address_rx.recv())
+        .await
+        .expect("listener callback deadline")
+        .expect("listener address");
+    let port = address.port();
     let client = reqwest::Client::new();
-    let base_url = format!("http://127.0.0.1:{port}");
+    let base_url = format!("http://{address}");
     wait_until_ready(&client, &base_url).await;
 
     let session = client

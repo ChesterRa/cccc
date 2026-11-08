@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 
 use crate::actions;
 use crate::argument_normalization::{
-    alias, message_mode, normalize_message_author, normalize_recipients,
+    alias, default_new_message_mode, message_mode, normalize_message_author, normalize_recipients,
 };
 
 pub fn daemon_call(
@@ -20,7 +20,8 @@ pub fn daemon_call(
         "cccc_message_send" => {
             reject_reply_target(&mut args)?;
             normalize_message_author(&mut args);
-            let mode = message_mode(&mut args, "mail")?;
+            let default = default_new_message_mode(&args, false);
+            let mode = message_mode(&mut args, default)?;
             args.insert("message_mode".into(), Value::String(mode));
             if connect_destination(&mut args)? {
                 return Ok(("connect_send".into(), args));

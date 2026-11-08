@@ -151,13 +151,17 @@ impl MattermostApi {
             .and_then(Value::as_str)
             .and_then(cccc_core::im_state::normalize_mattermost_url)
             .ok_or("Mattermost site URL is invalid")?;
-        let http = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .http1_only()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(http_error)?;
+            .timeout(Duration::from_secs(30));
+        if reqwest::Url::parse(&site)
+            .is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url))
+        {
+            builder = builder.no_proxy();
+        }
+        let http = builder.build().map_err(http_error)?;
         let mut api = Self {
             http,
             site,

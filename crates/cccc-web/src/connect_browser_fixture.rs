@@ -48,7 +48,7 @@ async fn connect_browser_fixture_when_enabled() {
             LiveBinding::from_env(),
             new_web_runtime_id(),
         );
-        state.connect_http = Ok(client.clone());
+        state.connect_http = Ok(client.clone().into());
         tasks.spawn(async move {
             axum::serve(listener, router_for_state(state))
                 .into_future()

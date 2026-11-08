@@ -173,6 +173,7 @@ fn skill(id: &str, name: &str, description: &str, capsule_text: &str, tags: &[&s
         capsule_text: capsule_text.trim().into(),
         source: "cccc_builtin".into(),
         source_uri: String::new(),
+        sync_state: String::new(),
         qualification_status: "qualified".into(),
         enable_supported: true,
     }
@@ -189,7 +190,42 @@ fn pack(id: &str, title: &str, tools: &[&str], tags: &[&str]) -> Capability {
         capsule_text: String::new(),
         source: "cccc_builtin".into(),
         source_uri: String::new(),
+        sync_state: String::new(),
         qualification_status: "qualified".into(),
         enable_supported: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The text asks the review to settle what the stand-up handed over and to
+    /// propose retiring a rule only on evidence; the user's pick decides.
+    #[test]
+    fn the_team_review_settles_handed_over_questions_and_retires_rules() {
+        for promise in [
+            concat!(
+                "A peer asked to run it passes the foreman only what the foreman can already ",
+                "read, or what the user authorized and the team's work needs, while honoring ",
+                "confidentiality limits."
+            ),
+            "in a task's title or at the start of a line in its notes",
+            "authorizes no change",
+            "leave it open and say what it waits for",
+            "no `Review:` question in it is still open",
+            "passing the `if_task_rev` you read",
+            "do not remove one only because nothing recurred or the user said nothing",
+            "each change within your authority worth checking later",
+            "the team saw the same failure again",
+            "Do not resend a card the user has not answered.",
+            "say briefly what you read",
+            "Standing rules, their removal and changes to members wait for the user's pick",
+            "share only what the user authorized and the team's work needs",
+            "honor any confidentiality limits",
+            "Do not include its ID unless the user specifically agreed.",
+        ] {
+            assert!(SELF_EVOLUTION_CAPSULE.contains(promise), "{promise}");
+        }
     }
 }

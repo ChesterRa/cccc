@@ -357,6 +357,16 @@
     "refresh": "Refresh",
     "close": "Close",
     "backToApp": "Back to app",
+    "builtin": {
+      "groupRuntime": "Lets agents, within their permissions, manage the Group: add, remove, start and stop members, list runtimes, and edit agent notes.",
+      "imBind": "Lets agents bind an IM chat to this Group with a bind key.",
+      "space": "Lets agents use this Group's NotebookLM notebooks: bind, add sources, ask questions and sync.",
+      "automation": "Lets agents view and change this Group's automation rules, and run one now.",
+      "contextDelegation": "Lets agents delegate work as a task with a linked message, and apply batched changes to shared context.",
+      "headlessNotify": "Lets headless agents report their status, and lets agents send system notifications.",
+      "workspaceUtilities": "Lets agents read the workspace, publish to Presentation, and read terminal output and logs.",
+      "capabilityAdmin": "Lets agents, within their permissions, check, enable, install, import, block and uninstall capabilities."
+    },
     "searchPlaceholder": "Search capability id, name, source, tag, or tool...",
     "typeFilter": "Type filter",
     "stateFilter": "State filter",
@@ -401,6 +411,8 @@
       "blocked": "Blocked",
       "setup": "Setup",
       "needsSetup": "Needs setup",
+      "legacySearchUnverified": "Unverified old search result",
+      "legacySearchUnverifiedHint": "From a retired remote search; the name and content may not match. Existing bindings remain. Check a trusted source and import it using a supported method.",
       "ready": "Ready"
     },
     "pagination": {
@@ -794,7 +806,7 @@
     "groupStateActiveLabel": "Activate Group",
     "groupStateActiveHint": "Start runners if needed, then resume active automation.",
     "groupStateIdleLabel": "Set Idle",
-    "groupStateIdleHint": "Keep sessions running but disable proactive automation.",
+    "groupStateIdleHint": "Keep sessions running. Other rules run as configured; the stand-up's scheduled runs pause, and Run now still works.",
     "groupStatePausedLabel": "Pause Delivery",
     "groupStatePausedHint": "Pause automation and notification delivery.",
     "groupStateStoppedLabel": "Stop Group",

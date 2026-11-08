@@ -25,6 +25,63 @@ pub fn visit_snapshot_oldest_first(
     Ok(())
 }
 
+/// A complete snapshot fold either resumes from its committed offsets or starts
+/// over when the ledger's identity or source sequence changed.
+#[derive(Default)]
+pub struct SnapshotCursor {
+    path: Option<PathBuf>,
+    sources: Vec<snapshot::Source>,
+    offsets: Vec<u64>,
+}
+
+/// Applied in order to the caller's derived state while updating a cursor.
+pub enum SnapshotUpdate {
+    /// Discard the previous state before applying the following events.
+    Reset,
+    Event(Event),
+}
+
+impl SnapshotCursor {
+    /// Visit newly committed events, or reset and visit the whole snapshot
+    /// when the path or captured source identities change.
+    ///
+    /// The caller must not publish its derived state when this returns an
+    /// error. The cursor is invalidated on error, so the next successful call
+    /// begins with `Reset`, including after a partially visited snapshot.
+    pub fn visit(&mut self, path: &Path, mut apply: impl FnMut(SnapshotUpdate)) -> io::Result<()> {
+        let snapshot = match snapshot::Snapshot::open(path) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                *self = Self::default();
+                return Err(error);
+            }
+        };
+        let resumes = self.path.as_deref() == Some(path) && snapshot.extends(&self.sources);
+        if !resumes {
+            apply(SnapshotUpdate::Reset);
+        }
+        let offsets = if resumes {
+            self.offsets.as_slice()
+        } else {
+            &[]
+        };
+        let next_offsets = match snapshot.visit(offsets, |event, _| {
+            apply(SnapshotUpdate::Event(event));
+            std::ops::ControlFlow::Continue(())
+        }) {
+            Ok(offsets) => offsets,
+            Err(error) => {
+                *self = Self::default();
+                return Err(error);
+            }
+        };
+        self.path = Some(path.to_path_buf());
+        self.sources = snapshot.sources;
+        self.offsets = next_offsets;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceRevision {
     pub(crate) path: PathBuf,

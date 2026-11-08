@@ -357,6 +357,16 @@
     "refresh": "更新",
     "close": "閉じる",
     "backToApp": "アプリに戻る",
+    "builtin": {
+      "groupRuntime": "エージェントが権限の範囲でグループを管理できます。メンバーの追加・削除・起動・停止、ランタイムの一覧、エージェントノートの編集。",
+      "imBind": "エージェントがバインドキーで IM チャットをこのグループにバインドできます。",
+      "space": "エージェントがこのグループの NotebookLM ノートブックを使えます。バインド、ソースの追加、質問、同期。",
+      "automation": "エージェントがこのグループの自動化ルールを確認・変更し、今すぐ実行できます。",
+      "contextDelegation": "エージェントがタスクと関連メッセージで作業を委任し、共有コンテキストをまとめて変更できます。",
+      "headlessNotify": "ヘッドレスのエージェントが状態を報告し、エージェントがシステム通知を送れます。",
+      "workspaceUtilities": "エージェントがワークスペースを読み取り、Presentation に公開し、ターミナル出力やログを読めます。",
+      "capabilityAdmin": "エージェントが権限の範囲で能力の確認・有効化・インストール・インポート・ブロック・アンインストールを行えます。"
+    },
     "searchPlaceholder": "capability id、名前、source、tag、tool を検索...",
     "typeFilter": "種類フィルター",
     "stateFilter": "状態フィルター",
@@ -401,6 +411,8 @@
       "blocked": "ブロック",
       "setup": "設定が必要",
       "needsSetup": "設定が必要",
+      "legacySearchUnverified": "未確認の旧検索結果",
+      "legacySearchUnverifiedHint": "提供終了したリモート検索の結果で、名前と内容が一致しない可能性があります。既存の割り当ては変わりません。利用する場合は信頼できる元を確認し、対応する方法で再インポートしてください。",
       "ready": "準備済み"
     },
     "pagination": {
@@ -794,7 +806,7 @@
     "groupStateActiveLabel": "グループを有効化",
     "groupStateActiveHint": "必要ならランタイムを起動し、能動的な自動化を再開します。",
     "groupStateIdleLabel": "idle にする",
-    "groupStateIdleHint": "セッションは維持したまま、能動的な自動化を停止します。",
+    "groupStateIdleHint": "セッションは維持したままにします。ほかのルールは設定どおり実行されます。スタンドアップの定時実行は止まりますが、今すぐ実行は使えます。",
     "groupStatePausedLabel": "配信を一時停止",
     "groupStatePausedHint": "自動化と通知配信を一時停止します。",
     "groupStateStoppedLabel": "グループを停止",

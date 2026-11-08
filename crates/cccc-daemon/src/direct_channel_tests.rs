@@ -14,9 +14,10 @@ async fn pending_direct_peer_recovers_approval_after_expiry() {
         .expect("store")
         .create("B", "")
         .expect("group");
-    let reserve = std::net::TcpListener::bind("127.0.0.1:0").expect("port");
+    let reserve = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("port");
     let address = reserve.local_addr().expect("address").to_string();
-    drop(reserve);
     direct::configure(
         &a,
         Some(DirectListener {
@@ -45,6 +46,13 @@ async fn pending_direct_peer_recovers_approval_after_expiry() {
         })
         .expect("expiry boundary");
     }
+    // The unavailable receiver owns its port until the attempted dial ends;
+    // do not send the preflight TLS handshake to a newly bound process.
+    let closer = tokio::spawn(async move {
+        let (stream, _) = reserve.accept().await.expect("preflight connection");
+        drop(stream);
+        reserve
+    });
     assert!(
         dial(
             b.clone(),
@@ -55,6 +63,11 @@ async fn pending_direct_peer_recovers_approval_after_expiry() {
         .await
         .is_err()
     );
+    let reserve = tokio::time::timeout(Duration::from_secs(5), closer)
+        .await
+        .expect("preflight deadline")
+        .expect("preflight closer");
+    drop(reserve);
     assert_eq!(
         direct::load(&b)
             .expect("transport failure retains pending")
@@ -115,6 +128,16 @@ async fn wait(mut condition: impl FnMut() -> bool) {
     .await
     .expect("condition converges");
 }
+
+async fn wait_for_direct_listener(home: &HomeLayout) {
+    wait(|| {
+        cccc_core::fs::read_json::<Value>(&home.root().join("state/connect/direct_status.json"))
+            .ok()
+            .is_some_and(|status| status["listener"] == true)
+    })
+    .await;
+}
+
 fn request(op: &str, args: Value) -> DaemonRequest {
     DaemonRequest {
         v: 1,
@@ -136,7 +159,6 @@ async fn two_homes_pair_and_exchange_files_replies_reconnect_and_revoke_without_
     let unused = sb.create("Unshared", "").expect("group");
     let reserve = std::net::TcpListener::bind("127.0.0.1:0").expect("port");
     let address = reserve.local_addr().expect("address").to_string();
-    drop(reserve);
     direct::configure(
         &a,
         Some(DirectListener {
@@ -161,7 +183,9 @@ async fn two_homes_pair_and_exchange_files_replies_reconnect_and_revoke_without_
     let la = DispatchLocks::default();
     let lb = DispatchLocks::default();
     let mut services = JoinSet::new();
+    drop(reserve);
     services.spawn(run(a.clone(), la.clone(), ca.clone()));
+    wait_for_direct_listener(&a).await;
     services.spawn(run(b.clone(), lb.clone(), cb.clone()));
     wait(|| direct::load(&a).expect("store").relations[0].state == DirectState::Pending).await;
     assert!(direct::binding(&a, &kb.peer_id, &id).is_err());
@@ -376,7 +400,6 @@ async fn standalone_background_catalog_and_outbox_need_no_account_snapshot() {
     sb.save(&gb).expect("save");
     let socket = std::net::TcpListener::bind("127.0.0.1:0").expect("port");
     let address = socket.local_addr().expect("address").to_string();
-    drop(socket);
     direct::configure(
         &a,
         Some(DirectListener {
@@ -389,10 +412,12 @@ async fn standalone_background_catalog_and_outbox_need_no_account_snapshot() {
     let invitation = direct::invite(&a, &ga.group_id).expect("invitation");
     let id = direct::join(&b, &gb.group_id, &invitation).expect("join");
     let mut tasks = JoinSet::new();
+    drop(socket);
     tasks.spawn(crate::connect_transport::run(
         a.clone(),
         DispatchLocks::default(),
     ));
+    wait_for_direct_listener(&a).await;
     tasks.spawn(crate::connect_transport::run(
         b.clone(),
         DispatchLocks::default(),

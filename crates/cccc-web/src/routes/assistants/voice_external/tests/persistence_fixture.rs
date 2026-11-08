@@ -186,8 +186,7 @@ impl Fixture {
             home,
             browser_surfaces: Arc::new(crate::browser_surface::BrowserSurfaces::default()),
             connect_frames: Arc::new(crate::connect_frames::ConnectFrames::default()),
-            connect_http: crate::connect_frames::http_client()
-                .build()
+            connect_http: crate::connect_frames::HttpClients::new()
                 .map_err(|error| error.to_string()),
             codex_voice: Arc::new(crate::codex_voice::CodexVoiceSessions::default()),
             notebooklm_auth: Arc::new(crate::notebooklm_auth::AuthFlowManager::default()),

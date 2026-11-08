@@ -202,11 +202,13 @@ fn call_http(
                 "external capability URL is missing",
             )
         })?;
-    let client = reqwest::blocking::Client::builder()
+    let mut builder = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(120))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(OpError::invalid)?;
+        .redirect(reqwest::redirect::Policy::none());
+    if reqwest::Url::parse(url).is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url)) {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build().map_err(OpError::invalid)?;
     let token = invoker
         .get("token")
         .and_then(Value::as_str)

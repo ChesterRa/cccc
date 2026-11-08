@@ -6,6 +6,69 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+
+- The built-in stand-up and the team review texts now ask the foreman to pass questions between
+  them. For a question that needs a deeper look, the stand-up text asks the foreman to mark it
+  `Review:` in a related `optimization` task, or in a new planned one that authorizes no change, and
+  to suggest a team review rather than run one; in a Group with few tasks it may ask you whether to
+  run a review now. The review text asks the foreman to handle those questions and to keep a task
+  open while one is unresolved, to record changes made within the foreman's authority that are worth
+  checking later, to propose revising or removing a rule only when it did not work in real cases,
+  and to answer briefly when you asked for a review and nothing needs your decision. These are
+  instructions to the model, not checks CCCC enforces. A stand-up rule that uses the built-in text
+  gets the new wording; a custom stand-up text stays as it is.
+- From a message addressed only to the foreman, the built-in stand-up and team review texts now let
+  it share what the user authorized and the team's work needs, in its own words and within any
+  confidentiality limits the user set, and leave out the message's ID unless the user agreed. The
+  stand-up text used to keep everything from such a message out of shared tasks, so a request the
+  user meant the team to act on could not be recorded in one. A peer asked to run the team review
+  may also pass the foreman what the user authorized from a message addressed only to that peer, on
+  the same terms; the review text used to leave such content to the user.
+- Capability search no longer recommends unimported results saved from the retired SkillsMP remote
+  search, whose name and content may not match. They stay in the catalog: the Capability Center and
+  the member and profile pickers mark them **Unverified old search result** with an explanation,
+  existing bindings keep working, and they can still be used by ID. To rely on one, find a trusted
+  original source and import it with a supported method; when the source is gone, it may not be
+  recoverable. `capability_overview` rows gain `legacy_search_unverified` and `sync_state`.
+- The Capability Center and the member and profile pickers describe CCCC's built-in capabilities in
+  English, Chinese or Japanese. Their names stay as they are, so search still finds them.
+
+### Fixed
+
+- An agent that sends the user a file or a new message without naming a mode no longer fails because
+  the omitted mode became Mail: for the user, who has no Inbox, the omitted mode is now Send. In a
+  connected native session, `cccc_file_send` now defaults to Send like `cccc_message_send`, as the
+  session's instructions say, instead of leaving files for agents as Mail; managed agents keep Mail
+  as their default for other agents. `cccc_file_send` now refuses a mode that is not text, as
+  `cccc_message_send` does, instead of treating it as Mail, and refuses `paths`, pointing to `path`,
+  which already takes a list of up to 10 files. Both tools refuse a recipient list with an entry
+  that is not text instead of dropping that entry.
+- Idle Grok webhook polling now reuses a cached summary of delivery claims instead of rereading the
+  entire Group ledger every two seconds. The summary catches up with new events and is rebuilt after
+  history is replaced or rotated, or after cache eviction. Previously, polling could consume CPU
+  even when no delivery was waiting.
+- Help and the Automation editor said an idle Group stops all automation. Only the built-in
+  stand-up's scheduled runs pause; other rules run as configured, and **Run now** still works.
+
+### Security
+
+- Requests to a configured literal loopback endpoint (`127.0.0.0/8`, `[::1]` or `localhost`) now
+  start without a system proxy: the daemon's and CLI's calls to the local Web, and calls to an
+  external MCP server, Mattermost, Codex Voice, a Connect peer or a skill URL. Previously, a proxy
+  without a loopback `NO_PROXY` exclusion could receive those requests and their credentials, such
+  as the Web admin token. Hostnames that need DNS resolution still follow the proxy settings. Codex
+  Voice and skill URL downloads follow redirects, keeping the proxy choice made for the initial
+  endpoint.
+- Skills installed from a URL no longer keep or show the username, password, query string or
+  fragment of that URL. For direct HTTP(S) skill URLs, CCCC still downloads from the URL as given;
+  the saved source fields, returned target and direct URL download errors leave those parts out;
+  catalog views also omit them from previously saved skill sources. Downloaded skill text stays as
+  it is. A username and password or a token in a skill URL used to be stored in
+  `state/capabilities/catalog.json` and were visible through the capability overview and to agents
+  in other Groups through capability search. If you installed a skill that way, replace those
+  credentials; entries saved before stay on disk as they are.
+
 ## [0.4.50]
 
 ### Added

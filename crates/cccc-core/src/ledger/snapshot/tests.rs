@@ -71,6 +71,114 @@ impl Fixture {
     }
 }
 
+fn collect_incremental(
+    cursor: &mut ledger::SnapshotCursor,
+    path: &Path,
+    events: &mut Vec<String>,
+) -> io::Result<usize> {
+    let mut resets = 0;
+    cursor.visit(path, |update| match update {
+        ledger::SnapshotUpdate::Reset => {
+            resets += 1;
+            events.clear();
+        }
+        ledger::SnapshotUpdate::Event(event) => events.push(event.id),
+    })?;
+    Ok(resets)
+}
+
+#[test]
+fn incremental_snapshot_skips_old_events_and_rebuilds_replaced_sources() {
+    let f = Fixture::new();
+    let (mails, pushes) = f.gzip_page();
+    let first = f.message("send", 0);
+    ledger::append(&f.ledger, &first).expect("first event");
+    let mut cursor = ledger::SnapshotCursor::default();
+    let mut events = Vec::new();
+    assert_eq!(
+        collect_incremental(&mut cursor, &f.ledger, &mut events).expect("incremental visit"),
+        1
+    );
+    assert_eq!(events.len(), mails.len() + pushes.len() + 1);
+    assert_eq!(events.last(), Some(&first.id));
+
+    let decoded = decoded_records();
+    let gzip = GZIP_READERS.get();
+    assert_eq!(
+        collect_incremental(&mut cursor, &f.ledger, &mut events).expect("incremental visit"),
+        0
+    );
+    assert_eq!(
+        decoded_records(),
+        decoded,
+        "unchanged history is not decoded"
+    );
+    assert_eq!(GZIP_READERS.get(), gzip, "unchanged gzip is not reopened");
+
+    let second = f.message("send", 1);
+    ledger::append(&f.ledger, &second).expect("second event");
+    assert_eq!(
+        collect_incremental(&mut cursor, &f.ledger, &mut events).expect("incremental visit"),
+        0
+    );
+    assert_eq!(
+        decoded_records() - decoded,
+        1,
+        "only the appended event is decoded"
+    );
+    assert_eq!(
+        GZIP_READERS.get(),
+        gzip,
+        "append does not reopen sealed gzip"
+    );
+    assert_eq!(events.last(), Some(&second.id));
+
+    std::fs::rename(&f.ledger, f._temp.path().join("old-active")).expect("replace active");
+    File::create(&f.ledger).expect("new active");
+    let replacement = f.message("send", 2);
+    ledger::append(&f.ledger, &replacement).expect("replacement event");
+    assert_eq!(
+        collect_incremental(&mut cursor, &f.ledger, &mut events).expect("incremental visit"),
+        1
+    );
+    assert_eq!(events.len(), mails.len() + pushes.len() + 1);
+    assert_eq!(events.last(), Some(&replacement.id));
+    assert!(!events.contains(&first.id));
+    assert!(!events.contains(&second.id));
+}
+
+#[test]
+fn incremental_snapshot_retry_resets_partially_visited_state() {
+    let f = Fixture::new();
+    let active = f.message("send", 0);
+    ledger::append(&f.ledger, &active).expect("active event");
+    let mut cursor = ledger::SnapshotCursor::default();
+    let mut events = Vec::new();
+    collect_incremental(&mut cursor, &f.ledger, &mut events).expect("warm cursor");
+    assert_eq!(events, [active.id.clone()]);
+
+    let archived = f.message("send", 1);
+    let mut plain = File::create(f.segments.join("ledger.000001.jsonl")).expect("plain archive");
+    serde_json::to_writer(&mut plain, &archived).expect("event");
+    plain.write_all(b"\n").expect("newline");
+    drop(plain);
+    let broken = f.segments.join("ledger.000002.jsonl.gz");
+    std::fs::write(&broken, b"not a gzip stream").expect("broken archive");
+    assert!(collect_incremental(&mut cursor, &f.ledger, &mut events).is_err());
+    assert_eq!(
+        events,
+        [archived.id.clone()],
+        "the failed visit stopped after one source"
+    );
+
+    std::fs::remove_file(broken).expect("repair archive");
+    assert_eq!(
+        collect_incremental(&mut cursor, &f.ledger, &mut events).expect("incremental visit"),
+        1
+    );
+    assert_eq!(events, [archived.id, active.id]);
+}
+
 #[cfg(unix)]
 #[test]
 fn many_archives_fit_low_descriptor_limit() {

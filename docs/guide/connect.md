@@ -92,8 +92,9 @@ Token is needed for Agent messaging.
    Instance/Group names are labels; use the returned IDs to address messages.
 3. Send with `cccc_message_send(dst_instance_id="...", dst_group_id="...",
    to=["@foreman"], text="...", insight="...", mode="send")`. Use an agent ID
-   for a specific recipient. `mode="send"` requests immediate delivery; the
-   MCP default `mode="mail"` leaves Mail for the recipient to read.
+   for a specific recipient. `mode="send"` requests immediate delivery; for
+   agent recipients the MCP default is `mode="mail"`, which leaves Mail for the
+   recipient to read, or Send in a native session.
    `cccc_file_send(...)` supports the same qualified destination for small
    attachments.
 4. On receipt, call `cccc_message_reply(event_id="...", text="...", insight="...")`

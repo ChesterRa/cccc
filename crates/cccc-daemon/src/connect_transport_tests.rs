@@ -29,6 +29,95 @@ pub(crate) fn client() -> PeerClient {
         .into()
 }
 
+// The child gets its own proxy environment; the test runner's environment is
+// never changed, and both listeners belong to this test.
+#[tokio::test]
+async fn peer_http_routes_loopback_directly_and_other_hosts_through_proxy() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    if let Ok(ports) = std::env::var("CCCC_PROXY_ROUTING_FIXTURE") {
+        let (web_port, _) = ports.split_once(':').expect("fixture ports");
+        let clients = PeerHttp::new().expect("peer HTTP clients");
+        let local = format!("http://127.0.0.1:{web_port}/local");
+        let other = format!("http://0.0.0.0:{web_port}/other");
+        for url in [local, other] {
+            let response = clients
+                .for_origin(&url)
+                .get(&url)
+                .send()
+                .await
+                .expect("fixture request");
+            assert!(response.status().is_success());
+        }
+        return;
+    }
+
+    async fn serve(listener: tokio::net::TcpListener) -> (String, tokio::net::TcpListener) {
+        let (mut stream, _) = tokio::time::timeout(Duration::from_secs(15), listener.accept())
+            .await
+            .expect("fixture accept timeout")
+            .expect("fixture accept");
+        let mut bytes = Vec::new();
+        let mut buffer = [0u8; 2048];
+        while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+            let n = stream.read(&mut buffer).await.expect("fixture request");
+            assert!(n > 0 && bytes.len() + n < 16384);
+            bytes.extend_from_slice(&buffer[..n]);
+        }
+        let first = String::from_utf8_lossy(&bytes)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            .await
+            .expect("fixture response");
+        (first, listener)
+    }
+
+    // If proxy routing regresses, even a direct request to 0.0.0.0 can only
+    // reach this held listener at this port, never a user's service.
+    let web = tokio::net::TcpListener::bind("0.0.0.0:0")
+        .await
+        .expect("web listener");
+    let proxy = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("proxy listener");
+    let web_port = web.local_addr().expect("web address").port();
+    let proxy_port = proxy.local_addr().expect("proxy address").port();
+    let web_task = tokio::spawn(serve(web));
+    let proxy_task = tokio::spawn(serve(proxy));
+    let temp = tempfile::tempdir().expect("home");
+    let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+    let mut child = tokio::process::Command::new(std::env::current_exe().expect("test binary"));
+    child.args(["--exact", "connect_transport::tests::peer_http_routes_loopback_directly_and_other_hosts_through_proxy"])
+        .env_clear()
+        .env("HOME", temp.path())
+        .env("HTTP_PROXY", &proxy_url)
+        .env("http_proxy", &proxy_url)
+        .env("ALL_PROXY", &proxy_url)
+        .env("all_proxy", &proxy_url)
+        .env("NO_PROXY", "")
+        .env("no_proxy", "")
+        .env("CCCC_PROXY_ROUTING_FIXTURE", format!("{web_port}:{proxy_port}"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let status = tokio::time::timeout(Duration::from_secs(20), child.status())
+        .await
+        .expect("child timeout")
+        .expect("child status");
+    assert!(status.success(), "proxy fixture child failed");
+    let (direct, _web_guard) = web_task.await.expect("web task");
+    let (proxied, _proxy_guard) = proxy_task.await.expect("proxy task");
+    assert!(direct.starts_with("GET /local "), "{direct}");
+    assert!(
+        proxied.starts_with(&format!("GET http://0.0.0.0:{web_port}/other ")),
+        "{proxied}"
+    );
+}
+
 pub(crate) fn send_request(
     source: &str,
     target: &str,

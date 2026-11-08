@@ -80,6 +80,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn overview_row(capability: Capability, blocked: bool) -> Value {
+    let legacy_search_unverified = capability.is_unverified_remote_search();
     let kind = if capability.kind.is_empty() {
         inferred_kind(&capability.id).to_owned()
     } else {
@@ -101,6 +102,8 @@ fn overview_row(capability: Capability, blocked: bool) -> Value {
         "description_short":capability.description,
         "source_id":capability.source,
         "source_uri":capability.source_uri,
+        "sync_state":capability.sync_state,
+        "legacy_search_unverified":legacy_search_unverified,
         "tags":capability.tags,
         "capsule_text":capability.capsule_text,
         "tool_names":capability.tool_names,

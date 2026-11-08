@@ -171,7 +171,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let requires_setup = enabled.len() < installed.len();
     let result = object(json!({
         "action_id":action_id,"group_id":group_id,"actor_id":actor_id,
-        "target":target,"target_kind":kind.as_str(),"scope":scope,
+        "target":cccc_core::capabilities::public_skill_source(&target),"target_kind":kind.as_str(),"scope":scope,
         "installed_capability_ids":installed,"enabled_capability_ids":enabled,
         "use_ready_capability_ids":enabled,"requires_setup":requires_setup,
         "refresh_required":!changed.is_empty(),"imported_capabilities":imported,
@@ -455,28 +455,34 @@ fn local_path(target: &str) -> Result<PathBuf, OpError> {
 
 fn url_record(target: &str) -> Result<Value, OpError> {
     let url = reqwest::Url::parse(target).map_err(OpError::invalid)?;
-    let markdown = client()?
+    let markdown = client(Some(&url))?
         .get(url.clone())
         .header(reqwest::header::ACCEPT, "text/markdown, text/plain")
         .send()
-        .map_err(OpError::invalid)?
+        .map_err(|error| OpError::invalid(error.without_url()))?
         .error_for_status()
-        .map_err(OpError::invalid)?
+        .map_err(|error| OpError::invalid(error.without_url()))?
         .text()
-        .map_err(OpError::invalid)?;
+        .map_err(|error| OpError::invalid(error.without_url()))?;
     let name = url
         .path_segments()
         .and_then(|mut parts| parts.next_back())
         .filter(|value| !value.eq_ignore_ascii_case("SKILL.md"))
         .or_else(|| url.path_segments().and_then(|parts| parts.rev().nth(1)))
         .unwrap_or("url-skill");
-    skill_record(&markdown, "url_import", target, "url", name)
+    skill_record(
+        &markdown,
+        "url_import",
+        &cccc_core::capabilities::public_skill_source(target),
+        "url",
+        name,
+    )
 }
 
 fn github_records(target: &str) -> Result<Vec<Value>, OpError> {
     let (owner, repo, requested_ref) = github_reference(target)
         .ok_or_else(|| OpError::new("capability_install_invalid", "invalid GitHub target"))?;
-    let client = client()?;
+    let client = client(None)?;
     let branch = if let Some(reference) = requested_ref {
         reference
     } else {
@@ -569,13 +575,15 @@ fn valid_github_token(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
-fn client() -> Result<Client, OpError> {
-    Client::builder()
+fn client(target: Option<&reqwest::Url>) -> Result<Client, OpError> {
+    let mut builder = Client::builder()
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(3))
-        .user_agent("cccc-capability-installer/1.0")
-        .build()
-        .map_err(OpError::invalid)
+        .user_agent("cccc-capability-installer/1.0");
+    if target.is_some_and(cccc_core::local_network::is_loopback_url) {
+        builder = builder.no_proxy();
+    }
+    builder.build().map_err(OpError::invalid)
 }
 
 fn github_get(client: &Client, url: &str) -> Result<Value, OpError> {
@@ -714,6 +722,109 @@ fn slug(value: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Proxy settings belong to the child, never to the parallel test runner.
+    #[test]
+    fn local_skill_url_with_basic_auth_does_not_use_the_system_proxy() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::process::Stdio;
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+
+        if let Ok(port) = std::env::var("CCCC_SKILL_PROXY_FIXTURE") {
+            let target = format!("http://fixture:secret@127.0.0.1:{port}/SKILL.md");
+            let record = url_record(&target).expect("fixture skill");
+            assert_eq!(record["name"], "proxy-fixture");
+            return;
+        }
+
+        fn serve(
+            listener: TcpListener,
+            stopped: Arc<AtomicBool>,
+            observations: Arc<Mutex<Vec<bool>>>,
+        ) -> std::thread::JoinHandle<()> {
+            std::thread::spawn(move || {
+                listener
+                    .set_nonblocking(true)
+                    .expect("nonblocking listener");
+                while !stopped.load(Ordering::Acquire) {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            stream
+                                .set_read_timeout(Some(Duration::from_secs(5)))
+                                .expect("read timeout");
+                            let mut bytes = Vec::new();
+                            let mut buf = [0u8; 2048];
+                            while !bytes.windows(4).any(|part| part == b"\r\n\r\n") {
+                                let count = stream.read(&mut buf).expect("fixture request");
+                                assert!(count > 0 && bytes.len() + count <= 16384);
+                                bytes.extend_from_slice(&buf[..count]);
+                            }
+                            let header = String::from_utf8_lossy(&bytes);
+                            observations
+                                .lock()
+                                .expect("observations")
+                                .push(header.lines().any(|line| {
+                                    line.split_once(':').is_some_and(|(key, value)| {
+                                        key.eq_ignore_ascii_case("authorization")
+                                            && value.trim() == "Basic Zml4dHVyZTpzZWNyZXQ="
+                                    })
+                                }));
+                            let body = "---\nname: proxy-fixture\ndescription: Fixture\n---\nFixture text.\n";
+                            write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).expect("fixture response");
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(10))
+                        }
+                        Err(error) => panic!("fixture accept: {error}"),
+                    }
+                }
+            })
+        }
+
+        let web = TcpListener::bind("127.0.0.1:0").expect("fixture Web");
+        let proxy = TcpListener::bind("127.0.0.1:0").expect("fixture proxy");
+        let web_port = web.local_addr().expect("Web address").port();
+        let proxy_port = proxy.local_addr().expect("proxy address").port();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let web_requests = Arc::new(Mutex::new(Vec::new()));
+        let proxy_requests = Arc::new(Mutex::new(Vec::new()));
+        // Keep the original listeners until both requests and threads finish.
+        let web_thread = serve(
+            web.try_clone().expect("clone Web"),
+            stopped.clone(),
+            web_requests.clone(),
+        );
+        let proxy_thread = serve(
+            proxy.try_clone().expect("clone proxy"),
+            stopped.clone(),
+            proxy_requests.clone(),
+        );
+        let temp = tempfile::tempdir().expect("fixture home");
+        let proxy_url = format!("http://127.0.0.1:{proxy_port}");
+        let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", "ops::capabilities::target_install::tests::local_skill_url_with_basic_auth_does_not_use_the_system_proxy"])
+            .env_clear().env("HOME", temp.path())
+            .env("HTTP_PROXY", &proxy_url).env("http_proxy", &proxy_url)
+            .env("ALL_PROXY", &proxy_url).env("all_proxy", &proxy_url)
+            .env("NO_PROXY", "").env("no_proxy", "")
+            .env("CCCC_SKILL_PROXY_FIXTURE", web_port.to_string())
+            .stdout(Stdio::null()).stderr(Stdio::null()).status().expect("fixture child");
+        stopped.store(true, Ordering::Release);
+        web_thread.join().expect("Web fixture");
+        proxy_thread.join().expect("proxy fixture");
+        assert!(status.success(), "skill URL child failed");
+        assert_eq!(*web_requests.lock().expect("Web observations"), [true]);
+        assert!(
+            proxy_requests
+                .lock()
+                .expect("proxy observations")
+                .is_empty()
+        );
+    }
 
     #[test]
     fn classifies_supported_install_targets() {

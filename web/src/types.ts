@@ -461,6 +461,7 @@ export type CapabilityOverviewItem = {
   trust_tier?: string;
   license?: string;
   sync_state?: string;
+  legacy_search_unverified?: boolean;
   updated_at_source?: string;
   last_synced_at?: string;
   policy_level?: string;

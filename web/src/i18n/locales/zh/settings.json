@@ -354,6 +354,16 @@
     "refresh": "刷新",
     "close": "关闭",
     "backToApp": "回到主应用",
+    "builtin": {
+      "groupRuntime": "让智能体在权限范围内管理工作组：添加、移除、启动和停止成员，查看可用的运行时，编辑智能体提示词。",
+      "imBind": "让智能体用绑定密钥把 IM 聊天绑定到本工作组。",
+      "space": "让智能体使用本工作组的 NotebookLM 笔记本：绑定、添加来源、提问和同步。",
+      "automation": "让智能体查看和修改本工作组的自动化规则，也可以立即执行一条。",
+      "contextDelegation": "让智能体以任务加关联消息的方式委派工作，并批量修改共享上下文。",
+      "headlessNotify": "让无终端运行的智能体汇报自己的状态，并让智能体发送系统通知。",
+      "workspaceUtilities": "让智能体只读查看工作区、发布到展示区，以及读取终端输出和日志。",
+      "capabilityAdmin": "让智能体在权限范围内查看、启用、安装、导入、阻止和卸载能力。"
+    },
     "searchPlaceholder": "搜索 capability id、名称、来源、标签或工具...",
     "typeFilter": "类型筛选",
     "stateFilter": "状态筛选",
@@ -398,6 +408,8 @@
       "blocked": "已阻止",
       "setup": "需配置",
       "needsSetup": "需配置",
+      "legacySearchUnverified": "未核实的旧搜索结果",
+      "legacySearchUnverifiedHint": "来自已停用的远程搜索，名称和内容可能不匹配。现有绑定不变；要使用时请核对可信来源并按支持的方式重新导入。",
       "ready": "就绪"
     },
     "pagination": {
@@ -791,7 +803,7 @@
     "groupStateActiveLabel": "激活工作组",
     "groupStateActiveHint": "按需启动运行时，然后恢复主动自动化。",
     "groupStateIdleLabel": "设为闲置",
-    "groupStateIdleHint": "保持会话运行，但关闭主动自动化。",
+    "groupStateIdleHint": "保持会话运行。其他规则仍按设置运行；站会的定时执行暂停，仍可立即执行。",
     "groupStatePausedLabel": "暂停投递",
     "groupStatePausedHint": "暂停自动化与通知投递。",
     "groupStateStoppedLabel": "停止工作组",

@@ -128,7 +128,7 @@ pub(crate) use cccc_core::connect_peer::identity_proof;
 
 pub(crate) async fn confirm_target(
     home: &HomeLayout,
-    client: &reqwest::Client,
+    clients: &HttpClients,
     target_id: &str,
     origin: &str,
 ) -> Result<(), String> {
@@ -147,7 +147,8 @@ pub(crate) async fn confirm_target(
         return Err("target route changed".into());
     }
     let nonce = uuid::Uuid::new_v4().to_string();
-    let mut response = client
+    let mut response = clients
+        .for_origin(origin)
         .get(format!("{origin}/api/v1/connect/identity"))
         .query(&[("nonce", &nonce)])
         .send()
@@ -179,6 +180,61 @@ pub(crate) fn http_client() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(5))
+}
+
+#[derive(Clone)]
+pub(crate) struct HttpClients {
+    remote: reqwest::Client,
+    loopback: reqwest::Client,
+}
+
+impl HttpClients {
+    pub(crate) fn new() -> Result<Self, reqwest::Error> {
+        Ok(Self {
+            remote: http_client().build()?,
+            loopback: http_client().no_proxy().build()?,
+        })
+    }
+
+    fn for_origin(&self, origin: &str) -> &reqwest::Client {
+        if reqwest::Url::parse(origin)
+            .is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url))
+        {
+            &self.loopback
+        } else {
+            &self.remote
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<reqwest::Client> for HttpClients {
+    fn from(client: reqwest::Client) -> Self {
+        Self {
+            remote: client.clone(),
+            loopback: client,
+        }
+    }
+}
+
+#[cfg(test)]
+mod proxy_tests {
+    use super::HttpClients;
+
+    #[test]
+    fn target_selects_the_client_without_changing_remote_proxy_settings() {
+        let clients = HttpClients::new().expect("HTTP clients");
+        for origin in [
+            "http://127.0.0.1:1234",
+            "http://[::1]:1234",
+            "http://localhost:1234",
+        ] {
+            assert!(std::ptr::eq(clients.for_origin(origin), &clients.loopback));
+        }
+        for origin in ["https://example.com", "http://127.0.0.1.nip.io"] {
+            assert!(std::ptr::eq(clients.for_origin(origin), &clients.remote));
+        }
+    }
 }
 
 pub(crate) fn issue(

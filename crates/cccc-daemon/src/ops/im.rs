@@ -177,13 +177,17 @@ fn delegate_im_action(home: &HomeLayout, action: &str, body: &Value) -> OpResult
         .and_then(|value| u16::try_from(value).ok())
         .filter(|value| *value > 0)
         .unwrap_or(8848);
-    let client = reqwest::blocking::Client::builder()
+    let endpoint = format!("http://{}:{port}/api/im/{action}", url_host(host));
+    let mut builder = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(OpError::invalid)?;
-    let mut request = client
-        .post(format!("http://{}:{port}/api/im/{action}", url_host(host)))
-        .json(body);
+        .redirect(reqwest::redirect::Policy::none());
+    if reqwest::Url::parse(&endpoint)
+        .is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url))
+    {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build().map_err(OpError::invalid)?;
+    let mut request = client.post(endpoint).json(body);
     if let Some(token) = AccessTokenStore::new(home.clone())
         .map_err(OpError::io)?
         .list()
@@ -884,6 +888,44 @@ mod tests {
         })
     }
 
+    /// Holds a port of its own and closes each connection unanswered, so a request fails as
+    /// if no Web service ran, without releasing the port to another test's mock server. The
+    /// caller keeps the returned listener until its requests are done.
+    fn closing_management_web(
+        home: &HomeLayout,
+        connections: usize,
+    ) -> (std::net::TcpListener, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let held = listener.try_clone().expect("held listener");
+        let mut global = settings::load(home).expect("settings");
+        global.remote_access = json!({"web_host":"127.0.0.1","web_port":listener.local_addr().expect("address").port()})
+            .as_object().cloned().expect("remote access");
+        settings::save(home, &global).expect("settings");
+        let closer = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut closed = 0;
+            while closed < connections {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        drop(stream);
+                        closed += 1;
+                    }
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::WouldBlock
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!(
+                        "expected {connections} management requests, closed {closed}: {error}"
+                    ),
+                }
+            }
+        });
+        (held, closer)
+    }
+
     #[test]
     fn mattermost_config_changes_delegate_complete_payload_without_local_state_writes() {
         for (from, target) in [
@@ -905,7 +947,11 @@ mod tests {
             let expected_id = group_id.clone();
             let server = mock_management_web(&home, move |request| {
                 let action = if target == "unset" { "unset" } else { "set" };
-                assert!(request.starts_with(&format!("POST /api/im/{action} HTTP/1.1")));
+                let first_line = request.lines().next().unwrap_or_default();
+                assert!(
+                    request.starts_with(&format!("POST /api/im/{action} HTTP/1.1")),
+                    "{from} -> {target}: {first_line}"
+                );
                 let payload: Value =
                     serde_json::from_str(request.split_once("\r\n\r\n").expect("body").1)
                         .expect("json");
@@ -1015,11 +1061,9 @@ mod tests {
             home.initialize().expect("home");
             let store = GroupStore::new(home.clone()).expect("store");
             let group_id = store.create("IM no Web", "").expect("group").group_id;
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("unused Web address");
-            let mut global = settings::load(&home).expect("settings");
-            global.remote_access = json!({"web_host":"127.0.0.1","web_port":listener.local_addr().expect("address").port()}).as_object().cloned().expect("remote");
-            settings::save(&home, &global).expect("settings");
-            drop(listener);
+            // Mattermost asks the Web service twice; Telegram saves locally.
+            let (held_port, web) =
+                closing_management_web(&home, if platform == "mattermost" { 2 } else { 0 });
             im_state::update(&store, &group_id, |value| { *value = json!({"config":{"platform":platform,"bot_token_env":"OLD","mattermost_url":"https://old.example.test"},"running":true}); Ok(()) }).expect("state");
             let before = im_state::load(&store, &group_id).expect("before");
             let request = DaemonRequest { v:1, op:"im_set".into(), args:json!({"group_id":group_id,"platform":platform,"bot_token_env":"NEW","mattermost_url":"https://new.example.test"}).as_object().cloned().expect("args") };
@@ -1050,6 +1094,8 @@ mod tests {
                 );
                 assert!(im_state::load(&store, &group_id).expect("cleared")["config"].is_null());
             }
+            web.join().expect("closing Web");
+            drop(held_port);
         }
     }
 }
