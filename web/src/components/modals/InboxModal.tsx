@@ -1,8 +1,8 @@
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
+import { useActorDisplayNameMap } from "../../hooks/useActorDisplayName";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { useChatObscuringViewOnPhone } from "../../hooks/useChatObscuringView";
 import { ModalFrame } from "./ModalFrame";
@@ -39,18 +39,12 @@ export function InboxModal({
   useChatObscuringViewOnPhone(isOpen);
   const { modalRef } = useModalA11y(isOpen, onClose);
 
-  // Helper to get display name for actor
-  const getDisplayName = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const actor of actors) {
-      const id = String(actor.id || "");
-      if (id) map.set(id, actor.title || id);
-    }
-    return (id: string) => {
-      if (!id || id === "user") return id;
-      return map.get(id) || id;
-    };
-  }, [actors]);
+  // Display name for an actor id; "user", empty and unknown ids show as given.
+  const displayNameMap = useActorDisplayNameMap(actors);
+  const getDisplayName = (id: string) => {
+    if (!id || id === "user") return id;
+    return displayNameMap.get(id) || id;
+  };
 
   if (!isOpen) return null;
 
