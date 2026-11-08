@@ -6,6 +6,7 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { useCopyFeedback } from "../hooks/useCopyFeedback";
 import { useModalA11y } from "../hooks/useModalA11y";
+import { useChatObscuringView } from "../hooks/useChatObscuringView";
 import { SearchIcon } from "./Icons";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -88,6 +89,7 @@ export function SearchModal({
   const copyWithFeedback = useCopyFeedback();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { modalRef } = useModalA11y(isOpen, onClose, { initialFocusRef: inputRef });
+  useChatObscuringView(isOpen);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<KindFilter>("all");
   const [by, setBy] = useState("");

@@ -754,6 +754,8 @@ export type PresentationBrowserSurfaceState = {
   error?: { code?: string | null; message?: string | null } | null;
   strategy?: string | null;
   url?: string | null;
+  /** Address used to create this shared session; `url` changes as someone navigates it. */
+  initial_url?: string | null;
   width?: number;
   height?: number;
   started_at?: string | null;

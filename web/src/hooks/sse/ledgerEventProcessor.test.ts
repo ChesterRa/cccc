@@ -274,6 +274,35 @@ describe("processLedgerEvent obligation facts", () => {
 });
 
 describe("Group work view unread state", () => {
+  it("counts a new message while a covering view is open, even at the bottom", () => {
+    const { deps } = processorDeps();
+    deps.incrementChatUnread = vi.fn();
+    useGroupStore.setState({ chatByGroup: {} });
+    useUIStore.setState({
+      activeTab: "chat",
+      chatSessions: {},
+      isSmallScreen: false,
+      workspaceFileViewerGroupId: "",
+      chatObscuringViews: 0,
+    });
+    const event = {
+      id: "covered-reply",
+      kind: "chat.message",
+      by: "actor-1",
+      data: { text: "Work finished", to: ["user"], message_mode: "send" },
+    } as LedgerEvent;
+    const release = useUIStore.getState().registerChatObscuringView();
+    try {
+      processLedgerEvent("g1", event, deps);
+      expect(deps.incrementChatUnread).toHaveBeenCalledWith("g1");
+    } finally {
+      release();
+    }
+    vi.mocked(deps.incrementChatUnread).mockClear();
+    processLedgerEvent("g1", { ...event, id: "visible-reply" }, deps);
+    expect(deps.incrementChatUnread).not.toHaveBeenCalled();
+  });
+
   it("counts replies while the message viewport is hidden even if it was at the bottom", () => {
     const { deps } = processorDeps();
     deps.incrementChatUnread = vi.fn();

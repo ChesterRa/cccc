@@ -66,7 +66,11 @@ export function PendingReplyCard({
   const other = options.length === 0 || draft.selection?.kind === "other";
   const locked = !!sending || !!uncertain;
   const selectedId = draft.selection?.kind === "option" ? draft.selection.id : null;
-  const editorVisible = !readOnly && state === "pending" && other && !locked;
+  // A chosen option may carry a note; its box opens on request, so a plain choice stays as
+  // compact as before.
+  const noteOpen = !other && selectedId !== null && !!draft.noteOpen;
+  const note = draft.note ?? "";
+  const editorVisible = !readOnly && state === "pending" && (other || noteOpen) && !locked;
   const releaseEditor = useCallback(() => {
     if (!editing.current) return;
     editing.current = false;
@@ -91,7 +95,7 @@ export function PendingReplyCard({
     const max = Number.parseFloat(style.maxHeight);
     node.style.height = `${Number.isFinite(max) ? Math.min(natural, max) : natural}px`;
   }, []);
-  useLayoutEffect(fitEditor, [fitEditor, draft.text, other, state]);
+  useLayoutEffect(fitEditor, [fitEditor, draft.text, note, other, noteOpen, state]);
   // A narrower box wraps the same text onto more lines (a turned phone, a side panel),
   // so it fits again when its width changes, and once the layout and fonts settle after
   // it appears; its own height changes are ignored.
@@ -123,7 +127,7 @@ export function PendingReplyCard({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [fitEditor, other, state]);
+  }, [fitEditor, other, noteOpen, state]);
   if (readOnly) return null;
 
   if (state !== "pending") {
@@ -149,6 +153,12 @@ export function PendingReplyCard({
                 {question?.options.find((option) => option.id === selectedId)?.label ?? selectedId}
               </p>
             )}
+            {selectedId && /\P{White_Space}/u.test(note) && (
+              <p>
+                {t("answerReceiptNote")}
+                {note}
+              </p>
+            )}
             {draft.text && <p>{draft.text}</p>}
           </div>
         )}
@@ -161,17 +171,21 @@ export function PendingReplyCard({
     );
   }
 
-  const textLength = Array.from(draft.text).length;
-  const tooLong = other && textLength > MAX_REPLY_SCALARS;
+  const textLength = Array.from(other ? draft.text : note).length;
+  const tooLong = (other || noteOpen) && textLength > MAX_REPLY_SCALARS;
   // Rust's trim uses Unicode White_Space, which differs from JavaScript's
   // trim for a few characters such as NEL and the byte-order mark.
   const hasText = /\P{White_Space}/u.test(draft.text);
+  // A blank note is no note: the answer is the plain choice.
+  const hasNote = noteOpen && /\P{White_Space}/u.test(note);
   const answer: ReplyAnswer | null = other
     ? hasText && !tooLong
       ? { kind: "other", text: draft.text }
       : null
-    : selectedId !== null && options.some((option) => option.id === selectedId)
-      ? { kind: "option", id: selectedId }
+    : selectedId !== null && options.some((option) => option.id === selectedId) && !tooLong
+      ? hasNote
+        ? { kind: "option", id: selectedId, note }
+        : { kind: "option", id: selectedId }
       : null;
   const send = () => {
     if (answer && !locked && !checking) onSubmit(answer);
@@ -208,6 +222,21 @@ export function PendingReplyCard({
       <span data-ask-send-label>{sendLabel}</span>
     </Button>
   );
+
+  const addNote =
+    selectedId !== null && !noteOpen && !locked ? (
+      <button
+        type="button"
+        className="shrink-0 px-1 text-xs text-[var(--color-text-secondary)] underline-offset-2 hover:text-[var(--color-text-primary)] hover:underline"
+        onClick={() => {
+          onDraftChange({ ...draft, noteOpen: true });
+          requestAnimationFrame(() => editorRef.current?.focus());
+        }}
+        data-ask-add-note
+      >
+        {t("pendingReply.addNote")}
+      </button>
+    ) : null;
 
   const otherChoice = (
     <label
@@ -284,11 +313,14 @@ export function PendingReplyCard({
           </label>
         );
       })}
-      {!other ? (
+      {!other && !noteOpen ? (
         // The action shares the last row and wraps below it when the row is short.
         <div className="lcd-ask-other">
           {otherChoice}
-          <div className="lcd-ask-action">{action}</div>
+          <div className="lcd-ask-action flex items-center gap-[1ch]">
+            {addNote}
+            {action}
+          </div>
         </div>
       ) : (
         otherChoice
@@ -302,14 +334,18 @@ export function PendingReplyCard({
       id={textId}
       rows={2}
       className="max-h-[min(12rem,40dvh)] resize-none"
-      value={draft.text}
+      value={other ? draft.text : note}
       disabled={locked}
       onFocus={() => {
         editing.current = true;
         onEditingChange?.(textId, true);
       }}
       onBlur={releaseEditor}
-      onChange={(event) => onDraftChange({ ...draft, text: event.target.value })}
+      onChange={(event) =>
+        onDraftChange(
+          other ? { ...draft, text: event.target.value } : { ...draft, note: event.target.value },
+        )
+      }
       onKeyDown={(event) => {
         // Ctrl+Enter, or ⌘+Enter on a Mac, sends the answer as it sends a message from the
         // composer. While an input method is composing, its Enter stays with it.
@@ -319,7 +355,7 @@ export function PendingReplyCard({
         event.preventDefault();
         send();
       }}
-      placeholder={t("pendingReply.placeholder")}
+      placeholder={t(other ? "pendingReply.placeholder" : "pendingReply.notePlaceholder")}
     />
   );
 
@@ -337,10 +373,10 @@ export function PendingReplyCard({
       ) : null}
       {/* The action sits beside "Other" (above) or beside the answer box. */}
       {choices}
-      {other && (
+      {(other || noteOpen) && (
         <div className="lcd-ask-answer">
           <label htmlFor={textId} className="sr-only">
-            {t("pendingReply.answer")}
+            {t(other ? "pendingReply.answer" : "pendingReply.note")}
           </label>
           {editor}
           {action}

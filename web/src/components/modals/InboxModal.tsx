@@ -4,6 +4,7 @@ import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringViewOnPhone } from "../../hooks/useChatObscuringView";
 import { ModalFrame } from "./ModalFrame";
 import { getMessageInsight } from "../../utils/messagePerspective";
 import { InboxEmptyIcon } from "../Icons";
@@ -35,6 +36,7 @@ export function InboxModal({
   onMarkAllRead,
 }: InboxModalProps) {
   const { t, i18n } = useTranslation("modals");
+  useChatObscuringViewOnPhone(isOpen);
   const { modalRef } = useModalA11y(isOpen, onClose);
 
   // Helper to get display name for actor

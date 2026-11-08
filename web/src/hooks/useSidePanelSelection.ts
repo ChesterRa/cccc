@@ -2,7 +2,8 @@ import { useCallback } from "react";
 import { getChatSession, useUIStore } from "../stores/useUIStore";
 import { useModalStore } from "../stores/useModalStore";
 
-export type SidePanelSurface = "files" | "presentation";
+/** What fills the right-hand column; `resources` is the resource panel docked there. */
+export type SidePanelSurface = "files" | "presentation" | "resources";
 
 /**
  * One right-hand column, two surfaces.

@@ -71,6 +71,8 @@
   "themeLabel": "主题",
   "moreAppearanceSettings": "更多外观设置",
   "lcdBodyLabel": "正文字体",
+  "lcdBodyProportional": "比例",
+  "lcdBodyProportionalHint": "比例字体仅用于消息正文。",
   "lcdBodyMono": "等宽",
   "lcdBodyPixel": "像素",
   "lcdWidthLabel": "消息区宽度",
@@ -186,6 +188,8 @@
     "directRequirement": "局域网 / VPN"
   },
   "workspaceFilesButton": "工作区文件",
+  "resourcesButton": "资源",
+  "reopenClosedResourcesButton": "重新打开最近关闭的资源",
   "linkedAccount": "本实例关联账户：{{account}}",
   "direct": {
     "startTitle": "建立直接连接",

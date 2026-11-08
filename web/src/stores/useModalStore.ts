@@ -16,6 +16,10 @@ interface PresentationViewerState {
   surface?: "modal" | "split";
   focusRef?: PresentationMessageRef | null;
   focusEventId?: string | null;
+  /** Keep the resource tab's reference identity when moving between a panel and a window. */
+  refKey?: string;
+  /** A window opened from a resource tab observes its existing shared session. */
+  reuseExistingSession?: boolean;
 }
 
 interface PresentationPinState {
@@ -26,6 +30,7 @@ interface PresentationPinState {
 }
 
 type PresentationAttentionState = Record<string, Record<string, boolean>>;
+type VisiblePresentationResource = { groupId: string; slotId: string };
 
 interface ModalState {
   // Modal visibility state
@@ -48,6 +53,8 @@ interface ModalState {
   presentationViewer: PresentationViewerState | null;
   presentationPin: PresentationPinState | null;
   presentationAttention: PresentationAttentionState;
+  /** Mounted resource viewers register only while the selected slot is actually on screen. */
+  visiblePresentationResources: Map<symbol, VisiblePresentationResource>;
   editingActor: Actor | null;
   editingActorSection: "chatgpt" | null;
   settingsTarget: {
@@ -82,6 +89,10 @@ interface ModalState {
   setGroupConnections: (groupId: string | null) => void;
   setPresentationViewer: (viewer: PresentationViewerState | null) => void;
   setPresentationPin: (pin: PresentationPinState | null) => void;
+  setVisiblePresentationResource: (
+    owner: symbol,
+    viewer: VisiblePresentationResource | null,
+  ) => void;
   markPresentationSlotAttention: (groupId: string, slotId: string) => void;
   clearPresentationSlotAttention: (groupId: string, slotId: string) => void;
   openActorEditor: (actor: Actor, section?: "chatgpt") => void;
@@ -109,6 +120,7 @@ export const useModalStore = create<ModalState>((set) => ({
   presentationViewer: null,
   presentationPin: null,
   presentationAttention: {},
+  visiblePresentationResources: new Map(),
   editingActor: null,
   editingActorSection: null,
   settingsTarget: null,
@@ -188,11 +200,33 @@ export const useModalStore = create<ModalState>((set) => ({
           surface: viewer.surface === "split" ? "split" : "modal",
           focusRef: viewer.focusRef || null,
           focusEventId: viewer.focusEventId ? String(viewer.focusEventId).trim() : null,
+          refKey: viewer.refKey,
+          reuseExistingSession: viewer.reuseExistingSession === true,
         },
         presentationAttention: nextAttention,
       };
     }),
   setPresentationPin: (pin) => set({ presentationPin: pin }),
+  setVisiblePresentationResource: (owner, viewer) =>
+    set((state) => {
+      const groupId = String(viewer?.groupId || "").trim();
+      const slotId = String(viewer?.slotId || "").trim();
+      const existing = state.visiblePresentationResources.get(owner);
+      if (existing?.groupId === groupId && existing.slotId === slotId) return {};
+      if (!existing && (!groupId || !slotId)) return {};
+      const visible = new Map(state.visiblePresentationResources);
+      if (groupId && slotId) visible.set(owner, { groupId, slotId });
+      else visible.delete(owner);
+      if (!groupId || !slotId || !state.presentationAttention[groupId]?.[slotId]) {
+        return { visiblePresentationResources: visible };
+      }
+      const nextAttention = { ...state.presentationAttention };
+      const groupAttention = { ...(nextAttention[groupId] || {}) };
+      delete groupAttention[slotId];
+      if (Object.keys(groupAttention).length) nextAttention[groupId] = groupAttention;
+      else delete nextAttention[groupId];
+      return { visiblePresentationResources: visible, presentationAttention: nextAttention };
+    }),
   markPresentationSlotAttention: (groupId, slotId) =>
     set((state) => {
       const normalizedGroupId = String(groupId || "").trim();
@@ -202,6 +236,13 @@ export const useModalStore = create<ModalState>((set) => ({
       if (viewer && viewer.groupId === normalizedGroupId && viewer.slotId === normalizedSlotId) {
         return {};
       }
+      if (
+        [...state.visiblePresentationResources.values()].some(
+          (resource) =>
+            resource.groupId === normalizedGroupId && resource.slotId === normalizedSlotId,
+        )
+      )
+        return {};
       return {
         presentationAttention: {
           ...state.presentationAttention,

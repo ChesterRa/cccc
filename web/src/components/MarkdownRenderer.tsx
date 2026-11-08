@@ -13,6 +13,7 @@ import { classNames } from "../utils/classNames";
 import { copyTextToClipboard } from "../utils/copy";
 import { activateMermaidBlocks, isMermaidFenceLanguage, toggleMermaidView } from "../utils/mermaid";
 import { useModalA11y } from "../hooks/useModalA11y";
+import { useChatObscuringView } from "../hooks/useChatObscuringView";
 import type { MessageMentionToken } from "../utils/mentionHighlight";
 
 const copyIconMarkup = renderToStaticMarkup(
@@ -60,6 +61,7 @@ function MermaidPreviewDialog({
   const [copied, setCopied] = useState(false);
   const titleId = useId();
   const { modalRef } = useModalA11y(true, onClose);
+  useChatObscuringView(true);
 
   useEffect(() => {
     if (!copied) return;

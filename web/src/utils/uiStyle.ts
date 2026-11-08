@@ -6,7 +6,7 @@ import { useSyncExternalStore } from "react";
  * wide, or the full width) and motion. index.html marks the page as LCD before the
  * first paint; these choices are applied as data attributes on the root element.
  */
-export type LcdBodyFont = "mono" | "pixel";
+export type LcdBodyFont = "proportional" | "mono" | "pixel";
 export type LcdWidth = "column" | "wide" | "full";
 export type LcdMotion = "on" | "off";
 export type UiStylePrefs = { lcdBody: LcdBodyFont; lcdWidth: LcdWidth; lcdMotion: LcdMotion };
@@ -22,7 +22,7 @@ const STORAGE_KEYS: Record<keyof UiStylePrefs, string> = {
 };
 
 export const DEFAULT_UI_STYLE_PREFS: UiStylePrefs = {
-  lcdBody: "mono",
+  lcdBody: "proportional",
   lcdWidth: "column",
   lcdMotion: "on",
 };
@@ -33,7 +33,7 @@ export function normalizeUiStylePrefs(raw: {
   lcdMotion?: unknown;
 }): UiStylePrefs {
   return {
-    lcdBody: raw.lcdBody === "pixel" ? "pixel" : "mono",
+    lcdBody: raw.lcdBody === "pixel" || raw.lcdBody === "mono" ? raw.lcdBody : "proportional",
     lcdWidth: raw.lcdWidth === "wide" || raw.lcdWidth === "full" ? raw.lcdWidth : "column",
     lcdMotion: raw.lcdMotion === "off" ? "off" : "on",
   };

@@ -64,7 +64,9 @@ PgUp/PgDn pages through them; Enter opens one. In a request, Up/Down moves
 between its options, Other and Send answer, and Enter selects the highlighted
 row: nothing is chosen until you press Enter on it. Other opens an editor where
 Ctrl+J starts a new line and Enter or Esc returns. Send answer records the
-answer; when the result is uncertain, only the same answer can be retried.
+answer; when the result is uncertain, only the same answer can be retried. A
+note added to a chosen option is written in the Web UI; here an answer is an
+option or Other.
 Requests that cannot be answered here, such as ones from another Group, say so
 and are answered in the Web conversation.
 

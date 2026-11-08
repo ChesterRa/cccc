@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { classNames } from "../../utils/classNames";
 
-export type SegmentedOption<Value> = { value: Value; label: string };
+export type SegmentedOption<Value> = { value: Value; label: string; title?: string };
 
 /**
  * A segmented radio group: every option is visible and one tap applies it.
@@ -60,6 +60,7 @@ export function SegmentedChoice<Value extends string | number>({
             type="button"
             role="radio"
             aria-checked={checked}
+            title={option.title}
             disabled={disabled}
             tabIndex={checked || (selected < 0 && index === 0) ? 0 : -1}
             onClick={() => onChange(option.value)}

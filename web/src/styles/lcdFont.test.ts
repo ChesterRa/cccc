@@ -34,3 +34,49 @@ it("prefers Japanese glyphs for Japanese LCD body text in both font modes", () =
     style.remove();
   }
 });
+
+it("changes only message text for proportional while keeping saved mono and pixel choices", () => {
+  const root = document.documentElement;
+  const previousStyle = root.getAttribute("data-ui-style");
+  const previousBody = root.getAttribute("data-lcd-body");
+  const style = document.createElement("style");
+  const host = document.createElement("div");
+  style.textContent = css;
+  const markup = `
+    <div data-lcd-scope><div data-chat-work-surface>
+      <span data-message-quote-text>Quote</span>
+      <div data-message-content>
+        <div class="markdown-body"><p>Message <code>inline</code></p><pre>block</pre></div>
+      </div>
+      <span data-message-insight-text>Insight</span>
+      <button>Control</button>
+    </div></div>`;
+  host.innerHTML = markup;
+  root.setAttribute("data-ui-style", "lcd");
+  root.setAttribute("data-lcd-body", "proportional");
+  document.head.append(style);
+  document.body.append(host);
+  try {
+    const font = (selector: string) => getComputedStyle(host.querySelector(selector)!).fontFamily;
+    for (const selector of ["p", "[data-message-quote-text]", "[data-message-insight-text]"]) {
+      expect(font(selector)).toContain("IBM Plex Sans");
+    }
+    for (const selector of ["code", "pre", "button"]) {
+      expect(font(selector)).toContain("IBM Plex Mono");
+    }
+    root.setAttribute("data-lcd-body", "mono");
+    host.innerHTML = markup;
+    expect(font("p")).toContain("IBM Plex Mono");
+    root.setAttribute("data-lcd-body", "pixel");
+    host.innerHTML = markup;
+    expect(font("p")).toContain("RoundPix 16");
+    expect(font("code")).toContain("IBM Plex Mono");
+  } finally {
+    style.remove();
+    host.remove();
+    if (previousStyle === null) root.removeAttribute("data-ui-style");
+    else root.setAttribute("data-ui-style", previousStyle);
+    if (previousBody === null) root.removeAttribute("data-lcd-body");
+    else root.setAttribute("data-lcd-body", previousBody);
+  }
+});

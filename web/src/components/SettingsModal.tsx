@@ -15,6 +15,7 @@ import { SettingsNavigation } from "./modals/settings/SettingsNavigation";
 import { useSettingsDiagnostics } from "./modals/settings/useSettingsDiagnostics";
 import { useSettingsIMBridge } from "./modals/settings/useSettingsIMBridge";
 import { useModalA11y } from "../hooks/useModalA11y";
+import { useChatObscuringView } from "../hooks/useChatObscuringView";
 
 const AutomationTab = lazy(() =>
   import("./modals/settings/AutomationTab").then((module) => ({ default: module.AutomationTab })),
@@ -122,6 +123,7 @@ export function SettingsModal({
   };
   const initialVoiceFocus = useRef<HTMLElement | null>(null);
   const { modalRef } = useModalA11y(isOpen, requestClose, { initialFocusRef: initialVoiceFocus });
+  useChatObscuringView(isOpen);
   const [initialLocation] = useState(() => readSettingsLastLocation(Boolean(groupId)));
   const [scope, setScope] = useState<SettingsScope>(() => initialLocation.scope);
   const [groupTab, setGroupTab] = useState<GroupTabId>(() => initialLocation.groupTab);

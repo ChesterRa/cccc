@@ -146,7 +146,11 @@ answer: the sidebar's counts, including the archived Groups' total and the one o
 button, and the **Waiting for you** filter inside each Group. Those requests then read as ordinary
 messages: one without a question is answered with the message's **Reply**, and one that asks a
 question still shows it so you can answer in place, without the Waiting for you frame.
-An answer already being sent keeps its form until it is confirmed, so it can be retried. Browser
+An answer already being sent keeps its form until it is confirmed, so it can be retried.
+A question's options can take a note: after you choose one, **+ Add a note (optional)** beside
+**Send answer** opens a box, and the requester receives your choice and your words in one reply.
+A blank note sends the choice alone; **Other** keeps its own box, and switching between them keeps
+what you wrote in each. Browser
 notifications keep their own switch under Settings → This instance → Notifications. The indicators show by default;
 the choice is saved in this browser.
 **Message area width** under Appearance sets how wide the conversation runs on
@@ -260,9 +264,84 @@ independent of these brief progress previews. The same rules apply to every mana
 
 Files and Presentation share one resizable sidebar with matching header controls. Each Group remembers its expanded width and Presentation density. Files always opens at the expanded width; its file draft survives switching to Presentation and back.
 
-Presentation keeps four fixed slots. New Groups open a compact button rail by default; existing saved layout and window/split preferences are preserved. Open a filled slot to read its content, and use the four slot buttons to switch without returning to the list. Empty slots open the pin flow. The expanded overview uses image thumbnails and compact titled entries for other resources, without starting interactive browser/PDF sessions or clearing update indicators.
+Presentation keeps four fixed slots. New Groups open a compact button rail by default. Open a filled slot to read it in the resource panel; empty slots open the pin flow. The expanded overview uses image thumbnails and compact titled entries for other resources, without starting interactive browser/PDF sessions or clearing update indicators.
 
-Collapse returns to the compact rail; closing the sidebar only hides it and keeps its contents. The expand button restores the remembered width and opens an available slot. Dragging to the minimum width also returns to compact slots. The divider supports arrow keys, and Enter toggles density. The viewer can still open in a larger window, and phones retain full-screen surfaces.
+Collapse returns to the compact rail; closing the sidebar only hides it and keeps its contents. Dragging to the minimum width also returns to compact slots. The divider supports arrow keys, and Enter toggles density.
+
+### Resource panel
+
+Workspace files (from **Files**, a path in a message, or a link inside a document), message
+attachments (images, videos, Markdown, text and PDF) and Presentation slots (from the slot list or
+a message's reference) open as tabs in one panel. Opening something that is already open selects
+its tab. Each Group keeps its own tabs until you close them or reload the page. Renaming or
+moving a file or folder in **Files** takes its open tabs and unsaved edits along.
+
+The panel sits in one of two places. Docked right, the default, it takes the right-hand column.
+Docked left, it covers the message list and keeps the composer. The arrow button in the panel's
+bar moves it, and this browser remembers the choice. Docked left, the panel belongs to the
+message view: the terminal view hides it and the message view brings it back. **Maximize**
+covers the messages and the right column together, and its key stays pressed until you press it
+again or Escape to restore. While the panel covers the messages, docked left or maximized, they do
+not count as read, and the collapse key, the same in every position, shows how many arrived beside
+its icon. Collapsing hides the panel and keeps its tabs: the resource button in the Group header
+shows how many are open and brings them back. Escape collapses the panel only from its bar;
+editors and PDF viewers keep their own Escape.
+
+When the tabs do not fit, the tab strip scrolls sideways, also with the mouse wheel. **All** lists every tab in order with a
+filter by name, path or sender, followed by **Recently closed**. Several tabs closed at once
+come back together, from that list or from the **Undo** notice that follows for eight seconds.
+When every tab is closed, the header's resource button stays, showing 0, until nothing is left
+to reopen. Right-click a tab for **Close**, **Close others**, **Close tabs to the right** and
+**Close all**; **All** also offers **Close others** and **Close all**. Delete closes the selected
+tab.
+
+A file with unsaved edits never closes silently. Closing it asks whether to save, close
+without saving or cancel; closing several stops and offers to close only the saved ones.
+
+Switching between workspace text, Markdown or table tabs in a Group, each shown alone, returns to
+where you were reading, so two long documents can be read in turn; a file opened at a link's anchor
+starts there. A workspace PDF or video starts again from the beginning when you switch to another
+workspace file, and an HTML preview does not keep its scroll position. While a file is loading, or
+if it cannot be read, its tab says so rather than showing the previous file. Attachments you looked
+at most recently stay loaded, eight images and four other attachments; an older one loads again when
+you return to it, so a PDF's page, a video's position or a document's scroll may start over.
+Switching to another Group, or resizing the window between the phone and desktop layouts, loads the
+panel again: tabs stay, but reading positions and loaded attachments start over.
+
+**Side by side** shows two tabs next to each other, for comparing two documents or two pictures; on
+a phone they are stacked. It starts with the tab you are reading and the one you read before it, in
+tab order, or with the same tab on both sides when it is the only one open, and coming back to it
+finds the same pair while both are open. Each side's header names its tab and lists every open tab
+to show there instead; picking the other side's tab shows one document in two places, each side
+keeping its own position. The current side, marked in its header, is the one you last clicked or
+tabbed into (inside a page shown in a frame, such as a PDF in the browser's own viewer, click the
+header instead); a tab picked from the tab strip, **All**, a message or a link opens on it, and one
+the other side already shows makes that side current instead. A side keeps its place while it shows
+the same tab; a workspace file shown there again starts from the top, or at the anchor last followed
+there. Drag the divider to give one side more room, or move it with the arrow keys; a double click
+puts it back in the middle. Each side shows its resource as it reads: workspace files rendered or as
+text, with any unsaved edits, pictures, videos, PDFs and Presentation slots in their own viewers. To
+edit a file, leave **Side by side** with its key or Escape, and the current side's tab is shown
+alone. When both sides hold the same Presentation slot, its viewer stays on the current side and the
+other side says so.
+
+A Presentation slot has one viewer in the panel however many of its tabs are open, and switching
+to another tab and back does not reload it. A slot's own tab takes the title of the slot's current
+card; a tab opened from a message keeps the title it was referenced with. Closing a Presentation tab closes only your view;
+the shared slot stays as it is. **Open in window** in the viewer shows the slot in a larger
+window and collapses the panel. The panel and the window share a slot's interactive page: when
+the slot is published again with another address while that page is open, CCCC asks before
+replacing it, since someone may be working in it.
+
+On a phone the panel is a full-screen surface. **Back** returns to where you opened the
+resource from: the messages, the Files tree or the Presentation slots. **All** is where you
+close several tabs at once. To leave room for the Group title, the phone header has no resource
+button: the menu lists **Resources** with the number open, or, when every tab is closed, offers
+to reopen what was closed last.
+
+Git diffs from **Changes** still open over the messages rather than in the panel. Enlarged
+message diagrams, and previews opened from a link in a message, such as an image or video on
+another site or Markdown from `raw.githubusercontent.com`, still open over the page.
 
 ### Message search and settings
 
@@ -343,16 +422,17 @@ Related fields use headings and spacing rather than nested cards. Section action
 ### Workspace files
 
 Open **Files** in the Group header to browse the active workspace. The file tree and
-Presentation share the right-hand column. Opening a text file on desktop places its
-editor in the message area and keeps the composer available. Closing the editor returns
-to messages; covered messages do not count as viewed for unread tracking.
+Presentation share the right-hand column. A file you open goes into the
+[resource panel](#resource-panel) as a tab.
 
-Save with the toolbar button or `Ctrl+S` / `Cmd+S`. Unsaved edits survive closing and
-reopening files within the current Group, including internal symlinks to the same file.
-Save before leaving the workspace. Switching Groups or instances with unsaved file edits asks whether to stay or discard; refreshing or closing the page uses the browser’s unsaved-changes warning. Closing the file viewer retains its drafts while you stay in the same workspace. A scope change or loss of access initiated elsewhere still retires the old editor; drafts never authorize saving into another scope.
-Changing the active workspace clears the file view and its drafts; stale saves are rejected
-instead of writing into the newly selected workspace. If the file changed on disk since it
-was opened, saving reports a conflict. **Reload file** reads the latest contents from disk,
+Save with the toolbar button or `Ctrl+S` / `Cmd+S`. Unsaved edits remain available when you
+switch files or collapse the resource panel, including internal symlinks to the same file.
+Switching Groups or instances with unsaved file edits asks whether to stay or discard;
+refreshing or closing the page uses the browser's unsaved-changes warning. If the active
+workspace changes, drafts stay with their original directory in this page. A tab from another
+directory shows its unsaved text read-only so you can copy it; switch back to that directory
+to edit or save it. A save never writes the draft into the newly selected directory. If the file
+changed on disk since it was opened, saving reports a conflict. **Reload file** reads the latest contents from disk,
 including updated media at the same path. With unsaved edits, it asks before discarding them;
 canceling or a failed read keeps the draft. Edits made while the reload is waiting are also
 retained. Reload is unavailable during a save. This check does not lock out external editors
@@ -446,11 +526,17 @@ On phones, Files opens a read-only viewer. Binary files and files larger than 1 
 not editable here. Files stay within the active workspace, and exhibit mode does not
 expose this surface.
 
-Images open in the shared graphics viewer, including files larger than the text
-limit. Videos and audio use native browser controls, without autoplay. PDFs open
-in the browser's PDF viewer, with **Open in a new tab** and **Download file** available
-if inline viewing is disabled or unsupported. Native support depends on the browser
-and the file's encoding.
+Images open in the shared graphics viewer, including files larger than the text limit.
+Videos and audio use native browser controls, without autoplay, and pause when their
+view is hidden. PDFs open in the browser's PDF viewer, with **Open in a new tab** and
+**Download file** available if inline viewing is disabled or unsupported. Native support
+depends on the browser and the file's encoding. On a device whose main pointer is touch,
+such as a phone or tablet, and in a browser that reports no built-in PDF viewer, PDFs
+open in CCCC's own reader instead: the pages scroll, and **Fit**, **Zoom out** and
+**Zoom in** work as in the image viewer. The reader shows pages only: it cannot select
+or search text, follow the PDF's own links, fill its forms or open a file that requires
+a password. For those, download the file, or open it in a new tab unless CCCC is
+embedded through Connect.
 
 Markdown renders with tables and Mermaid diagrams. CSV and TSV files open as tables,
 including quoted cells and multiline values; the preview shows up to 200 rows and
@@ -464,8 +550,9 @@ are supported; it is not a running website or application preview. Markdown and 
 resolve relative file links within the opened workspace and open them in Files.
 Section fragments such as `report.md#details` or `report.html#details` position the
 loaded preview at that section, including repeated same-file links. Positioning
-happens once per navigation; ordinary updates do not pull the reader back. PDF
-page fragments are passed to the browser viewer. HTML audio/video keep native
+happens once per navigation; ordinary updates do not pull the reader back. A PDF
+page fragment such as `paper.pdf#page=5` opens that page, in the browser's viewer or
+CCCC's reader. HTML audio/video keep native
 controls whether the URL is on the media element or a nested `source`.
 HTML does not load external resources. Workspace paths, including percent-encoded
 names, still undergo the same permission and scope checks. Root-relative document
@@ -487,8 +574,7 @@ quoted snapshots share a static graphics viewer. Use **Fit**, **100%**, **+** or
 and workspace SVG previews can grow to fill the view. Ctrl/⌘ + wheel and a trackpad or touch pinch zoom at the
 pointer; the plain wheel keeps native scrolling and dragging pans enlarged content. A click
 on the content switches between fit and actual size; on touch screens, double-tap.
-Expanded message images and videos open over the whole window. A click on the blank area
-around an image, Escape or **Close** closes the view; releasing a drag does not.
+Message images and videos open in the [resource panel](#resource-panel).
 Focus the viewport for `+`/`−`, `0` (fit),
 `1` (actual size) and native arrow-key scrolling. Closing a modal restores focus
 to its opener. Regular message scrolling, PDF controls and interactive browser
@@ -505,7 +591,11 @@ Switching to another slot or publication clears the previous resource and starts
 Workspace-linked PDF and HTML readers retain their current page, zoom and
 navigation state. Use **Refresh** to load edits from disk; publishing a new card
 also updates the reader. They do not reload on the automatic image/Markdown
-refresh timer.
+refresh timer. On touch devices and in browsers without a built-in PDF viewer, a
+PDF that this CCCC serves, such as a workspace file or an uploaded one, opens in
+CCCC's own reader, as for [workspace files](#workspace-files); a PDF from
+another site keeps the browser's viewer. The slot viewer has no download; for a
+PDF the reader cannot open, **Copy URL/path** copies its URL or workspace path.
 
 ### Chet global assistant (Experimental)
 
@@ -1126,17 +1216,19 @@ attachments, and delivery options remain those currently shown in the composer.
 
 ### Message attachments
 
-Click an image or a video's first frame to open its preview. Video frames load
-when their message comes into view; playback starts when you open the player.
-The player uses native browser controls and pauses other message videos.
-Escape or Close returns to the message. Downloads remain available when the
-browser cannot decode a video. Confirmed uploads play and download from the
-Group's stored blob, so they remain available after the local upload preview expires.
+Click an image or a video's first frame to open it in the
+[resource panel](#resource-panel). Video frames load when their message comes into view;
+playback starts in the panel. The player uses native browser controls and pauses other
+message videos, and it pauses when its tab is no longer in front. **Show in messages** in the
+panel returns to the message. Downloads remain available when the browser cannot decode a
+video. Confirmed uploads play and download from the Group's stored blob, so they remain
+available after the local upload preview expires.
 
-Markdown, PDF and common text files open in the page when you click their name; their
+Markdown, PDF and common text files open in the panel when you click their name; their
 download sits next to it. Markdown is rendered, and text and logs stay plain. A long file
-shows its first 1 MiB. PDF uses the browser's own viewer. Where it cannot show one, download
-it or, unless CCCC is embedded through Connect, open it in a new tab. Other files stay
+shows its first 1 MiB. PDF uses the browser's own viewer, or CCCC's reader on touch devices and
+in browsers without one, as for [workspace files](#workspace-files). Where neither can show it,
+download it or, unless CCCC is embedded through Connect, open it in a new tab. Other files stay
 downloads.
 
 Audio files keep their download chip and gain a play button. A message has one player,
@@ -1148,16 +1240,16 @@ try it again, and its download remains available.
 
 ### Links and file paths in messages
 
-An address that starts with `http://`, `https://` or `www.` is a link. A link to an image, audio
-or video file opens in the same preview and loads only when you click it. Whether it shows depends on the source and the
-browser, so the preview keeps a way to open the original in a new tab. Markdown and text open
-there too when they come from `raw.githubusercontent.com` or `gist.githubusercontent.com`, and
-a link to one of this Group's files opens there with its download. Other links, including a PDF
-on another site, open in a new tab. Ctrl, ⌘, Shift and the middle button keep their usual
+An address that starts with `http://`, `https://` or `www.` is a link. Links to an image, audio
+or video file open a page-level preview and load only when you click them. Whether they show
+depends on the source and the browser, so the preview offers a way to open the original in a new
+tab. Markdown and text from `raw.githubusercontent.com` or `gist.githubusercontent.com` also
+open there, as do full links to this site's Group files, with a download. Other links, including
+a PDF on another site, open in a new tab. Ctrl, ⌘, Shift and the middle button keep their usual
 behavior.
 
 A path with a directory, such as `docs/guide/web-ui.md`, `out/全片.mp4` or `src/main.rs:12`, opens a
-supported file in **Files**, as it is now rather than when the message was sent, and so does a
+supported file in the resource panel, as it is now rather than when the message was sent, and so does a
 Markdown link to a file in the workspace. Names may use letters and digits of any language. Put a
 path in inline code when a name has spaces or symbols other than `.`, `-` and `_`, or when a relative
 path starts with a folder named in letters other than A to Z; otherwise it may be missed or only
@@ -1419,7 +1511,7 @@ For end-to-end setup details, see: `Group Space + NotebookLM`.
 
 Switch between Light, Dark, or Auto theme. Auto follows the light or dark setting of your system.
 
-Both themes use the same pixel-screen look: light mode sets dark ink on a pale screen, dark mode light ink on a dark screen. Surfaces are separated by thin rules rather than shadows, and keyboard focus shows a dashed outline. **Body font** under Appearance sets most text in monospace, the default, or in a pixel font. Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its own sizing.
+Both themes use the same pixel-screen look: light mode sets dark ink on a pale screen, dark mode light ink on a dark screen. Surfaces are separated by thin rules rather than shadows, and keyboard focus shows a dashed outline. **Body font** under Appearance offers **Sans**, the default, which sets message text in IBM Plex Sans while message headers, controls and code stay monospace; **Mono**, which sets most text in monospace; and **Pixel**, a pixel font. Text size also scales side-panel titles, file paths and settings labels; terminal text keeps its own sizing.
 
 ## Mobile Usage
 

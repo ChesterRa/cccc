@@ -84,7 +84,12 @@ export function MessageContent(props: {
   return (
     <>
       {/* Layout stays the content's own; this element only hears clicks on its links. */}
-      <div className="contents" onClick={openLinkPreview} onKeyDown={openPathKey}>
+      <div
+        className="contents"
+        data-message-content
+        onClick={openLinkPreview}
+        onKeyDown={openPathKey}
+      >
         {props.shouldRenderMarkdown ? (
           <LazyMarkdownRenderer
             content={props.fallbackText}

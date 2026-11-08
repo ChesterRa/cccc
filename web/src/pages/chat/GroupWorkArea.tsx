@@ -162,10 +162,11 @@ export function GroupWorkArea({
         actor.effective_working_state === "stuck" ||
         actor.effective_working_state === "error"),
   );
-  const buttonClass =
-    "inline-flex h-8 shrink-0 items-center justify-center rounded-md px-2 hover:bg-[var(--glass-tab-bg)] disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]";
-
-  const pageButtonClass = `${buttonClass} !h-11 w-11`;
+  const controlClass =
+    "inline-flex h-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--glass-tab-bg)] disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]";
+  const buttonClass = `${controlClass} px-2`;
+  // Same size as the other header keys; touch screens get the larger target they use.
+  const pageButtonClass = `${controlClass} w-8 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px] md:pointer-coarse:min-h-10 md:pointer-coarse:min-w-10`;
 
   const pager =
     pageCount > 1 && tiled ? (
@@ -178,7 +179,7 @@ export function GroupWorkArea({
           onClick={() => setPage(groupId, page - 1)}
           aria-label={t("workView.previous")}
         >
-          <ChevronLeftIcon size={20} strokeWidth={2} absoluteStrokeWidth={false} />
+          <ChevronLeftIcon size={18} strokeWidth={1.25} absoluteStrokeWidth={false} />
         </button>
         <span
           aria-live="polite"
@@ -195,7 +196,7 @@ export function GroupWorkArea({
           onClick={() => setPage(groupId, page + 1)}
           aria-label={t("workView.next")}
         >
-          <ChevronRightIcon size={20} strokeWidth={2} absoluteStrokeWidth={false} />
+          <ChevronRightIcon size={18} strokeWidth={1.25} absoluteStrokeWidth={false} />
         </button>
         {otherAttention.length > 0 ? (
           <button

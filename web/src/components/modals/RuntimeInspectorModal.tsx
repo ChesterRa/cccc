@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { ModalFrame } from "./ModalFrame";
 
 export function RuntimeInspectorModal({
@@ -20,6 +21,7 @@ export function RuntimeInspectorModal({
   children: ReactNode;
 }) {
   const { modalRef } = useModalA11y(isOpen && !inline, onClose, { preserveTerminalKeys: true });
+  useChatObscuringView(isOpen && !inline);
   return (
     <ModalFrame
       isOpen={isOpen}

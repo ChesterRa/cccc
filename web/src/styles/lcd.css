@@ -8,6 +8,23 @@
    call those "classic". Font licenses ship under /ui/licenses/fonts/.
    ============================================ */
 
+/* IBM Plex Sans 1.1.0 (@ibm/plex-sans): complete, unmodified WOFF2 files. */
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("@/assets/fonts/lcd/IBMPlexSans-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  font-style: normal;
+  font-weight: 600 700;
+  font-display: swap;
+  src: url("@/assets/fonts/lcd/IBMPlexSans-SemiBold.woff2") format("woff2");
+}
+
 /* IBM Plex Mono 2.5.0 (@ibm/plex-mono), IBM's complete files as released: the reserved
    name "Plex" stays with an original release, and accents keep their base glyph's font. */
 @font-face {
@@ -918,6 +935,32 @@
   overflow-wrap: anywhere;
 }
 
+/* The proportional choice changes message text, while the surrounding controls,
+   attachments and code keep the screen's monospace font. */
+:root[data-ui-style="lcd"][data-lcd-body="proportional"]
+  [data-chat-work-surface]
+  :is([data-message-content], [data-message-quote-text], [data-message-insight-text]) {
+  font-family:
+    "IBM Plex Sans", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", "Hiragino Sans",
+    "Yu Gothic", "Meiryo", sans-serif;
+}
+
+:root[data-ui-style="lcd"][data-lcd-body="proportional"]:lang(ja)
+  [data-chat-work-surface]
+  :is([data-message-content], [data-message-quote-text], [data-message-insight-text]) {
+  font-family:
+    "IBM Plex Sans", "Noto Sans CJK JP", "Hiragino Sans", "Yu Gothic", "Meiryo", "Noto Sans CJK SC",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+/* Code and quotes already have their own styling; do not add punctuation absent from the text. */
+:root[data-ui-style="lcd"] [data-lcd-scope] .markdown-body code::before,
+:root[data-ui-style="lcd"] [data-lcd-scope] .markdown-body code::after,
+:root[data-ui-style="lcd"] [data-lcd-scope] .markdown-body blockquote p:first-of-type::before,
+:root[data-ui-style="lcd"] [data-lcd-scope] .markdown-body blockquote p:last-of-type::after {
+  content: none;
+}
+
 /* Code: the screen's own recessed panel, ink text and one rule, in both themes;
    set in IBM Plex Mono under either body font, as r8 specified. */
 :root[data-ui-style="lcd"] [data-lcd-scope] .code-block-wrapper,
@@ -1226,6 +1269,16 @@
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-lcd-key]:hover:not(:disabled) {
+  border-color: var(--lcd-sel-bg);
+  background: var(--lcd-sel-bg);
+  color: var(--lcd-sel-fg);
+}
+
+/* The resource bar's toggles, side by side and maximize, stay in reverse while on. */
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-resource-bar]
+  [data-lcd-key][aria-pressed="true"] {
   border-color: var(--lcd-sel-bg);
   background: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);

@@ -14,20 +14,29 @@ import { DocumentAttachment } from "./DocumentAttachment";
 import { ImagePreview } from "./ImagePreview";
 import { VideoPreview } from "./VideoPreview";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
+import type { MessageAttachmentSource } from "../resourcePanel/openAttachmentResource";
 
 export function MessageAttachments({
   attachments,
   blobGroupId,
+  panelGroupId,
+  sender,
+  sentAt,
   isUserMessage,
   isDark,
   attachmentKeyPrefix,
+  sourceEventId = "",
   downloadTitle,
 }: {
-  attachments: MessageAttachment[];
+  attachments: Array<MessageAttachment & { sourceIndex?: number }>;
   blobGroupId: string;
+  panelGroupId: string;
+  sender?: string;
+  sentAt?: string;
   isUserMessage: boolean;
   isDark: boolean;
   attachmentKeyPrefix: string;
+  sourceEventId?: string;
   downloadTitle: (name: string) => string;
 }) {
   const imageAttachments = attachments.filter((attachment) => isImageAttachment(attachment));
@@ -40,6 +49,19 @@ export function MessageAttachments({
       !isAudioAttachment(attachment),
   );
   const useImageGrid = imageAttachments.length > 1;
+  const sourceFor = (
+    attachment: MessageAttachment & { sourceIndex?: number },
+  ): MessageAttachmentSource => ({
+    panelGroupId,
+    blobGroupId,
+    messageKey: attachmentKeyPrefix,
+    sender,
+    sentAt,
+    eventId: sourceEventId,
+    index: attachment.sourceIndex ?? attachments.indexOf(attachment),
+    blobPath: attachment.path || "",
+    localPreviewUrl: attachment.path ? undefined : attachment.local_preview_url || undefined,
+  });
 
   if (attachments.length <= 0 || !blobGroupId) return null;
 
@@ -48,8 +70,10 @@ export function MessageAttachments({
       {imageAttachments.length > 0 && (
         <div
           className={classNames(
-            "max-w-full items-start gap-2",
-            useImageGrid ? "grid w-fit grid-cols-2" : "flex max-w-[min(30rem,82vw)] flex-col gap-3",
+            "items-start gap-2",
+            useImageGrid
+              ? "grid w-full max-w-[20.5rem] grid-cols-2 sm:max-w-[22.5rem]"
+              : "flex max-w-[min(100%,30rem,82vw)] flex-col gap-3",
             !useImageGrid && !isUserMessage && "w-[min(30rem,82vw)]",
           )}
         >
@@ -66,10 +90,11 @@ export function MessageAttachments({
                 key={`img:${attachmentKeyPrefix}:${index}`}
                 className={classNames(
                   "flex flex-col",
-                  useImageGrid ? "w-[10rem] sm:w-[11rem]" : "w-full max-w-[min(30rem,82vw)]",
+                  useImageGrid ? "min-w-0 w-full" : "w-full max-w-[min(30rem,82vw)]",
                 )}
               >
                 <ImagePreview
+                  resource={sourceFor(attachment)}
                   href={links.previewHref}
                   downloadHref={links.downloadHref}
                   downloadName={links.downloadName}
@@ -103,6 +128,7 @@ export function MessageAttachments({
             return (
               <VideoPreview
                 key={`video:${attachmentKeyPrefix}:${index}`}
+                resource={sourceFor(attachment)}
                 href={links.previewHref}
                 downloadHref={links.downloadHref}
                 downloadName={links.downloadName}
@@ -150,13 +176,12 @@ export function MessageAttachments({
               return (
                 <DocumentAttachment
                   key={`file:${attachmentKeyPrefix}:${index}`}
+                  resource={sourceFor(attachment)}
                   kind={documentKind}
-                  href={links.previewHref}
                   downloadHref={links.downloadHref}
                   downloadName={links.downloadName}
                   label={links.label}
                   downloadTitle={downloadTitle(links.label)}
-                  isDark={isDark}
                 />
               );
             }

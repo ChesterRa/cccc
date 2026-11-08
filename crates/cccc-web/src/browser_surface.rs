@@ -69,6 +69,17 @@ pub struct BrowserSurfaces {
     closed_pages: Mutex<HashMap<String, Option<String>>>,
 }
 
+#[derive(Debug)]
+pub(crate) struct BrowserSurfaceContentChanged;
+
+impl std::fmt::Display for BrowserSurfaceContentChanged {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("the shared browser session has a different initial URL")
+    }
+}
+
+impl std::error::Error for BrowserSurfaceContentChanged {}
+
 #[derive(Clone)]
 pub(super) struct Session {
     owner: Arc<RwLock<BrowserOwner>>,
@@ -76,6 +87,8 @@ pub(super) struct Session {
     is_system_browser: bool,
     shared_browser: bool,
     viewer: Value,
+    /// Presentation's published address; ordinary navigation changes `url` instead.
+    initial_url: Option<String>,
     url: String,
     pub(super) width: u32,
     pub(super) height: u32,
@@ -101,6 +114,7 @@ struct OpenRequest<'a> {
     height: u32,
     storage_state: Option<&'a Value>,
     reuse_existing: bool,
+    track_initial_url: bool,
     mode: BrowserMode,
     shared_browser: bool,
     actor_identity: Option<&'a str>,
@@ -210,6 +224,7 @@ impl BrowserSurfaces {
         Ok(closed)
     }
 
+    #[cfg(test)]
     pub async fn open(
         &self,
         key: &str,
@@ -226,6 +241,7 @@ impl BrowserSurfaces {
             height,
             storage_state: None,
             reuse_existing: false,
+            track_initial_url: false,
             mode: BrowserMode::Headless,
             shared_browser: false,
             actor_identity: None,
@@ -250,6 +266,33 @@ impl BrowserSurfaces {
             height,
             storage_state: None,
             reuse_existing: true,
+            track_initial_url: true,
+            mode: BrowserMode::Headless,
+            shared_browser: false,
+            actor_identity: None,
+        })
+        .await
+    }
+
+    /// Opens a Presentation page, or reuses its current session without replacing another card.
+    pub async fn open_presentation(
+        &self,
+        key: &str,
+        profile: &Path,
+        url: &str,
+        width: u32,
+        height: u32,
+        reuse_existing: bool,
+    ) -> Result<Value> {
+        self.open_with(OpenRequest {
+            key,
+            profile,
+            url,
+            width,
+            height,
+            storage_state: None,
+            reuse_existing,
+            track_initial_url: true,
             mode: BrowserMode::Headless,
             shared_browser: false,
             actor_identity: None,
@@ -273,6 +316,7 @@ impl BrowserSurfaces {
             height,
             storage_state: None,
             reuse_existing: true,
+            track_initial_url: false,
             mode: BrowserMode::System { background: false },
             shared_browser: true,
             actor_identity: None,
@@ -322,6 +366,7 @@ impl BrowserSurfaces {
             height: dimensions.1,
             storage_state: None,
             reuse_existing: true,
+            track_initial_url: false,
             mode: BrowserMode::System { background: false },
             shared_browser: true,
             actor_identity: Some(generation),
@@ -347,6 +392,7 @@ impl BrowserSurfaces {
             height,
             storage_state,
             reuse_existing: false,
+            track_initial_url: false,
             mode: BrowserMode::Headless,
             shared_browser: false,
             actor_identity: None,
@@ -371,6 +417,7 @@ impl BrowserSurfaces {
             height,
             storage_state,
             reuse_existing: false,
+            track_initial_url: false,
             mode: BrowserMode::System { background: true },
             shared_browser: false,
             actor_identity: None,
@@ -387,6 +434,7 @@ impl BrowserSurfaces {
             height,
             storage_state,
             reuse_existing,
+            track_initial_url,
             mode,
             shared_browser,
             actor_identity,
@@ -412,6 +460,7 @@ impl BrowserSurfaces {
                 height,
                 storage_state,
                 reuse_existing,
+                track_initial_url,
                 mode,
                 shared_browser,
                 actor_identity,
@@ -473,6 +522,7 @@ impl BrowserSurfaces {
             height,
             storage_state,
             reuse_existing,
+            track_initial_url,
             mode,
             shared_browser,
             actor_identity,
@@ -481,13 +531,15 @@ impl BrowserSurfaces {
             bail!("browser surfaces are shutting down");
         }
         if reuse_existing {
-            let existing = self
-                .sessions
-                .lock()
-                .await
-                .get(key)
-                .map(|s| (Arc::clone(&s.owner), state(s), s.page.target_id().clone()));
-            if let Some((owner, state, target_id)) = existing {
+            let existing = self.sessions.lock().await.get(key).map(|s| {
+                (
+                    Arc::clone(&s.owner),
+                    state(s),
+                    s.page.target_id().clone(),
+                    s.initial_url.clone(),
+                )
+            });
+            if let Some((owner, state, target_id, initial_url)) = existing {
                 let owner = owner.read().await;
                 if !owner.handler.is_finished()
                     && actor_identity.is_none_or(|g| state["metadata"]["actor_identity"] == g)
@@ -503,6 +555,9 @@ impl BrowserSurfaces {
                         .iter()
                         .any(|t| t.target_id == target_id)
                     {
+                        if track_initial_url && initial_url.as_deref() != Some(url) {
+                            return Err(BrowserSurfaceContentChanged.into());
+                        }
                         return Ok((state, None));
                     }
                 }
@@ -616,6 +671,7 @@ impl BrowserSurfaces {
             } else {
                 resource.viewer.clone()
             },
+            initial_url: track_initial_url.then(|| url.into()),
             url: url.into(),
             width,
             height,
@@ -1061,14 +1117,18 @@ fn authuser_from_url(raw: &str) -> usize {
 }
 
 fn state(session: &Session) -> Value {
-    json!({
+    let mut value = json!({
         "active":true,"state":"ready","message":"Browser surface is ready.","strategy":session.strategy,
         "url":session.url,"width":session.width,"height":session.height,
         "started_at":session.started_at,"updated_at":session.updated_at,
         "last_frame_seq":session.seq,"last_frame_at":session.updated_at,"controller_attached":false,
         "metadata":session.metadata,
         "viewer":session.viewer
-    })
+    });
+    if let Some(initial_url) = &session.initial_url {
+        value["initial_url"] = json!(initial_url);
+    }
+    value
 }
 
 fn idle() -> Value {

@@ -92,7 +92,11 @@ export interface MessageBubbleProps {
   onViewContext?: (eventId: string) => void;
   onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
-  onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+  onOpenPresentationRef?: (
+    ref: PresentationMessageRef,
+    event: LedgerEvent,
+    refIndex: number,
+  ) => void;
   onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
   onOpenReplyTarget?: (replyToEventId: string) => void;
 }
@@ -271,17 +275,23 @@ export const MessageBubble = memo(
       scopeKey: String(ev.scope_key || ""),
       foreign: !!srcGroupId || isRemoteSource,
     });
-    const blobAttachments = rawAttachments
-      .filter((a): a is MessageAttachment => a != null && typeof a === "object")
-      .map((a) => ({
+    const blobAttachments = rawAttachments.flatMap((a, sourceIndex) => {
+      if (a == null || typeof a !== "object") return [];
+      const attachment = {
         kind: String(a.kind || "file"),
         path: String(a.path || ""),
         title: String(a.title || ""),
         bytes: Number(a.bytes || 0),
         mime_type: String(a.mime_type || ""),
         local_preview_url: "local_preview_url" in a ? String(a.local_preview_url || "") : "",
-      }))
-      .filter((a) => a.path.startsWith("state/blobs/") || a.local_preview_url.startsWith("blob:"));
+        // Use the original message position even after unsupported entries are filtered out.
+        sourceIndex,
+      };
+      return attachment.path.startsWith("state/blobs/") ||
+        attachment.local_preview_url.startsWith("blob:")
+        ? [attachment]
+        : [];
+    });
     const displayMessageText = useMemo(() => {
       if (isRedundantWecomImagePlaceholder(messageText, blobAttachments, sourcePlatform)) {
         return "";
@@ -309,6 +319,7 @@ export const MessageBubble = memo(
         ? localizedAnswerReceipt(ev.data, displayMessageText, {
             selected: (optionId) => t("answerReceiptSelected", { id: optionId }),
             other: t("answerReceiptOther"),
+            note: t("answerReceiptNote"),
           })
         : null;
       return receipt ?? getDelegationDisplayText(displayMessageText);
@@ -337,10 +348,11 @@ export const MessageBubble = memo(
     const stableMessageAttachmentKey = useMemo(() => {
       const clientId =
         typeof msgData?.client_id === "string" ? String(msgData.client_id || "").trim() : "";
-      if (clientId) return `client:${clientId}`;
+      // The outbox belongs to the user; other authors may reuse the same client id.
+      if (isUserMessage && clientId) return `client:${clientId}`;
       const eventId = typeof ev.id === "string" ? String(ev.id || "").trim() : "";
       return eventId || `row:${String(ev.ts || "")}:${String(ev.by || "")}`;
-    }, [ev.id, ev.ts, ev.by, msgData]);
+    }, [ev.id, ev.ts, ev.by, isUserMessage, msgData]);
     const copyableMessageText = useMemo(
       () =>
         buildMessageCopyText({
@@ -605,6 +617,15 @@ export const MessageBubble = memo(
         </FloatingPortal>
       ) : null;
 
+    // A read-only exhibit is watched by spectators, not by the Group's user, so the
+    // user's messages are neither "you" nor set on the reader's side; spectators see
+    // the role in their own language.
+    const fromReader = isUserMessage && !readOnly;
+    const lcdAuthorName = fromReader
+      ? t("messageAuthorYou")
+      : isUserMessage
+        ? t("senderUser")
+        : senderDisplayName;
     const bubbleContent = (
       <>
         <MessageBubbleBody
@@ -629,6 +650,8 @@ export const MessageBubble = memo(
           insight={insight}
           blobAttachments={blobAttachments}
           blobGroupId={blobGroupId}
+          panelGroupId={groupId}
+          senderName={lcdAuthorName}
           stableMessageAttachmentKey={stableMessageAttachmentKey}
           onOpenPresentationRef={onOpenPresentationRef}
           onOpenTaskRef={onOpenTaskRef}
@@ -660,15 +683,6 @@ export const MessageBubble = memo(
     );
 
     const showAgentState = canShowAgentState && !collapseHeader;
-    // A read-only exhibit is watched by spectators, not by the Group's user, so the
-    // user's messages are neither "you" nor set on the reader's side; spectators see
-    // the role in their own language.
-    const fromReader = isUserMessage && !readOnly;
-    const lcdAuthorName = fromReader
-      ? t("messageAuthorYou")
-      : isUserMessage
-        ? t("senderUser")
-        : senderDisplayName;
     const messageActionProps = {
       readOnly,
       copyableMessageText,

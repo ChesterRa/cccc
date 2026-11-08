@@ -61,7 +61,7 @@ impl BrowserSurfaces {
         current.height = session.height;
         current.seq = session.seq;
         current.updated_at = session.updated_at.clone();
-        Ok(json!({
+        let mut frame = json!({
             "t":"frame",
             "seq":session.seq,
             "mime":"image/jpeg",
@@ -70,7 +70,11 @@ impl BrowserSurfaces {
             "height":session.height,
             "captured_at":session.updated_at,
             "url":session.url
-        }))
+        });
+        if let Some(initial_url) = &session.initial_url {
+            frame["initial_url"] = json!(initial_url);
+        }
+        Ok(frame)
     }
 }
 

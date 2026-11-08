@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
+import { groupMessagesVisible, useUIStore } from "../../stores/useUIStore";
 import { InboxModal } from "./InboxModal";
 
 vi.mock("react-i18next", () => ({
@@ -60,6 +61,68 @@ it("labels the inbox once and enables mark-read only when messages are available
     expect(markRead().disabled).toBe(true);
   } finally {
     await act(async () => root.unmount());
+    host.remove();
+  }
+});
+
+it("hides chat while the inbox is full-screen, and restores visibility on resize or close", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useUIStore.setState({
+    activeTab: "chat",
+    chatSessions: {},
+    isSmallScreen: false,
+    workspaceFileViewerGroupId: "",
+    chatObscuringViews: 0,
+  });
+  let fullScreen = false;
+  const media = new EventTarget() as MediaQueryList;
+  Object.defineProperty(media, "matches", { get: () => fullScreen });
+  const matchMedia = vi.spyOn(window, "matchMedia").mockReturnValue(media);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const render = async (isOpen: boolean) => {
+    await act(async () =>
+      root.render(
+        <InboxModal
+          isOpen={isOpen}
+          isDark={false}
+          actorId="reviewer"
+          actors={[]}
+          messages={[]}
+          busy=""
+          onClose={() => {}}
+          onMarkAllRead={() => {}}
+        />,
+      ),
+    );
+  };
+  try {
+    await render(true);
+    expect(matchMedia).toHaveBeenCalledWith("(width < 40rem)");
+    expect(groupMessagesVisible("group-a", useUIStore.getState())).toBe(true);
+
+    fullScreen = true;
+    await act(async () => {
+      media.dispatchEvent(new Event("change"));
+    });
+    expect(groupMessagesVisible("group-a", useUIStore.getState())).toBe(false);
+
+    fullScreen = false;
+    await act(async () => {
+      media.dispatchEvent(new Event("change"));
+    });
+    expect(groupMessagesVisible("group-a", useUIStore.getState())).toBe(true);
+
+    fullScreen = true;
+    await act(async () => {
+      media.dispatchEvent(new Event("change"));
+    });
+    await render(false);
+    expect(groupMessagesVisible("group-a", useUIStore.getState())).toBe(true);
+  } finally {
+    await act(async () => root.unmount());
+    matchMedia.mockRestore();
     host.remove();
   }
 });

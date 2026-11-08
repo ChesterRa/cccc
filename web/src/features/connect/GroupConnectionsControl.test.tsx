@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { GroupConnectionsControl, GroupConnectionsPanel } from "./GroupConnectionsControl";
 import { useModalStore } from "../../stores/useModalStore";
+import { groupMessagesVisible, useUIStore } from "../../stores/useUIStore";
 import type { GroupMeta } from "../../types";
 
 const mocks = vi.hoisted(() => ({ request: vi.fn(), t: (key: string) => key }));
@@ -81,6 +82,22 @@ it("has no polling or management entry for restricted access and only polls whil
     expect.objectContaining({ signal: expect.any(AbortSignal) }),
   );
   expect(mocks.request.mock.calls.every(([, options]) => options.method !== "POST")).toBe(true);
+});
+
+it("keeps chat hidden only while the connections dialog is open", async () => {
+  useUIStore.setState({
+    activeTab: "chat",
+    chatSessions: {},
+    isSmallScreen: false,
+    workspaceFileViewerGroupId: "",
+    chatObscuringViews: 0,
+  });
+  await render();
+  expect(groupMessagesVisible("a", useUIStore.getState())).toBe(true);
+  await openConnections();
+  expect(groupMessagesVisible("a", useUIStore.getState())).toBe(false);
+  await act(async () => useModalStore.getState().setGroupConnections(null));
+  expect(groupMessagesVisible("a", useUIStore.getState())).toBe(true);
 });
 
 it("uses the explicitly selected Group for an incoming invitation and leaves approval to the account website", async () => {

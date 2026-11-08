@@ -26,6 +26,11 @@ function containsMarkdownTable(text: string): boolean {
   return false;
 }
 
+// Bold text, the one emphasis agents use on its own. Like the renderer, the run may open with
+// an emoji or punctuation, but not with a space or a slash, so glob patterns such as
+// `**/src/**` and `src/**/*.rs` stay plain text.
+const BOLD_RUN = /\*\*(?![\s*/])(?:[^*\n]*[^\s*])?\*\*/;
+
 export function mayContainMarkdown(text: string): boolean {
   const value = String(text || "");
   if (!value.trim()) return false;
@@ -33,6 +38,7 @@ export function mayContainMarkdown(text: string): boolean {
   // picking up prose list spacing from Markdown rendering.
   if (/^\[cccc\]\s+(Attachments|References):/m.test(value)) return false;
   if (containsMarkdownTable(value)) return true;
+  if (BOLD_RUN.test(value)) return true;
   return /(```|`[^`\n]+`|\[[^\]]+\]\([^)]+\)|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>\s)/m.test(
     value,
   );

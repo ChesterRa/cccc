@@ -154,10 +154,41 @@ describe("pending user reply projection", () => {
     expect(matchesSubmittedAnswer(null, { v: 1, text: "words" }, plain)).toBe(true);
     expect(matchesSubmittedAnswer(parsed, { v: 1, text: "words" }, plain)).toBe(false);
   });
+
+  it("records a choice with a note, and only with its own note and text", () => {
+    const parsed = parseQuestion(question)!;
+    const note = "But only after the review.\n\nNote: kept as written";
+    const reply: LedgerEvent = {
+      kind: "chat.message",
+      by: "user",
+      data: {
+        reply_to: "request",
+        to: ["worker"],
+        message_mode: "send",
+        answer: { v: 2, option_id: "B", note },
+        text: `Selected B: There\n\nNote: ${note}`,
+      },
+    };
+    expect(recordedOption(parsed, "request", "worker", reply)).toMatchObject({ id: "B" });
+    expect(matchesSubmittedAnswer(parsed, { v: 2, option_id: "B", note }, reply)).toBe(true);
+    // Another note, a plain choice, or the note's text missing never matches.
+    expect(matchesSubmittedAnswer(parsed, { v: 2, option_id: "B", note: "other" }, reply)).toBe(
+      false,
+    );
+    expect(matchesSubmittedAnswer(parsed, { v: 1, option_id: "B" }, reply)).toBe(false);
+    const bare = { ...reply, data: { ...reply.data, text: "Selected B: There" } };
+    expect(recordedOption(parsed, "request", "worker", bare)).toBeNull();
+    expect(matchesSubmittedAnswer(parsed, { v: 2, option_id: "B", note }, bare)).toBe(false);
+    const extra = {
+      ...reply,
+      data: { ...reply.data, answer: { v: 2, option_id: "B", note, text: "x" } },
+    };
+    expect(recordedOption(parsed, "request", "worker", extra)).toBeNull();
+  });
 });
 
 describe("answer receipt prefixes", () => {
-  const labels = { selected: (id: string) => `已选 ${id}：`, other: "其他：" };
+  const labels = { selected: (id: string) => `已选 ${id}：`, other: "其他：", note: "补充：" };
   const receipt = (answer: unknown, text: string) =>
     localizedAnswerReceipt({ answer, text }, text, labels);
 
@@ -170,6 +201,22 @@ describe("answer receipt prefixes", () => {
     expect(receipt({ v: 1, text: "Later, with finance" }, "Other: Later, with finance")).toBe(
       "其他：Later, with finance",
     );
+  });
+
+  it("localizes a choice with a note, keeping the note as written", () => {
+    expect(
+      receipt(
+        { v: 2, option_id: "B", note: "Two lines\nhere" },
+        "Selected B: There\n\nNote: Two lines\nhere",
+      ),
+    ).toBe("已选 B：There\n\n补充：Two lines\nhere");
+    // The text must hold exactly that note after exactly that choice.
+    expect(receipt({ v: 2, option_id: "B", note: "x" }, "Selected B: There\n\nNote: y")).toBeNull();
+    expect(receipt({ v: 2, option_id: "B", note: "x" }, "Selected A: There\n\nNote: x")).toBeNull();
+    expect(receipt({ v: 2, option_id: "B", note: "x" }, "Selected B: \n\nNote: x")).toBeNull();
+    expect(
+      receipt({ v: 2, option_id: "B", note: "x", text: "y" }, "Selected B: There\n\nNote: x"),
+    ).toBeNull();
   });
 
   it("shows anything else as written", () => {

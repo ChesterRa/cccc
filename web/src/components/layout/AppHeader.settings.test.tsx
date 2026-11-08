@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { AppHeader, type AppHeaderProps } from "./AppHeader";
 import { useModalA11y } from "../../hooks/useModalA11y";
-import { useUIStore } from "../../stores/useUIStore";
+import { groupMessagesVisible, useUIStore } from "../../stores/useUIStore";
 import { useModalStore } from "../../stores/useModalStore";
 import type { TextScale, Theme } from "../../types";
 
@@ -73,6 +73,19 @@ afterEach(async () => {
 });
 
 describe("header settings menu", () => {
+  it("does not hide chat while the compact settings menu is open", async () => {
+    useUIStore.setState({
+      activeTab: "chat",
+      chatSessions: {},
+      isSmallScreen: false,
+      workspaceFileViewerGroupId: "",
+      chatObscuringViews: 0,
+    });
+    await mount();
+    expect(await openMenu()).not.toBeNull();
+    expect(groupMessagesVisible("group-1", useUIStore.getState())).toBe(true);
+  });
+
   it("retains group shortcuts and routes account through the menu", async () => {
     const onOpenAccount = vi.fn();
     const onOpenContext = vi.fn();

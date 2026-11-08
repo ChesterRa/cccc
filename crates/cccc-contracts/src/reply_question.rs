@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 pub const VERSION: u64 = 1;
+/// Answers with both a selected option and an accompanying note use their own shape.
+pub const ANSWER_WITH_NOTE_VERSION: u64 = 2;
 pub const MAX_CONTEXT_CHARS: usize = 4000;
 pub const MAX_PROMPT_CHARS: usize = 500;
 pub const MAX_LABEL_CHARS: usize = 80;
@@ -84,6 +86,10 @@ pub struct Answer {
     /// Kept exactly as written; emptiness is judged after trimming.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Version 2 only: a nonempty explanation attached to a selected option.
+    /// It is kept exactly as written; emptiness is judged after trimming.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,26 +296,44 @@ pub fn stored(data: &Map<String, Value>) -> Stored {
 
 impl Answer {
     pub fn parse(value: &Value) -> Result<Self, FieldError> {
+        // The versions have distinct shapes even when an extra field is null:
+        // adding V2 must not make an invalid V1 record valid.
+        if let Some(fields) = value.as_object() {
+            match fields.get("v").and_then(Value::as_u64) {
+                Some(VERSION) if fields.contains_key("note") => {
+                    return Err(FieldError::new("answer", "version 1 cannot contain note"));
+                }
+                Some(ANSWER_WITH_NOTE_VERSION) if fields.contains_key("text") => {
+                    return Err(FieldError::new("answer", "version 2 cannot contain text"));
+                }
+                _ => {}
+            }
+        }
         let answer: Self = serde_json::from_value(value.clone())
             .map_err(|error| FieldError::new("answer", error.to_string()))?;
-        if answer.v != VERSION {
-            return Err(FieldError::new(
-                "answer.v",
-                format!("answer version must be {VERSION}"),
-            ));
-        }
-        match (&answer.option_id, &answer.text) {
-            (Some(option_id), None) if !option_id.trim().is_empty() => {}
-            (None, Some(text)) => {
+        match (answer.v, &answer.option_id, &answer.text, &answer.note) {
+            (VERSION, Some(option_id), None, None) if !option_id.trim().is_empty() => {}
+            (VERSION, None, Some(text), None) => {
                 if text.trim().is_empty() {
                     return Err(FieldError::new("answer.text", "write an answer"));
                 }
                 within("answer.text", text, MAX_ANSWER_CHARS)?;
             }
+            (ANSWER_WITH_NOTE_VERSION, Some(option_id), None, Some(note))
+                if !option_id.trim().is_empty() =>
+            {
+                if note.trim().is_empty() {
+                    return Err(FieldError::new("answer.note", "write a note"));
+                }
+                within("answer.note", note, MAX_ANSWER_CHARS)?;
+            }
+            (version, _, _, _) if version != VERSION && version != ANSWER_WITH_NOTE_VERSION => {
+                return Err(FieldError::new("answer.v", "unsupported answer version"));
+            }
             _ => {
                 return Err(FieldError::new(
                     "answer",
-                    "give either option_id or text, not both",
+                    "give a version 1 option or text, or a version 2 option and note",
                 ));
             }
         }
@@ -323,7 +347,11 @@ impl Answer {
             let option = question.option(option_id).ok_or_else(|| {
                 FieldError::new("answer.option_id", "choose one of the offered options")
             })?;
-            return Ok(format!("Selected {}: {}", option.id, option.label));
+            let selected = format!("Selected {}: {}", option.id, option.label);
+            return Ok(match &self.note {
+                Some(note) => format!("{selected}\n\nNote: {note}"),
+                None => selected,
+            });
         }
         let text = self.text.clone().unwrap_or_default();
         Ok(if question.options.is_empty() {
@@ -552,5 +580,43 @@ mod tests {
         ] {
             assert!(Answer::parse(&invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn a_choice_with_a_note_has_its_own_version_and_preserves_user_text() {
+        let question = Question::from_request(&choice(), "").expect("question");
+        let note = "  中文 and a condition\nsecond line\n";
+        let value = json!({"v": 2, "option_id": "B", "note": note});
+        let answer = Answer::parse(&value).expect("choice and note");
+        assert_eq!(serde_json::to_value(&answer).expect("serialized"), value);
+        assert_eq!(
+            answer.reply_text(&question).expect("reply"),
+            format!("Selected B: Add a column\n\nNote: {note}")
+        );
+        let unknown =
+            Answer::parse(&json!({"v": 2, "option_id": "C", "note": "x"})).expect("valid shape");
+        assert_eq!(
+            unknown
+                .reply_text(&question)
+                .expect_err("not offered")
+                .field,
+            "answer.option_id"
+        );
+        for invalid in [
+            json!({"v": 1, "option_id": "A", "note": "x"}),
+            json!({"v": 1, "option_id": "A", "note": null}),
+            json!({"v": 2, "option_id": "A"}),
+            json!({"v": 2, "option_id": "A", "note": " \n "}),
+            json!({"v": 2, "note": "x"}),
+            json!({"v": 2, "option_id": "A", "note": "x", "text": "also other"}),
+            json!({"v": 2, "option_id": "A", "note": "x", "text": null}),
+            json!({"v": 2, "option_id": "A", "note": "x", "extra": true}),
+            json!({"v": 3, "option_id": "A", "note": "x"}),
+            json!({"v": 2, "option_id": "A", "note": "é".repeat(MAX_ANSWER_CHARS + 1)}),
+        ] {
+            assert!(Answer::parse(&invalid).is_err(), "{invalid}");
+        }
+        let max = json!({"v": 2, "option_id": "A", "note": "é".repeat(MAX_ANSWER_CHARS)});
+        Answer::parse(&max).expect("limit counts characters rather than bytes");
     }
 }

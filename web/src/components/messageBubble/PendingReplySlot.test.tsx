@@ -57,115 +57,199 @@ const event: LedgerEvent = {
   _user_request: { question: "valid", requester: "available" },
 };
 
-it("retains an uncertain answer and retries the identical request before marking it answered", async () => {
+it.each([
+  {
+    version: "a plain choice",
+    note: "",
+    answer: { v: 1, option_id: "A" },
+    text: "Selected A: Alpha",
+  },
+  {
+    version: "a choice with a note",
+    note: "only after review",
+    answer: { v: 2, option_id: "A", note: "only after review" },
+    text: "Selected A: Alpha\n\nNote: only after review",
+  },
+])(
+  "retains an uncertain answer, $version, and retries the identical request before marking it answered",
+  async ({ note, answer, text }) => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    mocks.answer.mockReset();
+    mocks.append.mockReset();
+    mocks.update.mockReset();
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const store = createPendingReplyStore();
+    const refresh = vi.fn();
+    mocks.answer.mockResolvedValueOnce({ ok: false, error: { code: "NETWORK_ERROR" } });
+    let finishRetry!: () => void;
+    mocks.answer.mockImplementationOnce(
+      (_group, _source, clientId) =>
+        new Promise((resolve) => {
+          finishRetry = () =>
+            resolve({
+              ok: true,
+              result: {
+                event: {
+                  id: "response",
+                  group_id: "g1",
+                  by: "user",
+                  kind: "chat.message",
+                  data: {
+                    reply_to: "r1",
+                    to: ["peer"],
+                    client_id: clientId,
+                    message_mode: "send",
+                    answer,
+                    text,
+                  },
+                },
+              },
+            });
+        }),
+    );
+    try {
+      await act(async () =>
+        root.render(
+          <PendingSummaryContext.Provider value={{ summaries: {}, refresh }}>
+            <PendingReplyStoreContext.Provider value={store}>
+              <PendingReplySlot event={event} groupId="g1" onUseComposer={() => {}} />
+            </PendingReplyStoreContext.Provider>
+          </PendingSummaryContext.Provider>,
+        ),
+      );
+      const choice = host.querySelector<HTMLInputElement>('input[type="radio"]')!;
+      await act(async () => choice.click());
+      if (note) {
+        await act(async () =>
+          host.querySelector<HTMLButtonElement>("[data-ask-add-note]")!.click(),
+        );
+        const input = host.querySelector<HTMLTextAreaElement>("textarea")!;
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+            input,
+            note,
+          );
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      }
+      await act(async () =>
+        host
+          .querySelector<HTMLFormElement>("form")!
+          .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+      );
+      const first = mocks.answer.mock.calls[0];
+      expect(first[3]).toEqual(answer);
+      expect(store.getState().entries[replyKey("g1", "r1")].attempt?.phase).toBe("uncertain");
+      expect(choice.disabled).toBe(true);
+      expect(mocks.append).not.toHaveBeenCalled();
+      // A failed status refresh loses the current projection, but the retry
+      // must retain the question as it was when the answer was submitted.
+      await act(async () =>
+        root.render(
+          <PendingSummaryContext.Provider value={{ summaries: {}, refresh }}>
+            <PendingReplyStoreContext.Provider value={store}>
+              <PendingReplySlot
+                event={{ ...event, _obligation_status: undefined, _user_request: undefined }}
+                groupId="g1"
+                onUseComposer={() => {}}
+              />
+            </PendingReplyStoreContext.Provider>
+          </PendingSummaryContext.Provider>,
+        ),
+      );
+      // While uncertain the retained note is shown, read-only, and the retry key is the card's
+      // only button.
+      if (note) expect(host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(note);
+      const retry = host.querySelector<HTMLButtonElement>(
+        'button[type="button"]:not([data-ask-add-note])',
+      )!;
+      expect(retry).not.toBeNull();
+      await act(async () => retry.click());
+      // The same client id and the same answer, the note word for word.
+      expect(mocks.answer.mock.calls[1]).toEqual(first);
+      expect(host.querySelector("form")).not.toBeNull();
+      expect(store.getState().entries[replyKey("g1", "r1")].attempt?.phase).toBe("sending");
+      // Another status read can see closure before this client's retry returns.
+      await act(async () =>
+        root.render(
+          <PendingSummaryContext.Provider value={{ summaries: {}, refresh }}>
+            <PendingReplyStoreContext.Provider value={store}>
+              <PendingReplySlot
+                event={{
+                  ...event,
+                  _obligation_status: {
+                    user: {
+                      reply_requested: true,
+                      replied: true,
+                      cancelled: false,
+                      delivery_state: "",
+                    },
+                  },
+                }}
+                groupId="g1"
+                onUseComposer={() => {}}
+              />
+            </PendingReplyStoreContext.Provider>
+          </PendingSummaryContext.Provider>,
+        ),
+      );
+      await act(async () => finishRetry());
+      expect(store.getState().entries[replyKey("g1", "r1")].closed).toBe("answered");
+      expect(host.textContent).toContain("pendingReply.answeredChoice: A");
+      expect(mocks.append).toHaveBeenCalledOnce();
+      expect(mocks.update).toHaveBeenCalledOnce();
+      expect(refresh).toHaveBeenCalledOnce();
+    } finally {
+      await act(async () => root.unmount());
+      host.remove();
+    }
+  },
+);
+
+it("sends a choice with a note as the second answer version, and a plain choice as the first", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.answer.mockReset();
-  mocks.append.mockReset();
-  mocks.update.mockReset();
+  mocks.answer.mockResolvedValue({ ok: false, error: { code: "invalid_answer" } });
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);
   const store = createPendingReplyStore();
-  const refresh = vi.fn();
-  mocks.answer.mockResolvedValueOnce({ ok: false, error: { code: "NETWORK_ERROR" } });
-  let finishRetry!: () => void;
-  mocks.answer.mockImplementationOnce(
-    (_group, _source, clientId) =>
-      new Promise((resolve) => {
-        finishRetry = () =>
-          resolve({
-            ok: true,
-            result: {
-              event: {
-                id: "response",
-                group_id: "g1",
-                by: "user",
-                kind: "chat.message",
-                data: {
-                  reply_to: "r1",
-                  to: ["peer"],
-                  client_id: clientId,
-                  message_mode: "send",
-                  answer: { v: 1, option_id: "A" },
-                  text: "Selected A: Alpha",
-                },
-              },
-            },
-          });
-      }),
-  );
   try {
     await act(async () =>
       root.render(
-        <PendingSummaryContext.Provider value={{ summaries: {}, refresh }}>
+        <PendingSummaryContext.Provider value={{ summaries: {}, refresh: vi.fn() }}>
           <PendingReplyStoreContext.Provider value={store}>
             <PendingReplySlot event={event} groupId="g1" onUseComposer={() => {}} />
           </PendingReplyStoreContext.Provider>
         </PendingSummaryContext.Provider>,
       ),
     );
-    const choice = host.querySelector<HTMLInputElement>('input[type="radio"]')!;
-    await act(async () => choice.click());
-    await act(async () =>
-      host
-        .querySelector<HTMLFormElement>("form")!
-        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
-    );
-    const first = mocks.answer.mock.calls[0];
-    expect(store.getState().entries[replyKey("g1", "r1")].attempt?.phase).toBe("uncertain");
-    expect(choice.disabled).toBe(true);
-    expect(mocks.append).not.toHaveBeenCalled();
-    // A failed status refresh loses the current projection, but the retry
-    // must retain the question as it was when the answer was submitted.
-    await act(async () =>
-      root.render(
-        <PendingSummaryContext.Provider value={{ summaries: {}, refresh }}>
-          <PendingReplyStoreContext.Provider value={store}>
-            <PendingReplySlot
-              event={{ ...event, _obligation_status: undefined, _user_request: undefined }}
-              groupId="g1"
-              onUseComposer={() => {}}
-            />
-          </PendingReplyStoreContext.Provider>
-        </PendingSummaryContext.Provider>,
-      ),
-    );
-    const retry = host.querySelector<HTMLButtonElement>('button[type="button"]')!;
-    expect(retry).not.toBeNull();
-    await act(async () => retry.click());
-    expect(mocks.answer.mock.calls[1]).toEqual(first);
-    expect(host.querySelector("form")).not.toBeNull();
-    expect(store.getState().entries[replyKey("g1", "r1")].attempt?.phase).toBe("sending");
-    // Another status read can see closure before this client's retry returns.
-    await act(async () =>
-      root.render(
-        <PendingSummaryContext.Provider value={{ summaries: {}, refresh }}>
-          <PendingReplyStoreContext.Provider value={store}>
-            <PendingReplySlot
-              event={{
-                ...event,
-                _obligation_status: {
-                  user: {
-                    reply_requested: true,
-                    replied: true,
-                    cancelled: false,
-                    delivery_state: "",
-                  },
-                },
-              }}
-              groupId="g1"
-              onUseComposer={() => {}}
-            />
-          </PendingReplyStoreContext.Provider>
-        </PendingSummaryContext.Provider>,
-      ),
-    );
-    await act(async () => finishRetry());
-    expect(store.getState().entries[replyKey("g1", "r1")].closed).toBe("answered");
-    expect(host.textContent).toContain("pendingReply.answeredChoice: A");
-    expect(mocks.append).toHaveBeenCalledOnce();
-    expect(mocks.update).toHaveBeenCalledOnce();
-    expect(refresh).toHaveBeenCalledOnce();
+    const send = () =>
+      act(async () =>
+        host
+          .querySelector<HTMLFormElement>("form")!
+          .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+      );
+    await act(async () => host.querySelector<HTMLInputElement>('input[type="radio"]')!.click());
+    await send();
+    expect(mocks.answer.mock.calls[0][3]).toEqual({ v: 1, option_id: "A" });
+    await act(async () => host.querySelector<HTMLButtonElement>("[data-ask-add-note]")!.click());
+    const input = host.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+        input,
+        "only after review",
+      );
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await send();
+    expect(mocks.answer.mock.calls[1][3]).toEqual({
+      v: 2,
+      option_id: "A",
+      note: "only after review",
+    });
   } finally {
     await act(async () => root.unmount());
     host.remove();

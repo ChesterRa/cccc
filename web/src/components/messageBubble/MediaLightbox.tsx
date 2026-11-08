@@ -4,6 +4,7 @@ import { useId } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { classNames } from "../../utils/classNames";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { ModalFocusGuard } from "../ModalFocusGuard";
@@ -37,6 +38,7 @@ export function MediaLightbox({
 }) {
   const { t } = useTranslation("chat");
   const { modalRef } = useModalA11y(open, onClose);
+  useChatObscuringView(open);
   const hintId = useId();
   if (!open) return null;
   return (

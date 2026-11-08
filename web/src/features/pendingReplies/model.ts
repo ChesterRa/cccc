@@ -94,28 +94,55 @@ export function recordedOption(
     !Array.isArray(data.to) ||
     data.to.length !== 1 ||
     data.to[0] !== requester ||
-    answer?.v !== 1 ||
-    typeof answer.option_id !== "string" ||
-    answer.text != null ||
-    Object.keys(answer).some((key) => !["v", "option_id", "text"].includes(key))
+    typeof answer?.option_id !== "string" ||
+    !(
+      (answer.v === 1 &&
+        answer.text == null &&
+        Object.keys(answer).every((key) => ["v", "option_id", "text"].includes(key))) ||
+      (answer.v === 2 &&
+        typeof answer.note === "string" &&
+        Object.keys(answer).every((key) => ["v", "option_id", "note"].includes(key)))
+    )
   )
     return null;
   const option = question.options.find((item) => item.id === answer.option_id);
-  if (!option || data.text !== `Selected ${option.id}: ${option.label}`) return null;
+  if (!option || data.text !== choiceReceipt(option, answer.v === 2 ? String(answer.note) : null))
+    return null;
   return option;
 }
 
+/** The text the daemon writes for a choice, with the user's note after a blank line. */
+export function choiceReceipt(option: ReplyOption, note: string | null) {
+  const choice = `Selected ${option.id}: ${option.label}`;
+  return note === null ? choice : `${choice}\n\nNote: ${note}`;
+}
+
 /**
- * The contract writes answer receipts with English prefixes ("Selected A: …", "Other: …").
- * Show the prefix in the reader's language only when the stored answer and the text agree
- * exactly; otherwise null, and the text is shown as written. Ledger, copy and search keep it.
+ * The contract writes answer receipts with English prefixes ("Selected A: …", "Other: …",
+ * "Note: …"). Show them in the reader's language only when the stored answer and the text
+ * agree exactly; otherwise null, and the text is shown as written. Ledger, copy and search
+ * keep it.
  */
 export function localizedAnswerReceipt(
   data: unknown,
   text: string,
-  labels: { selected: (optionId: string) => string; other: string },
+  labels: { selected: (optionId: string) => string; other: string; note: string },
 ): string | null {
   const answer = record(record(data)?.answer);
+  if (
+    answer?.v === 2 &&
+    typeof answer.option_id === "string" &&
+    answer.option_id &&
+    typeof answer.note === "string" &&
+    Object.keys(answer).every((key) => ["v", "option_id", "note"].includes(key))
+  ) {
+    const prefix = `Selected ${answer.option_id}: `;
+    const suffix = `\n\nNote: ${answer.note}`;
+    const label = text.slice(prefix.length, text.length - suffix.length);
+    return text.startsWith(prefix) && text.endsWith(suffix) && label && !label.includes("\n")
+      ? `${labels.selected(answer.option_id)}${label}\n\n${labels.note}${answer.note}`
+      : null;
+  }
   if (
     answer?.v !== 1 ||
     Object.keys(answer).some((key) => !["v", "option_id", "text"].includes(key))
@@ -143,6 +170,17 @@ export function matchesSubmittedAnswer(
   if (!data || data.message_mode !== "send") return false;
   if (!question) return !("answer" in data) && "text" in answer && data.text === answer.text;
   const stored = record(data.answer);
+  if (answer.v === 2) {
+    const option = question.options.find((item) => item.id === answer.option_id);
+    return (
+      !!option &&
+      stored?.v === 2 &&
+      Object.keys(stored).every((key) => ["v", "option_id", "note"].includes(key)) &&
+      stored.option_id === answer.option_id &&
+      stored.note === answer.note &&
+      data.text === choiceReceipt(option, answer.note)
+    );
+  }
   if (
     !stored ||
     stored.v !== 1 ||

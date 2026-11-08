@@ -4,6 +4,7 @@ import type { DocumentPreviewKind } from "../../utils/messageAttachments";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
 import { scrollWorkspaceFragment } from "../workspace/workspaceFragment";
 import { absoluteDocumentUrl } from "../workspace/workspacePreview";
+import { PdfPreview as EmbeddedPdf } from "../viewer/PdfPreview";
 import { isPdfDocument, readDocumentText, type DocumentText } from "./documentText";
 import { isModifiedClick } from "./messageMedia";
 
@@ -34,39 +35,34 @@ function PdfPreview({
   failedText: string;
 }) {
   const { t } = useTranslation(["chat", "common"]);
-  const viewer = navigator.pdfViewerEnabled !== false;
-  const [state, setState] = useState<"checking" | "ready" | "failed">("checking");
+  const [state, setState] = useState<{ href: string; status: "checking" | "ready" | "failed" }>({
+    href,
+    status: "checking",
+  });
   useEffect(() => {
-    if (!viewer) return;
     const controller = new AbortController();
-    setState("checking");
+    setState({ href, status: "checking" });
     isPdfDocument(href, controller.signal).then(
       (pdf) => {
-        if (!controller.signal.aborted) setState(pdf ? "ready" : "failed");
+        if (!controller.signal.aborted) setState({ href, status: pdf ? "ready" : "failed" });
       },
       () => {
-        if (!controller.signal.aborted) setState("failed");
+        if (!controller.signal.aborted) setState({ href, status: "failed" });
       },
     );
     return () => controller.abort();
-  }, [href, viewer]);
+  }, [href]);
 
-  if (viewer && state === "checking") return <p className={statusClass}>{t("common:loading")}</p>;
-  if (viewer && state === "failed")
+  if (state.href !== href || state.status === "checking")
+    return <p className={statusClass}>{t("common:loading")}</p>;
+  if (state.status === "failed")
     return (
       <p role="alert" className={statusClass}>
         {failedText}
       </p>
     );
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <p className="shrink-0 px-4 py-2 text-xs text-[var(--color-text-secondary)]">
-        {t("documentPdfHint")}
-      </p>
-      {viewer && (
-        <iframe title={title} src={href} className="min-h-0 w-full flex-1 border-0 bg-white" />
-      )}
-    </div>
+    <EmbeddedPdf href={href} title={title} hint={t("documentPdfHint")} failedText={failedText} />
   );
 }
 

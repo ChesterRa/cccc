@@ -349,3 +349,47 @@ it("keeps the send key's words as its name and its own icon while sending starts
     vi.useRealTimers();
   }
 });
+
+it("adds an optional note to a chosen option, apart from the words of Other", async () => {
+  const onSubmit = vi.fn();
+  await render({ question, state: "pending", onSubmit });
+  const addNote = () => host.querySelector<HTMLButtonElement>("[data-ask-add-note]");
+  // No choice, no note key; a plain choice keeps the card as it was.
+  expect(addNote()).toBeNull();
+  await act(async () => radios()[0]!.click());
+  expect(addNote()).not.toBeNull();
+  expect(host.querySelector("textarea")).toBeNull();
+
+  await act(async () => addNote()!.click());
+  expect(addNote()).toBeNull();
+  expect(host.querySelector("textarea")?.placeholder).toBe("pendingReply.notePlaceholder");
+  // A blank note is no note.
+  await changeText("   ");
+  await act(async () => submit().click());
+  expect(onSubmit).toHaveBeenLastCalledWith({ kind: "option", id: "first" });
+
+  await changeText("  Only after the review  ");
+  // Changing the option keeps the note; Other has its own empty box.
+  await act(async () => radios()[1]!.click());
+  expect(host.querySelector("textarea")?.value).toBe("  Only after the review  ");
+  await act(async () => radios()[2]!.click());
+  expect(host.querySelector("textarea")?.value).toBe("");
+  expect(submit().disabled).toBe(true);
+  await act(async () => radios()[1]!.click());
+  await act(async () => submit().click());
+  expect(onSubmit).toHaveBeenLastCalledWith({
+    kind: "option",
+    id: "second",
+    note: "  Only after the review  ",
+  });
+});
+
+it("holds back a note over the limit, as it does an answer", async () => {
+  const onSubmit = vi.fn();
+  await render({ question, state: "pending", onSubmit });
+  await act(async () => radios()[0]!.click());
+  await act(async () => host.querySelector<HTMLButtonElement>("[data-ask-add-note]")!.click());
+  await changeText("x".repeat(4001));
+  expect(submit().disabled).toBe(true);
+  expect(host.textContent).toContain("pendingReply.tooLong");
+});

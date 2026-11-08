@@ -338,7 +338,7 @@ it("finishes a save after leaving and returning to its file without a stale dige
   expect(files.saving).toBe(false);
 });
 
-it("retires drafts and pending opens when the same Group changes scope or location", async () => {
+it("keeps drafts but retires the visible file and pending opens on a scope change", async () => {
   await setup();
   await edit("old workspace draft");
   const oldFile = files.file!;
@@ -373,6 +373,8 @@ it("retires drafts and pending opens when the same Group changes scope or locati
   await render(true, "group-1", "scope-b", "/relocated");
   expect(files.file).toBeNull();
   expect(files.draft).toBe("");
+  expect(files.getFileDraft("README.txt", "scope-a", "/repo")).toBe("old workspace draft");
+  expect(files.getFileDraft("README.txt", "scope-b", "/other")).toBe("new edit");
 });
 
 it("ignores a save completion after a scope switch and sends the opened scope identity", async () => {

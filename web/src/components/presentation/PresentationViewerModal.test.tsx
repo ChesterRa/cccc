@@ -5,14 +5,18 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PresentationViewerModal, PresentationViewerSplitPanel } from "./PresentationViewerModal";
 import type { GroupPresentation } from "../../types";
+import { groupMessagesVisible, useUIStore } from "../../stores/useUIStore";
 
 type ViewerExtras = Pick<
   ComponentProps<typeof PresentationViewerSplitPanel>,
-  "onQuoteInChat" | "focusRef" | "onSelectSlot"
-> & { isOpen?: boolean };
+  "onQuoteInChat" | "focusRef" | "onSelectSlot" | "visible"
+> & { isOpen?: boolean; pdfUrl?: string };
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en" } }),
+}));
+vi.mock("../viewer/PdfCanvasViewer", () => ({
+  PdfCanvasViewer: ({ href }: { href: string }) => <div data-pdf-canvas-viewer={href} />,
 }));
 
 describe("Presentation refresh", () => {
@@ -32,6 +36,7 @@ describe("Presentation refresh", () => {
     cardType: "image" | "pdf" | "web_preview" = "image",
     extra: ViewerExtras = {},
   ) {
+    const { isOpen = true, pdfUrl, ...viewerExtras } = extra;
     const presentation: GroupPresentation = {
       v: 1,
       slots: ["slot-1", "slot-2"].map((id, index) => ({
@@ -43,19 +48,20 @@ describe("Presentation refresh", () => {
           card_type: cardType,
           published_at: revision,
           published_by: "worker",
-          content: {
-            mode: "workspace_link",
-            workspace_rel_path:
-              cardType === "pdf"
-                ? "report.pdf"
-                : cardType === "web_preview"
-                  ? "report.html"
-                  : "drawing.png",
-          },
+          content: pdfUrl
+            ? { mode: "reference", url: pdfUrl }
+            : {
+                mode: "workspace_link",
+                workspace_rel_path:
+                  cardType === "pdf"
+                    ? "report.pdf"
+                    : cardType === "web_preview"
+                      ? "report.html"
+                      : "drawing.png",
+              },
         },
       })),
     };
-    const { isOpen = true, ...viewerExtras } = extra;
     const props = {
       isDark: false,
       groupId,
@@ -98,6 +104,22 @@ describe("Presentation refresh", () => {
   };
   const unfoldKey = () =>
     host.querySelector<HTMLButtonElement>('[aria-label="presentationSlotsAndDetailsAction"]');
+
+  it("blocks chat in a window but not in the split panel", async () => {
+    useUIStore.setState({
+      activeTab: "chat",
+      chatSessions: {},
+      isSmallScreen: false,
+      workspaceFileViewerGroupId: "",
+      chatObscuringViews: 0,
+    });
+    await render(false);
+    expect(groupMessagesVisible("g", useUIStore.getState())).toBe(false);
+    await render(true);
+    expect(groupMessagesVisible("g", useUIStore.getState())).toBe(true);
+    await render(false, "g", "slot-1", "one", "image", { isOpen: false });
+    expect(groupMessagesVisible("g", useUIStore.getState())).toBe(true);
+  });
 
   let nextUrl = 0;
   beforeEach(() => {
@@ -173,6 +195,20 @@ describe("Presentation refresh", () => {
       }
     },
   );
+
+  it("keeps the viewer mounted but pauses linked-image refresh while its resource tab is hidden", async () => {
+    await render(true, "g", "slot-1", "one", "image", { visible: true });
+    const node = viewport();
+    const count = vi.mocked(fetch).mock.calls.length;
+    await render(true, "g", "slot-1", "one", "image", { visible: false });
+    await act(async () => vi.advanceTimersByTime(10_000));
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(count);
+    expect(viewport()).toBe(node);
+    await render(true, "g", "slot-1", "one", "image", { visible: true });
+    await act(async () => vi.advanceTimersByTime(5_000));
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(count + 1);
+    expect(viewport()).toBe(node);
+  });
 
   it("folds the slots, the details and the quote key behind one key on a short screen", async () => {
     shortScreen();
@@ -430,6 +466,68 @@ describe("Presentation refresh", () => {
       expect(host.querySelector("iframe")!.src).not.toBe(refreshed);
     },
   );
+
+  it.each([false, true])(
+    "uses the in-page reader for a same-origin PDF on touch and preserves it until refresh (split=%s)",
+    async (split) => {
+      vi.spyOn(window, "matchMedia").mockImplementation(
+        (query) =>
+          ({
+            matches: query === "(pointer: coarse)",
+            media: query,
+            addEventListener: () => undefined,
+            removeEventListener: () => undefined,
+          }) as unknown as MediaQueryList,
+      );
+      await render(split, "g", "slot-1", "one", "pdf", { visible: true });
+      const reader = host.querySelector<HTMLElement>("[data-pdf-canvas-viewer]")!;
+      expect(reader).not.toBeNull();
+      const src = reader.dataset.pdfCanvasViewer;
+      await render(split, "g", "slot-1", "one", "pdf", { visible: false });
+      await render(split, "g", "slot-1", "one", "pdf", { visible: true });
+      expect(host.querySelector("[data-pdf-canvas-viewer]")).toBe(reader);
+      await act(async () => button("presentationRefreshAction").click());
+      const refreshed = host.querySelector<HTMLElement>("[data-pdf-canvas-viewer]")!;
+      expect(refreshed).not.toBe(reader);
+      expect(refreshed.dataset.pdfCanvasViewer).not.toBe(src);
+      await render(split, "g", "slot-1", "two", "pdf");
+      expect(host.querySelector("[data-pdf-canvas-viewer]")).not.toBe(refreshed);
+    },
+  );
+
+  it("reloads a same-origin slot asset when a new card uses the same URL", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          matches: query === "(pointer: coarse)",
+          media: query,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+        }) as unknown as MediaQueryList,
+    );
+    const pdfUrl = "/api/v1/groups/g/presentation/slots/slot-1/asset";
+    await render(true, "g", "slot-1", "one", "pdf", { pdfUrl });
+    const reader = host.querySelector("[data-pdf-canvas-viewer]");
+    expect(reader).not.toBeNull();
+    await render(true, "g", "slot-1", "two", "pdf", { pdfUrl });
+    expect(host.querySelector("[data-pdf-canvas-viewer]")).not.toBe(reader);
+  });
+
+  it("keeps a remote PDF in the browser frame even on touch", async () => {
+    vi.spyOn(window, "matchMedia").mockImplementation(
+      (query) =>
+        ({
+          matches: query === "(pointer: coarse)",
+          media: query,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+        }) as unknown as MediaQueryList,
+    );
+    const pdfUrl = "https://example.invalid/report.pdf";
+    await render(true, "g", "slot-1", "one", "pdf", { pdfUrl });
+    expect(host.querySelector("[data-pdf-canvas-viewer]")).toBeNull();
+    expect(host.querySelector("iframe")?.getAttribute("src")).toBe(pdfUrl);
+  });
 
   it("fits another Group, slot or publication even when the other identity fields match", async () => {
     await render();

@@ -1,4 +1,5 @@
 import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
+import { useGroupResourcePanel, useResourcePanelStore } from "../stores/useResourcePanelStore";
 // AppModals renders all modal components in one place.
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -38,7 +39,6 @@ import {
   selectChatBucketState,
 } from "../stores";
 import { getRecipientActorIdsForEvent } from "../hooks/useSSE";
-import { getChatSession } from "../stores/useUIStore";
 import * as api from "../services/api";
 import {
   LedgerEvent,
@@ -182,28 +182,24 @@ export function AppModals({
   const {
     busy,
     isSmallScreen,
-    chatSessions,
     setBusy,
     showError,
     showNotice,
     setActiveTab,
     setChatMobileSurface,
-    setChatPresentationDockOpen,
-    setChatPresentationDisplayMode,
   } = useUIStore(
     useShallow((s) => ({
       busy: s.busy,
       isSmallScreen: s.isSmallScreen,
-      chatSessions: s.chatSessions,
       setBusy: s.setBusy,
       showError: s.showError,
       showNotice: s.showNotice,
       setActiveTab: s.setActiveTab,
       setChatMobileSurface: s.setChatMobileSurface,
-      setChatPresentationDockOpen: s.setChatPresentationDockOpen,
-      setChatPresentationDisplayMode: s.setChatPresentationDisplayMode,
     })),
   );
+  const resourcePanel = useGroupResourcePanel(selectedGroupId);
+  const lastClosedResources = resourcePanel.closed[0];
 
   const {
     modals,
@@ -263,13 +259,6 @@ export function AppModals({
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
   const [messageActionBusy, setMessageActionBusy] = useState("");
-
-  const preferredPresentationSurface = selectedGroupId
-    ? !isSmallScreen &&
-      getChatSession(selectedGroupId, chatSessions).presentationDisplayMode === "split"
-      ? "split"
-      : "modal"
-    : "modal";
 
   const {
     editGroupTitle,
@@ -1042,23 +1031,18 @@ export function AppModals({
         }
         setGroupPresentation(resp.result.presentation);
         setPresentationPin(null);
-        if (preferredPresentationSurface === "split") {
-          setChatPresentationDockOpen(gid, true);
-        }
         setPresentationViewer({
           groupId: gid,
           slotId: resp.result.slot_id || payload.slotId,
-          surface: preferredPresentationSurface,
+          surface: "split",
         });
       } finally {
         setBusy("");
       }
     },
     [
-      preferredPresentationSurface,
       selectedGroupId,
       setBusy,
-      setChatPresentationDockOpen,
       setGroupPresentation,
       setPresentationPin,
       setPresentationViewer,
@@ -1079,23 +1063,18 @@ export function AppModals({
         }
         setGroupPresentation(resp.result.presentation);
         setPresentationPin(null);
-        if (preferredPresentationSurface === "split") {
-          setChatPresentationDockOpen(gid, true);
-        }
         setPresentationViewer({
           groupId: gid,
           slotId: resp.result.slot_id || payload.slotId,
-          surface: preferredPresentationSurface,
+          surface: "split",
         });
       } finally {
         setBusy("");
       }
     },
     [
-      preferredPresentationSurface,
       selectedGroupId,
       setBusy,
-      setChatPresentationDockOpen,
       setGroupPresentation,
       setPresentationPin,
       setPresentationViewer,
@@ -1116,23 +1095,18 @@ export function AppModals({
         }
         setGroupPresentation(resp.result.presentation);
         setPresentationPin(null);
-        if (preferredPresentationSurface === "split") {
-          setChatPresentationDockOpen(gid, true);
-        }
         setPresentationViewer({
           groupId: gid,
           slotId: resp.result.slot_id || payload.slotId,
-          surface: preferredPresentationSurface,
+          surface: "split",
         });
       } finally {
         setBusy("");
       }
     },
     [
-      preferredPresentationSurface,
       selectedGroupId,
       setBusy,
-      setChatPresentationDockOpen,
       setGroupPresentation,
       setPresentationPin,
       setPresentationViewer,
@@ -1266,6 +1240,19 @@ export function AppModals({
             ? () => setChatMobileSurface(selectedGroupId, "files")
             : undefined
         }
+        resources={
+          isSmallScreen && selectedGroupId && (resourcePanel.tabs.length || lastClosedResources)
+            ? {
+                open: resourcePanel.tabs.length,
+                onOpen: () => {
+                  const store = useResourcePanelStore.getState();
+                  if (resourcePanel.tabs.length) store.setOpen(selectedGroupId, true);
+                  else if (lastClosedResources)
+                    store.restore(selectedGroupId, lastClosedResources.id);
+                },
+              }
+            : undefined
+        }
         onThemeChange={onThemeChange}
         onTextScaleChange={onTextScaleChange}
         onOpenSearch={() => openModal("search")}
@@ -1375,6 +1362,11 @@ export function AppModals({
                   groupId={selectedGroupId}
                   slotId={slotId}
                   presentation={groupPresentation}
+                  reuseExistingSession={
+                    presentationViewer?.groupId === selectedGroupId &&
+                    presentationViewer.slotId === slotId &&
+                    presentationViewer.reuseExistingSession === true
+                  }
                   focusRef={
                     presentationViewer?.groupId === selectedGroupId &&
                     presentationViewer.slotId === slotId
@@ -1398,6 +1390,7 @@ export function AppModals({
                       groupId: selectedGroupId,
                       slotId: nextSlotId,
                       surface: "modal",
+                      reuseExistingSession: presentationViewer?.reuseExistingSession,
                     })
                   }
                   onPinSlot={(nextSlotId) => {
@@ -1420,8 +1413,6 @@ export function AppModals({
                   onOpenSplit={() => {
                     const gid = String(selectedGroupId || "").trim();
                     if (!gid || !presentationViewer) return;
-                    setChatPresentationDisplayMode(gid, "split");
-                    setChatPresentationDockOpen(gid, true);
                     setPresentationViewer({ ...presentationViewer, surface: "split" });
                   }}
                   onClose={() => setPresentationViewer(null)}

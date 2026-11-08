@@ -20,6 +20,7 @@ export function MessageReplyQuote({
     "mb-3 block w-full min-w-0 border-l-2 border-[var(--color-border-primary)] py-1 pl-3 text-left text-xs text-[var(--color-text-secondary)]";
   const content = (clamped: boolean) => (
     <span
+      data-message-quote-text
       className={classNames(
         "min-w-0 whitespace-pre-wrap break-words leading-5 [overflow-wrap:anywhere]",
         clamped && "line-clamp-2",

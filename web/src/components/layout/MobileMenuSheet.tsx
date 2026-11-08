@@ -15,6 +15,8 @@ import {
   CloseIcon,
 } from "../Icons";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
+import { AppWindow } from "lucide-react";
+import { LcdIcon } from "../Icons";
 
 export interface MobileMenuSheetProps {
   isOpen: boolean;
@@ -30,6 +32,11 @@ export interface MobileMenuSheetProps {
   onOpenContext: () => void;
   /** Opens the workspace file tree as a full-screen surface; absent when unavailable. */
   onOpenFiles?: () => void;
+  /**
+   * The resource panel on a phone, whose header leaves room for the Group title: its open tabs, or
+   * with none open, the way back to what was closed last.
+   */
+  resources?: { open: number; onOpen: () => void };
   onOpenSettings: () => void;
   canAccessAccount: boolean;
   accountLabel?: string | null;
@@ -50,6 +57,7 @@ export function MobileMenuSheet({
   onOpenSearch,
   onOpenContext,
   onOpenFiles,
+  resources,
   onOpenSettings,
   canAccessAccount,
   accountLabel,
@@ -199,6 +207,28 @@ export function MobileMenuSheet({
                   <FolderIcon size={18} />
                   <span>{t("workspaceFilesButton")}</span>
                 </div>
+              </button>
+            ) : null}
+            {resources ? (
+              <button
+                className={rowButtonClass}
+                onClick={() => {
+                  onClose();
+                  resources.onOpen();
+                }}
+                data-mobile-menu-resources
+              >
+                <div className="flex items-center gap-3">
+                  <LcdIcon icon={AppWindow} glyph="app-windows" className="h-[18px] w-[18px]" />
+                  <span>
+                    {t(resources.open ? "resourcesButton" : "reopenClosedResourcesButton")}
+                  </span>
+                </div>
+                {resources.open ? (
+                  <span className="tabular-nums text-[var(--color-text-tertiary)]">
+                    {resources.open}
+                  </span>
+                ) : null}
               </button>
             ) : null}
             <button

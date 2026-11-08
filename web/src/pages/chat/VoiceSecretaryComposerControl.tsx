@@ -70,6 +70,7 @@ import {
 import { useUIStore, useModalStore, useGroupStore, useComposerStore } from "../../stores";
 import { getChatSession } from "../../stores/useUIStore";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { AnimatedShinyText } from "../../registry/magicui/animated-shiny-text";
 import { copyTextToClipboard } from "../../utils/copy";
 import { downloadVoiceDocument } from "./voice-secretary/downloadVoiceDocument";
@@ -3583,6 +3584,7 @@ export function VoiceSecretaryComposerControl({
   // Keep the parent in the modal stack while its settings are open. Its trigger
   // stays mounted, so the existing stack can restore focus on the way back.
   const { modalRef } = useModalA11y(open, closePanel, { preserveTerminalKeys: true });
+  useChatObscuringView(open && !settingsOpen);
   const previousSettingsOpenRef = useRef(settingsOpen);
   useEffect(() => {
     const closed = previousSettingsOpenRef.current && !settingsOpen;

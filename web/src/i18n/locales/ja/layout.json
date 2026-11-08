@@ -71,6 +71,8 @@
   "themeLabel": "テーマ",
   "moreAppearanceSettings": "その他の表示設定",
   "lcdBodyLabel": "本文フォント",
+  "lcdBodyProportional": "可変幅",
+  "lcdBodyProportionalHint": "可変幅はメッセージ本文にのみ適用されます。",
   "lcdBodyMono": "等幅",
   "lcdBodyPixel": "ドット",
   "lcdWidthLabel": "メッセージ欄の幅",
@@ -186,6 +188,8 @@
     "directRequirement": "LAN / VPN"
   },
   "workspaceFilesButton": "ワークスペースのファイル",
+  "resourcesButton": "リソース",
+  "reopenClosedResourcesButton": "最近閉じたリソースをもう一度開く",
   "linkedAccount": "このインスタンスの連携アカウント：{{account}}",
   "direct": {
     "startTitle": "直接接続を始める",

@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { MediaLightbox } from "./MediaLightbox";
+import { groupMessagesVisible, useUIStore } from "../../stores/useUIStore";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -10,6 +11,13 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 let root: Root;
 let host: HTMLDivElement;
 beforeEach(() => {
+  useUIStore.setState({
+    activeTab: "chat",
+    chatSessions: {},
+    isSmallScreen: false,
+    workspaceFileViewerGroupId: "",
+    chatObscuringViews: 0,
+  });
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     callback(0);
     return 1;
@@ -18,6 +26,24 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
+});
+
+it("treats chat as hidden while an image is expanded and releases it on close", () => {
+  const render = (open: boolean) =>
+    act(() =>
+      root.render(
+        <MediaLightbox open={open} onClose={() => {}} dialogLabel="Image" title="image.png" image>
+          <img src="/fixture.png" alt="Fixture" />
+        </MediaLightbox>,
+      ),
+    );
+  render(false);
+  expect(groupMessagesVisible("g1", useUIStore.getState())).toBe(true);
+  render(true);
+  expect(document.querySelector("[data-media-lightbox]")).not.toBeNull();
+  expect(groupMessagesVisible("g1", useUIStore.getState())).toBe(false);
+  render(false);
+  expect(groupMessagesVisible("g1", useUIStore.getState())).toBe(true);
 });
 afterEach(() => {
   act(() => root.unmount());

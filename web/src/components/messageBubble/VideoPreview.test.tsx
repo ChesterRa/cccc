@@ -3,6 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { VideoPreview } from "./VideoPreview";
+import { AttachmentResourceView } from "../resourcePanel/views/AttachmentResourceView";
+import { useResourcePanelStore } from "../../stores/useResourcePanelStore";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -41,11 +43,20 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  useResourcePanelStore.setState({ groups: {} });
 });
 
 const preview = (href: string, label = "clip.mp4") => (
   <VideoPreview
     key={label}
+    resource={{
+      panelGroupId: "g",
+      blobGroupId: "g",
+      messageKey: label,
+      eventId: label,
+      index: 0,
+      blobPath: `state/blobs/${label}`,
+    }}
     href={href}
     downloadHref={`${href}?download=true`}
     downloadName={label}
@@ -67,7 +78,7 @@ const reveal = (label = "clip.mp4") =>
     }
   });
 const open = (label = "clip.mp4") => act(() => thumbnail(label).click());
-const player = () => document.querySelector<HTMLVideoElement>('[role="dialog"] video');
+const player = () => document.querySelector<HTMLVideoElement>("video[data-message-media]");
 
 it("shows the first frame only once on screen and never plays it inline", () => {
   act(() => root.render(preview("/preview/clip.mp4")));
@@ -84,36 +95,45 @@ it("shows the first frame only once on screen and never plays it inline", () => 
   expect(player()).toBeNull();
 });
 
-it("plays in a dialog opened from the thumbnail", () => {
+it("opens a resource tab from the thumbnail", () => {
   act(() => root.render(preview("/preview/clip.mp4")));
 
   open();
 
-  const dialog = document.querySelector('[role="dialog"]')!;
-  expect(dialog.getAttribute("aria-label")).toBe("videoPreviewDialog");
-  expect(dialog.textContent).toContain("clip.mp4");
-  const video = player()!;
-  expect(video.getAttribute("src")).toBe("/preview/clip.mp4");
-  expect(video.autoplay).toBe(true);
-  expect(video.controls).toBe(true);
-
-  act(() => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  });
   expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(useResourcePanelStore.getState().groups.g.tabs[0]).toMatchObject({
+    kind: "attachment",
+    media: "video",
+    eventId: "clip.mp4",
+    title: "clip.mp4",
+  });
 });
 
 it("pauses another playing video when one starts", () => {
   act(() =>
     root.render(
       <>
-        {preview("/preview/a.mp4", "a.mp4")}
-        {preview("/preview/b.mp4", "b.mp4")}
+        <AttachmentResourceView
+          media="video"
+          href="/preview/a.mp4"
+          title="a.mp4"
+          isSvg={false}
+          isDark={false}
+          active
+          resourceKey="a"
+        />
+        <AttachmentResourceView
+          media="video"
+          href="/preview/b.mp4"
+          title="b.mp4"
+          isSvg={false}
+          isDark={false}
+          active
+          resourceKey="b"
+        />
       </>,
     ),
   );
-  open("a.mp4");
-  open("b.mp4");
   const [first, second] = [
     ...document.querySelectorAll<HTMLVideoElement>("video[data-message-media]"),
   ];
@@ -131,10 +151,10 @@ it("pauses another playing video when one starts", () => {
 
 it("falls back to the download link when the browser cannot play the video", () => {
   act(() => root.render(preview("/preview/clip.mp4")));
-  open();
+  reveal();
 
   act(() => {
-    player()!.dispatchEvent(new Event("error"));
+    thumbnail().querySelector("video")!.dispatchEvent(new Event("error"));
   });
 
   expect(document.querySelector('[role="dialog"]')).toBeNull();

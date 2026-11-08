@@ -5,6 +5,7 @@ import {
   transferOutboxPreviewUrls,
   useChatOutboxStore,
 } from "../stores/chatOutboxStore";
+import { useResourcePanelStore } from "../stores/useResourcePanelStore";
 
 export type CanonicalOutboxReconciliation = {
   event: LedgerEvent;
@@ -50,6 +51,30 @@ export function completeCanonicalOutboxReconciliation(
   reconciliation: CanonicalOutboxReconciliation,
 ): void {
   if (!reconciliation.clientId) return;
+  // An open resource must stop using the outbox's object URL before that URL is revoked.
+  // The message row may have been virtualized away, so update the resource store here rather
+  // than relying on that row to render the confirmed attachment. Do not open or select a tab.
+  const resources = useResourcePanelStore.getState();
+  if (resources.groups[groupId]) {
+    const event = reconciliation.event;
+    const data =
+      event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : null;
+    const attachments = data && Array.isArray(data.attachments) ? data.attachments : [];
+    const eventId = String(event.id || "").trim();
+    const blobGroupId = String(event.group_id || "").trim() || groupId;
+    attachments.forEach((attachment, index) => {
+      if (!attachment || typeof attachment !== "object") return;
+      const blobPath = String((attachment as { path?: unknown }).path || "").trim();
+      if (!blobPath) return;
+      resources.updateAttachment(groupId, `client:${reconciliation.clientId}`, index, {
+        eventId,
+        sentAt: event.ts,
+        blobGroupId,
+        blobPath,
+        localPreviewUrl: undefined,
+      });
+    });
+  }
   useChatOutboxStore.getState().remove(groupId, reconciliation.clientId);
   releaseTransferredPreviewUrls(reconciliation.transferredPreviewUrls);
 }

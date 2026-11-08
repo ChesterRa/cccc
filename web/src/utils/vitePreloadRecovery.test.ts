@@ -66,13 +66,11 @@ describe("isDynamicImportError", () => {
 });
 
 describe("recoverDynamicImportError", () => {
-  it("reloads once for a stale dynamic import and absorbs repeats during cooldown", () => {
-    const storage = memoryStorage();
+  it("hands a stale dynamic import to the reload, which decides when to reload", () => {
     const reload = vi.fn();
     const error = new TypeError("Failed to fetch dynamically imported module: /ui/chunk.js");
 
-    expect(recoverDynamicImportError(error, storage, reload, 1_000)).toBe(true);
-    expect(recoverDynamicImportError(error, storage, reload, 2_000)).toBe(true);
+    expect(recoverDynamicImportError(error, reload)).toBe(true);
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
@@ -80,12 +78,7 @@ describe("recoverDynamicImportError", () => {
     const reload = vi.fn();
 
     expect(
-      recoverDynamicImportError(
-        new TypeError("Cannot read properties of undefined"),
-        memoryStorage(),
-        reload,
-        1_000,
-      ),
+      recoverDynamicImportError(new TypeError("Cannot read properties of undefined"), reload),
     ).toBe(false);
     expect(reload).not.toHaveBeenCalled();
   });

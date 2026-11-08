@@ -104,17 +104,22 @@ it("removes protection only when all drafts and outstanding saves are settled", 
   expect(navigate).toHaveBeenCalledOnce();
 });
 
-it("retires pending navigation on an authoritative scope change instead of applying an old action", async () => {
+it("keeps the draft but retires pending navigation on an authoritative scope change", async () => {
   await act(async () => editor.openFile("a.txt"));
   await act(async () => editor.setDraft("edited"));
   const navigate = vi.fn();
   await act(async () => requestWorkspaceNavigation(navigate));
   await act(async () => root.render(<Probe scopeKey="replacement" />));
   expect(editor.file).toBeNull();
-  expect(unloading()).toBe(false);
+  expect(unloading()).toBe(true);
+  expect(editor.getFileDraft("a.txt", "scope", "/repo")).toBe("edited");
   expect(useWorkspaceNavigation.getState().pending).toBeNull();
   finishWorkspaceNavigation(true);
   expect(navigate).not.toHaveBeenCalled();
+  await act(async () => root.render(<Probe />));
+  await act(async () => editor.openFile("a.txt"));
+  expect(editor.draft).toBe("edited");
+  expect(unloading()).toBe(true);
 });
 
 it("does not resurrect dirty ownership when an old editor save finishes after unmount", async () => {

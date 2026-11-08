@@ -199,6 +199,7 @@ describe("appearance choices inside their real hosts", () => {
 
   for (const host of ["desktop", "sheet"] as const) {
     it(`${host}: offers the body-font, width and motion choices, with no style switch`, async () => {
+      await act(async () => setUiStylePrefs({ lcdBody: "proportional" }));
       await renderHost(host, "light");
       const choice = (name: string) =>
         document.querySelector<HTMLElement>(
@@ -210,10 +211,18 @@ describe("appearance choices inside their real hosts", () => {
       expect(choice("uiStyle")).toBeNull();
       try {
         expect(radios("lcdBody").map((radio) => radio.textContent)).toEqual([
+          "lcdBodyProportional",
           "lcdBodyMono",
           "lcdBodyPixel",
         ]);
+        expect(radios("lcdBody")[0]?.getAttribute("title")).toBe("lcdBodyProportionalHint");
+        expect(
+          radios("lcdBody").find((radio) => radio.getAttribute("aria-checked") === "true")
+            ?.textContent,
+        ).toBe("lcdBodyProportional");
         await click(radios("lcdBody")[1]!);
+        expect(document.documentElement.dataset.lcdBody).toBe("mono");
+        await click(radios("lcdBody")[2]!);
         expect(document.documentElement.dataset.lcdBody).toBe("pixel");
         expect(radios("lcdWidth").map((radio) => radio.textContent)).toEqual([
           "lcdWidthColumn",
@@ -236,7 +245,7 @@ describe("appearance choices inside their real hosts", () => {
         expect(outerOpen(host)).toBe(true);
       } finally {
         await act(async () =>
-          setUiStylePrefs({ lcdBody: "mono", lcdWidth: "column", lcdMotion: "on" }),
+          setUiStylePrefs({ lcdBody: "proportional", lcdWidth: "column", lcdMotion: "on" }),
         );
       }
     });

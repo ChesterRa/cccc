@@ -34,7 +34,11 @@ type VirtualMessageRowProps = {
   onTogglePin?: (eventId: string, pinned: boolean) => void;
   onRelay?: (event: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
-  onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+  onOpenPresentationRef?: (
+    ref: PresentationMessageRef,
+    event: LedgerEvent,
+    refIndex: number,
+  ) => void;
   onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
   onOpenReplyTarget?: (replyToEventId: string) => void;
   measureElement: (node: Element | null) => void;

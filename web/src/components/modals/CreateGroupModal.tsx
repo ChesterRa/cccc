@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useRef } from "react";
 import { DirItem, DirSuggestion } from "../../types";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringViewOnPhone } from "../../hooks/useChatObscuringView";
 import { ArrowDownIcon, DownloadIcon, FileIcon, FolderIcon, HomeIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -62,6 +63,7 @@ export function CreateGroupModal({
   onCancelAndReset,
 }: CreateGroupModalProps) {
   const { t } = useTranslation("modals");
+  useChatObscuringViewOnPhone(isOpen);
   const pathInputRef = useRef<HTMLInputElement>(null);
   const { modalRef } = useModalA11y(isOpen, onClose, { initialFocusRef: pathInputRef });
   if (!isOpen) return null;

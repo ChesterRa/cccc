@@ -18,6 +18,8 @@ interface UINotice {
   message: string;
   actionLabel?: string;
   onAction?: () => void;
+  /** An actionable notice stays until dismissed unless it has its own lifetime, like an undo. */
+  durationMs?: number;
 }
 
 export type ChatFilter = "all" | "user" | "pinned" | "pending_user";
@@ -86,7 +88,6 @@ export interface ChatSessionState {
   scrollSnapshot: ChatScrollSnapshot | null;
   mobileSurface: MobileSurface;
   presentationDockOpen: boolean;
-  presentationDisplayMode: "modal" | "split";
   filesPanelOpen: boolean;
   sidePanelWidth: number;
   presentationCompact: boolean;
@@ -105,7 +106,6 @@ const DEFAULT_CHAT_SESSION: ChatSessionState = {
   scrollSnapshot: null,
   mobileSurface: "messages",
   presentationDockOpen: false,
-  presentationDisplayMode: "split",
   filesPanelOpen: false,
   sidePanelWidth: SIDE_PANEL_DEFAULT_WIDTH,
   presentationCompact: true,
@@ -141,6 +141,8 @@ interface UIState {
   /** The current Web principal, not bootstrap access to settings. */
   isWebAdmin: boolean | null;
   workspaceFileViewerGroupId: string;
+  /** Large views over this page; never saved across page loads. */
+  chatObscuringViews: number;
   sseStatus: "connected" | "connecting" | "disconnected";
   sseError: SSEErrorDetail | null;
 
@@ -172,7 +174,6 @@ interface UIState {
   setGroupTerminalPage: (groupId: string, page: number) => void;
   setChatMobileSurface: (groupId: string, v: MobileSurface) => void;
   setChatPresentationDockOpen: (groupId: string, v: boolean) => void;
-  setChatPresentationDisplayMode: (groupId: string, v: "modal" | "split") => void;
   setChatFilesPanelOpen: (groupId: string, v: boolean) => void;
   setChatVoicePreferences: (
     groupId: string,
@@ -184,6 +185,7 @@ interface UIState {
     >,
   ) => void;
   setWorkspaceFileViewerGroupId: (groupId: string) => void;
+  registerChatObscuringView: () => () => void;
   setWebReadOnly: (v: boolean) => void;
   setCanAccessGlobalSettings: (v: boolean | null) => void;
   setIsWebAdmin: (v: boolean | null) => void;
@@ -295,12 +297,17 @@ export function groupMessagesVisible(
   groupId: string,
   state: Pick<
     UIState,
-    "activeTab" | "chatSessions" | "isSmallScreen" | "workspaceFileViewerGroupId"
+    | "activeTab"
+    | "chatSessions"
+    | "isSmallScreen"
+    | "workspaceFileViewerGroupId"
+    | "chatObscuringViews"
   >,
 ): boolean {
   const session = getChatSession(groupId, state.chatSessions);
   return (
     state.activeTab === "chat" &&
+    !state.chatObscuringViews &&
     state.workspaceFileViewerGroupId !== groupId &&
     session.workView !== "terminals" &&
     (!state.isSmallScreen || session.mobileSurface === "messages")
@@ -324,7 +331,6 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
       chatSenderFilter?: unknown;
       mobileSurface?: unknown;
       presentationDockOpen?: unknown;
-      presentationDisplayMode?: unknown;
       filesPanelOpen?: unknown;
       sidePanelWidth?: unknown;
       presentationCompact?: unknown;
@@ -349,7 +355,6 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
         ? (session.mobileSurface as MobileSurface)
         : "messages",
       presentationDockOpen: Boolean(session.presentationDockOpen),
-      presentationDisplayMode: session.presentationDisplayMode === "modal" ? "modal" : "split",
       filesPanelOpen: Boolean(session.filesPanelOpen),
       sidePanelWidth: clampSidePanelWidth(Number(session.sidePanelWidth)),
       presentationCompact:
@@ -385,7 +390,6 @@ function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
           chatSenderFilter: session.chatSenderFilter,
           mobileSurface: session.mobileSurface,
           presentationDockOpen: session.presentationDockOpen,
-          presentationDisplayMode: session.presentationDisplayMode,
           filesPanelOpen: session.filesPanelOpen,
           sidePanelWidth: session.sidePanelWidth,
           presentationCompact: session.presentationCompact,
@@ -441,6 +445,7 @@ export const useUIStore = create<UIState>((set) => ({
   canAccessGlobalSettings: null,
   isWebAdmin: null,
   workspaceFileViewerGroupId: "",
+  chatObscuringViews: 0,
   sseStatus: "disconnected" as const,
   sseError: null as SSEErrorDetail | null,
 
@@ -482,12 +487,12 @@ export const useUIStore = create<UIState>((set) => ({
     }
     set({ notice });
     // Actionable notices remain until user dismisses/clicks action.
-    const persistent = Boolean(notice.onAction && notice.actionLabel);
+    const persistent = Boolean(notice.onAction && notice.actionLabel) && !notice.durationMs;
     if (!persistent) {
       noticeTimeoutId = window.setTimeout(() => {
         set({ notice: null });
         noticeTimeoutId = null;
-      }, 3500);
+      }, notice.durationMs || 3500);
     }
   },
   dismissNotice: () => {
@@ -602,14 +607,6 @@ export const useUIStore = create<UIState>((set) => ({
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),
-  setChatPresentationDisplayMode: (groupId, v) =>
-    set((state) => {
-      const chatSessions = updateChatSession(state.chatSessions, groupId, {
-        presentationDisplayMode: v,
-      });
-      saveChatSessions(chatSessions);
-      return { chatSessions };
-    }),
   setChatFilesPanelOpen: (groupId, v) =>
     set((state) => {
       const chatSessions = updateChatSession(state.chatSessions, groupId, { filesPanelOpen: v });
@@ -633,6 +630,15 @@ export const useUIStore = create<UIState>((set) => ({
       return { chatSessions };
     }),
   setWorkspaceFileViewerGroupId: (groupId) => set({ workspaceFileViewerGroupId: groupId }),
+  registerChatObscuringView: () => {
+    set((state) => ({ chatObscuringViews: state.chatObscuringViews + 1 }));
+    let registered = true;
+    return () => {
+      if (!registered) return;
+      registered = false;
+      set((state) => ({ chatObscuringViews: state.chatObscuringViews - 1 }));
+    };
+  },
   setWebReadOnly: (v) => set({ webReadOnly: v }),
   setCanAccessGlobalSettings: (v) => set({ canAccessGlobalSettings: v }),
   setIsWebAdmin: (v) => set({ isWebAdmin: v }),

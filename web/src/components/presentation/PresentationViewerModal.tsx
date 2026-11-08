@@ -3,8 +3,10 @@ import { PanelRightClose } from "lucide-react";
 import { LcdSpinner } from "../LcdSpinner";
 import { PresentationPreviewModeToggle } from "./PresentationPreviewModeToggle";
 import { PresentationSlotNavigation } from "./PresentationSlotNavigation";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { PresentationViewerTitle } from "./PresentationViewerTitle";
 import { GraphicViewer } from "../viewer/GraphicViewer";
+import { PdfPreview } from "../viewer/PdfPreview";
 import { getPresentationReferenceHref } from "./presentationAssets";
 import { usePresentationAsset } from "./usePresentationAsset";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -65,6 +67,10 @@ type PresentationViewerBaseProps = {
   sourceEvent?: LedgerEvent | null;
   focusRef?: PresentationMessageRef | null;
   focusEventId?: string | null;
+  /** The viewer can stay mounted while its resource tab is hidden. */
+  visible?: boolean;
+  /** Resource tabs reattach to an existing Group/slot session after a remount. */
+  reuseExistingSession?: boolean;
   onQuoteInChat?: (payload: { slotId: string; ref?: PresentationMessageRef | null }) => void;
   onOpenMessageContext?: (eventId: string) => void;
   onReplyToMessage?: (event: LedgerEvent) => void;
@@ -78,6 +84,8 @@ type PresentationViewerBaseProps = {
 
 type PresentationViewerProps = PresentationViewerBaseProps & {
   variant: "modal" | "split";
+  /** The resource panel supplies its own title, close and layout controls. */
+  embedded?: boolean;
   isOpen?: boolean;
   supportsSplit?: boolean;
   onOpenSplit?: () => void;
@@ -92,7 +100,20 @@ type PresentationViewerModalProps = PresentationViewerBaseProps & {
 
 type PresentationViewerSplitPanelProps = PresentationViewerBaseProps & {
   onOpenWindow?: () => void;
+  embedded?: boolean;
 };
+
+function isSameOriginHttp(href: string): boolean {
+  try {
+    const url = new URL(href, window.location.href);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.origin === window.location.origin
+    );
+  } catch {
+    return false;
+  }
+}
 
 async function dataUrlToFile(dataUrl: string, filename: string): Promise<File | null> {
   const raw = String(dataUrl || "").trim();
@@ -151,7 +172,10 @@ function PresentationWindowExpandIcon({ expanded }: { expanded: boolean }) {
 
 function PresentationViewer({
   variant,
+  embedded = false,
   isOpen = true,
+  visible = true,
+  reuseExistingSession = false,
   supportsSplit = false,
   onOpenSplit,
   onOpenWindow,
@@ -176,13 +200,14 @@ function PresentationViewer({
   const { t, i18n } = useTranslation("chat");
   const showError = useUIStore((state) => state.showError);
   const isModal = variant === "modal";
+  useChatObscuringView(isModal && isOpen && visible);
   const slotButtonRef = useRef<HTMLButtonElement>(null);
   const hasSlotNavigation = !!onSelectSlot;
   // A short screen, such as a phone turned sideways, folds the slots, the card's details and
   // its keys behind one key, so the card keeps the height and nothing covers it.
   const compact = useMediaQuery(SHORT_VIEWPORT_QUERY);
   const [chromeOpen, setChromeOpen] = useState(false);
-  const showChrome = !compact || chromeOpen;
+  const showChrome = embedded || !compact || chromeOpen;
   const chromeId = useId();
   // Each window names its own title: switching slots keeps the previous window mounted.
   const titleId = useId();
@@ -199,17 +224,17 @@ function PresentationViewer({
     }),
     [],
   );
-  const { modalRef } = useModalA11y(isModal && isOpen, onClose, {
+  const { modalRef } = useModalA11y(isModal && isOpen && visible, onClose, {
     initialFocusRef: hasSlotNavigation ? initialFocusRef : undefined,
   });
   // The side panel takes focus as the window does, on the same key.
   const splitRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
-    if (isModal || !isOpen || !hasSlotNavigation) return;
+    if (isModal || embedded || !isOpen || !visible || !hasSlotNavigation) return;
     const target = initialFocusRef.current;
     if (target) target.focus();
     else if (splitRef.current) focusFirst(splitRef.current);
-  }, [isModal, isOpen, hasSlotNavigation, groupId, slotId, initialFocusRef]);
+  }, [isModal, embedded, isOpen, visible, hasSlotNavigation, groupId, slotId, initialFocusRef]);
   // Each short screen, and each opening, starts folded: a closed window stays mounted while
   // its Group is open. A key that disappears while focused, because the slots fold or the
   // screen grows taller and the unfold key goes, hands focus to the key that replaces it.
@@ -235,7 +260,7 @@ function PresentationViewer({
     };
   }, []);
   useLayoutEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !visible) return;
     if (!showChrome && chromeHadFocusRef.current) chromeToggleRef.current?.focus();
     const viewer = toggleFocusViewerRef.current;
     if (!compact && viewer) {
@@ -247,7 +272,7 @@ function PresentationViewer({
     }
     chromeHadFocusRef.current = false;
     toggleFocusViewerRef.current = null;
-  }, [isOpen, showChrome, compact]);
+  }, [isOpen, visible, showChrome, compact]);
   const [refreshTick, setRefreshTick] = useState(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [copiedReference, setCopiedReference] = useState(false);
@@ -360,7 +385,7 @@ function PresentationViewer({
     [groupId, quotedSnapshot?.path],
   );
   const { modalRef: snapshotModalRef } = useModalA11y(
-    isOpen && snapshotLightboxOpen && !!currentSnapshotUrl,
+    isOpen && visible && snapshotLightboxOpen && !!currentSnapshotUrl,
     () => setSnapshotLightboxOpen(false),
   );
   const prefersInnerViewportScroll =
@@ -571,7 +596,7 @@ function PresentationViewer({
   }, [allowLiveBrowser, groupId, slotId, card?.published_at]);
 
   useEffect(() => {
-    if (!isOpen || !isWorkspaceLinked) return;
+    if (!isOpen || !visible || !isWorkspaceLinked) return;
     // Documents own their reading/navigation state. Reload them only on an
     // explicit refresh or publication, rather than replacing the iframe every tick.
     if (cardType !== "image" && cardType !== "markdown") return;
@@ -581,6 +606,7 @@ function PresentationViewer({
     return () => window.clearInterval(timer);
   }, [
     isOpen,
+    visible,
     isWorkspaceLinked,
     groupId,
     slotId,
@@ -990,14 +1016,30 @@ function PresentationViewer({
       />
     )
   ) : card.card_type === "pdf" ? (
-    <iframe
-      title={card.title}
-      src={href}
-      className={classNames(
-        immersiveViewportClassName,
-        "w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white",
-      )}
-    />
+    isSameOriginHttp(href) ? (
+      <div
+        className={classNames(
+          immersiveViewportClassName,
+          "flex w-full min-w-0 flex-col overflow-hidden rounded-3xl border border-[var(--glass-border-subtle)]",
+        )}
+      >
+        <PdfPreview
+          key={resourceKey}
+          href={href}
+          title={card.title}
+          failedText={t("presentationPdfUnavailable")}
+        />
+      </div>
+    ) : (
+      <iframe
+        title={card.title}
+        src={href}
+        className={classNames(
+          immersiveViewportClassName,
+          "w-full rounded-3xl border border-[var(--glass-border-subtle)] bg-white",
+        )}
+      />
+    )
   ) : card.card_type === "web_preview" ? (
     isOpen ? (
       <PresentationWebPreviewPanel
@@ -1011,6 +1053,8 @@ function PresentationViewer({
         allowLiveBrowser={allowLiveBrowser}
         mode={webPreviewMode}
         refreshNonce={refreshTick}
+        visible={visible}
+        reuseExistingSession={reuseExistingSession}
         viewportClassName={immersiveViewportClassName}
         onInteractiveFrameUpdate={setBrowserFrameForQuote}
       />
@@ -1093,11 +1137,11 @@ function PresentationViewer({
                 />
               ) : null}
               <div className="ml-auto flex items-center gap-1.5 max-sm:gap-1">
-                {canQuote ? (
+                {canQuote || currentSnapshotUrl ? (
                   <div
                     className={classNames("flex items-center gap-1", compact ? "" : "sm:hidden")}
                   >
-                    {renderQuoteKey(true)}
+                    {canQuote ? renderQuoteKey(true) : null}
                     {renderSnapshotKey(true)}
                   </div>
                 ) : null}
@@ -1141,9 +1185,16 @@ function PresentationViewer({
             </div>
           </>
         ) : (
-          <span>
-            {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
-          </span>
+          <>
+            <span>
+              {t("presentationMissingCard", { defaultValue: "This presentation slot is empty." })}
+            </span>
+            {currentSnapshotUrl ? (
+              <div className={classNames("ml-auto", compact ? "" : "sm:hidden")}>
+                {renderSnapshotKey(true)}
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     ) : null;
@@ -1329,7 +1380,7 @@ function PresentationViewer({
             </div>
           </div>
         ) : null}
-        {canQuote && !compact ? (
+        {(canQuote || !!currentSnapshotUrl) && !compact ? (
           <div
             className={classNames(
               "pointer-events-none absolute bottom-[max(1rem,env(safe-area-inset-bottom))] right-5 z-10 flex items-center gap-2",
@@ -1337,7 +1388,7 @@ function PresentationViewer({
             )}
           >
             {renderSnapshotKey(false)}
-            {renderQuoteKey(false)}
+            {canQuote ? renderQuoteKey(false) : null}
           </div>
         ) : null}
       </div>
@@ -1365,41 +1416,43 @@ function PresentationViewer({
         )}
         aria-label={t("presentationTitle", { defaultValue: "Presentation" })}
       >
-        <SidePanelHeader
-          title={card?.title || t("presentationTitle")}
-          subtitle={
-            linkedAsset.stale
-              ? t("presentationRefreshFailed")
-              : card
-                ? getCardTypeLabel(card.card_type, t)
-                : undefined
-          }
-          onClose={onClose}
-          closeLabel={t("presentationCloseDockAction")}
-        >
-          {compact && (hasSlotNavigation || card) ? (
-            <SidePanelButton
-              ref={attachChromeToggle}
-              title={chromeLabel}
-              data-presentation-action
-              aria-expanded={chromeOpen}
-              aria-controls={chromeId}
-              onClick={() => setChromeOpen((value) => !value)}
-            >
-              <MoreHorizontalIcon />
-            </SidePanelButton>
-          ) : null}
-          {onCollapse && (
-            <SidePanelButton title={t("presentationCompactSlots")} onClick={onCollapse}>
-              <LcdIcon icon={PanelRightClose} glyph="square-chevron-right" />
-            </SidePanelButton>
-          )}
-          {onOpenWindow && (
-            <SidePanelButton title={t("presentationOpenWindowAction")} onClick={onOpenWindow}>
-              <WindowViewIcon />
-            </SidePanelButton>
-          )}
-        </SidePanelHeader>
+        {!embedded ? (
+          <SidePanelHeader
+            title={card?.title || t("presentationTitle")}
+            subtitle={
+              linkedAsset.stale
+                ? t("presentationRefreshFailed")
+                : card
+                  ? getCardTypeLabel(card.card_type, t)
+                  : undefined
+            }
+            onClose={onClose}
+            closeLabel={t("presentationCloseDockAction")}
+          >
+            {compact && (hasSlotNavigation || card) ? (
+              <SidePanelButton
+                ref={attachChromeToggle}
+                title={chromeLabel}
+                data-presentation-action
+                aria-expanded={chromeOpen}
+                aria-controls={chromeId}
+                onClick={() => setChromeOpen((value) => !value)}
+              >
+                <MoreHorizontalIcon />
+              </SidePanelButton>
+            ) : null}
+            {onCollapse && (
+              <SidePanelButton title={t("presentationCompactSlots")} onClick={onCollapse}>
+                <LcdIcon icon={PanelRightClose} glyph="square-chevron-right" />
+              </SidePanelButton>
+            )}
+            {onOpenWindow && (
+              <SidePanelButton title={t("presentationOpenWindowAction")} onClick={onOpenWindow}>
+                <WindowViewIcon />
+              </SidePanelButton>
+            )}
+          </SidePanelHeader>
+        ) : null}
         {linkedAsset.stale && (
           <span role="status" className="sr-only">
             {t("presentationRefreshFailed")}
@@ -1412,7 +1465,8 @@ function PresentationViewer({
               {(showWebPreviewModeToggle ||
                 canRefresh ||
                 copyReferenceValue ||
-                (compact && canQuote) ||
+                (compact && (canQuote || !!currentSnapshotUrl)) ||
+                (embedded && ((sourceEventId && onOpenMessageContext) || onOpenWindow)) ||
                 (!readOnly && (onReplaceSlot || onClearSlot) && slot)) && (
                 <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 py-1">
                   {showWebPreviewModeToggle ? (
@@ -1425,11 +1479,27 @@ function PresentationViewer({
                     />
                   ) : null}
                   <div className="ml-auto flex shrink-0 items-center gap-1">
-                    {compact && canQuote ? (
+                    {compact && (canQuote || currentSnapshotUrl) ? (
                       <>
-                        {renderQuoteKey(true)}
+                        {canQuote ? renderQuoteKey(true) : null}
                         {renderSnapshotKey(true)}
                       </>
+                    ) : null}
+                    {embedded && sourceEventId && onOpenMessageContext ? (
+                      <SidePanelButton
+                        title={jumpToChatLabel}
+                        onClick={() => onOpenMessageContext(sourceEventId)}
+                      >
+                        <MessageSquareIcon />
+                      </SidePanelButton>
+                    ) : null}
+                    {embedded && onOpenWindow ? (
+                      <SidePanelButton
+                        title={t("presentationOpenWindowAction")}
+                        onClick={onOpenWindow}
+                      >
+                        <WindowViewIcon />
+                      </SidePanelButton>
                     ) : null}
                     {canRefresh && (
                       <SidePanelButton

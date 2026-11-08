@@ -25,13 +25,9 @@ export function claimVitePreloadReload(storage: Storage, now: number = Date.now(
   return true;
 }
 
-export function recoverDynamicImportError(
-  error: unknown,
-  storage: Storage,
-  reload: () => void,
-  now: number = Date.now(),
-): boolean {
+/** A failed dynamic import is handled by `reload`, which decides whether to reload now. */
+export function recoverDynamicImportError(error: unknown, reload: () => void): boolean {
   if (!isDynamicImportError(error)) return false;
-  if (claimVitePreloadReload(storage, now)) reload();
+  reload();
   return true;
 }

@@ -3,6 +3,7 @@ import { useId, useRef, useState } from "react";
 import { classNames } from "../../utils/classNames";
 import { useTranslation } from "react-i18next";
 import { useModalStore } from "../../stores/useModalStore";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { Button } from "../../components/ui/button";
 import { SelectMenu } from "../../components/ui/select-menu";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "../../components/ui/dialog";
@@ -64,6 +65,7 @@ function GroupConnectionsDialog({
   onOpenAccount: () => void;
 }) {
   const { t } = useTranslation("layout");
+  useChatObscuringView(true);
   const returnFocus = useRef(document.activeElement as HTMLElement | null);
   const [chosen, setChosen] = useState("");
   const current = chosen || groupId || (invitation ? groups[0]?.group_id : "") || "";

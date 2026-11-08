@@ -767,6 +767,7 @@ export function normalizePresentationBrowserSurfaceState(
       : null,
     strategy: asOptionalString(record.strategy),
     url: asOptionalString(record.url),
+    initial_url: asOptionalString(record.initial_url),
     width: Number.isFinite(Number(record.width)) ? Number(record.width) : 0,
     height: Number.isFinite(Number(record.height)) ? Number(record.height) : 0,
     started_at: asOptionalString(record.started_at),

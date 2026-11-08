@@ -132,6 +132,7 @@ export function WorkspaceDocumentPreview({
         className="min-h-0 flex-1 overflow-auto p-3"
         tabIndex={0}
         aria-label={t("workspaceTablePreview")}
+        data-workspace-scroll
       >
         {table.error ? (
           <p role="alert">{t("workspaceTableInvalid")}</p>
@@ -175,6 +176,7 @@ export function WorkspaceDocumentPreview({
     <div
       ref={viewport}
       className="min-h-0 flex-1 overflow-auto p-4"
+      data-workspace-scroll
       onClick={(event) => followLink(event, event.currentTarget)}
     >
       <LazyMarkdownRenderer

@@ -1351,6 +1351,7 @@ impl App {
                                 v: 1,
                                 option_id: Some(id.clone()),
                                 text: None,
+                                note: None,
                             },
                             Some(ReplySelection::Other)
                                 if !draft.text.trim().is_empty()
@@ -1360,6 +1361,7 @@ impl App {
                                     v: 1,
                                     option_id: None,
                                     text: Some(draft.text.clone()),
+                                    note: None,
                                 }
                             }
                             Some(ReplySelection::Other)

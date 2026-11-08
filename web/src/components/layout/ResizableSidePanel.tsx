@@ -9,20 +9,18 @@ import { classNames } from "../../utils/classNames";
 export function ResizableSidePanel({
   groupId,
   surface,
-  viewing,
   container,
   isDark,
   children,
 }: {
   groupId: string;
   surface: SidePanelSurface;
-  viewing: boolean;
   container: RefObject<HTMLDivElement | null>;
   isDark: boolean;
   children: (controls: { compact: boolean; toggleCompact: () => void }) => ReactNode;
 }) {
   const { t } = useTranslation("chat");
-  const layout = useSidePanelLayout(groupId, surface, viewing, container);
+  const layout = useSidePanelLayout(groupId, surface, container);
   const { compact, toggleCompact } = layout;
   const panelRef = useRef<HTMLDivElement>(null);
   // Share the resolved width with the header without rerendering the chat during a drag.

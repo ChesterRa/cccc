@@ -82,8 +82,34 @@ describe("MessageReferenceSections", () => {
     const buttons = host.querySelectorAll("button");
     await act(async () => buttons[0]?.click());
     await act(async () => buttons[1]?.click());
-    expect(onOpenPresentationRef).toHaveBeenCalledWith(presentationRef, event);
+    expect(onOpenPresentationRef).toHaveBeenCalledWith(presentationRef, event, 0);
     expect(onOpenTaskRef).toHaveBeenCalledWith(taskRef, event);
+  });
+
+  it("distinguishes repeated presentation references by their position", async () => {
+    const event: LedgerEvent = { id: "event-1", kind: "message" };
+    const ref: PresentationMessageRef = { kind: "presentation_ref", slot_id: "slot-1" };
+    const open = vi.fn();
+    await act(async () =>
+      root.render(
+        <MessageReferenceSections
+          event={event}
+          presentationRefs={[ref, ref]}
+          voiceDocumentRefs={[]}
+          taskRefs={[]}
+          taskById={new Map()}
+          sectionClassName="reference-section"
+          onOpenPresentationRef={open}
+        />,
+      ),
+    );
+    const buttons = host.querySelectorAll("button");
+    await act(async () => buttons[0].click());
+    await act(async () => buttons[1].click());
+    expect(open.mock.calls).toEqual([
+      [ref, event, 0],
+      [ref, event, 1],
+    ]);
   });
   it("opens the replied message from the quote itself", async () => {
     const onOpenReplyTarget = vi.fn();

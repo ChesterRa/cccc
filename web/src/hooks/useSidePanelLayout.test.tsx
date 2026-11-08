@@ -24,7 +24,7 @@ function Harness({
   surface?: SidePanelSurface;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  layout = useSidePanelLayout(group, surface, false, ref);
+  layout = useSidePanelLayout(group, surface, ref);
   return (
     <div ref={ref}>
       <div
@@ -176,11 +176,9 @@ it("starts new Groups compact and keeps saved Group preferences", async () => {
   await render("new");
   expect(layout.compact).toBe(true);
   expect(layout.width).toBe(64);
-  expect(state("new").presentationDisplayMode).toBe("split");
   await render("a");
   expect(layout.compact).toBe(false);
-  useUIStore.getState().setChatPresentationDisplayMode("a", "modal");
   await render("new");
   await render("a");
-  expect(state("a").presentationDisplayMode).toBe("modal");
+  expect(layout.compact).toBe(false);
 });

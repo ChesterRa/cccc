@@ -20,6 +20,7 @@ describe("MessageAttachments download contract", () => {
           },
         ]}
         blobGroupId="g1"
+        panelGroupId="g1"
         isUserMessage={false}
         isDark={false}
         attachmentKeyPrefix="event-1"
@@ -42,6 +43,7 @@ describe("MessageAttachments download contract", () => {
           { kind: "file", path: "state/blobs/d-hash", title: "notes.txt", mime_type: "text/plain" },
         ]}
         blobGroupId="g1"
+        panelGroupId="g1"
         isUserMessage={false}
         isDark={false}
         attachmentKeyPrefix="event-audio"
@@ -71,6 +73,7 @@ describe("MessageAttachments download contract", () => {
           },
         ]}
         blobGroupId="g1"
+        panelGroupId="g1"
         isUserMessage={false}
         isDark={false}
         attachmentKeyPrefix="event-2"
@@ -96,6 +99,7 @@ describe("MessageAttachments download contract", () => {
           },
         ]}
         blobGroupId="g1"
+        panelGroupId="g1"
         isUserMessage={false}
         isDark={false}
         attachmentKeyPrefix="event-3"
@@ -127,6 +131,7 @@ describe("MessageAttachments download contract", () => {
           },
         ]}
         blobGroupId="g1"
+        panelGroupId="g1"
         isUserMessage
         isDark={false}
         attachmentKeyPrefix="event-4"
@@ -155,6 +160,7 @@ describe("MessageAttachments download contract", () => {
           },
         ]}
         blobGroupId="g1"
+        panelGroupId="g1"
         isUserMessage
         isDark={false}
         attachmentKeyPrefix="event-5"
@@ -184,6 +190,7 @@ describe("MessageAttachments image layout", () => {
             mime_type: "image/png",
           }))}
           blobGroupId="g1"
+          panelGroupId="g1"
           isUserMessage={isUserMessage}
           isDark={false}
           attachmentKeyPrefix="event-image"
@@ -194,7 +201,6 @@ describe("MessageAttachments image layout", () => {
       host.innerHTML = markup;
       const imageContainer = host.querySelector("[data-image-frame]")?.parentElement?.parentElement;
       expect(imageContainer).not.toBeNull();
-      expect(imageContainer?.classList.contains("max-w-full")).toBe(true);
       expect(imageContainer?.classList.contains("w-[min(30rem,82vw)]")).toBe(reserveWidth);
     },
   );
@@ -218,6 +224,7 @@ describe("MessageAttachments video layout", () => {
             },
           ]}
           blobGroupId="g1"
+          panelGroupId="g1"
           isUserMessage={isUserMessage}
           isDark={false}
           attachmentKeyPrefix="event-video"

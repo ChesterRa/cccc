@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { ImagePreview } from "./ImagePreview";
+import { AttachmentResourceView } from "../resourcePanel/views/AttachmentResourceView";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -50,24 +51,19 @@ it.each([
   );
   await act(async () => {
     root.render(
-      <ImagePreview
+      <AttachmentResourceView
+        media="image"
         href="/api/v1/groups/g/blobs/content?filename=picture.svg"
-        downloadHref="/download"
-        downloadName="picture.svg"
-        alt="picture.svg"
+        title="picture.svg"
         isSvg
-        isUserMessage={false}
         isDark={false}
+        active
+        resourceKey="fixture"
       />,
     );
   });
-  await vi.waitFor(() =>
-    expect(host.querySelector<HTMLButtonElement>("button")?.disabled).toBe(false),
-  );
-  await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
-  const image = document.querySelector<HTMLImageElement>(
-    '[role="dialog"] [data-graphic-image] img',
-  )!;
+  await vi.waitFor(() => expect(host.querySelector("[data-graphic-image] img")).not.toBeNull());
+  const image = host.querySelector<HTMLImageElement>("[data-graphic-image] img")!;
   await act(async () => image.dispatchEvent(new Event("load")));
   expect(Number.parseFloat(image.parentElement!.style.width)).toBe(expected);
 });
@@ -80,6 +76,14 @@ it("does not allocate an object URL when an SVG response arrives after the sourc
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, blob: () => pending }));
   const preview = (href: string, isSvg: boolean) => (
     <ImagePreview
+      resource={{
+        panelGroupId: "g",
+        blobGroupId: "g",
+        messageKey: "event",
+        eventId: "event",
+        index: 0,
+        blobPath: "state/blobs/image",
+      }}
       href={href}
       downloadHref={href}
       downloadName="picture.svg"

@@ -143,9 +143,14 @@ function ReplyEntry({
     store.getState().fail(key, attempt.clientId, error, uncertain);
     if (definite) summary?.refresh();
   };
+  // A choice without a note stays the original answer, which every daemon accepts.
   const submit = (answer: ReplyAnswer) =>
     void send(
-      answer.kind === "option" ? { v: 1, option_id: answer.id } : { v: 1, text: answer.text },
+      answer.kind === "other"
+        ? { v: 1, text: answer.text }
+        : answer.note === undefined
+          ? { v: 1, option_id: answer.id }
+          : { v: 2, option_id: answer.id, note: answer.note },
     );
   // With 'Waiting for you' indicators off, a request without a question reads as an
   // ordinary message, answered with the usual Reply. A question keeps its choices, and

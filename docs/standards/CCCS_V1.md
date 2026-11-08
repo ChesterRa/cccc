@@ -256,7 +256,7 @@ data: {
 
   // A choice put to the user, and the user's answer to it (see §6.4)
   question?: ReplyQuestionV1
-  answer?: ReplyAnswerV1
+  answer?: ReplyAnswerV1 | ReplyAnswerV2
 
   // Reserved for future threading
   thread?: string
@@ -382,6 +382,12 @@ type ReplyQuestionV1 = {
 type ReplyAnswerV1 =
   | { v: 1; option_id: string }
   | { v: 1; text: string }  // at most 4000 characters; kept exactly as written
+
+type ReplyAnswerV2 = {
+  v: 2
+  option_id: string
+  note: string              // nonempty, at most 4000 characters; kept exactly as written
+}
 ```
 
 **Rules**
@@ -402,9 +408,12 @@ type ReplyAnswerV1 =
   the user's choice.
 - `answer` appears only on the user's reply to a question, written by the
   daemon's answer operation, never accepted from a caller's message fields.
-  Its `text` is generated for the requester: `Selected <id>: <label>` for a
-  choice, the user's words prefixed with `Other: ` when the question offered
-  options, and the user's words alone when it did not.
+  V1 keeps its two mutually exclusive forms. V2 is used only for a selected
+  option with a nonempty note; it does not change the question's V1 shape.
+  The message `text` is generated for the requester: `Selected <id>: <label>`
+  for a choice; for V2, that line followed by a blank line and `Note: <note>`;
+  the user's words prefixed with `Other: ` when the question offered options;
+  and the user's words alone when it did not. The note is preserved exactly.
 - The user's obligation follows §6.3: the first reply by the user or a
   cancellation after the request closes it. `user` is the Group's shared human
   audience; one person's answer closes the request for everyone with access to

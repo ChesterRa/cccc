@@ -8,7 +8,7 @@ import {
   type RefObject,
 } from "react";
 import { getChatSession, useUIStore } from "../stores/useUIStore";
-import { useModalStore } from "../stores/useModalStore";
+import { useResourcePanelStore } from "../stores/useResourcePanelStore";
 import {
   clampSidePanelWidth,
   shouldCompactSidePanel,
@@ -22,18 +22,32 @@ type Layout = { width: number; compact: boolean };
 export function useSidePanelLayout(
   groupId: string,
   surface: SidePanelSurface | null,
-  viewing: boolean,
   container: RefObject<HTMLDivElement | null>,
 ) {
   const session = useUIStore((state) => getChatSession(groupId, state.chatSessions));
-  const save = useUIStore((state) => state.setChatSidePanelLayout);
-  const closeViewer = useModalStore((state) => state.setPresentationViewer);
+  const saveSession = useUIStore((state) => state.setChatSidePanelLayout);
+  const resourceWidth = useResourcePanelStore((state) => state.width);
+  const saveResourceWidth = useResourcePanelStore((state) => state.setWidth);
   const [containerWidth, setContainerWidth] = useState(0);
   const [draft, setDraft] = useState<Layout | null>(null);
   const gesture = useRef<{ x: number; width: number; latest: Layout } | null>(null);
-  const compact =
-    surface === "presentation" && (draft?.compact ?? (!viewing && session.presentationCompact));
-  const expandedWidth = clampSidePanelWidth(draft?.width ?? session.sidePanelWidth, containerWidth);
+  const compact = surface === "presentation" && (draft?.compact ?? session.presentationCompact);
+  // The resource panel keeps its own width: a document or PDF needs more room than the tree.
+  const storedWidth =
+    surface === "resources"
+      ? (resourceWidth ?? Math.round(containerWidth / 2))
+      : session.sidePanelWidth;
+  const expandedWidth = clampSidePanelWidth(draft?.width ?? storedWidth, containerWidth);
+  const save = useCallback(
+    (id: string, layout: { width?: number; compact?: boolean }) => {
+      if (surface === "resources") {
+        if (layout.width) saveResourceWidth(layout.width);
+        return;
+      }
+      saveSession(id, layout);
+    },
+    [saveResourceWidth, saveSession, surface],
+  );
   const width = compact ? SIDE_PANEL_COMPACT_WIDTH : expandedWidth;
   const dragging = draft !== null;
 
@@ -88,7 +102,6 @@ export function useSidePanelLayout(
           width: next.compact ? undefined : next.width,
           ...(surface === "presentation" ? { compact: next.compact } : {}),
         });
-        if (next.compact && viewing) closeViewer(null);
       }
       gesture.current = null;
       setDraft(null);
@@ -106,13 +119,12 @@ export function useSidePanelLayout(
       gesture.current = null;
       setDraft(null);
     };
-  }, [dragging, groupId, surface, viewing, containerWidth, save, closeViewer]);
+  }, [dragging, groupId, surface, containerWidth, save]);
 
   const toggleCompact = useCallback(() => {
     if (surface !== "presentation") return;
     save(groupId, { compact: !compact });
-    if (!compact && viewing) closeViewer(null);
-  }, [surface, groupId, compact, viewing, save, closeViewer]);
+  }, [surface, groupId, compact, save]);
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!surface || event.button !== 0) return;
     event.preventDefault();
@@ -135,10 +147,9 @@ export function useSidePanelLayout(
       save(groupId, {
         width: nextCompact
           ? undefined
-          : clampSidePanelWidth(compact ? session.sidePanelWidth : proposed, containerWidth),
+          : clampSidePanelWidth(compact ? storedWidth : proposed, containerWidth),
         ...(surface === "presentation" ? { compact: nextCompact } : {}),
       });
-      if (nextCompact && viewing) closeViewer(null);
     }
   };
   return {

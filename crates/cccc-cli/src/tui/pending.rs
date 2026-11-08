@@ -429,6 +429,7 @@ mod tests {
                 v: 1,
                 option_id: Some("B".into()),
                 text: None,
+                note: None,
             },
             question: Some(question),
         };
@@ -448,6 +449,7 @@ mod tests {
             v: 1,
             option_id: None,
             text: Some("words".into()),
+            note: None,
         };
         let mut plain = receipt;
         plain["data"]

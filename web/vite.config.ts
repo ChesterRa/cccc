@@ -1,5 +1,6 @@
 import { defineConfig } from "vite-plus";
 import react from "@vitejs/plugin-react";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 function localProxyHost(host: string | undefined): string {
@@ -21,7 +22,32 @@ export default defineConfig({
   test: {
     execArgv: Object.hasOwn(globalThis, "localStorage") ? ["--no-experimental-webstorage"] : [],
   },
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "pdfjs-assets",
+      apply: "build",
+      buildStart() {
+        // PDF.js requests these resources by their original names. Version the
+        // directory because packaged assets are cached indefinitely.
+        const root = path.resolve(__dirname, "node_modules/pdfjs-dist");
+        const { version } = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+          version: string;
+        };
+        for (const dir of ["cmaps", "standard_fonts", "wasm", "iccs"]) {
+          const sourceDir = path.join(root, dir);
+          for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+            if (!entry.isFile()) continue;
+            this.emitFile({
+              type: "asset",
+              fileName: `assets/pdfjs/${version}/${dir}/${entry.name}`,
+              source: readFileSync(path.join(sourceDir, entry.name)),
+            });
+          }
+        }
+      },
+    },
+  ],
   fmt: { ignorePatterns: ["dist/**"], objectWrap: "collapse" },
   lint: {
     ignorePatterns: ["dist/**", "node_modules/**"],
@@ -97,6 +123,9 @@ export default defineConfig({
           }
 
           if (!id.includes("node_modules")) return;
+          // The PDF reader is used only on touch devices or where the browser
+          // lacks a PDF viewer; leave its large graph behind the lazy import.
+          if (/[\\/]node_modules[\\/]pdfjs-dist[\\/]/.test(id)) return;
           // Mermaid is loaded only when a message actually contains a Mermaid fence.
           // Leave its graph to the dynamic import splitter instead of pulling it into
           // the initial shared vendor chunk or one oversized manual chunk.

@@ -34,6 +34,7 @@
     "markdown-it": "^14.3.0",
     "markdown-it-cjk-friendly": "^3.0.0",
     "mermaid": "11.16.1",
+    "pdfjs-dist": "6.5.438",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-diff-view": "3.3.3",

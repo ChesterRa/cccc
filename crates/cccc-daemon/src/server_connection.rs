@@ -139,6 +139,91 @@ mod tests {
     use tokio::sync::watch;
 
     #[tokio::test]
+    async fn competing_choices_with_notes_are_serialized_by_the_daemon() {
+        let temp = tempfile::tempdir().expect("temporary home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let request = |op: &str, args: Value| cccc_contracts::DaemonRequest {
+            v: 1,
+            op: op.into(),
+            args: args.as_object().expect("request args").clone(),
+        };
+        let create =
+            crate::handle_request(&home, &request("group_create", json!({"title": "notes"})));
+        assert!(create.ok, "{:?}", create.error);
+        let group = create.result["group"]["group_id"]
+            .as_str()
+            .expect("group")
+            .to_owned();
+        let actor = crate::handle_request(
+            &home,
+            &request(
+                "actor_add",
+                json!({
+                    "group_id": group, "actor_id": "lead", "runtime": "custom", "by": "user"
+                }),
+            ),
+        );
+        assert!(actor.ok, "{:?}", actor.error);
+        let sent = crate::handle_request(
+            &home,
+            &request(
+                "send",
+                json!({
+                    "group_id": group, "by": "lead", "to": ["user"], "message_mode": "request_reply",
+                    "text": "", "question": {"v": 1, "prompt": "Which?", "options": [
+                        {"label": "One"}, {"label": "Two"}
+                    ]}
+                }),
+            ),
+        );
+        assert!(sent.ok, "{:?}", sent.error);
+        let source = sent.result["event"]["id"]
+            .as_str()
+            .expect("source")
+            .to_owned();
+        let answer = |client: &str, option: &str| {
+            request(
+                "reply_request_answer",
+                json!({
+                    "group_id": group, "source_event_id": source, "by": "user", "client_id": client,
+                    "answer": {"v": 2, "option_id": option, "note": client}
+                }),
+            )
+        };
+        let (shutdown, _) = watch::channel(false);
+        let locks = DispatchLocks::default();
+        // `response` takes the same Group write permit as a real IPC connection.
+        let (first, second) = tokio::join!(
+            super::response(&home, answer("first", "A"), &shutdown, &locks),
+            super::response(&home, answer("second", "B"), &shutdown, &locks),
+        );
+        assert_ne!(first.ok, second.ok);
+        let (winner, loser) = if first.ok {
+            (first, second)
+        } else {
+            (second, first)
+        };
+        assert_eq!(
+            loser.error.expect("closed request").code,
+            "reply_request_closed"
+        );
+        let status = crate::handle_request(
+            &home,
+            &request(
+                "ledger_statuses",
+                json!({
+                    "group_id": group, "event_ids": [source]
+                }),
+            ),
+        );
+        assert!(status.ok, "{:?}", status.error);
+        assert_eq!(
+            status.result["statuses"][&source]["user_request"]["reply_event_id"],
+            winner.result["event"]["id"]
+        );
+    }
+
+    #[tokio::test]
     async fn malformed_connection_does_not_panic() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

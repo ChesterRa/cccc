@@ -127,6 +127,11 @@ export function AppearancePreferences({
           value={uiStyle.lcdBody}
           onChange={(lcdBody) => setUiStylePrefs({ lcdBody })}
           options={[
+            {
+              value: "proportional",
+              label: t("lcdBodyProportional"),
+              title: t("lcdBodyProportionalHint"),
+            },
             { value: "mono", label: t("lcdBodyMono") },
             { value: "pixel", label: t("lcdBodyPixel") },
           ]}

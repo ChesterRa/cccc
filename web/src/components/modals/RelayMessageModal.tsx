@@ -5,6 +5,7 @@ import { classNames } from "../../utils/classNames";
 import { MOBILE_VIEWPORT_MEDIA_QUERY } from "../../utils/responsiveLayout";
 import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringViewOnPhone } from "../../hooks/useChatObscuringView";
 import { Button } from "../ui/button";
 import { Surface } from "../ui/surface";
 import { Textarea } from "../ui/textarea";
@@ -32,6 +33,7 @@ export function RelayMessageModal({
   onSubmit,
 }: RelayMessageModalProps) {
   const { t } = useTranslation("modals");
+  useChatObscuringViewOnPhone(isOpen);
   const dstGroups = useMemo(() => {
     return (groups || [])
       .map((g) => {

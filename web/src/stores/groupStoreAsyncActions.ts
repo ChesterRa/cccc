@@ -345,19 +345,21 @@ export function createGroupStoreAsyncActions(
 
     refreshPresentation: async (groupId?: string) => {
       const gid = String(groupId || get().selectedGroupId || "").trim();
-      if (!gid) return;
+      if (!gid) return false;
       const epoch = beginGroupRequestEpoch(presentationRequestEpochByGroup, gid);
       try {
         const resp = await api.fetchPresentation(gid);
-        if (!resp.ok) return;
-        if (!isLatestGroupRequestEpoch(presentationRequestEpochByGroup, gid, epoch)) return;
+        if (!resp.ok) return false;
+        if (!isLatestGroupRequestEpoch(presentationRequestEpochByGroup, gid, epoch)) return false;
         const nextPresentation = resp.result.presentation || null;
         saveGroupView(gid, { groupPresentation: nextPresentation });
         if (String(get().selectedGroupId || "").trim() === gid) {
           set({ groupPresentation: nextPresentation });
         }
+        return true;
       } catch (error) {
         console.error(`Failed to refresh presentation for group=${gid}:`, error);
+        return false;
       }
     },
 

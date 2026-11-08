@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { MicrophoneIcon } from "../../components/Icons";
 import { classNames } from "../../utils/classNames";
 import { recoverDynamicImportError } from "../../utils/vitePreloadRecovery";
-import { reloadPage } from "../../features/connect/reloadPage";
+import { reloadForNewBuild, reloadPage } from "../../features/connect/reloadPage";
 import type {
   VoiceSecretaryCaptureMode,
   VoiceSecretaryComposerControlProps,
@@ -37,7 +37,9 @@ async function loadVoiceSecretaryComposerControl() {
     const module = await import("./VoiceSecretaryComposerControl");
     return { default: module.VoiceSecretaryComposerControl };
   } catch (error) {
-    const recovered = recoverDynamicImportError(error, window.sessionStorage, reloadPage);
+    const recovered = recoverDynamicImportError(error, () =>
+      reloadForNewBuild(window.sessionStorage),
+    );
     if (!recovered) throw error;
     return { default: VoiceSecretaryLoadFailure };
   }

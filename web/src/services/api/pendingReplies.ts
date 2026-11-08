@@ -19,7 +19,11 @@ export type PendingReplyPage = {
   before?: string | null;
 };
 
-export type PendingReplyAnswer = { v: 1; option_id: string } | { v: 1; text: string };
+/** A choice, other words, or (version 2) a choice with the user's note added. */
+export type PendingReplyAnswer =
+  | { v: 1; option_id: string }
+  | { v: 1; text: string }
+  | { v: 2; option_id: string; note: string };
 
 export function fetchPendingReplySummary(init?: RequestInit) {
   return apiJson<{ groups: PendingReplySummary[] }>("/api/v1/reply-requests/summary", {

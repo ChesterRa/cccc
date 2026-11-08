@@ -26,6 +26,8 @@ export function MessageBubbleBody({
   insight,
   blobAttachments,
   blobGroupId,
+  panelGroupId,
+  senderName,
   stableMessageAttachmentKey,
   onOpenPresentationRef,
   onOpenTaskRef,
@@ -49,10 +51,17 @@ export function MessageBubbleBody({
     bytes: number;
     mime_type: string;
     local_preview_url: string;
+    sourceIndex: number;
   }>;
   blobGroupId: string;
+  panelGroupId: string;
+  senderName: string;
   stableMessageAttachmentKey: string;
-  onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+  onOpenPresentationRef?: (
+    ref: PresentationMessageRef,
+    event: LedgerEvent,
+    refIndex: number,
+  ) => void;
   onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
   onOpenReplyTarget?: (replyToEventId: string) => void;
 }) {
@@ -90,9 +99,17 @@ export function MessageBubbleBody({
       <MessageAttachments
         attachments={blobAttachments}
         blobGroupId={blobGroupId}
+        panelGroupId={panelGroupId}
+        sender={senderName}
+        sentAt={event.ts}
         isUserMessage={isUserMessage}
         isDark={isDark}
         attachmentKeyPrefix={stableMessageAttachmentKey}
+        sourceEventId={
+          !event._streaming && !(event.data as { _optimistic?: unknown } | undefined)?._optimistic
+            ? String(event.id || "").trim()
+            : ""
+        }
         downloadTitle={(name) => t("download", { name })}
       />
 
@@ -101,7 +118,10 @@ export function MessageBubbleBody({
           <div className="mb-1.5 text-xs font-semibold uppercase text-[var(--color-text-tertiary)]">
             {t("senderPerspective")}
           </div>
-          <div className="max-w-full break-words whitespace-pre-wrap text-[var(--color-text-secondary)] [overflow-wrap:anywhere]">
+          <div
+            data-message-insight-text
+            className="max-w-full break-words whitespace-pre-wrap text-[var(--color-text-secondary)] [overflow-wrap:anywhere]"
+          >
             {insight}
           </div>
         </div>

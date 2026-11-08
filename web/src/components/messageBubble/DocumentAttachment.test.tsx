@@ -1,13 +1,19 @@
 // @vitest-environment happy-dom
 
+import type { Window as HappyWindow } from "happy-dom";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DocumentAttachment } from "./DocumentAttachment";
 import { DOCUMENT_PREVIEW_BYTES } from "./documentText";
+import { AttachmentResourceView } from "../resourcePanel/views/AttachmentResourceView";
+import { useResourcePanelStore } from "../../stores/useResourcePanelStore";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("../viewer/PdfCanvasViewer", () => ({
+  PdfCanvasViewer: ({ href }: { href: string }) => <div data-pdf-canvas-viewer={href} />,
+}));
 vi.mock("../LazyMarkdownRenderer", () => ({
   LazyMarkdownRenderer: (props: {
     content: string;
@@ -31,20 +37,17 @@ async function open(kind: "markdown" | "text" | "pdf", href = PREVIEW) {
   root = createRoot(host);
   await act(async () =>
     root!.render(
-      <DocumentAttachment
-        kind={kind}
+      <AttachmentResourceView
+        media={kind}
         href={href}
-        downloadHref={`${PREVIEW}&download=true`}
-        downloadName="notes"
-        label="notes"
-        downloadTitle="Download notes"
+        title="notes"
+        isSvg={false}
         isDark={false}
+        active
+        resourceKey="fixture"
       />,
     ),
   );
-  await act(async () => {
-    document.querySelector<HTMLButtonElement>("[data-message-document] button")!.click();
-  });
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve));
   });
@@ -59,6 +62,7 @@ function respondWith(body: BodyInit, status = 200, headers?: HeadersInit) {
 }
 
 beforeEach(() => {
+  (window as unknown as HappyWindow).happyDOM.settings.disableIframePageLoading = true;
   Object.defineProperty(navigator, "pdfViewerEnabled", { value: true, configurable: true });
 });
 
@@ -66,8 +70,10 @@ afterEach(async () => {
   await act(async () => root?.unmount());
   root = null;
   document.body.replaceChildren();
+  (window as unknown as HappyWindow).happyDOM.settings.disableIframePageLoading = false;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  useResourcePanelStore.setState({ groups: {} });
 });
 
 describe("DocumentAttachment", () => {
@@ -80,13 +86,19 @@ describe("DocumentAttachment", () => {
     await act(async () =>
       root!.render(
         <DocumentAttachment
+          resource={{
+            panelGroupId: "g1",
+            blobGroupId: "g1",
+            messageKey: "event",
+            eventId: "event",
+            index: 0,
+            blobPath: "state/blobs/notes",
+          }}
           kind="markdown"
-          href="/preview"
           downloadHref="/download"
           downloadName="notes.md"
           label="notes.md"
           downloadTitle="Download notes.md"
-          isDark={false}
         />,
       ),
     );
@@ -183,20 +195,52 @@ describe("DocumentAttachment", () => {
     await open("text");
     expect(signal?.aborted).toBe(false);
 
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('[aria-label="common:close"]')!.click();
-    });
+    await act(async () => root!.render(null));
     expect(signal?.aborted).toBe(true);
   });
 
-  it("gives a PDF to the browser's viewer, with a way to a new tab", async () => {
+  it("gives a PDF to the browser's viewer", async () => {
     respondWith("%PDF-1.7\n", 200, { "content-type": "application/pdf" });
     await open("pdf", "about:blank#notes");
 
     expect(document.querySelector("iframe")?.getAttribute("src")).toBe("about:blank#notes");
-    const separate = document.querySelector('[data-media-actions] a[target="_blank"]');
-    expect(separate?.getAttribute("href")).toBe("about:blank#notes");
-    expect(separate?.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it("checks a replacement PDF address before placing it in the browser viewer", async () => {
+    let finish: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        url === "/first.pdf"
+          ? Promise.resolve(
+              new Response("%PDF-1.7\n", { headers: { "content-type": "application/pdf" } }),
+            )
+          : new Promise<Response>((resolve) => {
+              finish = resolve;
+            }),
+      ),
+    );
+    await open("pdf", "/first.pdf");
+    expect(document.querySelector("iframe")?.getAttribute("src")).toBe("/first.pdf");
+    await act(async () =>
+      root!.render(
+        <AttachmentResourceView
+          media="pdf"
+          href="/second.pdf"
+          title="notes"
+          isSvg={false}
+          isDark={false}
+          active
+          resourceKey="fixture"
+        />,
+      ),
+    );
+    expect(document.querySelector("iframe")).toBeNull();
+    await act(async () =>
+      finish?.(new Response("not a PDF", { headers: { "content-type": "text/html" } })),
+    );
+    expect(document.querySelector("iframe")).toBeNull();
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe("documentPreviewFailed");
   });
 
   it.each([
@@ -215,11 +259,14 @@ describe("DocumentAttachment", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toBe("documentPreviewFailed");
   });
 
-  it("leaves out the frame where the browser has no PDF viewer", async () => {
+  it("uses the in-page renderer when the browser has no PDF viewer", async () => {
     Object.defineProperty(navigator, "pdfViewerEnabled", { value: false, configurable: true });
+    respondWith("%PDF-1.7\n", 200, { "content-type": "application/pdf" });
     await open("pdf");
 
     expect(document.querySelector("iframe")).toBeNull();
-    expect(document.body.textContent).toContain("documentPdfHint");
+    expect(
+      document.querySelector("[data-pdf-canvas-viewer]")?.getAttribute("data-pdf-canvas-viewer"),
+    ).toBe(PREVIEW);
   });
 });

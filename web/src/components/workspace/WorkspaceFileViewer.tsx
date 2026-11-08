@@ -1,5 +1,5 @@
 import { buttonVariants } from "../ui/button-variants";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Code, Download, Eye, ExternalLink, Paperclip, RotateCcw, Save, X } from "lucide-react";
 import { LcdIcon } from "../Icons";
@@ -7,11 +7,9 @@ import { LcdSpinner } from "../LcdSpinner";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceFile } from "../../types";
 import { baseName } from "./workspaceTreeModel";
-import { applyEditorText, editorText } from "./workspaceText";
+import { applyEditorText, editorText, formatBytes } from "./workspaceText";
 import { workspaceContentUrl } from "../../services/api/workspace";
-import { GraphicViewer } from "../viewer/GraphicViewer";
-import { WorkspaceMediaPreview } from "./WorkspaceMediaPreview";
-import { WorkspaceDocumentPreview } from "./WorkspaceDocumentPreview";
+import { WorkspaceFilePreview } from "./WorkspaceFilePreview";
 import { workspacePreviewKind } from "./workspacePreview";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "../ui/dialog";
 
@@ -35,13 +33,11 @@ type Props = {
   onAttach: () => void;
   onOpenFile?: (path: string, options?: WorkspaceOpenFileOptions) => void;
   navigation?: WorkspaceFileNavigation | null;
+  /** Inside the resource panel the tab carries the name, the unsaved mark and the close. */
+  inPanel?: boolean;
+  /** On screen; a hidden player is paused. */
+  visible?: boolean;
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 export function WorkspaceFileViewer(props: Props) {
   const { groupId, file } = props;
@@ -71,6 +67,8 @@ function FileViewer({
   onAttach,
   onOpenFile,
   navigation,
+  inPanel = false,
+  visible = true,
 }: Props) {
   const { t } = useTranslation("chat");
   const [showSource, setShowSource] = useState(false);
@@ -98,11 +96,6 @@ function FileViewer({
     if (dirty) setConfirmReload(true);
     else onReload();
   };
-  // Render SVG drafts through an image, never inject workspace markup into the App DOM.
-  const imageUrl = useMemo(
-    () => (svgSource && dirty ? `data:image/svg+xml,${encodeURIComponent(draft)}` : contentUrl),
-    [svgSource, dirty, draft, contentUrl],
-  );
 
   const fileActionClass = `${buttonVariants({ variant: "ghost", size: "iconSm" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`;
 
@@ -114,13 +107,22 @@ function FileViewer({
           "border-[var(--glass-border-subtle)]",
         )}
       >
-        <span className="min-w-0 flex-1 basis-24 truncate text-sm font-medium" title={file.path}>
-          {baseName(file.path)}
-          {dirty ? <span className="ml-1 opacity-60">•</span> : null}
-          <span className="ml-2 truncate text-xs font-normal text-[var(--color-text-tertiary)]">
+        {inPanel ? (
+          <span
+            className="min-w-0 flex-1 basis-24 truncate text-xs text-[var(--color-text-tertiary)]"
+            title={file.path}
+          >
             {file.path}
           </span>
-        </span>
+        ) : (
+          <span className="min-w-0 flex-1 basis-24 truncate text-sm font-medium" title={file.path}>
+            {baseName(file.path)}
+            {dirty ? <span className="ml-1 opacity-60">•</span> : null}
+            <span className="ml-2 truncate text-xs font-normal text-[var(--color-text-tertiary)]">
+              {file.path}
+            </span>
+          </span>
+        )}
         <span className="shrink-0 text-xs text-[var(--color-text-tertiary)]">
           {formatBytes(file.bytes)}
         </span>
@@ -206,15 +208,20 @@ function FileViewer({
             <LcdIcon icon={Save} glyph="save" className="h-3.5 w-3.5" />
           </button>
         ) : null}
-        <button
-          type="button"
-          onClick={onClose}
-          title={t("workspaceCloseFile", { defaultValue: "Close file" })}
-          className={classNames(fileActionClass, isDark ? "hover:bg-white/8" : "hover:bg-black/5")}
-          data-lcd-key
-        >
-          <LcdIcon icon={X} glyph="close" className="h-3.5 w-3.5" />
-        </button>
+        {inPanel ? null : (
+          <button
+            type="button"
+            onClick={onClose}
+            title={t("workspaceCloseFile", { defaultValue: "Close file" })}
+            className={classNames(
+              fileActionClass,
+              isDark ? "hover:bg-white/8" : "hover:bg-black/5",
+            )}
+            data-lcd-key
+          >
+            <LcdIcon icon={X} glyph="close" className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {error ? (
@@ -247,55 +254,10 @@ function FileViewer({
         </div>
       ) : null}
 
-      {preview ? (
-        kind === "image" ? (
-          <GraphicViewer src={imageUrl} alt={baseName(file.path)} isSvg={svgSource} />
-        ) : kind === "video" || kind === "audio" ? (
-          <WorkspaceMediaPreview
-            key={contentUrl}
-            src={contentUrl}
-            name={baseName(file.path)}
-            audio={kind === "audio"}
-          />
-        ) : kind === "pdf" ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <p className="shrink-0 px-3 py-2 text-xs text-[var(--color-text-secondary)]">
-              {t("workspacePdfHint")}
-            </p>
-            {navigator.pdfViewerEnabled !== false && (
-              <iframe
-                title={file.path}
-                src={contentUrl}
-                className="min-h-0 w-full flex-1 border-0 bg-white"
-              />
-            )}
-          </div>
-        ) : (
-          <WorkspaceDocumentPreview
-            kind={kind}
-            groupId={groupId}
-            file={file}
-            content={draft}
-            isDark={isDark}
-            onOpenFile={onOpenFile}
-            navigation={navigation}
-          />
-        )
-      ) : file.truncated ? (
-        <div className="px-3 py-6 text-center text-xs text-[var(--color-text-tertiary)]">
-          {t("workspaceTooLarge", {
-            defaultValue:
-              "This file is too large for the text viewer ({{size}}). Download it to open locally.",
-            size: formatBytes(file.bytes),
-          })}
-        </div>
-      ) : file.binary ? (
-        <div className="px-3 py-6 text-center text-xs text-[var(--color-text-tertiary)]">
-          {t("workspaceBinary", { defaultValue: "Binary file — no text preview." })}
-        </div>
-      ) : editable ? (
+      {editable ? (
         <textarea
           data-workspace-editor="true"
+          data-workspace-scroll
           value={editorText(draft)}
           spellCheck={false}
           onChange={(event) => setDraft(applyEditorText(draft, event.target.value, file.content))}
@@ -312,18 +274,17 @@ function FileViewer({
           data-workspace-text
         />
       ) : (
-        <pre
-          data-workspace-text
-          className={classNames(
-            // Wraps rather than scrolling sideways: on a phone a horizontal drag per line is
-            // unreadable, and the editable path (a textarea) already soft-wraps.
-            "min-h-0 flex-1 overflow-auto px-3 py-2 font-mono text-xs leading-relaxed",
-            "whitespace-pre-wrap break-words",
-            isDark ? "text-slate-200" : "text-slate-800",
-          )}
-        >
-          {draft}
-        </pre>
+        <WorkspaceFilePreview
+          groupId={groupId}
+          file={file}
+          content={draft}
+          contentUrl={contentUrl}
+          isDark={isDark}
+          showSource={showSource}
+          onOpenFile={onOpenFile}
+          navigation={navigation}
+          visible={visible}
+        />
       )}
       <Dialog open={confirmReload} onOpenChange={setConfirmReload}>
         <DialogContent

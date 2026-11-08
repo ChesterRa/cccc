@@ -35,6 +35,7 @@ import {
 import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
 import { ModalFrame } from "./ModalFrame";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { ProcessRecoveryDialog } from "./ProcessRecoveryDialog";
 import { VoiceProviderSelect } from "../../features/codexVoice/VoiceProviderSelect";
 import { SpeakingVoiceSelect } from "../../features/codexVoice/SpeakingVoiceSelect";
@@ -79,6 +80,7 @@ export function CodexVoiceAnalystModal({
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [mobilePane, setMobilePane] = useState<MobilePane>("conversation");
   const { modalRef } = useModalA11y(isOpen, onClose);
+  useChatObscuringView(isOpen);
   const [splitLayout, setSplitLayout] = useState(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return !isSmallScreen;

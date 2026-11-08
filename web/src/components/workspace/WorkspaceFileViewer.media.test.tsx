@@ -11,6 +11,9 @@ vi.mock("react-i18next", () => ({
     t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key,
   }),
 }));
+vi.mock("../viewer/PdfCanvasViewer", () => ({
+  PdfCanvasViewer: ({ href }: { href: string }) => <div data-pdf-canvas-viewer={href} />,
+}));
 
 let root: Root;
 let host: HTMLDivElement;
@@ -183,7 +186,7 @@ it("does not expose source editing for oversized SVG or pretend other binary fil
   expect(host.querySelector("a[download]")).not.toBeNull();
 });
 
-it("provides native PDF viewing plus separate-open/download and a fallback when the browser disables inline PDFs", async () => {
+it("uses the in-page PDF renderer when the browser disables native viewing", async () => {
   await render({ ...file("report.pdf", "application/pdf"), binary: true });
   expect(host.querySelector("iframe")?.src).toContain("report.pdf");
   expect(host.querySelector('a[target="_blank"]')?.getAttribute("rel")).toContain("noopener");
@@ -192,7 +195,7 @@ it("provides native PDF viewing plus separate-open/download and a fallback when 
   try {
     await render(file("another.pdf", "application/pdf"));
     expect(host.querySelector("iframe")).toBeNull();
-    expect(host.textContent).toContain("workspacePdfHint");
+    expect(host.querySelector("[data-pdf-canvas-viewer]")).not.toBeNull();
     expect(host.querySelector('a[target="_blank"]')).not.toBeNull();
   } finally {
     vi.unstubAllGlobals();

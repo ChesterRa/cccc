@@ -33,6 +33,8 @@ describe("LCD appearance preferences", () => {
       { lcdBody: "pixel", lcdWidth: "full", lcdMotion: "off" },
     );
     expect(normalizeUiStylePrefs({ lcdWidth: "wide" }).lcdWidth).toBe("wide");
+    expect(normalizeUiStylePrefs({ lcdBody: "mono" }).lcdBody).toBe("mono");
+    expect(normalizeUiStylePrefs({ lcdBody: "proportional" }).lcdBody).toBe("proportional");
     expect(normalizeUiStylePrefs({ lcdBody: 1, lcdWidth: "max", lcdMotion: false })).toEqual(
       DEFAULT_UI_STYLE_PREFS,
     );
@@ -44,10 +46,21 @@ describe("LCD appearance preferences", () => {
     window.localStorage.setItem(LCD_MOTION_STORAGE_KEY, "off");
     const store = await loadStore();
     expect(store.getUiStylePrefs()).toEqual({
-      lcdBody: "mono",
+      lcdBody: "proportional",
       lcdWidth: "full",
       lcdMotion: "off",
     });
+  });
+
+  it("defaults to proportional while preserving saved monospace and pixel choices", async () => {
+    let store = await loadStore();
+    expect(store.getUiStylePrefs().lcdBody).toBe("proportional");
+    window.localStorage.setItem(LCD_BODY_STORAGE_KEY, "mono");
+    store = await loadStore();
+    expect(store.getUiStylePrefs().lcdBody).toBe("mono");
+    window.localStorage.setItem(LCD_BODY_STORAGE_KEY, "pixel");
+    store = await loadStore();
+    expect(store.getUiStylePrefs().lcdBody).toBe("pixel");
   });
 
   it("starts from the defaults when storage cannot be read", async () => {

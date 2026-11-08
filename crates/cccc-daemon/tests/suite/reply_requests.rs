@@ -262,6 +262,65 @@ fn an_answer_closes_the_request_once_and_reaches_the_requester() {
 }
 
 #[test]
+fn a_choice_with_note_is_recorded_once_and_retries_compare_the_entire_answer() {
+    let f = Fixture::new();
+    let id = f.ask(choice());
+    let note = "  Keep the narrow view.\n中文说明\n";
+    let answer = json!({"v": 2, "option_id": "B", "note": note});
+    for invalid in [
+        json!({"v": 2, "option_id": "C", "note": "not offered"}),
+        json!({"v": 2, "option_id": "B", "note": " \n "}),
+        json!({"v": 1, "option_id": "B", "note": "wrong version"}),
+    ] {
+        assert_eq!(
+            f.fail(
+                "reply_request_answer",
+                json!({"source_event_id": id, "client_id": "invalid", "answer": invalid}),
+            )
+            .code,
+            "invalid_answer"
+        );
+    }
+    let result = f.answer(&id, "note-first", answer.clone());
+    let event = &result["event"];
+    assert_eq!(event["by"], "user");
+    assert_eq!(event["data"]["reply_to"], json!(id));
+    assert_eq!(event["data"]["to"], json!(["lead"]));
+    assert_eq!(event["data"]["answer"], answer);
+    assert_eq!(
+        event["data"]["text"],
+        format!("Selected B: Add a column\n\nNote: {note}")
+    );
+    assert_eq!(
+        event["data"]["quote_text"],
+        "Where should the task count go?"
+    );
+    assert_eq!(f.status(&id)["user_request"]["reply_event_id"], event["id"]);
+
+    let retry = f.answer(&id, "note-first", answer);
+    assert_eq!(retry["duplicate"], true);
+    assert_eq!(retry["event"]["id"], event["id"]);
+    assert_eq!(
+        f.fail(
+            "reply_request_answer",
+            json!({"source_event_id": id, "client_id": "note-first", "answer":
+                {"v": 2, "option_id": "B", "note": "different"}}),
+        )
+        .code,
+        "idempotency_conflict"
+    );
+    assert_eq!(
+        f.fail(
+            "reply_request_answer",
+            json!({"source_event_id": id, "client_id": "note-second", "answer":
+                {"v": 2, "option_id": "A", "note": "later"}}),
+        )
+        .code,
+        "reply_request_closed"
+    );
+}
+
+#[test]
 fn a_retry_returns_only_the_answer_the_requester_received() {
     let f = Fixture::new();
     f.add_actor("other");

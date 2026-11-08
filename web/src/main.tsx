@@ -6,20 +6,20 @@ import { useBrandingStore } from "./stores";
 import { applyBrandingToDocument, DEFAULT_WEB_BRANDING } from "./utils/branding";
 import { applyTextScale, getStoredTextScale } from "./utils/textScale";
 import { applyUiStylePrefs, getUiStylePrefs } from "./utils/uiStyle";
-import { claimVitePreloadReload, recoverDynamicImportError } from "./utils/vitePreloadRecovery";
+import { recoverDynamicImportError } from "./utils/vitePreloadRecovery";
 import { cleanupLegacyWorkers } from "./features/pushNotifications/legacyWorkers";
 import { WebRoot } from "./WebRoot";
-import { reloadPage } from "./features/connect/reloadPage";
+import { reloadForNewBuild } from "./features/connect/reloadPage";
+
+const reloadForNewModules = () => reloadForNewBuild(window.sessionStorage);
 
 function reloadAfterStaleModuleError(error: unknown): boolean {
-  return recoverDynamicImportError(error, window.sessionStorage, reloadPage);
+  return recoverDynamicImportError(error, reloadForNewModules);
 }
 
+// Without a reload the import fails with its own error, which the part that loads it can show.
 window.addEventListener("vite:preloadError", (event) => {
-  event.preventDefault();
-  if (claimVitePreloadReload(window.sessionStorage)) {
-    reloadPage();
-  }
+  if (reloadForNewModules()) event.preventDefault();
 });
 
 // Development imports are not wrapped by Vite's production preload helper.

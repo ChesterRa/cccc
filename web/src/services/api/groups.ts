@@ -1272,7 +1272,13 @@ export async function fetchPresentationBrowserSurfaceSession(
 
 export async function startPresentationBrowserSurfaceSession(
   groupId: string,
-  payload: { slotId: string; url: string; width?: number; height?: number },
+  payload: {
+    slotId: string;
+    url: string;
+    width?: number;
+    height?: number;
+    reuseExistingSession?: boolean;
+  },
 ): Promise<ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>> {
   const resp = await apiJson<{ group_id?: unknown; browser_surface?: unknown }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session`,
@@ -1284,6 +1290,7 @@ export async function startPresentationBrowserSurfaceSession(
         url: String(payload.url || "").trim(),
         width: Number.isFinite(Number(payload.width)) ? Number(payload.width) : 1280,
         height: Number.isFinite(Number(payload.height)) ? Number(payload.height) : 800,
+        ...(payload.reuseExistingSession ? { reuse_existing: true } : {}),
       }),
     },
   );

@@ -7,6 +7,7 @@ import {
   type WorkspaceOperation,
 } from "../../services/api/workspace";
 import { setWorkspaceDirty } from "../../stores/workspaceNavigation";
+import { useResourcePanelStore } from "../../stores/useResourcePanelStore";
 import { joinWorkspacePath, type UploadEntry } from "./workspaceUploads";
 
 type Editor = {
@@ -97,12 +98,23 @@ export function useWorkspaceMutations(
       const response = await changeWorkspaceEntry(groupId, scopeKey, scopeUrl, operation);
       if (token !== generation.current) return false;
       if (response.ok) {
-        if (operation.operation === "move")
+        if (operation.operation === "move") {
           reconcileEntry(
             response.result.path,
             response.result.destination,
             response.result.mime_type,
           );
+          if (typeof response.result.destination === "string")
+            useResourcePanelStore
+              .getState()
+              .moveWorkspacePath(
+                groupId,
+                scopeKey,
+                scopeUrl,
+                response.result.path,
+                response.result.destination,
+              );
+        }
         if (operation.operation === "delete") reconcileEntry(response.result.path);
       } else
         setError(

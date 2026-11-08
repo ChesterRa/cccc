@@ -30,13 +30,7 @@ it("keeps parent and panel contents out of drag renders while persisting the fin
     return (
       <div ref={container} data-group-shell>
         <main>Messages</main>
-        <ResizableSidePanel
-          groupId="resize"
-          surface="files"
-          viewing={false}
-          container={container}
-          isDark={false}
-        >
+        <ResizableSidePanel groupId="resize" surface="files" container={container} isDark={false}>
           {() => <Content />}
         </ResizableSidePanel>
       </div>

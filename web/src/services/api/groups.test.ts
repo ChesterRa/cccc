@@ -5,6 +5,7 @@ import {
   fetchVoiceAssistantStatus,
   fetchVoiceAssistantWorkspace,
   previewGroupCopy,
+  startPresentationBrowserSurfaceSession,
   transcribeVoiceAssistantAudio,
   updateVoiceAssistantRecordingLease,
   type GroupCopyPreview,
@@ -14,6 +15,56 @@ import {
   fetchVoiceAssistantDocumentContent,
   retryVoiceAssistantTranscriptPersistence,
 } from "./voiceSecretary";
+
+describe("Presentation browser session", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    setAuthToken("");
+  });
+
+  it.each([undefined, false, true])(
+    "sends reuse only when requested (%s)",
+    async (reuseExistingSession) => {
+      vi.stubGlobal("window", { location: { search: "" } });
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              ok: true,
+              result: {
+                group_id: "g",
+                browser_surface: {
+                  active: true,
+                  state: "ready",
+                  url: "https://example.test/next",
+                  initial_url: "https://example.test/start",
+                },
+              },
+            }),
+          ),
+        );
+      const result = await startPresentationBrowserSurfaceSession("g", {
+        slotId: "slot-1",
+        url: "https://example.test/start",
+        reuseExistingSession,
+      });
+      expect(result.ok && result.result.browser_surface.initial_url).toBe(
+        "https://example.test/start",
+      );
+      const init = fetchMock.mock.calls[0][1];
+      expect(JSON.parse(String(init?.body))).toEqual({
+        by: "user",
+        slot: "slot-1",
+        url: "https://example.test/start",
+        width: 1280,
+        height: 800,
+        ...(reuseExistingSession ? { reuse_existing: true } : {}),
+      });
+    },
+  );
+});
 
 describe("scope attachment API", () => {
   afterEach(() => {

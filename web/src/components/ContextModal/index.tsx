@@ -28,6 +28,7 @@ import type { GroupContext, AgentsMdInfo, Task } from "../../types";
 import { evaluateTaskWorkflow, getTaskTypeDefinition } from "../../utils/taskWorkflow";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { setWorkspaceDirty } from "../../stores/workspaceNavigation";
 import { ModalFrame } from "../modals/ModalFrame";
 import { settingsDialogBodyClass, settingsDialogPanelClass } from "../modals/settings/types";
@@ -789,6 +790,7 @@ export function ContextModal({
     if (!dragTaskId) handleModalClose();
   }, [dragTaskId, handleModalClose]);
   const { modalRef } = useModalA11y(isOpen, handleModalEscape);
+  useChatObscuringView(isOpen);
 
   // Navigation that replaces this Group's context, such as opening a
   // notification for another Group, asks before unsaved edits are dropped.

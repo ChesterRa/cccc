@@ -6,8 +6,56 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+
+- A question's card lets you add a note to the option you choose: **+ Add a note (optional)** beside
+  **Send answer** opens a box, and the requester receives the choice and your words in one reply,
+  the choice line, a blank line and `Note:` with your text as written. A blank note sends the choice
+  alone, and **Other** keeps its own box. The daemon records this as a version 2 answer; a daemon
+  from before this release refuses it and the card keeps your note. The terminal interface still
+  answers with an option or **Other**.
+- PDFs from messages, links to this CCCC, the workspace and Presentation slots open in a reader
+  inside the page on devices whose main pointer is touch, such as phones and tablets, and in
+  browsers that report no built-in PDF viewer: the pages scroll, fit the width and zoom. Other
+  desktop browsers keep their own viewer, and so does a Presentation PDF from another site. The
+  reader, PDF.js bundled with CCCC, cannot select or search text, use a PDF's links and forms or
+  open a file that requires a password. A message attachment or workspace file keeps **Download**,
+  and outside a Connect frame it can still open in its own browser tab; a Presentation slot's viewer
+  offers **Copy URL/path**.
+
 ### Changed
 
+- Workspace files, message attachments and Presentation slots now open as tabs in one resource
+  panel. It replaces the file editor over the messages, the full-window image, video and document
+  preview, and the side-by-side Presentation viewer. Opening something already open selects its tab.
+  The panel sits in the right column or over the message list, a choice this browser remembers; it
+  can be maximized, and collapsing it keeps its tabs, with their number on the header's resource
+  button. Many tabs scroll sideways; **All** lists them with a filter and the recently closed ones,
+  and closing several at once can be undone. A file with unsaved edits asks before it closes, and
+  renaming or moving a file or folder in **Files** takes its open tabs and unsaved edits along.
+  Switching between workspace text, Markdown or table tabs, each shown alone, returns to where you
+  were reading, and **Side by side** shows two open tabs next to each other, stacked on a phone:
+  each side's header picks any open tab, the other side's included, a tab picked elsewhere opens on
+  the side last used, and the divider drags; workspace files show there as they read, with any
+  unsaved edits, and are edited one at a time. The eight images and four other attachments looked at
+  most recently stay loaded; an older one loads again, so a PDF's page or a video's position may
+  start over. Switching Groups, or between the phone and desktop layouts, loads the panel again:
+  tabs stay, reading positions do not. While the panel covers the messages they stay unread, and the
+  panel's collapse key shows how many arrived. Presentation slots open in the panel even if you
+  chose the window view before; **Open in window** in the viewer still shows one in a larger window.
+  The panel and the window share a slot's interactive page; when the slot is published again with
+  another address while that page is open, CCCC asks before replacing it, since someone may be
+  working in it. On a phone the panel is one full-screen surface, and **Back** returns to the
+  messages, the Files tree or the Presentation slots; the phone header keeps its room for the Group
+  title, and the menu lists **Resources** or offers to reopen what was closed last. Tabs stay until
+  you close them or reload the page. Git diffs from **Changes** still open over the messages, and
+  enlarged message diagrams and previews opened from a link, such as an image on another site, still
+  open over the page.
+- Message text now uses a proportional font by default: IBM Plex Sans, bundled with CCCC (about 130
+  KB), with Chinese and Japanese in the system's own fonts. Message headers, controls and code stay
+  in the monospace font. **Body font** in the appearance settings now offers **Sans**, **Mono** and
+  **Pixel**; a font you chose before stays as it was. Markdown no longer adds backticks around
+  inline code or quotation marks around a quote that the text does not contain.
 - The built-in stand-up and the team review texts now ask the foreman to pass questions between
   them. For a question that needs a deeper look, the stand-up text asks the foreman to mark it
   `Review:` in a related `optimization` task, or in a new planned one that authorizes no change, and
@@ -36,6 +84,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Fixed
 
+- After CCCC is updated, an open page that fails to load one of its parts no longer reloads itself
+  while it holds unsaved workspace edits, an unsent message or an operation still in progress, such
+  as a message being sent or a voice recording; text typed into a question's card, and an answer
+  still being sent from it, are not counted. If that part is the PDF reader or voice input, it shows
+  its own error and the rest of the page keeps working, so you can save first.
 - An agent that sends the user a file or a new message without naming a mode no longer fails because
   the omitted mode became Mail: for the user, who has no Inbox, the omitted mode is now Send. In a
   connected native session, `cccc_file_send` now defaults to Send like `cccc_message_send`, as the
@@ -48,8 +101,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   entire Group ledger every two seconds. The summary catches up with new events and is rebuilt after
   history is replaced or rotated, or after cache eviction. Previously, polling could consume CPU
   even when no delivery was waiting.
+- The page buttons in the terminal view's header were larger than the other header buttons. They
+  now match them when you use a mouse; on a touch screen they keep the larger size.
 - Help and the Automation editor said an idle Group stops all automation. Only the built-in
   stand-up's scheduled runs pause; other rules run as configured, and **Run now** still works.
+- A message whose only Markdown is simple bold text now shows the bold instead of the asterisks.
+- Messages from other participants that arrive while a full-screen diagram or another window that
+  covers the chat, such as Settings, Search or Context, now count as unread, as they already did
+  while a workspace file was open. On phones this includes dialogs that fill the screen.
 
 ### Security
 

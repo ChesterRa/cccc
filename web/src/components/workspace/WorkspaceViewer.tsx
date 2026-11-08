@@ -11,11 +11,16 @@ export function WorkspaceViewer({
   isDark,
   readOnly,
   onAttach,
+  inPanel = false,
+  visible = true,
 }: {
   files: WorkspaceFilesController;
   isDark: boolean;
   readOnly: boolean;
   onAttach: (path: string) => void;
+  inPanel?: boolean;
+  /** On screen; a hidden player is paused. */
+  visible?: boolean;
 }) {
   const { t } = useTranslation("chat");
   if (files.mode === "changes")
@@ -50,6 +55,8 @@ export function WorkspaceViewer({
       onSave={files.saveFile}
       onReload={() => files.file && void files.openFile(files.file.path, { reload: true })}
       onAttach={() => files.file && onAttach(files.file.path)}
+      inPanel={inPanel}
+      visible={visible}
     />
   );
 }

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { PresentationSlot, PresentationWorkspaceItem } from "../../types";
 import { fetchPresentationWorkspaceListing } from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { classNames } from "../../utils/classNames";
 import { isValidPresentationWebUrl, normalizePresentationUrlInput } from "../../utils/presentation";
 import { ModalFrame } from "../modals/ModalFrame";
@@ -221,6 +222,7 @@ export function PresentationPinModal({
   const { modalRef } = useModalA11y(isOpen, onClose);
   const slotId = String(slot?.slot_id || "").trim();
   const slotIndex = Number(slot?.index || 0) || 0;
+  useChatObscuringView(isOpen && !!slotId && slotIndex > 0);
   const card = slot?.card || null;
   const replaceMode = !!card;
   // A pin started from the file tree already knows its file, so it opens on the workspace source.

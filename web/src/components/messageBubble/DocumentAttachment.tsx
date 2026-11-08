@@ -1,34 +1,29 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { readFrameProof } from "../../features/connect/protocol";
 import type { DocumentPreviewKind } from "../../utils/messageAttachments";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { DownloadIcon, FileIcon } from "../Icons";
-import { DocumentPreview } from "./DocumentPreview";
-import { MediaLightbox } from "./MediaLightbox";
+import {
+  openAttachmentResource,
+  type MessageAttachmentSource,
+} from "../resourcePanel/openAttachmentResource";
 
 /** A file that opens in the page on a click, with its download beside it. */
 export function DocumentAttachment({
+  resource,
   kind,
-  href,
   downloadHref,
   downloadName,
   label,
   downloadTitle,
-  isDark,
 }: {
+  resource: MessageAttachmentSource;
   kind: DocumentPreviewKind;
-  href: string;
   downloadHref: string;
   downloadName: string;
   label: string;
   downloadTitle: string;
-  isDark: boolean;
 }) {
   const { t } = useTranslation("chat");
-  const [open, setOpen] = useState(false);
-  // A new tab leaves the embedded cookie partition, so it would not be signed in.
-  const openHref = kind === "pdf" && !readFrameProof(window.location) ? href : undefined;
   return (
     <div
       className="inline-flex max-w-full items-stretch rounded-full border border-[var(--glass-border-subtle)] text-xs"
@@ -36,7 +31,7 @@ export function DocumentAttachment({
     >
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => openAttachmentResource(resource, kind, label)}
         title={t("previewFile", { name: label })}
         aria-label={t("previewFile", { name: label })}
         className="inline-flex min-h-10 min-w-0 items-center gap-2 rounded-l-full py-1.5 pl-2.5 pr-1.5 text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--glass-tab-bg)]"
@@ -55,25 +50,6 @@ export function DocumentAttachment({
       >
         <DownloadIcon size={13} />
       </AuthenticatedDownloadLink>
-      <MediaLightbox
-        open={open}
-        onClose={() => setOpen(false)}
-        dialogLabel={t("documentPreviewDialog")}
-        title={label}
-        downloadHref={downloadHref}
-        downloadName={downloadName}
-        openHref={openHref}
-      >
-        {open ? (
-          <DocumentPreview
-            kind={kind}
-            href={href}
-            title={label}
-            isDark={isDark}
-            failedText={t("documentPreviewFailed")}
-          />
-        ) : null}
-      </MediaLightbox>
     </div>
   );
 }

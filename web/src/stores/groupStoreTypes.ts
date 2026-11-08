@@ -138,7 +138,8 @@ export interface GroupState {
   refreshActors: (groupId?: string, opts?: { includeUnread?: boolean }) => Promise<void>;
   refreshInternalRuntimeActors: (groupId?: string) => Promise<void>;
   refreshSettings: (groupId?: string) => Promise<void>;
-  refreshPresentation: (groupId?: string) => Promise<void>;
+  /** False when the read failed or was superseded by a newer request. */
+  refreshPresentation: (groupId?: string) => Promise<boolean>;
   loadGroup: (groupId: string) => Promise<void>;
   warmGroup: (groupId: string) => Promise<void>;
   loadMoreHistory: (groupId?: string) => Promise<void | false>;

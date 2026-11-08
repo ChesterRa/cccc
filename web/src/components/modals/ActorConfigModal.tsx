@@ -61,6 +61,7 @@ import { useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { SUPPORTED_RUNTIMES } from "../../types";
 import { isGrokBotUrl } from "../../utils/webModelTargetDraft";
 import { ModalFrame } from "./ModalFrame";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 
 // Centered with equal breathing room above and below: the frame already pads
 // the viewport by 1rem on each side, so this leaves 3rem clear top and bottom.
@@ -320,6 +321,7 @@ function CreateActorConfigModal({
   );
   const canJoinNative = useUIStore((state) => state.isWebAdmin === true && !state.webReadOnly);
   const { modalRef } = useModalA11y(isOpen && !localDialogOpen, onCancel);
+  useChatObscuringView(isOpen);
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("default");
   const createDrafts = useRef<
     Partial<
@@ -1047,6 +1049,7 @@ function EditActorConfigModal({
   const { modalRef } = useModalA11y(isOpen && !suspended, closeEdit, {
     initialFocusRef: focusConversation ? conversationRef : undefined,
   });
+  useChatObscuringView(isOpen);
   useEffect(() => {
     setSharedSettingsRequested(false);
   }, [groupId, actorId, isOpen]);

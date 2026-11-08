@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useCopyFeedback } from "../../hooks/useCopyFeedback";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringViewOnPhone } from "../../hooks/useChatObscuringView";
 import { useIMEComposition } from "../../hooks/useIMEComposition";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -43,6 +44,7 @@ export function GroupEditModal({
   onDelete,
 }: GroupEditModalProps) {
   const { t } = useTranslation("modals");
+  useChatObscuringViewOnPhone(isOpen);
   const copyWithFeedback = useCopyFeedback();
   const { modalRef } = useModalA11y(isOpen, onCancel);
   const imeTitle = useIMEComposition({ value: title, onChange: onChangeTitle });

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { ProjectedBrowserSurfacePanel } from "../browser/ProjectedBrowserSurfacePanel";
 import { ModalFrame } from "../modals/ModalFrame";
 import { primaryButtonClass, secondaryButtonClass } from "../modals/settings/types";
@@ -66,6 +67,7 @@ function RecoveryDialog({
   onClose: () => void;
 }) {
   const { t } = useTranslation(["chat", "common"]);
+  useChatObscuringView(true);
   const titleId = useId();
   const { modalRef } = useModalA11y(true, onClose);
   const [result, setResult] = useState<api.WebModelBrowserSurfaceResult | null>(null);

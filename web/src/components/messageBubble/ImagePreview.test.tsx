@@ -9,6 +9,14 @@ import { ImagePreview } from "./ImagePreview";
 import { ImagePreviewFailure } from "./ImagePreviewFailure";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+const resource = {
+  panelGroupId: "g1",
+  blobGroupId: "g1",
+  messageKey: "event-1",
+  eventId: "event-1",
+  index: 0,
+  blobPath: "state/blobs/image",
+};
 
 describe("ImagePreview fixed layout", () => {
   it.each([
@@ -17,6 +25,7 @@ describe("ImagePreview fixed layout", () => {
   ] as const)("keeps the %s preview at %dpx before image decode", (layout, height) => {
     const markup = renderToStaticMarkup(
       <ImagePreview
+        resource={resource}
         href="/api/v1/groups/g1/blobs/image"
         downloadHref="/api/v1/groups/g1/blobs/image?download=true"
         downloadName="image.png"
@@ -61,6 +70,7 @@ describe("ImagePreview fixed layout", () => {
       act(async () =>
         root.render(
           <ImagePreview
+            resource={resource}
             href="/api/v1/groups/g1/blobs/image"
             downloadHref="/api/v1/groups/g1/blobs/image?download=true"
             downloadName="image.png"

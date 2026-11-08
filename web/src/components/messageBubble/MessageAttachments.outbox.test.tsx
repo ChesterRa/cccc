@@ -3,12 +3,15 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { useChatOutboxStore } from "../../stores/chatOutboxStore";
+import { useResourcePanelStore } from "../../stores/useResourcePanelStore";
 import type { LedgerEvent, MessageAttachment } from "../../types";
+import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
 import {
   completeCanonicalOutboxReconciliation,
   reconcileCanonicalOutboxEvent,
 } from "../../utils/chatOutboxReconciliation";
 import { MessageAttachments } from "./MessageAttachments";
+import { AttachmentResourceView } from "../resourcePanel/views/AttachmentResourceView";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
@@ -24,6 +27,7 @@ afterEach(() => {
   act(() => root.unmount());
   host.remove();
   useChatOutboxStore.getState().clearAll();
+  useResourcePanelStore.setState({ groups: {} });
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -84,6 +88,7 @@ it("plays and downloads a sent video from the stored blob after its local previe
       <MessageAttachments
         attachments={attachments}
         blobGroupId="g1"
+        panelGroupId="g1"
         isUserMessage
         isDark={false}
         attachmentKeyPrefix="event-1"
@@ -95,8 +100,38 @@ it("plays and downloads a sent video from the stored blob after its local previe
     host.querySelector<HTMLButtonElement>('button[aria-label="playVideo"]')!.click();
   });
 
-  const source = document.querySelector('[role="dialog"] video')!.getAttribute("src")!;
-  expect(source).toContain("/api/v1/groups/g1/blobs/video-hash?filename=clip.mp4");
+  const tab = useResourcePanelStore.getState().groups.g1.tabs[0];
+  expect(tab.kind).toBe("attachment");
+  if (tab.kind !== "attachment") throw new Error("expected video attachment");
+  const links = buildMessageAttachmentLinks({
+    groupId: tab.blobGroupId,
+    path: tab.blobPath,
+    title: tab.title,
+    fallbackLabel: "video",
+  });
+  const panelHost = document.createElement("div");
+  document.body.append(panelHost);
+  const panelRoot = createRoot(panelHost);
+  try {
+    act(() =>
+      panelRoot.render(
+        <AttachmentResourceView
+          media="video"
+          href={links.previewHref}
+          title={tab.title}
+          isSvg={false}
+          isDark={false}
+          active
+          resourceKey={tab.key}
+        />,
+      ),
+    );
+    const source = panelHost.querySelector("video[data-message-media]")!.getAttribute("src")!;
+    expect(source).toContain("/api/v1/groups/g1/blobs/video-hash?filename=clip.mp4");
+  } finally {
+    act(() => panelRoot.unmount());
+    panelHost.remove();
+  }
   const download = host.querySelector<HTMLAnchorElement>('a[download="clip.mp4"]')!;
   expect(download.getAttribute("href")).toContain("/api/v1/groups/g1/blobs/video-hash?");
   expect(document.body.innerHTML).not.toContain("blob:video-preview");

@@ -65,10 +65,19 @@ import {
 } from "../../utils/chatGptAppPermissionHint";
 import { useRuntimeDockWorkCards } from "./useRuntimeDockWorkCards";
 import { useFloatingDockReserve } from "./useFloatingDockReserve";
+import { useWorkspaceTabChoice } from "./useWorkspaceTabChoice";
 import { type ComposerMentionKind } from "./chatMentionSuggestions";
 import { useWorkspaceFiles } from "../../components/workspace/useWorkspaceFiles";
 import { WorkspaceFilesTrigger } from "../../components/workspace/WorkspaceFilesTrigger";
 import { useSidePanelSelection } from "../../hooks/useSidePanelSelection";
+import { ResourcePanelTrigger } from "../../components/resourcePanel/ResourcePanelTrigger";
+import {
+  type ClosedEntry,
+  type PresentationResource,
+  useGroupResourcePanel,
+  useResourcePanelStore,
+} from "../../stores/useResourcePanelStore";
+import type { WorkspaceOpenFileOptions } from "../../components/workspace/useWorkspaceEditor";
 import { ensurePresentation } from "../../utils/presentation";
 import { PresentationTrigger } from "../../components/presentation/PresentationTrigger";
 import { MobilePresentationSurface } from "../../components/presentation/MobilePresentationSurface";
@@ -81,11 +90,6 @@ const PresentationRail = lazy(() =>
     default: module.PresentationRail,
   })),
 );
-const PresentationViewerSplitPanel = lazy(() =>
-  import("../../components/presentation/PresentationViewerModal").then((module) => ({
-    default: module.PresentationViewerSplitPanel,
-  })),
-);
 const WorkspaceFilesPanel = lazy(() =>
   import("../../components/workspace/WorkspaceFilesPanel").then((module) => ({
     default: module.WorkspaceFilesPanel,
@@ -94,6 +98,11 @@ const WorkspaceFilesPanel = lazy(() =>
 const WorkspaceViewer = lazy(() =>
   import("../../components/workspace/WorkspaceViewer").then((module) => ({
     default: module.WorkspaceViewer,
+  })),
+);
+const ResourcePanel = lazy(() =>
+  import("../../components/resourcePanel/ResourcePanel").then((module) => ({
+    default: module.ResourcePanel,
   })),
 );
 const SetupChecklist = lazy(() =>
@@ -394,17 +403,7 @@ export function ChatTab({
   const workView = useUIStore((state) =>
     selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).workView : "messages",
   );
-  const presentationDisplayMode = useUIStore((state) =>
-    selectedGroupId
-      ? getChatSession(selectedGroupId, state.chatSessions).presentationDisplayMode
-      : "modal",
-  );
-  const setChatFilesPanelOpen = useUIStore((state) => state.setChatFilesPanelOpen);
   const setChatMobileSurface = useUIStore((state) => state.setChatMobileSurface);
-  const setChatPresentationDockOpen = useUIStore((state) => state.setChatPresentationDockOpen);
-  const setChatPresentationDisplayMode = useUIStore(
-    (state) => state.setChatPresentationDisplayMode,
-  );
   const showError = useUIStore((state) => state.showError);
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
@@ -488,19 +487,55 @@ export function ChatTab({
     bucket: liveWorkBucket,
   });
 
-  const preferredPresentationSurface =
-    !isSmallScreen && presentationDisplayMode === "split" ? "split" : "modal";
-  const splitPresentationViewer =
-    !isSmallScreen &&
-    presentationViewer?.groupId === selectedGroupId &&
-    presentationViewer.surface === "split"
+  // A request for the side-by-side viewer, which is now a resource tab (see below).
+  const panelPresentationRequest =
+    presentationViewer?.groupId === selectedGroupId && presentationViewer.surface === "split"
       ? presentationViewer
       : null;
   // One right-hand column, two surfaces. The activity rail selects which one occupies it.
   const { activeSidePanel, selectSidePanel } = useSidePanelSelection(selectedGroupId);
-  const showSplitFiles = !isSmallScreen && activeSidePanel === "files";
-  const showSplitPresentation = !isSmallScreen && activeSidePanel === "presentation";
-  const showSplitSurface = showSplitPresentation || showSplitFiles;
+  const resourceDock = useResourcePanelStore((state) => state.dock);
+  const resourcePanel = useGroupResourcePanel(selectedGroupId);
+  const setResourcePanelOpen = useResourcePanelStore((state) => state.setOpen);
+  const resourcePanelExpanded =
+    !!selectedGroupId && resourcePanel.open && resourcePanel.tabs.length > 0;
+  // A phone shows the panel as its own full-screen surface instead.
+  const resourcePanelShown = !isSmallScreen && resourcePanelExpanded;
+  // Docked right, the panel takes the column over the surface beneath it; collapsing it shows
+  // that surface again.
+  const resourcePanelInColumn = resourcePanelShown && resourceDock === "right";
+  // Docked over the messages it belongs to the message view: the terminal view hides it
+  // without collapsing it. Maximized, it covers the messages wherever it is docked.
+  const resourcePanelCoversChat =
+    resourcePanelShown &&
+    workView !== "terminals" &&
+    (resourceDock === "left" || resourcePanel.maximized);
+  const showSplitFiles = !isSmallScreen && activeSidePanel === "files" && !resourcePanelInColumn;
+  const showSplitPresentation =
+    !isSmallScreen && activeSidePanel === "presentation" && !resourcePanelInColumn;
+  const showSplitSurface = showSplitPresentation || showSplitFiles || resourcePanelInColumn;
+  const columnSurface = resourcePanelInColumn ? "resources" : activeSidePanel;
+  const [chatWorkSurface, setChatWorkSurface] = useState<HTMLDivElement | null>(null);
+  const [resourceColumnSlot, setResourceColumnSlot] = useState<HTMLDivElement | null>(null);
+  // Files and Presentation share the column with the docked panel: choosing one of them while
+  // the panel covers the column shows it instead of toggling it away unseen.
+  const selectColumnSurface = useCallback(
+    (surface: "files" | "presentation") => {
+      if (resourcePanelInColumn) {
+        setResourcePanelOpen(selectedGroupId, false);
+        if (activeSidePanel !== surface) selectSidePanel(surface);
+        return;
+      }
+      selectSidePanel(surface);
+    },
+    [
+      activeSidePanel,
+      resourcePanelInColumn,
+      selectSidePanel,
+      selectedGroupId,
+      setResourcePanelOpen,
+    ],
+  );
   // A phone has no room for a side column, so the tree becomes its own full-screen surface.
   const showMobileFiles = isSmallScreen && mobileSurface === "files" && !!selectedGroupId;
   // The tree lives in the right column while the opened file takes the main area, so the
@@ -516,17 +551,148 @@ export function ChatTab({
     workspaceScope?.scope_key || "",
     workspaceScope?.url || "",
   );
-  const hasWorkspaceViewer =
-    workspaceFiles.mode === "changes" ? !!workspaceFiles.changes.selection : !!workspaceFiles.file;
-  const showWorkspaceFileViewer = showSplitFiles && hasWorkspaceViewer;
+  // Changes are not part of the resource panel: a selected diff still opens over the messages.
+  const changesSelection = workspaceFiles.changes.selection;
+  // A panel the user brought back over the messages stays on top; the diff returns when it goes.
+  const showChangesViewer =
+    showSplitFiles &&
+    workspaceFiles.mode === "changes" &&
+    !!changesSelection &&
+    !resourcePanelCoversChat;
+  const chatCovered = resourcePanelCoversChat || showChangesViewer;
   const setWorkspaceFileViewerGroupId = useUIStore((state) => state.setWorkspaceFileViewerGroupId);
   useLayoutEffect(() => {
-    if (!showWorkspaceFileViewer) return;
-    // The editor covers the message area. Do not mark hidden messages as viewed
-    // or suppress their Voice notifications while that overlay is present.
+    if (!chatCovered) return;
+    // The panel or a diff covers the message area. Do not mark hidden messages as viewed
+    // or suppress their Voice notifications while it is there.
     setWorkspaceFileViewerGroupId(selectedGroupId);
     return () => setWorkspaceFileViewerGroupId("");
-  }, [selectedGroupId, showWorkspaceFileViewer, setWorkspaceFileViewerGroupId]);
+  }, [selectedGroupId, chatCovered, setWorkspaceFileViewerGroupId]);
+  // A diff picked while the panel covers the messages would open underneath it, so the panel
+  // steps aside; its tabs stay.
+  const panelCoverRef = useRef({ covers: resourcePanelCoversChat, groupId: selectedGroupId });
+  useLayoutEffect(() => {
+    panelCoverRef.current = { covers: resourcePanelCoversChat, groupId: selectedGroupId };
+  }, [resourcePanelCoversChat, selectedGroupId]);
+  useEffect(() => {
+    const { covers, groupId } = panelCoverRef.current;
+    if (changesSelection && covers && groupId) setResourcePanelOpen(groupId, false);
+  }, [changesSelection, setResourcePanelOpen]);
+
+  const workspaceScopeKey = workspaceScope?.scope_key || "";
+  const workspaceScopeUrl = workspaceScope?.url || "";
+  // Every file the editor ends up holding gets a tab. A file the user asks for is also selected
+  // once it is read, wherever it was asked for: the tree, the path box, Changes, a diff's Open
+  // file, a path in a message, a link in a document or a tab.
+  const {
+    choose: chooseWorkspaceTab,
+    settle: settleWorkspaceTab,
+    follow: followWorkspaceTab,
+  } = useWorkspaceTabChoice(
+    selectedGroupId,
+    workspaceScopeKey,
+    workspaceScopeUrl,
+    workspaceFiles.file?.path || "",
+  );
+  const requestWorkspaceFile = useCallback(() => {
+    const choice = chooseWorkspaceTab();
+    // Docked over the messages, the panel shows only in the message view: a file picked while
+    // the terminals are up brings that view back now, not when a slow read finishes.
+    if (selectedGroupId && !isSmallScreen && resourceDock === "left" && workView === "terminals")
+      useUIStore.getState().setGroupWorkView(selectedGroupId, "messages");
+    return choice;
+  }, [chooseWorkspaceTab, isSmallScreen, resourceDock, selectedGroupId, workView]);
+  const { openFile: openWorkspaceFile, locatePath: locateWorkspaceFile } = workspaceFiles;
+  const locateWorkspaceTab = useCallback(
+    async (path: string) => {
+      const choice = requestWorkspaceFile();
+      const opened = await locateWorkspaceFile(path);
+      if (opened) settleWorkspaceTab(opened, choice);
+      return opened;
+    },
+    [locateWorkspaceFile, requestWorkspaceFile, settleWorkspaceTab],
+  );
+  const panelWorkspaceFiles = useMemo(
+    () => ({
+      ...workspaceFiles,
+      // Reopening the current file leaves the editor unchanged, so its tab is selected here.
+      openFile: async (path: string, options?: WorkspaceOpenFileOptions) => {
+        const choice = requestWorkspaceFile();
+        const opened = await openWorkspaceFile(path, options);
+        if (opened) settleWorkspaceTab(opened, choice);
+        return opened;
+      },
+      locatePath: locateWorkspaceTab,
+      // Loads the file of the tab already in front without choosing a tab. A load that counted
+      // as a choice could take the selection from the file the user just opened, and the two
+      // tabs would then keep taking it from each other. A file now found at another path, as
+      // after it became a symlink, gives that path's tab the front instead.
+      loadFile: async (path: string, options?: WorkspaceOpenFileOptions) => {
+        const since = useResourcePanelStore.getState().generation;
+        const opened = await openWorkspaceFile(path, options);
+        if (opened && opened !== path) followWorkspaceTab(opened, since);
+        return opened;
+      },
+    }),
+    [
+      followWorkspaceTab,
+      locateWorkspaceTab,
+      openWorkspaceFile,
+      requestWorkspaceFile,
+      settleWorkspaceTab,
+      workspaceFiles,
+    ],
+  );
+  // A diff's Open file asks for its file like the path box does.
+  const viewerWorkspaceFiles = useMemo(
+    () => ({ ...workspaceFiles, locatePath: locateWorkspaceTab }),
+    [locateWorkspaceTab, workspaceFiles],
+  );
+  const setGroupWorkView = useUIStore((state) => state.setGroupWorkView);
+  // Docked over the messages, the panel is hidden in the terminal view without being collapsed;
+  // the header entry then brings back the messages with it rather than collapsing it unseen.
+  const resourcePanelVisible =
+    resourcePanelShown && (resourceDock === "right" || workView !== "terminals");
+  const toggleResourcePanel = useCallback(() => {
+    if (!selectedGroupId) return;
+    if (resourcePanelVisible) {
+      setResourcePanelOpen(selectedGroupId, false);
+      return;
+    }
+    if (!isSmallScreen && resourceDock === "left" && workView === "terminals") {
+      setGroupWorkView(selectedGroupId, "messages");
+    }
+    setResourcePanelOpen(selectedGroupId, true);
+  }, [
+    isSmallScreen,
+    resourceDock,
+    resourcePanelVisible,
+    selectedGroupId,
+    setGroupWorkView,
+    setResourcePanelOpen,
+    workView,
+  ]);
+  const closeResourcePanel = useCallback(() => {
+    if (selectedGroupId) setResourcePanelOpen(selectedGroupId, false);
+  }, [selectedGroupId, setResourcePanelOpen]);
+  // Reopening what was closed, from the header when no tab is left open.
+  const restoreResourceEntry = useCallback(
+    (entry: ClosedEntry) => {
+      if (!selectedGroupId) return;
+      if (!isSmallScreen && resourceDock === "left" && workView === "terminals") {
+        setGroupWorkView(selectedGroupId, "messages");
+      }
+      useResourcePanelStore.getState().restore(selectedGroupId, entry.id);
+      const last = entry.tabs[entry.tabs.length - 1];
+      if (
+        last?.kind === "workspace" &&
+        last.scopeKey === workspaceFiles.scopeKey &&
+        last.scopeUrl === workspaceFiles.scopeUrl
+      )
+        void workspaceFiles.openFile(last.path);
+    },
+    [isSmallScreen, resourceDock, selectedGroupId, setGroupWorkView, workView, workspaceFiles],
+  );
 
   const showMobilePresentationViewer =
     isSmallScreen &&
@@ -534,53 +700,77 @@ export function ChatTab({
     presentationViewer.surface !== "split";
   const splitLayoutRef = useRef<HTMLDivElement | null>(null);
 
-  const openPresentationSlot = useCallback(
-    (slotId: string) => {
+  // A Presentation slot, or one message's reference to it, opens as a resource tab like any other
+  // resource.
+  const openPresentationTab = useCallback(
+    (
+      slotId: string,
+      reference?: { ref: PresentationMessageRef; eventId: string; refIndex: number } | null,
+      /** The tab's own key, when it comes back from the window. */
+      tabRefKey?: string,
+    ) => {
       if (!selectedGroupId || !slotId) return;
-      if (preferredPresentationSurface === "split") {
-        setChatPresentationDockOpen(selectedGroupId, true);
-        setChatFilesPanelOpen(selectedGroupId, false);
+      const slot = findPresentationSlot(groupPresentation, slotId);
+      const slotIndex = slot?.index ?? (Number(slotId.replace("slot-", "")) || 0);
+      const title =
+        String(reference?.ref.title || slot?.card?.title || "").trim() ||
+        t("resourcePanel.fromSlot", { slot: slotIndex });
+      if (!isSmallScreen && resourceDock === "left" && workView === "terminals") {
+        setGroupWorkView(selectedGroupId, "messages");
       }
-      setPresentationViewer({
-        groupId: selectedGroupId,
-        slotId,
-        surface: preferredPresentationSurface,
-      });
+      useResourcePanelStore
+        .getState()
+        .open(
+          selectedGroupId,
+          {
+            kind: "presentation",
+            slotId,
+            slotIndex,
+            refKey:
+              tabRefKey || (reference ? `${reference.eventId}:${reference.refIndex}` : "live"),
+            focusEventId: reference?.eventId || undefined,
+            focusRef: reference?.ref ?? null,
+          },
+          title,
+        );
     },
     [
-      preferredPresentationSurface,
+      groupPresentation,
+      isSmallScreen,
+      resourceDock,
       selectedGroupId,
-      setChatFilesPanelOpen,
-      setChatPresentationDockOpen,
-      setPresentationViewer,
+      setGroupWorkView,
+      t,
+      workView,
     ],
   );
 
-  const openPresentationRef = useCallback(
-    (ref: PresentationMessageRef, event: LedgerEvent) => {
-      if (!selectedGroupId) return;
-      const slotId = String(ref.slot_id || "").trim();
-      if (!slotId) return;
-      if (preferredPresentationSurface === "split") {
-        setChatPresentationDockOpen(selectedGroupId, true);
-        setChatFilesPanelOpen(selectedGroupId, false);
-      }
-      setPresentationViewer({
-        groupId: selectedGroupId,
-        slotId,
-        surface: preferredPresentationSurface,
-        focusRef: ref,
-        focusEventId: String(event.id || "").trim() || null,
-      });
-    },
-    [
-      preferredPresentationSurface,
-      selectedGroupId,
-      setChatFilesPanelOpen,
-      setChatPresentationDockOpen,
-      setPresentationViewer,
-    ],
+  const openPresentationSlot = useCallback(
+    (slotId: string) => openPresentationTab(slotId),
+    [openPresentationTab],
   );
+
+  const openPresentationRef = useCallback(
+    (ref: PresentationMessageRef, event: LedgerEvent, refIndex = 0) => {
+      const slotId = String(ref.slot_id || "").trim();
+      const eventId = String(event.id || "").trim();
+      openPresentationTab(slotId, eventId ? { ref, eventId, refIndex } : null);
+    },
+    [openPresentationTab],
+  );
+
+  // Callers outside this page (a slot just pinned, the window's "open beside" action) ask for the
+  // side-by-side viewer; that viewer is now a resource tab.
+  useEffect(() => {
+    if (!panelPresentationRequest) return;
+    const { slotId, focusRef, focusEventId, refKey } = panelPresentationRequest;
+    setPresentationViewer(null);
+    openPresentationTab(
+      slotId,
+      focusRef && focusEventId ? { ref: focusRef, eventId: focusEventId, refIndex: 0 } : null,
+      refKey,
+    );
+  }, [openPresentationTab, panelPresentationRequest, setPresentationViewer]);
 
   const openTaskRef = useCallback(
     (ref: TaskMessageRef, _event?: LedgerEvent) => {
@@ -623,22 +813,25 @@ export function ChatTab({
     [groupPresentation, readOnly, selectedGroupId, setPresentationPin],
   );
 
-  const { setMode: setWorkspaceMode, locatePath: locateWorkspacePath } = workspaceFiles;
+  const { setMode: setWorkspaceMode } = workspaceFiles;
   const openMessagePath = useCallback(
     (path: string) => {
       if (!selectedGroupId) return;
-      if (isSmallScreen) setChatMobileSurface(selectedGroupId, "files");
-      else if (activeSidePanel !== "files") selectSidePanel("files");
+      // Beside a panel docked over the messages the tree stays in view; a panel docked right
+      // takes the column itself. A phone opens the file in its panel surface, and Back returns
+      // to the messages.
+      if (!isSmallScreen && resourceDock === "left" && activeSidePanel !== "files")
+        selectSidePanel("files");
       setWorkspaceMode("files");
-      void locateWorkspacePath(path);
+      void locateWorkspaceTab(path);
     },
     [
       activeSidePanel,
       isSmallScreen,
-      locateWorkspacePath,
+      locateWorkspaceTab,
+      resourceDock,
       selectSidePanel,
       selectedGroupId,
-      setChatMobileSurface,
       setWorkspaceMode,
     ],
   );
@@ -685,16 +878,21 @@ export function ChatTab({
       setComposerDestGroupId(gid);
       setChatMobileSurface(gid, "messages");
       setPresentationViewer(null);
+      // A phone's panel or a maximized one covers the composer the reference goes into.
+      if (isSmallScreen || resourcePanel.maximized) setResourcePanelOpen(gid, false);
       window.setTimeout(() => composerRef.current?.focus(), 0);
     },
     [
       composerRef,
       groupPresentation,
+      isSmallScreen,
+      resourcePanel.maximized,
       selectedGroupId,
       setChatMobileSurface,
       setComposerDestGroupId,
       setPresentationViewer,
       setQuotedPresentationRef,
+      setResourcePanelOpen,
       showError,
       t,
     ],
@@ -718,17 +916,49 @@ export function ChatTab({
     ],
   );
 
-  const handleOpenPresentationWindow = useCallback(() => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid || !splitPresentationViewer) return;
-    setChatPresentationDisplayMode(gid, "modal");
-    setPresentationViewer({ ...splitPresentationViewer, surface: "modal" });
-  }, [
-    selectedGroupId,
-    setChatPresentationDisplayMode,
-    setPresentationViewer,
-    splitPresentationViewer,
-  ]);
+  const handleOpenPresentationWindow = useCallback(
+    (tab: PresentationResource) => {
+      const gid = String(selectedGroupId || "").trim();
+      if (!gid) return;
+      // The window has its own viewer of the slot; the panel steps aside rather than show two.
+      setResourcePanelOpen(gid, false);
+      setPresentationViewer({
+        groupId: gid,
+        slotId: tab.slotId,
+        surface: "modal",
+        focusRef: tab.focusRef ?? null,
+        focusEventId: tab.focusEventId ?? null,
+        reuseExistingSession: true,
+        // Coming back beside the messages finds the same tab, not the message's first reference.
+        refKey: tab.refKey,
+      });
+    },
+    [selectedGroupId, setPresentationViewer, setResourcePanelOpen],
+  );
+  // Showing a resource's message brings the message view forward: a phone's full-screen panel, a
+  // panel over the messages and a maximized one step aside, and the terminal view gives way.
+  const locateMessageFromPanel = useCallback(
+    (eventId: string) => {
+      const gid = String(selectedGroupId || "").trim();
+      if (!gid || !eventId) return;
+      if (isSmallScreen || resourceDock === "left" || resourcePanel.maximized) {
+        setResourcePanelOpen(gid, false);
+      }
+      if (isSmallScreen) setChatMobileSurface(gid, "messages");
+      else if (workView === "terminals") setGroupWorkView(gid, "messages");
+      void useGroupStore.getState().openChatWindow(gid, eventId);
+    },
+    [
+      isSmallScreen,
+      resourceDock,
+      resourcePanel.maximized,
+      selectedGroupId,
+      setChatMobileSurface,
+      setGroupWorkView,
+      setResourcePanelOpen,
+      workView,
+    ],
+  );
 
   const handleSplitReplaceSlot = useCallback(
     (slotId: string) => {
@@ -770,6 +1000,36 @@ export function ChatTab({
       setPresentationViewer,
       showError,
       t,
+    ],
+  );
+  const resourcePresentation = useMemo(
+    () => ({
+      data: groupPresentation,
+      readOnly: !!readOnly,
+      handlers: {
+        onQuoteInChat: handleQuotePresentationReference,
+        onOpenMessageContext: locateMessageFromPanel,
+        onReplaceSlot: handleSplitReplaceSlot,
+        onClearSlot: (slotId: string) => {
+          void handleSplitClearSlot(slotId);
+        },
+        onSelectSlot: openPresentationSlot,
+        onPinSlot: pinPresentationSlot,
+      },
+      // A phone's panel is already the whole screen.
+      onOpenWindow: isSmallScreen ? undefined : handleOpenPresentationWindow,
+    }),
+    [
+      groupPresentation,
+      handleOpenPresentationWindow,
+      handleQuotePresentationReference,
+      handleSplitClearSlot,
+      handleSplitReplaceSlot,
+      isSmallScreen,
+      locateMessageFromPanel,
+      openPresentationSlot,
+      pinPresentationSlot,
+      readOnly,
     ],
   );
 
@@ -815,7 +1075,7 @@ export function ChatTab({
     mobileSurface === "messages" &&
     workView === "messages" &&
     !activeRuntimeActorId &&
-    !showWorkspaceFileViewer &&
+    !chatCovered &&
     !showSetupNotice &&
     !senderHistoryError &&
     !pendingPageError &&
@@ -898,12 +1158,16 @@ export function ChatTab({
                     : undefined,
               }}
             >
-              <div className="relative flex min-h-0 flex-1 flex-col" data-chat-work-surface>
+              <div
+                ref={setChatWorkSurface}
+                className="relative flex min-h-0 flex-1 flex-col"
+                data-chat-work-surface
+              >
                 {(chatWindowProps || showSetupNotice) && (
                   <div
                     className="shrink-0"
-                    inert={showWorkspaceFileViewer || undefined}
-                    aria-hidden={showWorkspaceFileViewer || undefined}
+                    inert={chatCovered || undefined}
+                    aria-hidden={chatCovered || undefined}
                     data-chat-notices
                   >
                     {/* Jump-to window banner */}
@@ -969,7 +1233,7 @@ export function ChatTab({
                 )}
 
                 <GroupWorkArea
-                  covered={showWorkspaceFileViewer}
+                  covered={chatCovered}
                   availableGroupIds={Object.keys(groupLabelById)}
                   readOnly={readOnly}
                   groupId={selectedGroupId}
@@ -986,27 +1250,37 @@ export function ChatTab({
                   sidePanelControls={
                     !selectedGroupId ? undefined : !isSmallScreen ? (
                       <>
+                        <ResourcePanelTrigger
+                          groupId={selectedGroupId}
+                          shown={resourcePanelVisible}
+                          onToggle={toggleResourcePanel}
+                          onRestore={restoreResourceEntry}
+                        />
                         <WorkspaceFilesTrigger
-                          active={activeSidePanel === "files"}
-                          onToggle={() => selectSidePanel("files")}
+                          active={columnSurface === "files"}
+                          onToggle={() => selectColumnSurface("files")}
                         />
                         <PresentationTrigger
                           presentation={groupPresentation}
                           attentionSlots={presentationAttention}
                           isDark={isDark}
-                          isOpen={activeSidePanel === "presentation"}
-                          onOpen={() => selectSidePanel("presentation")}
+                          isOpen={columnSurface === "presentation"}
+                          onOpen={() => selectColumnSurface("presentation")}
                         />
                       </>
                     ) : !chatWindowProps ? (
-                      <PresentationTrigger
-                        mobile
-                        presentation={groupPresentation}
-                        attentionSlots={presentationAttention}
-                        isDark={isDark}
-                        isOpen={mobileSurface === "presentation"}
-                        onOpen={() => setChatMobileSurface(selectedGroupId, "presentation")}
-                      />
+                      // A phone's header keeps room for the Group title; its open resources
+                      // are listed in the menu instead.
+                      <>
+                        <PresentationTrigger
+                          mobile
+                          presentation={groupPresentation}
+                          attentionSlots={presentationAttention}
+                          isDark={isDark}
+                          isOpen={mobileSurface === "presentation"}
+                          onOpen={() => setChatMobileSurface(selectedGroupId, "presentation")}
+                        />
+                      </>
                     ) : undefined
                   }
                 >
@@ -1347,7 +1621,7 @@ export function ChatTab({
                 {/* `--color-chat-bg` is a 75% glass tint, so it alone would let the chat
                   underneath show through. The overlay composites it over the opaque page
                   background to match the chat surface exactly while staying fully opaque. */}
-                {showWorkspaceFileViewer ? (
+                {showChangesViewer ? (
                   <div
                     className="absolute inset-0 z-20 flex min-h-0 flex-col"
                     style={{
@@ -1359,7 +1633,7 @@ export function ChatTab({
                   >
                     <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
                       <WorkspaceViewer
-                        files={workspaceFiles}
+                        files={viewerWorkspaceFiles}
                         isDark={isDark}
                         readOnly={!!readOnly}
                         onAttach={attachWorkspacePath}
@@ -1452,108 +1726,118 @@ export function ChatTab({
             </section>
           ) : null}
 
-          {showSplitSurface && activeSidePanel ? (
+          {showSplitSurface && columnSurface ? (
             <ResizableSidePanel
               groupId={selectedGroupId}
-              surface={activeSidePanel}
-              viewing={!!splitPresentationViewer}
+              surface={columnSurface}
               container={splitLayoutRef}
               isDark={isDark}
             >
-              {({ compact, toggleCompact }) =>
-                showSplitFiles ? (
-                  <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                      <WorkspaceFilesPanel
-                        files={workspaceFiles}
-                        isDark={isDark}
-                        readOnly={!!readOnly}
-                        // Routed through the selector so closing clears the column instead of
-                        // letting the other surface pop up in its place.
-                        onClose={() => selectSidePanel("files")}
-                        onAttachPath={attachWorkspacePath}
-                        onPinPath={pinWorkspacePath}
-                      />
-                    </div>
-                  </Suspense>
-                ) : splitPresentationViewer && !compact ? (
-                  <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                    <PresentationViewerSplitPanel
-                      key={`${selectedGroupId}:${splitPresentationViewer.slotId}`}
-                      isDark={isDark}
-                      readOnly={readOnly}
-                      groupId={selectedGroupId}
-                      slotId={splitPresentationViewer.slotId}
-                      presentation={groupPresentation}
-                      focusRef={splitPresentationViewer.focusRef || null}
-                      focusEventId={splitPresentationViewer.focusEventId || null}
-                      onQuoteInChat={handleQuotePresentationReference}
-                      onReplaceSlot={handleSplitReplaceSlot}
-                      onClearSlot={(slotId) => {
-                        void handleSplitClearSlot(slotId);
-                      }}
-                      onOpenWindow={handleOpenPresentationWindow}
-                      onSelectSlot={(slotId) =>
-                        setPresentationViewer({
-                          groupId: selectedGroupId,
-                          slotId,
-                          surface: "split",
-                        })
-                      }
-                      onPinSlot={pinPresentationSlot}
-                      onCollapse={() => {
-                        toggleCompact();
-                        requestAnimationFrame(() =>
-                          document
-                            .querySelector<HTMLButtonElement>(
-                              '[data-presentation-density="compact"] button',
-                            )
-                            ?.focus(),
-                        );
-                      }}
-                      onClose={() => selectSidePanel("presentation")}
+              {({ compact, toggleCompact }) => (
+                <>
+                  {columnSurface === "resources" ? (
+                    // The docked panel is mounted once and laid over this slot; it never moves
+                    // into the column, because moving an iframe reloads it.
+                    <div
+                      ref={setResourceColumnSlot}
+                      className="flex min-h-0 min-w-0 flex-1"
+                      data-resource-panel-slot
                     />
-                  </Suspense>
-                ) : (
-                  // Presentation with no slot opened: the slot list that phones already use.
-                  <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                      <PresentationRail
-                        groupId={selectedGroupId}
-                        compact={compact}
-                        onToggleCompact={() => {
-                          toggleCompact();
-                          if (compact) {
-                            const slots = ensurePresentation(groupPresentation);
-                            const slot =
-                              slots.slots.find(
-                                (item) => item.slot_id === slots.highlight_slot_id && item.card,
-                              ) || slots.slots.find((item) => item.card);
-                            if (slot)
-                              setPresentationViewer({
-                                groupId: selectedGroupId,
-                                slotId: slot.slot_id,
-                                surface: "split",
-                              });
-                          }
-                        }}
-                        presentation={groupPresentation}
-                        isDark={isDark}
-                        readOnly={readOnly}
-                        attentionSlots={presentationAttention}
-                        onOpenSlot={openPresentationSlot}
-                        onPinSlot={pinPresentationSlot}
-                        onClose={() => selectSidePanel("presentation")}
-                      />
+                  ) : null}
+                  {activeSidePanel === "files" ? (
+                    // The tree stays mounted under a panel docked over the column, so coming back
+                    // to it finds the same scroll position and typed path. The wrapper hides the
+                    // loading placeholder too.
+                    <div
+                      className="flex min-h-0 min-w-0 flex-1 flex-col"
+                      hidden={columnSurface === "resources"}
+                    >
+                      <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
+                        <WorkspaceFilesPanel
+                          files={panelWorkspaceFiles}
+                          isDark={isDark}
+                          readOnly={!!readOnly}
+                          // Routed through the selector so closing clears the column instead of
+                          // letting the other surface pop up in its place.
+                          onClose={() => selectSidePanel("files")}
+                          onAttachPath={attachWorkspacePath}
+                          onPinPath={pinWorkspacePath}
+                        />
+                      </Suspense>
                     </div>
-                  </Suspense>
-                )
-              }
+                  ) : columnSurface === "presentation" ? (
+                    // Presentation: the slot list that phones already use; a slot opens as a tab.
+                    <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                        <PresentationRail
+                          groupId={selectedGroupId}
+                          compact={compact}
+                          onToggleCompact={toggleCompact}
+                          presentation={groupPresentation}
+                          isDark={isDark}
+                          readOnly={readOnly}
+                          attentionSlots={presentationAttention}
+                          onOpenSlot={openPresentationSlot}
+                          onPinSlot={pinPresentationSlot}
+                          onClose={() => selectSidePanel("presentation")}
+                        />
+                      </div>
+                    </Suspense>
+                  ) : null}
+                </>
+              )}
             </ResizableSidePanel>
           ) : null}
 
+          {!isSmallScreen && selectedGroupId && resourcePanel.tabs.length > 0 ? (
+            <Suspense fallback={null}>
+              <ResourcePanel
+                key={selectedGroupId}
+                groupId={selectedGroupId}
+                dock={resourceDock}
+                visible={resourceDock === "right" || workView !== "terminals"}
+                slot={resourceDock === "right" ? resourceColumnSlot : chatWorkSurface}
+                container={splitLayoutRef}
+                files={panelWorkspaceFiles}
+                isDark={isDark}
+                readOnly={!!readOnly}
+                presentation={resourcePresentation}
+                onLocateMessage={locateMessageFromPanel}
+                onAttachPath={attachWorkspacePath}
+              />
+            </Suspense>
+          ) : null}
+
           <MobilePresentationSurface
-            isOpen={showMobileFiles}
+            isOpen={isSmallScreen && resourcePanelExpanded}
+            keepMounted={isSmallScreen && !!selectedGroupId && resourcePanel.tabs.length > 0}
+            isDark={isDark}
+            surface="resources"
+            label={t("resourcePanel.tabs")}
+            onClose={closeResourcePanel}
+          >
+            <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
+              <ResourcePanel
+                key={selectedGroupId}
+                groupId={selectedGroupId}
+                dock={resourceDock}
+                layout="phone"
+                visible={resourcePanelExpanded}
+                slot={null}
+                container={splitLayoutRef}
+                files={panelWorkspaceFiles}
+                isDark={isDark}
+                readOnly
+                presentation={resourcePresentation}
+                onLocateMessage={locateMessageFromPanel}
+                onAttachPath={attachWorkspacePath}
+              />
+            </Suspense>
+          </MobilePresentationSurface>
+
+          <MobilePresentationSurface
+            isOpen={showMobileFiles && !resourcePanelExpanded}
+            keepMounted={showMobileFiles}
             isDark={isDark}
             surface="files"
             label={t("workspaceFilesTitle", { defaultValue: "Files" })}
@@ -1561,9 +1845,9 @@ export function ChatTab({
           >
             <Suspense fallback={<ChatLazyFallback className="flex-1" />}>
               <div className="flex min-h-0 flex-1 flex-col">
-                {hasWorkspaceViewer ? (
+                {workspaceFiles.mode === "changes" && workspaceFiles.changes.selection ? (
                   <WorkspaceViewer
-                    files={workspaceFiles}
+                    files={viewerWorkspaceFiles}
                     isDark={isDark}
                     readOnly
                     onAttach={(path) => {
@@ -1573,7 +1857,7 @@ export function ChatTab({
                   />
                 ) : (
                   <WorkspaceFilesPanel
-                    files={workspaceFiles}
+                    files={panelWorkspaceFiles}
                     isDark={isDark}
                     readOnly
                     onClose={closeMobileFiles}
@@ -1589,8 +1873,12 @@ export function ChatTab({
 
           <MobilePresentationSurface
             isOpen={
-              isSmallScreen && mobileSurface === "presentation" && !showMobilePresentationViewer
+              isSmallScreen &&
+              mobileSurface === "presentation" &&
+              !showMobilePresentationViewer &&
+              !resourcePanelExpanded
             }
+            keepMounted={isSmallScreen && mobileSurface === "presentation"}
             isDark={isDark}
             label={t("presentationSectionLabel", { defaultValue: "Presentation" })}
             onClose={closeMobilePresentation}

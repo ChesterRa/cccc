@@ -71,7 +71,9 @@
   "themeLabel": "Theme",
   "moreAppearanceSettings": "More appearance settings",
   "lcdBodyLabel": "Body font",
-  "lcdBodyMono": "Monospace",
+  "lcdBodyProportional": "Sans",
+  "lcdBodyProportionalHint": "Sans applies to message text only.",
+  "lcdBodyMono": "Mono",
   "lcdBodyPixel": "Pixel",
   "lcdWidthLabel": "Message area width",
   "lcdWidthColumn": "Medium",
@@ -186,6 +188,8 @@
     "directRequirement": "LAN / VPN"
   },
   "workspaceFilesButton": "Workspace files",
+  "resourcesButton": "Resources",
+  "reopenClosedResourcesButton": "Reopen recently closed resources",
   "linkedAccount": "Linked account for this instance: {{account}}",
   "direct": {
     "startTitle": "Connect directly",

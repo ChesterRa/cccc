@@ -15,6 +15,8 @@ type PresentationWebPreviewPanelProps = {
   allowLiveBrowser: boolean;
   mode: PresentationWebPreviewMode;
   refreshNonce: number;
+  visible?: boolean;
+  reuseExistingSession?: boolean;
   viewportClassName?: string;
   onInteractiveFrameUpdate?: (frame: PresentationBrowserFrame | null) => void;
 };
@@ -29,6 +31,8 @@ export function PresentationWebPreviewPanel({
   allowLiveBrowser,
   mode,
   refreshNonce,
+  visible = true,
+  reuseExistingSession = false,
   viewportClassName,
   onInteractiveFrameUpdate,
 }: PresentationWebPreviewPanelProps) {
@@ -44,6 +48,8 @@ export function PresentationWebPreviewPanel({
           url={href}
           isDark={isDark}
           refreshNonce={refreshNonce}
+          visible={visible}
+          reuseExistingSession={reuseExistingSession}
           viewportClassName={viewportClassName}
           onFrameUpdate={onInteractiveFrameUpdate}
         />

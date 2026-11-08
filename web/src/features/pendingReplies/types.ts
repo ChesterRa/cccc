@@ -12,10 +12,16 @@ export type StructuredQuestion = ReplyQuestion & { v: 1; context?: string; promp
 
 export type ReplyDraft = {
   selection: { kind: "option"; id: string } | { kind: "other" } | null;
+  /** The words of an "Other" answer. */
   text: string;
+  /** A note added to a chosen option, kept apart from "Other" so neither leaks into the other. */
+  note?: string;
+  noteOpen?: boolean;
 };
 
-export type ReplyAnswer = { kind: "option"; id: string } | { kind: "other"; text: string };
+export type ReplyAnswer =
+  | { kind: "option"; id: string; note?: string }
+  | { kind: "other"; text: string };
 export type ReplyState =
   | "pending"
   | "answered"

@@ -45,7 +45,11 @@ export function MessageReferenceSections({
   taskRefs: TaskMessageRef[];
   taskById: Map<string, Task>;
   sectionClassName: string;
-  onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+  onOpenPresentationRef?: (
+    ref: PresentationMessageRef,
+    event: LedgerEvent,
+    refIndex: number,
+  ) => void;
   onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
 }) {
   const { t } = useTranslation("chat");
@@ -72,7 +76,7 @@ export function MessageReferenceSections({
               <button
                 key={`${String(event.id || "message")}:presentation-ref:${index}:${String(ref.slot_id || "")}`}
                 type="button"
-                onClick={() => onOpenPresentationRef?.(ref, event)}
+                onClick={() => onOpenPresentationRef?.(ref, event, index)}
                 className={classNames(
                   "inline-flex max-w-full items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
                   "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",

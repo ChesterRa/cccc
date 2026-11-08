@@ -4,6 +4,7 @@
 
 import { create } from "zustand";
 import type { LedgerEvent } from "../types";
+import { useResourcePanelStore } from "./useResourcePanelStore";
 
 function collectEventObjectUrls(event: LedgerEvent | undefined): string[] {
   const data = event?.data;
@@ -27,13 +28,46 @@ function collectEventObjectUrls(event: LedgerEvent | undefined): string[] {
   return urls;
 }
 
+// A user can open a pending attachment before a send fails. The outbox then goes away, but the
+// resource tab (including its recently-closed entry) still needs that very same object URL.
+const retainedPreviewUrls = new Set<string>();
+let stopWatchingResources: (() => void) | undefined;
+
+function resourceUsesPreview(url: string): boolean {
+  return Object.values(useResourcePanelStore.getState().groups).some((panel) =>
+    [...panel.tabs, ...panel.closed.flatMap((entry) => entry.tabs)].some(
+      (tab) => tab.kind === "attachment" && tab.localPreviewUrl === url,
+    ),
+  );
+}
+
+function revokeObjectUrl(url: string): void {
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    void 0;
+  }
+}
+
+function releaseUnreferencedPreviews(): void {
+  for (const url of retainedPreviewUrls) {
+    if (resourceUsesPreview(url)) continue;
+    retainedPreviewUrls.delete(url);
+    revokeObjectUrl(url);
+  }
+  if (retainedPreviewUrls.size === 0 && stopWatchingResources) {
+    stopWatchingResources();
+    stopWatchingResources = undefined;
+  }
+}
+
 function revokeObjectUrls(urls: string[]): void {
-  for (const previewUrl of urls) {
-    try {
-      URL.revokeObjectURL(previewUrl);
-    } catch {
-      void 0;
-    }
+  for (const url of urls) {
+    if (resourceUsesPreview(url)) retainedPreviewUrls.add(url);
+    else revokeObjectUrl(url);
+  }
+  if (retainedPreviewUrls.size > 0 && !stopWatchingResources) {
+    stopWatchingResources = useResourcePanelStore.subscribe(releaseUnreferencedPreviews);
   }
 }
 

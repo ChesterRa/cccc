@@ -1,6 +1,7 @@
 // Selected Pixelarticons 2.4.2 paths, MIT, Copyright (c) 2019 Gerrit Halfmann.
-// See /ui/licenses/logos/Pixelarticons-MIT.txt. The maximize, minimize and pin glyphs, the
-// upward arrow on archive-restore and the arrows on file-link and folder-link are original.
+// See /ui/licenses/logos/Pixelarticons-MIT.txt. The maximize, minimize, pin and columns-2
+// glyphs, the upward arrow on archive-restore and the arrows on file-link and folder-link are
+// original.
 const paths = {
   search: [
     "M22 22h-2v-2h2v2Zm-2-2h-2v-2h2v2Zm-6-2H6v-2h8v2Zm4 0h-2v-2h2v2ZM6 16H4v-2h2v2Zm10 0h-2v-2h2v2ZM4 14H2V6h2v8Zm14 0h-2V6h2v8ZM6 6H4V4h2v2Zm10 0h-2V4h2v2Zm-2-2H6V2h8v2Z",
@@ -96,6 +97,8 @@ const paths = {
     "M11 4h2v18h-2z",
     "M4 20h16v2H4z",
   ],
+  // Two columns in the grid glyph's frame, for the side-by-side view: an original glyph.
+  "columns-2": ["M4 2h16v2H4zM2 4h2v16H2zm18 0h2v16h-2zM4 20h16v2H4zm7-16h2v16h-2z"],
   reload: [
     "M13 20H9V18H13V20ZM19 16H21V18H19V20H17V18H15V16H17V8H19V16ZM9 18H7V16H9V18ZM7 6H9V8H7V16H5V8H3V6H5V4H7V6ZM15 16H13V14H15V16ZM23 16H21V14H23V16ZM3 10H1V8H3V10ZM11 10H9V8H11V10ZM17 8H15V6H17V8ZM15 6H11V4H15V6Z",
   ],

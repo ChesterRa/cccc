@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { classNames } from "../../utils/classNames";
 import { ModalFocusGuard } from "../ModalFocusGuard";
 
@@ -10,10 +11,13 @@ export function MobilePresentationSurface({
   isDark,
   label,
   surface = "presentation",
+  keepMounted = false,
   onClose,
   children,
 }: {
   isOpen: boolean;
+  /** Stays in the page while hidden, so what it shows (a PDF's page, a tree's scroll) is kept. */
+  keepMounted?: boolean;
   isDark: boolean;
   label: string;
   surface?: string;
@@ -21,8 +25,9 @@ export function MobilePresentationSurface({
   children: ReactNode;
 }) {
   const { modalRef } = useModalA11y(isOpen, onClose);
+  useChatObscuringView(isOpen);
 
-  if (!isOpen || typeof document === "undefined") return null;
+  if ((!isOpen && !keepMounted) || typeof document === "undefined") return null;
 
   return createPortal(
     <div
@@ -32,6 +37,7 @@ export function MobilePresentationSurface({
         "pt-[env(safe-area-inset-top,0px)] pr-[env(safe-area-inset-right,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)]",
         isDark ? "bg-slate-950 text-slate-100" : "bg-[var(--color-bg-primary)] text-gray-900",
       )}
+      hidden={!isOpen}
       role="dialog"
       aria-modal="true"
       aria-label={label}

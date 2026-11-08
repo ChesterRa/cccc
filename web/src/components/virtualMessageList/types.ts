@@ -42,7 +42,11 @@ export interface VirtualMessageListProps {
   onViewContext?: (eventId: string) => void;
   onRelay?: (event: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
-  onOpenPresentationRef?: (ref: PresentationMessageRef, event: LedgerEvent) => void;
+  onOpenPresentationRef?: (
+    ref: PresentationMessageRef,
+    event: LedgerEvent,
+    refIndex: number,
+  ) => void;
   onOpenTaskRef?: (ref: TaskMessageRef, event: LedgerEvent) => void;
   showScrollButton: boolean;
   onScrollButtonClick: () => void;

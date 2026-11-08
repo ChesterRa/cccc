@@ -165,6 +165,7 @@ async fn closed_actor_windows_retire_with_their_generation() {
                 height: 600,
                 storage_state: None,
                 reuse_existing: true,
+                track_initial_url: false,
                 mode: BrowserMode::Headless,
                 shared_browser: true,
                 actor_identity: Some(&generation),

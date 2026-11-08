@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { workspacePreviewKind } from "./workspacePreview";
 import { useWorkspaceFiles } from "./useWorkspaceFiles";
 import { useWorkspaceNavigation } from "../../stores/workspaceNavigation";
+import { resourceKey, useResourcePanelStore } from "../../stores/useResourcePanelStore";
 const api = vi.hoisted(() => ({
   resolveWorkspacePath: vi.fn(),
   fetchWorkspaceListing: vi.fn(),
@@ -38,6 +39,7 @@ const diskFile = (path: string) => ({
 });
 beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  useResourcePanelStore.setState({ groups: {} });
   vi.resetAllMocks();
   api.fetchWorkspaceListing.mockResolvedValue({
     ok: true,
@@ -74,6 +76,43 @@ afterEach(async () => {
   host.remove();
 });
 describe("workspace mutation ownership", () => {
+  it("moves the open tabs and drafts together only after a folder move succeeds", async () => {
+    const file = (path: string) =>
+      ({ kind: "workspace", scopeKey: "scope", scopeUrl: "/repo", path }) as const;
+    const panel = useResourcePanelStore.getState();
+    panel.open("group", file("src/a.txt"), "a.txt");
+    panel.open("group", file("src/b.txt"), "b.txt");
+    panel.open("other", file("src/a.txt"), "a.txt");
+    await act(async () => files.openFile("src/a.txt"));
+    await act(async () => files.setDraft("draft A"));
+    await act(async () => files.openFile("src/b.txt"));
+    await act(async () => files.setDraft("draft B"));
+    await act(async () => {
+      await files.mutations.change({ operation: "move", path: "src", destination: "lib" });
+    });
+    const moved = useResourcePanelStore.getState().groups.group;
+    expect(moved.tabs.map((tab) => tab.key)).toEqual([
+      resourceKey(file("lib/a.txt")),
+      resourceKey(file("lib/b.txt")),
+    ]);
+    expect(moved.activeKey).toBe(resourceKey(file("lib/b.txt")));
+    expect(useResourcePanelStore.getState().groups.other.tabs[0].key).toBe(
+      resourceKey(file("src/a.txt")),
+    );
+    expect(files.file?.path).toBe("lib/b.txt");
+    expect(files.draft).toBe("draft B");
+    expect(files.getFileDraft("lib/a.txt")).toBe("draft A");
+
+    api.changeWorkspaceEntry.mockResolvedValueOnce({ ok: false, error: { message: "denied" } });
+    await act(async () => {
+      await files.mutations.change({ operation: "move", path: "lib", destination: "failed" });
+    });
+    expect(useResourcePanelStore.getState().groups.group.tabs.map((tab) => tab.key)).toEqual(
+      moved.tabs.map((tab) => tab.key),
+    );
+    expect(files.getFileDraft("lib/a.txt")).toBe("draft A");
+  });
+
   it("moves all descendant drafts and clears only explicitly deleted drafts", async () => {
     await act(async () => {
       await files.openFile("src/a.txt");

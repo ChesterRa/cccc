@@ -5636,6 +5636,7 @@ Args:
   by?: "user"                  // any other caller is refused (permission_denied)
   client_id: string            // required; at most 200 characters
   answer: { v: 1; option_id: string } | { v: 1; text: string }
+        | { v: 2; option_id: string; note: string }
 }
 ```
 
@@ -5658,7 +5659,7 @@ Under the Group's write permit, in this order:
   answer or the request's closure.
 - A `client_id` already used by the user returns that earlier result when it
   was this answer: a `send` reply to the same request, addressed to the
-  requester alone, with the same answer (free text compared exactly). It does
+  requester alone, with the same answer (free text and notes compared exactly). It does
   so even after the request closed or the requester left. Any other message
   under that `client_id`, such as an ordinary reply to someone else or a Mail,
   fails with `idempotency_conflict`. A lookup that cannot complete fails with
