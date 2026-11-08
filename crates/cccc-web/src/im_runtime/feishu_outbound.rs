@@ -1,7 +1,7 @@
 use super::inbound_attachments::MAX_ATTACHMENT_BYTES;
 use super::outbound_attachment::safe_filename;
 use super::outbound_chunks::{fits_message, split_message};
-use super::outbound_stream_state::trim_active;
+use super::outbound_stream_state::{event_string, trim_active};
 use super::{AuthorizedChat, outbound_text};
 use async_trait::async_trait;
 use cccc_contracts::Event;
@@ -460,16 +460,6 @@ impl FeishuSender for MessageSender<ReqwestOpenApiTransport> {
         };
         result.map(|_| ()).map_err(|error| error.to_string())
     }
-}
-
-fn event_string(event: &Event, key: &str) -> String {
-    event
-        .data
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
 }
 
 #[cfg(test)]

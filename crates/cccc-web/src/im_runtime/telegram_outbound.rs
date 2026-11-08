@@ -1,7 +1,7 @@
 use super::inbound_attachments::MAX_ATTACHMENT_BYTES;
 use super::outbound_attachment::safe_filename;
 use super::outbound_chunks::{fits_message, split_message};
-use super::outbound_stream_state::trim_active;
+use super::outbound_stream_state::{event_string, trim_active};
 use super::{AuthorizedChat, outbound_text};
 use cccc_contracts::Event;
 use cccc_core::HomeLayout;
@@ -358,16 +358,6 @@ fn parse_thread_id(target: &AuthorizedChat) -> Result<Option<ThreadId>, String> 
         .parse::<i32>()
         .map(|id| Some(ThreadId(MessageId(id))))
         .map_err(|_| format!("invalid Telegram thread id: {}", target.thread_id))
-}
-
-fn event_string(event: &Event, key: &str) -> String {
-    event
-        .data
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
 }
 
 #[cfg(test)]

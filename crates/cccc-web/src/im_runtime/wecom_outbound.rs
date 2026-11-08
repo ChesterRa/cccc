@@ -1,5 +1,6 @@
 use super::outbound_attachment::safe_filename;
 use super::outbound_chunks::split_message;
+use super::outbound_stream_state::event_string;
 use super::{outbound_text, wecom_client::WecomClient};
 use cccc_contracts::Event;
 use cccc_core::HomeLayout;
@@ -38,8 +39,8 @@ impl WecomOutbound {
     }
 
     async fn send_stream(&self, targets: Vec<String>, event: &Event) {
-        let op = string_data(event, "op");
-        let stream_id = string_data(event, "stream_id");
+        let op = event_string(event, "op");
+        let stream_id = event_string(event, "stream_id");
         if stream_id.is_empty() || !matches!(op.as_str(), "start" | "update" | "end") {
             return;
         }
@@ -118,7 +119,7 @@ impl WecomOutbound {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let stream_id = string_data(event, "stream_id");
+        let stream_id = event_string(event, "stream_id");
 
         for attachment in attachments {
             let Some(path) = attachment.get("path").and_then(Value::as_str) else {
@@ -282,10 +283,6 @@ fn ordinary_message_payloads(event: &Event) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-fn string_data(event: &Event, key: &str) -> String {
-    raw_string_data(event, key).trim().to_owned()
-}
-
 fn raw_string_data(event: &Event, key: &str) -> String {
     event
         .data
@@ -360,7 +357,12 @@ mod tests {
         let mut event = Event::new("chat.stream", "group");
         event.data.insert("text".into(), json!("  exact reply\n"));
 
+        event
+            .data
+            .insert("stream_id".into(), json!("  stream-1 \n"));
+
         assert_eq!(raw_string_data(&event, "text"), "  exact reply\n");
+        assert_eq!(event_string(&event, "stream_id"), "stream-1");
     }
 
     #[test]

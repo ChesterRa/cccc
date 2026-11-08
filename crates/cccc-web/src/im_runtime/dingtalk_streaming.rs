@@ -1,5 +1,6 @@
 use super::dingtalk_outbound::DingTalkTarget;
 use super::outbound_chunks::fits_message;
+use super::outbound_stream_state::event_string;
 use super::outbound_text;
 use async_trait::async_trait;
 use cccc_contracts::Event;
@@ -338,16 +339,6 @@ fn card_route(
             "unsupported DingTalk card conversationType: {other}"
         )),
     }
-}
-
-fn event_string(event: &Event, key: &str) -> String {
-    event
-        .data
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
 }
 
 fn prepare_stream_text(value: &str) -> String {
