@@ -86,7 +86,7 @@ async fn send(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
-    web_authority::prepare_user_message(&mut args, principal.is_admin)?;
+    web_authority::prepare_user_message(&mut args, &principal)?;
     oversized_text::dispatch(&state, group_id, "send", &mut args).await
 }
 async fn tracked_send(
@@ -112,7 +112,7 @@ async fn reply(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
-    web_authority::prepare_user_message(&mut args, principal.is_admin)?;
+    web_authority::prepare_user_message(&mut args, &principal)?;
     args.remove("quote_text");
     oversized_text::dispatch(&state, group_id, "reply", &mut args).await
 }
@@ -300,7 +300,7 @@ async fn upload(
             upload_fields::insert(&mut args, name, value)?;
         }
     }
-    web_authority::prepare_user_message(&mut args, principal.is_admin)?;
+    web_authority::prepare_user_message(&mut args, principal)?;
     if is_reply {
         let message_mode = args
             .get("message_mode")
@@ -372,7 +372,7 @@ async fn daemon_body(
     body: Value,
 ) -> ApiResult {
     let mut args = body_object(body)?;
-    web_authority::prepare_user_message(&mut args, principal.is_admin)?;
+    web_authority::prepare_user_message(&mut args, principal)?;
     daemon_args(state, op, group_id, args).await
 }
 

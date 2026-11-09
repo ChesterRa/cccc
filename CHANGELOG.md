@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Changed
 
+- Web and MCP message calls now reject caller-supplied IM origin fields, such as
+  `source_platform` or `transport`. When forwarding a message in the Web, the sender must
+  be able to access the referenced source Group.
 - Message calls now reject arguments they do not recognize. A misspelt or misplaced argument,
   such as `mdoe` for the mode or a question's `options` given at the top level, used to be stored
   or ignored while the call reported success. The call now fails with `unknown_arguments`, names

@@ -5017,6 +5017,15 @@ metadata CCCC's ports attach; the lists are defined in
   `source_message_id`, which a reply drops; on `send`, the no-MCP advisory's
   `title`.
 
+The four MCP message-writing tools (`cccc_message_send`, `cccc_message_reply`,
+`cccc_file_send` and `cccc_tracked_send`) and ordinary Web message endpoints
+MUST reject caller-supplied IM provenance fields from that list. CCCC's internal
+IM adapters still attach these fields at the IPC boundary. A Web message that
+supplies a nonempty `src_group_id` MUST be authorized to access that source
+Group as well as the destination Group; this preserves manual relay without
+accepting a source reference outside the caller's access. Replying to a genuine
+incoming cross-Group message does not impose a new source-Group read permission.
+
 Key validation is separate from the existing authorization checks: accepting
 a key establishes no provenance or authority. `message_upload_preflight` accepts the arguments of the operation it
 names plus `operation` and `has_attachments`; one that names no valid

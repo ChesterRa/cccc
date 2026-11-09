@@ -51,6 +51,13 @@ pub(crate) async fn call_with_context(
     if name == "cccc_voice_secretary_task" {
         return Err("This tool requires a host-issued secretary task grant".into());
     }
+    if is_message_operation(name)
+        && let Some(key) = arguments
+            .keys()
+            .find(|key| cccc_contracts::message_args::IM.contains(&key.as_str()))
+    {
+        return Err(format!("IM provenance is host-owned: {key}").into());
+    }
     crate::tools::apply_default_action(name, &mut arguments);
     remove_untrusted_authority(&mut arguments);
     add_runtime_context(home, &mut arguments);
@@ -917,6 +924,106 @@ mod tests {
     };
     use crate::RequestContext;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn message_tools_reject_model_supplied_im_provenance() {
+        if crate::lib_tests::isolate_embedded_daemon_test(concat!(
+            module_path!(),
+            "::",
+            "message_tools_reject_model_supplied_im_provenance"
+        )) {
+            return;
+        }
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let groups = cccc_core::GroupStore::new(home.clone()).expect("groups");
+        let mut group = groups.create("message origin", "").expect("group");
+        for id in ["writer", "receiver"] {
+            let mut actor = cccc_contracts::Actor::new(id);
+            actor.runtime = cccc_contracts::ActorRuntime::Custom;
+            actor.command = vec!["/bin/true".into()];
+            cccc_core::actors::add(&mut group, actor).expect("actor");
+        }
+        groups.save(&group).expect("save");
+        let client = cccc_client::DaemonClient::new(home.clone());
+        let ledger = groups.ledger_path(&group.group_id).expect("ledger");
+        let before = std::fs::read(&ledger).expect("events before");
+        let base = json!({
+            "group_id":group.group_id,"by":"writer","actor_id":"writer",
+            "text":"model message","to":["receiver"],"mode":"mail",
+            "src_group_id":"g_reference","src_event_id":"reference-event",
+            "insight":"Connector origin must remain separate from model-authored content."
+        });
+        // No daemon exists yet: these errors must come from the actual router,
+        // before IPC, local file handling or any message-side effect.
+        for tool in [
+            "cccc_message_send",
+            "cccc_message_reply",
+            "cccc_file_send",
+            "cccc_tracked_send",
+        ] {
+            for key in [
+                "transport",
+                "im_platform",
+                "im_chat_id",
+                "im_thread_id",
+                "source_platform",
+                "source_user_id",
+                "source_message_id",
+            ] {
+                let mut args = base.as_object().expect("args").clone();
+                args.insert(key.into(), json!("do-not-echo-source-value"));
+                let error = super::call(&home, &client, tool, args)
+                    .await
+                    .expect_err("IM origin rejected");
+                assert_eq!(
+                    error.to_string(),
+                    format!("IM provenance is host-owned: {key}")
+                );
+                assert!(!error.to_string().contains("do-not-echo-source-value"));
+            }
+        }
+        assert_eq!(std::fs::read(&ledger).expect("events after"), before);
+
+        let daemon_home = home.clone();
+        let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        for _ in 0..100 {
+            if home.daemon_dir().join("ccccd.addr.json").is_file() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let sent = super::call(
+            &home,
+            &client,
+            "cccc_message_send",
+            base.as_object().expect("args").clone(),
+        )
+        .await
+        .expect("ordinary message");
+        assert_eq!(sent["structuredContent"]["event"]["by"], "writer");
+        let event_id = sent["structuredContent"]["event"]["id"]
+            .as_str()
+            .expect("event id");
+        let stored = cccc_core::ledger::read_all(&ledger).expect("stored events");
+        let event = stored
+            .iter()
+            .find(|event| event.id == event_id)
+            .expect("stored message");
+        assert_eq!(event.data["text"], "model message");
+        assert_eq!(
+            sent["structuredContent"]["event"]["data"]["src_group_id"],
+            "g_reference"
+        );
+        let _ = client
+            .call(&cccc_contracts::DaemonRequest {
+                v: 1,
+                op: "shutdown".into(),
+                args: serde_json::Map::new(),
+            })
+            .await;
+        daemon.await.expect("daemon task").expect("daemon");
+    }
 
     #[test]
     fn exact_native_history_identifies_this_server_not_the_supplied_value() {

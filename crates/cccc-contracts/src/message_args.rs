@@ -146,7 +146,7 @@ const REPLY: &[&str] = &["reply_to", "quote_text"];
 
 /// Inbound IM provenance, attached by the Web's IM bridge and no-MCP send. A
 /// reply drops it, so the reply still reaches IM subscribers.
-const IM: &[&str] = &[
+pub const IM: &[&str] = &[
     "transport",
     "im_platform",
     "im_chat_id",

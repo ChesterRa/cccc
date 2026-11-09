@@ -1,12 +1,13 @@
 use serde_json::{Map, Value};
 
 use crate::api::ApiError;
+use crate::auth::Principal;
 
 /// Ordinary Web messaging always represents the signed-in human user. Runtime
 /// bindings and Chet's origin are supplied by their own host-side ports.
 pub(in crate::routes) fn prepare_user_message(
     args: &mut Map<String, Value>,
-    is_admin: bool,
+    principal: &Principal,
 ) -> Result<(), ApiError> {
     if let Some(by) = args.get("by")
         && !by.is_null()
@@ -24,10 +25,27 @@ pub(in crate::routes) fn prepare_user_message(
             "runtime authority cannot be supplied by a Web message",
         ));
     }
+    if let Some(key) = args
+        .keys()
+        .find(|key| cccc_contracts::message_args::IM.contains(&key.as_str()))
+    {
+        return Err(ApiError::forbidden(format!(
+            "IM provenance is host-owned: {key}"
+        )));
+    }
+    if let Some(source) = args
+        .get("src_group_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|source| !source.is_empty())
+        && !principal.allows(source)
+    {
+        return Err(ApiError::forbidden("source Group access denied"));
+    }
     args.insert("by".into(), Value::String("user".into()));
     args.insert(
         cccc_core::actors::CHET_WEB_ADMISSION_ARG.into(),
-        Value::Bool(is_admin),
+        Value::Bool(principal.is_admin),
     );
     Ok(())
 }
@@ -37,6 +55,16 @@ mod tests {
     use serde_json::json;
 
     use super::prepare_user_message;
+    use crate::auth::Principal;
+
+    fn principal(is_admin: bool) -> Principal {
+        Principal {
+            user_id: "test".into(),
+            allowed_groups: Vec::new(),
+            is_admin,
+            raw_token: String::new(),
+        }
+    }
 
     #[test]
     fn ordinary_web_messages_use_the_user_identity() {
@@ -50,7 +78,7 @@ mod tests {
             if let Some(value) = by {
                 args.insert("by".into(), value);
             }
-            prepare_user_message(&mut args, false).expect("human message");
+            prepare_user_message(&mut args, &principal(false)).expect("human message");
             assert_eq!(args["by"], "user");
             assert_eq!(args[cccc_core::actors::CHET_WEB_ADMISSION_ARG], false);
         }
@@ -65,7 +93,7 @@ mod tests {
             json!({"_cccc_web_binding":{}}),
         ] {
             let mut args = value.as_object().expect("object").clone();
-            assert!(prepare_user_message(&mut args, true).is_err());
+            assert!(prepare_user_message(&mut args, &principal(true)).is_err());
         }
     }
 }
