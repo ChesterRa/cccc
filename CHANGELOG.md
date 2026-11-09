@@ -83,6 +83,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   now stay until fresh ones arrive. In a frame-by-frame check in headless Chrome, the reconnect
   symbol had stayed on screen for 50–100 ms on each of 6 switches, and a mail mark had been gone
   for 50–100 ms on each of 5 returns to a Group; with the change neither flicker occurred.
+- A package built from source gave its archive the release name, so building again before the
+  version number changed silently replaced a release archive of the same version in `dist/`. The
+  package scripts now name a local archive after its commit, for example
+  `cccc-v0.4.51+994415c1-x86_64-unknown-linux-gnu.tar.gz`, adding `-dirty` when the tree has
+  uncommitted changes and using `local` outside a Git checkout; rebuilding replaces only the archive
+  of the same name. Without a label the archive helper keeps the release name, which release builds
+  use, and no longer overwrites an existing archive of that name.
 
 ## [0.4.51]
 

@@ -405,6 +405,7 @@ def test_release_builds_one_atomic_rust_only_set() -> None:
     assert "cargo build --release --locked --features standalone" in release_runs
     assert "scripts/check_release_versions.py --rust-binary" in release_runs
     assert "scripts/build_standalone_archive.py" in release_runs
+    assert "--label" not in release_runs
     assert "scripts/build_native_wheel.py" in release_runs
     assert "scripts/verify_native_wheel.py" in release_runs
     assert release_runs.count("scripts/tests/smoke_wheel_frontdoor.py") == 2
@@ -633,6 +634,9 @@ def test_source_helpers_use_one_native_product_path() -> None:
     assert "cccc.daemon_main" not in start
     for script in (package_unix, package_windows):
         assert "build_standalone_archive.py" in script
+        assert "--label" in script
+        assert ".git" in script
+        assert "-dirty" in script
         assert "--install-deps" in script
         assert "--features standalone" in script
         assert "--version" in script

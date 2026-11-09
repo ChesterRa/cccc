@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Wrap one release-ready CCCC executable in a deterministic standalone archive."""
+"""Wrap one release-ready CCCC executable in a deterministic standalone archive.
+
+Without --label the archive takes its release name, and an existing archive of that
+name is never overwritten. Local builds pass --label, which puts +LABEL into the file
+name (not into the directory inside the archive); rebuilding replaces that archive.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +12,7 @@ import argparse
 import gzip
 import io
 import os
+import re
 import stat
 import tarfile
 import time
@@ -14,6 +20,9 @@ import tomllib
 import zipfile
 from pathlib import Path
 
+
+# One file-name part: a commit such as 994415c1, optionally with -dirty, or "local".
+_LABEL = re.compile(r"[0-9A-Za-z][0-9A-Za-z.-]*")
 
 _TARGETS = {
     "x86_64-unknown-linux-gnu": (".tar.gz", "cccc"),
@@ -51,8 +60,10 @@ def _files(
     ]
 
 
-def _tar(output: Path, package: str, files: list[tuple[str, bytes, int]]) -> None:
-    with output.open("wb") as raw:
+def _tar(
+    output: Path, package: str, files: list[tuple[str, bytes, int]], open_mode: str
+) -> None:
+    with output.open(f"{open_mode}b") as raw:
         with gzip.GzipFile(
             filename="", mode="wb", fileobj=raw, mtime=_epoch(), compresslevel=9
         ) as zipped:
@@ -72,9 +83,11 @@ def _tar(output: Path, package: str, files: list[tuple[str, bytes, int]]) -> Non
                     archive.addfile(info, io.BytesIO(data))
 
 
-def _zip(output: Path, package: str, files: list[tuple[str, bytes, int]]) -> None:
+def _zip(
+    output: Path, package: str, files: list[tuple[str, bytes, int]], open_mode: str
+) -> None:
     with zipfile.ZipFile(
-        output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+        output, open_mode, compression=zipfile.ZIP_DEFLATED, compresslevel=9
     ) as archive:
         directory = zipfile.ZipInfo(f"{package}/", date_time=_zip_time())
         directory.create_system = 3
@@ -88,7 +101,14 @@ def _zip(output: Path, package: str, files: list[tuple[str, bytes, int]]) -> Non
             archive.writestr(info, data)
 
 
-def build(binary: Path, output_dir: Path, *, target: str, root: Path) -> Path:
+def build(
+    binary: Path,
+    output_dir: Path,
+    *,
+    target: str,
+    root: Path,
+    label: str | None = None,
+) -> Path:
     binary = binary.resolve()
     if not binary.is_file():
         raise ValueError(f"release binary not found: {binary}")
@@ -97,15 +117,26 @@ def build(binary: Path, output_dir: Path, *, target: str, root: Path) -> Path:
     except KeyError as error:
         raise ValueError(f"unsupported release target: {target!r}") from error
 
+    if label is not None and not _LABEL.fullmatch(label):
+        raise ValueError(f"invalid archive label: {label!r}")
+
     version = _version(root.resolve())
     package = f"cccc-v{version}-{target}"
+    name = package if label is None else f"cccc-v{version}+{label}-{target}"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output = output_dir / f"{package}{suffix}"
+    output = output_dir / f"{name}{suffix}"
     files = _files(root.resolve(), binary, executable_name)
-    if suffix == ".zip":
-        _zip(output, package, files)
-    else:
-        _tar(output, package, files)
+    # A release name is created only once; a labeled local build replaces its own.
+    open_mode = "x" if label is None else "w"
+    try:
+        if suffix == ".zip":
+            _zip(output, package, files, open_mode)
+        else:
+            _tar(output, package, files, open_mode)
+    except FileExistsError:
+        raise ValueError(
+            f"archive already exists, not overwriting it: {output}"
+        ) from None
     return output
 
 
@@ -117,6 +148,10 @@ def main() -> int:
     parser.add_argument(
         "--root", type=Path, default=Path(__file__).resolve().parents[1]
     )
+    parser.add_argument(
+        "--label",
+        help="local build label added to the file name, for example a commit",
+    )
     args = parser.parse_args()
     try:
         output = build(
@@ -124,6 +159,7 @@ def main() -> int:
             args.output_dir.resolve(),
             target=args.target,
             root=args.root,
+            label=args.label,
         )
     except (OSError, ValueError, KeyError) as error:
         parser.error(str(error))

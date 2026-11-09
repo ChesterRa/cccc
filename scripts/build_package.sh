@@ -10,6 +10,15 @@ for command_name in node npm cargo rustc python3; do
 done
 TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 BINARY="$ROOT_DIR/target/release/cccc"
+# A local build never takes the release archive name, which only CI writes. The label
+# names the commit, adds -dirty for uncommitted changes, and is "local" outside Git.
+LABEL=local
+if [ -e "$ROOT_DIR/.git" ] && SHA="$(git -C "$ROOT_DIR" rev-parse --short=8 HEAD 2>/dev/null)"; then
+  LABEL="$SHA"
+  if [ -n "$(git -C "$ROOT_DIR" status --porcelain 2>/dev/null)" ]; then
+    LABEL="$SHA-dirty"
+  fi
+fi
 
 node "$ROOT_DIR/scripts/prepare_rust_web_assets.mjs" --install-deps
 cargo build \
@@ -22,7 +31,8 @@ cargo build \
 python3 "$ROOT_DIR/scripts/build_standalone_archive.py" \
   "$BINARY" \
   --target "$TARGET" \
-  --output-dir "$ROOT_DIR/dist"
+  --output-dir "$ROOT_DIR/dist" \
+  --label "$LABEL"
 "$BINARY" --version
 
 echo "OK: built the native CCCC archive in dist/"
