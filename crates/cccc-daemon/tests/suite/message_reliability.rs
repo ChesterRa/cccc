@@ -134,13 +134,13 @@ fn chet_handoff_treats_an_empty_destination_group_as_local() {
     );
 
     for op in ["send", "send_files"] {
-        let invalid = call_unchecked(
-            &home,
-            op,
-            json!({"group_id":group.group_id,"by":"user","to":["worker"],
-                "text":"Invalid destination","paths":["missing.txt"],"message_mode":"send",
-                "_voice_origin":token,"dst_group_id":7}),
-        );
+        let mut args = json!({"group_id":group.group_id,"by":"user","to":["worker"],
+            "text":"Invalid destination","message_mode":"send",
+            "_voice_origin":token,"dst_group_id":7});
+        if op == "send_files" {
+            args["paths"] = json!(["missing.txt"]);
+        }
+        let invalid = call_unchecked(&home, op, args);
         assert_eq!(
             invalid.error.expect("invalid destination").code,
             "invalid_args"
@@ -417,22 +417,55 @@ fn chet_provenance_is_host_owned_across_message_ports() {
         "stream_emit",
         "message_upload_preflight",
     ] {
+        // A message write takes only its own arguments, so each gets those,
+        // and the marker, which it must refuse itself.
+        let mut args = payload.as_object().expect("args").clone();
+        if let Some(write) = message_write(op) {
+            let unknown = cccc_contracts::message_args::unknown(write, args.keys())
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            for key in unknown {
+                assert_ne!(key, marker, "{op} must accept the marker to refuse it");
+                args.remove(&key);
+            }
+        }
         let result = cccc_daemon::handle_request(
             &home,
             &DaemonRequest {
                 v: 1,
                 op: op.into(),
-                args: payload.as_object().expect("args").clone(),
+                args,
             },
         );
         assert!(!result.ok, "{op} must reject caller-supplied provenance");
-        assert_eq!(result.error.expect("error").code, "invalid_args", "{op}");
+        let error = result.error.expect("error");
+        assert_eq!(error.code, "invalid_args", "{op}");
+        assert!(
+            error
+                .message
+                .contains("Chet author provenance is host-owned"),
+            "{op}: {}",
+            error.message
+        );
     }
-    let mut im = payload.clone();
-    im["transport"] = json!("im");
+    // An inbound IM message is an ordinary send with its provenance; it cannot
+    // carry the marker either.
+    let mut im = json!({"group_id":group.group_id,"by":"user","text":"fixture",
+        "to":["user"],"message_mode":"send","transport":"im"});
+    im.as_object_mut()
+        .expect("object")
+        .insert(marker.into(), json!("forged"));
+    let error = call_unchecked(&home, "send", im)
+        .error
+        .expect("IM cannot inject provenance");
+    assert_eq!(error.code, "invalid_args");
     assert!(
-        !call_unchecked(&home, "send", im).ok,
-        "IM cannot inject provenance"
+        error
+            .message
+            .contains("Chet author provenance is host-owned"),
+        "{}",
+        error.message
     );
     let mut raw = cccc_contracts::Event::new("chat.message", &group.group_id);
     raw.by = "worker".into();
@@ -456,6 +489,18 @@ fn chet_provenance_is_host_owned_across_message_ports() {
         .expect("ledger")
         .len();
     assert_eq!(after, before, "rejected attempts append no events");
+}
+
+fn message_write(op: &str) -> Option<cccc_contracts::message_args::MessageWrite> {
+    use cccc_contracts::message_args::MessageWrite;
+    Some(match op {
+        "send" => MessageWrite::Send,
+        "reply" => MessageWrite::Reply,
+        "send_files" => MessageWrite::SendFiles,
+        "tracked_send" => MessageWrite::TrackedSend,
+        "send_cross_group" => MessageWrite::SendCrossGroup,
+        _ => return None,
+    })
 }
 
 #[test]

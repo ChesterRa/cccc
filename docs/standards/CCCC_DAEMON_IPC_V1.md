@@ -277,6 +277,7 @@ Rules:
 - `v` MUST be `1`.
 - `op` MUST be a non-empty string (snake_case in CCCC v0.4.x).
 - Clients MUST NOT send unknown top-level fields (the daemon is strict at the envelope level).
+- `args` keys are defined per operation. The message-write operations in §8.6 reject keys they do not accept with `unknown_arguments`; other operations may ignore them.
 
 ### 5.2 Response
 
@@ -318,6 +319,7 @@ Common codes used by CCCC v0.4.x include (non-exhaustive):
 - `missing_actor_id`, `actor_not_found`, `actor_not_running`, `not_pty_actor`
 - `permission_denied`
 - `invalid_patch`, `invalid_template`, `confirmation_required`
+- `unknown_arguments` (message writes; see §8.6, Message write arguments)
 
 ## 7. Operation Conventions
 
@@ -4657,7 +4659,7 @@ Sources whose detected scopes share a `scope_key` but have different physical ro
 
 For a new conversation, the caller source MUST be the first Actor when supplied; otherwise, preserve the explicit source selection order. Duplicate source IDs represent one member. Existing Group role semantics therefore make the caller or first selection foreman. For a new human-created Group, the Web MAY let the user choose Foreman among selected sources; it MUST place that source first in the submitted `source_ids`, preserving the relative order of the remaining selections. The default-directory preview MUST follow that source. One selected source is automatic; joining an existing Group MUST NOT expose this as a role-change control. This does not add an independent role field or change native-initiated caller ordering. Direct reuse compares the canonical source set independently of order and MUST NOT reorder existing Actors or change their roles.
 
-`local_session_send` (Group write with `group_id`, global write otherwise): `{ source_ids?: string[], source_id?: string, group_id?: string, text: string, to?: string[], message_mode?: "send"|"request_reply"|"mail", client_id?: string, insight?: string }`. Without `group_id`, creates/reuses a direct conversation from the selected sources; a non-empty `to` MUST be rejected, and recipients MUST be the enabled Actors for the selected `source_ids`, not additional members of a reused Group. With `group_id`, a non-empty `source_ids` MUST be rejected and sending requires the caller source to be an enabled member; absent `source_id` means human `user`, and absent `to` retains ordinary `@all` semantics. A null or empty `to` or `source_ids` counts as absent, as CCCS does for an empty `to`, so a client that fills unused optional lists with `[]` keeps the addressing mode it chose. Uses ordinary messaging validation, ledger, delivery claims and receipts. Returns the normal send result plus `group_id`. Native MCP MUST supply the current source identity itself, require explicit Group IDs for ordinary Group tools, enforce membership, and apply normal peer-insight rules. Native `cccc_session send`, and native-profile `cccc_message_send` and `cccc_file_send`, default to Send; explicit Mail remains available. MCP `cccc_session send`, `cccc_message_send` and `cccc_message_reply` MUST expose `mode` and translate it to IPC `message_mode` at the MCP boundary. They MUST reject `message_mode` in MCP input, including duplicate or conflicting names, and invalid mode types/values before appending a message or creating a conversation; they MUST NOT silently replace the requested mode with a default. These port defaults MUST NOT change IPC behavior or the ordinary managed-Actor Mail default for agent recipients, described with the MCP file surface. Native Preamble and tool descriptions MUST agree and include the explicit Group ID for bootstrap and Group tools. Existing Group tools require valid live native lifecycle identity and enabled membership, not current receive readiness; a lost Monitor/queue MUST NOT by itself revoke read/reply/leave access. Explicitly disabled membership and ended native identity remain unauthorized for ordinary Group tools. Native MCP MUST capture `{ group_id, actor_id, actor_generation, source_id, session_revision }` from trusted lifecycle metadata and membership discovery, never tool arguments. The internal `_cccc_native_binding` snapshot MUST accompany Group operations and be revalidated under the daemon operation permit before execution. The current Actor must be enabled and match the captured source and generation; the live lifecycle record must match the captured revision. Local file/tool and bootstrap paths MUST preserve and revalidate the same snapshot. Source or Actor ID reuse MUST NOT transfer an in-flight request to a replacement membership. This metadata MUST NOT be persisted as message content.
+`local_session_send` (Group write with `group_id`, global write otherwise): `{ source_ids?: string[], source_id?: string, group_id?: string, text: string, to?: string[], message_mode?: "send"|"request_reply"|"mail", client_id?: string, insight?: string, require_peer_insight?: boolean, title?: string }`. Without `group_id`, creates/reuses a direct conversation from the selected sources; a non-empty `to` MUST be rejected, and recipients MUST be the enabled Actors for the selected `source_ids`, not additional members of a reused Group; `title` names a conversation the send creates. With `group_id`, a non-empty `source_ids` MUST be rejected and sending requires the caller source to be an enabled member; absent `source_id` means human `user`, and absent `to` retains ordinary `@all` semantics. A null or empty `to` or `source_ids` counts as absent, as CCCS does for an empty `to`, so a client that fills unused optional lists with `[]` keeps the addressing mode it chose. Uses ordinary messaging validation, ledger, delivery claims and receipts. Returns the normal send result plus `group_id`. Native MCP MUST supply the current source identity itself, require explicit Group IDs for ordinary Group tools, enforce membership, and apply normal peer-insight rules. Native `cccc_session send`, and native-profile `cccc_message_send` and `cccc_file_send`, default to Send; explicit Mail remains available. MCP `cccc_session send`, `cccc_message_send` and `cccc_message_reply` MUST expose `mode` and translate it to IPC `message_mode` at the MCP boundary. They MUST reject `message_mode` in MCP input, including duplicate or conflicting names, and invalid mode types/values before appending a message or creating a conversation; they MUST NOT silently replace the requested mode with a default. These port defaults MUST NOT change IPC behavior or the ordinary managed-Actor Mail default for agent recipients, described with the MCP file surface. Native Preamble and tool descriptions MUST agree and include the explicit Group ID for bootstrap and Group tools. Existing Group tools require valid live native lifecycle identity and enabled membership, not current receive readiness; a lost Monitor/queue MUST NOT by itself revoke read/reply/leave access. Explicitly disabled membership and ended native identity remain unauthorized for ordinary Group tools. Native MCP MUST capture `{ group_id, actor_id, actor_generation, source_id, session_revision }` from trusted lifecycle metadata and membership discovery, never tool arguments. The internal `_cccc_native_binding` snapshot MUST accompany Group operations and be revalidated under the daemon operation permit before execution. The current Actor must be enabled and match the captured source and generation; the live lifecycle record must match the captured revision. Local file/tool and bootstrap paths MUST preserve and revalidate the same snapshot. Source or Actor ID reuse MUST NOT transfer an in-flight request to a replacement membership. This metadata MUST NOT be persisted as message content.
 
 `local_session_leave` (Group write): `{ source_id, group_id }` stops only that membership's CCCC access.
 
@@ -4992,6 +4994,53 @@ environment. It never copies Analyst, Actor or ASR credentials.
 
 ### 8.6 Chat Messaging
 
+#### Message write arguments
+
+These message-write operations check the top-level keys of each request before
+they act: `send` and `message_send`, `reply`, `send_files`,
+`send_cross_group`, `tracked_send`, `system_notify`, `slash_skill_dispatch`,
+`local_session_send` and `message_upload_preflight`. Each accepts the Args its
+section lists, the fields it refuses with an error of its own, and the
+metadata CCCC's ports attach; the lists are defined in
+`crates/cccc-contracts/src/message_args.rs`:
+
+- `actor_id`, the calling Actor as MCP tools name it;
+- captured session authority: `_cccc_native_binding`, `_cccc_web_binding` and,
+  on `local_session_send`, `_cccc_native_source_binding`;
+- `_voice_origin`, the Chet voice origin, and `_cccc_chet_web_admin`, Chet
+  admission from the Web;
+- `require_peer_insight`, the Agent Insight profile marker;
+- on the chat operations, `idempotency_key` as MCP sends it; only `client_id`
+  selects a replay;
+- on `send` and `reply`, inbound IM provenance: `transport`, `im_platform`,
+  `im_chat_id`, `im_thread_id`, `source_platform`, `source_user_id` and
+  `source_message_id`, which a reply drops; on `send`, the no-MCP advisory's
+  `title`.
+
+Key validation is separate from the existing authorization checks: accepting
+a key establishes no provenance or authority. `message_upload_preflight` accepts the arguments of the operation it
+names plus `operation` and `has_attachments`; one that names no valid
+operation is reported by the preflight itself. `slash_skill_dispatch` accepts
+`group_id`, `by`, `task_text`, `command`, `capability_id`, `to`, `client_id`,
+`reply_to` and `quote_text`. It drops `control_kind`, `title` and `hidden`, and
+refuses `priority`, `reply_required`, `requires_ack` and `message_mode`.
+
+Any other top-level key fails the request with `unknown_arguments` and
+`details: { unknown: string[], new_side_effects: false }`. `unknown` lists the
+key names in sorted order, never their values. The check runs after the
+dispatcher validates captured authority and before any replay, delivery, blob,
+task, conversation or ledger write. Nested values (`refs`, `attachments`,
+`question`, `checklist`, `context`) follow their own rules.
+
+Only the incoming request is checked; stored events are never compared with
+these lists. An accepted request still replays by its `client_id`, and a
+cross-group retry still re-sends from its stored source record. A retry that
+adds a key these lists do not accept fails instead of replaying, including a
+retry of a request accepted before this check existed. Retried without that
+key and with the same `client_id`, it replays, except a question: its replay
+compares the whole normalized message, so a question accepted with that key
+fails with `idempotency_conflict`.
+
 #### `ledger_search`
 
 Read events from one Group without delivering messages or creating runtime work.
@@ -5130,7 +5179,12 @@ Args (core):
   by?: string
   to?: string[]                 // empty/omitted materializes group default_send_to
   message_mode: "send" | "request_reply" | "mail"
-  path?: string                 // optional filesystem path; sets the event's scope_key once checked against the Group's scopes. A caller's own scope_key is ignored
+  path?: string                 // optional filesystem path; sets the event's scope_key once checked against the Group's scopes. scope_key is not an argument
+  format?: "plain" | "markdown" // default "plain"
+  reply_to?: string             // replied-to event_id
+  quote_text?: string           // display hint
+  client_id?: string            // idempotency key
+  suggested_user_message?: string // a next message the Web composer may offer the user; never sent automatically
   attachments?: unknown[]       // attachment refs (implementation-defined)
   refs?: ReferenceV1[]          // structured message refs, e.g. presentation_ref/task_ref
   insight?: string              // optional provisional sender perspective; max 1200 characters
@@ -5330,6 +5384,7 @@ Args:
   insight?: string
   require_peer_insight?: boolean
   has_attachments: boolean      // temporary upload parts exist; no blob refs yet
+  // ...and any other argument the named operation accepts
 }
 ```
 
@@ -5383,6 +5438,11 @@ Args:
   message_mode: "send" | "request_reply" | "mail"
   insight?: string
   client_id?: string
+  path?: string                 // the message's scope, as for `send`; never carried to another Group
+  refs?: ReferenceV1[]
+  format?: "plain" | "markdown"
+  suggested_user_message?: string
+  require_peer_insight?: boolean // profile gate; default false
 }
 ```
 
@@ -5452,6 +5512,10 @@ Args:
   message_mode?: "send" | "mail" // default: "send"
   attachments?: unknown[]
   refs?: ReferenceV1[]
+  format?: "plain" | "markdown"
+  quote_text?: string
+  client_id?: string
+  suggested_user_message?: string
   insight?: string
   require_peer_insight?: boolean // profile gate; default false
 }
@@ -5524,8 +5588,17 @@ Args:
   waiting_on?: "none" | "user" | "actor" | "external"
   handoff_to?: string
   notes?: string
+  goal?: string
+  status?: string
+  task_type?: string
+  blocked_by?: string[]
   idempotency_key?: string
+  client_request_id?: string    // same as idempotency_key; the first nonblank one is used
   refs?: ReferenceV1[]
+  path?: string
+  format?: "plain" | "markdown"
+  attachments?: unknown[]
+  suggested_user_message?: string
   insight?: string
   require_peer_insight?: boolean // profile gate; default false
 }
@@ -5566,7 +5639,7 @@ Cross-group send implemented as:
 
 Args:
 ```ts
-{ group_id: string; dst_group_id: string; text?: string; attachments?: AttachmentRefV1[]; by?: string; to?: string[]; message_mode: "send" | "request_reply" | "mail"; insight?: string; require_peer_insight?: boolean }
+{ group_id: string; dst_group_id: string; text?: string; attachments?: AttachmentRefV1[]; by?: string; to?: string[]; message_mode: "send" | "request_reply" | "mail"; insight?: string; require_peer_insight?: boolean; path?: string /* checked against the destination's scopes */; client_id?: string; refs?: ReferenceV1[]; format?: "plain" | "markdown"; suggested_user_message?: string; reply_to?: string; quote_text?: string; remote_reply_to_event_id?: string /* sent by the Web with a reply; stored, not read */ }
 ```
 
 Result:
@@ -6475,9 +6548,13 @@ Args:
   priority?: "low" | "normal" | "high" | "urgent"
   title?: string
   message?: string
+  text?: string                 // further body; delivery shows title, message and text in that order
   target_actor_id?: string | null
   im_visibility?: "internal" | "public" // default: "internal"
   context?: Record<string, unknown>
+  to?: string[]
+  client_id?: string
+  related_event_id?: string
 }
 ```
 

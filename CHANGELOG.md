@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+
+- Message calls now reject arguments they do not recognize. A misspelt or misplaced argument,
+  such as `mdoe` for the mode or a question's `options` given at the top level, used to be stored
+  or ignored while the call reported success. The call now fails with `unknown_arguments`, names
+  the arguments without their values, and makes no new changes. This covers sending, replying,
+  sending files, cross-Group sends on the same instance, tracked sends, system notifications,
+  slash-skill dispatch, native session sends and upload preflights; new messages and files sent
+  through CCCC Connect are not covered yet. A caller-supplied `scope_key` is now rejected instead
+  of dropped, and sender snapshot fields are rejected at these entries too. A retry that carries
+  such an argument also fails, even when the message was accepted before.
+
+### Fixed
+
+- A message a native session sends directly, and the record a cross-Group send keeps in its own
+  Group, no longer store the session's internal binding with the message. Messages already in a
+  ledger keep what they stored.
+- The collaboration guidance no longer suggests Mail for useful context that has no higher-order
+  perspective. Under the MCP profile, an agent's Mail to another agent still needs an insight, so
+  following that line led to a rejected call.
+
 ## [0.4.52]
 
 ### Changed

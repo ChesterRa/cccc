@@ -822,7 +822,7 @@ pub(crate) fn tool_result(payload: Value) -> Value {
     json!({"content":[{"type":"text","text":text}],"structuredContent":payload})
 }
 
-fn is_message_operation(name: &str) -> bool {
+pub(crate) fn is_message_operation(name: &str) -> bool {
     matches!(
         name,
         "cccc_message_send" | "cccc_tracked_send" | "cccc_message_reply" | "cccc_file_send"

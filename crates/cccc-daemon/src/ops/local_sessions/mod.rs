@@ -33,7 +33,14 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "local_session_receiver_detach" => Operation::new(ResourceOwned, detach),
         "local_session_conversation" => Operation::new(GlobalWrite, conversations::create),
         "local_session_join" => Operation::new(Write, conversations::join),
-        "local_session_send" => Operation::new(Write, conversations::send),
+        "local_session_send" => Operation::new(Write, |home, request| {
+            // Before the send can create or reuse a conversation.
+            super::messaging::accept_arguments(
+                request,
+                cccc_contracts::message_args::MessageWrite::LocalSessionSend,
+            )?;
+            conversations::send(home, request)
+        }),
         "local_session_leave" => Operation::new(Write, conversations::leave),
         _ => return None,
     })

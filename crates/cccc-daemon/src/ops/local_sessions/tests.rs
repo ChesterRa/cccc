@@ -2338,6 +2338,123 @@ fn native_queue_failure_is_recorded_once_and_the_same_batch_continues() {
 }
 
 #[test]
+fn source_directed_send_rejects_unknown_arguments_before_creating_a_conversation() {
+    let fixture = Fixture::new();
+    fixture.attach();
+    let groups = GroupStore::new(fixture.home.clone()).expect("store");
+    let before = groups.list().expect("Groups").len();
+    let result = crate::dispatch::dispatch(
+        &fixture.home,
+        &req(
+            "local_session_send",
+            json!({
+                "source_ids":[fixture.source.source_id],"text":"Typo","message_mode":"mail",
+                "mdoe":"mail"
+            }),
+        ),
+    );
+    let error = result.error.expect("unknown argument");
+    assert_eq!(error.code, "unknown_arguments");
+    assert_eq!(error.details["unknown"], json!(["mdoe"]));
+    assert_eq!(groups.list().expect("Groups").len(), before);
+    // The title names the conversation the send creates.
+    let sent = fixture.call(
+        "local_session_send",
+        json!({
+            "source_ids":[fixture.source.source_id],"text":"Fixed","message_mode":"mail",
+            "title":"Fixed conversation"
+        }),
+    );
+    let group_id = sent["group_id"].as_str().expect("Group ID");
+    assert_eq!(
+        groups.load(group_id).expect("Group").title,
+        "Fixed conversation"
+    );
+    assert_eq!(groups.list().expect("Groups").len(), before + 1);
+}
+
+#[test]
+fn captured_native_bindings_are_never_stored_with_messages() {
+    use cccc_contracts::local_session::{LocalSessionBinding, LocalSessionSourceBinding};
+    let fixture = Fixture::new();
+    fixture.attach();
+    let groups = GroupStore::new(fixture.home.clone()).expect("store");
+    let stored = |group_id: &str, key: &str| {
+        cccc_core::ledger::read_all(&groups.ledger_path(group_id).expect("ledger"))
+            .expect("events")
+            .iter()
+            .any(|event| event.kind == "chat.message" && event.data.contains_key(key))
+    };
+    // A second connected source to address directly.
+    let mut other = fixture.source.clone();
+    other.runtime = LocalSessionRuntime::Opencode;
+    other.source_id = LocalSessionRuntime::Opencode.source_id("ses_other");
+    other.native_session_id = "other-conversation".into();
+    other.revision = "other-revision".into();
+    other.opencode_server = Some(NativeHost::capture(std::process::id()).expect("host"));
+    native::write(&fixture.home, other.clone()).expect("other source");
+    let _receiver =
+        store::attach(&fixture.home, &other.source_id, "other-receiver").expect("receiver");
+
+    // A direct send carries the source binding, as native MCP sends it.
+    let direct = crate::dispatch::dispatch(
+        &fixture.home,
+        &req(
+            "local_session_send",
+            json!({
+                "source_id":fixture.source.source_id,"source_ids":[other.source_id],
+                "text":"Direct","message_mode":"mail","require_peer_insight":true,
+                "insight":"Shared view","_cccc_native_source_binding":LocalSessionSourceBinding {
+                    source_id:fixture.source.source_id.clone(),
+                    session_revision:fixture.source.revision.clone(),
+                }
+            }),
+        ),
+    );
+    assert!(direct.ok, "direct send: {:?}", direct.error);
+    let conversation = direct.result["group_id"].as_str().expect("conversation");
+    assert!(!stored(conversation, "_cccc_native_source_binding"));
+
+    // A cross-group send carries the member's binding; neither record keeps it.
+    let group = fixture.conversation();
+    let actor = group.actors[0].clone();
+    let destination = fixture.call(
+        "group_create",
+        json!({"title":"destination","by":"user"}),
+    )["group"]["group_id"]
+        .as_str()
+        .expect("destination")
+        .to_owned();
+    fixture.call(
+        "actor_add",
+        json!({
+            "group_id":destination,"actor_id":"peer","runtime":"custom",
+            "command":["/bin/true"],"by":"user"
+        }),
+    );
+    let relayed = crate::dispatch::dispatch(
+        &fixture.home,
+        &req(
+            "send_cross_group",
+            json!({
+                "group_id":group.group_id,"by":actor.id,"dst_group_id":destination,
+                "to":["peer"],"text":"Relayed","message_mode":"mail",
+                "_cccc_native_binding":LocalSessionBinding {
+                    group_id:group.group_id.clone(),
+                    actor_id:actor.id.clone(),
+                    actor_generation:cccc_core::actors::generation_identity(&actor),
+                    source_id:fixture.source.source_id.clone(),
+                    session_revision:fixture.source.revision.clone(),
+                }
+            }),
+        ),
+    );
+    assert!(relayed.ok, "cross-group send: {:?}", relayed.error);
+    assert!(!stored(&group.group_id, "_cccc_native_binding"));
+    assert!(!stored(&destination, "_cccc_native_binding"));
+}
+
+#[test]
 fn source_directed_send_does_not_broadcast_to_added_group_members() {
     let fixture = Fixture::new();
     fixture.attach();

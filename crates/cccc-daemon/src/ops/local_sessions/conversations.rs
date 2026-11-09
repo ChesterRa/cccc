@@ -415,7 +415,14 @@ pub(super) fn send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .filter(|(k, _)| {
             !matches!(
                 k.as_str(),
-                "source_id" | "source_ids" | "direct" | "title" | "by" | "group_id"
+                "source_id"
+                    | "source_ids"
+                    | "direct"
+                    | "title"
+                    | "by"
+                    | "group_id"
+                    // Checked before dispatch; never message content.
+                    | "_cccc_native_source_binding"
             ) && (k.as_str() != "to" || addressed("to"))
         })
         .map(|(k, v)| (k.clone(), v.clone()))

@@ -2,6 +2,7 @@ use super::operation::{
     Operation,
     Policy::{Read, Write},
 };
+use cccc_contracts::message_args::{self, MessageWrite};
 use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
@@ -27,24 +28,44 @@ pub(super) fn send_local_session(home: &HomeLayout, request: &DaemonRequest) -> 
 
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
-        "send" | "message_send" => {
-            Operation::new(Write, |home, request| send(home, request, "chat.message"))
-        }
-        "send_files" => Operation::new(Write, send_files),
-        "send_cross_group" => Operation::new(Write, send_cross_group),
-        "tracked_send" => Operation::new(Write, tracked_send::handle),
-        "slash_skill_dispatch" => Operation::new(Write, slash_skill_dispatch),
-        "reply" => Operation::new(Write, reply),
-        "message_upload_preflight" => Operation::new(Read, message_upload_preflight),
+        "send" | "message_send" => Operation::new(Write, |home, request| {
+            accept_arguments(request, MessageWrite::Send)?;
+            send(home, request, "chat.message")
+        }),
+        "send_files" => Operation::new(Write, |home, request| {
+            accept_arguments(request, MessageWrite::SendFiles)?;
+            send_files(home, request)
+        }),
+        "send_cross_group" => Operation::new(Write, |home, request| {
+            accept_arguments(request, MessageWrite::SendCrossGroup)?;
+            send_cross_group(home, request)
+        }),
+        "tracked_send" => Operation::new(Write, |home, request| {
+            accept_arguments(request, MessageWrite::TrackedSend)?;
+            tracked_send::handle(home, request)
+        }),
+        "slash_skill_dispatch" => Operation::new(Write, |home, request| {
+            accept_arguments(request, MessageWrite::SlashSkillDispatch)?;
+            slash_skill_dispatch(home, request)
+        }),
+        "reply" => Operation::new(Write, |home, request| {
+            accept_arguments(request, MessageWrite::Reply)?;
+            reply(home, request)
+        }),
+        "message_upload_preflight" => Operation::new(Read, |home, request| {
+            accept_upload_arguments(request)?;
+            message_upload_preflight(home, request)
+        }),
         "reply_request_cancel" => Operation::new(Write, reply_request_cancel),
         "reply_request_answer" => Operation::new(Write, super::reply_requests::answer),
         "user_reply_requests" => Operation::new(Read, super::reply_requests::page),
         "user_reply_requests_summary" => Operation::new(Read, super::reply_requests::summary),
         "message_deliver" => Operation::new(Write, message_deliver),
         "stream_emit" => Operation::new(Write, stream::emit),
-        "system_notify" => {
-            Operation::new(Write, |home, request| send(home, request, "system.notify"))
-        }
+        "system_notify" => Operation::new(Write, |home, request| {
+            accept_arguments(request, MessageWrite::SystemNotify)?;
+            send(home, request, "system.notify")
+        }),
         "event_append" => Operation::new(Write, append_raw),
         "ledger_tail" => Operation::new(Read, super::messaging_query::tail),
         "ledger_search" => Operation::new(Read, super::messaging_query::search),
@@ -211,6 +232,10 @@ fn send_cross_group_with_reply(
         }
     }
     delivery_data.remove("transport");
+    // Captured port authority was checked before dispatch; it is never stored
+    // with the source record or the copy.
+    delivery_data.remove("_cccc_native_binding");
+    delivery_data.remove("_cccc_web_binding");
     // A source event copied for relay is not an attestation about the
     // destination Group, even when the source was authored by Chet.
     delivery_data.remove(cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD);
@@ -1421,6 +1446,51 @@ fn append_in_scope(
     )
     .map_err(OpError::io)?;
     Ok(event)
+}
+
+/// Fails a message write whose request carries a top-level key its operation
+/// does not accept. It runs before the handler, so the request has no effect.
+/// Internal producers call the handlers directly and are not checked.
+pub(super) fn accept_arguments(
+    request: &DaemonRequest,
+    operation: MessageWrite,
+) -> Result<(), OpError> {
+    reject_unknown(message_args::unknown(operation, request.args.keys()))
+}
+
+/// A preflight that names no operation, or an unknown one, is reported by the
+/// preflight itself.
+fn accept_upload_arguments(request: &DaemonRequest) -> Result<(), OpError> {
+    match request
+        .args
+        .get("operation")
+        .and_then(Value::as_str)
+        .and_then(MessageWrite::for_upload)
+    {
+        Some(operation) => reject_unknown(message_args::unknown_for_upload(
+            operation,
+            request.args.keys(),
+        )),
+        None => Ok(()),
+    }
+}
+
+fn reject_unknown(unknown: Vec<&str>) -> Result<(), OpError> {
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    let mut error = OpError::new(
+        message_args::UNKNOWN_ARGUMENTS,
+        format!(
+            "unknown argument(s): {}; this attempt made no new changes",
+            unknown.join(", ")
+        ),
+    );
+    error.details.insert("unknown".into(), json!(unknown));
+    error
+        .details
+        .insert("new_side_effects".into(), Value::Bool(false));
+    Err(error)
 }
 
 /// This attestation belongs to the local host, never to a message caller.

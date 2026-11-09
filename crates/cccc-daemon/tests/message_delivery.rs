@@ -2267,7 +2267,13 @@ fn a_message_takes_its_scope_only_from_a_path_the_daemon_checked() {
     assert_eq!(scoped.result["event"]["scope_key"], scope_key);
     assert_eq!(scoped.result["event"]["data"]["scope_key"], scope_key);
 
-    let claimed = call(
+    // A scope comes only from a checked path; a caller cannot claim one.
+    let ledger = GroupStore::new(home.clone())
+        .expect("store")
+        .ledger_path(&group_id)
+        .expect("ledger");
+    let before = std::fs::read_to_string(&ledger).expect("ledger before");
+    let claimed = call_raw(
         &home,
         "send",
         json!({
@@ -2275,8 +2281,13 @@ fn a_message_takes_its_scope_only_from_a_path_the_daemon_checked() {
             "message_mode":"send","scope_key":scope_key
         }),
     );
-    assert_eq!(claimed.result["event"]["scope_key"], "");
-    assert!(claimed.result["event"]["data"].get("scope_key").is_none());
+    let error = claimed.error.expect("claimed scope");
+    assert_eq!(error.code, "unknown_arguments");
+    assert_eq!(error.details["unknown"], json!(["scope_key"]));
+    assert_eq!(
+        std::fs::read_to_string(&ledger).expect("ledger after"),
+        before
+    );
 }
 
 #[test]
@@ -2451,6 +2462,188 @@ fn block_ledger_writes(path: &std::path::Path) -> bool {
 fn allow_ledger_writes(path: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).expect("writable");
+}
+
+#[test]
+fn message_writes_reject_unknown_arguments_before_any_effect() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = temp.path().join("scope");
+    std::fs::create_dir_all(&scope).expect("scope");
+    std::fs::write(scope.join("payload.bin"), b"never stored").expect("payload");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let create = |title: &str| {
+        call(&home, "group_create", json!({"title":title,"by":"user"})).result["group"]["group_id"]
+            .as_str()
+            .expect("group id")
+            .to_owned()
+    };
+    let group_id = create("unknown-arguments");
+    let destination_id = create("unknown-arguments-destination");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":scope,"by":"user"}),
+    );
+    // A command that exits at once, so no real provider starts even if a
+    // check is removed and a message wakes an Actor.
+    for actor in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,"actor_id":actor,"runtime":"custom",
+                "command":["/bin/true"],"by":"user"
+            }),
+        );
+    }
+    let parent = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["lead"],"text":"question","message_mode":"mail"}),
+    )
+    .result["event"]["id"]
+        .as_str()
+        .expect("parent")
+        .to_owned();
+
+    let store = GroupStore::new(home.clone()).expect("store");
+    let blob_dir = store.state_dir(&group_id).expect("state").join("blobs");
+    // The ledger, blob, task and Group document changes these requests could
+    // make; an Actor wake-up changes the Group document.
+    let effects = || {
+        let ledger = |id: &str| {
+            std::fs::read_to_string(store.ledger_path(id).expect("ledger")).unwrap_or_default()
+        };
+        let blobs = std::fs::read_dir(&blob_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .count();
+        let tasks = call(
+            &home,
+            "context_get",
+            json!({"group_id":group_id,"by":"user"}),
+        )
+        .result["coordination"]["tasks"]
+            .clone();
+        let group = serde_json::to_value(store.load(&group_id).expect("group")).expect("doc");
+        (
+            ledger(&group_id),
+            ledger(&destination_id),
+            blobs,
+            tasks,
+            group,
+        )
+    };
+    let rejected = |op: &str, args: Value, unknown: &[&str]| {
+        let error = call_raw(&home, op, args)
+            .error
+            .unwrap_or_else(|| panic!("{op} accepted an unknown argument"));
+        assert_eq!(error.code, "unknown_arguments", "{op}: {}", error.message);
+        assert_eq!(error.details["unknown"], json!(unknown), "{op}");
+        assert_eq!(error.details["new_side_effects"], false, "{op}");
+        assert!(
+            !error.message.contains("never-echoed"),
+            "{op}: {}",
+            error.message
+        );
+    };
+    let before = effects();
+
+    // A misspelt mode, question options at the top level, a guessed
+    // recipients field: each was stored or ignored before.
+    rejected(
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"t","message_mode":"send","mdoe":"never-echoed"}),
+        &["mdoe"],
+    );
+    rejected(
+        "message_send",
+        json!({
+            "group_id":group_id,"by":"lead","to":["user"],"text":"t","message_mode":"request_reply",
+            "question":{"v":1,"prompt":"Which?"},"options":[{"label":"A"},{"label":"B"}]
+        }),
+        &["options"],
+    );
+    rejected(
+        "send",
+        json!({"group_id":group_id,"by":"user","recipients":["peer1"],"text":"t","message_mode":"send","scope_key":"s"}),
+        &["recipients", "scope_key"],
+    );
+    rejected(
+        "reply",
+        json!({"group_id":group_id,"by":"lead","reply_to":parent,"text":"t","thread":"t1"}),
+        &["thread"],
+    );
+    rejected(
+        "send_files",
+        json!({"group_id":group_id,"by":"user","paths":["payload.bin"],"to":["peer1"],"message_mode":"send","caption":"c"}),
+        &["caption"],
+    );
+    rejected(
+        "message_upload_preflight",
+        json!({
+            "operation":"send","has_attachments":true,"group_id":group_id,"by":"user",
+            "to":["peer1"],"text":"t","message_mode":"send","paths":["payload.bin"]
+        }),
+        &["paths"],
+    );
+    rejected(
+        "send_cross_group",
+        json!({"group_id":group_id,"dst_group_id":destination_id,"by":"user","text":"t","message_mode":"send","dst_to":["@foreman"]}),
+        &["dst_to"],
+    );
+    rejected(
+        "tracked_send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"title":"T","text":"t","message_mode":"mail"}),
+        &["message_mode"],
+    );
+    rejected(
+        "system_notify",
+        json!({"group_id":group_id,"by":"system","kind":"info","title":"T","text":"t","format":"markdown"}),
+        &["format"],
+    );
+    rejected(
+        "slash_skill_dispatch",
+        json!({"group_id":group_id,"by":"user","task_text":"t","command":"/x","capability_id":"skill:x","text":"overwritten"}),
+        &["text"],
+    );
+    assert!(effects() == before, "a rejected request had an effect");
+
+    // Fields a handler refuses itself keep their own error.
+    let legacy = call_raw(
+        &home,
+        "reply",
+        json!({"group_id":group_id,"by":"lead","reply_to":parent,"text":"t","priority":"urgent"}),
+    );
+    assert_eq!(
+        legacy.error.as_ref().map(|error| error.code.as_str()),
+        Some("unsupported_message_fields")
+    );
+
+    // An accepted request still replays; a retry that adds an unknown key
+    // fails without replaying.
+    let request = json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"once","message_mode":"mail","client_id":"stable"});
+    let first = call(&home, "send", request.clone());
+    let again = call(&home, "send", request.clone());
+    assert_eq!(again.result["duplicate"], true);
+    assert_eq!(again.result["event"]["id"], first.result["event"]["id"]);
+    let mut changed = request.as_object().cloned().expect("request");
+    changed.insert("mdoe".into(), json!("mail"));
+    rejected("send", Value::Object(changed), &["mdoe"]);
+
+    // Shapes earlier MCP versions send are still accepted: a raw
+    // idempotency key and no mode on a reply, `actor_id` on a notification.
+    call(
+        &home,
+        "reply",
+        json!({"group_id":group_id,"by":"lead","actor_id":"lead","reply_to":parent,"text":"ok","idempotency_key":"old-reply"}),
+    );
+    call(
+        &home,
+        "system_notify",
+        json!({"group_id":group_id,"by":"lead","actor_id":"peer1","kind":"info","title":"T","message":"m"}),
+    );
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

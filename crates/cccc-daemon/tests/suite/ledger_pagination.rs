@@ -195,7 +195,8 @@ fn message_persists_immutable_sender_snapshot() {
         }),
     );
 
-    let sent = call(
+    // The snapshot is the host's; a caller cannot supply it.
+    let spoofed = call_raw(
         &home,
         "send",
         json!({
@@ -208,6 +209,17 @@ fn message_persists_immutable_sender_snapshot() {
             "sender_runtime":"custom",
             "sender_avatar_path":"state/blobs/spoofed"
         }),
+    );
+    let error = spoofed.error.expect("spoofed snapshot");
+    assert_eq!(error.code, "unknown_arguments");
+    assert_eq!(
+        error.details["unknown"],
+        json!(["sender_avatar_path", "sender_runtime", "sender_title"])
+    );
+    let sent = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"alice","to":["user"],"text":"hello","message_mode":"send"}),
     );
     let event_id = sent.result["event"]["id"].as_str().expect("event id");
     call(

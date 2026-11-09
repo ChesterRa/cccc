@@ -479,6 +479,65 @@ mod tests {
         assert_eq!(args["include_archived"], true);
     }
 
+    /// Every argument a message tool offers reaches the daemon under a key
+    /// that operation accepts, together with the keys the router adds.
+    #[test]
+    fn message_tool_arguments_reach_the_daemon_under_accepted_keys() {
+        use cccc_contracts::message_args::{MessageWrite, unknown};
+        let properties = |tool: &str| {
+            crate::tools::catalog()
+                .into_iter()
+                .find(|entry| entry["name"] == tool)
+                .unwrap_or_else(|| panic!("{tool}"))["inputSchema"]["properties"]
+                .as_object()
+                .expect("properties")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        for (tool, left_out, operation) in [
+            (
+                "cccc_message_send",
+                &["dst_instance_id", "dst_group_id"][..],
+                MessageWrite::Send,
+            ),
+            (
+                "cccc_message_send",
+                &["dst_instance_id"][..],
+                MessageWrite::SendCrossGroup,
+            ),
+            // `event_id` is the same field as `reply_to`.
+            ("cccc_message_reply", &["event_id"][..], MessageWrite::Reply),
+            ("cccc_tracked_send", &[][..], MessageWrite::TrackedSend),
+            ("cccc_notify", &[][..], MessageWrite::SystemNotify),
+        ] {
+            let mut args = Map::new();
+            for key in properties(tool) {
+                if left_out.contains(&key.as_str()) {
+                    continue;
+                }
+                let value = match key.as_str() {
+                    "mode" | "action" => json!("send"),
+                    "to" => json!(["peer"]),
+                    _ => json!("x"),
+                };
+                args.insert(key, value);
+            }
+            let (op, mut mapped) = daemon_call(tool, args).expect(tool);
+            for key in ["by", "_cccc_native_binding"] {
+                mapped.insert(key.into(), json!("router"));
+            }
+            if crate::router::is_message_operation(tool) {
+                mapped.insert("require_peer_insight".into(), json!(true));
+            }
+            assert!(
+                unknown(operation, mapped.keys()).is_empty(),
+                "{tool} reaches {op} with {:?}",
+                unknown(operation, mapped.keys())
+            );
+        }
+    }
+
     #[test]
     fn connect_destination_is_qualified_even_when_group_ids_match() {
         let args=serde_json::json!({"group_id":"g_same","actor_id":"worker","dst_instance_id":"i_other","dst_group_id":"g_same","text":"hello","mode":"send","idempotency_key":"stable"}).as_object().expect("args").clone();

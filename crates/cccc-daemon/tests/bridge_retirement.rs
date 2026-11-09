@@ -39,11 +39,12 @@ fn retired_remote_replies_are_rejected_before_local_writes_even_with_colliding_i
     std::fs::create_dir_all(&archive).expect("archive");
     std::fs::rename(&path, archive.join("original.jsonl")).expect("rotate");
     for op in ["reply", "message_upload_preflight"] {
-        let response = call(
-            &home,
-            op,
-            json!({"group_id":local.group_id,"by":"user","reply_to":source.id,"operation":"reply","text":"must not be sent","has_attachments":true}),
-        );
+        let mut args = json!({"group_id":local.group_id,"by":"user","reply_to":source.id,"text":"must not be sent"});
+        if op == "message_upload_preflight" {
+            args["operation"] = json!("reply");
+            args["has_attachments"] = json!(true);
+        }
+        let response = call(&home, op, args);
         assert!(!response.ok, "{op}");
         assert_eq!(response.error.expect("error").code, "group_bridge_retired");
     }
