@@ -47,22 +47,17 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.51
+## What's new in 0.4.52
 
-- **One panel for what you open.** Workspace files, message attachments and Presentation slots open as tabs in one panel beside or over the messages. Keep several open, find one under **All**, put two side by side to compare them, close several at once and undo it. A file with unsaved edits asks before it closes, and new messages that arrive while the panel covers the chat count as unread.
-- **PDFs scroll on phones and tablets.** On touch devices, and in browsers without a PDF viewer, PDFs from messages, the workspace and Presentation slots served by this CCCC open in a reader inside the page that scrolls through the pages and zooms. It cannot select or search text; message attachments and workspace files keep **Download**.
-- **A note with your choice.** When an agent asks you a question with options, **+ Add a note (optional)** sends a few words with the option you choose, in one reply.
-- **DeepSeek connection settings.** A DeepSeek member's API address, model and key have their own form, both when you add the member and in its Runtime settings; a saved key is never shown again. The default model is now `deepseek-flash`. When a turn fails, the key and other private values the member was started with are replaced wherever the error repeats them in full, before it is saved.
-- **Credentials stay off proxies.** When the address is a literal loopback address, these calls no longer go through a system proxy: the daemon's and the CLI's calls to the local Web, which carry the admin token, and calls to a local MCP server, Mattermost, Codex Voice, Connect peer, skill URL or DeepSeek gateway.
-- **Skill source URLs are protected.** For a skill installed from a direct HTTP(S) URL, CCCC no longer saves or shows the URL's username, password, query string or fragment. A secret in the URL's path is not removed, and entries saved before stay as they are on disk.
-- **Message text in a proportional font.** Messages use IBM Plex Sans by default, with Chinese and Japanese in your system's fonts; code stays monospace. **Body font** offers Sans, Mono and Pixel, and a font you chose stays.
-- **A quieter daemon with Grok web model members.** It no longer rereads the whole Group history every two seconds.
-- **Old search results are marked.** SkillsMP search results that were never imported are no longer recommended and show as unverified.
-- **The Terminal history button and panel are removed.** Scroll the runtime's own terminal to look back, though a runtime that redraws its screen in place may keep no earlier output there; agents can still read retained output through `cccc_terminal`.
+- **Tabs come back after a refresh.** Refreshing a browser tab restores each Group's resource panel: the tabs you had open, the selected one, a **Side by side** comparison, and whether the panel was collapsed or maximized. A Group keeps its side-by-side layout when you switch away and back. Only which files, attachments and Presentation slots were open is kept, in that browser tab's session storage; their contents are read again with your current permissions, and unsaved edits and reading positions are not restored.
+- **Steadier Group switching.** Switching Groups no longer flashes the connection symbol as reconnecting, or makes a member's unread mail mark disappear and come back.
+- **Less work in the background.** To find messages for Chet, the Web no longer reads the whole history of every Group every 30 seconds; it reads only what was written since. Idle Claude, Pi and OpenCode sessions ask the daemon for their next message less often, and the actions on each message no longer make every visible message re-render when a new one arrives.
+- **Memory goes back after busy periods.** On Linux with glibc, the daemon asks the allocator every five minutes to return unused pages to the system, so memory it freed need not stay with the process. This is not a memory limit.
+- **Ctrl-C while the Web starts.** A Ctrl-C after the daemon was ready and while the Web was starting, including just as its **Local:** address appeared, ended `cccc web`, `cccc --headless` and `cccc` without the terminal interface at once. It now starts the usual stop, and a second one still forces the exit.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. If you use a system proxy whose `NO_PROXY` does not exclude loopback, create a new Web admin token, delete the old one, and replace other credentials sent to local services. If a skill URL you installed from held credentials, replace them.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. That first reload still starts with an empty resource panel, because the earlier page did not save its tabs. Sessions that are already connected keep asking at the earlier interval until they are started again.
 
-Details: [0.4.51 release notes](https://chesterra.github.io/cccc/release/v0.4.51_release_notes).
+Details: [0.4.52 release notes](https://chesterra.github.io/cccc/release/v0.4.52_release_notes).
 
 ## Quick start
 

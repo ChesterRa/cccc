@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.52]
+
 ### Changed
 
 - Refreshing the browser tab brings back the resource panel's tabs: their order, the selected tab,
@@ -37,13 +39,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   0.10–0.12% instead of 0.27–0.30%. A message sent to an idle session can take longer to be picked
   up: in a separate check, ten first notifications after idle periods appeared in the Claude
   receiver's output 12–404 ms after they were sent, instead of 31–139 ms.
-- When a message arrives in the open Group, the Web no longer re-renders every visible message and
-  its action bar. The actions each message receives (reply, copy link, relay, open the source
-  message, show recipients, open the message it replies to) were rebuilt on every render of the
-  chat, so each change to its data re-rendered all of them. In headless Chrome on a test Group of
-  150 messages, one incoming message re-rendered about 330 components instead of about 4,200, and
-  the script time of a Group switch fell from about 150 ms to about 110 ms. What these actions do
-  is unchanged; each uses the Group and settings current when it is clicked.
+- The actions each message in the chat receives (reply, copy link, relay, open the source message,
+  show recipients, open the message it replies to) were rebuilt on every render of the chat, so each
+  change to the chat's data, such as an incoming message, re-rendered every visible message and its
+  action bar. They now keep one identity across renders. In headless Chrome on a test Group of 150
+  messages, one incoming message re-rendered about 330 components instead of about 4,200, and the
+  script time of a Group switch fell from about 150 ms to about 110 ms. What these actions do is
+  unchanged; each uses the Group and settings current when it is clicked.
 
 ### Fixed
 
@@ -86,7 +88,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - A package built from source gave its archive the release name, so building again before the
   version number changed silently replaced a release archive of the same version in `dist/`. The
   package scripts now name a local archive after its commit, for example
-  `cccc-v0.4.51+994415c1-x86_64-unknown-linux-gnu.tar.gz`, adding `-dirty` when the tree has
+  `cccc-v0.4.52+<commit>-x86_64-unknown-linux-gnu.tar.gz`, adding `-dirty` when the tree has
   uncommitted changes and using `local` outside a Git checkout; rebuilding replaces only the archive
   of the same name. Without a label the archive helper keeps the release name, which release builds
   use, and no longer overwrites an existing archive of that name.
