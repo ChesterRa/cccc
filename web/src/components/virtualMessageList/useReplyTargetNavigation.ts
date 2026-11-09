@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { LedgerEvent } from "../../types";
 import type { ChatFollowMode } from "../../stores/useUIStore";
 
-export function useReplyTargetNavigation(input: {
+export function useReplyTargetNavigation(latestInput: {
   messages: LedgerEvent[];
   shouldVirtualize: boolean;
   missingTargetMessage: string;
@@ -14,6 +14,12 @@ export function useReplyTargetNavigation(input: {
   setAtBottom: (value: boolean) => void;
   setFollowMode: (value: ChatFollowMode) => void;
 }) {
+  // Every message row receives openReplyTarget; one identity keeps the rows memoized while a
+  // click reads the input of the last committed render.
+  const inputRef = useRef(latestInput);
+  useLayoutEffect(() => {
+    inputRef.current = latestInput;
+  });
   const clearHighlightTimerRef = useRef<number | null>(null);
   const clearNoticeTimerRef = useRef<number | null>(null);
   const [highlightEventId, setHighlightEventId] = useState("");
@@ -30,6 +36,7 @@ export function useReplyTargetNavigation(input: {
 
   const openReplyTarget = useCallback(
     (replyToEventId: string) => {
+      const input = inputRef.current;
       const targetId = String(replyToEventId || "").trim();
       if (!targetId) return;
       const index = input.messages.findIndex((message) => String(message?.id || "") === targetId);
@@ -67,7 +74,7 @@ export function useReplyTargetNavigation(input: {
       container.scrollTo({ top, behavior: "auto" });
       input.onScrollTopChange(top);
     },
-    [input, showNotice],
+    [showNotice],
   );
 
   useEffect(

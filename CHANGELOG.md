@@ -18,6 +18,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   reading positions, recently closed tabs and attachments the ledger has not confirmed yet are not
   restored. Browser tabs do not share this state, and whether a tab the browser duplicates or
   reopens keeps it depends on the browser.
+- The daemon's `message_history`, which Agents read through MCP, walks back from the newest message,
+  or from the given anchor, and stops once it has enough matches to fill the page and tell whether
+  more exist, instead of first collecting every message the reader can see. Results are unchanged.
+  On a synthetic Group of 37,500 events with its ledger already loaded, the median time of one call
+  for the default page fell from 2.0 ms to 0.3 ms, and for the page before an anchor near the end
+  from 2.7 ms to 0.8 ms.
+- The daemon builds most results by converting them to a JSON object, and copied that object once
+  more before replying. It now replies with the object itself. Responses are unchanged. On a
+  synthetic Group with its ledger already loaded, reading the latest 120 messages, their delivery
+  statuses or 50 messages of history requested 12–21% fewer bytes from the Rust allocator.
+- A Claude, Pi or OpenCode session connected to CCCC asks the daemon for its next message less
+  often while nothing is waiting for it: after an empty answer it now waits 500 ms instead of
+  200 ms before it asks again. Other timing, including Claude's existing notification limit, is
+  unchanged. Each request opens a new connection, so even an idle session cost its receiver and the
+  daemon CPU time. In an isolated test, one 60-second run for each version with five idle Claude
+  sessions, the daemon used 0.62% of one CPU core instead of 1.27%, and each session's receiver
+  0.10–0.12% instead of 0.27–0.30%. A message sent to an idle session can take longer to be picked
+  up: in a separate check, ten first notifications after idle periods appeared in the Claude
+  receiver's output 12–404 ms after they were sent, instead of 31–139 ms.
+- When a message arrives in the open Group, the Web no longer re-renders every visible message and
+  its action bar. The actions each message receives (reply, copy link, relay, open the source
+  message, show recipients, open the message it replies to) were rebuilt on every render of the
+  chat, so each change to its data re-rendered all of them. In headless Chrome on a test Group of
+  150 messages, one incoming message re-rendered about 330 components instead of about 4,200, and
+  the script time of a Group switch fell from about 150 ms to about 110 ms. What these actions do
+  is unchanged; each uses the Group and settings current when it is clicked.
 
 ### Fixed
 
@@ -27,6 +53,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   stop, and a second one still forces the exit. How these commands handle a Ctrl-C before their
   daemon is ready is unchanged. The terminal interface on Linux and macOS had a similar gap right
   after it began watching for signals, and now listens for Ctrl-C from that moment.
+- On Linux with glibc, the daemon could keep much of the memory it freed after busy periods, so its
+  resident memory could stay near the size of its busiest moment. It now asks the allocator every
+  five minutes to return unused pages to the system. This is not a memory limit: use still grows
+  while the daemon is busy, and returned pages take a little time to reuse. When the daemon runs
+  inside `cccc`, `cccc web` or `cccc --headless`, the whole process is trimmed, Web included; a
+  daemon started with `cccc daemon start` trims only itself. The daemon diagnostics log records the
+  first trim after the daemon starts and any trim that takes longer than 200 ms, with its duration
+  and resident memory before and after.
+- Every 30 seconds the Web read the whole history of every Group to find messages addressed to
+  Chet. When the Groups' ledger indexes exceeded the in-memory cache budget, these sweeps could
+  rebuild them again and again, which cost a burst of CPU on each sweep and raised resident
+  memory. The Web now keeps its place in each Group's ledger and reads only what was written
+  since. It reads a Group in full when the Web starts or first sees the Group, when the Group's
+  ledger files change in a way it cannot continue from (for example after rotation), and after a
+  failed read. Pending registration and dispatch are still retried. The sweep still checks every
+  Group at 30-second intervals to recover messages the live event feed missed. To diagnose the
+  previous behavior, an isolated test with nine synthetic Groups holding 56.8 MB of ledgers ran
+  the previous Web for 180 seconds with its Chet input worker active and again with the worker
+  held inactive. With the worker active, the process used 0.19–0.38 s of CPU in the two seconds
+  around each 30-second mark, against 0.03–0.05 s, and its resident memory ranged from 346 to 597
+  MiB after the first 10 seconds, against 217 MiB.
 - Switching Groups briefly showed the header's connection symbol as reconnecting, and made a
   member's unread mail mark disappear and come back. A switch replaces the Group's event stream; the
   Web now keeps the connection shown as connected while the new stream opens, shows reconnecting

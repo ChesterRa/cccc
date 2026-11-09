@@ -108,28 +108,29 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         } else {
             generations.get(&actor_id).copied().unwrap_or(0)
         };
-        let visible = events[generation..]
-            .iter()
-            .filter(|event| {
-                event.kind == "chat.message"
-                    && (event.by == actor_id || inbox::is_for_actor(&group, event, &actor_id))
-            })
-            .collect::<Vec<_>>();
+        let events = &events[generation..];
+        let visible = |event: &Event| {
+            event.kind == "chat.message"
+                && (event.by == actor_id || inbox::is_for_actor(&group, event, &actor_id))
+        };
+        // The anchor is the oldest visible message with that ID, as before. The
+        // page walks back from it, or from the newest event, and stops one match
+        // past the limit instead of first collecting every visible message.
         let end = if before.is_empty() {
-            Ok(visible.len())
+            events.len()
         } else {
-            visible
+            events
                 .iter()
-                .position(|event| event.id == before)
+                .position(|event| event.id == before && visible(event))
                 .ok_or_else(|| {
                     OpError::new(
                         "event_not_found",
                         format!("history anchor not found: {before}"),
                     )
-                })
-        }?;
+                })?
+        };
         let mut matches = Vec::new();
-        for event in visible[..end].iter().rev() {
+        for event in events[..end].iter().rev().filter(|event| visible(event)) {
             let event_mode = event
                 .data
                 .get("message_mode")
@@ -152,7 +153,7 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                     continue;
                 }
             }
-            matches.push((*event).clone());
+            matches.push(event.clone());
             if matches.len() > limit {
                 break;
             }
@@ -402,6 +403,151 @@ mod tests {
         assert_eq!(
             history_limit(&request(json!(100))).expect("history limit"),
             100
+        );
+    }
+
+    #[test]
+    fn history_pages_walk_back_from_the_newest_message_or_the_oldest_visible_anchor() {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path()).expect("layout");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("paging", "").expect("group");
+        for id in ["reader", "other"] {
+            actors::add(&mut group, Actor::new(id)).expect("actor");
+        }
+        store.save(&group).expect("save group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let append = |kind: &str, by: &str, data: Value| {
+            let mut event = Event::new(kind, &group.group_id);
+            event.by = by.into();
+            event.data = data.as_object().expect("data").clone();
+            ledger::append(&path, &event).expect("append");
+            event
+        };
+        let chat = |by: &str, to: &str, mode: &str, text: &str| {
+            append(
+                "chat.message",
+                by,
+                json!({"to":[to],"text":text,"message_mode":mode}),
+            )
+        };
+        let before_join = chat("user", "reader", "send", "update before joining");
+        append("actor.add", "user", json!({"actor":{"id":"reader"}}));
+        let mut visible = Vec::new();
+        let mut hidden = Vec::new();
+        for index in 0..12 {
+            let mode = ["send", "mail", "request_reply"][index % 3];
+            visible.push(if index % 4 == 0 {
+                chat("reader", "other", mode, &format!("note {index}"))
+            } else {
+                chat("user", "reader", mode, &format!("update {index}"))
+            });
+            hidden.push(chat("user", "other", mode, &format!("update {index}")));
+            append("runtime.delivery", "system", json!({}));
+        }
+        let read = |args: Value| {
+            let mut request = json!({"group_id":group.group_id,"actor_id":"reader","by":"reader"});
+            let fields = request.as_object_mut().expect("request");
+            fields.extend(args.as_object().expect("args").clone());
+            history(
+                &home,
+                &DaemonRequest {
+                    v: 1,
+                    op: "message_history".into(),
+                    args: fields.clone(),
+                },
+            )
+        };
+        let page = |args: Value| {
+            let result = read(args).expect("page");
+            let ids = result["messages"]
+                .as_array()
+                .expect("messages")
+                .iter()
+                .map(|event| event["id"].as_str().expect("id").to_owned())
+                .collect::<Vec<_>>();
+            (ids, result["has_more"].as_bool().expect("has_more"))
+        };
+        // A page holds the matching visible messages before the anchor, newest first.
+        let expected = |messages: &[Event], filter: &dyn Fn(&Event) -> bool, limit: usize| {
+            let matching = messages
+                .iter()
+                .rev()
+                .filter(|event| filter(event))
+                .map(|event| event.id.clone())
+                .collect::<Vec<_>>();
+            let has_more = matching.len() > limit;
+            (
+                matching.into_iter().take(limit).collect::<Vec<_>>(),
+                has_more,
+            )
+        };
+        let text = |event: &Event| event.data["text"].as_str().expect("text").to_owned();
+        type Filter<'a> = &'a dyn Fn(&Event) -> bool;
+        let filters: [(Value, Filter<'_>); 4] = [
+            (json!({}), &|_| true),
+            (json!({"mode":"mail"}), &|event| {
+                event.data["message_mode"] == "mail"
+            }),
+            (json!({"sender":"user"}), &|event| event.by == "user"),
+            (json!({"query":"UPDATE 1"}), &|event| {
+                text(event).contains("update 1")
+            }),
+        ];
+        for (args, filter) in &filters {
+            for limit in 1..=visible.len() + 1 {
+                let mut latest = args.clone();
+                latest["limit"] = json!(limit);
+                assert_eq!(
+                    page(latest.clone()),
+                    expected(&visible, filter, limit),
+                    "{latest}"
+                );
+                for (index, anchor) in visible.iter().enumerate() {
+                    let mut older = latest.clone();
+                    older["before_event_id"] = json!(anchor.id);
+                    assert_eq!(
+                        page(older.clone()),
+                        expected(&visible[..index], filter, limit),
+                        "{older}"
+                    );
+                }
+            }
+        }
+
+        // An anchor the reader cannot see, one from before it joined, a notice,
+        // or a short ID (which only the exact read resolves) is not found.
+        let notice = append(
+            "system.notify",
+            "system",
+            json!({"kind":"info","target_actor_id":"reader","text":"notice"}),
+        );
+        for anchor in [
+            hidden[3].id.as_str(),
+            before_join.id.as_str(),
+            notice.id.as_str(),
+            &visible[2].id[..8],
+            "missing",
+        ] {
+            let error = read(json!({"before_event_id":anchor})).expect_err(anchor);
+            assert_eq!(error.code, "event_not_found", "{anchor}");
+        }
+
+        // A repeated ID anchors at its oldest copy the reader can see.
+        ledger::append(&path, &visible[5]).expect("repeat a visible ID");
+        let mut shown = hidden[7].clone();
+        shown.data.insert("to".into(), json!(["reader"]));
+        ledger::append(&path, &shown).expect("repeat a hidden ID for the reader");
+        let all_before = |anchor: &str| page(json!({"before_event_id":anchor,"limit":100})).0;
+        assert_eq!(
+            all_before(&visible[5].id),
+            expected(&visible[..5], &|_: &Event| true, 100).0
+        );
+        let mut seen = visible.clone();
+        seen.push(visible[5].clone());
+        assert_eq!(
+            all_before(&hidden[7].id),
+            expected(&seen, &|_: &Event| true, 100).0
         );
     }
 

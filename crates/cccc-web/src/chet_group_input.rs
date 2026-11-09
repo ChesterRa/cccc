@@ -37,7 +37,14 @@ struct Work {
     event: Event,
 }
 
+/// How often the worker reads what each Group committed since the last sweep.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+
 pub(crate) fn spawn(state: AppState) {
+    spawn_with_interval(state, SWEEP_INTERVAL);
+}
+
+fn spawn_with_interval(state: AppState, every: Duration) {
     let mut shutdown = state.shutdown.subscribe();
     tokio::spawn(async move {
         let Some(_owner) = take_owner(&state.home, &mut shutdown).await else {
@@ -80,10 +87,14 @@ pub(crate) fn spawn(state: AppState) {
             }
         });
         let mut rescan = true;
-        let mut retry = tokio::time::interval_at(
-            tokio::time::Instant::now() + Duration::from_secs(30),
-            Duration::from_secs(30),
-        );
+        // Each Group's position in its ledger, so a sweep reads only what was
+        // committed since the last one. The feed only shortens the wait: a
+        // Group it has not discovered is still read here.
+        let mut cursors = HashMap::<String, ledger::SnapshotCursor>::new();
+        // Groups to read whole again, because an input found there was left
+        // unregistered or undispatched after its cursor moved past it.
+        let mut reread = HashSet::<String>::new();
+        let mut retry = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
         retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             if rescan {
@@ -93,22 +104,39 @@ pub(crate) fn spawn(state: AppState) {
                 if reconcile_pending(&state, &mut known, &mut shutdown).await {
                     return;
                 }
+                reread.extend(pending_groups(&known));
+                for group_id in reread.drain() {
+                    cursors.remove(&group_id);
+                }
                 let home = state.home.clone();
-                let events = tokio::task::spawn_blocking(move || source_events(&home)).await;
-                match events {
-                    Ok(Ok(events)) => {
+                let mut taken = std::mem::take(&mut cursors);
+                let swept = tokio::task::spawn_blocking(move || {
+                    let events = source_events(&home, &mut taken);
+                    (taken, events)
+                })
+                .await;
+                match swept {
+                    Ok((kept, Ok(events))) => {
+                        cursors = kept;
                         for event in events {
                             if shutdown.try_recv().is_ok() {
                                 return;
                             }
+                            let group_id = event.group_id.clone();
                             if let Err(error) =
                                 register_event(&state, &mut known, event, &work_tx).await
                             {
                                 tracing::warn!(%error, "Chet Group input remains pending");
+                                reread.insert(group_id);
                             }
                         }
                     }
-                    _ => tracing::warn!("Chet Group source sweep failed; will retry"),
+                    Ok((kept, Err(_))) => {
+                        cursors = kept;
+                        tracing::warn!("Chet Group source sweep failed; will retry");
+                    }
+                    // The cursors went with the task, so the next sweep reads every Group whole.
+                    Err(_) => tracing::warn!("Chet Group source sweep failed; will retry"),
                 }
                 rescan = false;
             }
@@ -124,6 +152,9 @@ pub(crate) fn spawn(state: AppState) {
                 },
                 received = feed.recv() => match received {
                     Ok(event) => {
+                        // No reread here: the next sweep reads this message if
+                        // its cursor has not yet, and otherwise the sweep already
+                        // tried it and scheduled any retry.
                         if let Err(error) = register_event(&state, &mut known, event, &work_tx).await {
                             tracing::warn!(%error, "Chet Group input remains pending");
                         }
@@ -344,35 +375,56 @@ fn addressed_to_chet(event: &Event) -> bool {
         && event.data.get("to") == Some(&json!([actors::CHET_SERVICE_PRINCIPAL]))
 }
 
-fn source_events(home: &HomeLayout) -> std::io::Result<Vec<Event>> {
+/// Groups with an input that was neither attempted nor is waiting in the dispatcher.
+fn pending_groups(known: &HashMap<SourceKey, KnownInput>) -> Vec<String> {
+    known
+        .iter()
+        .filter(|(_, entry)| !entry.attempted && !entry.queued)
+        .map(|((group_id, _, _), _)| group_id.clone())
+        .collect()
+}
+
+/// Messages addressed to Chet that each Group committed since its cursor. A
+/// Group without a cursor, or whose ledger file was replaced or rotated, is
+/// read whole. A read error publishes nothing for that Group and leaves its
+/// cursor to start over, while other Groups' messages are still returned.
+fn source_events(
+    home: &HomeLayout,
+    cursors: &mut HashMap<String, ledger::SnapshotCursor>,
+) -> std::io::Result<Vec<Event>> {
+    // An error is returned only from here, before any cursor moves, so a caller
+    // that drops the result loses no message.
     let groups = GroupStore::new(home.clone())?;
+    let listed = groups.list()?;
+    cursors.retain(|group_id, _| listed.iter().any(|meta| meta.group_id == *group_id));
     let mut pending = Vec::new();
-    for meta in groups.list()? {
-        let events = match groups.ledger_path(&meta.group_id).and_then(|path| {
-            ledger::inspect(&path, |events, _| {
-                let start = events
-                    .iter()
-                    .rposition(|event| {
-                        event.kind == "group.create"
-                            && event.data.get("imported") == Some(&Value::Bool(true))
-                    })
-                    .map_or(0, |index| index + 1);
-                events
-                    .iter()
-                    .skip(start)
-                    .filter(|event| addressed_to_chet(event))
-                    .cloned()
-                    .collect::<Vec<_>>()
+    for meta in listed {
+        let cursor = cursors.entry(meta.group_id.clone()).or_default();
+        let mut found = Vec::new();
+        let visited = groups.ledger_path(&meta.group_id).and_then(|path| {
+            cursor.visit(&path, |update| match update {
+                ledger::SnapshotUpdate::Reset => found.clear(),
+                // Imported history ends at its marker; only later messages are inputs.
+                ledger::SnapshotUpdate::Event(event)
+                    if event.kind == "group.create"
+                        && event.data.get("imported") == Some(&Value::Bool(true)) =>
+                {
+                    found.clear();
+                }
+                ledger::SnapshotUpdate::Event(event) => {
+                    if addressed_to_chet(&event) {
+                        found.push(event);
+                    }
+                }
             })
-        }) {
-            Ok(events) => events,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+        });
+        match visited {
+            Ok(()) => pending.extend(found),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => {
                 tracing::warn!("Chet could not scan a Group ledger; other Groups remain available");
-                continue;
             }
-        };
-        pending.extend(events);
+        }
     }
     Ok(pending)
 }
@@ -683,6 +735,7 @@ fn bounded_reference_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cccc_contracts::DaemonResponse;
 
     #[test]
     fn group_input_instructions_keep_requests_and_acknowledgements_distinct() {
@@ -1010,7 +1063,7 @@ mod tests {
             receiver.recv().await,
             Err(broadcast::error::RecvError::Lagged(_))
         ));
-        let recovered = source_events(&home).expect("reconcile");
+        let recovered = source_events(&home, &mut HashMap::new()).expect("reconcile");
         assert_eq!(
             recovered
                 .iter()
@@ -1037,5 +1090,302 @@ mod tests {
             assert_eq!(repeated.result["registration"], "existing");
             assert_eq!(first.result["id"], repeated.result["id"]);
         }
+    }
+
+    fn event_ids(events: Vec<Event>) -> Vec<String> {
+        events.into_iter().map(|event| event.id).collect()
+    }
+
+    #[test]
+    fn ledger_sweep_reads_each_new_message_once_and_a_group_without_a_cursor_whole() {
+        let temp = tempfile::tempdir().expect("isolated home");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let groups = GroupStore::new(home.clone()).expect("groups");
+        let first = groups.create("first", "").expect("group");
+        let first_path = groups.ledger_path(&first.group_id).expect("ledger");
+        let one = fixture_message(&first.group_id, "one");
+        ledger::append(&first_path, &one).expect("append");
+        let mut cursors = HashMap::new();
+        let sweep = |cursors: &mut HashMap<String, ledger::SnapshotCursor>| {
+            event_ids(source_events(&home, cursors).expect("sweep"))
+        };
+        assert_eq!(sweep(&mut cursors), vec![one.id.clone()]);
+        // A later sweep reads only what was committed since the last one.
+        let two = fixture_message(&first.group_id, "two");
+        ledger::append(&first_path, &two).expect("append");
+        assert_eq!(sweep(&mut cursors), vec![two.id.clone()]);
+        assert!(sweep(&mut cursors).is_empty());
+        // A Group the feed never announced is still read from its start.
+        let second = groups.create("second", "").expect("group");
+        let three = fixture_message(&second.group_id, "three");
+        ledger::append(
+            &groups.ledger_path(&second.group_id).expect("ledger"),
+            &three,
+        )
+        .expect("append");
+        assert_eq!(sweep(&mut cursors), vec![three.id]);
+        // A retry drops the cursor, which reads that Group whole again.
+        cursors.remove(&first.group_id);
+        assert_eq!(sweep(&mut cursors), vec![one.id, two.id]);
+    }
+
+    #[test]
+    fn ledger_sweep_skips_history_imported_after_the_cursor() {
+        let temp = tempfile::tempdir().expect("isolated home");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let groups = GroupStore::new(home.clone()).expect("groups");
+        let group = groups.create("fixture", "").expect("group");
+        let path = groups.ledger_path(&group.group_id).expect("ledger");
+        let mut cursors = HashMap::new();
+        assert!(
+            source_events(&home, &mut cursors)
+                .expect("sweep")
+                .is_empty()
+        );
+        ledger::append(&path, &fixture_message(&group.group_id, "imported")).expect("append");
+        let mut marker = Event::new("group.create", &group.group_id);
+        marker.data.insert("imported".into(), json!(true));
+        ledger::append(&path, &marker).expect("import marker");
+        let after = fixture_message(&group.group_id, "after the import");
+        ledger::append(&path, &after).expect("append");
+        let swept = source_events(&home, &mut cursors).expect("sweep");
+        assert_eq!(event_ids(swept), vec![after.id]);
+    }
+
+    #[test]
+    fn ledger_sweep_reads_a_group_whole_again_after_a_read_error() {
+        let temp = tempfile::tempdir().expect("isolated home");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let groups = GroupStore::new(home.clone()).expect("groups");
+        let group = groups.create("fixture", "").expect("group");
+        let path = groups.ledger_path(&group.group_id).expect("ledger");
+        let healthy = groups.create("healthy", "").expect("group");
+        let healthy_path = groups.ledger_path(&healthy.group_id).expect("ledger");
+        let one = fixture_message(&group.group_id, "one");
+        ledger::append(&path, &one).expect("append");
+        let mut cursors = HashMap::new();
+        assert_eq!(
+            event_ids(source_events(&home, &mut cursors).expect("sweep")),
+            vec![one.id.clone()]
+        );
+        let saved = std::fs::read(&path).expect("ledger bytes");
+        std::fs::remove_file(&path).expect("remove ledger");
+        std::fs::create_dir(&path).expect("directory in place of the ledger");
+        // One Group's failed read still returns what another Group committed.
+        let elsewhere = fixture_message(&healthy.group_id, "elsewhere");
+        ledger::append(&healthy_path, &elsewhere).expect("append");
+        assert_eq!(
+            event_ids(source_events(&home, &mut cursors).expect("sweep")),
+            vec![elsewhere.id]
+        );
+        std::fs::remove_dir(&path).expect("remove directory");
+        std::fs::write(&path, saved).expect("restore ledger");
+        let two = fixture_message(&group.group_id, "two");
+        ledger::append(&path, &two).expect("append");
+        // Nothing that the failed read visited was lost.
+        assert_eq!(
+            event_ids(source_events(&home, &mut cursors).expect("sweep")),
+            vec![one.id, two.id]
+        );
+    }
+
+    #[test]
+    fn retry_rereads_only_groups_with_an_input_neither_attempted_nor_queued() {
+        let entry = |attempted, queued| KnownInput {
+            id: Uuid::new_v4(),
+            input: GroupInput {
+                group_id: "g".into(),
+                group_generation: "generation".into(),
+                event_id: Uuid::new_v4().simple().to_string(),
+                sender: GroupInputSender::User,
+                reply_to: None,
+            },
+            attempted,
+            queued,
+        };
+        let mut known = HashMap::new();
+        known.insert(
+            ("g_attempted".into(), "a".into(), "1".into()),
+            entry(true, false),
+        );
+        known.insert(
+            ("g_queued".into(), "a".into(), "2".into()),
+            entry(false, true),
+        );
+        assert!(pending_groups(&known).is_empty());
+        known.insert(
+            ("g_left".into(), "a".into(), "3".into()),
+            entry(false, false),
+        );
+        assert_eq!(pending_groups(&known), vec!["g_left".to_owned()]);
+    }
+
+    /// A daemon without Chet history that records every request and answers
+    /// each operation with `answer(op)`.
+    async fn fixture_daemon(
+        home: &HomeLayout,
+        answer: fn(&str) -> DaemonResponse,
+    ) -> std::sync::Arc<std::sync::Mutex<Vec<DaemonRequest>>> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = cccc_contracts::DaemonAddress {
+            v: 1,
+            transport: cccc_contracts::Transport::Tcp,
+            path: String::new(),
+            host: "127.0.0.1".into(),
+            port: listener.local_addr().expect("address").port(),
+            pid: std::process::id(),
+            version: "test".into(),
+            source_id: String::new(),
+            ts: "test".into(),
+        };
+        std::fs::write(
+            home.daemon_dir().join("ccccd.addr.json"),
+            serde_json::to_vec(&address).expect("serialize address"),
+        )
+        .expect("write address");
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = std::sync::Arc::clone(&requests);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let seen = std::sync::Arc::clone(&seen);
+                tokio::spawn(async move {
+                    let mut stream = tokio::io::BufReader::new(stream);
+                    let mut line = String::new();
+                    if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let request: DaemonRequest = serde_json::from_str(&line).expect("request");
+                    let response = if request.op == "chet_history_list" {
+                        DaemonResponse::success(
+                            json!({"records": [], "after": "0", "has_more": false})
+                                .as_object()
+                                .expect("result")
+                                .clone(),
+                        )
+                    } else {
+                        answer(&request.op)
+                    };
+                    seen.lock().expect("requests").push(request);
+                    let mut payload = serde_json::to_vec(&response).expect("response");
+                    payload.push(b'\n');
+                    let _ = stream.get_mut().write_all(&payload).await;
+                });
+            }
+        });
+        requests
+    }
+
+    /// Runs the real worker with a short sweep interval on one message addressed
+    /// to Chet that was committed before it started, so the live feed never
+    /// carries it, and waits until the fixture daemon has received `op` for
+    /// that message's Group `times` times.
+    async fn worker_requests_reach(answer: fn(&str) -> DaemonResponse, op: &str, times: usize) {
+        let temp = tempfile::tempdir().expect("isolated home");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let requests = fixture_daemon(&home, answer).await;
+        let groups = GroupStore::new(home.clone()).expect("groups");
+        let group = groups.create("fixture", "").expect("group");
+        let event = fixture_message(&group.group_id, "question");
+        ledger::append(
+            &groups.ledger_path(&group.group_id).expect("ledger"),
+            &event,
+        )
+        .expect("append");
+        let (shutdown, _) = broadcast::channel(4);
+        let (_, _, _, state, _) = crate::app_with_shutdown_and_recovery(
+            home.clone(),
+            shutdown.clone(),
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "fixture".into(),
+            None,
+        );
+        spawn_with_interval(state, Duration::from_millis(50));
+        let target = json!(group.group_id);
+        let count = || {
+            requests
+                .lock()
+                .expect("requests")
+                .iter()
+                .filter(|request| {
+                    let group_id = Some(&target);
+                    request.op == op
+                        && (request.args.get("group_id") == group_id
+                            || request
+                                .args
+                                .get("input")
+                                .and_then(|input| input.get("group_id"))
+                                == group_id)
+                })
+                .count()
+        };
+        let reached = tokio::time::timeout(Duration::from_secs(10), async {
+            while count() < times {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        shutdown.send(()).ok();
+        let ops = requests
+            .lock()
+            .expect("requests")
+            .iter()
+            .map(|request| request.op.clone())
+            .collect::<Vec<_>>();
+        assert!(
+            reached.is_ok(),
+            "{op} reached {} of {times}: {ops:?}",
+            count()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_registers_again_a_message_whose_registration_failed_after_its_cursor_moved() {
+        // The first sweep reads the message and moves its cursor past it, and
+        // the registration fails. Only a sweep that reads the Group whole again
+        // can try once more.
+        worker_requests_reach(
+            |_| DaemonResponse::failure("unavailable", "fixture"),
+            "chet_history_group_input",
+            2,
+        )
+        .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_dispatches_again_an_input_whose_dispatch_did_not_attempt_it() {
+        // Registration succeeds and building the prompt fails, so each dispatch
+        // stops before any Runtime is prepared and leaves the input unattempted
+        // and unqueued. Reconciling it does not dispatch it; only a sweep that
+        // reads its Group whole again registers and queues it once more, and
+        // that second dispatch asks for the reference history again.
+        worker_requests_reach(
+            |op| match op {
+                "chet_history_group_input" => DaemonResponse::success(
+                    json!({
+                        "id": "0d6e3f6a-4a52-4f1c-9b8e-2f3c4d5e6f70",
+                        "registration": "inserted",
+                    })
+                    .as_object()
+                    .expect("result")
+                    .clone(),
+                ),
+                _ => DaemonResponse::failure("unavailable", "fixture"),
+            },
+            "message_history",
+            2,
+        )
+        .await;
     }
 }

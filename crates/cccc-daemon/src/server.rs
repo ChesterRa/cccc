@@ -54,6 +54,8 @@ async fn run_with_restore(
     std::fs::write(&lifecycle.paths.pid, format!("{}\n", std::process::id()))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let actor_activity = ActorActivityService::start(lifecycle.paths.home.clone());
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    let memory_maintenance = crate::server_memory::MemoryMaintenance::start();
     let dispatch_locks = DispatchLocks::default();
 
     let result = if use_tcp() {
@@ -76,6 +78,8 @@ async fn run_with_restore(
         .await
     };
     actor_activity.finish().await;
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    memory_maintenance.finish().await;
     lifecycle.finish(result)
 }
 

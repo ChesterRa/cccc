@@ -1,12 +1,18 @@
 #![cfg(unix)]
 use cccc_client::DaemonClient;
-use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, local_session::LocalSessionRuntime};
+use cccc_contracts::{
+    Actor, ActorRuntime, DaemonRequest, DaemonResponse, local_session::LocalSessionRuntime,
+};
 use cccc_core::{
     GroupStore, HomeLayout, actors,
     local_sessions::{self as native, NativeHost, NativeSession},
 };
 use serde_json::{Map, Value, json};
-use std::{path::Path, process::Stdio, time::Duration};
+use std::{
+    path::Path,
+    process::Stdio,
+    time::{Duration, Instant},
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 fn isolated_command(root: &Path, home: &HomeLayout) -> tokio::process::Command {
@@ -208,4 +214,99 @@ async fn claude_monitor_reattaches_after_in_app_resume_without_restarting_the_re
         .expect("daemon exit")
         .expect("task")
         .expect("clean shutdown");
+}
+
+#[tokio::test]
+async fn an_idle_claude_receiver_waits_longer_after_each_empty_answer() {
+    let temp = tempfile::tempdir().expect("isolated native fixture");
+    let home = HomeLayout::from_path(temp.path().join("cccc")).expect("home");
+    let provider = temp.path().join("provider");
+    std::fs::create_dir(&provider).expect("provider");
+    let host = NativeHost::capture(std::process::id()).expect("native host fixture");
+    native::write(
+        &home,
+        NativeSession {
+            source_id: format!("claude:{}", host.key()),
+            runtime: LocalSessionRuntime::Claude,
+            native_session_id: "idle-conversation".into(),
+            host: host.clone(),
+            cwd: temp.path().to_string_lossy().into_owned(),
+            title: "Idle native host".into(),
+            origin: None,
+            revision: "idle-revision".into(),
+            context_epoch: 0,
+            codex_home: None,
+            codex_can_receive: false,
+            codex_program: None,
+            claude_config_dir: Some(provider),
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: None,
+            retired: None,
+        },
+    )
+    .expect("idle conversation");
+    // A stand-in daemon that never has a handoff, as an idle queue or a daemon from before this
+    // pacing answers. It notes when each request for the next handoff arrives, before replying.
+    std::fs::create_dir_all(home.daemon_dir()).expect("daemon directory");
+    let socket = home.daemon_dir().join("stand-in.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).expect("stand-in daemon");
+    std::fs::write(
+        cccc_client::address_path(&home),
+        json!({"v":1,"transport":"unix","path":socket,"pid":std::process::id(),
+            "version":"stand-in","ts":"2026-11-09T00:00:00Z"})
+        .to_string(),
+    )
+    .expect("stand-in address");
+    let (arrived, mut arrivals) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let arrived = arrived.clone();
+            tokio::spawn(async move {
+                let (read, mut write) = stream.into_split();
+                let mut lines = BufReader::new(read).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let request: DaemonRequest = serde_json::from_str(&line).expect("request");
+                    let result = if request.op == "local_session_receiver_next" {
+                        let _ = arrived.send(Instant::now());
+                        json!({"source":{},"handoff":null})
+                    } else {
+                        json!({"source":{}})
+                    };
+                    let response =
+                        DaemonResponse::success(result.as_object().expect("result object").clone());
+                    let mut payload = serde_json::to_vec(&response).expect("response");
+                    payload.push(b'\n');
+                    if write.write_all(&payload).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    let mut receiver = isolated_command(temp.path(), &home)
+        .args(["sessions", "receive", "--host-pid", &host.pid.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("real native receive process");
+    // Wait for the requests themselves rather than a fixed window: a busy machine may delay
+    // the receiver, but never makes it ask sooner.
+    let mut times = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while times.len() < 3 {
+            times.push(arrivals.recv().await.expect("stand-in daemon"));
+        }
+    })
+    .await
+    .expect("three requests for the next handoff");
+    receiver.kill().await.expect("stop the receiver");
+    for pair in times.windows(2) {
+        let gap = pair[1] - pair[0];
+        assert!(
+            gap >= Duration::from_millis(500),
+            "asked again {gap:?} after an empty answer"
+        );
+    }
 }

@@ -39,8 +39,12 @@ export function useVirtualMessageMetadata(
 
   const actorDisplayNames = useActorDisplayNameMap(actors);
   const displayNameMap = useMemo(() => {
+    // Every message row receives this map. Without Group Bridge aliases it is the actor map
+    // itself, so a new message no longer gives the row memo a new map on its own.
+    const bridgeNames = buildGroupBridgeDisplayNameMap(messages);
+    if (bridgeNames.size === 0) return actorDisplayNames;
     const values = new Map(actorDisplayNames);
-    for (const [id, name] of buildGroupBridgeDisplayNameMap(messages)) values.set(id, name);
+    for (const [id, name] of bridgeNames) values.set(id, name);
     return values;
   }, [actorDisplayNames, messages]);
 

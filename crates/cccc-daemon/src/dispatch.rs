@@ -125,10 +125,10 @@ pub fn object<T: Serialize>(value: T) -> OpResult {
 }
 
 pub fn value_map(value: Value) -> OpResult {
-    value
-        .as_object()
-        .cloned()
-        .ok_or_else(|| OpError::new("internal_error", "result is not an object"))
+    match value {
+        Value::Object(result) => Ok(result),
+        _ => Err(OpError::new("internal_error", "result is not an object")),
+    }
 }
 
 pub fn store(home: &HomeLayout) -> Result<GroupStore, OpError> {

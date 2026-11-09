@@ -10,6 +10,7 @@ members = [
   "crates/cccc-mcp",
   "crates/cccc-notebooklm",
   "crates/cccc-web",
+  "crates/cccc-linux-memory",
   "crates/cccc-windows-console",
   "crates/cccc-windows-process",
   "crates/cccc-cli",

@@ -46,6 +46,9 @@ zip.workspace = true
 [target.'cfg(windows)'.dependencies]
 win32job.workspace = true
 
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+cccc-linux-memory = { path = "../cccc-linux-memory" }
+
 [dev-dependencies]
 axum.workspace = true
 

@@ -18,6 +18,8 @@ mod server_connection;
 mod server_connections;
 mod server_events_stream;
 mod server_lifecycle;
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+mod server_memory;
 mod server_terminal_attach;
 
 pub use dispatch::dispatch as handle_request;

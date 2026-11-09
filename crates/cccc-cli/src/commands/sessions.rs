@@ -21,6 +21,12 @@ pub(crate) mod setup;
 /// half of them after the 18th.
 const MONITOR_NOTICE_GAP: Duration = Duration::from_millis(2_100);
 
+/// A native receiver passes again this soon, unless its last request for the next handoff came
+/// back empty: then it waits `IDLE_RECEIVE_POLL`, so an idle session asks the daemon less often
+/// while messages that arrive in a row are still taken one after another.
+const RECEIVE_POLL: Duration = Duration::from_millis(200);
+const IDLE_RECEIVE_POLL: Duration = Duration::from_millis(500);
+
 pub async fn run(home: &HomeLayout, action: SessionsAction) -> Result<()> {
     let client = DaemonClient::new(home.clone());
     match action {
@@ -387,12 +393,14 @@ async fn receive(home: &HomeLayout, host_pid: Option<u32>) -> Result<()> {
     let mut next_notice_at = tokio::time::Instant::now();
     let mut output = tokio::io::stdout();
     let mut stop = std::pin::pin!(stop_signal());
+    let mut wait = RECEIVE_POLL;
     let result = async {
         loop {
             tokio::select! {
                 ()=&mut stop=>break,
-                ()=tokio::time::sleep(Duration::from_millis(200))=>{},
+                ()=tokio::time::sleep(wait)=>{},
             }
+            wait = RECEIVE_POLL;
             if !host.alive() {
                 break;
             }
@@ -457,6 +465,7 @@ async fn receive(home: &HomeLayout, host_pid: Option<u32>) -> Result<()> {
                 }
             };
             if next["handoff"].is_null() {
+                wait = IDLE_RECEIVE_POLL;
                 continue;
             }
             let handoff = &next["handoff"];

@@ -575,6 +575,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cccc-linux-memory"
+version = "0.4.51"
+
+[[package]]
 name = "cccc-pair-client"
 version = "0.4.51"
 dependencies = [
@@ -641,6 +645,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "cccc-linux-memory",
  "cccc-pair-client",
  "cccc-pair-contracts",
  "cccc-pair-core",

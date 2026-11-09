@@ -1,8 +1,9 @@
 //! Bounded, content-free diagnostics for the CLI-owned daemon.
 //!
 //! Tracing fields may contain provider output or other private data. This
-//! subscriber records only source locations and explicitly allowed identifiers
-//! and codes. It deliberately never formats a `message` or `error` field.
+//! subscriber records only source locations, explicitly allowed identifiers and
+//! codes, and numeric allocator-maintenance measurements. It deliberately never
+//! formats a `message` or `error` field.
 
 use fs2::FileExt;
 use serde_json::json;
@@ -25,6 +26,7 @@ const LOCK: &str = "ccccd-diagnostics.lock";
 const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_KEYS: usize = 256;
 const REPEAT_INTERVAL: Duration = Duration::from_secs(60);
+const MEMORY_TRIM_TARGET: &str = "cccc_daemon::memory_trim";
 
 pub(crate) fn install(dir: &Path) {
     let state = Arc::new(Mutex::new(State::new(dir.to_path_buf(), MAX_BYTES)));
@@ -49,17 +51,23 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn enabled(&self, metadata: &Metadata<'_>, _: Context<'_, S>) -> bool {
-        *metadata.level() <= Level::WARN
+        (*metadata.level() <= Level::WARN
             && matches!(
                 metadata.target().split("::").next(),
                 Some("cccc_daemon" | "cccc_core" | "cccc_runtime")
-            )
+            ))
+            || (metadata.target() == MEMORY_TRIM_TARGET && *metadata.level() <= Level::INFO)
     }
 
     fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
         let mut fields = SafeFields::default();
         event.record(&mut fields);
         let metadata = event.metadata();
+        let memory_trim = metadata.target() == MEMORY_TRIM_TARGET
+            && fields.action.as_deref() == Some("memory_trim");
+        if *metadata.level() > Level::WARN && !memory_trim {
+            return;
+        }
         let event_id = fields.event_id;
         let key = Key {
             level: metadata.level().as_str().to_owned(),
@@ -100,6 +108,20 @@ where
                 record[name] = json!(value);
             }
         }
+        if memory_trim {
+            for (name, value) in [
+                ("duration_ms", fields.duration_ms),
+                ("rss_before_kib", fields.rss_before_kib),
+                ("rss_after_kib", fields.rss_after_kib),
+            ] {
+                if let Some(value) = value {
+                    record[name] = json!(value);
+                }
+            }
+            if let Some(value) = fields.trim_released {
+                record["trim_released"] = json!(value);
+            }
+        }
         if suppressed > 0 {
             record["suppressed"] = json!(suppressed);
         }
@@ -128,6 +150,10 @@ struct SafeFields {
     event_id: Option<String>,
     code: Option<String>,
     action: Option<String>,
+    duration_ms: Option<u64>,
+    rss_before_kib: Option<u64>,
+    rss_after_kib: Option<u64>,
+    trim_released: Option<bool>,
 }
 
 impl SafeFields {
@@ -150,6 +176,21 @@ impl SafeFields {
 }
 
 impl Visit for SafeFields {
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        match field.name() {
+            "duration_ms" => self.duration_ms = Some(value),
+            "rss_before_kib" => self.rss_before_kib = Some(value),
+            "rss_after_kib" => self.rss_after_kib = Some(value),
+            _ => {}
+        }
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        if field.name() == "trim_released" {
+            self.trim_released = Some(value);
+        }
+    }
+
     fn record_str(&mut self, field: &Field, value: &str) {
         self.record(field.name(), value);
     }
@@ -208,6 +249,7 @@ fn safe_action(value: &str) -> bool {
             | "automation_group_tick"
             | "actor_activity"
             | "ledger_decode"
+            | "memory_trim"
     )
 }
 
@@ -479,6 +521,38 @@ mod tests {
             !temp.path().join(NAME).exists(),
             "busy record was not skipped"
         );
+    }
+
+    #[test]
+    fn allocator_measurements_are_numeric_scoped_and_exclude_routine_debug() {
+        let temp = tempfile::tempdir().expect("temporary diagnostics");
+        let state = Arc::new(Mutex::new(State::new(temp.path().into(), MAX_BYTES)));
+        let subscriber = tracing_subscriber::registry().with(SafeLayer(state));
+        tracing::subscriber::with_default(subscriber, || {
+            let private = "private_fixture_memory_measurement";
+            tracing::info!(target: "cccc_daemon::memory_trim", diagnostic_action = "memory_trim", duration_ms = 12_u64, rss_before_kib = 800_000_u64, rss_after_kib = 300_000_u64, trim_released = true, other_number = 123_u64, error = private, message = private);
+            tracing::debug!(target: "cccc_daemon::memory_trim", diagnostic_action = "memory_trim", duration_ms = 1_u64, "routine maintenance is not a diagnostic");
+            tracing::info!(target: "cccc_daemon::memory_trim", diagnostic_action = "unknown_action", duration_ms = 999_u64, "not the fixed maintenance event");
+            tracing::warn!(target: "cccc_daemon::fixture", diagnostic_action = "memory_trim", duration_ms = 99_u64, rss_before_kib = 999_u64, trim_released = true, "other modules cannot add measurements");
+        });
+        let text = fs::read_to_string(temp.path().join(NAME)).expect("diagnostics");
+        let records: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("JSON line"))
+            .collect();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0]["level"], "INFO");
+        assert_eq!(records[0]["duration_ms"], 12);
+        assert_eq!(records[0]["rss_before_kib"], 800_000);
+        assert_eq!(records[0]["rss_after_kib"], 300_000);
+        assert_eq!(records[0]["trim_released"], true);
+        assert!(records[1].get("duration_ms").is_none());
+        assert!(records[1].get("rss_before_kib").is_none());
+        assert!(records[1].get("trim_released").is_none());
+        assert!(!text.contains("private_fixture"));
+        assert!(!text.contains("other_number"));
+        assert!(!text.contains("routine maintenance"));
+        assert!(!text.contains("unknown_action"));
     }
 
     #[test]

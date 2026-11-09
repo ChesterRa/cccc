@@ -1,0 +1,14 @@
+[package]
+name = "cccc-linux-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Safe glibc memory maintenance for CCCC"
+publish = false
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"
