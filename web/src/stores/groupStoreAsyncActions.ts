@@ -121,6 +121,10 @@ export function createGroupStoreAsyncActions(
   set: GroupStoreSet,
   get: GroupStoreGet,
 ): GroupStoreAsyncActions {
+  // The actors a Group shows now: the selected Group's from the store, another's from its cache.
+  const shownActors = (gid: string): Actor[] =>
+    get().selectedGroupId === gid ? get().actors : getCachedGroupView(gid)?.actors || [];
+
   return {
     refreshGroups: async () => {
       if (refreshGroupsInFlight) {
@@ -231,8 +235,7 @@ export function createGroupStoreAsyncActions(
         });
         if (resp.ok) {
           const split = splitFetchedActors(resp.result.actors || []);
-          const prevActors =
-            get().selectedGroupId === gid ? get().actors : getCachedGroupView(gid)?.actors || [];
+          const prevActors = shownActors(gid);
           const prevInternalActors = get().internalRuntimeActorsByGroup[gid] || [];
           const nextActors = includeUnread
             ? reuseEqualActors(split.actors, prevActors)
@@ -519,12 +522,17 @@ export function createGroupStoreAsyncActions(
         .then((actorsResp) => {
           if (!actorsResp.ok) return;
           const split = splitFetchedActors(actorsResp.result.actors || []);
-          commitViewPatch({ actors: split.actors });
+          // This read has no unread counts. Keep the ones shown until the deferred unread
+          // refresh answers, as refreshActors does, so mail marks do not vanish and return.
+          commitViewPatch({ actors: mergeActorUnreadCounts(split.actors, shownActors(gid)) });
           if (isLatestSelection()) {
             set((state) => ({
               internalRuntimeActorsByGroup: {
                 ...state.internalRuntimeActorsByGroup,
-                [gid]: split.internalRuntimeActors,
+                [gid]: mergeActorUnreadCounts(
+                  split.internalRuntimeActors,
+                  state.internalRuntimeActorsByGroup[gid] || [],
+                ),
               },
               selectedGroupActorsHydrating: false,
               selectedGroupActorStatusProvisional: false,

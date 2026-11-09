@@ -851,6 +851,8 @@
   "workspaceOpenFiles": "Show workspace files",
   "workspaceHideFiles": "Hide workspace files",
   "resourcePanel": {
+    "referenceLoadFailed": "This message reference could not be loaded.",
+    "referenceUnavailable": "This message reference is no longer available.",
     "tabs": "Open resources",
     "show": "Show resources ({{open}} open)",
     "hide": "Collapse resources (tabs stay open)",

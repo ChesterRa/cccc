@@ -202,6 +202,7 @@ export function ResourcePanel({
   slot,
   container,
   files,
+  scopeReady = true,
   isDark,
   readOnly,
   presentation,
@@ -218,6 +219,8 @@ export function ResourcePanel({
   container: RefObject<HTMLDivElement | null>;
   /** openFile and locatePath also select the file's tab once it is read; loadFile does not. */
   files: WorkspaceFilesController & { loadFile: WorkspaceFilesController["openFile"] };
+  /** The current Group's scope list has arrived, including an empty list. */
+  scopeReady?: boolean;
   isDark: boolean;
   readOnly: boolean;
   /** What a Presentation tab needs from the page: the slots, and the slot actions it offers. */
@@ -263,7 +266,13 @@ export function ResourcePanel({
   const setMaximized = useResourcePanelStore((state) => state.setMaximized);
   // Two tabs side by side, as in an editor's split view; leaving it keeps every tab. The tab read
   // before the selected one is the other side's first choice.
-  const [split, setSplit] = useState<ResourceSplit | null>(null);
+  const split = panel.split;
+  const setGroupSplit = useResourcePanelStore((state) => state.setSplit);
+  const setSplit = useCallback(
+    (change: ResourceSplit | null | ((current: ResourceSplit | null) => ResourceSplit | null)) =>
+      setGroupSplit(groupId, change),
+    [groupId, setGroupSplit],
+  );
   // Leaving and coming back finds the same pair, while both are open.
   const lastSplit = useRef<ResourceSplit | null>(null);
   const leaveSplit = useCallback(() => {
@@ -271,7 +280,7 @@ export function ResourcePanel({
       if (current) lastSplit.current = current;
       return null;
     });
-  }, []);
+  }, [setSplit]);
   // A link followed in a side moves one side only. A link within the file moves the side it
   // was followed from, without the editor. A link to another file goes through the editor and
   // moves the side already showing that file, or else the current side, where the file opens;
@@ -309,7 +318,7 @@ export function ResourcePanel({
   }, [panel.activeKey]);
   useEffect(() => {
     setSplit((current) => (current ? followTabs(current, tabs, panel.activeKey) : current));
-  }, [panel.activeKey, tabs]);
+  }, [panel.activeKey, setSplit, tabs]);
   const splitSide = (key: string): SplitSide | null =>
     split?.left === key ? "left" : split?.right === key ? "right" : null;
   const [listOpen, setListOpen] = useState(false);
@@ -331,9 +340,23 @@ export function ResourcePanel({
   // Only the tab's own file shows under it. While the editor still holds another file, because
   // this one is loading or could not be read, the tab says so instead of showing that file.
   const workspaceShown =
-    active?.kind === "workspace" && sameScope(active, files) && files.file?.path === active.path;
+    scopeReady &&
+    active?.kind === "workspace" &&
+    sameScope(active, files) &&
+    files.file?.path === active.path;
   const workspacePending =
-    active?.kind === "workspace" && sameScope(active, files) && !workspaceShown ? active : null;
+    scopeReady && active?.kind === "workspace" && sameScope(active, files) && !workspaceShown
+      ? active
+      : null;
+  const workspaceLoading = (
+    <p
+      role="status"
+      className="p-4 text-sm text-[var(--color-text-secondary)]"
+      data-resource-workspace-loading
+    >
+      {t("common:loading")}
+    </p>
+  );
   const workspaceKept =
     !!files.file &&
     tabs.some(
@@ -1035,7 +1058,9 @@ export function ResourcePanel({
               const both = split.left === split.right;
               const content =
                 tab.kind === "workspace" ? (
-                  sameScope(tab, files) ? (
+                  !scopeReady ? (
+                    workspaceLoading
+                  ) : sameScope(tab, files) ? (
                     <WorkspaceResourceView
                       groupId={groupId}
                       resource={tab}
@@ -1101,10 +1126,14 @@ export function ResourcePanel({
               );
             })
           : null}
-        {!split && active?.kind === "workspace" && !sameScope(active, files) ? (
-          <OtherScopeNotice
-            draft={files.getFileDraft(active.path, active.scopeKey, active.scopeUrl)}
-          />
+        {!split && active?.kind === "workspace" && (!scopeReady || !sameScope(active, files)) ? (
+          scopeReady ? (
+            <OtherScopeNotice
+              draft={files.getFileDraft(active.path, active.scopeKey, active.scopeUrl)}
+            />
+          ) : (
+            workspaceLoading
+          )
         ) : null}
         {!split && workspacePending ? (
           files.selectedPath === workspacePending.path && files.fileError ? (
@@ -1124,13 +1153,7 @@ export function ResourcePanel({
               </button>
             </div>
           ) : (
-            <p
-              role="status"
-              className="p-4 text-sm text-[var(--color-text-secondary)]"
-              data-resource-workspace-loading
-            >
-              {t("common:loading")}
-            </p>
+            workspaceLoading
           )
         ) : null}
         {/* The editor's file stays mounted while another tab is in front, so coming back finds
@@ -1177,6 +1200,7 @@ export function ResourcePanel({
                       presentation={presentation.data}
                       focusRef={tab.focusRef ?? null}
                       focusEventId={tab.focusEventId ?? null}
+                      referenceKey={tab.refKey}
                       isDark={isDark}
                       readOnly={presentation.readOnly}
                       visible={shown && front}

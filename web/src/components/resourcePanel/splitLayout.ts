@@ -1,13 +1,9 @@
 import type { CSSProperties } from "react";
 import type { ResourceTab } from "../../stores/useResourcePanelStore";
+import type { ResourceSplit } from "../../stores/resourcePanelModel";
+export type { ResourceSplit } from "../../stores/resourcePanelModel";
 
 export type SplitSide = "left" | "right";
-
-/**
- * Two open tabs side by side, as in an editor's split view or a diff tool. The focused side is
- * the selected tab: picking a tab elsewhere opens it there.
- */
-export type ResourceSplit = { left: string; right: string; focus: SplitSide; ratio: number };
 
 /** A side's header: as tall as the panel's keys, which grow for touch. */
 export const SPLIT_HEADER = { pointer: 32, touch: 44 };
@@ -50,7 +46,10 @@ export function resumeSplit(
   if (!last || (activeKey !== last.left && activeKey !== last.right)) return null;
   if (!tabs.some((tab) => tab.key === last.left) || !tabs.some((tab) => tab.key === last.right))
     return null;
-  return { ...last, focus: activeKey === last.left ? "left" : "right" };
+  return {
+    ...last,
+    focus: last[last.focus] === activeKey ? last.focus : activeKey === last.left ? "left" : "right",
+  };
 }
 
 /**

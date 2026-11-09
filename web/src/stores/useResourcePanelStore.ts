@@ -1,82 +1,39 @@
 import { create } from "zustand";
-import type { PresentationMessageRef } from "../types";
+import {
+  resourceKey,
+  type AttachmentUpdate,
+  type GroupPanel,
+  type ResourceDescriptor,
+  type ResourceDock,
+  type ResourceSplit,
+  type ResourceTab,
+  type WorkspaceResource,
+} from "./resourcePanelModel";
+import { readResourcePanels, saveResourcePanels } from "./resourcePanelPersistence";
 
-/** Where the one resource panel sits: over the message area, or in the right-hand column. */
-export type ResourceDock = "left" | "right";
-
-export type WorkspaceResource = {
-  kind: "workspace";
-  scopeKey: string;
-  /** The scope's root as well: a scope key bound to another root is another workspace. */
-  scopeUrl: string;
-  /** The server-resolved workspace path, so a symlink and its target share one tab. */
-  path: string;
-};
-
-export type AttachmentResource = {
-  kind: "attachment";
-  /**
-   * The message's stable key: for the user's own messages their client id, which stays the key
-   * after the ledger confirms the message, and the event id for everyone else's. With `index`
-   * it names one attachment, so the same blob sent in two messages stays two tabs.
-   */
-  messageKey: string;
-  /** The confirmed ledger event, empty until known; returning to the message uses it. */
-  eventId: string;
-  index: number;
-  /** The Group that owns the blob, which can differ from the Group whose panel shows it. */
-  blobGroupId: string;
-  /**
-   * Where the blob lives. Addresses are built from this when shown, so a temporary proof that
-   * an address can carry never enters the store or the recently closed list.
-   */
-  blobPath: string;
-  /** The sender's local preview, only until the ledger confirms the message. */
-  localPreviewUrl?: string;
-  /** Who sent it and when, shown to tell two attachments of the same name apart. */
-  sender?: string;
-  sentAt?: string;
-  media: "image" | "video" | "markdown" | "text" | "pdf";
-  isSvg: boolean;
-};
-
-/**
- * A Presentation slot, either itself ("live") or as one message quoted it. Closing such a tab only
- * closes this person's view; the shared slot is cleared only by its own explicit action.
- */
-export type PresentationResource = {
-  kind: "presentation";
-  slotId: string;
-  /** The slot's position as people see it, 1 to 4. */
-  slotIndex: number;
-  /** "live" for the slot itself, `${eventId}:${refIndex}` for a quoted reference. */
-  refKey: string;
-  focusEventId?: string;
-  focusRef?: PresentationMessageRef | null;
-};
-
-export type ResourceDescriptor = WorkspaceResource | AttachmentResource | PresentationResource;
-export type ResourceTab = ResourceDescriptor & { key: string; title: string };
-export type AttachmentUpdate = Partial<
-  Pick<AttachmentResource, "eventId" | "blobGroupId" | "blobPath" | "localPreviewUrl" | "sentAt">
->;
-
-/** What one close took away: one tab, or every tab of a "close others" or "close all". */
-export type ClosedEntry = { id: number; tabs: ResourceTab[] };
-
-type GroupPanel = {
-  tabs: ResourceTab[];
-  activeKey: string;
-  open: boolean;
-  /** Covering the messages and the right column together, until restored or collapsed. */
-  maximized: boolean;
-  closed: ClosedEntry[];
-};
+export { resourceKey } from "./resourcePanelModel";
+export type {
+  AttachmentResource,
+  AttachmentUpdate,
+  ClosedEntry,
+  PresentationResource,
+  ResourceDescriptor,
+  ResourceDock,
+  ResourceTab,
+  WorkspaceResource,
+} from "./resourcePanelModel";
 
 const DOCK_KEY = "cccc-resource-panel-dock";
 const WIDTH_KEY = "cccc-resource-panel-width";
 const CLOSED_LIMIT = 20;
-const EMPTY: GroupPanel = { tabs: [], activeKey: "", open: false, maximized: false, closed: [] };
+const EMPTY: GroupPanel = {
+  tabs: [],
+  activeKey: "",
+  open: false,
+  maximized: false,
+  closed: [],
+  split: null,
+};
 let closedId = 0;
 
 function readDock(): ResourceDock {
@@ -96,18 +53,11 @@ function readWidth(): number | null {
   }
 }
 
-export function resourceKey(resource: ResourceDescriptor): string {
-  if (resource.kind === "workspace")
-    return `workspace:${resource.scopeKey}:${resource.scopeUrl}:${resource.path}`;
-  if (resource.kind === "presentation") return `presentation:${resource.slotId}:${resource.refKey}`;
-  return `attachment:${resource.messageKey}:${resource.index}`;
-}
-
 type ResourcePanelState = {
   dock: ResourceDock;
   /** Docked right, the panel's own column width; until the user drags it, half the row. */
   width: number | null;
-  /** Open tabs live per Group in this page only; a refresh starts empty. */
+  /** Each browser tab restores resource identities and layout per Group across refreshes. */
   groups: Record<string, GroupPanel>;
   /**
    * Bumped by every choice the user makes in the panel. A slow open that finishes after a newer
@@ -151,6 +101,10 @@ type ResourcePanelState = {
     from: string,
     to: string,
   ) => void;
+  setSplit: (
+    groupId: string,
+    split: ResourceSplit | null | ((current: ResourceSplit | null) => ResourceSplit | null),
+  ) => void;
   setOpen: (groupId: string, open: boolean) => void;
   setMaximized: (groupId: string, maximized: boolean) => void;
   setDock: (dock: ResourceDock) => void;
@@ -159,14 +113,19 @@ type ResourcePanelState = {
 
 export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
   const update = (groupId: string, patch: (panel: GroupPanel) => GroupPanel, choice = true) =>
-    set((state) => ({
-      generation: choice ? state.generation + 1 : state.generation,
-      groups: { ...state.groups, [groupId]: patch(state.groups[groupId] ?? EMPTY) },
-    }));
+    set((state) => {
+      const previous = state.groups[groupId] ?? EMPTY;
+      const panel = patch(previous);
+      if (!choice && panel === previous) return state;
+      return {
+        generation: choice ? state.generation + 1 : state.generation,
+        groups: { ...state.groups, [groupId]: panel },
+      };
+    });
   return {
     dock: readDock(),
     width: readWidth(),
-    groups: {},
+    groups: readResourcePanels(),
     generation: 0,
     ensure: (groupId, resource, title) => {
       const key = resourceKey(resource);
@@ -227,6 +186,7 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
           open: panel.open && tabs.length > 0,
           maximized: panel.maximized && tabs.length > 0,
           closed: [{ id, tabs: closing }, ...panel.closed].slice(0, CLOSED_LIMIT),
+          split: tabs.length ? panel.split : null,
         };
       });
       return id;
@@ -306,6 +266,15 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
         false,
       );
     },
+    setSplit: (groupId, change) =>
+      update(
+        groupId,
+        (panel) => {
+          const split = typeof change === "function" ? change(panel.split) : change;
+          return split === panel.split ? panel : { ...panel, split };
+        },
+        false,
+      ),
     setOpen: (groupId, open) =>
       update(groupId, (panel) => {
         const next = open && panel.tabs.length > 0;
@@ -339,3 +308,8 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
 export function useGroupResourcePanel(groupId: string): GroupPanel {
   return useResourcePanelStore((state) => state.groups[groupId] ?? EMPTY);
 }
+
+// Persist references rather than document contents or temporary authorization URLs.
+useResourcePanelStore.subscribe((state, previous) => {
+  if (state.groups !== previous.groups) saveResourcePanels(state.groups);
+});

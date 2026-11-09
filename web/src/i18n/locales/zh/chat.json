@@ -851,6 +851,8 @@
   "workspaceOpenFiles": "显示工作区文件",
   "workspaceHideFiles": "隐藏工作区文件",
   "resourcePanel": {
+    "referenceLoadFailed": "这条消息引用加载失败。",
+    "referenceUnavailable": "这条消息引用已不可用。",
     "tabs": "打开的资源",
     "show": "展开资源（开着 {{open}} 个）",
     "hide": "收起资源（标签都保留）",

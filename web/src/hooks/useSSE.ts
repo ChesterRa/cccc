@@ -39,6 +39,9 @@ const MAX_RECENT_PROCESSED_IDS = 10000;
 // Server heartbeats are sent every 15 seconds; allow 10 seconds for scheduling.
 const FOCUS_STALE_STREAM_MS = 25000;
 const FOCUS_RECOVERY_DEBOUNCE_MS = 500;
+// A Group switch replaces the ledger stream. Report reconnecting only if the new
+// Group's stream has not opened by then, so a normal switch does not flash it.
+export const SWITCH_RECONNECTING_GRACE_MS = 1000;
 
 export {
   computeGroupRuntimeFromActorActivityUpdate,
@@ -97,6 +100,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const headlessReconnectDelayRef = useRef<number>(1000);
   const headlessReconnectTimerRef = useRef<number | null>(null);
   const hiddenDisconnectTimerRef = useRef<number | null>(null);
+  const keepLiveStatusRef = useRef<boolean>(false);
+  const switchReconnectingTimerRef = useRef<number | null>(null);
   const hasConnectedOnceRef = useRef<boolean>(false);
   const needsVisibilityCatchupRef = useRef<boolean>(false);
   const ledgerCursorByGroupRef = useRef(new Map<string, string>());
@@ -981,7 +986,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     flushPendingHeadlessMessages(groupId);
   }
 
+  function clearSwitchReconnectingTimer() {
+    if (switchReconnectingTimerRef.current) {
+      window.clearTimeout(switchReconnectingTimerRef.current);
+      switchReconnectingTimerRef.current = null;
+    }
+  }
+
   function closeLedgerStream() {
+    clearSwitchReconnectingTimer();
     sseRegistryRef.current.close("ledger");
     eventSourceRef.current = null;
   }
@@ -1062,6 +1075,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   }
 
   function connectStream(groupId: string) {
+    const keepLiveStatus = keepLiveStatusRef.current;
+    keepLiveStatusRef.current = false;
     if (shouldStartGroupStreams(document.hidden)) {
       clearHiddenGroupStreamDisconnectTimer();
     }
@@ -1079,14 +1094,25 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       return;
     }
 
-    setSSEStatus("connecting");
     const es = openEventStream(
       api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`),
     );
     const ledgerToken = sseRegistryRef.current.set("ledger", groupId, es);
+    if (keepLiveStatus) {
+      // Switching Groups is not an interruption: keep the live status while the new
+      // stream opens, unless that takes longer than the grace period.
+      setSSEStatus("connected");
+      switchReconnectingTimerRef.current = window.setTimeout(() => {
+        switchReconnectingTimerRef.current = null;
+        if (sseRegistryRef.current.isCurrent(ledgerToken)) setSSEStatus("connecting");
+      }, SWITCH_RECONNECTING_GRACE_MS);
+    } else {
+      setSSEStatus("connecting");
+    }
 
     es.onopen = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      clearSwitchReconnectingTimer();
       const isReconnect = hasConnectedOnceRef.current || needsVisibilityCatchupRef.current;
       setSSEStatus("connected");
       setSSEError(null);
@@ -1118,6 +1144,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
     es.onerror = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
+      clearSwitchReconnectingTimer();
       setSSEStatus("disconnected");
       // Keep this logical subscription alive: the shared transport reconnects
       // with its delivered cursor so Rust can replay the missed ledger events.
@@ -1331,6 +1358,14 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   }, []);
 
   function cleanup() {
+    // A Group switch runs this cleanup and the next connectStream in one pass. Let
+    // that connect keep a live status; the flag lapses once this pass is over.
+    if (useUIStore.getState().sseStatus === "connected") {
+      keepLiveStatusRef.current = true;
+      queueMicrotask(() => {
+        keepLiveStatusRef.current = false;
+      });
+    }
     disconnectGroupStreams({ resetConnected: true });
   }
 

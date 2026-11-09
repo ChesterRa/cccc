@@ -851,6 +851,8 @@
   "workspaceOpenFiles": "ワークスペースのファイルを表示",
   "workspaceHideFiles": "ワークスペースのファイルを隠す",
   "resourcePanel": {
+    "referenceLoadFailed": "このメッセージの参照を読み込めませんでした。",
+    "referenceUnavailable": "このメッセージの参照はもう利用できません。",
     "tabs": "開いているリソース",
     "show": "リソースを表示（{{open}} 件）",
     "hide": "リソースを折りたたむ（タブは残ります）",

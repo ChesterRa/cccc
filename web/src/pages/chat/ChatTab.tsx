@@ -545,6 +545,9 @@ export function ChatTab({
       ? state.groupDoc.scopes?.find((scope) => scope.scope_key === state.groupDoc?.active_scope_key)
       : undefined,
   );
+  const workspaceScopeReady = useGroupStore(
+    (state) => state.groupDoc?.group_id === selectedGroupId && Array.isArray(state.groupDoc.scopes),
+  );
   const workspaceFiles = useWorkspaceFiles(
     selectedGroupId,
     showSplitFiles || showMobileFiles,
@@ -1799,6 +1802,7 @@ export function ChatTab({
                 slot={resourceDock === "right" ? resourceColumnSlot : chatWorkSurface}
                 container={splitLayoutRef}
                 files={panelWorkspaceFiles}
+                scopeReady={workspaceScopeReady}
                 isDark={isDark}
                 readOnly={!!readOnly}
                 presentation={resourcePresentation}
@@ -1826,6 +1830,7 @@ export function ChatTab({
                 slot={null}
                 container={splitLayoutRef}
                 files={panelWorkspaceFiles}
+                scopeReady={workspaceScopeReady}
                 isDark={isDark}
                 readOnly
                 presentation={resourcePresentation}

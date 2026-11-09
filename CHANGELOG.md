@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+
+- Refreshing the browser tab brings back the resource panel's tabs: their order, the selected tab,
+  the side-by-side layout, and whether the panel was collapsed or maximized. A Group's side-by-side
+  layout also stays when you switch to another Group and back. Only which files, attachments and
+  Presentation slots were open is kept, in that browser tab's session storage, and their contents
+  are read again with your current permissions. A message's reference to a Presentation slot is
+  fetched again when its tab is shown; if the message no longer holds it, the tab says so rather
+  than showing the slot's current card, and a request that fails offers **Retry**. Unsaved edits,
+  reading positions, recently closed tabs and attachments the ledger has not confirmed yet are not
+  restored. Browser tabs do not share this state, and whether a tab the browser duplicates or
+  reopens keeps it depends on the browser.
+
 ### Fixed
 
 - A Ctrl-C after the daemon was ready and while the Web was starting, including just as its
@@ -14,6 +27,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   stop, and a second one still forces the exit. How these commands handle a Ctrl-C before their
   daemon is ready is unchanged. The terminal interface on Linux and macOS had a similar gap right
   after it began watching for signals, and now listens for Ctrl-C from that moment.
+- Switching Groups briefly showed the header's connection symbol as reconnecting, and made a
+  member's unread mail mark disappear and come back. A switch replaces the Group's event stream; the
+  Web now keeps the connection shown as connected while the new stream opens, shows reconnecting
+  only if it has not opened within a second, and still shows a failed stream at once. A switch
+  whose stream opens within that second also no longer makes the Web check whether its server
+  restarted. The first member read after a switch has no unread counts; the counts already shown
+  now stay until fresh ones arrive. In a frame-by-frame check in headless Chrome, the reconnect
+  symbol had stayed on screen for 50–100 ms on each of 6 switches, and a mail mark had been gone
+  for 50–100 ms on each of 5 returns to a Group; with the change neither flicker occurred.
 
 ## [0.4.51]
 

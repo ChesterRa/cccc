@@ -273,8 +273,17 @@ Collapse returns to the compact rail; closing the sidebar only hides it and keep
 Workspace files (from **Files**, a path in a message, or a link inside a document), message
 attachments (images, videos, Markdown, text and PDF) and Presentation slots (from the slot list or
 a message's reference) open as tabs in one panel. Opening something that is already open selects
-its tab. Each Group keeps its own tabs until you close them or reload the page. Renaming or
-moving a file or folder in **Files** takes its open tabs and unsaved edits along.
+its tab. Each Group keeps its own tabs. Refreshing the same browser tab restores their order,
+selection, side-by-side layout, and whether the panel was collapsed or maximized, when browser
+session storage is available. This also keeps the layout when you switch Groups and return.
+Renaming or moving a file or folder in **Files** takes its open tabs and unsaved edits along.
+
+Restoration saves resource references, not document contents or unsaved edits. Resources are read
+again with your current permissions. A restored message reference that is no longer available
+stays unavailable; it does not switch to the slot's current card. A request that fails offers a retry
+instead. Attachments not yet confirmed by the ledger are omitted. Reading positions and recently
+closed tabs are not saved across refreshes. This feature does not copy state between browser tabs or
+guarantee recovery after closing a tab.
 
 The panel sits in one of two places. Docked right, the default, it takes the right-hand column.
 Docked left, it covers the message list and keeps the composer. The arrow button in the panel's
