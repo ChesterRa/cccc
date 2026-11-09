@@ -29,6 +29,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - The collaboration guidance no longer suggests Mail for useful context that has no higher-order
   perspective. Under the MCP profile, an agent's Mail to another agent still needs an insight, so
   following that line led to a rejected call.
+- For a native session, the calls `cccc_bootstrap` suggests now include the explicit `group_id`
+  that session's tools require. The agent-state examples omit an unnecessary `actor_id`
+  placeholder and use the caller's session identity. A native session's tool parameter
+  descriptions also state that `group_id` must be given explicitly.
 
 ## [0.4.52]
 

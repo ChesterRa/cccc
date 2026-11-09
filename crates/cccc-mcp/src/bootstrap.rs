@@ -96,6 +96,9 @@ pub(crate) async fn build(
         build_inbox_preview(&inbox, inbox_limit),
         context_hygiene,
     );
+    if native_binding.is_some() {
+        name_group_in_examples(&mut payload, &group_id);
+    }
     if let Ok(store) = cccc_core::GroupStore::new(home.clone())
         && let Ok(group) = store.load(&group_id)
         && let Ok(Some(pending)) = cccc_core::inbox::mail_pending_summary(home, &group, &actor_id)
@@ -175,6 +178,31 @@ fn assemble_payload(
             "inbox_read": "cccc_inbox_read()",
         }
     })
+}
+
+/// A native session has no Group of its own to fall back on, so the calls
+/// bootstrap suggests to it name the Group.
+fn name_group_in_examples(payload: &mut Value, group_id: &str) {
+    let name_group = |example: &mut Value| {
+        if let Some((tool, arguments)) = example.as_str().and_then(|call| call.split_once('(')) {
+            let separator = if arguments.starts_with(')') { "" } else { ", " };
+            *example = json!(format!(
+                "{tool}(group_id=\"{group_id}\"{separator}{arguments}"
+            ));
+        }
+    };
+    if let Some(calls) = payload["next_calls"].as_object_mut() {
+        calls.values_mut().for_each(name_group);
+    }
+    for key in [
+        "update_command",
+        "execution_update_command",
+        "mind_context_update_command",
+    ] {
+        if let Some(example) = payload["context_hygiene"].get_mut(key) {
+            name_group(example);
+        }
+    }
 }
 
 fn request_args(
@@ -724,9 +752,9 @@ fn evaluate_hygiene(
             "touch_age_seconds": mind_age,
             "hot_only_updates_since_touch": churn,
         },
-        "update_command": "cccc_agent_state(action=\"update\", actor_id=\"<self>\", focus=\"...\", next_action=\"...\", what_changed=\"...\", environment_summary=\"...\", user_model=\"...\", persona_notes=\"...\")",
-        "execution_update_command": "cccc_agent_state(action=\"update\", actor_id=\"<self>\", focus=\"...\", next_action=\"...\", what_changed=\"...\")",
-        "mind_context_update_command": "cccc_agent_state(action=\"update\", actor_id=\"<self>\", environment_summary=\"...\", user_model=\"...\", persona_notes=\"...\")",
+        "update_command": "cccc_agent_state(action=\"update\", focus=\"...\", next_action=\"...\", what_changed=\"...\", environment_summary=\"...\", user_model=\"...\", persona_notes=\"...\")",
+        "execution_update_command": "cccc_agent_state(action=\"update\", focus=\"...\", next_action=\"...\", what_changed=\"...\")",
+        "mind_context_update_command": "cccc_agent_state(action=\"update\", environment_summary=\"...\", user_model=\"...\", persona_notes=\"...\")",
         "recommendation": recommendation,
     })
 }
@@ -1217,6 +1245,48 @@ mod tests {
         );
         assert_eq!(result["omitted"]["count"], 12);
         assert!(available_skills(&Map::new()).is_none());
+    }
+
+    #[test]
+    fn a_native_session_gets_examples_that_name_its_group() {
+        let hygiene = missing_hygiene("peer");
+        for key in [
+            "update_command",
+            "execution_update_command",
+            "mind_context_update_command",
+        ] {
+            let example = hygiene[key].as_str().expect("example");
+            assert!(
+                example.starts_with("cccc_agent_state(action=\"update\", "),
+                "{example}"
+            );
+            // These self-update examples use the caller identity and need no actor_id argument.
+            assert!(!example.contains("actor_id"), "{example}");
+        }
+        let managed = assemble_payload(json!({}), json!({}), json!({}), hygiene);
+        assert_eq!(managed["next_calls"]["inbox_read"], "cccc_inbox_read()");
+        let mut native = managed.clone();
+        name_group_in_examples(&mut native, "g_fixture");
+        assert_eq!(
+            native["next_calls"]["inbox_read"],
+            "cccc_inbox_read(group_id=\"g_fixture\")"
+        );
+        assert_eq!(
+            native["next_calls"]["context_get"],
+            "cccc_context_get(group_id=\"g_fixture\", detail=\"overview\")  # brief, recent decisions and handoffs, agent states"
+        );
+        assert_eq!(
+            native["context_hygiene"]["execution_update_command"],
+            "cccc_agent_state(group_id=\"g_fixture\", action=\"update\", focus=\"...\", next_action=\"...\", what_changed=\"...\")"
+        );
+        for (key, example) in native["next_calls"].as_object().expect("next calls") {
+            let example = example.as_str().expect("example");
+            assert!(
+                example.contains("(group_id=\"g_fixture\""),
+                "{key}: {example}"
+            );
+        }
+        assert_eq!(native["session"], managed["session"]);
     }
 
     #[test]

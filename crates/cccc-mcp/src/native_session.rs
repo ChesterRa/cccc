@@ -101,9 +101,8 @@ impl Context {
                     .map(|mut tool| {
                         if tool["name"] != "cccc_session" {
                             let schema = &mut tool["inputSchema"];
-                            if schema["properties"].get("group_id").is_none() {
-                                schema["properties"]["group_id"] = json!({"type":"string","description":"Explicit Group ID from the CCCC message or cccc_session list self_memberships; no active-Group fallback"});
-                            }
+                            // Native calls require an explicit group_id rather than the shared environment fallback.
+                            schema["properties"]["group_id"] = json!({"type":"string","description":"Explicit Group ID from the CCCC message or cccc_session list self_memberships; no active-Group fallback"});
                             let required = schema.as_object_mut().expect("tool schema")
                                 .entry("required").or_insert(json!([])).as_array_mut().expect("required array");
                             if !required.contains(&json!("group_id")) { required.push(json!("group_id")); }
@@ -1127,8 +1126,9 @@ mod tests {
             );
         }
         for tool in tools.iter().filter(|tool| tool["name"] != "cccc_session") {
-            assert!(
-                tool["inputSchema"]["properties"].get("group_id").is_some(),
+            assert_eq!(
+                tool["inputSchema"]["properties"]["group_id"]["description"],
+                "Explicit Group ID from the CCCC message or cccc_session list self_memberships; no active-Group fallback",
                 "{}",
                 tool["name"]
             );
@@ -1295,6 +1295,29 @@ mod tests {
             )
             .await;
         assert_ne!(bootstrapped["result"]["isError"], true, "{bootstrapped}");
+        let examples = &bootstrapped["result"]["structuredContent"];
+        let named = format!("(group_id=\"{}\"", member_group.group_id);
+        assert_eq!(
+            examples["next_calls"]["inbox_read"],
+            format!("cccc_inbox_read{named})")
+        );
+        for example in examples["next_calls"]
+            .as_object()
+            .expect("next calls")
+            .values()
+            .chain(
+                [
+                    "update_command",
+                    "execution_update_command",
+                    "mind_context_update_command",
+                ]
+                .map(|key| &examples["context_hygiene"][key]),
+            )
+        {
+            let example = example.as_str().expect("example");
+            assert!(example.contains(&named), "{example}");
+            assert!(!example.contains("actor_id"), "{example}");
+        }
         let identity = &bootstrapped["result"]["structuredContent"]["mcp_server"];
         assert_eq!(identity["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(
