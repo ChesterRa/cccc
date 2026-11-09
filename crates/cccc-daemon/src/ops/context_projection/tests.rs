@@ -63,7 +63,7 @@ fn full_context_keeps_task_objects_in_the_board_projection() {
 
 #[test]
 fn open_blocked_by_is_derived_and_emitted_next_to_the_stored_list() {
-    let mut document = document();
+    let document = document();
     let blocker = |status: &str| {
         json!({"id":"dependency","status":status})
             .as_object()
