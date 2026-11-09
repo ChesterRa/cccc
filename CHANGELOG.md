@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+
+- A Ctrl-C after the daemon was ready and while the Web was starting, including just as its
+  **Local:** address appeared, ended `cccc web`, `cccc --headless` and `cccc` without the terminal
+  interface at once, instead of stopping them the usual way. Such a Ctrl-C now starts the usual
+  stop, and a second one still forces the exit. How these commands handle a Ctrl-C before their
+  daemon is ready is unchanged. The terminal interface on Linux and macOS had a similar gap right
+  after it began watching for signals, and now listens for Ctrl-C from that moment.
+
 ## [0.4.51]
 
 ### Added

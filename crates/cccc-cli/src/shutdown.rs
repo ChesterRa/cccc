@@ -123,15 +123,13 @@ pub(crate) fn watch_signals(
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
+        let mut interrupt = signal(SignalKind::interrupt())?;
         let mut terminate = signal(SignalKind::terminate())?;
         let mut hangup = signal(SignalKind::hangup())?;
         Ok(tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    result = tokio::signal::ctrl_c() => {
-                        if result.is_err() { return; }
-                        controller.interrupt();
-                    }
+                    event = interrupt.recv() => if event.is_some() { controller.interrupt(); } else { return; },
                     event = terminate.recv() => if event.is_some() { controller.request(); } else { return; },
                     event = hangup.recv() => if event.is_some() { controller.request(); } else { return; },
                 }
@@ -205,14 +203,41 @@ enum ForceExitReason {
     Deadline,
 }
 
+#[cfg(unix)]
+type Interrupts = tokio::signal::unix::Signal;
+#[cfg(windows)]
+type Interrupts = tokio::signal::windows::CtrlC;
+
+/// Listens for interrupts from now on and watches them on a task: the first
+/// asks the host to stop, and a second, or the deadline, forces the exit.
+/// `tokio::signal::ctrl_c()` registers only once it is first polled, so a task
+/// awaiting it would leave an interrupt that arrives before the task first
+/// runs to end the process.
+pub(crate) fn watch_for_interrupt(
+    controller: Controller,
+    home: Option<HomeLayout>,
+    #[cfg(windows)] detached_daemon: crate::detached_daemon_owner::SharedOwnedDetachedDaemon,
+) -> std::io::Result<tokio::task::JoinHandle<()>> {
+    #[cfg(unix)]
+    let interrupts = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    #[cfg(windows)]
+    let interrupts = tokio::signal::windows::ctrl_c()?;
+    #[cfg(unix)]
+    let watcher = stop_on_interrupt(controller, interrupts, home);
+    #[cfg(windows)]
+    let watcher = stop_on_interrupt(controller, interrupts, home, detached_daemon);
+    Ok(tokio::spawn(watcher))
+}
+
 /// Bound provider stop requests, then terminate owned process trees without
 /// entering normal cleanup or acquiring managed-session stop locks.
-pub(crate) async fn watch_for_interrupt(
+async fn stop_on_interrupt(
     controller: Controller,
+    mut interrupts: Interrupts,
     _home: Option<HomeLayout>,
     #[cfg(windows)] _detached_daemon: crate::detached_daemon_owner::SharedOwnedDetachedDaemon,
 ) {
-    if tokio::signal::ctrl_c().await.is_err() {
+    if interrupts.recv().await.is_none() {
         return;
     }
     eprintln!("Stopping CCCC... (press Ctrl-C again to force exit)");
@@ -222,7 +247,7 @@ pub(crate) async fn watch_for_interrupt(
 
     let reason = force_exit_reason(
         async {
-            let _ = tokio::signal::ctrl_c().await;
+            let _ = interrupts.recv().await;
         },
         tokio::time::sleep(FORCE_EXIT_TIMEOUT),
     )

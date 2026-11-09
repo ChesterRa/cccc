@@ -217,20 +217,27 @@ pub(crate) async fn launch(
     // The plain host retains its existing signal behavior, except that its first
     // interrupt requests the same stop as the TUI's controller. The TUI's
     // controller also receives raw key events and keeps running through Web
-    // restarts.
+    // restarts. Its listener is registered here, before the Web starts.
     let owned_home = daemon_owned.then(|| home.clone());
     let plain_stop = (!terminal).then(crate::shutdown::Controller::new);
     #[cfg(windows)]
-    let plain_watchdog = plain_stop.clone().map(|controller| {
-        tokio::spawn(crate::shutdown::watch_for_interrupt(
+    let plain_watching = plain_stop.clone().map(|controller| {
+        crate::shutdown::watch_for_interrupt(
             controller,
             owned_home,
             std::sync::Arc::clone(&detached_daemon),
-        ))
+        )
     });
     #[cfg(not(windows))]
-    let plain_watchdog = plain_stop.clone().map(|controller| {
-        tokio::spawn(crate::shutdown::watch_for_interrupt(controller, owned_home))
+    let plain_watching = plain_stop
+        .clone()
+        .map(|controller| crate::shutdown::watch_for_interrupt(controller, owned_home));
+    let plain_watchdog = plain_watching.and_then(|watching| {
+        watching
+            .inspect_err(|error| {
+                cccc_runtime::diagnostic(format_args!("could not listen for interrupts: {error}"))
+            })
+            .ok()
     });
 
     let mode = web_mode.unwrap_or_else(cccc_web::WebMode::from_env);

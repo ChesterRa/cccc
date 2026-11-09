@@ -79,6 +79,58 @@ fn forced_launcher_exit_terminates_owned_tree_without_destructors() {
     closed.expect("actor or descendant survived process::exit and still owns stdout");
 }
 
+#[test]
+fn the_host_watcher_catches_an_interrupt_before_it_first_runs() {
+    in_fresh_process(
+        "shutdown::process_tests::the_host_watcher_catches_an_interrupt_before_it_first_runs",
+        "CCCC_TEST_HOST_EARLY_INTERRUPT",
+        || interrupt_before_first_run(|controller| watch_for_interrupt(controller, None)),
+    );
+}
+
+#[test]
+fn the_terminal_watcher_catches_an_interrupt_before_it_first_runs() {
+    in_fresh_process(
+        "shutdown::process_tests::the_terminal_watcher_catches_an_interrupt_before_it_first_runs",
+        "CCCC_TEST_TERMINAL_EARLY_INTERRUPT",
+        || interrupt_before_first_run(watch_signals),
+    );
+}
+
+/// Runs `scenario` in a fresh run of this test alone, where nothing else has
+/// registered for interrupts and an interrupt nobody catches ends that run.
+fn in_fresh_process(test: &str, marker: &str, scenario: impl FnOnce()) {
+    if std::env::var_os(marker).is_some() {
+        scenario();
+        return;
+    }
+    let status = Command::new(std::env::current_exe().expect("locate test executable"))
+        .args(["--exact", test, "--nocapture"])
+        .env(marker, "1")
+        .status()
+        .expect("run the test in a fresh process");
+    assert!(status.success(), "the fresh run failed: {status:?}");
+}
+
+/// A current-thread runtime runs a spawned watcher only once this code yields,
+/// so the interrupt is raised before the watcher has run at all.
+fn interrupt_before_first_run(
+    watch: impl FnOnce(Controller) -> std::io::Result<tokio::task::JoinHandle<()>>,
+) {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let controller = Controller::new();
+        let watcher = watch(controller.clone()).expect("listen for interrupts");
+        nix::sys::signal::raise(nix::sys::signal::Signal::SIGINT).expect("raise an interrupt");
+        let requested = tokio::time::timeout(Duration::from_secs(5), controller.requested()).await;
+        watcher.abort();
+        requested.expect("the interrupt asked for a stop");
+    });
+}
+
 /// Reap the direct fixture child on every exit, including assertion failure.
 struct FixtureLauncher(std::process::Child);
 
