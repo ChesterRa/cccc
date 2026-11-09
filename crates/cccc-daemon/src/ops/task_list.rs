@@ -71,9 +71,10 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
     let mut tasks = document
         .tasks
-        .into_iter()
+        .iter()
         .filter(|task| {
             matches_task(
+                &document.tasks,
                 task,
                 status.as_deref(),
                 attention.as_deref(),
@@ -81,6 +82,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 &assignee,
             )
         })
+        .cloned()
         .collect::<Vec<_>>();
     sort_tasks(&mut tasks, status.as_deref());
     object(json!({"tasks":tasks,"tasks_version":version}))

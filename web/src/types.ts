@@ -672,6 +672,8 @@ export type Task = {
   assignee?: string | null;
   priority?: string | null;
   blocked_by?: string[];
+  /** Derived by the daemon: the subset of `blocked_by` whose tasks are still unfinished. */
+  open_blocked_by?: string[];
   waiting_on?: TaskWaitingOn | null;
   handoff_to?: string | null;
   task_type?: string | null;

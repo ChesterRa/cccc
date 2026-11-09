@@ -31,7 +31,12 @@ export function TaskCardBadges({
   subtasks?: SubtaskProgress;
 }) {
   const live = taskIsLive(task);
-  const blocked = live && Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+  // The daemon derives `open_blocked_by` beside the stored list; a projection
+  // that predates it falls back to the stored ids.
+  const blockedBy = Array.isArray(task.open_blocked_by)
+    ? task.open_blocked_by
+    : task.blocked_by;
+  const blocked = live && Array.isArray(blockedBy) && blockedBy.length > 0;
   const waiting = String(task.waiting_on || "none").trim();
   const handoff = String(task.handoff_to || "").trim();
   const checklist = (task.checklist || []).filter((item) => String(item.text || "").trim());
@@ -67,7 +72,7 @@ export function TaskCardBadges({
         note("unassigned", tr("context.unassigned", "Unassigned"))
       ) : null}
       {blocked
-        ? note("blocked", `${tr("context.blocked", "Blocked")}: ${task.blocked_by?.join(", ")}`)
+        ? note("blocked", `${tr("context.blocked", "Blocked")}: ${blockedBy?.join(", ")}`)
         : null}
       {!compact && live && waiting === "user" ? (
         <span data-task-note="waiting-user">{waitingLabel(waiting, tr)}</span>

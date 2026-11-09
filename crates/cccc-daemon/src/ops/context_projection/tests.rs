@@ -62,6 +62,69 @@ fn full_context_keeps_task_objects_in_the_board_projection() {
 }
 
 #[test]
+fn open_blocked_by_is_derived_and_emitted_next_to_the_stored_list() {
+    let mut document = document();
+    let blocker = |status: &str| {
+        json!({"id":"dependency","status":status})
+            .as_object()
+            .cloned()
+            .expect("blocker")
+    };
+    // The fixture's stored blocked_by names "dependency"; give it a real task.
+    // waiting_on is neutralised so only the blocker decides `blocked`.
+    for status in ["planned", "active", "done", "archived"] {
+        let mut doc = document.clone();
+        doc.tasks[0].insert("waiting_on".into(), json!("none"));
+        doc.tasks.push(blocker(status));
+        let result = project(doc, "v1".into(), "summary");
+        let task = &result["coordination"]["tasks"][0];
+        assert_eq!(task["blocked_by"], json!(["dependency"]), "{status}");
+        let open = if matches!(status, "done" | "archived") {
+            json!([])
+        } else {
+            json!(["dependency"])
+        };
+        assert_eq!(task["open_blocked_by"], open, "{status}");
+        let blocked = usize::from(matches!(status, "planned" | "active"));
+        assert_eq!(result["attention"]["blocked"], blocked, "{status}");
+        assert_eq!(result["tasks_summary"]["blocked"], blocked, "{status}");
+    }
+    // A blocker restored to an unfinished status blocks again; restoring it
+    // to done does not — the set is derived on every read.
+    let mut doc = document.clone();
+    doc.tasks[0].insert("waiting_on".into(), json!("none"));
+    doc.tasks.push(blocker("done"));
+    assert_eq!(
+        project(doc.clone(), "v1".into(), "summary")["attention"]["blocked"],
+        0
+    );
+    doc.tasks[1].insert("status".into(), json!("planned"));
+    assert_eq!(
+        project(doc, "v1".into(), "summary")["attention"]["blocked"],
+        1
+    );
+}
+
+#[test]
+fn full_and_board_projections_carry_open_blocked_by() {
+    let mut document = document();
+    document.tasks.push(
+        json!({"id":"dependency","status":"done"})
+            .as_object()
+            .cloned()
+            .expect("blocker"),
+    );
+    let result = project(document, "v1".into(), "full");
+    for task in [
+        &result["coordination"]["tasks"][0],
+        &result["board"]["planned"][0],
+        &result["attention"]["blocked"][0],
+    ] {
+        assert_eq!(task["open_blocked_by"], json!([]), "{task}");
+    }
+}
+
+#[test]
 fn waiting_on_actor_or_external_is_blocked_without_a_blocked_by_list() {
     for waiting_on in ["actor", "external"] {
         let mut document = document();

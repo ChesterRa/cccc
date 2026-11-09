@@ -19,6 +19,7 @@ pub(super) fn page(
         .iter()
         .filter(|task| {
             matches_task(
+                tasks,
                 task,
                 status,
                 filter.attention,

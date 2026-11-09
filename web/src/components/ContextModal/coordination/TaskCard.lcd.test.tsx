@@ -121,3 +121,26 @@ it("writes attention as notes, with waiting on the user as the one tag", () => {
     [...row.querySelectorAll("[data-task-note]")].map((el) => el.getAttribute("data-task-note")),
   ).toEqual(["assignee", "blocked", "waiting-user", "handoff", "priority", "parent"]);
 });
+
+it("shows only the blockers that are still open", () => {
+  const row = render({
+    id: "T5",
+    title: "Ship the migration",
+    status: "active",
+    blocked_by: ["T1", "T2"],
+    open_blocked_by: ["T2"],
+  });
+  const note = row.querySelector<HTMLElement>('[data-task-note="blocked"]');
+  expect(note?.textContent).toBe("[Blocked: T2]");
+
+  // Every stored blocker finished: the badge goes away even though the
+  // stored list still names them.
+  const cleared = render({
+    id: "T6",
+    title: "Ship the follow-up",
+    status: "active",
+    blocked_by: ["T1", "T2"],
+    open_blocked_by: [],
+  });
+  expect(cleared.querySelector('[data-task-note="blocked"]')).toBeNull();
+});

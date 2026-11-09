@@ -169,6 +169,7 @@ fn attention_facets_and_filters_ignore_completed_history() {
 
     assert_eq!(facets["blocked"], 1);
     assert!(super::task_list_query::matches_task(
+        &tasks,
         &tasks[0],
         None,
         Some("blocked"),
@@ -176,6 +177,101 @@ fn attention_facets_and_filters_ignore_completed_history() {
         ""
     ));
     assert!(!super::task_list_query::matches_task(
+        &tasks,
+        &tasks[1],
+        None,
+        Some("blocked"),
+        "",
+        ""
+    ));
+}
+
+#[test]
+fn a_blocker_that_is_done_or_archived_stops_blocking() {
+    let blocker = |status: &str| {
+        json!({"id":"T000","status":status})
+            .as_object()
+            .cloned()
+            .expect("blocker")
+    };
+    let task = || {
+        json!({"id":"T001","status":"active","blocked_by":["T000"]})
+            .as_object()
+            .cloned()
+            .expect("task")
+    };
+    for status in ["planned", "active"] {
+        let tasks = [blocker(status), task()];
+        assert_eq!(
+            super::task_list_query::facets(&tasks)["blocked"],
+            1,
+            "{status}"
+        );
+        assert!(super::task_list_query::matches_task(
+            &tasks,
+            &tasks[1],
+            None,
+            Some("blocked"),
+            "",
+            ""
+        ));
+    }
+    for status in ["done", "archived"] {
+        let tasks = [blocker(status), task()];
+        assert_eq!(
+            super::task_list_query::facets(&tasks)["blocked"],
+            0,
+            "{status}"
+        );
+        assert!(!super::task_list_query::matches_task(
+            &tasks,
+            &tasks[1],
+            None,
+            Some("blocked"),
+            "",
+            ""
+        ));
+    }
+    // Restoring the blocker to an unfinished status blocks again; the set is
+    // derived on every read, nothing is stored.
+    let mut restored = blocker("done");
+    restored.insert("status".into(), json!("planned"));
+    let tasks = [restored, task()];
+    assert_eq!(super::task_list_query::facets(&tasks)["blocked"], 1);
+}
+
+#[test]
+fn a_blocker_id_that_names_no_task_keeps_blocking() {
+    let tasks = [json!({"id":"T001","status":"active","blocked_by":["T999"]})
+        .as_object()
+        .cloned()
+        .expect("task")];
+    assert_eq!(super::task_list_query::facets(&tasks)["blocked"], 1);
+    assert!(super::task_list_query::matches_task(
+        &tasks,
+        &tasks[0],
+        None,
+        Some("blocked"),
+        "",
+        ""
+    ));
+}
+
+#[test]
+fn waiting_on_still_blocks_without_any_open_blocker() {
+    let tasks = [
+        json!({"id":"T000","status":"done"})
+            .as_object()
+            .cloned()
+            .expect("blocker"),
+        json!({"id":"T001","status":"active","blocked_by":["T000"],"waiting_on":"actor"})
+            .as_object()
+            .cloned()
+            .expect("task"),
+    ];
+    assert_eq!(super::task_list_query::facets(&tasks)["blocked"], 1);
+    assert!(super::task_list_query::matches_task(
+        &tasks,
         &tasks[1],
         None,
         Some("blocked"),

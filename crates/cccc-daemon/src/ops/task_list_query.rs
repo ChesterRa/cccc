@@ -1,4 +1,5 @@
 use cccc_contracts::DaemonRequest;
+use cccc_core::context::open_blocked_by;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,6 +25,7 @@ pub(super) fn validated_filter(
 }
 
 pub(super) fn matches_task(
+    tasks: &[Map<String, Value>],
     task: &Map<String, Value>,
     status: Option<&str>,
     attention: Option<&str>,
@@ -40,7 +42,7 @@ pub(super) fn matches_task(
     if !assignee.is_empty() && assignee != "__unassigned__" && task_assignee != assignee {
         return false;
     }
-    if attention.is_some_and(|wanted| !matches_attention(task, wanted)) {
+    if attention.is_some_and(|wanted| !matches_attention(tasks, task, wanted)) {
         return false;
     }
     query.is_empty()
@@ -76,7 +78,7 @@ pub(super) fn facets(tasks: &[Map<String, Value>]) -> Value {
             assignees.insert(assignee.to_owned());
         }
         if task_status(task) != "done" {
-            blocked_count += usize::from(blocked(task));
+            blocked_count += usize::from(blocked(tasks, task));
             waiting_user += usize::from(text(task, "waiting_on") == "user");
             handoffs += usize::from(!text(task, "handoff_to").is_empty());
         }
@@ -133,11 +135,15 @@ pub(super) fn delete_info(tasks: &[Map<String, Value>], root: &str) -> Value {
     json!({"allowed":blocked.is_none(),"total":ids.len(),"reason":reason})
 }
 
-fn matches_attention(task: &Map<String, Value>, wanted: &str) -> bool {
+fn matches_attention(
+    tasks: &[Map<String, Value>],
+    task: &Map<String, Value>,
+    wanted: &str,
+) -> bool {
     let status = task_status(task);
     match wanted {
         "unassigned" => status != "archived" && text(task, "assignee").is_empty(),
-        "blocked" => !matches!(status, "done" | "archived") && blocked(task),
+        "blocked" => !matches!(status, "done" | "archived") && blocked(tasks, task),
         "waiting_user" => {
             !matches!(status, "done" | "archived") && text(task, "waiting_on") == "user"
         }
@@ -146,10 +152,8 @@ fn matches_attention(task: &Map<String, Value>, wanted: &str) -> bool {
     }
 }
 
-fn blocked(task: &Map<String, Value>) -> bool {
-    task.get("blocked_by")
-        .and_then(Value::as_array)
-        .is_some_and(|items| !items.is_empty())
+fn blocked(tasks: &[Map<String, Value>], task: &Map<String, Value>) -> bool {
+    !open_blocked_by(tasks, task).is_empty()
         || matches!(text(task, "waiting_on"), "actor" | "external")
 }
 
