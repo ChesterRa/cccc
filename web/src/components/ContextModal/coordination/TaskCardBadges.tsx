@@ -33,9 +33,7 @@ export function TaskCardBadges({
   const live = taskIsLive(task);
   // The daemon derives `open_blocked_by` beside the stored list; a projection
   // that predates it falls back to the stored ids.
-  const blockedBy = Array.isArray(task.open_blocked_by)
-    ? task.open_blocked_by
-    : task.blocked_by;
+  const blockedBy = Array.isArray(task.open_blocked_by) ? task.open_blocked_by : task.blocked_by;
   const blocked = live && Array.isArray(blockedBy) && blockedBy.length > 0;
   const waiting = String(task.waiting_on || "none").trim();
   const handoff = String(task.handoff_to || "").trim();
