@@ -210,6 +210,20 @@ pub(crate) fn sync_dir(_path: &Path) -> io::Result<()> {
 mod tests {
     use super::quote_rfc3339_yaml_scalars;
 
+    /// On Unix, a child spawned by a concurrently running test can keep an
+    /// inherited copy of the lock's descriptor until it execs, and the flock
+    /// with it, so a released lock can stay busy until that copy closes.
+    fn reclaim<T>(mut attempt: impl FnMut() -> Option<T>) -> Option<T> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let claimed = attempt();
+            if claimed.is_some() || std::time::Instant::now() >= deadline {
+                return claimed;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn a_held_lock_answers_busy_to_another_open_until_it_is_dropped() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -221,7 +235,7 @@ mod tests {
         assert!(super::try_exclusive_lock(&path).expect("lock").is_none());
 
         drop(held);
-        assert!(super::try_exclusive_lock(&path).expect("lock").is_some());
+        assert!(reclaim(|| super::try_exclusive_lock(&path).expect("lock")).is_some());
     }
 
     #[test]

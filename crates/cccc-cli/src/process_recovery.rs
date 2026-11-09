@@ -147,6 +147,20 @@ pub(crate) fn offline(
 mod tests {
     use super::*;
 
+    /// On Unix, a child spawned by a concurrently running test can keep an
+    /// inherited copy of the lock's descriptor until it execs, and the flock
+    /// with it, so a released lock can stay busy until that copy closes.
+    fn reclaim<T>(mut attempt: impl FnMut() -> Option<T>) -> Option<T> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let claimed = attempt();
+            if claimed.is_some() || std::time::Instant::now() >= deadline {
+                return claimed;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn offline_review_never_takes_an_active_owners_lock() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -161,7 +175,7 @@ mod tests {
                     .is_none()
             );
             drop(held);
-            assert!(try_owner_lock(&home, owner).expect("reclaim").is_some());
+            assert!(reclaim(|| try_owner_lock(&home, owner).expect("reclaim")).is_some());
         }
     }
 

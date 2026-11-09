@@ -417,6 +417,20 @@ mod tests {
         std::fs::write(paths.daemon_dir.join("restore.started"), b"").expect("mark restore start");
     }
 
+    /// On Unix, a child spawned by a concurrently running test can keep an
+    /// inherited copy of the lock's descriptor until it execs, and the flock
+    /// with it, so a released lock can stay busy until that copy closes.
+    fn reclaim<T>(mut attempt: impl FnMut() -> Option<T>) -> Option<T> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let claimed = attempt();
+            if claimed.is_some() || std::time::Instant::now() >= deadline {
+                return claimed;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     #[test]
     fn reclaims_an_unlocked_stale_daemon_lock_file() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -427,7 +441,13 @@ mod tests {
 
         assert!(path.exists());
         drop(lock);
-        acquire_daemon_lock(&path).expect("reclaim released lock");
+        let mut last_error = None;
+        reclaim(|| {
+            acquire_daemon_lock(&path)
+                .map_err(|error| last_error = Some(error))
+                .ok()
+        })
+        .unwrap_or_else(|| panic!("reclaim released lock: {last_error:?}"));
     }
 
     #[test]
