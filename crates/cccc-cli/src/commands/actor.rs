@@ -47,6 +47,9 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: ActorArgs) -> R
         ActorAction::Start(target) => lifecycle(client, home, "actor_start", target).await?,
         ActorAction::Stop(target) => lifecycle(client, home, "actor_stop", target).await?,
         ActorAction::Restart(target) => lifecycle(client, home, "actor_restart", target).await?,
+        ActorAction::NewSession(target) => {
+            lifecycle(client, home, "actor_new_session", target).await?
+        }
         ActorAction::Update {
             actor_id,
             group_id,
