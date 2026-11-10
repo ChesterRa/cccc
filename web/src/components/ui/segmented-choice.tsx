@@ -39,7 +39,7 @@ export function SegmentedChoice<Value extends string | number>({
       aria-labelledby={labelledBy}
       aria-label={ariaLabel}
       aria-disabled={disabled || undefined}
-      data-segmented-choice=""
+      data-segmented-choice={fill ? "" : "wrap"}
       {...rest}
       className={classNames(
         "rounded-[10px] bg-[var(--glass-tab-bg)] p-[3px]",
@@ -75,6 +75,8 @@ export function SegmentedChoice<Value extends string | number>({
             }}
             className={classNames(
               "h-[30px] min-w-0 truncate rounded-lg px-3 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-text-secondary)] disabled:opacity-50 pointer-coarse:h-10",
+              // When the options wrap, each row fills the width, so the rows stay one block.
+              !fill && "flex-auto",
               checked
                 ? "bg-[var(--color-bg-primary)] font-semibold text-[var(--color-text-primary)] shadow-[0_1px_2px_rgba(24,24,27,0.08),0_0_0_1px_rgba(24,24,27,0.04)]"
                 : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)]",

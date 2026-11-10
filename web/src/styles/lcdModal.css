@@ -160,6 +160,17 @@
   margin-left: -1px;
 }
 
+/* A choice sized to its labels can wrap. Every key then overlaps the one above and the
+   one to its left by the border, so wrapped rows line up and share one dividing line.
+   A single row keeps the size it had. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-segmented-choice="wrap"] {
+  padding: 1px 0 0 1px;
+}
+
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-segmented-choice="wrap"] > [role="radio"] {
+  margin: -1px 0 0 -1px;
+}
+
 :root[data-ui-style="lcd"]
   [data-lcd-scope]
   :is(

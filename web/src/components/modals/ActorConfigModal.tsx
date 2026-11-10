@@ -500,7 +500,8 @@ function CreateActorConfigModal({
             </div>
           ) : null}
 
-          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+          {/* Top-aligned: the submit column may carry a hint line, which must not stretch Cancel. */}
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-start sm:justify-end">
             <Button
               type="button"
               variant="secondary"

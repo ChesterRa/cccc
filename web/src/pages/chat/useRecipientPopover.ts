@@ -39,7 +39,8 @@ export function useRecipientPopover({ isSmallScreen }: { isSmallScreen: boolean 
       anchorRef.current = node;
       const rect = node.getBoundingClientRect();
       const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
-      const tooltipWidth = Math.min(196, Math.max(176, viewportWidth - 16));
+      // More room for the kind label beside the foreman badge and the copy button.
+      const tooltipWidth = Math.min(256, Math.max(176, viewportWidth - 16));
       const top = rect.top;
       const transform = `translateY(calc(-100% - ${RECIPIENT_POPOVER_GAP_PX}px))`;
       if (isSmallScreen) {
