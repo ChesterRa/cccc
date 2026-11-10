@@ -47,16 +47,17 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.53
+## What's new in 0.4.54
 
-- **Mistyped message arguments fail at once.** A message call with an argument CCCC does not recognize, such as `mdoe` for the mode or a question's options in the wrong place, used to report success while the argument was stored or ignored. It now fails with `unknown_arguments`, names the argument and changes nothing. New messages and files sent through CCCC Connect are not covered yet.
-- **Message origin stays with the bridge.** Ordinary Web and MCP message calls can no longer supply the IM origin fields that record a platform and sender, which a caller could use to show a recipient a false origin. Forwarding a message in the Web requires access to the Group it comes from.
-- **Start-up examples a native session can call.** The calls `cccc_bootstrap` suggests to a connected native session now name its Group, which that session's tools require.
-- **A starter pair and an AGENTS.md template.** The guide walks through a builder and reviewer pair from registering the two agents to integration, with a short template to copy into your project's instructions. It also explains where a Claude Code agent that CCCC starts edits files, and the Claude Code setting that changes it.
+- **A conversation that was not resumed leaves a record.** When an agent that CCCC starts comes back on a new conversation although an earlier one was saved, its page now shows a small information mark after the status, with the time and the compared settings that had changed, and CCCC attempts to write one notice to the user. Which conversation a start selects is unchanged.
+- **Rotated ledger segments are read in order.** History and the Inbox read a Group's rotated ledger segments in the order they were rotated, even when the system clock went backwards between two rotations. Before, history could show messages out of order and an Inbox read could skip Mail.
+- **Fewer redundant ledger checks on Linux.** CCCC Web no longer checks a Group's ledger again when a program only opens it for reading.
+- **Layout fixes.** On a phone-sized screen, the Edit button under a stopped agent's page no longer breaks its label over two lines. The Group menu is no longer much wider than its items, and three smaller layout defects are fixed.
+- **A removed agent leaves Agent State.** Agent State no longer shows a card for an agent that was removed from the Group.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. Agent sessions started before the upgrade keep the MCP server they started with: they keep working, but the MCP-side origin check and the new start-up examples reach a session only when its MCP server is started again, for example by restarting the agent.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. Saved conversations are matched as before; a start that does not resume one now leaves a record, and CCCC attempts to write one notice. In a Group whose rotated ledger segments were already read in the wrong order, Mail that an Inbox read had passed over may not return to the Inbox; it remains in the Group's history.
 
-Details: [0.4.53 release notes](https://chesterra.github.io/cccc/release/v0.4.53_release_notes).
+Details: [0.4.54 release notes](https://chesterra.github.io/cccc/release/v0.4.54_release_notes).
 
 ## Quick start
 

@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.54]
+
 ### Added
 
 - A managed agent that starts a new conversation although one was saved now leaves a record. Until
@@ -15,10 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   record and the compared settings that had changed. For managed Claude and Pi agents and for ACP
   agents other than Antigravity, a changed launch `PATH` and a changed CCCC program location are
   named separately from the other launch settings when both the saved record and the new one contain
-  that detail; a record saved by an earlier version does not. CCCC also writes one system notice
-  addressed to the user, which an enabled IM bridge can forward, and the Actor listing reports
-  `runtime_session_replaced_at` and `runtime_session_replaced_reasons`. Which conversation a start
-  selects is unchanged.
+  that detail; a record saved by an earlier version does not. CCCC also attempts to write one
+  system notice addressed to the user, which an enabled IM bridge can forward, and the Actor
+  listing reports `runtime_session_replaced_at` and `runtime_session_replaced_reasons`. Which
+  conversation a start selects is unchanged.
 
 ### Changed
 
@@ -39,6 +41,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - On a phone-sized screen, the Edit button under a stopped agent's page no longer breaks its label
   over two lines and grows taller than the buttons beside it. It shows its icon alone there, as it
   already does while the agent is running.
+- The Group menu, opened from the run button in the header or from a Group in the sidebar, no
+  longer reserves extra width as if neighbouring items stood side by side. The labels filled only
+  part of it.
+- **Agent State** no longer shows an agent that was removed from the Group. Removal cleared the
+  agent's state but left an empty entry in the stored context, so Project Context kept a card
+  for it and context reads returned it. Context reads now return states only for agents still in
+  the Group, including for entries left by earlier removals. States of agents still in the Group
+  are kept even if they are disabled or stopped. This filtering does not rewrite the stored
+  context.
+- Three smaller layout defects in CCCC Web. In the add-agent dialog, Cancel no longer grows
+  taller than the create button beside it when that button has a hint line under it. A settings
+  choice whose options wrap onto a second row, such as the default recipient in Japanese and
+  English, now forms one block of aligned rows. The card that opens from a recipient in the
+  composer gives the recipient's kind more room on wider screens; it was cut off in Japanese and
+  English.
 
 ## [0.4.53]
 
