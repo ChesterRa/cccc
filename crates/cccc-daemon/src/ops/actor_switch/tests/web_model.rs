@@ -5,6 +5,24 @@ use cccc_core::{integration_state, web_model_connectors as connectors};
 
 const BROWSER: &str = "web_model_browser";
 
+/// On Unix, a child spawned by a concurrently running test can keep an
+/// inherited copy of the lock's descriptor until it execs, and the flock
+/// with it, so a released lock can stay busy until that copy closes.
+fn after_browser_work(mut attempt: impl FnMut() -> DaemonResponse) -> DaemonResponse {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = attempt();
+        let busy = response
+            .error
+            .as_ref()
+            .is_some_and(|error| error.code == "actor_browser_busy");
+        if !busy || Instant::now() >= deadline {
+            return response;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 impl Fixture {
     /// `x` as a running browser Web Model, ready to claim work.
     fn browser_member(&self) {
@@ -268,7 +286,8 @@ fn a_switch_answers_busy_while_browser_work_runs_and_changes_nothing() {
     assert!(!fixture.active_turn().is_empty());
     assert_eq!(fixture.delivery_state(&message).as_deref(), Some("claimed"));
     drop(work);
-    fixture.switch(to_codex());
+    let switched = after_browser_work(|| fixture.try_switch(to_codex(), json!({})));
+    assert!(switched.ok, "{:?}", switched.error);
     assert_eq!(fixture.actor().runtime, ActorRuntime::Codex);
 }
 
@@ -296,7 +315,7 @@ fn removing_a_member_or_its_group_waits_for_browser_work() {
     assert_eq!(fixture.actor().runtime, ActorRuntime::WebModel);
 
     drop(work);
-    let deleted = fixture.request("group_delete", json!({}));
+    let deleted = after_browser_work(|| fixture.request("group_delete", json!({})));
     assert!(deleted.ok, "{:?}", deleted.error);
     assert!(!lock.parent().expect("locks of the Group").exists());
 }
@@ -399,17 +418,17 @@ fn a_profile_can_carry_a_member_into_a_web_model() {
 
 #[test]
 fn a_failed_switch_does_not_call_a_web_model_stopped() {
-    let fixture = Fixture::new();
-    fixture.browser_member();
-    let request = DaemonRequest {
-        v: 1,
-        op: "actor_runtime_switch".into(),
-        args: json!({"group_id": fixture.group_id, "actor_id": "x", "by": "user"})
-            .as_object()
-            .cloned()
-            .expect("args"),
-    };
     let report = |was_running: bool| {
+        let fixture = Fixture::new();
+        fixture.browser_member();
+        let request = DaemonRequest {
+            v: 1,
+            op: "actor_runtime_switch".into(),
+            args: json!({"group_id": fixture.group_id, "actor_id": "x", "by": "user"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
         let hold = Hold {
             _browser_work: actor_runtime::hold_browser_work(&fixture.home, &fixture.group_id, "x")
                 .expect("nothing else holds it"),

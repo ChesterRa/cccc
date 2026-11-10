@@ -1228,6 +1228,84 @@ async fn scope_follow_group_changes_only_after_the_owner_exits() {
     fixture.stop().await;
 }
 
+/// Every call cccc_bootstrap suggests, with the key it is returned under.
+fn bootstrap_examples(payload: &Value) -> Vec<(String, String)> {
+    let text = |example: &Value| example.as_str().expect("example").to_owned();
+    payload["next_calls"]
+        .as_object()
+        .expect("next calls")
+        .iter()
+        .map(|(key, example)| (key.clone(), text(example)))
+        .chain(
+            [
+                "update_command",
+                "execution_update_command",
+                "mind_context_update_command",
+            ]
+            .map(|key| (key.to_owned(), text(&payload["context_hygiene"][key]))),
+        )
+        .collect()
+}
+
+/// Reads `tool(key="value", ...)  # comment`, the only form the examples use, into a tool
+/// name and its arguments. Any other shape fails here instead of being guessed.
+fn example_call(example: &str) -> (String, Value) {
+    let call = example.split("  #").next().expect("call").trim_end();
+    let (tool, rest) = call
+        .split_once('(')
+        .unwrap_or_else(|| panic!("not a call: {example}"));
+    let mut rest = rest
+        .strip_suffix(')')
+        .unwrap_or_else(|| panic!("unclosed call: {example}"));
+    let mut arguments = Map::new();
+    while !rest.is_empty() {
+        let (key, tail) = rest
+            .split_once("=\"")
+            .unwrap_or_else(|| panic!("unsupported argument: {example}"));
+        let (value, tail) = tail
+            .split_once('"')
+            .unwrap_or_else(|| panic!("unterminated value: {example}"));
+        assert!(
+            !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            "unsupported argument name {key:?}: {example}"
+        );
+        arguments.insert(key.to_owned(), json!(value));
+        rest = if tail.is_empty() {
+            tail
+        } else {
+            tail.strip_prefix(", ")
+                .unwrap_or_else(|| panic!("unsupported separator: {example}"))
+        };
+    }
+    (tool.to_owned(), Value::Object(arguments))
+}
+
+/// A member CCCC starts talks to its own MCP process, which knows the Group and the member
+/// from its environment. Each call bootstrap suggests to it must run there exactly as
+/// returned. This checks that the arguments are accepted, not what an agent would write in
+/// them, and starts no runtime.
+#[tokio::test]
+async fn a_started_member_can_run_every_call_bootstrap_suggests() {
+    let fixture = ActorScopeFixture::new().await;
+    let accepted = |response: &Value| {
+        response.get("error").is_none()
+            && response["result"].is_object()
+            && response["result"]["isError"] != true
+    };
+    let bootstrap = fixture
+        .stdio_tool("follow", "cccc_bootstrap", json!({}))
+        .await;
+    assert!(accepted(&bootstrap), "{bootstrap}");
+    let examples = bootstrap_examples(&bootstrap["result"]["structuredContent"]);
+    assert_eq!(examples.len(), 8, "{examples:?}");
+    for (key, example) in examples {
+        let (tool, arguments) = example_call(&example);
+        let response = fixture.stdio_tool("follow", &tool, arguments).await;
+        assert!(accepted(&response), "{key}: {example}: {response}");
+    }
+    fixture.stop().await;
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn scope_copy_import_reset_and_replacement_do_not_inherit_launch_authority() {

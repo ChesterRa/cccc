@@ -8,6 +8,20 @@ use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
 use cccc_core::{GroupStore, HomeLayout, ledger};
 use std::sync::{Arc, Mutex};
 
+/// On Unix, a child spawned by a concurrently running test can keep an
+/// inherited copy of the lock's descriptor until it execs, and the flock
+/// with it, so a released lock can stay busy until that copy closes.
+fn reclaim<T>(mut attempt: impl FnMut() -> Option<T>) -> Option<T> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let claimed = attempt();
+        if claimed.is_some() || std::time::Instant::now() >= deadline {
+            return claimed;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 #[test]
 fn browser_work_and_a_switch_exclude_each_other_without_waiting() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -23,9 +37,8 @@ fn browser_work_and_a_switch_exclude_each_other_without_waiting() {
     );
     drop(switch);
 
-    let work = browser_work_in(&home, "group", "actor")
-        .expect("work")
-        .expect("free");
+    let work = reclaim(|| browser_work_in(&home, "group", "actor").expect("work"))
+        .expect("released switch lock");
     assert!(lock().is_none());
     assert!(
         browser_work_in(&home, "group", "actor")
@@ -33,7 +46,7 @@ fn browser_work_and_a_switch_exclude_each_other_without_waiting() {
             .is_none()
     );
     drop(work);
-    assert!(lock().is_some());
+    assert!(reclaim(lock).is_some());
 }
 
 #[test]

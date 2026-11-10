@@ -515,6 +515,73 @@ mod action_tests;
 mod tests {
     use super::*;
 
+    /// Every call cccc_bootstrap suggests, with the key it is returned under.
+    fn bootstrap_examples(payload: &Value) -> Vec<(String, String)> {
+        let text = |example: &Value| example.as_str().expect("example").to_owned();
+        payload["next_calls"]
+            .as_object()
+            .expect("next calls")
+            .iter()
+            .map(|(key, example)| (key.clone(), text(example)))
+            .chain(
+                [
+                    "update_command",
+                    "execution_update_command",
+                    "mind_context_update_command",
+                ]
+                .map(|key| (key.to_owned(), text(&payload["context_hygiene"][key]))),
+            )
+            .collect()
+    }
+
+    /// Reads `tool(key="value", ...)  # comment`, the only form the examples use, into a
+    /// tool name and its arguments. Any other shape fails here instead of being guessed.
+    fn example_call(example: &str) -> (String, Value) {
+        let call = example.split("  #").next().expect("call").trim_end();
+        let (tool, rest) = call
+            .split_once('(')
+            .unwrap_or_else(|| panic!("not a call: {example}"));
+        let mut rest = rest
+            .strip_suffix(')')
+            .unwrap_or_else(|| panic!("unclosed call: {example}"));
+        let mut arguments = Map::new();
+        while !rest.is_empty() {
+            let (key, tail) = rest
+                .split_once("=\"")
+                .unwrap_or_else(|| panic!("unsupported argument: {example}"));
+            let (value, tail) = tail
+                .split_once('"')
+                .unwrap_or_else(|| panic!("unterminated value: {example}"));
+            assert!(
+                !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                "unsupported argument name {key:?}: {example}"
+            );
+            arguments.insert(key.to_owned(), json!(value));
+            rest = if tail.is_empty() {
+                tail
+            } else {
+                tail.strip_prefix(", ")
+                    .unwrap_or_else(|| panic!("unsupported separator: {example}"))
+            };
+        }
+        (tool.to_owned(), Value::Object(arguments))
+    }
+
+    #[test]
+    fn example_call_reads_the_forms_bootstrap_returns() {
+        assert_eq!(
+            example_call("cccc_help()  # when a route is unclear"),
+            ("cccc_help".to_owned(), json!({}))
+        );
+        assert_eq!(
+            example_call("cccc_agent_state(group_id=\"g_1\", action=\"update\", focus=\"...\")"),
+            (
+                "cccc_agent_state".to_owned(),
+                json!({"group_id":"g_1","action":"update","focus":"..."})
+            )
+        );
+    }
+
     #[test]
     fn receive_notice_repeats_only_after_a_change_a_new_loss_or_six_hours() {
         use std::time::Duration;
@@ -1301,22 +1368,26 @@ mod tests {
             examples["next_calls"]["inbox_read"],
             format!("cccc_inbox_read{named})")
         );
-        for example in examples["next_calls"]
-            .as_object()
-            .expect("next calls")
-            .values()
-            .chain(
-                [
-                    "update_command",
-                    "execution_update_command",
-                    "mind_context_update_command",
-                ]
-                .map(|key| &examples["context_hygiene"][key]),
-            )
-        {
-            let example = example.as_str().expect("example");
+        // Each suggested call runs exactly as returned. This checks that the arguments are
+        // accepted, not what an agent would write in them.
+        let call = |tool: &str, arguments: Value| {
+            json!({"jsonrpc":"2.0","id":11,"method":"tools/call","params":{
+                "name":tool,"arguments":arguments
+            }})
+        };
+        let accepted = |response: &Value| {
+            response.get("error").is_none()
+                && response["result"].is_object()
+                && response["result"]["isError"] != true
+        };
+        for (key, example) in bootstrap_examples(examples) {
             assert!(example.contains(&named), "{example}");
             assert!(!example.contains("actor_id"), "{example}");
+            let (tool, arguments) = example_call(&example);
+            let response = context
+                .handle(&home, &client, &call(&tool, arguments))
+                .await;
+            assert!(accepted(&response), "{key}: {example}: {response}");
         }
         let identity = &bootstrapped["result"]["structuredContent"]["mcp_server"];
         assert_eq!(identity["version"], env!("CARGO_PKG_VERSION"));
