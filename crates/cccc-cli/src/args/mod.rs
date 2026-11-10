@@ -13,7 +13,7 @@ pub use integrations::{
 };
 pub use messaging::{
     CancelReplyArgs, ConnectArgs, DeliverArgs, InboxArgs, InboxSummaryArgs, LedgerAction,
-    LedgerArgs, ReplyArgs, SendArgs, TailArgs, TrackedSendArgs,
+    LedgerArgs, ReplyArgs, SearchArgs, SendArgs, TailArgs, TrackedSendArgs,
 };
 
 use clap::{Args, Parser, Subcommand, ValueEnum};

@@ -261,6 +261,38 @@ pub async fn ledger(client: &DaemonClient, home: &HomeLayout, args: LedgerArgs) 
             )
             .await?
         }
+        LedgerAction::Search(args) => {
+            let mut request = json!({
+                "group_id":group(home,args.group_id)?,
+                "kind":args.kind,
+                "limit":args.limit,
+            });
+            if let Some(value) = args.by {
+                request["by"] = json!(value);
+            }
+            if !args.by_any.is_empty() {
+                request["by_any"] = json!(args.by_any);
+            }
+            if let Some(value) = args.to {
+                request["to"] = json!(value);
+            }
+            if let Some(value) = args.since {
+                request["since_ts"] = json!(value);
+            }
+            if let Some(value) = args.until {
+                request["until_ts"] = json!(value);
+            }
+            if let Some(value) = args.query {
+                request["q"] = json!(value);
+            }
+            if let Some(value) = args.before {
+                request["before"] = json!(value);
+            }
+            if let Some(value) = args.after {
+                request["after"] = json!(value);
+            }
+            call(client, "ledger_search", request).await?
+        }
     };
     print(response)
 }
