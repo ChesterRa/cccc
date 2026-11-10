@@ -1926,7 +1926,7 @@ mod tests {
         );
     }
 
-    // Shaped like Agent View job records captured 2026-11-07 (Claude Code 2.1.319), reduced to
+    // Shaped like Agent View job records captured 2026-11-07 (claude CLI 2.1.319), reduced to
     // the fields parse_job reads; identifiers and workspace are synthetic. ADOPTED_JOB resumed a
     // conversation Agent View did not create: its own id differs and it writes that transcript.
     const ADOPTED_JOB: &str = r#"{"short":"a1b2c3d4","sessionId":"11111111-1111-4111-8111-111111111111","cwd":"/work","cliVersion":"2.1.319"}"#;

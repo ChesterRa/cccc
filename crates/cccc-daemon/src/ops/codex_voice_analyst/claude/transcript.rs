@@ -69,7 +69,7 @@ pub(super) struct TranscriptState {
     record_session_id: String,
     events: broadcast::Sender<AnalystEvent>,
     active: Option<ActiveTurn>,
-    /// promptIds of hidden (isMeta) user inputs seen while idle. Claude Code starts its own
+    /// promptIds of hidden (isMeta) user inputs seen while idle. The claude CLI starts its own
     /// turns from such inputs (scheduled prompts, cross-session messages); the turn they start
     /// is attributed to these prompts.
     meta_prompt_ids: Vec<String>,
