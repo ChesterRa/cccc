@@ -6,11 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.53]
+
+### Added
+
+- The guide has a starter path for a two-agent team. The Builder + Reviewer Pair use case now goes
+  from registering two agents to handoff, review and integration, and a new page holds a short
+  `AGENTS.md` template to copy and adapt. Supported Runtimes explains where a Claude Code agent
+  that CCCC starts edits files: Claude Code has such a background session enter a worktree before
+  it edits files in the main checkout by default. The page shows how to pass Claude Code's
+  `worktree.bgIsolation` setting in that agent's command; CCCC's own default is unchanged.
+
 ### Changed
 
-- Web and MCP message calls now reject caller-supplied IM origin fields, such as
-  `source_platform` or `transport`. When forwarding a message in the Web, the sender must
-  be able to access the referenced source Group.
 - Message calls now reject arguments they do not recognize. A misspelt or misplaced argument,
   such as `mdoe` for the mode or a question's `options` given at the top level, used to be stored
   or ignored while the call reported success. The call now fails with `unknown_arguments`, names
@@ -33,6 +41,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   that session's tools require. The agent-state examples omit an unnecessary `actor_id`
   placeholder and use the caller's session identity. A native session's tool parameter
   descriptions also state that `group_id` must be given explicitly.
+
+### Security
+
+- Web and MCP message calls now reject caller-supplied IM origin fields, such as
+  `source_platform` or `transport`. A caller, including a non-administrator Web token limited to
+  one Group, could use them to put a false platform and sender in the envelope a recipient sees.
+  When forwarding a message in the Web, the sender must be able to access the referenced source
+  Group. Source references given through an MCP tool are not verified, and programs that call the
+  daemon directly on the same machine are trusted as before. An MCP server started before the
+  upgrade keeps the earlier behavior until it is started again.
 
 ## [0.4.52]
 

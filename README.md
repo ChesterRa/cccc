@@ -47,17 +47,16 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.52
+## What's new in 0.4.53
 
-- **Tabs come back after a refresh.** Refreshing a browser tab restores each Group's resource panel: the tabs you had open, the selected one, a **Side by side** comparison, and whether the panel was collapsed or maximized. A Group keeps its side-by-side layout when you switch away and back. Only which files, attachments and Presentation slots were open is kept, in that browser tab's session storage; their contents are read again with your current permissions, and unsaved edits and reading positions are not restored.
-- **Steadier Group switching.** Switching Groups no longer flashes the connection symbol as reconnecting, or makes a member's unread mail mark disappear and come back.
-- **Less work in the background.** To find messages for Chet, the Web no longer reads the whole history of every Group every 30 seconds; it reads only what was written since. Idle Claude, Pi and OpenCode sessions ask the daemon for their next message less often, and the actions on each message no longer make every visible message re-render when a new one arrives.
-- **Memory goes back after busy periods.** On Linux with glibc, the daemon asks the allocator every five minutes to return unused pages to the system, so memory it freed need not stay with the process. This is not a memory limit.
-- **Ctrl-C while the Web starts.** A Ctrl-C after the daemon was ready and while the Web was starting, including just as its **Local:** address appeared, ended `cccc web`, `cccc --headless` and `cccc` without the terminal interface at once. It now starts the usual stop, and a second one still forces the exit.
+- **Mistyped message arguments fail at once.** A message call with an argument CCCC does not recognize, such as `mdoe` for the mode or a question's options in the wrong place, used to report success while the argument was stored or ignored. It now fails with `unknown_arguments`, names the argument and changes nothing. New messages and files sent through CCCC Connect are not covered yet.
+- **Message origin stays with the bridge.** Ordinary Web and MCP message calls can no longer supply the IM origin fields that record a platform and sender, which a caller could use to show a recipient a false origin. Forwarding a message in the Web requires access to the Group it comes from.
+- **Start-up examples a native session can call.** The calls `cccc_bootstrap` suggests to a connected native session now name its Group, which that session's tools require.
+- **A starter pair and an AGENTS.md template.** The guide walks through a builder and reviewer pair from registering the two agents to integration, with a short template to copy into your project's instructions. It also explains where a Claude Code agent that CCCC starts edits files, and the Claude Code setting that changes it.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. That first reload still starts with an empty resource panel, because the earlier page did not save its tabs. Sessions that are already connected keep asking at the earlier interval until they are started again.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. Agent sessions started before the upgrade keep the MCP server they started with: they keep working, but the MCP-side origin check and the new start-up examples reach a session only when its MCP server is started again, for example by restarting the agent.
 
-Details: [0.4.52 release notes](https://chesterra.github.io/cccc/release/v0.4.52_release_notes).
+Details: [0.4.53 release notes](https://chesterra.github.io/cccc/release/v0.4.53_release_notes).
 
 ## Quick start
 
