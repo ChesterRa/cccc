@@ -12,6 +12,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   opens of a ledger could queue redundant ledger checks. Writes, rotations, Group removal and the
   periodic recovery scan are handled as before.
 
+### Fixed
+
+- History and the Inbox read a Group's rotated ledger segments in the order they were rotated,
+  even when the system clock went backwards between two rotations. Segments were read in
+  file-name order, and a name starts with the time of its rotation, so a later segment stamped
+  with an earlier time was read first: history showed its messages out of order and an Inbox
+  read could skip Mail. Nothing was removed from the ledger. A ledger is rotated only by an
+  explicit compaction such as `cccc ledger compact`. In a Group that was already read in the
+  wrong order, new Mail arrives normally after the update, but Mail that an Inbox read had
+  already passed over may not return to the Inbox; it remains in the Group's history.
+
 ## [0.4.53]
 
 ### Added

@@ -430,7 +430,22 @@ fn source_paths(path: &Path) -> io::Result<Vec<PathBuf>> {
                 selected.insert(logical, candidate);
             }
         }
-        paths.extend(selected.into_values());
+        // Rotation timestamps can go backwards. Canonical segments follow their
+        // sequence; unsequenced names stay in lexical order before them. Keep
+        // distinct logical sources even when they claim the same sequence.
+        let mut ordered = selected
+            .into_iter()
+            .map(|(logical, physical)| {
+                let sequence = logical
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(crate::ledger_archive::parse_segment_name)
+                    .map_or(0, |(_, sequence, _, _)| sequence);
+                ((sequence, logical), physical)
+            })
+            .collect::<Vec<_>>();
+        ordered.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+        paths.extend(ordered.into_iter().map(|(_, physical)| physical));
     }
     if path.exists() {
         paths.push(path.to_path_buf());
@@ -1276,5 +1291,80 @@ mod tests {
         let events = read_all(&path).expect("read all");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id, event.id);
+    }
+
+    fn write_segment_event(path: &Path, event: &Event) {
+        std::fs::write(
+            path,
+            format!("{}\n", serde_json::to_string(event).expect("event JSON")),
+        )
+        .expect("write segment event");
+    }
+
+    #[test]
+    fn segment_order_follows_sequence_when_timestamps_go_backwards() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let segments = temp.path().join("state/ledger/segments");
+        std::fs::create_dir_all(&segments).expect("segments");
+        let events: [Event; 4] = std::array::from_fn(|_| Event::new("chat.message", "g_test"));
+        for (name, event) in [
+            "ledger.20261110T000002Z.000001.jsonl",
+            "ledger.20261110T000001Z.000002.jsonl",
+            "ledger.20261110T000001Z.000003.jsonl",
+        ]
+        .into_iter()
+        .zip(&events)
+        {
+            write_segment_event(&segments.join(name), event);
+        }
+        write_segment_event(&path, &events[3]);
+        let expected = events
+            .iter()
+            .map(|event| event.id.clone())
+            .collect::<Vec<_>>();
+        let ids = |events: Vec<Event>| events.into_iter().map(|event| event.id).collect::<Vec<_>>();
+
+        assert_eq!(ids(read_all(&path).expect("all events")), expected);
+        assert_eq!(ids(tail(&path, 2).expect("last events")), expected[2..]);
+        let mut snapshot_ids = Vec::new();
+        visit_snapshot_oldest_first(&path, |event| {
+            snapshot_ids.push(event.id);
+            ControlFlow::Continue(())
+        })
+        .expect("snapshot events");
+        assert_eq!(snapshot_ids, expected);
+    }
+
+    #[test]
+    fn segment_order_keeps_unsequenced_and_duplicate_sequence_sources() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let segments = temp.path().join("state/ledger/segments");
+        std::fs::create_dir_all(&segments).expect("segments");
+        let events: [Event; 4] = std::array::from_fn(|_| Event::new("chat.message", "g_test"));
+        for (name, event) in [
+            "ledger.zzz.jsonl",
+            "ledger.20261110T000001Z.000001.jsonl",
+            "ledger.20261110T000002Z.000001.jsonl",
+        ]
+        .into_iter()
+        .zip(&events)
+        {
+            write_segment_event(&segments.join(name), event);
+        }
+        write_segment_event(&path, &events[3]);
+
+        assert_eq!(
+            read_all(&path)
+                .expect("each source remains readable")
+                .into_iter()
+                .map(|event| event.id)
+                .collect::<Vec<_>>(),
+            events
+                .iter()
+                .map(|event| event.id.clone())
+                .collect::<Vec<_>>()
+        );
     }
 }

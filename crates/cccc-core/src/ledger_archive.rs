@@ -293,7 +293,7 @@ fn discover_segments(segments_dir: &Path) -> io::Result<BTreeMap<u64, PhysicalSe
     Ok(by_sequence)
 }
 
-fn parse_segment_name(name: &str) -> Option<(String, u64, bool, String)> {
+pub(crate) fn parse_segment_name(name: &str) -> Option<(String, u64, bool, String)> {
     let (without_gzip, compressed) = name
         .strip_suffix(".gz")
         .map_or((name, false), |value| (value, true));
