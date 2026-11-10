@@ -13,6 +13,31 @@ export function actorSupportsNewSession(
   );
 }
 
+const SESSION_REPLACED_REASONS = [
+  "runtime",
+  "transport",
+  "record_version",
+  "workspace",
+  "command",
+  "model",
+  "launch_path",
+  "cccc_cli",
+  "launch_identity",
+] as const;
+
+/** A start of this agent did not resume the conversation saved before it; `at` is when that was recorded. */
+export function actorSessionReplacement(
+  actor: Pick<Actor, "runtime_session_replaced_at" | "runtime_session_replaced_reasons">,
+): { at: string; reasons: (typeof SESSION_REPLACED_REASONS)[number][] } | null {
+  const at = String(actor.runtime_session_replaced_at || "").trim();
+  if (!at) return null;
+  const reported = Array.isArray(actor.runtime_session_replaced_reasons)
+    ? actor.runtime_session_replaced_reasons
+    : [];
+  // The daemon's list is open: a reason this build has no words for is left out.
+  return { at, reasons: SESSION_REPLACED_REASONS.filter((reason) => reported.includes(reason)) };
+}
+
 export function actorHasRuntimeResumeFailure(
   actor: Pick<Actor, "runtime_session_status">,
 ): boolean {

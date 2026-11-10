@@ -53,6 +53,7 @@ import {
   PlusIcon,
 } from "./Icons";
 import { ActorQuickControls } from "./agentTerminal/ActorQuickControls";
+import { SessionReplacedMark } from "./agentTerminal/SessionReplacedMark";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { NATIVE_SESSION_AVAILABLE, nativeSessionStatusKey } from "../utils/nativeSessionStatus";
@@ -68,6 +69,7 @@ import { attachTerminalTouchScroll } from "./agentTerminal/terminalTouchScroll";
 import { getTerminalTheme } from "./agentTerminal/terminalTheme";
 import {
   actorHasRuntimeResumeFailure,
+  actorSessionReplacement,
   actorSupportsNewSession,
   shouldFetchStoppedTerminalTail,
   shouldReconcileStoppedActorStatus,
@@ -217,6 +219,21 @@ export function AgentTab({
   const canStartNewSession =
     !accessOnly && actorSupportsNewSession(actor.runtime, actor.runtime_mode);
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
+  const sessionReplacement = actorSessionReplacement(actor);
+  const sessionReplacedMark = sessionReplacement ? (
+    <SessionReplacedMark
+      summary={t("runtimeSessionReplaced", { time: formatFullTime(sessionReplacement.at) })}
+      reasons={
+        sessionReplacement.reasons.length
+          ? t("runtimeSessionReplacedReasons", {
+              reasons: sessionReplacement.reasons
+                .map((reason) => t(`runtimeSessionReplacedReason.${reason}`))
+                .join(t("runtimeSessionReplacedReasonSeparator")),
+            })
+          : ""
+      }
+    />
+  ) : null;
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
   const actorBusy = useUIStore(
@@ -821,6 +838,7 @@ export function AgentTab({
                 {compactStatusText}
               </span>
             ) : null}
+            {sessionReplacedMark}
           </div>
           {navigation}
           <ActorQuickControls
@@ -893,21 +911,20 @@ export function AgentTab({
                       : t("groupRolePeer", { defaultValue: "Peer" })}
                   </span>
                 </div>
-                <div
-                  className={classNames(
-                    "mt-0.5 text-xs truncate",
-                    "text-[var(--color-text-tertiary)]",
-                  )}
-                >
-                  {rtInfo?.label || t("custom")} •{" "}
-                  <span
-                    className="lcd-group-symbol"
-                    data-lcd-shape={lcdStatusShape}
-                    aria-hidden="true"
-                  >
-                    {lcdStatusText}
-                  </span>{" "}
-                  {runtimeStatusText}
+                {/* Only the text is cut short: the mark beside it keeps the area a finger hits. */}
+                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-[var(--color-text-tertiary)]">
+                  <span className="min-w-0 truncate">
+                    {rtInfo?.label || t("custom")} •{" "}
+                    <span
+                      className="lcd-group-symbol"
+                      data-lcd-shape={lcdStatusShape}
+                      aria-hidden="true"
+                    >
+                      {lcdStatusText}
+                    </span>{" "}
+                    {runtimeStatusText}
+                  </span>
+                  {sessionReplacedMark}
                 </div>
                 {/* Mobile-only: condensed single-line agent state */}
                 {(!isEventActor || agentState) && (
@@ -1355,10 +1372,11 @@ export function AgentTab({
                 onClick={onEdit}
                 disabled={isBusy}
                 data-lcd-key
-                className={ghostActionButtonClass}
+                className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
                 aria-label={t("editAgentConfig")}
               >
-                <EditIcon size={16} /> {t("common:edit")}
+                <EditIcon size={16} />
+                {!isSmallScreen && t("common:edit")}
               </button>
             </>
           )}

@@ -28,11 +28,11 @@ impl AnalystSession {
                 "Secretary tool authority is owned by CCCC; remove --exclude-tools from the Pi command",
             ));
         }
-        let identity = super::super::runtime_session::pi::identity(
+        let (identity, launch_parts) = super::super::runtime_session::pi::launch(
             &binding.root,
             &identity_command,
             &environment,
-        );
+        )?;
         let cccc = super::super::codex_mcp::configure_actor_cli(&mut environment);
         #[cfg(test)]
         let cccc = cccc.or_else(|| environment.remove("PI_FIXTURE_CLI").map(PathBuf::from));
@@ -203,7 +203,12 @@ impl AnalystSession {
             if purpose != SessionPurpose::VoiceSecretary {
                 let receipt = if let Some(path) = receipt_path {
                     super::super::runtime_session::pi::record(
-                        &path, &identity, &id, &file, resumed,
+                        &path,
+                        &identity,
+                        launch_parts.as_ref(),
+                        &id,
+                        &file,
+                        resumed,
                     )?;
                     super::super::runtime_session::native_acp::PromptReceipt::actor(
                         path,

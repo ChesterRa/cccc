@@ -226,6 +226,7 @@ pub(super) fn attach_managed(
         return Err(cleanup_failed_start(&item, error));
     }
     super::output::emit(&item, "headless.session.started", Map::new());
+    super::super::runtime_session::announce_replaced(home, &group.group_id, &actor.id);
     Ok(())
 }
 

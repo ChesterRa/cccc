@@ -486,3 +486,164 @@ fn native_acp_voice_profiles_resolve_mode_and_preserve_private_configuration() {
         }
     }
 }
+
+fn probe_launch(runtime: ActorRuntime, command: &[&str]) -> ResolvedAgentRuntime {
+    ResolvedAgentRuntime {
+        runtime,
+        runtime_mode: cccc_contracts::RuntimeMode::default(),
+        command: command.iter().map(|part| (*part).to_owned()).collect(),
+        // Every provider selector is set, so the process environment is not read.
+        environment: [
+            ("CCCC_CLI", "/probe/cccc"),
+            ("HOME", "/probe/home"),
+            ("PATH", "/probe/bin:/usr/bin"),
+            ("PI_CODING_AGENT_DIR", "/probe/pi"),
+            ("PROBE_SETTING", "same"),
+            ("USERPROFILE", "/probe/profile"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect(),
+    }
+}
+
+/// Saved conversations are matched by these fingerprints, so splitting one
+/// into parts must not move it. The expected values were encoded outside this
+/// code, from the format in use before the split.
+#[test]
+fn splitting_a_launch_fingerprint_keeps_what_saved_receipts_are_matched_by() {
+    let cwd = tempfile::tempdir().expect("tempdir");
+    let claude = probe_launch(ActorRuntime::Claude, &["claude", "--model", "sonnet"]);
+    const CLAUDE: &str = "a2a3b3725b5684ed419c7d060dd8e9202f70da928537f06e210991b79b3fca40";
+    assert_eq!(
+        claude.identity_fingerprint_at(cwd.path()).expect("Claude"),
+        CLAUDE
+    );
+    assert_eq!(
+        claude.launch_identity_at(cwd.path()).expect("Claude").0,
+        CLAUDE
+    );
+    let pi = probe_launch(ActorRuntime::Pi, &["pi"]);
+    const PI: &str = "f255f339b404ec154e0f739af6014190388d4439a7c101e9a614f43f48c4c0dc";
+    assert_eq!(pi.identity_fingerprint(), PI);
+    assert_eq!(pi.launch_identity_at(cwd.path()).expect("Pi").0, PI);
+
+    // A launch file adds its flag, its resolved path and the hash of its content.
+    std::fs::write(cwd.path().join("settings.json"), "{}").expect("launch file");
+    let file = cwd
+        .path()
+        .join("settings.json")
+        .canonicalize()
+        .expect("resolved launch file");
+    let saved_format = format!(
+        r#"[{{"runtime":"claude","command":["claude","--settings","settings.json"],"environment":{{"CCCC_CLI":"/probe/cccc","HOME":"/probe/home","PATH":"/probe/bin:/usr/bin","PI_CODING_AGENT_DIR":"/probe/pi","PROBE_SETTING":"same","USERPROFILE":"/probe/profile"}}}},[["--settings",{},"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"]]]"#,
+        serde_json::to_string(&file.to_string_lossy()).expect("path as JSON")
+    );
+    assert_eq!(
+        probe_launch(
+            ActorRuntime::Claude,
+            &["claude", "--settings", "settings.json"]
+        )
+        .identity_fingerprint_at(cwd.path())
+        .expect("Claude with a launch file"),
+        format!("{:x}", Sha256::digest(saved_format))
+    );
+}
+
+#[test]
+fn launch_parts_tell_which_part_of_a_launch_changed() {
+    let cwd = tempfile::tempdir().expect("tempdir");
+    std::fs::write(cwd.path().join("settings.json"), "{}").expect("launch file");
+    let split = |launch: &ResolvedAgentRuntime| {
+        let (fingerprint, parts) = launch.launch_identity_at(cwd.path()).expect("identity");
+        (fingerprint, parts.expect("parts"))
+    };
+    // The parts that differ from `base`, whose fingerprint must differ as well.
+    let changed = |base: &ResolvedAgentRuntime, launch: &ResolvedAgentRuntime| {
+        let ((fingerprint, base), (changed_fingerprint, changed)) = (split(base), split(launch));
+        assert_ne!(fingerprint, changed_fingerprint);
+        assert_eq!((base.v, changed.v), (1, 1));
+        [
+            ("path", base.path != changed.path),
+            ("cccc_cli", base.cccc_cli != changed.cccc_cli),
+            ("rest", base.rest != changed.rest),
+        ]
+        .into_iter()
+        .filter_map(|(part, differs)| differs.then_some(part))
+        .collect::<Vec<_>>()
+    };
+    let with = |base: &ResolvedAgentRuntime, key: &str, value: Option<&str>| {
+        let mut launch = base.clone();
+        match value {
+            Some(value) => launch.environment.insert(key.into(), value.into()),
+            None => launch.environment.remove(key),
+        };
+        launch
+    };
+
+    let claude = probe_launch(
+        ActorRuntime::Claude,
+        &["claude", "--settings", "settings.json"],
+    );
+    for base in [&claude, &probe_launch(ActorRuntime::Pi, &["pi"])] {
+        assert_eq!(
+            changed(base, &with(base, "PATH", Some("/other/bin:/usr/bin"))),
+            ["path"]
+        );
+        assert_eq!(
+            changed(base, &with(base, "CCCC_CLI", Some("/other/cccc"))),
+            ["cccc_cli"]
+        );
+        assert_eq!(
+            changed(base, &with(base, "PROBE_SETTING", Some("other"))),
+            ["rest"]
+        );
+        // An unset value is not an empty one.
+        assert_eq!(changed(base, &with(base, "PATH", None)), ["path"]);
+        assert_eq!(
+            changed(&with(base, "PATH", None), &with(base, "PATH", Some(""))),
+            ["path"]
+        );
+        assert_eq!(
+            changed(
+                &with(base, "CCCC_CLI", None),
+                &with(base, "CCCC_CLI", Some(""))
+            ),
+            ["cccc_cli"]
+        );
+        let mut command = base.clone();
+        command.command.push("--verbose".into());
+        assert_eq!(changed(base, &command), ["rest"]);
+    }
+    assert_eq!(
+        changed(
+            &probe_launch(ActorRuntime::Pi, &["pi"]),
+            &with(
+                &probe_launch(ActorRuntime::Pi, &["pi"]),
+                "PI_CODING_AGENT_DIR",
+                Some("/other/pi")
+            )
+        ),
+        ["rest"]
+    );
+
+    // The content of a Claude launch file belongs to the rest.
+    let (before, before_parts) = split(&claude);
+    std::fs::write(cwd.path().join("settings.json"), r#"{"changed":true}"#).expect("launch file");
+    let (after, after_parts) = split(&claude);
+    assert_ne!(before, after);
+    assert_ne!(before_parts.rest, after_parts.rest);
+    assert_eq!(
+        (&before_parts.path, &before_parts.cccc_cli),
+        (&after_parts.path, &after_parts.cccc_cli)
+    );
+
+    // A fingerprint that does not cover the launch PATH has no parts.
+    assert_eq!(
+        probe_launch(ActorRuntime::Codex, &["codex"])
+            .launch_identity_at(cwd.path())
+            .expect("Codex")
+            .1,
+        None
+    );
+}

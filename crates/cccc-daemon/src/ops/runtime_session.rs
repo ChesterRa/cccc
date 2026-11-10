@@ -13,6 +13,7 @@ pub(crate) mod native_acp;
 mod opencode;
 pub(crate) use opencode::valid_opencode_session_id;
 pub(crate) mod pi;
+mod replaced;
 pub(crate) mod resume_failure;
 pub use claude::{
     ResumeBlocked as ClaudeResumeBlocked, is_resume_blocked as is_claude_resume_blocked,
@@ -131,7 +132,7 @@ pub fn record_codex_app_thread(
         ("failure_count".into(), json!(0)),
         ("updated_at".into(), json!(utc_now())),
     ]);
-    write(home, group_id, actor_id, &document)
+    write_recorded(home, group_id, actor_id, document)
 }
 
 pub fn remove(home: &HomeLayout, group_id: &str, actor_id: &str) -> std::io::Result<()> {
@@ -173,50 +174,71 @@ pub fn restore_snapshot(
     }
 }
 
-pub fn actor_fields(home: &HomeLayout, group_id: &str, actor_id: &str) -> Map<String, Value> {
-    if selected_acp(home, group_id, actor_id)
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        let usable = selected_path(home, group_id, actor_id).is_ok_and(|path| {
-            if selected_acp(home, group_id, actor_id).ok().flatten()
-                == Some(cccc_contracts::ActorRuntime::Antigravity)
-            {
-                path.is_file()
-            } else {
-                cccc_core::fs::read_json::<Value>(&path)
-                    .is_ok_and(|value| value["attempted"] == true)
-            }
+/// Called once a managed launch is attached. A notice that cannot be written
+/// is only logged: the start already succeeded, and the receipt keeps the fact.
+pub(crate) fn announce_replaced(home: &HomeLayout, group_id: &str, actor_id: &str) {
+    let Ok(path) = selected_path(home, group_id, actor_id) else {
+        return;
+    };
+    let Some(noted) = replaced::take_unannounced(&path) else {
+        return;
+    };
+    let appended = GroupStore::new(home.clone())
+        .and_then(|store| store.ledger_path(group_id))
+        .and_then(|ledger| {
+            cccc_core::ledger::append(&ledger, &replaced::notice(group_id, actor_id, &noted))
         });
-        return Map::from_iter([
+    if let Err(error) = appended {
+        tracing::warn!(%error, %group_id, %actor_id, "failed to record that a saved conversation was not resumed");
+    }
+}
+
+pub fn actor_fields(home: &HomeLayout, group_id: &str, actor_id: &str) -> Map<String, Value> {
+    let acp = selected_acp(home, group_id, actor_id).ok().flatten();
+    let path = surface_path(home, group_id, actor_id, acp);
+    let receipt = path
+        .as_ref()
+        .ok()
+        .and_then(|path| cccc_core::fs::read_json::<Value>(path).ok())
+        .unwrap_or_default();
+    let mut fields = if let Some(runtime) = acp {
+        let usable = if runtime == cccc_contracts::ActorRuntime::Antigravity {
+            path.is_ok_and(|path| path.is_file())
+        } else {
+            receipt["attempted"] == true
+        };
+        Map::from_iter([
             (
                 "runtime_session_status".into(),
                 if usable { json!("usable") } else { Value::Null },
             ),
             ("runtime_session_resume_eligible".into(), json!(usable)),
             ("runtime_session_last_resume_error".into(), Value::Null),
-        ]);
-    }
-    let document = read(home, group_id, actor_id).unwrap_or_default();
-    Map::from_iter([
-        (
-            "runtime_session_status".into(),
-            nullable_string(&document, "status"),
-        ),
-        (
-            "runtime_session_resume_eligible".into(),
-            document
-                .get("resume_eligible")
-                .cloned()
-                .filter(Value::is_boolean)
-                .unwrap_or(Value::Null),
-        ),
-        (
-            "runtime_session_last_resume_error".into(),
-            nullable_string(&document, "last_resume_error"),
-        ),
-    ])
+        ])
+    } else {
+        let empty = Map::new();
+        let document = receipt.as_object().unwrap_or(&empty);
+        Map::from_iter([
+            (
+                "runtime_session_status".into(),
+                nullable_string(document, "status"),
+            ),
+            (
+                "runtime_session_resume_eligible".into(),
+                document
+                    .get("resume_eligible")
+                    .cloned()
+                    .filter(Value::is_boolean)
+                    .unwrap_or(Value::Null),
+            ),
+            (
+                "runtime_session_last_resume_error".into(),
+                nullable_string(document, "last_resume_error"),
+            ),
+        ])
+    };
+    fields.extend(replaced::actor_fields(&receipt));
+    fields
 }
 
 fn selected_acp(
@@ -237,7 +259,18 @@ fn selected_acp(
 }
 
 fn selected_path(home: &HomeLayout, group: &str, actor: &str) -> std::io::Result<PathBuf> {
-    match selected_acp(home, group, actor)? {
+    surface_path(home, group, actor, selected_acp(home, group, actor)?)
+}
+
+/// The receipt of the surface the Actor currently runs on: an ACP runtime
+/// keeps its own file beside the shared one.
+fn surface_path(
+    home: &HomeLayout,
+    group: &str,
+    actor: &str,
+    acp: Option<cccc_contracts::ActorRuntime>,
+) -> std::io::Result<PathBuf> {
+    match acp {
         Some(cccc_contracts::ActorRuntime::Antigravity) => {
             antigravity::receipt_path(home, group, actor)
         }
@@ -261,6 +294,16 @@ fn write(
     document: &Map<String, Value>,
 ) -> std::io::Result<()> {
     cccc_core::fs::write_json(&path(home, group_id, actor_id)?, document)
+}
+
+/// Persist the receipt of the conversation a launch now uses.
+fn write_recorded(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    document: Map<String, Value>,
+) -> std::io::Result<()> {
+    replaced::write_recorded(&path(home, group_id, actor_id)?, Value::Object(document))
 }
 
 fn path(home: &HomeLayout, group_id: &str, actor_id: &str) -> std::io::Result<PathBuf> {

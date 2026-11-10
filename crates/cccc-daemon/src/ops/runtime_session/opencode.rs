@@ -1,5 +1,6 @@
 use super::{
     command_fingerprint, model_from_command, read, resume_enabled, string, workspace_path, write,
+    write_recorded,
 };
 use cccc_contracts::{ActorRuntime, utc_now};
 use cccc_core::HomeLayout;
@@ -130,7 +131,7 @@ pub fn record_managed(
         ("failure_count".into(), json!(0)),
         ("updated_at".into(), json!(utc_now())),
     ]);
-    write(home, group_id, actor_id, &document)
+    write_recorded(home, group_id, actor_id, document)
 }
 
 fn identity_fingerprint(

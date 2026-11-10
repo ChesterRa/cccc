@@ -1,9 +1,10 @@
 use super::{
     command_fingerprint, model_from_command, read, resume_enabled, string, valid_session_id,
-    workspace_path, write,
+    workspace_path, write, write_recorded,
 };
 use cccc_contracts::utc_now;
 use cccc_core::HomeLayout;
+use cccc_core::codex_voice_settings::LaunchParts;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::io;
@@ -69,7 +70,7 @@ pub fn prepare_managed(
         || string(&document, "command_fingerprint") != command_fingerprint(base_command)
         || string(&document, "model") != model_from_command(base_command)
         || string(&document, "identity_fingerprint")
-            != identity_fingerprint(base_command, environment, cwd)?
+            != launch_identity(base_command, environment, cwd)?.0
         || !string(&document, "provider_thread_id").is_empty()
     {
         return Ok(None);
@@ -186,6 +187,7 @@ pub fn record_managed(
         ));
     }
     let now = utc_now();
+    let (identity_fingerprint, launch_parts) = launch_identity(base_command, environment, cwd)?;
     let document = Map::from_iter([
         ("v".into(), json!(MANAGED_RECORD_VERSION)),
         ("kind".into(), json!("runtime_session")),
@@ -199,10 +201,9 @@ pub fn record_managed(
             json!(command_fingerprint(base_command)),
         ),
         ("model".into(), json!(model_from_command(base_command))),
-        (
-            "identity_fingerprint".into(),
-            json!(identity_fingerprint(base_command, environment, cwd)?),
-        ),
+        ("identity_fingerprint".into(), json!(identity_fingerprint)),
+        // Beside the fingerprint, never part of what a resume is matched by.
+        ("launch_parts".into(), json!(launch_parts)),
         ("provider_session_id".into(), json!(session_id)),
         ("provider_thread_id".into(), json!("")),
         ("resume_command_hint".into(), json!("")),
@@ -223,27 +224,101 @@ pub fn record_managed(
         ("failure_count".into(), json!(0)),
         ("updated_at".into(), json!(utc_now())),
     ]);
-    write(home, group_id, actor_id, &document)
+    write_recorded(home, group_id, actor_id, document)
 }
 
-fn identity_fingerprint(
+fn launch_identity(
     command: &[String],
     environment: &BTreeMap<String, String>,
     cwd: &Path,
-) -> std::io::Result<String> {
+) -> std::io::Result<(String, Option<LaunchParts>)> {
     cccc_core::codex_voice_settings::ResolvedAgentRuntime {
         runtime: cccc_contracts::ActorRuntime::Claude,
         runtime_mode: cccc_contracts::RuntimeMode::default(),
         command: command.to_vec(),
         environment: environment.clone(),
     }
-    .identity_fingerprint_at(cwd)
+    .launch_identity_at(cwd)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use cccc_core::GroupStore;
+
+    #[test]
+    fn a_receipt_saved_before_fingerprints_were_split_still_resumes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("Claude receipt", "")
+            .expect("group")
+            .group_id;
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir(&workspace).expect("workspace");
+        let session_id = "52b41c61-e23c-4b7c-8b60-809c347451b5";
+        // Encoded outside this code, from the format in use before the split.
+        const SAVED: &str = "a2a3b3725b5684ed419c7d060dd8e9202f70da928537f06e210991b79b3fca40";
+        const SAVED_COMMAND: &str =
+            "1a670870531a6a414b1a98742b0f4348ba8f93fd8040cfe3d2c8d079eca525ed";
+        // Written as it was then, not through `record_managed`.
+        let saved = json!({"v":2,"kind":"runtime_session","transport":"claude_agent_view","group_id":group,"actor_id":"claude-1","runtime":"claude","workspace_path":workspace_path(&workspace),"command_fingerprint":SAVED_COMMAND,"model":"sonnet","identity_fingerprint":SAVED,"provider_session_id":session_id,"provider_thread_id":"","resume_command_hint":"","captured_from":"claude_agent_view_start","status":"usable","resume_eligible":true,"last_seen_at":"2026-01-01T00:00:00Z","last_resume_attempt_at":"","last_resume_attempt_id":"","last_resume_error":"","failure_count":0,"updated_at":"2026-01-01T00:00:00Z"});
+        write(
+            &home,
+            &group,
+            "claude-1",
+            saved.as_object().expect("receipt"),
+        )
+        .expect("saved receipt");
+        let command = vec!["claude".to_owned(), "--model".into(), "sonnet".into()];
+        let environment = [
+            ("CCCC_CLI", "/probe/cccc"),
+            ("HOME", "/probe/home"),
+            ("PATH", "/probe/bin:/usr/bin"),
+            ("PI_CODING_AGENT_DIR", "/probe/pi"),
+            ("PROBE_SETTING", "same"),
+            ("USERPROFILE", "/probe/profile"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect();
+        let resumes = || {
+            prepare_managed(
+                &home,
+                &group,
+                "claude-1",
+                &workspace,
+                &command,
+                &environment,
+            )
+            .expect("prepare")
+            .map(|attempt| attempt.session_id)
+        };
+        assert_eq!(resumes().as_deref(), Some(session_id));
+
+        // The parts go beside the fingerprint, which keeps its value and its version.
+        record_managed(
+            &home,
+            &group,
+            "claude-1",
+            &workspace,
+            &command,
+            &environment,
+            session_id,
+            true,
+        )
+        .expect("record");
+        let stored = read(&home, &group, "claude-1").expect("stored receipt");
+        assert_eq!(stored["v"], 2);
+        assert_eq!(stored["identity_fingerprint"], SAVED);
+        assert_eq!(stored["launch_parts"]["v"], 1);
+        for part in ["path", "cccc_cli", "rest"] {
+            assert!(stored["launch_parts"][part].is_string(), "{part}");
+        }
+        assert_eq!(resumes().as_deref(), Some(session_id));
+    }
 
     #[test]
     fn managed_receipt_rejects_legacy_and_identity_changes() {

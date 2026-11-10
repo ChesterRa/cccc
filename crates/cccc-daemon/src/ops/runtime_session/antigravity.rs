@@ -62,9 +62,9 @@ pub(crate) fn record(
         return Ok(());
     }
     let (id, resumed) = session;
-    cccc_core::fs::write_json(
+    replaced::write_recorded(
         &receipt_path(home, group, actor)?,
-        &json!({"v":1,"identity":identity(cwd,command,env),"provider_session_id":id,"resumed":resumed,"updated_at":utc_now()}),
+        json!({"v":1,"identity":identity(cwd,command,env),"provider_session_id":id,"resumed":resumed,"updated_at":utc_now()}),
     )
 }
 

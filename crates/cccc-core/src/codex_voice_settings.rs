@@ -31,10 +31,7 @@ impl ResolvedAgentRuntime {
     #[must_use]
     pub fn identity_fingerprint(&self) -> String {
         if self.runtime == ActorRuntime::Pi {
-            let encoded =
-                serde_json::to_vec(&(self, identity_fingerprint(self.runtime, &self.environment)))
-                    .expect("Pi identity serializes");
-            return format!("{:x}", Sha256::digest(encoded));
+            return self.pi_fingerprint(&identity_fingerprint(self.runtime, &self.environment));
         }
         if self.runtime.supports_acp_mode() {
             let encoded = serde_json::to_vec(&(
@@ -58,13 +55,93 @@ impl ResolvedAgentRuntime {
     }
 
     pub fn identity_fingerprint_at(&self, cwd: &Path) -> io::Result<String> {
-        if self.runtime != ActorRuntime::Claude {
-            return Ok(self.identity_fingerprint());
+        Ok(self.launch_identity_at(cwd)?.0)
+    }
+
+    /// The fingerprint of `identity_fingerprint_at` and, where that fingerprint
+    /// covers the whole launch environment, its parts. Both come from one
+    /// reading of the launch files and of the process environment, so the
+    /// parts describe exactly the fingerprint they are returned with.
+    pub fn launch_identity_at(&self, cwd: &Path) -> io::Result<(String, Option<LaunchParts>)> {
+        match self.runtime {
+            ActorRuntime::Claude => {
+                let files = claude_launch_file_fingerprints(&self.command, cwd)?;
+                let encoded = serde_json::to_vec(&(self, &files))
+                    .expect("resolved Claude runtime serializes");
+                Ok((
+                    format!("{:x}", Sha256::digest(encoded)),
+                    Some(self.launch_parts(&files)),
+                ))
+            }
+            ActorRuntime::Pi => {
+                let selectors = identity_fingerprint(self.runtime, &self.environment);
+                Ok((
+                    self.pi_fingerprint(&selectors),
+                    Some(self.launch_parts(&selectors)),
+                ))
+            }
+            _ => Ok((self.identity_fingerprint(), None)),
         }
-        let files = claude_launch_file_fingerprints(&self.command, cwd)?;
-        let encoded =
-            serde_json::to_vec(&(self, files)).expect("resolved Claude runtime serializes");
-        Ok(format!("{:x}", Sha256::digest(encoded)))
+    }
+
+    fn pi_fingerprint(&self, selectors: &str) -> String {
+        let encoded = serde_json::to_vec(&(self, selectors)).expect("Pi identity serializes");
+        format!("{:x}", Sha256::digest(encoded))
+    }
+
+    /// `extra` is what the fingerprint covers besides this launch itself.
+    fn launch_parts(&self, extra: &impl Serialize) -> LaunchParts {
+        LaunchParts::split(&self.environment, |environment| {
+            let launch = Self {
+                runtime: self.runtime,
+                runtime_mode: self.runtime_mode,
+                command: self.command.clone(),
+                environment,
+            };
+            (launch, extra)
+        })
+    }
+}
+
+/// A launch fingerprint split into what it was made from, to tell which part
+/// changed between two launches. Diagnostic only: whether a saved conversation
+/// is resumed is decided by the whole fingerprint, never by these.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LaunchParts {
+    /// Format of this split; a reader compares only splits it understands.
+    pub v: u8,
+    /// The launch `PATH`, which follows the shell that started the daemon
+    /// unless the launch sets its own.
+    pub path: String,
+    /// `CCCC_CLI`, the CCCC executable the launch was given.
+    pub cccc_cli: String,
+    /// Everything else the fingerprint covers.
+    pub rest: String,
+}
+
+impl LaunchParts {
+    pub const VERSION: u8 = 1;
+
+    /// `rest` returns what the fingerprint encodes, given the launch
+    /// environment without the two values that have a part of their own.
+    pub fn split<T: Serialize>(
+        environment: &BTreeMap<String, String>,
+        rest: impl FnOnce(BTreeMap<String, String>) -> T,
+    ) -> Self {
+        fn digest(value: &impl Serialize) -> String {
+            let encoded = serde_json::to_vec(value).expect("launch part serializes");
+            format!("{:x}", Sha256::digest(encoded))
+        }
+        let mut others = environment.clone();
+        // An unset value and an empty one are different launches.
+        let path: Option<String> = others.remove("PATH");
+        let cccc_cli: Option<String> = others.remove("CCCC_CLI");
+        Self {
+            v: Self::VERSION,
+            path: digest(&path),
+            cccc_cli: digest(&cccc_cli),
+            rest: digest(&rest(others)),
+        }
     }
 }
 

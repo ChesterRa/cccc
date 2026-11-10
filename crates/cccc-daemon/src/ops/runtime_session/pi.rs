@@ -1,5 +1,6 @@
 //! Pi RPC recovery uses the existing Actor receipt and provider-owned JSONL.
 use super::*;
+use cccc_core::codex_voice_settings::LaunchParts;
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Read};
 
@@ -9,15 +10,24 @@ pub(crate) struct Resume {
     pub(crate) attempted: bool,
 }
 
-pub(crate) fn identity(cwd: &Path, command: &[String], env: &BTreeMap<String, String>) -> Value {
-    let fingerprint = cccc_core::codex_voice_settings::ResolvedAgentRuntime {
+/// The identity a receipt is matched by, and the parts of its fingerprint
+/// taken from the same reading of the provider environment.
+pub(crate) fn launch(
+    cwd: &Path,
+    command: &[String],
+    env: &BTreeMap<String, String>,
+) -> io::Result<(Value, Option<LaunchParts>)> {
+    let (fingerprint, parts) = cccc_core::codex_voice_settings::ResolvedAgentRuntime {
         runtime: cccc_contracts::ActorRuntime::Pi,
         runtime_mode: cccc_contracts::RuntimeMode::Default,
         command: command.to_vec(),
         environment: env.clone(),
     }
-    .identity_fingerprint();
-    json!({"workspace_path":workspace_path(cwd),"launch_fingerprint":fingerprint})
+    .launch_identity_at(cwd)?;
+    Ok((
+        json!({"workspace_path":workspace_path(cwd),"launch_fingerprint":fingerprint}),
+        parts,
+    ))
 }
 
 pub(crate) fn receipt_path(home: &HomeLayout, group: &str, actor: &str) -> io::Result<PathBuf> {
@@ -123,16 +133,19 @@ fn validate_file(file: &Path, id: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// `parts` goes beside `identity`, never inside it: `prepare` matches the
+/// identity as a whole.
 pub(crate) fn record(
     path: &Path,
     identity: &Value,
+    parts: Option<&LaunchParts>,
     id: &str,
     file: &Path,
     attempted: bool,
 ) -> io::Result<()> {
-    cccc_core::fs::write_json(
+    replaced::write_recorded(
         path,
-        &json!({"v":MANAGED_RECORD_VERSION,"kind":"runtime_session","runtime":"pi","transport":"pi_rpc","identity":identity,"workspace_path":identity["workspace_path"],"provider_session_id":id,"provider_thread_id":id,"session_file":file,"attempted":attempted,"status":"usable","resume_eligible":true,"updated_at":utc_now()}),
+        json!({"v":MANAGED_RECORD_VERSION,"kind":"runtime_session","runtime":"pi","transport":"pi_rpc","identity":identity,"launch_parts":parts,"workspace_path":identity["workspace_path"],"provider_session_id":id,"provider_thread_id":id,"session_file":file,"attempted":attempted,"status":"usable","resume_eligible":true,"updated_at":utc_now()}),
     )
 }
 
@@ -148,7 +161,8 @@ mod tests {
                 cccc_core::fs::read_json(&root.join("environment.json"))
                     .expect("isolated Actor environment");
             let command = vec!["pi".into()];
-            let current = identity(&root.join("workspace"), &command, &environment);
+            let (current, parts) = launch(&root.join("workspace"), &command, &environment)
+                .expect("Pi launch identity");
             let voice = cccc_core::codex_voice_settings::ResolvedAgentRuntime {
                 runtime: cccc_contracts::ActorRuntime::Pi,
                 runtime_mode: cccc_contracts::RuntimeMode::Default,
@@ -161,7 +175,7 @@ mod tests {
                 .map(|session| session.id);
             cccc_core::fs::write_json(
                 &root.join("result.json"),
-                &json!({"identity":current,"voice_fingerprint":voice,"resumed_session_id":resumed}),
+                &json!({"identity":current,"parts":parts,"voice_fingerprint":voice,"resumed_session_id":resumed}),
             )
             .expect("isolated identity result");
             return;
@@ -239,7 +253,7 @@ mod tests {
                 std::fs::write(&file, format!("{}\n", json!({"type":"session","id":id})))
                     .expect("provider-owned session header");
                 let receipt = root.join("receipt.json");
-                record(&receipt, &before["identity"], &id, &file, true)
+                record(&receipt, &before["identity"], None, &id, &file, true)
                     .expect("persist valid Actor receipt");
                 let receipt_bytes = std::fs::read(&receipt).expect("original receipt");
                 let history_bytes = std::fs::read(&file).expect("original history");
@@ -260,6 +274,13 @@ mod tests {
                         after["resumed_session_id"].is_null(),
                         "a changed inherited {selector} must not resume another provider identity"
                     );
+                    // No launch value holds the inherited selector: of the parts,
+                    // only the rest can show that it changed.
+                    assert!(before["parts"]["rest"].is_string());
+                    assert_ne!(before["parts"]["rest"], after["parts"]["rest"]);
+                    for part in ["path", "cccc_cli"] {
+                        assert_eq!(before["parts"][part], after["parts"][part]);
+                    }
                 }
                 assert_eq!(
                     before["identity"]["launch_fingerprint"],
@@ -278,6 +299,58 @@ mod tests {
     }
 
     #[test]
+    fn a_receipt_saved_before_fingerprints_were_split_still_resumes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sessions = temp.path().join("sessions");
+        std::fs::create_dir(&sessions).expect("provider history");
+        let id = uuid::Uuid::new_v4().to_string();
+        let file = sessions.join("session.jsonl");
+        std::fs::write(&file, format!("{}\n", json!({"type":"session","id":id})))
+            .expect("provider-owned session header");
+        let path = temp.path().join("receipt.json");
+        // Encoded outside this code, from the format in use before the split.
+        const SAVED: &str = "f255f339b404ec154e0f739af6014190388d4439a7c101e9a614f43f48c4c0dc";
+        let identity =
+            json!({"workspace_path":workspace_path(temp.path()),"launch_fingerprint":SAVED});
+        // Written as it was then, not through `record`.
+        cccc_core::fs::write_json(
+            &path,
+            &json!({"v":2,"kind":"runtime_session","runtime":"pi","transport":"pi_rpc","identity":identity,"workspace_path":identity["workspace_path"],"provider_session_id":id,"provider_thread_id":id,"session_file":file,"attempted":true,"status":"usable","resume_eligible":true,"updated_at":"2026-01-01T00:00:00Z"}),
+        )
+        .expect("saved receipt");
+        // Every provider selector is set, so the process environment is not read.
+        let environment = [
+            ("CCCC_CLI", "/probe/cccc"),
+            ("HOME", "/probe/home"),
+            ("PATH", "/probe/bin:/usr/bin"),
+            ("PI_CODING_AGENT_DIR", "/probe/pi"),
+            ("PROBE_SETTING", "same"),
+            ("USERPROFILE", "/probe/profile"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect();
+        let (current, parts) =
+            launch(temp.path(), &["pi".to_owned()], &environment).expect("Pi launch identity");
+        let resumes = || {
+            prepare(&path, &current, &sessions)
+                .expect("prepare")
+                .map(|session| session.id)
+        };
+        assert_eq!(resumes().as_ref(), Some(&id));
+
+        // The parts go beside the identity, which keeps its fields and its version.
+        assert!(parts.is_some());
+        record(&path, &current, parts.as_ref(), &id, &file, true).expect("record");
+        let stored: Value = cccc_core::fs::read_json(&path).expect("stored receipt");
+        assert_eq!(stored["v"], 2);
+        assert_eq!(stored["identity"], identity);
+        assert_eq!(stored["launch_parts"], json!(parts));
+        assert_eq!(stored["launch_parts"]["v"], 1);
+        assert_eq!(resumes().as_ref(), Some(&id));
+    }
+
+    #[test]
     fn pi_recovery_never_replaces_attempted_missing_or_changed_history() {
         let tmp = tempfile::tempdir().expect("tmp");
         let sessions = tmp.path().join("sessions");
@@ -286,14 +359,15 @@ mod tests {
         let file = sessions.join("session.jsonl");
         let id = uuid::Uuid::new_v4().to_string();
         let identity = json!({"workspace_path":"fixture"});
-        record(&path, &identity, &id, &file, false).expect("record never-attempted Pi receipt");
+        record(&path, &identity, None, &id, &file, false)
+            .expect("record never-attempted Pi receipt");
         let empty = prepare(&path, &identity, &sessions)
             .expect("prepare never-attempted Pi receipt")
             .expect("never-attempted Pi receipt retains its identity");
         assert_eq!(empty.id, id);
         assert!(!empty.attempted);
         assert!(empty.file.is_none());
-        record(&path, &identity, &id, &file, true).expect("record attempted Pi receipt");
+        record(&path, &identity, None, &id, &file, true).expect("record attempted Pi receipt");
         assert!(prepare(&path, &identity, &sessions).is_err());
         std::fs::write(
             &file,

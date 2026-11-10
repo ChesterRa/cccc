@@ -370,6 +370,8 @@ export type Actor = {
   runtime_session_status?: string | null;
   runtime_session_resume_eligible?: boolean | null;
   runtime_session_last_resume_error?: string | null;
+  runtime_session_replaced_at?: string | null;
+  runtime_session_replaced_reasons?: string[] | null;
   /** The original PTY is waiting for the user before managed runtime admission. */
   runtime_confirmation_required?: boolean;
   /** That confirmation ended before admission: automatic retries are paused in the current

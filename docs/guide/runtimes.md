@@ -434,6 +434,28 @@ decision; CCCC waits for the managed session before delivering tasks.
 
 For Codex, Grok, OpenCode and Kilo, a failed attempt to restore a matching saved conversation also shows **Resume failed** and retains the original identity, history and pending messages. Correct the provider configuration and use **Start** or **Restart** to retry; **New session** intentionally starts fresh. Profile summaries distinguish native TUI, ACP and Pi RPC so a saved execution mode is visible before launch.
 
+A managed agent can also start a new conversation although one was saved,
+because its runtime, command, model, workspace, launch settings or launch
+environment no longer match what was saved. For managed Claude and Pi agents,
+and for ACP agents other than Antigravity, the launch environment includes a
+`PATH` built from the agent's own `PATH` setting or, without one, from the
+`PATH` the daemon was started with, with CCCC's directory placed first. Starting
+the daemon from a different shell can therefore be enough. That start succeeds,
+so nothing is shown as failed; CCCC records that the saved conversation was not
+resumed. The agent's page then shows a small information mark after its status;
+hovering over it or selecting it gives the time of that record and the compared
+settings that had changed. For the agents named above, a changed launch `PATH`
+and a changed CCCC program location are named separately from the other launch
+settings, once both the saved record and the new one were written by a version
+that keeps that detail. `cccc actor list` reports
+`runtime_session_replaced_at` and `runtime_session_replaced_reasons`. CCCC also
+writes one system notice addressed to the user, which an enabled IM bridge can
+forward; if that notice could not be written, the mark and the two fields still
+keep the fact. The record stays until **New session** or the next replacement. A
+first start, **New session** and `CCCC_RUNTIME_RESUME=0` do not create it. CCCC
+does not delete the earlier conversation's provider history, and it keeps that
+conversation's provider ID only in the receipt under `CCCC_HOME`.
+
 `web_model` keeps the pull-consumer contract: an external executor calls
 `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. It does not claim
 to have a local provider process or native terminal.

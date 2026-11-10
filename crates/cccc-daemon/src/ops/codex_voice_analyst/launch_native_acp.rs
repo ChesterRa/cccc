@@ -30,7 +30,7 @@ impl AnalystSession {
         } else {
             command.clone()
         };
-        let identity = super::super::runtime_session::native_acp::identity(
+        let (identity, launch_parts) = super::super::runtime_session::native_acp::launch(
             &binding.root,
             &identity_command,
             &env,
@@ -156,7 +156,11 @@ impl AnalystSession {
         if purpose != SessionPurpose::VoiceSecretary {
             let receipt = if let Some(path) = receipt_path {
                 if let Err(error) = super::super::runtime_session::native_acp::record(
-                    &path, &identity, &id, resumed,
+                    &path,
+                    &identity,
+                    &launch_parts,
+                    &id,
+                    resumed,
                 ) {
                     protocol.close().await;
                     process.stop()?;

@@ -1,6 +1,6 @@
 use super::{
     command_fingerprint, model_from_command, read, resume_enabled, string, valid_session_id,
-    workspace_path, write,
+    workspace_path, write, write_recorded,
 };
 use cccc_contracts::utc_now;
 use cccc_core::HomeLayout;
@@ -104,7 +104,7 @@ pub fn record_managed(
         ("failure_count".into(), json!(0)),
         ("updated_at".into(), json!(utc_now())),
     ]);
-    write(home, group_id, actor_id, &document)
+    write_recorded(home, group_id, actor_id, document)
 }
 
 fn identity_fingerprint(command: &[String], environment: &BTreeMap<String, String>) -> String {

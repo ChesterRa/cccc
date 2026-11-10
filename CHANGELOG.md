@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Added
+
+- A managed agent that starts a new conversation although one was saved now leaves a record. Until
+  now the saved conversation was replaced without a trace when the agent's runtime, command, model,
+  workspace, launch settings or launch environment no longer matched it. The agent's page shows a
+  small information mark after its status; hovering over it or selecting it gives the time of the
+  record and the compared settings that had changed. For managed Claude and Pi agents and for ACP
+  agents other than Antigravity, a changed launch `PATH` and a changed CCCC program location are
+  named separately from the other launch settings when both the saved record and the new one contain
+  that detail; a record saved by an earlier version does not. CCCC also writes one system notice
+  addressed to the user, which an enabled IM bridge can forward, and the Actor listing reports
+  `runtime_session_replaced_at` and `runtime_session_replaced_reasons`. Which conversation a start
+  selects is unchanged.
+
 ### Changed
 
 - CCCC Web ignores file-open notifications when it watches Group ledgers. On Linux, read-only
@@ -22,6 +36,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   explicit compaction such as `cccc ledger compact`. In a Group that was already read in the
   wrong order, new Mail arrives normally after the update, but Mail that an Inbox read had
   already passed over may not return to the Inbox; it remains in the Group's history.
+- On a phone-sized screen, the Edit button under a stopped agent's page no longer breaks its label
+  over two lines and grows taller than the buttons beside it. It shows its icon alone there, as it
+  already does while the agent is running.
 
 ## [0.4.53]
 
