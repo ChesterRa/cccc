@@ -394,6 +394,41 @@ pub fn is_stale_mail_notice(
         .is_ok_and(|awaited| awaited.is_empty())
 }
 
+/// Why an answered send delivery is withdrawn instead of delivered again.
+pub const ANSWERED_SEND: &str = "send delivery withdrawn: the Actor has answered since";
+
+/// A `send` chat.message the actor has already answered: any later
+/// chat.message from that actor means its session is processing, so handing
+/// the brief over again would only splice a duplicate. Like the mail-notice
+/// check, a failed ledger read keeps the delivery: a redundant copy is safer
+/// than a lost one.
+pub fn is_answered_send(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    event: &Event,
+) -> bool {
+    if event.kind != "chat.message"
+        || event.data.get("message_mode").and_then(Value::as_str) != Some("send")
+    {
+        return false;
+    }
+    let Ok(store) = GroupStore::new(home.clone()) else {
+        return false;
+    };
+    let Ok(ledger_path) = store.ledger_path(&group.group_id) else {
+        return false;
+    };
+    ledger::inspect(&ledger_path, |events, positions| {
+        positions.get(&event.id).is_some_and(|&index| {
+            events[index.saturating_add(1)..]
+                .iter()
+                .any(|later| later.kind == "chat.message" && later.by.as_str() == actor_id)
+        })
+    })
+    .unwrap_or(false)
+}
+
 fn delivery_lock_path(ledger_path: &Path) -> PathBuf {
     ledger_path
         .parent()

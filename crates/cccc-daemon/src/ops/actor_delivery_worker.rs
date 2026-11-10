@@ -126,6 +126,7 @@ pub fn process_batch_tracked(
     // Mail: one read, answered, or delivered since is withdrawn, never sent, and
     // leaves the batch for good.
     withdraw_stale_mail_notices(jobs, &job.home, &current_group, &current_actor);
+    withdraw_answered_sends(jobs, &job.home, &current_group, &current_actor);
     if jobs.is_empty() {
         return BatchOutcome::Delivered;
     }
@@ -676,6 +677,26 @@ fn withdraw_stale_mail_notices(
     }
 }
 
+/// Withdraw `send` deliveries the actor has already answered and remove them
+/// from `jobs`; the remaining jobs are left to deliver.
+fn withdraw_answered_sends(
+    jobs: &mut Vec<DeliveryJob>,
+    home: &cccc_core::HomeLayout,
+    group: &cccc_core::GroupDoc,
+    actor: &Actor,
+) {
+    let (answered, live): (Vec<_>, Vec<_>) = std::mem::take(jobs).into_iter().partition(|job| {
+        crate::ops::runtime_delivery::is_answered_send(home, group, &actor.id, &job.event)
+    });
+    *jobs = live;
+    if !answered.is_empty() {
+        super::actor_delivery::withdraw_jobs(
+            &answered,
+            crate::ops::runtime_delivery::ANSWERED_SEND,
+        );
+    }
+}
+
 /// Record a managed submission's outcome. Returns Retry only for Deferred,
 /// the one outcome that enters automatic retry.
 fn settle_managed_batch(
@@ -1004,6 +1025,74 @@ mod tests {
             cccc_runtime::status(&group.group_id, "peer1").is_err(),
             "no runtime was started for a stale notice"
         );
+    }
+
+    #[test]
+    fn an_answered_send_is_withdrawn_instead_of_redelivered() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("answered send", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let message = |by: &str, mode: &str, text: &str| {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = by.into();
+            event.data = serde_json::json!({"to":["peer1"],"text":text,"message_mode":mode})
+                .as_object()
+                .cloned()
+                .expect("message");
+            event
+        };
+        let send = message("user", "send", "brief");
+        let mail = message("user", "mail", "letter");
+        let request = message("user", "request_reply", "question");
+        for event in [&send, &mail, &request] {
+            cccc_core::ledger::append(&ledger_path, event).expect("append");
+        }
+        let job = |event: &Event| DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: event.clone(),
+            claimed: true,
+            transport: "pty",
+        };
+        let state = |event: &Event| {
+            crate::ops::runtime_delivery::latest_state(&home, &group.group_id, "peer1", &event.id)
+                .expect("state")
+                .map(|(state, _)| state)
+        };
+
+        // Before the actor answers, every mode stays for delivery.
+        let mut batch = vec![job(&send), job(&mail), job(&request)];
+        withdraw_answered_sends(&mut batch, &home, &group, &actor);
+        assert_eq!(batch.len(), 3);
+
+        // Another actor's later message does not count as an answer.
+        let mut other = message("user", "send", "to someone else");
+        other.data.insert("to".into(), serde_json::json!(["peer2"]));
+        cccc_core::ledger::append(&ledger_path, &other).expect("other");
+        withdraw_answered_sends(&mut batch, &home, &group, &actor);
+        assert_eq!(batch.len(), 3);
+
+        // The actor's own later chat.message answers the send: it is
+        // withdrawn, while mail and request_reply deliveries are untouched.
+        let answer = message("peer1", "send", "done");
+        cccc_core::ledger::append(&ledger_path, &answer).expect("answer");
+        withdraw_answered_sends(&mut batch, &home, &group, &actor);
+        assert_eq!(
+            batch
+                .iter()
+                .map(|job| job.event.id.clone())
+                .collect::<Vec<_>>(),
+            vec![mail.id.clone(), request.id.clone()]
+        );
+        assert_eq!(state(&send).as_deref(), Some("withdrawn"));
+        assert_eq!(state(&mail), None);
+        assert_eq!(state(&request), None);
     }
 
     #[cfg(unix)]
