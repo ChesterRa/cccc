@@ -1,9 +1,9 @@
 use cccc_contracts::DaemonRequest;
 use cccc_core::context::open_blocked_by;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::dispatch::{string_arg, OpError};
+use crate::dispatch::{OpError, string_arg};
 
 pub(super) fn validated_filter(
     request: &DaemonRequest,
@@ -181,11 +181,7 @@ fn unexecuted(task: &Map<String, Value>) -> bool {
 
 pub(super) fn task_status(task: &Map<String, Value>) -> &str {
     let status = text(task, "status").trim();
-    if status.is_empty() {
-        "planned"
-    } else {
-        status
-    }
+    if status.is_empty() { "planned" } else { status }
 }
 
 pub(super) fn task_number(task: &Map<String, Value>) -> u64 {

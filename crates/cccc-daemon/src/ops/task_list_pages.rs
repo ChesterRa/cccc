@@ -1,5 +1,5 @@
 use cccc_core::context::open_blocked_by;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::task_list_query::{
     matches_task, sort_tasks, stamp_open_blocked_by, task_number, task_status,

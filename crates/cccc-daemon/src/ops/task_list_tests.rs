@@ -1,7 +1,7 @@
 use super::*;
 use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupStore, HomeLayout};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 fn request(group_id: &str, args: Value) -> DaemonRequest {
     let mut args = args.as_object().cloned().expect("args");
@@ -137,11 +137,13 @@ fn filters_apply_before_pagination() {
     .expect("filtered");
     assert_eq!(filtered["total_count"], 17);
     assert_eq!(filtered["count"], 10);
-    assert!(filtered["tasks"]
-        .as_array()
-        .expect("tasks")
-        .iter()
-        .all(|task| task["assignee"] == "peer"));
+    assert!(
+        filtered["tasks"]
+            .as_array()
+            .expect("tasks")
+            .iter()
+            .all(|task| task["assignee"] == "peer")
+    );
 
     let unassigned = run(
         &home,
@@ -175,9 +177,11 @@ fn batch_pages_share_one_version_and_include_an_unfiltered_index() {
     assert_eq!(result["pages"]["active"]["count"], 0);
     assert_eq!(result["pages"]["done"]["count"], 0);
     assert_eq!(result["task_index"].as_array().expect("index").len(), 35);
-    assert!(result["tasks_version"]
-        .as_str()
-        .is_some_and(|value| value.starts_with("tasksv:")));
+    assert!(
+        result["tasks_version"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("tasksv:"))
+    );
 }
 
 #[test]
