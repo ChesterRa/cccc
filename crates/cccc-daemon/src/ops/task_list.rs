@@ -1,10 +1,12 @@
 use cccc_contracts::DaemonRequest;
-use cccc_core::{HomeLayout, context::ContextStore};
-use serde_json::{Map, Value, json};
+use cccc_core::{context::ContextStore, HomeLayout};
+use serde_json::{json, Map, Value};
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
-use task_list_pages::{PageFilter, index, page, pages};
-use task_list_query::{delete_info, facets, matches_task, sort_tasks, text, validated_filter};
+use crate::dispatch::{object, required_arg, string_arg, OpError, OpResult};
+use task_list_pages::{index, page, pages, PageFilter};
+use task_list_query::{
+    delete_info, facets, matches_task, sort_tasks, stamp_open_blocked_by, text, validated_filter,
+};
 
 const STATUSES: [&str; 4] = ["planned", "active", "done", "archived"];
 const ATTENTION_FILTERS: [&str; 4] = ["blocked", "waiting_user", "handoff", "unassigned"];
@@ -85,6 +87,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .cloned()
         .collect::<Vec<_>>();
     sort_tasks(&mut tasks, status.as_deref());
+    stamp_open_blocked_by(&document.tasks, &mut tasks);
     object(json!({"tasks":tasks,"tasks_version":version}))
 }
 
@@ -94,16 +97,16 @@ fn one(tasks: &[Map<String, Value>], task_id: &str, version: String) -> OpResult
         .find(|task| text(task, "id") == task_id)
         .cloned()
         .ok_or_else(|| OpError::new("task_not_found", format!("task not found: {task_id}")))?;
+    stamp_open_blocked_by(tasks, std::slice::from_mut(&mut task));
+    let mut children = tasks
+        .iter()
+        .filter(|candidate| text(candidate, "parent_id") == task_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    stamp_open_blocked_by(tasks, &mut children);
     task.insert(
         "children".into(),
-        Value::Array(
-            tasks
-                .iter()
-                .filter(|candidate| text(candidate, "parent_id") == task_id)
-                .cloned()
-                .map(Value::Object)
-                .collect(),
-        ),
+        Value::Array(children.into_iter().map(Value::Object).collect()),
     );
     object(json!({
         "task":task,
@@ -120,10 +123,11 @@ fn many(tasks: &[Map<String, Value>], raw_ids: &str, version: String) -> OpResul
             "task_ids accepts at most 100 ids",
         ));
     }
-    let selected = ids
+    let mut selected = ids
         .iter()
         .filter_map(|id| tasks.iter().find(|task| text(task, "id") == id).cloned())
         .collect::<Vec<_>>();
+    stamp_open_blocked_by(tasks, &mut selected);
     object(json!({"tasks":selected,"tasks_version":version}))
 }
 

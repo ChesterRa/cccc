@@ -1,7 +1,7 @@
 use super::*;
 use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupStore, HomeLayout};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 fn request(group_id: &str, args: Value) -> DaemonRequest {
     let mut args = args.as_object().cloned().expect("args");
@@ -33,6 +33,50 @@ fn seeded() -> (tempfile::TempDir, HomeLayout, String) {
         .sync(&group.group_id, &ops, None, "user", false)
         .expect("seed");
     (temp, home, group.group_id)
+}
+
+fn seeded_with_finished_blocker() -> (tempfile::TempDir, HomeLayout, String) {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("tasks", "").expect("group");
+    let contexts = ContextStore::new(home.clone()).expect("contexts");
+    let ops = [
+        json!({
+            "op":"task.create",
+            "title":"finished blocker",
+            "status":"done",
+            "client_request_id":"finished-blocker",
+        }),
+        json!({
+            "op":"task.create",
+            "title":"blocked task",
+            "client_request_id":"blocked-task",
+            "blocked_by_refs":["finished-blocker"],
+        }),
+        json!({
+            "op":"task.create",
+            "title":"blocked child",
+            "parent_ref":"blocked-task",
+            "blocked_by_refs":["finished-blocker"],
+        }),
+    ]
+    .into_iter()
+    .map(|op| op.as_object().cloned().expect("op"))
+    .collect::<Vec<Map<String, Value>>>();
+    contexts
+        .sync(&group.group_id, &ops, None, "user", false)
+        .expect("seed");
+    (temp, home, group.group_id)
+}
+
+fn task_named<'a>(tasks: &'a Value, title: &str) -> &'a Value {
+    tasks
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .find(|task| task["title"] == title)
+        .expect("named task")
 }
 
 #[test]
@@ -93,13 +137,11 @@ fn filters_apply_before_pagination() {
     .expect("filtered");
     assert_eq!(filtered["total_count"], 17);
     assert_eq!(filtered["count"], 10);
-    assert!(
-        filtered["tasks"]
-            .as_array()
-            .expect("tasks")
-            .iter()
-            .all(|task| task["assignee"] == "peer")
-    );
+    assert!(filtered["tasks"]
+        .as_array()
+        .expect("tasks")
+        .iter()
+        .all(|task| task["assignee"] == "peer"));
 
     let unassigned = run(
         &home,
@@ -133,11 +175,9 @@ fn batch_pages_share_one_version_and_include_an_unfiltered_index() {
     assert_eq!(result["pages"]["active"]["count"], 0);
     assert_eq!(result["pages"]["done"]["count"], 0);
     assert_eq!(result["task_index"].as_array().expect("index").len(), 35);
-    assert!(
-        result["tasks_version"]
-            .as_str()
-            .is_some_and(|value| value.starts_with("tasksv:"))
-    );
+    assert!(result["tasks_version"]
+        .as_str()
+        .is_some_and(|value| value.starts_with("tasksv:")));
 }
 
 #[test]
@@ -189,13 +229,13 @@ fn attention_facets_and_filters_ignore_completed_history() {
 #[test]
 fn a_blocker_that_is_done_or_archived_stops_blocking() {
     let blocker = |status: &str| {
-        json!({"id":"T000","status":status})
+        json!({"id":"blocker-a","status":status})
             .as_object()
             .cloned()
             .expect("blocker")
     };
     let task = || {
-        json!({"id":"T001","status":"active","blocked_by":["T000"]})
+        json!({"id":"task-a","status":"active","blocked_by":["blocker-a"]})
             .as_object()
             .cloned()
             .expect("task")
@@ -242,10 +282,12 @@ fn a_blocker_that_is_done_or_archived_stops_blocking() {
 
 #[test]
 fn a_blocker_id_that_names_no_task_keeps_blocking() {
-    let tasks = [json!({"id":"T001","status":"active","blocked_by":["T999"]})
-        .as_object()
-        .cloned()
-        .expect("task")];
+    let tasks = [
+        json!({"id":"task-a","status":"active","blocked_by":["missing-blocker"]})
+            .as_object()
+            .cloned()
+            .expect("task"),
+    ];
     assert_eq!(super::task_list_query::facets(&tasks)["blocked"], 1);
     assert!(super::task_list_query::matches_task(
         &tasks,
@@ -260,11 +302,11 @@ fn a_blocker_id_that_names_no_task_keeps_blocking() {
 #[test]
 fn waiting_on_still_blocks_without_any_open_blocker() {
     let tasks = [
-        json!({"id":"T000","status":"done"})
+        json!({"id":"blocker-a","status":"done"})
             .as_object()
             .cloned()
             .expect("blocker"),
-        json!({"id":"T001","status":"active","blocked_by":["T000"],"waiting_on":"actor"})
+        json!({"id":"task-a","status":"active","blocked_by":["blocker-a"],"waiting_on":"actor"})
             .as_object()
             .cloned()
             .expect("task"),
@@ -278,4 +320,69 @@ fn waiting_on_still_blocks_without_any_open_blocker() {
         "",
         ""
     ));
+}
+
+#[test]
+fn every_task_list_response_stamps_open_blocked_by() {
+    let (_temp, home, group_id) = seeded_with_finished_blocker();
+    let plain = run(&home, &request(&group_id, json!({}))).expect("plain");
+    let blocked = task_named(&plain["tasks"], "blocked task");
+    let blocked_id = blocked["id"].as_str().expect("blocked id").to_owned();
+    assert_eq!(
+        blocked["blocked_by"]
+            .as_array()
+            .expect("stored blockers")
+            .len(),
+        1
+    );
+    assert_eq!(blocked["open_blocked_by"], json!([]));
+
+    let page = run(
+        &home,
+        &request(&group_id, json!({"status":"planned","limit":10})),
+    )
+    .expect("page");
+    assert_eq!(
+        task_named(&page["tasks"], "blocked task")["open_blocked_by"],
+        json!([])
+    );
+
+    let pages = run(
+        &home,
+        &request(&group_id, json!({"statuses":"planned,done","limit":10})),
+    )
+    .expect("pages");
+    assert_eq!(
+        task_named(&pages["pages"]["planned"]["tasks"], "blocked task")["open_blocked_by"],
+        json!([])
+    );
+
+    let one = run(
+        &home,
+        &request(&group_id, json!({"task_id":blocked_id.clone()})),
+    )
+    .expect("one");
+    assert_eq!(one["task"]["open_blocked_by"], json!([]));
+    let child = task_named(&one["task"]["children"], "blocked child");
+    assert_eq!(child["open_blocked_by"], json!([]));
+
+    let many = run(
+        &home,
+        &request(&group_id, json!({"task_ids":blocked_id.clone()})),
+    )
+    .expect("many");
+    assert_eq!(many["tasks"][0]["open_blocked_by"], json!([]));
+
+    let indexed = run(
+        &home,
+        &request(&group_id, json!({"limit":10,"include_index":true})),
+    )
+    .expect("indexed");
+    let index_item = indexed["task_index"]
+        .as_array()
+        .expect("task index")
+        .iter()
+        .find(|task| task["id"].as_str() == Some(blocked_id.as_str()))
+        .expect("indexed task");
+    assert_eq!(index_item["open_blocked_by"], json!([]));
 }

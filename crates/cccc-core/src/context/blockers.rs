@@ -57,38 +57,41 @@ mod tests {
 
     #[test]
     fn a_planned_blocker_still_blocks() {
-        let blocker = task("T001", "planned", &[]);
-        let task = task("T002", "active", &["T001"]);
-        assert_eq!(open_blocked_by(&[blocker, task.clone()], &task), ["T001"]);
+        let blocker = task("blocker-a", "planned", &[]);
+        let task = task("task-a", "active", &["blocker-a"]);
+        assert_eq!(
+            open_blocked_by(&[blocker, task.clone()], &task),
+            ["blocker-a"]
+        );
     }
 
     #[test]
     fn done_and_archived_blockers_stop_counting() {
-        let done = task("T001", "done", &[]);
-        let archived = task("T002", "archived", &[]);
-        let planned = task("T003", "planned", &[]);
-        let task = task("T004", "active", &["T001", "T002", "T003"]);
+        let done = task("blocker-a", "done", &[]);
+        let archived = task("blocker-b", "archived", &[]);
+        let planned = task("blocker-c", "planned", &[]);
+        let task = task("task-a", "active", &["blocker-a", "blocker-b", "blocker-c"]);
         assert_eq!(
             open_blocked_by(&[done, archived, planned, task.clone()], &task),
-            ["T003"]
+            ["blocker-c"]
         );
     }
 
     #[test]
     fn an_id_that_names_no_task_keeps_blocking() {
-        let task = task("T002", "active", &["T999"]);
-        assert_eq!(open_blocked_by(&[task.clone()], &task), ["T999"]);
+        let task = task("task-a", "active", &["missing-blocker"]);
+        assert_eq!(open_blocked_by(&[task.clone()], &task), ["missing-blocker"]);
     }
 
     #[test]
     fn a_blocker_restored_to_unfinished_blocks_again() {
-        let mut blocker = task("T001", "done", &[]);
-        let task = task("T002", "active", &["T001"]);
+        let mut blocker = task("blocker-a", "done", &[]);
+        let task = task("task-a", "active", &["blocker-a"]);
         assert!(open_blocked_by(&[blocker.clone(), task.clone()], &task).is_empty());
         blocker.insert("status".into(), json!("planned"));
         assert_eq!(
             open_blocked_by(&[blocker.clone(), task.clone()], &task),
-            ["T001"]
+            ["blocker-a"]
         );
         blocker.insert("status".into(), json!("done"));
         assert!(open_blocked_by(&[blocker, task.clone()], &task).is_empty());

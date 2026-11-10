@@ -1,9 +1,9 @@
 use cccc_contracts::DaemonRequest;
 use cccc_core::context::open_blocked_by;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::dispatch::{OpError, string_arg};
+use crate::dispatch::{string_arg, OpError};
 
 pub(super) fn validated_filter(
     request: &DaemonRequest,
@@ -152,6 +152,22 @@ fn matches_attention(
     }
 }
 
+/// Stamp a response's selected tasks with the derived subset of their stored
+/// `blocked_by` that still blocks. `all` must be the whole task set: a page
+/// slice cannot decide by itself whether a blocker is done or archived.
+pub(super) fn stamp_open_blocked_by(
+    all: &[Map<String, Value>],
+    selected: &mut [Map<String, Value>],
+) {
+    let opens = selected
+        .iter()
+        .map(|task| open_blocked_by(all, task))
+        .collect::<Vec<_>>();
+    for (task, open) in selected.iter_mut().zip(opens) {
+        task.insert("open_blocked_by".into(), json!(open));
+    }
+}
+
 fn blocked(tasks: &[Map<String, Value>], task: &Map<String, Value>) -> bool {
     !open_blocked_by(tasks, task).is_empty()
         || matches!(text(task, "waiting_on"), "actor" | "external")
@@ -165,7 +181,11 @@ fn unexecuted(task: &Map<String, Value>) -> bool {
 
 pub(super) fn task_status(task: &Map<String, Value>) -> &str {
     let status = text(task, "status").trim();
-    if status.is_empty() { "planned" } else { status }
+    if status.is_empty() {
+        "planned"
+    } else {
+        status
+    }
 }
 
 pub(super) fn task_number(task: &Map<String, Value>) -> u64 {
