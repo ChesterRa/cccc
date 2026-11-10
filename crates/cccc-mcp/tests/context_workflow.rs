@@ -303,7 +303,15 @@ async fn context_get_pages_a_captured_board_within_its_byte_bound() {
     let home = HomeLayout::from_path(temp.path()).expect("home");
     let groups = GroupStore::new(home.clone()).expect("groups");
     let mut group = groups.create("captured context", "").expect("group");
-    for id in ["lead", "peer"] {
+    // The Actors whose states the board captured are in the Group: a read returns
+    // states only for current members.
+    let captured: Value = serde_json::from_str(CAPTURED_CONTEXT).expect("captured context");
+    let members = captured["agent_states"]
+        .as_array()
+        .expect("captured states")
+        .iter()
+        .map(|state| state["actor_id"].as_str().expect("state owner"));
+    for id in ["lead", "peer"].into_iter().chain(members) {
         cccc_core::actors::add(&mut group, cccc_contracts::Actor::new(id)).expect("actor");
     }
     groups.save(&group).expect("save group");

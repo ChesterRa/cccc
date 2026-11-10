@@ -23,7 +23,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
 
 fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    load_group(home, &group_id)?;
+    let group = load_group(home, &group_id)?;
     let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
     let detail = string_arg(request, "detail").unwrap_or_else(|| "full".into());
     if !matches!(detail.as_str(), "overview" | "summary" | "full") {
@@ -32,13 +32,18 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "detail must be 'overview', 'summary', or 'full'",
         ));
     }
-    let document = if detail == "overview" {
+    let mut document = if detail == "overview" {
         contexts.load_overview(&group_id)
     } else {
         contexts.load(&group_id)
     }
     .map_err(OpError::io)?;
     let version = contexts.version(&document).map_err(OpError::io)?;
+    // Removal clears the stored state but can leave an empty entry. Membership
+    // controls what is shown; the version still identifies the stored document.
+    document
+        .agent_states
+        .retain(|id, _| group.actors.iter().any(|actor| actor.id == *id));
     match page(request)? {
         Some(page) if detail == "overview" => {
             let value = super::context_projection::project(document, version, &detail);

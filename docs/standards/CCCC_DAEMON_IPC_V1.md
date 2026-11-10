@@ -6279,6 +6279,11 @@ Result:
 
 Notes:
 - Task objects returned in `coordination.tasks`, `board`, or `task_list` include `task_type`.
+- In every detail and paging mode, `agent_states` MUST include only states for
+  Actors still in the Group's Actor list. Disabled or stopped Actors remain
+  eligible. Stored entries left by removed Actors MUST be omitted without
+  rewriting the stored context; `version` continues to identify that stored
+  context for `context_sync` optimistic concurrency.
 - Paging starts when `limit`, `cursor` or `max_bytes` is present; without them
   the snapshot stays complete. A page holds at most `limit` tasks numbered
   after `cursor` in `coordination.tasks` (and, for `full`, in `board`), halved

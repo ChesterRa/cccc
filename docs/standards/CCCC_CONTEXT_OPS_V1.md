@@ -353,6 +353,10 @@ Permission: self / user.
 
 Notes:
 - Clears both `hot` and `warm`, then refreshes `updated_at`.
+- The stored entry can remain after its Actor is removed. Context read projections
+  MUST omit states whose Actor ID is no longer in the Group's Actor list, including
+  entries left by earlier removals. Disabled or stopped Actors still in that list
+  remain eligible; clearing state does not itself change membership.
 
 ### 3.4 Restricted Meta
 

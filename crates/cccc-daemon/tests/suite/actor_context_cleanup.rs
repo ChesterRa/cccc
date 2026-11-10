@@ -136,6 +136,62 @@ fn removed_actor_loses_open_task_references_and_working_state_before_recreation(
 }
 
 #[test]
+fn context_reads_show_only_current_members_without_changing_stored_state() {
+    let fixture = Fixture::new();
+    fixture.call(
+        "context_sync",
+        json!({"by":"user","ops":[
+            {"op":"agent_state.update","actor_id":"leaving","focus":"old generation"},
+            {"op":"agent_state.update","actor_id":"staying","focus":"still a member"}
+        ]}),
+    );
+    fixture.call("actor_remove", json!({"actor_id":"leaving","by":"user"}));
+
+    let stored = fixture.context();
+    assert!(stored.agent_states.contains_key("leaving"));
+    let contexts = ContextStore::new(fixture.home.clone()).expect("context store");
+    let stored_version = contexts.version(&stored).expect("stored version");
+    for detail in ["overview", "summary", "full"] {
+        for paged in [false, true] {
+            let mut args = json!({"detail":detail});
+            if paged {
+                args["limit"] = json!(1);
+                args["max_bytes"] = json!(4096);
+            }
+            let result = fixture.call("context_get", args);
+            let states = result["agent_states"].as_array().expect("states");
+            assert_eq!(states.len(), 1, "{detail}, paged={paged}");
+            assert_eq!(states[0]["id"], "staying");
+            assert_eq!(states[0]["hot"]["focus"], "still a member");
+            assert_eq!(result["version"], stored_version);
+        }
+    }
+    assert_eq!(fixture.context().agent_states, stored.agent_states);
+
+    // A response version remains usable for optimistic writes even though the
+    // response omits the removed member's stored entry.
+    fixture.call(
+        "context_sync",
+        json!({"by":"user","if_version":stored_version,"ops":[
+            {"op":"agent_state.update","actor_id":"staying","focus":"updated"}
+        ]}),
+    );
+
+    // The fixture's members are disabled. Existence, rather than runtime status
+    // or non-empty state, decides whether a member's saved state is returned.
+    fixture.add_actor("leaving");
+    let recreated = fixture.call("context_get", json!({"detail":"overview"}));
+    let states = recreated["agent_states"].as_array().expect("states");
+    assert_eq!(states.len(), 2);
+    let state = states
+        .iter()
+        .find(|state| state["id"] == "leaving")
+        .expect("recreated member");
+    assert_eq!(state["hot"], json!({}));
+    assert_eq!(state["warm"], json!({}));
+}
+
+#[test]
 fn removed_actor_working_state_is_cleared_without_any_open_tasks() {
     let fixture = Fixture::new();
     fixture.call(
