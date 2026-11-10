@@ -57,6 +57,7 @@ pub(super) fn remove_actor_settings(
 const EVENT_CAPACITY: usize = 2048;
 const COMMAND_CAPACITY: usize = 16;
 const LAUNCH_TIMEOUT: Duration = Duration::from_secs(15);
+const ADOPTION_STATE_TIMEOUT: Duration = Duration::from_secs(5);
 const JOB_READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long a live or freshly woken session may report transient activity
 /// before CCCC stops waiting to attach to it.
@@ -85,6 +86,10 @@ pub(super) struct LaunchedClaude {
 struct Job {
     short: String,
     session_id: String,
+    /// The conversation Agent View resumed into this job (`resumeSessionId`). It equals
+    /// `session_id` for sessions CCCC created; it names the original conversation when a job
+    /// adopted one that Agent View did not create.
+    resume_session_id: Option<String>,
     cwd: PathBuf,
     cli_version: command::Version,
 }
@@ -119,8 +124,17 @@ pub(super) async fn launch(
     generation: &str,
     purpose: SessionPurpose,
     requested_session_id: Option<&str>,
+    adopted_session_id: Option<&str>,
 ) -> io::Result<LaunchedClaude> {
-    launch_inner(prepared, cwd, generation, purpose, requested_session_id).await
+    launch_inner(
+        prepared,
+        cwd,
+        generation,
+        purpose,
+        requested_session_id,
+        adopted_session_id,
+    )
+    .await
 }
 
 async fn launch_inner(
@@ -129,14 +143,25 @@ async fn launch_inner(
     generation: &str,
     purpose: SessionPurpose,
     requested_session_id: Option<&str>,
+    adopted_session_id: Option<&str>,
 ) -> io::Result<LaunchedClaude> {
+    if let Some(id) = adopted_session_id {
+        validate_session_id(id)?;
+    }
+    // A first launch with nothing saved adopts the named conversation instead of starting a
+    // new one. Later launches resume the saved job, which keeps writing that conversation.
+    let adopting = requested_session_id
+        .is_none()
+        .then_some(adopted_session_id)
+        .flatten();
     command::require_supported_version(&prepared.executable, cwd, &prepared.launch_environment)
         .await?;
     // Inspect durable job metadata BEFORE respawn can replace it. A receipt
     // alone does not imply that this session ever received its first prompt.
     let skip_existing_transcript = match requested_session_id {
         Some(id) => !known_empty_session(&prepared.config_dir, id)?,
-        None => false,
+        // The adopted conversation's history is not new output.
+        None => adopting.is_some(),
     };
 
     if let Some(session_id) = requested_session_id {
@@ -152,6 +177,7 @@ async fn launch_inner(
                 true,
                 skip_existing_transcript,
                 false,
+                adopted_session_id,
             )
             .await;
         }
@@ -174,6 +200,11 @@ async fn launch_inner(
     } else {
         arguments.extend(prepared.arguments.iter().cloned());
         arguments.extend(["--name".into(), name, "--bg".into()]);
+        if let Some(id) = adopting {
+            // CCCC's own launch configuration is required here (MCP, settings), so Agent View
+            // starts a new job that resumes the conversation rather than reusing its id.
+            arguments.extend(["--resume".into(), id.into()]);
+        }
     }
     let mut command = command::process_command(
         &prepared.executable,
@@ -229,7 +260,7 @@ async fn launch_inner(
                 "Claude Agent View launch did not identify its managed session",
             )
         })?;
-    let (endpoint, job) = match wait_for_job(&prepared.config_dir, &short).await {
+    let (endpoint, mut job) = match wait_for_job(&prepared.config_dir, &short).await {
         Ok(value) => value,
         Err(error) => {
             let rollback = rollback_started_job(&prepared.config_dir, &short).await;
@@ -247,11 +278,31 @@ async fn launch_inner(
         let rollback = kill_and_confirm(&endpoint, &job.short).await;
         return Err(with_optional_cleanup_error(error, rollback.err()));
     }
+    if adopting.is_some() {
+        let deadline = tokio::time::Instant::now() + ADOPTION_STATE_TIMEOUT;
+        loop {
+            read_resumed_conversation(&prepared.config_dir, &mut job).await;
+            if job.resume_session_id.is_some() || tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    if let Some(adopted) = adopting
+        && transcript_identity(&job, Some(adopted)) != adopted
+    {
+        let error = io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Claude Agent View did not resume the conversation this actor adopts",
+        );
+        let rollback = kill_and_confirm(&endpoint, &job.short).await;
+        return Err(with_optional_cleanup_error(error, rollback.err()));
+    }
     if let Err(error) = await_settled(&prepared.config_dir, &job, cwd).await {
         let rollback = kill_and_confirm(&endpoint, &job.short).await;
         return Err(with_optional_cleanup_error(error, rollback.err()));
     }
-    let resumed = requested_session_id.is_some();
+    let resumed = requested_session_id.is_some() || adopting.is_some();
     connect_launched(
         prepared,
         endpoint,
@@ -260,8 +311,19 @@ async fn launch_inner(
         resumed,
         skip_existing_transcript,
         true,
+        adopted_session_id,
     )
     .await
+}
+
+/// The transcript a job writes. Agent View keeps writing a resumed conversation's own file, so a
+/// job that adopted a conversation writes that file, not one named after the job. Only the
+/// conversation this actor adopts is accepted: an unrequested attach still fails validation.
+fn transcript_identity<'a>(job: &'a Job, adopted: Option<&str>) -> &'a str {
+    match (adopted, job.resume_session_id.as_deref()) {
+        (Some(adopted), Some(resumed)) if resumed == adopted => resumed,
+        _ => &job.session_id,
+    }
 }
 
 fn known_empty_session(config_dir: &Path, session_id: &str) -> io::Result<bool> {
@@ -342,7 +404,13 @@ async fn connect_launched(
     resumed: bool,
     skip_existing_transcript: bool,
     rollback_on_failure: bool,
+    adopted_session_id: Option<&str>,
 ) -> io::Result<LaunchedClaude> {
+    let mut job = job;
+    if adopted_session_id.is_some() {
+        read_resumed_conversation(&prepared.config_dir, &mut job).await;
+    }
+    let transcript_id = transcript_identity(&job, adopted_session_id).to_owned();
     let state_path = prepared
         .config_dir
         .join("jobs")
@@ -356,6 +424,7 @@ async fn connect_launched(
         prepared.config_dir.clone(),
         generation.to_owned(),
         skip_existing_transcript,
+        transcript_id,
     )
     .await
     {
@@ -629,12 +698,37 @@ fn parse_job(value: &Value) -> Option<Job> {
     valid_short_id(short)
         .then_some(())
         .and_then(|_| validate_session_id(session_id).ok())?;
+    let resume_session_id = resumed_conversation(value);
     (!cwd.is_empty()).then(|| Job {
         short: short.to_owned(),
         session_id: session_id.to_owned(),
+        resume_session_id,
         cwd: PathBuf::from(cwd),
         cli_version,
     })
+}
+
+fn resumed_conversation(value: &Value) -> Option<String> {
+    value
+        .get("resumeSessionId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| validate_session_id(id).is_ok())
+        .map(str::to_owned)
+}
+
+/// Agent View's job list does not report which conversation a job resumed; the job's own state
+/// file does. Read only for an actor that adopts a conversation.
+async fn read_resumed_conversation(config_dir: &Path, job: &mut Job) {
+    if job.resume_session_id.is_some() {
+        return;
+    }
+    let path = config_dir.join("jobs").join(&job.short).join("state.json");
+    if let Ok(bytes) = tokio::fs::read(&path).await
+        && let Ok(state) = serde_json::from_slice::<Value>(&bytes)
+    {
+        job.resume_session_id = resumed_conversation(&state);
+    }
 }
 
 fn parse_job_required(value: &Value) -> io::Result<Job> {
@@ -826,6 +920,7 @@ impl ClaudeClient {
         config_dir: PathBuf,
         generation: String,
         skip_existing_transcript: bool,
+        transcript_id: String,
     ) -> io::Result<Self> {
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
@@ -836,6 +931,7 @@ impl ClaudeClient {
             session_id.clone(),
             skip_existing_transcript,
         );
+        transcript.transcript_id = transcript_id;
         transcript.initialize().await?;
         let task = tokio::spawn(run_client(
             receiver,
@@ -1024,6 +1120,7 @@ async fn run_client(
 ) {
     let mut state =
         transcript::TranscriptState::new(generation.clone(), session_id.clone(), events.clone());
+    state.set_record_session_id(transcript.transcript_id.clone());
     let mut pending: Option<PendingControl> = None;
     let mut native_inputs = std::collections::VecDeque::new();
     let mut transcript_tick = tokio::time::interval(Duration::from_millis(50));
@@ -1228,7 +1325,8 @@ async fn transcript_file_identity(file: &tokio::fs::File) -> io::Result<same_fil
 struct TranscriptFollower {
     state_path: PathBuf,
     config_dir: PathBuf,
-    session_id: String,
+    /// The conversation file this job writes: the job's own id, or the conversation it adopted.
+    transcript_id: String,
     path: Option<PathBuf>,
     identity: Option<same_file::Handle>,
     offset: u64,
@@ -1250,7 +1348,7 @@ impl TranscriptFollower {
         Self {
             state_path,
             config_dir,
-            session_id,
+            transcript_id: session_id,
             path: None,
             identity: None,
             offset: 0,
@@ -1385,7 +1483,7 @@ impl TranscriptFollower {
                     "Claude Agent View stopped publishing the active transcript",
                 ));
             }
-            let Some(path) = transcript_path::find(&self.config_dir, &self.session_id)? else {
+            let Some(path) = transcript_path::find(&self.config_dir, &self.transcript_id)? else {
                 return Ok(());
             };
             self.discovered_from_store = true;
@@ -1395,7 +1493,7 @@ impl TranscriptFollower {
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or_default();
-        if filename != format!("{}.jsonl", self.session_id) {
+        if filename != format!("{}.jsonl", self.transcript_id) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "Claude Agent View state referenced a different transcript identity",
@@ -1403,7 +1501,7 @@ impl TranscriptFollower {
         }
         let path = transcript_path::recover_missing(
             &self.config_dir,
-            &self.session_id,
+            &self.transcript_id,
             path,
             self.path.as_deref(),
             &mut self.stale_published_path,
@@ -1441,7 +1539,7 @@ impl TranscriptFollower {
                         ));
                     }
                 }
-                let candidate = transcript_path::find(&self.config_dir, &self.session_id)?
+                let candidate = transcript_path::find(&self.config_dir, &self.transcript_id)?
                     .ok_or_else(|| {
                         io::Error::new(
                             io::ErrorKind::NotFound,
@@ -1594,6 +1692,7 @@ mod tests {
         let job = Job {
             short: short.into(),
             session_id: session_id.into(),
+            resume_session_id: None,
             cwd: cwd.clone(),
             cli_version: (2, 1, 259),
         };
@@ -1825,6 +1924,108 @@ mod tests {
                 .is_some(),
             "a sustained unverifiable session must eventually fail closed"
         );
+    }
+
+    // Shaped like Agent View job records captured 2026-11-07 (Claude Code 2.1.319), reduced to
+    // the fields parse_job reads; identifiers and workspace are synthetic. ADOPTED_JOB resumed a
+    // conversation Agent View did not create: its own id differs and it writes that transcript.
+    const ADOPTED_JOB: &str = r#"{"short":"a1b2c3d4","sessionId":"11111111-1111-4111-8111-111111111111","cwd":"/work","cliVersion":"2.1.319"}"#;
+    const ADOPTED_STATE: &str = r#"{"sessionId":"11111111-1111-4111-8111-111111111111","resumeSessionId":"22222222-2222-4222-8222-222222222222"}"#;
+    const OWN_JOB: &str = r#"{"short":"d4e5f6a7","sessionId":"33333333-3333-4333-8333-333333333333","cwd":"/work","cliVersion":"2.1.319"}"#;
+    const OWN_STATE: &str = r#"{"sessionId":"33333333-3333-4333-8333-333333333333","resumeSessionId":"33333333-3333-4333-8333-333333333333"}"#;
+    const ADOPTED_CONVERSATION: &str = "22222222-2222-4222-8222-222222222222";
+
+    fn captured_job(record: &str) -> Job {
+        parse_job(&serde_json::from_str(record).expect("record")).expect("job")
+    }
+
+    async fn captured_job_with_state(config_dir: &Path, record: &str, state: &str) -> Job {
+        let mut job = captured_job(record);
+        assert_eq!(
+            job.resume_session_id, None,
+            "the job list omits resumeSessionId"
+        );
+        let job_dir = config_dir.join("jobs").join(&job.short);
+        std::fs::create_dir_all(&job_dir).expect("job dir");
+        std::fs::write(job_dir.join("state.json"), state).expect("state");
+        read_resumed_conversation(config_dir, &mut job).await;
+        job
+    }
+
+    #[tokio::test]
+    async fn only_the_adopted_conversation_becomes_the_transcript_identity() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let adopted = captured_job_with_state(temp.path(), ADOPTED_JOB, ADOPTED_STATE).await;
+        assert_eq!(
+            adopted.resume_session_id.as_deref(),
+            Some(ADOPTED_CONVERSATION)
+        );
+        assert_eq!(
+            transcript_identity(&adopted, Some(ADOPTED_CONVERSATION)),
+            ADOPTED_CONVERSATION
+        );
+        // Nothing adopted, as in the unrequested attach this record comes from: the job's own
+        // id stands, so the transcript check still refuses the other conversation.
+        assert_eq!(transcript_identity(&adopted, None), adopted.session_id);
+        assert_eq!(
+            transcript_identity(&adopted, Some("44444444-4444-4444-8444-444444444444")),
+            adopted.session_id
+        );
+        let own = captured_job_with_state(temp.path(), OWN_JOB, OWN_STATE).await;
+        assert_eq!(transcript_identity(&own, None), own.session_id);
+        assert_eq!(
+            transcript_identity(&own, Some(ADOPTED_CONVERSATION)),
+            own.session_id
+        );
+    }
+
+    #[tokio::test]
+    async fn follower_reads_the_adopted_transcript_and_refuses_an_unrequested_one() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let config_dir = temp.path().join("config");
+        let projects_dir = config_dir.join("projects/workspace");
+        let job_dir = config_dir.join("jobs/a1b2c3d4");
+        std::fs::create_dir_all(&projects_dir).expect("projects");
+        let job = captured_job_with_state(&config_dir, ADOPTED_JOB, ADOPTED_STATE).await;
+        let transcript_path = projects_dir.join(format!("{ADOPTED_CONVERSATION}.jsonl"));
+        let record = json!({
+            "type":"user",
+            "sessionId":ADOPTED_CONVERSATION,
+            "promptId":"adopted-prompt",
+            "message":{"content":"continue the work"},
+        });
+        std::fs::write(&transcript_path, format!("{record}\n")).expect("transcript");
+        let state_path = job_dir.join("state.json");
+        cccc_core::fs::write_json(
+            &state_path,
+            &json!({
+                "sessionId":job.session_id,
+                "resumeSessionId":ADOPTED_CONVERSATION,
+                "linkScanPath":transcript_path,
+            }),
+        )
+        .expect("state");
+
+        let mut unrequested = TranscriptFollower::new(
+            state_path.clone(),
+            config_dir.clone(),
+            job.session_id.clone(),
+            false,
+        );
+        let error = unrequested
+            .initialize()
+            .await
+            .expect_err("an unrequested attach stays refused");
+        assert!(
+            error.to_string().contains("different transcript identity"),
+            "{error}"
+        );
+
+        let mut adopted =
+            TranscriptFollower::new(state_path, config_dir, job.session_id.clone(), false);
+        adopted.transcript_id = transcript_identity(&job, Some(ADOPTED_CONVERSATION)).to_owned();
+        adopted.initialize().await.expect("adopted transcript");
+        assert_eq!(adopted.poll().await.expect("records"), [record]);
     }
 
     #[tokio::test]
@@ -2253,6 +2454,7 @@ mod tests {
             "generation-12345678",
             SessionPurpose::Actor,
             re_adopt.then_some(session_id),
+            None,
         )
         .await
         .expect("launch Agent View");
@@ -2440,6 +2642,7 @@ mod tests {
                 job: Job {
                     short: short.into(),
                     session_id: session_id.into(),
+                    resume_session_id: None,
                     cwd: workspace.clone(),
                     cli_version: (2, 1, 260),
                 },

@@ -64,6 +64,9 @@ struct ActiveTurn {
 pub(super) struct TranscriptState {
     generation: String,
     session_id: String,
+    /// The `sessionId` the transcript's records carry: the job's own id, or the conversation
+    /// the job adopted (whose records keep that conversation's id).
+    record_session_id: String,
     events: broadcast::Sender<AnalystEvent>,
     active: Option<ActiveTurn>,
     /// promptIds of hidden (isMeta) user inputs seen while idle. Claude Code starts its own
@@ -83,12 +86,17 @@ impl TranscriptState {
     ) -> Self {
         Self {
             generation,
+            record_session_id: session_id.clone(),
             session_id,
             events,
             active: None,
             meta_prompt_ids: Vec::new(),
             settled_prompt_ids: HashSet::new(),
         }
+    }
+
+    pub(super) fn set_record_session_id(&mut self, id: String) {
+        self.record_session_id = id;
     }
 
     pub(super) fn active_turn_id(&self) -> Option<&str> {
@@ -133,7 +141,7 @@ impl TranscriptState {
             .get("sessionId")
             .or_else(|| record.get("session_id"))
             .and_then(Value::as_str)
-            && observed != self.session_id
+            && observed != self.record_session_id
         {
             return invalid("Claude transcript record belongs to a different session");
         }
@@ -330,7 +338,7 @@ impl TranscriptState {
                 .get("sessionId")
                 .or_else(|| record.get("session_id"))
                 .and_then(Value::as_str)
-                .is_some_and(|observed| observed != self.session_id)
+                .is_some_and(|observed| observed != self.record_session_id)
         {
             return;
         }
@@ -543,6 +551,21 @@ mod tests {
             TranscriptState::new("generation-1".into(), "session-1".into(), events),
             receiver,
         )
+    }
+
+    #[test]
+    fn records_of_an_adopted_conversation_are_accepted_once_named() {
+        let record = json!({
+            "type":"user",
+            "sessionId":"22222222-2222-4222-8222-222222222222",
+            "promptId":"adopted-prompt",
+            "message":{"content":"continue the work"},
+        });
+        let (mut state, _events) = harness();
+        assert!(state.ingest(&record, None).is_err());
+        let (mut state, _events) = harness();
+        state.set_record_session_id("22222222-2222-4222-8222-222222222222".into());
+        assert!(state.ingest(&record, None).is_ok());
     }
 
     #[test]

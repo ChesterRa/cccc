@@ -3,6 +3,10 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 
+/// Actor environment key naming an existing Claude conversation (session id) the managed actor
+/// adopts on its first launch instead of starting a new one.
+pub(crate) const ADOPT_SESSION_ENV: &str = "CCCC_CLAUDE_ADOPT_SESSION";
+
 impl AnalystSession {
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn launch_claude(
@@ -94,6 +98,12 @@ impl AnalystSession {
             .as_ref()
             .map(|attempt| attempt.session_id.as_str())
             .or(requested_session_id.as_deref());
+        // An actor may name an existing Claude conversation to adopt. It is kept in the actor's
+        // configuration so every later launch still accepts that conversation's transcript.
+        let adopted_session_id = actor
+            .and(environment.get(ADOPT_SESSION_ENV))
+            .map(|id| id.trim().to_owned())
+            .filter(|id| !id.is_empty());
         let result = match claude::prepare(
             home,
             &command,
@@ -112,6 +122,7 @@ impl AnalystSession {
                     &generation,
                     purpose,
                     resume_session_id,
+                    adopted_session_id.as_deref(),
                 ))
                 .await
             }

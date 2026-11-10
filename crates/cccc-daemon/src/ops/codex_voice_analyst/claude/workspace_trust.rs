@@ -100,6 +100,7 @@ mod tests {
             "generation-12345678",
             SessionPurpose::Actor,
             None,
+            None,
         )
         .await;
         let Err(error) = result else {
