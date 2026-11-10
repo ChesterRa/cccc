@@ -1,6 +1,7 @@
 use cccc_contracts::Event;
 use cccc_core::ledger::LedgerFollower;
 use cccc_core::{GroupStore, HomeLayout};
+use notify::event::{AccessKind, EventKind};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -188,11 +189,7 @@ fn create_watcher(
     let callback_root = groups_root.clone();
     let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
         if let Ok(event) = result {
-            for path in event.paths {
-                if is_ledger_path(&path) || (!path.exists() && path.starts_with(&callback_root)) {
-                    enqueue_watch_path(&sender, &rescan_required, path);
-                }
-            }
+            enqueue_changed_paths(event, &callback_root, &sender, &rescan_required);
         }
     })
     .map_err(|error| error.to_string())?;
@@ -200,6 +197,26 @@ fn create_watcher(
         .watch(&groups_root, RecursiveMode::Recursive)
         .map_err(|error| error.to_string())?;
     Ok(watcher)
+}
+
+/// Queues the paths of a filesystem event that may mean a ledger changed or a Group went
+/// away. Opening a file changes nothing, and every reader of a ledger opens it, so an open
+/// is not queued: the watcher reports opens on Linux, and following them made each read of
+/// a ledger cost a check of its own.
+fn enqueue_changed_paths(
+    event: notify::Event,
+    groups_root: &Path,
+    sender: &mpsc::Sender<PathBuf>,
+    rescan_required: &AtomicBool,
+) {
+    if matches!(event.kind, EventKind::Access(AccessKind::Open(_))) {
+        return;
+    }
+    for path in event.paths {
+        if is_ledger_path(&path) || (!path.exists() && path.starts_with(groups_root)) {
+            enqueue_watch_path(sender, rescan_required, path);
+        }
+    }
 }
 
 async fn run_monitor(
@@ -460,6 +477,44 @@ fn poll_global_events(inner: &HubInner, group_id: &str) -> Vec<Event> {
 mod tests {
     use super::*;
     use cccc_core::ledger;
+
+    #[test]
+    fn the_watcher_queues_changes_to_a_ledger_but_not_opens() {
+        use notify::event::{AccessMode, CreateKind, DataChange, ModifyKind, RemoveKind};
+        let root = Path::new("/nonexistent-cccc-home/groups");
+        let ledger = root.join("g_test/ledger.jsonl");
+        let segment = root.join("g_test/state/ledger/segments/ledger.1.jsonl.gz");
+        let (sender, mut receiver) = mpsc::channel(8);
+        let rescan_required = AtomicBool::new(false);
+        let mut queued = |kind: EventKind, path: &Path| {
+            let event = notify::Event::new(kind).add_path(path.to_owned());
+            enqueue_changed_paths(event, root, &sender, &rescan_required);
+            std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>()
+        };
+        let open = EventKind::Access(AccessKind::Open(AccessMode::Any));
+
+        for path in [&ledger, &segment] {
+            assert!(queued(open, path).is_empty(), "{path:?}");
+            for kind in [
+                EventKind::Access(AccessKind::Close(AccessMode::Write)),
+                EventKind::Modify(ModifyKind::Data(DataChange::Any)),
+                EventKind::Create(CreateKind::File),
+                EventKind::Remove(RemoveKind::File),
+                EventKind::Any,
+                EventKind::Other,
+            ] {
+                assert_eq!(queued(kind, path), [path.clone()], "{kind:?} {path:?}");
+            }
+        }
+        // A path that is gone still reaches the monitor, which prunes deleted Groups.
+        let removed_group = root.join("g_removed");
+        assert_eq!(
+            queued(EventKind::Remove(RemoveKind::Folder), &removed_group),
+            [removed_group.clone()]
+        );
+        assert!(queued(open, &removed_group).is_empty());
+        assert!(!rescan_required.load(Ordering::Acquire));
+    }
 
     #[test]
     fn extracts_group_id_from_nested_ledger_path() {

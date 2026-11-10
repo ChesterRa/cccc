@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+
+- CCCC Web ignores file-open notifications when it watches Group ledgers. On Linux, read-only
+  opens of a ledger could queue redundant ledger checks. Writes, rotations, Group removal and the
+  periodic recovery scan are handled as before.
+
 ## [0.4.53]
 
 ### Added
