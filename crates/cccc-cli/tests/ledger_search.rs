@@ -115,7 +115,7 @@ fn search_forwards_every_filter_and_prints_the_result() {
         .expect("one daemon request");
     assert_eq!(request.op, "ledger_search");
     assert_eq!(
-        request.args,
+        Value::Object(request.args),
         json!({
             "group_id":"g_other",
             "by":"sender",
@@ -154,7 +154,7 @@ fn search_uses_the_active_group_and_page_defaults() {
         .expect("one daemon request");
     assert_eq!(request.op, "ledger_search");
     assert_eq!(
-        request.args,
+        Value::Object(request.args),
         json!({"group_id":"g_test","kind":"all","limit":50u64})
     );
 }
@@ -191,7 +191,7 @@ fn search_forwards_the_after_cursor_and_query() {
         .recv_timeout(Duration::from_secs(5))
         .expect("one daemon request");
     assert_eq!(
-        request.args,
+        Value::Object(request.args),
         json!({
             "group_id":"g_test",
             "kind":"all",
