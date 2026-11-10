@@ -57,10 +57,24 @@ pub(super) fn claim(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .is_some_and(|id| !id.is_empty())
             || dots["execution"]["state"] == "active"
             || (!captured_wake.is_null()
-                && (dots["execution"]["event_id"] == *captured_wake
-                    || dots["last_execution"]["event_id"] == *captured_wake))
+                && dots["execution"]["event_id"] == *captured_wake)
         {
-            return Ok(Ok(json!({"status":"turn_in_progress","turn":null})));
+            return Ok(Ok(json!({
+                "status":"turn_in_progress",
+                "turn":null,
+                "reason_code":"dots_turn_unfinished",
+                "instructions":"No new work was claimed. Let the original run finish with its own claim result; do not retrieve credentials from another run or claim again. If that run cannot finish, have the owner review its work in ChatGPT and use End this turn in this Actor's CCCC pane. Ending a turn does not stop cloud work or replay its messages."
+            })));
+        }
+        // A repeated wake after completion is idle, not an unfinished turn.
+        // Check canonical ownership above first: private completion may have
+        // committed before a crash left the runtime projection uncleared.
+        if !captured_wake.is_null() && dots["last_execution"]["event_id"] == *captured_wake {
+            return Ok(Ok(json!({
+                "status":"idle",
+                "turn":null,
+                "reason_code":"dots_wake_already_completed"
+            })));
         }
         let Some(event_id) = captured_wake.as_str() else {
             return Ok(Ok(json!({"status":"idle","turn":null})));

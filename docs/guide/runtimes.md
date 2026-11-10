@@ -662,6 +662,16 @@ configuration or saved memory to recover credentials. If that original result
 is unavailable, report the block and explicitly resolve the unfinished turn
 before starting new work. Discard temporary context after confirmed completion.
 
+A repeated claim returns no task payload or execution credential. While an
+earlier turn is unfinished, it returns `turn_in_progress` with reason
+`dots_turn_unfinished` and recovery guidance. Let the original run finish; do
+not take it over by looking up old credentials. If it cannot finish, review
+its work in ChatGPT and use **End this turn** in the agent's CCCC pane. This
+does not stop cloud work or resend the original messages. A repeated wake
+after completion returns `idle` with reason `dots_wake_already_completed`,
+not an unfinished-turn warning. Later queued messages still need their own
+native event and claim.
+
 If an older task asks to read subscription configuration or refuses to save a
 credential in its handler, get the current setup instructions and update that
 same task with the credential-free handler. Updating CCCC cannot rewrite a task

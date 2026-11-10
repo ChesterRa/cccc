@@ -1022,6 +1022,16 @@ async fn paired_dot_claims_successive_turns_without_saved_credentials_or_event_p
         );
         assert!(duplicate["result"]["structuredContent"]["turn"].is_null());
         assert!(duplicate["result"]["structuredContent"]["actor_token"].is_null());
+        assert_eq!(
+            duplicate["result"]["structuredContent"]["reason_code"],
+            "dots_turn_unfinished"
+        );
+        assert!(
+            duplicate["result"]["structuredContent"]["instructions"]
+                .as_str()
+                .expect("recovery guidance")
+                .contains("End this turn")
+        );
         if let Some(old) = tokens.last() {
             let path = store.ledger_path(&fixture.group_id).expect("ledger");
             let (_, forged) = fixture.mcp("tools/call", json!({"name":"cccc_runtime_complete_turn","arguments":{"actor_token":old,"turn_id":packet["turn"]["turn_id"],"event_ids":packet["turn"]["event_ids"]}}), true).await;

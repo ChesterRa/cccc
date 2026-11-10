@@ -696,6 +696,20 @@ fn dots_claim_handshake_returns_execution_credential_only_to_the_first_owner() {
         assert_eq!(duplicate["status"], "turn_in_progress");
         assert_eq!(duplicate["turn"], Value::Null);
         assert!(duplicate.get("actor_token").is_none());
+        assert_eq!(duplicate["reason_code"], "dots_turn_unfinished");
+        let instructions = duplicate["instructions"]
+            .as_str()
+            .expect("recovery guidance");
+        assert!(instructions.contains("No new work was claimed"));
+        assert!(instructions.contains("do not retrieve credentials from another run"));
+        assert!(instructions.contains("End this turn"));
+        assert!(instructions.contains("does not stop cloud work or replay its messages"));
+        assert!(!duplicate.to_string().contains(token));
+        assert!(
+            !duplicate
+                .to_string()
+                .contains("content is fetched only by the winning claim")
+        );
     }
     assert!(
         !f.call("dots_events_status", json!({}))
@@ -713,6 +727,72 @@ fn dots_claim_handshake_returns_execution_credential_only_to_the_first_owner() {
     );
     f.complete(&claimed["turn"], &live);
     assert!(store::dots_binding_for_token(&f.private(), token, "cccc_message_send").is_none());
+}
+
+#[test]
+fn dots_completed_wake_is_idle_without_replaying_work_or_claiming_later_input() {
+    let f = Fixture::new();
+    f.start();
+    f.source("first private task");
+    let delivery = f.delivery();
+    let captured = f.claim_capture();
+    let claimed = f.claim(&captured);
+    let execution = f.captured(&delivery, "cccc_runtime_complete_turn");
+    f.complete(&claimed["turn"], &execution);
+    let later = f.source("later queued input");
+    let before = f.private();
+    for duplicate in [f.claim(&captured), f.claim(&f.claim_capture())] {
+        assert_eq!(duplicate["status"], "idle");
+        assert_eq!(duplicate["reason_code"], "dots_wake_already_completed");
+        assert_eq!(duplicate["turn"], Value::Null);
+        assert!(duplicate.get("actor_token").is_none());
+        assert!(!duplicate.to_string().contains("first private task"));
+        assert!(!duplicate.to_string().contains("later queued input"));
+    }
+    assert_eq!(
+        f.private(),
+        before,
+        "duplicate claims must not change execution state"
+    );
+    let status = f.call("dots_events_status", json!({}));
+    assert_eq!(status["active_turn_id"], "");
+    assert_eq!(status["pending_count"], 1);
+    assert_eq!(status["last_execution"]["status"], "done");
+    let next = f.delivery();
+    let next_claim = f.claim(&f.claim_capture());
+    assert_eq!(next_claim["turn"]["event_ids"], json!([later]));
+    f.complete(
+        &next_claim["turn"],
+        &f.captured(&next, "cccc_runtime_complete_turn"),
+    );
+}
+
+#[test]
+fn dots_completed_private_record_does_not_hide_an_unfinished_canonical_turn() {
+    let f = Fixture::new();
+    f.start();
+    f.source("completion projection crash");
+    f.delivery();
+    let claimed = f.claim(&f.claim_capture());
+    store::dots_update(&f.home, &f.connector_id, |c| {
+        let mut completed = c["dots"]["execution"].clone();
+        completed["state"] = json!("completed");
+        completed["status"] = json!("done");
+        c["dots"]["last_execution"] = completed;
+        c["dots"]["execution"] = Value::Null;
+        c["dots"]["wake"]["state"] = json!("completed");
+        Ok(())
+    })
+    .expect("simulate private completion before canonical cleanup");
+    let blocked = f.claim(&f.claim_capture());
+    assert_eq!(blocked["status"], "turn_in_progress");
+    assert_eq!(blocked["reason_code"], "dots_turn_unfinished");
+    assert_eq!(blocked["turn"], Value::Null);
+    assert!(blocked.get("actor_token").is_none());
+    assert_eq!(
+        f.call("dots_events_status", json!({}))["active_turn_id"],
+        claimed["turn"]["turn_id"]
+    );
 }
 
 #[test]
