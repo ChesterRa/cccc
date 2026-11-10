@@ -734,6 +734,22 @@ Native terminal output always uses bounded memory and can optionally persist a b
 
 CCCC does not create worktrees automatically or manage their cleanup. Agents can create them with Git or runtime tools; a native terminal's custom launch command can also request one. Managed runtimes accept only their supported command arguments, so a flag available in a standalone CLI is not necessarily supported by CCCC.
 
+### Where a managed Claude Code agent edits files {#managed-claude-edit-location}
+
+A managed Claude Code agent runs as an Agent View background session. By default, Claude Code has a background session enter a worktree under `.claude/worktrees/` before it edits files in the main checkout, so its changes can sit in a different directory and branch from the checkout the rest of the Group works in. This is Claude Code's default, not a CCCC setting; see [how file edits are isolated](https://code.claude.com/docs/en/agent-view#how-file-edits-are-isolated) for the rule and its exceptions.
+
+Claude Code's [`worktree.bgIsolation`](https://code.claude.com/docs/en/settings-reference#worktreebgisolation) setting controls this. `"none"` lets a background session edit the working copy directly; it does not stop an agent from entering a worktree on its own. CCCC leaves the default unchanged. When a Group should share one checkout, pass the setting in that agent's command, which you can edit in the agent's settings, in its Runtime Profile, or from the CLI. For an agent named `my-claude` (use your agent's ID) whose command is the default `claude`:
+
+```bash
+cccc actor update my-claude --command "claude --settings '{\"worktree\":{\"bgIsolation\":\"none\"}}'"
+```
+
+`--command` replaces the whole command. If the agent's command already has arguments such as `--model`, keep them in the new command; if it already has `--settings`, add the key to that JSON or file, because a command may contain only one `--settings` source.
+
+CCCC writes the setting into the agent's private settings file and passes that file to Claude Code. A setting passed this way takes precedence over the same key in user and project settings files; a managed policy takes precedence over it. Changing an agent's launch configuration can make its saved session ineligible for resume; see [Managed Codex/Claude/Grok/OpenCode/Kilo sessions](#managed-codex-claude-grok-opencode-kilo-sessions).
+
+A shared checkout has no per-agent worktree isolation, so divide the work by file. Whichever setting applies, a handoff should say where the result is (directory and branch) and who integrates it.
+
 Stopping or restarting a local CLI agent terminates its process; it does not guarantee the runtime's interactive worktree cleanup flow. Cleanup depends on the runtime, who created the worktree, and any remaining work. Claude Code, for example, has exit handling and a subagent/background-session sweep, but that sweep excludes worktrees created with `git worktree add` and main worktree sessions that were never backgrounded. See [Claude Code's cleanup rules](https://code.claude.com/docs/en/worktrees#clean-up-worktrees).
 
 Before removing a candidate, confirm no agent or other process is using it, preserve any unique commits (including a detached HEAD), and save all needed untracked and ignored files. Inspect one worktree at a time:

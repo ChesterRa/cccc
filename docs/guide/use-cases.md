@@ -15,40 +15,95 @@ Each scenario includes:
 
 ### Goal
 
-Increase delivery quality without adding human review bottlenecks.
+Deliver one bounded change with an independent review and a clear owner for
+integration. Start with two agents before adding more roles.
 
 ### Minimal Setup
+
+This example uses members that CCCC starts. Install and sign in to the runtimes
+you intend to use first; follow the [CLI Quick Start](./getting-started/cli) or
+[Web UI Quick Start](./getting-started/web) for the host setup. To connect sessions
+you already have open instead, use [Native sessions](./local-sessions).
+
+For a project with no existing CCCC Group, register a pair:
 
 ```bash
 cd /path/to/repo
 cccc attach .
-cccc setup --runtime claude
-cccc setup --runtime codex
-cccc actor add builder --runtime claude
-cccc actor add reviewer --runtime codex
+cccc actor add builder --runtime codex
+cccc actor add reviewer --runtime claude
+cccc actor list
+```
+
+These runtime choices are an example, not a required pairing. The first agent
+in a new Group is its foreman; here that is `builder`. If the project already
+has a Group, inspect its members and choose unused names instead of replacing
+existing agents.
+
+Merge the [short AGENTS.md template](./agents-template) into the project's
+instructions, including its own commands and constraints. CCCC does not make
+every runtime load `AGENTS.md`; check the runtime's instruction loading before
+the first task.
+
+Start the new Group's two members:
+
+```bash
 cccc group start
 ```
 
+When adding members to an existing Group, start only those members with their
+Web controls instead of starting every member in the Group. Before assigning
+work, complete any pending runtime onboarding or trust prompt in the Web
+confirmation terminal. See [runtime interaction](./runtimes#runtime-interaction).
+
+Agree where each member will edit. A shared Group or scope does not guarantee
+the same checkout: a managed Claude background session may enter a worktree.
+See [where managed Claude edits files](./runtimes#managed-claude-edit-location)
+for configuration and cleanup. Do not assume a clean main checkout means
+another member has made no changes.
+
 ### Execution Flow
 
-1. Send implementation task to `@builder`.
-2. Send review criteria to `@reviewer` (bug risk, regression risk, tests).
-3. Require `@builder` to reply with changed files + rationale.
-4. Require `@reviewer` to reply with findings (severity + evidence).
-5. Use human decision for final merge.
+1. Give the builder one concrete behavior to change, acceptance cases and
+   boundaries. Name the reviewer and integration owner; here the builder
+   integrates after review. For example: "Remove duplicate IDs from the CSV
+   export. Add coverage for repeated IDs and keep the public API unchanged."
+2. Ask the reviewer to inspect the requirements and current implementation
+   independently. Agree file ownership before either edits; review can start
+   with a read of the existing behavior while implementation proceeds.
+3. Keep work that needs a lasting owner or completion record in a CCCC task.
+   Keep the goal and shared constraints in the brief, rather than copying every
+   local todo or chat message onto the board.
+4. The builder hands off the actual checkout/branch, changed files, checks and
+   remaining uncertainty. The reviewer examines that change and reports
+   actionable findings with evidence, or says what was checked and found clear.
+5. The integration owner resolves confirmed findings and reruns affected
+   checks. Report the result and remaining limits to the user; commits, pushes
+   and releases follow the authority the user granted.
+
+For a concrete reply obligation, the human can select **Send + Reply** in the
+Web UI, or use the CLI's `--mode request-reply`. Ordinary agent discussion
+follows CCCC's built-in Send/Mail guidance.
+
+Use the next similar task to check whether an agreed workflow adjustment helped.
 
 ### Success Criteria
 
-- Faster implementation feedback loop.
-- Fewer missed regressions.
-- Review output is actionable, not generic.
+- The agreed behavior and acceptance cases are satisfied.
+- Review findings refer to the actual change and can be acted on.
+- The result is integrated where intended; the handoff links acceptance checks
+  and their results, with remaining limits stated.
 
 ### Common Failure Points
 
 - Task scope too broad.
 - Reviewer lacks explicit acceptance criteria.
-- Team uses ordinary Send where a concrete reply was actually required; use
-  `message_mode=request_reply` for that explicit obligation.
+- Both agents edit the same files without agreeing ownership.
+- A worktree contains the result but the integration owner checks only the main
+  checkout.
+- Runtime confirmation is still pending, or changed instruction files have not
+  been read by the running sessions.
+- A concrete review was requested without a reply obligation or clear handoff.
 
 ## Use Case 2: Foreman-Led Multi-Agent Delivery
 
@@ -68,7 +123,8 @@ cccc group start
 
 ### Execution Flow
 
-1. Foreman defines shared goal in Context (`vision`, `sketch`, `milestones`).
+1. Foreman records the current objective, focus and constraints in the shared
+   brief, and uses tasks for work with durable owners and completion criteria.
 2. Assign focused tasks via direct recipients.
 3. Enforce checkpoint reminders through Automation rules.
 4. Foreman integrates and resolves conflicts.

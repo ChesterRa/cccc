@@ -139,6 +139,7 @@ export default defineConfig({
             { text: 'Group Space + NotebookLM', link: '/guide/group-space-notebooklm' },
             { text: 'Capability Allowlist', link: '/guide/capability-allowlist' },
             { text: 'Best Practices', link: '/guide/best-practices' },
+            { text: 'AGENTS.md Template', link: '/guide/agents-template' },
             { text: 'FAQ', link: '/guide/faq' }
           ]
         },
