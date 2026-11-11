@@ -928,8 +928,8 @@ it("leaves a connector created elsewhere untouched when the page was stale", asy
     result: { connectors: [], connector_base_url: "https://cccc.example.test" },
   });
   mocks.create.mockResolvedValue({
-    ok: false,
-    error: { code: "connector_exists", message: "exists" },
+    ok: true,
+    result: { outcome: "existing", connector: { connector_id: "shared" } },
   });
   await render({ onOpenSharedSettings: vi.fn() });
   await act(async () => button("dotsActor.setup.createConnector").click());

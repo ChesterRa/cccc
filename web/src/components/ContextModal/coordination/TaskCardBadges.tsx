@@ -31,7 +31,8 @@ export function TaskCardBadges({
   subtasks?: SubtaskProgress;
 }) {
   const live = taskIsLive(task);
-  const blocked = live && Array.isArray(task.blocked_by) && task.blocked_by.length > 0;
+  const openBlockedBy = task.open_blocked_by ?? task.blocked_by ?? [];
+  const blocked = live && openBlockedBy.length > 0;
   const waiting = String(task.waiting_on || "none").trim();
   const handoff = String(task.handoff_to || "").trim();
   const checklist = (task.checklist || []).filter((item) => String(item.text || "").trim());
@@ -67,7 +68,7 @@ export function TaskCardBadges({
         note("unassigned", tr("context.unassigned", "Unassigned"))
       ) : null}
       {blocked
-        ? note("blocked", `${tr("context.blocked", "Blocked")}: ${task.blocked_by?.join(", ")}`)
+        ? note("blocked", `${tr("context.blocked", "Blocked")}: ${openBlockedBy.join(", ")}`)
         : null}
       {!compact && live && waiting === "user" ? (
         <span data-task-note="waiting-user">{waitingLabel(waiting, tr)}</span>

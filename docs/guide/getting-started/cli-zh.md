@@ -166,6 +166,7 @@ cccc actor add <id> --runtime <r> # 添加智能体
 cccc actor start <id>            # 启动智能体
 cccc actor stop <id>             # 停止智能体
 cccc actor restart <id>          # 重启智能体
+cccc actor new-session <id>      # 以新会话重启智能体
 cccc actor remove <id>           # 移除智能体
 ```
 
@@ -181,6 +182,7 @@ cccc reply <event_id> "回复内容"    # 回复消息
 cccc inbox --actor-id assistant   # 读取并消费智能体的未读 Mail
 cccc tail -n 50                   # 最近的事件
 cccc tail -f                      # 持续查看新事件
+cccc ledger search --by assistant # 按发送者搜索事件
 ```
 
 ### daemon 控制

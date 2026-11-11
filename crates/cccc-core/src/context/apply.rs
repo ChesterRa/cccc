@@ -17,9 +17,7 @@ fn newly_finished_tasks(before: &ContextDoc, after: &ContextDoc) -> u64 {
     let was_done = before
         .tasks
         .iter()
-        .filter(|task| {
-            is_done(task) || task.get("archived_from").and_then(Value::as_str) == Some("done")
-        })
+        .filter(|task| super::task_is_completed(task))
         .filter_map(|task| task.get("id").and_then(Value::as_str))
         .collect::<HashSet<_>>();
     after

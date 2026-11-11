@@ -459,12 +459,7 @@ fn task_slice(tasks: &[Value], actor_id: &str) -> (Vec<Value>, Vec<Value>) {
             actor_attention.push(slim);
         } else if waiting_on == "user" {
             waiting_user.push(slim);
-        } else if task
-            .get("blocked_by")
-            .and_then(Value::as_array)
-            .is_some_and(|items| !items.is_empty())
-            || waiting_on == "external"
-        {
+        } else if cccc_core::context::task_is_blocked(task) {
             globally_blocked.push(slim);
         }
     }
@@ -525,7 +520,7 @@ fn slim_task(task: &Map<String, Value>) -> Value {
         })
         .collect::<Vec<_>>();
     let blocked_by = trimmed_list(task.get("blocked_by"), 4, 64);
-    Value::Object(clean_object(Map::from_iter([
+    let mut result = clean_object(Map::from_iter([
         ("id".into(), trimmed_value(task.get("id"), 64)),
         (
             "rev".into(),
@@ -553,7 +548,14 @@ fn slim_task(task: &Map<String, Value>) -> Value {
             task.get("updated_at").cloned().unwrap_or(Value::Null),
         ),
         ("blocked_by".into(), Value::Array(blocked_by)),
-    ])))
+    ]));
+    if task.contains_key("open_blocked_by") {
+        result.insert(
+            "open_blocked_by".into(),
+            Value::Array(trimmed_list(task.get("open_blocked_by"), 4, 64)),
+        );
+    }
+    Value::Object(result)
 }
 
 fn recent_notes(coordination: Option<&Map<String, Value>>, key: &str) -> Value {
@@ -1333,5 +1335,18 @@ mod tests {
             .load(&group.group_id)
             .expect("read");
         assert_eq!(slim_task(&loaded.tasks[0])["rev"], 0);
+    }
+    #[test]
+    fn completed_dependencies_do_not_enter_the_blocked_recovery_slice() {
+        let done = json!({"id":"T2","status":"planned","blocked_by":["T1"],"open_blocked_by":[]});
+        let missing =
+            json!({"id":"T3","status":"planned","blocked_by":["T99"],"open_blocked_by":["T99"]});
+        let (_, attention) = task_slice(&[done.clone(), missing], "peer");
+        assert_eq!(attention.len(), 1);
+        assert_eq!(attention[0]["id"], "T3");
+        assert_eq!(
+            slim_task(done.as_object().expect("task"))["open_blocked_by"],
+            json!([])
+        );
     }
 }

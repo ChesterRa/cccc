@@ -33,7 +33,7 @@ use navigation::goto_dom_content_loaded;
 use owner::BrowserOwner;
 mod pairing;
 use page_recovery::{candidate_page_url, close_internal_pages, is_internal_page};
-pub(crate) use pairing::PairingPage;
+pub(crate) use pairing::{PairingPage, pairing_prompt};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

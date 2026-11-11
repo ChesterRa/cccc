@@ -173,6 +173,7 @@ cccc actor add <id> --runtime <r> # エージェントを追加
 cccc actor start <id>            # エージェントを起動
 cccc actor stop <id>             # エージェントを停止
 cccc actor restart <id>          # エージェントを再起動
+cccc actor new-session <id>      # 新しいセッションで再起動
 cccc actor remove <id>           # エージェントを削除
 ```
 
@@ -188,6 +189,7 @@ cccc reply <event_id> "応答"       # メッセージに返信
 cccc inbox --actor-id assistant   # エージェントの未読 Mail を読み取り、既読として消費
 cccc tail -n 50                   # 最近のイベントを表示
 cccc tail -f                      # 新しいイベントを追跡
+cccc ledger search --by assistant # 送信者でイベントを検索
 ```
 
 ### daemon の操作

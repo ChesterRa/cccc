@@ -672,6 +672,8 @@ export type Task = {
   assignee?: string | null;
   priority?: string | null;
   blocked_by?: string[];
+  /** Read-only dependencies not yet completed, including missing task IDs. */
+  open_blocked_by?: string[];
   waiting_on?: TaskWaitingOn | null;
   handoff_to?: string | null;
   task_type?: string | null;

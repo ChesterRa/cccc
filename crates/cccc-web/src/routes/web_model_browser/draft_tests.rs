@@ -129,6 +129,13 @@ async fn preview_and_saved_alignment_preserve_attachment_only_drafts() {
         .expect("readiness");
     assert_eq!(inspected["composer_chars"], 0);
     assert_eq!(inspected["running"], false);
+    // This page is not the saved chat, and its box holds a file. Choosing a
+    // conversation is refused while the draft is there, so health names it first.
+    let health =
+        payload(&state, gid, "a", true).await.expect("health").0["result"]["health_snapshot"]
+            .clone();
+    assert_eq!(health["target"]["state"], "unavailable");
+    assert_eq!(health["next_action"]["recommended"], "clear_composer");
     ensure_open_for_actor(&state, gid, "a", 800, 600)
         .await
         .expect("open viewer");

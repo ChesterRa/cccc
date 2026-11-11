@@ -73,15 +73,16 @@ export function DotsPluginStep({ isVisible, disabled, sharedSettings, onBusyChan
       // Never rotate: this page may be stale and a connector may exist by now.
       const created = await api.createWebModelConnector("chatgpt_web", { createOnly: true });
       if (!created.ok) {
-        if (created.error.code === "connector_exists") {
-          setShared((previous) => ({ ...previous, exists: true }));
-          setError(t("dotsActor.setup.connectorExists"));
-        } else setError(created.error.message);
+        setError(created.error.message);
         return;
       }
-      const token = created.result.connector.connector_url_path_token || "";
+      const token =
+        created.result.outcome === "existing"
+          ? ""
+          : created.result.connector.connector_url_path_token || "";
       setUrl(token ? new URL(token, window.location.href).toString() : "");
       setShared((previous) => ({ ...previous, exists: true }));
+      if (created.result.outcome === "existing") setError(t("dotsActor.setup.connectorExists"));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

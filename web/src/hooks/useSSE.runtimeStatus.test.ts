@@ -7,6 +7,15 @@ import {
 } from "./useSSE";
 
 describe("SSE actor activity runtime projection", () => {
+  it("does not call a running actor with unobserved turn state idle", () => {
+    const runtime = computeGroupRuntimeFromActorActivityUpdates(
+      [],
+      [{ id: "headless", running: true, effective_working_state: "unknown" }],
+      { lifecycle_state: "active" },
+    );
+    expect(runtime.lifecycle_state).toBe("active");
+    expect(runtime.runtime_running).toBe(true);
+  });
   it("does not derive stopped lifecycle from zero running actors", () => {
     const actors: Actor[] = [
       { id: "claude-1", role: "foreman", runtime: "codex", runner: "pty", running: true },

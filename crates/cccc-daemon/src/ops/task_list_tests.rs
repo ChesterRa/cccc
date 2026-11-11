@@ -183,3 +183,79 @@ fn attention_facets_and_filters_ignore_completed_history() {
         ""
     ));
 }
+
+#[test]
+fn completed_dependencies_stop_blocking_every_task_list_shape_without_rewriting_links() {
+    let temp = tempfile::tempdir().expect("home");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("dependency state", "").expect("group");
+    let contexts = ContextStore::new(home.clone()).expect("contexts");
+    let ops = [
+        json!({"op":"task.create","title":"prerequisite"}),
+        json!({"op":"task.create","title":"dependent","blocked_by":["T001"],"open_blocked_by":[]}),
+    ]
+    .map(|op| op.as_object().expect("op").clone());
+    contexts
+        .sync(&group.group_id, &ops, None, "user", false)
+        .expect("create");
+    let first = run(
+        &home,
+        &request(&group.group_id, json!({"attention":"blocked","limit":10})),
+    )
+    .expect("blocked");
+    assert_eq!(first["total_count"], 1);
+    assert_eq!(first["tasks"][0]["open_blocked_by"], json!(["T001"]));
+    let finish = [json!({"op":"task.move","task_id":"T001","status":"done"})
+        .as_object()
+        .expect("move")
+        .clone()];
+    contexts
+        .sync(&group.group_id, &finish, None, "user", false)
+        .expect("finish blocker");
+    let stored = contexts.load(&group.group_id).expect("stored");
+    let version = contexts.tasks_version(&stored);
+    for args in [
+        json!({"attention":"blocked","limit":10}),
+        json!({"attention":"blocked","statuses":"planned,active","limit":10}),
+    ] {
+        let result = run(&home, &request(&group.group_id, args)).expect("filtered");
+        assert_eq!(result["facets"]["blocked"], 0);
+        if let Some(pages) = result.get("pages") {
+            assert_eq!(pages["planned"]["total_count"], 0);
+            assert_eq!(pages["active"]["total_count"], 0);
+        } else {
+            assert_eq!(result["total_count"], 0);
+        }
+    }
+    for args in [
+        json!({"task_id":"T002"}),
+        json!({"task_ids":"T002"}),
+        json!({"limit":10}),
+    ] {
+        let result = run(&home, &request(&group.group_id, args)).expect("task read");
+        let task = if let Some(task) = result.get("task") {
+            task
+        } else {
+            result["tasks"]
+                .as_array()
+                .expect("tasks")
+                .iter()
+                .find(|task| task["id"] == "T002")
+                .expect("dependent")
+        };
+        assert_eq!(task["blocked_by"], json!(["T001"]));
+        assert_eq!(task["open_blocked_by"], json!([]));
+        assert_eq!(result["tasks_version"], version);
+    }
+    let after = contexts
+        .load(&group.group_id)
+        .expect("read unchanged store");
+    assert_eq!(after.tasks, stored.tasks);
+    assert!(
+        after
+            .tasks
+            .iter()
+            .all(|task| !task.contains_key("open_blocked_by"))
+    );
+}

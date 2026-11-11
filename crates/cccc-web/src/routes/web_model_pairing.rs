@@ -153,9 +153,7 @@ async fn start_connection(
     let code = pair["code"]
         .as_str()
         .ok_or_else(|| ApiError::bad("Invalid pairing response"))?;
-    let prompt = format!(
-        "Connect this conversation to the Actor selected in CCCC. Send this temporary CCCC pairing code to cccc_pair through the same CCCC connector: {{\"code\":\"{code}\"}}. This records a pending link; reply with the returned receipt exactly as plain text so CCCC can verify this window and activate the link. Subsequent CCCC tool calls will use that Actor's configured permissions. This setup does not read workspace files or run tasks; wait for the next task message. If ChatGPT requires my approval, ask me. If the call is blocked or fails, report the error."
-    );
+    let prompt = crate::browser_surface::pairing_prompt(code);
     args.insert("pairing_id".into(), json!(id));
     let connecting = Connecting::new(state, &id);
     let mut shutdown = state.shutdown.subscribe();

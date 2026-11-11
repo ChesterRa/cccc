@@ -3789,6 +3789,14 @@ Result:
 { actors: Array<Record<string, unknown>> } // includes at least id/title/runtime/enabled + role/running/effective_scope
 ```
 
+When a running headless Actor has no authoritative local turn state,
+`effective_working_state` is `unknown` with
+`effective_working_reason=headless_running_state_unknown`.
+`effective_working_updated_at` and `effective_active_task_id` remain null.
+Process liveness or a last message timestamp MUST NOT establish idle state or
+its duration. Existing managed-session and Dots execution observations keep
+precedence over this fallback.
+
 Each Actor row includes the observed Boolean `runtime_confirmation_required`.
 For a managed Claude Actor it is true while a recovery-owned confirmation PTY
 is running without a ready managed session. It is a live projection, not Actor
@@ -6449,7 +6457,14 @@ Result:
 ```
 
 Notes:
-- Returned task objects include `task_type`.
+- Returned task objects include `task_type`. Tasks with nonempty `blocked_by`
+  also include read-only `open_blocked_by`, the stored dependency subset whose
+  references are not completed: only `done` or `archived` with
+  `archived_from=done` releases a dependency. Archiving unfinished work does not.
+  Missing references keep blocking. Derivation precedes filtering and paging;
+  counts, attention, and rows use that same snapshot. Stored relationships and
+  dependent task revisions are unchanged when a dependency completes or reopens.
+  An explicit `waiting_on=actor` or `external` still blocks independently.
 - `task_id` takes precedence over other arguments, followed by `task_ids`.
   `status` and `statuses` MUST NOT be combined. A `statuses` request reads one
   task snapshot and returns every requested column at the same `tasks_version`.
@@ -6462,8 +6477,9 @@ Notes:
   has_more, tasks_version, note }`. A row keeps `id`, `title` (longer than 120
   characters it is cut and ends in `...`), `status`, `rev`, `updated_at`, checklist
   progress as `"done/total"`, and `assignee`, `priority`, `task_type`, `parent_id`,
-  `handoff_to`, `blocked_by` (at most 10 ids, with `blocked_by_total` when there are
-  more) and `waiting_on` when set; notes, outcome and checklist text are read with
+  `handoff_to`, `blocked_by` and `open_blocked_by` (at most 10 ids each, with
+  `<field>_total` when there are more) and `waiting_on` when set. An empty
+  `open_blocked_by` remains explicit; notes, outcome and checklist text are read with
   `task_id`. Without `status`, rows are planned and active tasks, with `query` also
   done ones, and `include_archived=true` adds archived tasks; an explicit `status`
   lists that status only. Rows keep the compatibility listing's order, most recently
@@ -9123,7 +9139,7 @@ These IPC operations use the daemon global write permit and require `by=user`; n
 
 | Operation | Required input / effect |
 |---|---|
-| `web_model_connector_configure` | Optional `provider` (`chatgpt_web`, default, or `grok_web`); optional boolean `create_only` (default `false`). Create or rotate only that provider’s instance credential and return its secret once. `create_only=true` atomically rejects an active existing connector with `connector_exists`, preserving its credential, bindings and routing keys; a revoked connector permits fresh creation. A non-boolean flag is `invalid_argument` and MUST NOT fall back to rotation. Rotation retains bindings and routing keys. |
+| `web_model_connector_configure` | Optional `provider` (`chatgpt_web`, default, or `grok_web`); boolean `rotate` and `create_only` default to `false`. Without `rotate=true`, atomically create only when absent or revoked: return `outcome=created`, `connector` and the new `secret`, or `outcome=existing` with the unchanged connector and no secret. Explicit `rotate=true` replaces only an active connector's credential and returns `outcome=rotated`, `connector` and the new `secret`; absent or revoked is `connector_unavailable`. Returning an existing connector and rotating it preserve its bindings, pairings, routing keys and Dots state. `create_only` never selects rotation; combining it with `rotate=true`, or supplying a non-boolean flag, is `invalid_argument` before mutation. |
 | `web_model_connector_revoke` | `connector_id`; disable all tool routes and pending pairings. |
 | `web_model_pairing_begin` | `connector_id`, `group_id`, `actor_id`; optional `automatic=true` requires an enabled, unbound Web Model Actor in a running, non-paused Group; otherwise requires a stopped Actor. Issue one 10-minute code, persisting only its hash and automatic intent. |
 | `web_model_pairing_accept` | `connector_id`, `code`, `session_key`; private Web port forwards the authenticated host session hash. Return a unique, idempotent receipt for this candidate/session; receipt alone grants no business authority. |
@@ -9354,7 +9370,7 @@ connection, network receipt and resolution operations require `by="user"`.
 | `dots_events_unsubscribe` | Exact subscription identity and callback; retires that subscription's task authority. An older callback cannot unsubscribe a replacement. |
 | `dots_events_next_delivery` | Claims a bounded sending lease for pending inbox work; returns private callback data and one persisted event identity. It never accepts a business turn. |
 | `dots_events_delivery_record` | Exact connector, epoch, event and attempt; records HTTP handoff or a safe error. Bounded retries reuse the same event; HTTP 410/413 are not retried. |
-| `dots_work_claim` | Captured binding, epoch and current wake identity; accepts at most one existing canonical turn and returns its private execution `actor_token` only after persistence. Idle, duplicate or competing claims expose no business body or execution credential and do not recover another execution. |
+| `dots_work_claim` | Captured binding, epoch and current wake identity; accepts at most one existing canonical turn and returns its private execution `actor_token` only after persistence. Idle, duplicate or competing claims expose no business body or execution credential and do not recover another execution. While a turn is unfinished (a canonical active turn, an active Dots execution, or the captured wake's own execution), a repeated claim returns `turn_in_progress` with `reason_code: "dots_turn_unfinished"` and recovery `instructions`; this check runs first. A repeated claim for a wake whose turn already completed returns `idle` with `reason_code: "dots_wake_already_completed"`. |
 | `dots_work_control` | User `action="resolve"` with exact canonical `turn_id` and `event_ids`; reconciles an existing terminal receipt, or cancels unfinished work without replay. Retires old execution authority while preserving the Actor's enabled state; does not terminate ChatGPT cloud work. |
 
 `dots_events_status` exposes the same nullable `active_turn_elapsed_seconds`

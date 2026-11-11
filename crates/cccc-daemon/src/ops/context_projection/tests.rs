@@ -96,3 +96,47 @@ fn overview_omits_task_collections_but_keeps_coordination_notes() {
     assert!(result.get("tasks_summary").is_none());
     assert!(result.get("attention").is_none());
 }
+
+#[test]
+fn resolved_dependencies_use_the_full_document_before_paging() {
+    let tasks = [
+        json!({"id":"T001","status":"done"}),
+        json!({"id":"T002","status":"planned","blocked_by":["T001"]}),
+    ]
+    .map(|task| task.as_object().expect("task").clone())
+    .to_vec();
+    let doc = ContextDoc {
+        tasks,
+        ..ContextDoc::default()
+    };
+    let before = doc.clone();
+    for detail in ["summary", "full"] {
+        let result = project(doc.clone(), "v1".into(), detail);
+        let task = &result["coordination"]["tasks"][1];
+        assert_eq!(task["blocked_by"], json!(["T001"]));
+        assert_eq!(task["open_blocked_by"], json!([]));
+        assert_eq!(result["tasks_summary"]["blocked"], 0);
+        if detail == "full" {
+            assert_eq!(result["attention"]["blocked"], json!([]));
+        }
+        let page = project_page(
+            doc.clone(),
+            "v1".into(),
+            detail,
+            &Page {
+                limit: 1,
+                after: 1,
+                max_bytes: None,
+                include_archived: false,
+            },
+        )
+        .expect("page");
+        assert_eq!(page["coordination"]["tasks"][0]["id"], "T002");
+        assert_eq!(
+            page["coordination"]["tasks"][0]["open_blocked_by"],
+            json!([])
+        );
+        assert_eq!(page["tasks_summary"]["blocked"], 0);
+    }
+    assert_eq!(doc.tasks, before.tasks);
+}

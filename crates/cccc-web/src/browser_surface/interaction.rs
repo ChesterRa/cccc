@@ -217,7 +217,6 @@ pub async fn serve_socket(
                 if matches!(message, Message::Close(_)) { break }
                 let Message::Text(text) = message else { continue };
                 let Ok(command) = serde_json::from_str::<Value>(&text) else { continue };
-                let command_id = command.get("id").and_then(Value::as_str).unwrap_or("");
                 let Some(result) = until_shutdown(
                     &mut shutdown,
                     surfaces.command(key, &command),
@@ -225,25 +224,67 @@ pub async fn serve_socket(
                     close_for_shutdown(&mut socket).await;
                     break;
                 };
-                match result {
-                    Ok(()) if !command_id.is_empty() => {
-                        let _ = socket.send(Message::Text(
-                            json!({"t":"command_result","id":command_id,"ok":true}).to_string().into(),
-                        )).await;
-                    }
-                    Ok(()) => {}
-                    Err(error) if !command_id.is_empty() => {
-                        let _ = socket.send(Message::Text(
-                            json!({"t":"command_result","id":command_id,"ok":false,"message":error.to_string()}).to_string().into(),
-                        )).await;
-                    }
-                    Err(error) => {
-                        let _ = socket.send(Message::Text(
-                            json!({"t":"error","message":error.to_string()}).to_string().into(),
-                        )).await;
-                    }
+                if let Some(reply) = command_reply(&command, result) {
+                    let _ = socket.send(Message::Text(reply.to_string().into())).await;
                 }
             }
+        }
+    }
+}
+
+fn command_reply(command: &Value, result: Result<()>) -> Option<Value> {
+    let id = command
+        .get("id")
+        .filter(|id| !id.is_null() && id.as_str() != Some(""));
+    match (id, result) {
+        (Some(id), Ok(())) => Some(json!({"t":"command_result","id":id,"ok":true})),
+        (Some(id), Err(error)) => {
+            Some(json!({"t":"command_result","id":id,"ok":false,"message":error.to_string()}))
+        }
+        (None, Ok(())) => None,
+        (None, Err(error)) => Some(json!({"t":"error","message":error.to_string()})),
+    }
+}
+
+#[cfg(test)]
+mod command_reply_tests {
+    use super::*;
+
+    #[test]
+    fn opaque_ids_are_echoed_without_conversion_on_success_and_failure() {
+        for id in [
+            json!(7),
+            json!(0),
+            json!({"request":3}),
+            json!(["a", 2]),
+            json!(false),
+            json!("probe"),
+            json!(" "),
+        ] {
+            let command = json!({"t":"ping","id":id});
+            assert_eq!(
+                command_reply(&command, Ok(())),
+                Some(json!({"t":"command_result","id":id,"ok":true}))
+            );
+            assert_eq!(
+                command_reply(&command, Err(anyhow::anyhow!("fixture failure"))),
+                Some(json!({"t":"command_result","id":id,"ok":false,"message":"fixture failure"}))
+            );
+        }
+    }
+
+    #[test]
+    fn absent_ids_keep_the_existing_notification_behavior() {
+        for command in [
+            json!({"t":"ping"}),
+            json!({"t":"ping","id":null}),
+            json!({"t":"ping","id":""}),
+        ] {
+            assert_eq!(command_reply(&command, Ok(())), None);
+            assert_eq!(
+                command_reply(&command, Err(anyhow::anyhow!("fixture failure"))),
+                Some(json!({"t":"error","message":"fixture failure"}))
+            );
         }
     }
 }

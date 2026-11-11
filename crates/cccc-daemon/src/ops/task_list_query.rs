@@ -147,10 +147,7 @@ fn matches_attention(task: &Map<String, Value>, wanted: &str) -> bool {
 }
 
 fn blocked(task: &Map<String, Value>) -> bool {
-    task.get("blocked_by")
-        .and_then(Value::as_array)
-        .is_some_and(|items| !items.is_empty())
-        || matches!(text(task, "waiting_on"), "actor" | "external")
+    cccc_core::context::task_is_blocked(task)
 }
 
 pub(super) fn task_status(task: &Map<String, Value>) -> &str {

@@ -168,6 +168,17 @@ clear it. Returning to `planned` does not make executed work deletable. Older
 records which had already returned to planned before this marker existed have
 no reconstructible execution history; no history is invented for them.
 
+Reads of tasks with a nonempty `blocked_by` include read-only `open_blocked_by`:
+the stored `blocked_by` subset whose referenced tasks are not completed.
+A dependency is completed only in `done`, or `archived` with `archived_from=done`.
+Archiving unfinished work, or an archive without a known prior status, does not
+release its dependents. Missing references remain unresolved. This is computed
+from the full task snapshot before filtering or
+paging; completing a dependency does not rewrite the dependent task or its
+revision, and reopening it makes it block again. Explicit `waiting_on=actor` or
+`external` remains blocked independently. Clients MUST edit `blocked_by`, not
+this projection; `task.create` and `task.update` ignore `open_blocked_by` input.
+
 Every task read exposes a daemon-owned unsigned `rev`. Existing task files with
 no stored revision read as `rev: 0` without being rewritten; new tasks start at
 `rev: 1`. A semantic task change advances its revision once per operation,

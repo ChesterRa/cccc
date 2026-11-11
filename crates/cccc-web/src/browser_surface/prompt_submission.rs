@@ -1626,16 +1626,21 @@ const ATTACHMENT_STATUS_SCRIPT: &str = r#"payload => {
         preview_count: previewNodes.length, image_preview_count: imagePreviews.length };
 }"#;
 
-pub(super) async fn composer_has_attachments(page: &Page) -> Result<bool> {
-    // An empty text box can still contain a user's pending file upload.
-    // Restrict previews to the composer, never earlier chat images.
-    page.evaluate(r#"() => {
+// An empty text box can still contain a user's pending file upload. Restrict
+// previews to the composer, never earlier chat images.
+pub(super) const COMPOSER_ATTACHMENTS_SCRIPT: &str = r#"() => {
             if ([...document.querySelectorAll('input[type=file]')].some(e => e.files?.length)) return true;
             const composer = document.querySelector('#prompt-textarea, [data-cccc-web-model-composer]');
             let root = composer?.closest('form, [data-testid*="composer" i], [class*="composer" i]');
             return !!root && [...root.querySelectorAll('[data-testid*="file-preview" i], [data-testid="attachment" i], [data-testid*="attachment-preview" i], [data-testid*="upload-preview" i], [class*="file-preview" i], [class*="attachment-preview" i], [class*="upload-preview" i], img[src^="blob:"]')]
                 .some(e => e.getClientRects().length > 0);
-        }"#).await?.into_value::<bool>().map_err(Into::into)
+        }"#;
+
+pub(super) async fn composer_has_attachments(page: &Page) -> Result<bool> {
+    page.evaluate(COMPOSER_ATTACHMENTS_SCRIPT)
+        .await?
+        .into_value::<bool>()
+        .map_err(Into::into)
 }
 
 #[cfg(test)]

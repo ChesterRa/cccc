@@ -40,20 +40,22 @@ pub(crate) fn summary_row(task: &Map<String, Value>) -> Value {
     if let Some(waiting_on) = text(task, "waiting_on").filter(|value| value != "none") {
         row.insert("waiting_on".into(), Value::String(waiting_on));
     }
-    let blocked_by = task
-        .get("blocked_by")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.as_str().map(str::trim).filter(|id| !id.is_empty()))
-        .collect::<Vec<_>>();
-    if !blocked_by.is_empty() {
-        row.insert(
-            "blocked_by".into(),
-            json!(blocked_by.iter().take(BLOCKED_BY_ITEMS).collect::<Vec<_>>()),
-        );
-        if blocked_by.len() > BLOCKED_BY_ITEMS {
-            row.insert("blocked_by_total".into(), json!(blocked_by.len()));
+    for key in ["blocked_by", "open_blocked_by"] {
+        let blocked_by = task
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.as_str().map(str::trim).filter(|id| !id.is_empty()))
+            .collect::<Vec<_>>();
+        if !blocked_by.is_empty() || (key == "open_blocked_by" && task.contains_key(key)) {
+            row.insert(
+                key.into(),
+                json!(blocked_by.iter().take(BLOCKED_BY_ITEMS).collect::<Vec<_>>()),
+            );
+            if blocked_by.len() > BLOCKED_BY_ITEMS {
+                row.insert(format!("{key}_total"), json!(blocked_by.len()));
+            }
         }
     }
     if let Some(items) = task
@@ -336,5 +338,13 @@ mod tests {
         let title = row["title"].as_str().expect("title");
         assert_eq!(title.chars().count(), 120);
         assert!(title.ends_with("..."));
+    }
+    #[test]
+    fn completed_dependency_subset_stays_explicit_even_when_empty() {
+        let row = summary_row(&object(
+            json!({"id":"T2","blocked_by":["T1"],"open_blocked_by":[]}),
+        ));
+        assert_eq!(row["blocked_by"], json!(["T1"]));
+        assert_eq!(row["open_blocked_by"], json!([]));
     }
 }

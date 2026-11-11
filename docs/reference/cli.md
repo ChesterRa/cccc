@@ -255,6 +255,7 @@ cccc actor add <actor_id> --scope /path/to/project
 cccc actor start <actor_id>        # Start actor
 cccc actor stop <actor_id>         # Stop actor
 cccc actor restart <actor_id>      # Restart actor
+cccc actor new-session <actor_id>  # Restart actor on a new session
 cccc actor remove <actor_id>       # Remove actor
 cccc actor update <actor_id> --scope /path/to/project
 cccc actor update <actor_id> --model-label "gpt-5-codex"   # An empty value clears it
@@ -366,6 +367,25 @@ cccc tail                          # Show recent events
 cccc tail -n 50                    # Show last 50 events
 cccc tail -f                       # Follow new events
 ```
+
+### `cccc ledger search`
+
+Search the ledger through the daemon's `ledger_search` operation. Like
+`cccc tail`, it does not consume Mail.
+
+```bash
+cccc ledger search --by assistant                    # Events from one sender
+cccc ledger search --by-any peer-1 --by-any peer-2   # From any of several senders
+cccc ledger search --to user --kind chat             # Chat messages to one recipient
+cccc ledger search -q release --since 2026-11-01T00:00:00Z
+cccc ledger search --before <event_id> -n 20         # The page before an event
+```
+
+`--kind` accepts `all` (default), `chat` or `notify`. `--since` and `--until`
+are inclusive RFC 3339 times; `--before` and `--after` take event IDs and are
+exclusive. `-q` matches text anywhere in the event, ignoring case. The daemon
+clamps `--limit` (default 50) to 1–200. Without `--group`, the current Group
+is searched.
 
 ## IM Bridge Commands
 

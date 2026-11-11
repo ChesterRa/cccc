@@ -48,6 +48,7 @@ function sameTaskRevision(left: Task, right: Task): boolean {
       left.notes === right.notes &&
       left.updated_at === right.updated_at &&
       JSON.stringify(left.blocked_by) === JSON.stringify(right.blocked_by) &&
+      JSON.stringify(left.open_blocked_by) === JSON.stringify(right.open_blocked_by) &&
       JSON.stringify(left.checklist) === JSON.stringify(right.checklist))
   );
 }

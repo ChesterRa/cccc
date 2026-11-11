@@ -157,8 +157,7 @@ pub(super) fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 if name == "task.move"
                     && operation.get("status").and_then(Value::as_str) == Some("done")
                     && let Some(task) = document.tasks.iter().find(|task| task.get("id").and_then(Value::as_str) == operation.get("task_id").and_then(Value::as_str).map(str::trim))
-                    && task.get("status").and_then(Value::as_str) != Some("done")
-                    && task.get("archived_from").and_then(Value::as_str) != Some("done")
+                    && !cccc_core::context::task_is_completed(task)
                 {
                     finished_sources.insert(task.get("id").and_then(Value::as_str).unwrap_or_default().to_owned());
                 }

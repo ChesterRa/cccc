@@ -38,22 +38,44 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .as_str()
                 .ok_or_else(|| OpError::new("invalid_argument", "provider must be a string"))?,
         };
-        let create_only = match request.args.get("create_only") {
-            None => false,
-            Some(value) => value
-                .as_bool()
-                .ok_or_else(|| OpError::new("invalid_argument", "create_only must be a boolean"))?,
+        let flag = |name: &str| -> Result<bool, OpError> {
+            match request.args.get(name) {
+                None => Ok(false),
+                Some(value) => value.as_bool().ok_or_else(|| {
+                    OpError::new("invalid_argument", format!("{name} must be a boolean"))
+                }),
+            }
         };
-        if create_only {
-            return match store::create_provider_if_absent(home, provider).map_err(OpError::io)? {
-                Some(created) => object(created),
-                None => Err(OpError::new(
-                    "connector_exists",
-                    "A shared connector already exists; its credential was not changed",
-                )),
-            };
+        let rotate = flag("rotate")?;
+        let create_only = flag("create_only")?;
+        if rotate && create_only {
+            return Err(OpError::new(
+                "invalid_argument",
+                "rotate and create_only conflict",
+            ));
         }
-        return object(store::configure_provider(home, provider).map_err(OpError::io)?);
+        if rotate {
+            return object(store::rotate_provider(home, provider).map_err(|error| {
+                if error.to_string() == "connector_unavailable" {
+                    OpError::new("connector_unavailable", "No active connector to rotate")
+                } else {
+                    OpError::io(error)
+                }
+            })?);
+        }
+        return match store::create_provider_if_absent(home, provider).map_err(OpError::io)? {
+            Some(created) => object(created),
+            None => {
+                let connector = store::load(home)
+                    .map_err(OpError::io)?
+                    .into_iter()
+                    .find(|item| item["provider"] == provider && item["revoked"] != true)
+                    .ok_or_else(|| {
+                        OpError::new("connector_unavailable", "Connector is unavailable")
+                    })?;
+                object(json!({"outcome":"existing","connector":connector}))
+            }
+        };
     }
     let id = required_arg(request, "connector_id")?;
     if request.op == "web_model_connector_revoke" {

@@ -548,6 +548,9 @@ function coerceBoardTask(entry: TaskBoardEntry, taskMap: Map<string, Task>): Tas
       blocked_by: Array.isArray(entry.blocked_by)
         ? entry.blocked_by.map((item) => String(item))
         : [],
+      open_blocked_by: Array.isArray(entry.open_blocked_by)
+        ? entry.open_blocked_by.map((item) => String(item))
+        : undefined,
       waiting_on: typeof entry.waiting_on === "string" ? entry.waiting_on : undefined,
       handoff_to: typeof entry.handoff_to === "string" ? entry.handoff_to : null,
       task_type: typeof entry.task_type === "string" ? entry.task_type : null,

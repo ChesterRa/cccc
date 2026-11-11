@@ -178,16 +178,18 @@ function ProviderSettings({
     [provider],
   );
   const actionsDisabled = busy || !isActive || loadState !== "ready";
-  async function action(kind: "configure" | "revoke" | "open" | "check" | "close") {
+  async function action(kind: "configure" | "rotate" | "revoke" | "open" | "check" | "close") {
     if (actionPending.current || actionsDisabled) return;
-    if (kind === "configure" && address.kind !== "https") return;
+    if ((kind === "configure" || kind === "rotate") && address.kind !== "https") return;
     actionPending.current = true;
     setBusy(true);
     setError("");
     setCopied(false);
     try {
-      if (kind === "configure") {
-        const r = await api.createWebModelConnector(provider);
+      if (kind === "configure" || kind === "rotate") {
+        const r = await (kind === "rotate"
+          ? api.rotateWebModelConnector(provider)
+          : api.createWebModelConnector(provider));
         if (!r.ok) throw new Error(r.error.message);
         setConnector(r.result.connector);
         setNeedsSetup(false);
@@ -477,9 +479,7 @@ function ProviderSettings({
                             type="button"
                             className={dangerButtonClass()}
                             disabled={actionsDisabled}
-                            onClick={() =>
-                              void action(confirm === "rotate" ? "configure" : "revoke")
-                            }
+                            onClick={() => void action(confirm === "rotate" ? "rotate" : "revoke")}
                           >
                             {label("confirm")}
                           </button>

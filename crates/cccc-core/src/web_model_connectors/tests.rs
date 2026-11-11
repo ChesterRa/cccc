@@ -533,3 +533,58 @@ fn create_if_absent_never_rotates_an_active_connector() {
             .is_some()
     );
 }
+
+#[test]
+fn explicit_rotation_preserves_routes_and_refuses_missing_or_revoked_connectors() {
+    for provider in ["chatgpt_web", "grok_web"] {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        assert!(rotate_provider(&home, provider).is_err());
+        assert!(
+            !store_path(&home).exists(),
+            "rotation cannot create an entrance"
+        );
+        let first = configure_provider(&home, provider).expect("create");
+        let id = first["connector"]["connector_id"].as_str().expect("id");
+        update(&home, |root| {
+            let c = &mut root["connectors"][provider];
+            c["bindings"] = json!({"route":{"generation":"g1","revision":2}});
+            c["pairings"] = json!({"pending":{"code":"test-only"}});
+            c["dots"] = json!({"state":"active","wake":{"id":"fixture-wake"}});
+            Ok(())
+        })
+        .expect("state fixture");
+        let before = load(&home).expect("load").remove(0);
+        let rotated = rotate_provider(&home, provider).expect("rotate");
+        let after = &rotated["connector"];
+        for field in [
+            "connector_id",
+            "created_at",
+            "routing_mode",
+            "routing_key",
+            "routing_salt",
+            "bindings",
+            "pairings",
+            "dots",
+        ] {
+            assert_eq!(after[field], before[field], "preserve {field}");
+        }
+        assert_eq!(rotated["outcome"], "rotated");
+        assert!(!secret_matches(
+            after,
+            first["secret"].as_str().expect("old secret")
+        ));
+        assert!(secret_matches(
+            after,
+            rotated["secret"].as_str().expect("new secret")
+        ));
+        revoke(&home, id).expect("revoke");
+        let revoked_bytes = std::fs::read(store_path(&home)).expect("store");
+        assert!(rotate_provider(&home, provider).is_err());
+        assert_eq!(
+            std::fs::read(store_path(&home)).expect("store"),
+            revoked_bytes
+        );
+    }
+}

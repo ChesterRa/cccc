@@ -1,7 +1,12 @@
 use cccc_core::context::ContextDoc;
 use serde_json::{Map, Value, json};
 
-pub(super) fn project(document: ContextDoc, version: String, detail: &str) -> Value {
+pub(super) fn project(mut document: ContextDoc, version: String, detail: &str) -> Value {
+    cccc_core::context::project_task_dependencies(&mut document.tasks);
+    project_resolved(document, version, detail)
+}
+
+fn project_resolved(document: ContextDoc, version: String, detail: &str) -> Value {
     if detail == "overview" {
         return context_overview::project(document, version);
     }
@@ -49,6 +54,7 @@ pub(super) fn project_page(
     detail: &str,
     page: &Page,
 ) -> Result<Value, usize> {
+    cccc_core::context::project_task_dependencies(&mut document.tasks);
     let tasks = std::mem::take(&mut document.tasks);
     let attention = attention(&tasks, false);
     let summary = task_summary(&tasks, &attention);
@@ -62,7 +68,7 @@ pub(super) fn project_page(
     loop {
         let mut slice = document.clone();
         slice.tasks = candidates[..take].to_vec();
-        let mut value = project(slice, version.clone(), detail);
+        let mut value = project_resolved(slice, version.clone(), detail);
         let truncated = take < candidates.len();
         let next_cursor = truncated
             .then(|| {
@@ -169,7 +175,7 @@ fn coordination(
 }
 
 fn summary_task(task: &Map<String, Value>) -> Map<String, Value> {
-    const FIELDS: [&str; 20] = [
+    const FIELDS: [&str; 21] = [
         "id",
         "rev",
         "title",
@@ -180,6 +186,7 @@ fn summary_task(task: &Map<String, Value>) -> Map<String, Value> {
         "assignee",
         "priority",
         "blocked_by",
+        "open_blocked_by",
         "waiting_on",
         "handoff_to",
         "task_type",
@@ -229,13 +236,7 @@ fn status(task: &Map<String, Value>) -> &str {
 }
 
 fn is_blocked(task: &Map<String, Value>) -> bool {
-    task.get("blocked_by")
-        .and_then(Value::as_array)
-        .is_some_and(|items| !items.is_empty())
-        || matches!(
-            task.get("waiting_on").and_then(Value::as_str),
-            Some("actor" | "external")
-        )
+    cccc_core::context::task_is_blocked(task)
 }
 
 fn task_summary(tasks: &[Map<String, Value>], attention: &Value) -> Value {

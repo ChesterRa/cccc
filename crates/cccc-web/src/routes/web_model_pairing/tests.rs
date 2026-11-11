@@ -257,6 +257,93 @@ async fn automatic_pairing_verifies_owned_receipts_and_preserves_drafts_routes_a
     .await;
     // A connector icon and the upload button are not unsent user attachments.
     page_value(&a, "document.querySelector('form').insertAdjacentHTML('beforeend','<img alt=CCCC width=24 height=24 src=/connector-icon.png><button type=button data-testid=attachment-button>Add files</button>')").await;
+    // An interrupted attempt's unsent setup message is CCCC's own, and a retry
+    // removes it without sending it. With anything added it may be a human's.
+    let stale = crate::browser_surface::pairing_prompt(&format!(
+        "wm_pair_{}",
+        "0123456789abcdef".repeat(4)
+    ));
+    let amended = format!("{stale} Also check the build.");
+    page_value(
+        &a,
+        &format!(
+            "document.querySelector('textarea').value={}",
+            json!(amended)
+        ),
+    )
+    .await;
+    assert!(
+        change(
+            State(state.clone()),
+            Json(json!({"group_id":gid,"actor_id":"alpha","action":"connect"}))
+        )
+        .await
+        .expect_err("added text may be a human's")
+        .to_string()
+        .contains("pairing_composer_occupied")
+    );
+    assert_eq!(
+        page_value(&a, "document.querySelector('textarea').value").await,
+        json!(amended)
+    );
+    assert!(stored_pair(&state, gid, "alpha").is_none());
+    // The page's own focus handling can change the box after the first read, so the
+    // last checks come after focusing: text rewritten or a file added then is kept.
+    // A one-time focus() replacement stands for such a handler, as a page whose
+    // window lacks focus may not dispatch the event; its removal shows the clear ran.
+    for (on_focus, kept) in [
+        (
+            "this.value = 'Typed while connecting'",
+            json!("Typed while connecting"),
+        ),
+        (
+            "this.form.insertAdjacentHTML('beforeend', '<div data-testid=attachment>Unsent file</div>')",
+            json!(stale),
+        ),
+    ] {
+        page_value(
+            &a,
+            &format!(
+                "() => {{ const t = document.querySelector('textarea'); t.value = {}; \
+                 t.focus = function () {{ delete this.focus; this.focus(); {on_focus}; }}; }}",
+                json!(stale)
+            ),
+        )
+        .await;
+        assert!(
+            change(
+                State(state.clone()),
+                Json(json!({"group_id":gid,"actor_id":"alpha","action":"connect"}))
+            )
+            .await
+            .expect_err("changed while focusing")
+            .to_string()
+            .contains("pairing_composer_occupied")
+        );
+        assert_eq!(
+            page_value(
+                &a,
+                "Object.hasOwn(document.querySelector('textarea'), 'focus')"
+            )
+            .await,
+            false
+        );
+        assert_eq!(
+            page_value(&a, "document.querySelector('textarea').value").await,
+            kept
+        );
+        assert!(stored_pair(&state, gid, "alpha").is_none());
+    }
+    page_value(
+        &a,
+        "document.querySelector('[data-testid=attachment]').remove()",
+    )
+    .await;
+    page_value(
+        &a,
+        &format!("document.querySelector('textarea').value={}", json!(stale)),
+    )
+    .await;
     let started = connect_actor(&state, gid, "alpha").await;
     assert!(
         started["code"].is_null(),

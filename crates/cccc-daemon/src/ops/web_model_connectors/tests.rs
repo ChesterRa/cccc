@@ -348,31 +348,88 @@ fn grok_binding_preserves_enabled_state_and_retires_on_runtime_change() {
 }
 
 #[test]
-fn create_only_must_be_a_boolean_and_never_falls_back_to_rotation() {
-    let temp = tempfile::tempdir().expect("valid test fixture");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("valid test fixture");
-    home.initialize().expect("valid test fixture");
-    store::configure(&home).expect("existing connector");
-    let before = store::load(&home).expect("load");
-    for flag in [serde_json::json!("true"), serde_json::json!(1), Value::Null] {
+fn creation_is_idempotent_and_only_an_explicit_boolean_rotates() {
+    for provider in ["chatgpt_web", "grok_web"] {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let configured = execute(
+            &home,
+            &request(
+                "web_model_connector_configure",
+                json!({"by":"user","provider":provider}),
+            ),
+        )
+        .expect("create");
+        assert_eq!(configured["outcome"], "created");
+        let before = store::load(&home).expect("load");
+        for flags in [
+            json!({}),
+            json!({"create_only":true}),
+            json!({"create_only":false}),
+            json!({"rotate":false}),
+            json!({"rotate":false,"create_only":true}),
+        ] {
+            let mut args = json!({"by":"user","provider":provider});
+            args.as_object_mut()
+                .expect("args")
+                .extend(flags.as_object().expect("flags").clone());
+            let existing =
+                execute(&home, &request("web_model_connector_configure", args)).expect("existing");
+            assert_eq!(existing["outcome"], "existing");
+            assert!(existing.get("secret").is_none());
+            assert_eq!(existing["connector"], configured["connector"]);
+            assert_eq!(store::load(&home).expect("load"), before);
+        }
+        for name in ["create_only", "rotate"] {
+            for value in [json!("true"), json!(1), Value::Null] {
+                let mut args = json!({"by":"user","provider":provider});
+                args[name] = value;
+                let error = execute(&home, &request("web_model_connector_configure", args))
+                    .expect_err("strict flag");
+                assert_eq!(error.code, "invalid_argument");
+                assert_eq!(store::load(&home).expect("load"), before);
+            }
+        }
         let error = execute(
             &home,
             &request(
                 "web_model_connector_configure",
-                serde_json::json!({"by":"user","provider":"chatgpt_web","create_only":flag}),
+                json!({"by":"user","provider":provider,"rotate":true,"create_only":true}),
             ),
         )
-        .expect_err("a non-boolean create_only is refused");
-        assert_eq!(error.code, "invalid_argument", "{flag}");
+        .expect_err("conflicting intent");
+        assert_eq!(error.code, "invalid_argument");
+        assert_eq!(store::load(&home).expect("load"), before);
+        let rotated = execute(
+            &home,
+            &request(
+                "web_model_connector_configure",
+                json!({"by":"user","provider":provider,"rotate":true}),
+            ),
+        )
+        .expect("rotate");
+        assert_eq!(rotated["outcome"], "rotated");
+        assert_eq!(
+            rotated["connector"]["connector_id"],
+            configured["connector"]["connector_id"]
+        );
+        assert!(!store::secret_matches(
+            &rotated["connector"],
+            configured["secret"].as_str().expect("old secret")
+        ));
+        assert!(store::secret_matches(
+            &rotated["connector"],
+            rotated["secret"].as_str().expect("new secret")
+        ));
+        let denied = execute(
+            &home,
+            &request(
+                "web_model_connector_configure",
+                json!({"by":"peer","provider":provider,"rotate":true}),
+            ),
+        )
+        .expect_err("user only");
+        assert_eq!(denied.code, "permission_denied");
     }
-    let refused = execute(
-        &home,
-        &request(
-            "web_model_connector_configure",
-            serde_json::json!({"by":"user","provider":"chatgpt_web","create_only":true}),
-        ),
-    )
-    .expect_err("an existing connector is kept");
-    assert_eq!(refused.code, "connector_exists");
-    assert_eq!(store::load(&home).expect("load"), before, "nothing rotated");
 }

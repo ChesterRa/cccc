@@ -1601,10 +1601,67 @@ async fn subscription_refresh_and_unsubscribe_use_modern_wire_contract_and_fixed
 }
 
 #[tokio::test]
-async fn one_click_create_refuses_to_rotate_an_existing_connector() {
+async fn one_click_create_is_idempotent_and_explicit_rotation_preserves_bindings() {
     let mut fixture = Fixture::new();
     fixture.start_daemon().await;
-    let before = fixture.connector()["secret_hash"].clone();
+    let before = fixture.connector();
+    for flags in [
+        json!({}),
+        json!({"create_only":true}),
+        json!({"create_only":false}),
+        json!({"rotate":false}),
+    ] {
+        let mut args = json!({"provider":"chatgpt_web"});
+        args.as_object_mut()
+            .expect("args")
+            .extend(flags.as_object().expect("flags").clone());
+        let (status, response) = fixture
+            .send(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/web-model/connectors")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
+                    .body(Body::from(args.to_string()))
+                    .expect("create"),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(response["result"]["outcome"], "existing");
+        assert_eq!(
+            response["result"]["connector"]["connector_id"],
+            fixture.connector_id
+        );
+        assert_eq!(response["result"]["connector"]["secret_available"], false);
+        assert!(response["result"].get("secret").is_none());
+        assert!(
+            response["result"]["connector"]
+                .get("connector_url_path_token")
+                .is_none()
+        );
+        assert!(response["result"]["connector"].get("secret_hash").is_none());
+        assert!(!response.to_string().contains(&fixture.secret));
+        assert_eq!(fixture.connector(), before);
+    }
+    for name in ["create_only", "rotate"] {
+        for flag in [json!("true"), json!(1), Value::Null] {
+            let mut args = json!({"provider":"chatgpt_web"});
+            args[name] = flag;
+            let (status, _) = fixture
+                .send(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/web-model/connectors")
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
+                        .body(Body::from(args.to_string()))
+                        .expect("invalid flag"),
+                )
+                .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert_eq!(fixture.connector(), before);
+        }
+    }
     let (status, response) = fixture
         .send(
             Request::builder()
@@ -1613,34 +1670,58 @@ async fn one_click_create_refuses_to_rotate_an_existing_connector() {
                 .header(header::CONTENT_TYPE, "application/json")
                 .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
                 .body(Body::from(
-                    json!({"provider":"chatgpt_web","create_only":true}).to_string(),
+                    json!({"provider":"chatgpt_web","rotate":true}).to_string(),
                 ))
-                .expect("create-only request"),
+                .expect("rotate"),
         )
         .await;
-    assert_ne!(status, StatusCode::OK);
-    assert_eq!(response["ok"], false);
-    assert_eq!(response["error"]["code"], "connector_exists");
-    // A mistyped flag is refused rather than read as "rotate".
-    for flag in [json!("true"), json!(1), Value::Null] {
-        let (status, _) = fixture
-            .send(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/web-model/connectors")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
-                    .body(Body::from(
-                        json!({"provider":"chatgpt_web","create_only":flag}).to_string(),
-                    ))
-                    .expect("mistyped request"),
-            )
-            .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{flag}");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["result"]["outcome"], "rotated");
+    assert_eq!(response["result"]["connector"]["secret_available"], true);
+    let after = fixture.connector();
+    for field in [
+        "connector_id",
+        "bindings",
+        "pairings",
+        "dots",
+        "routing_salt",
+    ] {
+        assert_eq!(after[field], before[field], "preserve {field}");
     }
-    assert!(!response.to_string().contains("wmcs_"));
-    // The credential already added to ChatGPT keeps working.
-    assert_eq!(fixture.connector()["secret_hash"], before);
+    let (old_status, _) = fixture.mcp("initialize", json!({}), false).await;
+    assert_eq!(old_status, StatusCode::FORBIDDEN);
+    fixture.secret = response["result"]["secret"]
+        .as_str()
+        .expect("replacement secret")
+        .into();
+    let (new_status, _) = fixture.mcp("initialize", json!({}), false).await;
+    assert_eq!(new_status, StatusCode::OK);
+    connectors::revoke(&fixture.state.home, &fixture.connector_id).expect("revoked fixture");
+    let (status, created) = fixture
+        .send(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/web-model/connectors")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {}", fixture.admin))
+                .body(Body::from(json!({"provider":"chatgpt_web"}).to_string()))
+                .expect("fresh create"),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["result"]["outcome"], "created");
+    assert_ne!(
+        created["result"]["connector"]["connector_id"],
+        fixture.connector_id
+    );
+    assert_eq!(created["result"]["connector"]["secret_available"], true);
+    let secret = created["result"]["secret"].as_str().expect("new secret");
+    assert!(
+        created["result"]["connector"]["connector_url_path_token"]
+            .as_str()
+            .expect("token URL")
+            .ends_with(secret)
+    );
     fixture.close().await;
 }
 

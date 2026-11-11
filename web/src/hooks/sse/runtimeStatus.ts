@@ -47,7 +47,7 @@ function deriveLifecycleState(
     const state = String(actor.effective_working_state || "")
       .trim()
       .toLowerCase();
-    return state === "working" || state === "waiting" || state === "stuck";
+    return state === "working" || state === "waiting" || state === "stuck" || state === "unknown";
   })
     ? "active"
     : "idle";

@@ -28,17 +28,19 @@ pub(super) async fn create(State(state): State<AppState>, Json(body): Json<Value
             .as_str()
             .ok_or_else(|| ApiError::bad("provider must be a string"))?,
     };
-    // create_only: create when absent, never rotate an existing credential. Only
-    // a real boolean may choose; a mistyped flag must not fall back to rotation.
-    let create_only = match body.get("create_only") {
-        None => false,
-        Some(Value::Bool(value)) => *value,
-        Some(_) => return Err(ApiError::bad("create_only must be a boolean")),
+    let flag = |name: &str| -> Result<bool, ApiError> {
+        match body.get(name) {
+            None => Ok(false),
+            Some(Value::Bool(value)) => Ok(*value),
+            Some(_) => Err(ApiError::bad(format!("{name} must be a boolean"))),
+        }
     };
+    let create_only = flag("create_only")?;
+    let rotate = flag("rotate")?;
     let result = super::web_model_delivery_completion::call(
         &state,
         "web_model_connector_configure",
-        json!({"by":"user","provider":provider,"create_only":create_only})
+        json!({"by":"user","provider":provider,"create_only":create_only,"rotate":rotate})
             .as_object()
             .expect("literal JSON object")
             .clone(),
@@ -46,11 +48,18 @@ pub(super) async fn create(State(state): State<AppState>, Json(body): Json<Value
     .await?;
     let base_url = connector_base_url(&state)?;
     let mut connector = public(&result["connector"], &base_url);
-    let url = connector["connector_url"].as_str().unwrap_or_default();
-    let secret = result["secret"].as_str().unwrap_or_default();
-    connector["connector_url_path_token"] = json!(format!("{url}/token/{secret}"));
-    connector["secret_available"] = json!(true);
-    Ok(success(json!({"connector":connector,"secret":secret})))
+    if let Some(secret) = result["secret"].as_str() {
+        let url = connector["connector_url"].as_str().unwrap_or_default();
+        connector["connector_url_path_token"] = json!(format!("{url}/token/{secret}"));
+        connector["secret_available"] = json!(true);
+        Ok(success(
+            json!({"outcome":result["outcome"],"connector":connector,"secret":secret}),
+        ))
+    } else {
+        Ok(success(
+            json!({"outcome":result["outcome"],"connector":connector}),
+        ))
+    }
 }
 
 fn connector_base_url(state: &AppState) -> Result<String, ApiError> {

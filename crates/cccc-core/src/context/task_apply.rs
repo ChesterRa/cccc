@@ -64,6 +64,7 @@ pub(super) fn create(
         "parent_ref",
         "blocked_by_refs",
         "ever_executed",
+        "open_blocked_by",
     ] {
         task.remove(key);
     }

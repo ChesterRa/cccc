@@ -304,3 +304,48 @@ it("quotes the matching field and highlights a title match", () => {
     host.remove();
   }
 });
+
+it("updates the dependency badge when its blocker finishes without changing this task's revision", () => {
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const task: Task = {
+    id: "T2",
+    rev: 3,
+    title: "Dependent",
+    status: "active",
+    blocked_by: ["T1"],
+    open_blocked_by: ["T1"],
+  };
+  const onSelectTask = vi.fn();
+  const onMoveTaskToStatus = vi.fn();
+  const onRestoreTask = vi.fn();
+  const render = (value: Task) =>
+    act(() =>
+      root.render(
+        <DndContext>
+          <TaskCard
+            task={value}
+            tr={tr}
+            syncBusy={false}
+            selected={false}
+            onSelectTask={onSelectTask}
+            onMoveTaskToStatus={onMoveTaskToStatus}
+            onRestoreTask={onRestoreTask}
+          />
+        </DndContext>,
+      ),
+    );
+  try {
+    render(task);
+    expect(host.querySelector('[data-task-note="blocked"]')?.textContent).toContain("T1");
+    render({ ...task, open_blocked_by: [] });
+    expect(host.querySelector('[data-task-note="blocked"]')).toBeNull();
+    render({ ...task, open_blocked_by: ["missing"] });
+    expect(host.querySelector('[data-task-note="blocked"]')?.textContent).toContain("missing");
+    expect(task.blocked_by).toEqual(["T1"]);
+  } finally {
+    act(() => root.unmount());
+    host.remove();
+  }
+});

@@ -594,7 +594,19 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
             "The conversation input is not ready or its status is unknown. Check the page without reloading it.",
         )
     } else if matches!(target_state, "missing" | "invalid" | "unavailable") {
-        ("bind_chat", "Choose a conversation", target_reason)
+        // Choosing a conversation is refused while the box holds an unsent draft,
+        // so the draft comes first.
+        if readiness["composer_chars"].as_u64().unwrap_or(0) > 0
+            || readiness["composer_has_attachments"] == true
+        {
+            (
+                "clear_composer",
+                "Clear the message box",
+                "The message box in this browser holds an unsent draft. Send or clear it there, then choose a conversation.",
+            )
+        } else {
+            ("bind_chat", "Choose a conversation", target_reason)
+        }
     } else if delivery_state == "pending_bind" {
         (
             "wait_for_chat_bind",

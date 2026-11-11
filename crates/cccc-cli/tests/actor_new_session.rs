@@ -50,7 +50,12 @@ fn stand_in(home: &HomeLayout, reply: Value) -> mpsc::UnboundedReceiver<DaemonRe
 }
 
 fn run(home: &HomeLayout, args: &[&str]) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_cccc"))
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_cccc"));
+    // An inherited CCCC_GROUP_ID would override active.json, e.g. inside a CCCC agent.
+    for (key, _) in std::env::vars().filter(|(key, _)| key.starts_with("CCCC_")) {
+        command.env_remove(key);
+    }
+    command
         .args(args)
         .env("CCCC_HOME", home.root())
         .stdout(Stdio::piped())

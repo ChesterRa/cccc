@@ -100,8 +100,13 @@ fn pending_managed_session_and_structured_runtime_have_distinct_states() {
     custom.runtime = ActorRuntime::Custom;
     custom.runner = RunnerKind::Headless;
     let state = fields(&home, &custom, "g_test", true, "headless");
-    assert_eq!(state["effective_working_state"], "idle");
-    assert_eq!(state["effective_working_reason"], "headless_running");
+    assert_eq!(state["effective_working_state"], "unknown");
+    assert_eq!(
+        state["effective_working_reason"],
+        "headless_running_state_unknown"
+    );
+    assert!(state["effective_working_updated_at"].is_null());
+    assert!(state["effective_active_task_id"].is_null());
     assert!(state["pty_last_output_at"].is_null());
     assert!(state["pty_quiet_seconds"].is_null());
 }

@@ -76,6 +76,20 @@ not prove that ChatGPT has added or used it. Shared settings separately show the
 last recorded connector request and the number of verified agent bindings.
 Credential replacement and revocation are under **Manage connector credential**.
 
+Creating is safe to repeat: an existing connector is returned unchanged, without
+its secret or a token URL. **Rotate** remains an explicit maintenance action with
+the existing confirmation dialog. It replaces the credential while preserving
+conversation pairings and Dots state. The old URL stops working; copy the new URL
+and update every external plugin using it.
+
+For API/IPC callers, a flagless create no longer rotates. Send the boolean
+`rotate=true` explicitly to replace an active credential. Create returns
+`outcome=created` with the secret once, or `outcome=existing` without it; rotation
+returns `outcome=rotated` with the replacement secret once. Existing
+`create_only` callers must accept the successful `existing` response instead of
+expecting `connector_exists`. Non-boolean flags and conflicting `rotate=true`
+and `create_only=true` are refused without changing the connector.
+
 ### Conversation pairing and diagnostics
 
 The connector exposes `cccc_pair({"code":"…"})` and `cccc_connector_status({})` before pairing through ChatGPT's normal connector tool invocation. These connector-level tools are not available inside **CCCC's `cccc_code_exec`**; this restriction does not prescribe how ChatGPT internally dispatches connector calls. On normal startup, an enabled agent without a binding or prior attempt automatically connects its conversation. CCCC sends one setup message, receives a unique receipt through MCP, and verifies its assistant-side echo after that exact message in the same owned window before saving the stable conversation URL. Only then does the existing delivery queue send the pending task. No preliminary pairing click, copied code or second CCCC confirmation is needed; any ChatGPT approval remains user-controlled.
@@ -157,7 +171,7 @@ Open a GPT-5.x chat, select Developer mode/tools, and enable the CCCC connector.
 3. Enable the same CCCC connector in the intended conversation and start the agent normally. Complete any login or connector approval in ChatGPT itself. CCCC automatically sends one setup message and verifies its reply before delivering queued tasks. You can send Group messages while connection is pending; they stay queued.
 4. Repeat for other agents using separate conversations. No additional connector, login or pairing action is required.
 
-Connection attempts last at most ten minutes. You may close settings while waiting, or cancel the attempt. Draft text and pending attachments are protected; before the first send, CCCC waits until the composer is available. After an attempted send, failure, cancellation, expiry or interruption requires **Retry connection**; background checks never replay it. Stopping an agent or pausing/stopping its Group invalidates an unfinished automatic handshake, including a rapid stop/start. Established bindings survive ordinary restarts. Status GETs only observe state; they do not send or resume anything.
+Connection attempts last at most ten minutes. You may close settings while waiting, or cancel the attempt. Draft text and pending attachments are protected. The one exception is CCCC's own setup message that an interrupted attempt left unsent: the next connection attempt removes it, without sending it, when the message box holds exactly that message and no file. Before the first send, CCCC waits until the composer is available. After an attempted send, failure, cancellation, expiry or interruption requires **Retry connection**; background checks never replay it. Stopping an agent or pausing/stopping its Group invalidates an unfinished automatic handshake, including a rapid stop/start. Established bindings survive ordinary restarts. Status GETs only observe state; they do not send or resume anything.
 
 For a new chat, connection also waits for ChatGPT to assign its permanent conversation address. Its temporary address during the first response is part of normal startup, not a request to select or pair the conversation manually.
 

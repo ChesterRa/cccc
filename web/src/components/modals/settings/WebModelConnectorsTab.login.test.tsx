@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   browser: vi.fn(),
   connectors: vi.fn(),
   create: vi.fn(),
+  rotate: vi.fn(),
   revoke: vi.fn(),
   panel: vi.fn(),
   copy: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("../../../services/api", () => ({
   fetchWebModelConnectors: () => mocks.connectors(),
   sharedWebModelBrowser: (...args: unknown[]) => mocks.browser(...args),
   createWebModelConnector: (...args: unknown[]) => mocks.create(...args),
+  rotateWebModelConnector: (...args: unknown[]) => mocks.rotate(...args),
   revokeWebModelConnector: (...args: unknown[]) => mocks.revoke(...args),
   sharedWebModelBrowserWebSocketUrl: () => "ws://fixture/shared",
 }));
@@ -67,6 +69,7 @@ describe("shared Web Model login and connector", () => {
     mocks.connectors.mockResolvedValue(empty);
     mocks.browser.mockResolvedValue({ ok: true, result: { browser_session: { active: false } } });
     mocks.create.mockResolvedValue(created);
+    mocks.rotate.mockResolvedValue(created);
     mocks.copy.mockResolvedValue(true);
   });
   afterEach(async () => {
@@ -139,7 +142,7 @@ describe("shared Web Model login and connector", () => {
         connector_base_url: "https://cccc.example.test",
       },
     });
-    mocks.create.mockResolvedValue({ ok: false, error: { message: "Save failed" } });
+    mocks.rotate.mockResolvedValue({ ok: false, error: { message: "Save failed" } });
     await act(async () => root.render(<WebModelConnectorsTab isDark={true} />));
     expect(host.textContent).toContain("webModelShared.notSeen");
     expect(host.querySelector("details")?.open).toBe(false);
@@ -148,8 +151,10 @@ describe("shared Web Model login and connector", () => {
     });
     await act(async () => button("rotate").click());
     expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.rotate).not.toHaveBeenCalled();
     await act(async () => button("confirm").click());
-    expect(mocks.create).toHaveBeenCalledOnce();
+    expect(mocks.rotate).toHaveBeenCalledExactlyOnceWith("chatgpt_web");
+    expect(mocks.create).not.toHaveBeenCalled();
     expect(host.textContent).toContain("Save failed");
     expect(host.textContent).toContain("2 webModelShared.pairedActors");
   });
@@ -187,15 +192,30 @@ describe("shared Web Model login and connector", () => {
     await act(async () => host.querySelector("summary")!.click());
     await act(async () => button("rotate").click());
     expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.rotate).not.toHaveBeenCalled();
     await act(async () => button("cancel").click());
-    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.rotate).not.toHaveBeenCalled();
     await act(async () => button("rotate").click());
     await act(async () => button("confirm").click());
-    expect(mocks.create).toHaveBeenCalledOnce();
+    expect(mocks.rotate).toHaveBeenCalledExactlyOnceWith("chatgpt_web");
+    expect(mocks.create).not.toHaveBeenCalled();
     await act(async () => button("copy").click());
     expect(mocks.copy).toHaveBeenCalledExactlyOnceWith(
       created.result.connector.connector_url_path_token,
     );
+  });
+  it("accepts an existing connector after a stale-page create without requesting rotation", async () => {
+    mocks.create.mockResolvedValue({
+      ok: true,
+      result: { outcome: "existing", connector: existing },
+    });
+    await act(async () => root.render(<WebModelConnectorsTab isDark={false} />));
+    await act(async () => button("create").click());
+    expect(mocks.create).toHaveBeenCalledExactlyOnceWith("chatgpt_web");
+    expect(mocks.rotate).not.toHaveBeenCalled();
+    expect(button("create")).toBeUndefined();
+    expect(button("copy")).toBeUndefined();
+    expect(host.textContent).toContain("webModelShared.notSeen");
   });
   it.each(["response", "network"])(
     "keeps a failed %s load closed to writes until a successful retry",

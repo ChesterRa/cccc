@@ -473,6 +473,9 @@ export function normalizeTask(value: unknown): Task | null {
     priority: asOptionalString(record.priority),
     parent_id: asOptionalString(record.parent_id),
     blocked_by: asStringArray(record.blocked_by),
+    open_blocked_by: Array.isArray(record.open_blocked_by)
+      ? asStringArray(record.open_blocked_by)
+      : undefined,
     waiting_on: asString(record.waiting_on).trim() || undefined,
     handoff_to: asOptionalString(record.handoff_to),
     task_type: asOptionalString(record.task_type),
