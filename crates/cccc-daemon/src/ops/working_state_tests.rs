@@ -521,10 +521,12 @@ fn headless_record_status_wins_over_a_stale_turn_id() {
         },
     )
     .expect("seed stale turn");
-    for (status, expected) in [
-        ("idle", "idle"),
-        ("waiting", "waiting"),
-        ("stopped", "stopped"),
+    // The public status writer does not create `last_turn_end`, so its idle
+    // write has no evidence and must not be reported as idle.
+    for (status, expected, expected_reason) in [
+        ("idle", "waiting", "headless_state_unknown"),
+        ("waiting", "waiting", "headless_turn_record"),
+        ("stopped", "stopped", "headless_turn_record"),
     ] {
         let response = crate::dispatch::dispatch(
             &home,
@@ -542,7 +544,57 @@ fn headless_record_status_wins_over_a_stale_turn_id() {
         assert!(response.ok, "{:?}", response.error);
         let state = fields(&home, &actor, &group.group_id, true, "headless");
         assert_eq!(state["effective_working_state"], expected, "{status}");
+        assert_eq!(
+            state["effective_working_reason"], expected_reason,
+            "{status}"
+        );
+        assert!(
+            state["effective_working_updated_at"].is_null(),
+            "{status}: no turn end was written"
+        );
         assert!(state["effective_active_task_id"].is_null(), "{status}");
+    }
+}
+
+#[test]
+fn headless_unknown_or_empty_record_is_unknown_not_idle() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut actor = Actor::new("hs-actor");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.runner = RunnerKind::Headless;
+    let group = headless_group(&store, &actor);
+    for record in [
+        json!({}),
+        json!({"status": null}),
+        json!({"status": ""}),
+        json!({"status": "paused"}),
+        json!({"status": "paused", "active_turn_id": "turn-1"}),
+    ] {
+        let record = record.clone();
+        cccc_core::integration_state::group_update(
+            &store,
+            &group.group_id,
+            "runtime_states",
+            |value| {
+                *value = json!({"hs-actor": record.clone()});
+                Ok(())
+            },
+        )
+        .expect("seed unknown record");
+        let state = fields(&home, &actor, &group.group_id, true, "headless");
+        assert_eq!(state["effective_working_state"], "waiting", "{record:?}");
+        assert_eq!(
+            state["effective_working_reason"], "headless_state_unknown",
+            "{record:?}"
+        );
+        assert!(
+            state["effective_working_updated_at"].is_null(),
+            "{record:?}"
+        );
+        assert!(state["effective_active_task_id"].is_null(), "{record:?}");
     }
 }
 

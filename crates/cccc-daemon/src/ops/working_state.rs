@@ -118,17 +118,26 @@ pub(super) fn fields(
                 let active_turn = runtime["active_turn_id"]
                     .as_str()
                     .filter(|value| !value.is_empty());
-                let state = match status {
-                    Some(value) if matches!(value, "working" | "idle" | "waiting" | "stopped") => {
-                        value
-                    }
-                    _ if active_turn.is_some() => "working",
-                    _ => "idle",
+                let last_turn_end = runtime["last_turn_end"]
+                    .as_str()
+                    .filter(|value| !value.is_empty());
+                // Idle is evidence-backed: an idle status without a turn end
+                // cannot say when the runner last stopped working, so report
+                // the unknown state instead. A live turn id is only the
+                // legacy fallback for records written before `status` existed;
+                // an unrecognized status is not treated as working.
+                let (state, reason) = match status {
+                    Some("working") => ("working", "headless_turn_record"),
+                    Some("idle") if last_turn_end.is_some() => ("idle", "headless_turn_record"),
+                    Some("waiting") => ("waiting", "headless_turn_record"),
+                    Some("stopped") => ("stopped", "headless_turn_record"),
+                    None if active_turn.is_some() => ("working", "headless_turn_record"),
+                    _ => ("waiting", "headless_state_unknown"),
                 };
                 let updated_at = if state == "working" {
                     runtime["updated_at"].as_str()
                 } else {
-                    runtime["last_turn_end"].as_str()
+                    last_turn_end
                 }
                 .map(str::to_owned);
                 let active_task_id = if state == "working" {
@@ -141,7 +150,7 @@ pub(super) fn fields(
                 };
                 (
                     state.to_owned(),
-                    "headless_turn_record".to_owned(),
+                    reason.to_owned(),
                     updated_at,
                     active_task_id,
                 )
