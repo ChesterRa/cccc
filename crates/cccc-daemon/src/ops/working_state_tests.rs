@@ -586,7 +586,7 @@ fn headless_unknown_or_empty_record_is_unknown_not_idle() {
     actor.runtime = ActorRuntime::Deepseek;
     actor.runner = RunnerKind::Headless;
     let group = headless_group(&store, &actor);
-    for (fields, empty) in [
+    for (overrides, clear) in [
         (json!({}), true),
         (json!({"status": null}), false),
         (json!({"status": ""}), false),
@@ -598,10 +598,10 @@ fn headless_unknown_or_empty_record_is_unknown_not_idle() {
             false,
         ),
     ] {
-        let record = if empty {
+        let record = if clear {
             json!({})
         } else {
-            runtime_record(fields)
+            runtime_record(overrides)
         };
         cccc_core::integration_state::group_update(
             &store,
