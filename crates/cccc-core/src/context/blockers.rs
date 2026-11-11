@@ -44,62 +44,69 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn task(id: &str, status: &str, blocked_by: &[&str]) -> Map<String, Value> {
-        let mut task = Map::new();
-        task.insert("id".into(), json!(id));
-        task.insert("status".into(), json!(status));
-        task.insert(
-            "blocked_by".into(),
-            json!(blocked_by.iter().map(|id| json!(id)).collect::<Vec<_>>()),
-        );
-        task
+    fn captured_tasks() -> Vec<Map<String, Value>> {
+        serde_json::from_str(include_str!(
+            "../../tests/fixtures/open-blocked-by/tasks.json"
+        ))
+        .expect("captured tasks")
+    }
+
+    fn set_status(tasks: &mut [Map<String, Value>], index: usize, status: &str) {
+        tasks[index].insert("status".into(), json!(status));
     }
 
     #[test]
     fn a_planned_blocker_still_blocks() {
-        let blocker = task("blocker-a", "planned", &[]);
-        let task = task("task-a", "active", &["blocker-a"]);
-        assert_eq!(
-            open_blocked_by(&[blocker, task.clone()], &task),
-            ["blocker-a"]
-        );
+        let tasks = captured_tasks();
+        assert_eq!(open_blocked_by(&tasks, &tasks[0]), ["blocker-task"]);
     }
 
     #[test]
     fn done_and_archived_blockers_stop_counting() {
-        let done = task("blocker-a", "done", &[]);
-        let archived = task("blocker-b", "archived", &[]);
-        let planned = task("blocker-c", "planned", &[]);
-        let task = task("task-a", "active", &["blocker-a", "blocker-b", "blocker-c"]);
-        assert_eq!(
-            open_blocked_by(&[done, archived, planned, task.clone()], &task),
-            ["blocker-c"]
-        );
+        let mut tasks = captured_tasks();
+        let blocked = tasks[0].clone();
+        for status in ["planned", "active"] {
+            set_status(&mut tasks, 1, status);
+            assert_eq!(
+                open_blocked_by(&tasks, &blocked),
+                ["blocker-task"],
+                "{status}"
+            );
+        }
+        for status in ["done", "archived"] {
+            set_status(&mut tasks, 1, status);
+            assert!(
+                open_blocked_by(&tasks, &blocked).is_empty(),
+                "{status} should not block"
+            );
+        }
     }
 
     #[test]
     fn an_id_that_names_no_task_keeps_blocking() {
-        let task = task("task-a", "active", &["missing-blocker"]);
-        assert_eq!(open_blocked_by(&[task.clone()], &task), ["missing-blocker"]);
+        let mut tasks = captured_tasks();
+        tasks[0].insert("blocked_by".into(), json!(["missing-blocker"]));
+        let blocked = tasks[0].clone();
+        assert_eq!(open_blocked_by(&tasks, &blocked), ["missing-blocker"]);
     }
 
     #[test]
     fn a_blocker_restored_to_unfinished_blocks_again() {
-        let mut blocker = task("blocker-a", "done", &[]);
-        let task = task("task-a", "active", &["blocker-a"]);
-        assert!(open_blocked_by(&[blocker.clone(), task.clone()], &task).is_empty());
-        blocker.insert("status".into(), json!("planned"));
-        assert_eq!(
-            open_blocked_by(&[blocker.clone(), task.clone()], &task),
-            ["blocker-a"]
-        );
-        blocker.insert("status".into(), json!("done"));
-        assert!(open_blocked_by(&[blocker, task.clone()], &task).is_empty());
+        let mut tasks = captured_tasks();
+        let blocked = tasks[0].clone();
+        set_status(&mut tasks, 1, "done");
+        assert!(open_blocked_by(&tasks, &blocked).is_empty());
+        set_status(&mut tasks, 1, "planned");
+        assert_eq!(open_blocked_by(&tasks, &blocked), ["blocker-task"]);
+        set_status(&mut tasks, 1, "done");
+        assert!(open_blocked_by(&tasks, &blocked).is_empty());
     }
 
     #[test]
     fn no_blocked_by_means_nothing_open() {
-        let task = Map::new();
-        assert!(open_blocked_by(&[task.clone()], &task).is_empty());
+        let mut tasks = captured_tasks();
+        tasks[0].remove("blocked_by");
+        let blocked = tasks[0].clone();
+        assert!(open_blocked_by(&tasks, &blocked).is_empty());
     }
 }

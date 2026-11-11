@@ -1,0 +1,20 @@
+[
+  {
+    "id": "blocked-task",
+    "title": "captured blocked task",
+    "status": "planned",
+    "blocked_by": ["blocker-task"],
+    "waiting_on": null,
+    "task_type": "standard",
+    "updated_at": "2026-10-20T19:48:49.494734Z"
+  },
+  {
+    "id": "blocker-task",
+    "title": "captured planned blocker",
+    "status": "planned",
+    "blocked_by": [],
+    "waiting_on": null,
+    "task_type": "standard",
+    "updated_at": "2026-10-21T14:30:21.739723Z"
+  }
+]
