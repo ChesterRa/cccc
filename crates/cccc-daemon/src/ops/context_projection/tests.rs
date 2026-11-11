@@ -131,8 +131,8 @@ fn stored_open_blocked_by_is_recomputed() {
     let result = project(document, "v1".into(), "summary");
     let task = &result["coordination"]["tasks"][0];
 
-    assert_eq!(task["blocked_by"], json!(["T002"]));
-    assert_eq!(task["open_blocked_by"], json!(["T002"]));
+    assert_eq!(task["blocked_by"], json!(["blocker-task"]));
+    assert_eq!(task["open_blocked_by"], json!(["blocker-task"]));
     assert_eq!(result["attention"]["blocked"], 1);
     assert_eq!(result["tasks_summary"]["blocked"], 1);
 }

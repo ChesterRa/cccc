@@ -514,22 +514,21 @@ mod tests {
             .expect("captured tasks"),
             ..ContextDoc::default()
         };
-        let index = doc
-            .tasks
-            .iter()
-            .position(|task| task["id"] == "T792")
-            .expect("captured task");
-        doc.tasks[index].insert("open_blocked_by".into(), json!(["T999"]));
+        let task_id = doc.tasks[0]["id"]
+            .as_str()
+            .expect("captured task id")
+            .to_owned();
+        doc.tasks[0].insert("open_blocked_by".into(), json!(["forged-task"]));
 
         update(
             &mut doc,
             &operation(json!({
-                "op":"task.update","task_id":"T792","title":"renamed"
+                "op":"task.update","task_id":task_id,"title":"renamed"
             })),
         )
         .expect("update");
 
-        assert!(doc.tasks[index].get("open_blocked_by").is_none());
-        assert_eq!(doc.tasks[index]["title"], "renamed");
+        assert!(doc.tasks[0].get("open_blocked_by").is_none());
+        assert_eq!(doc.tasks[0]["title"], "renamed");
     }
 }

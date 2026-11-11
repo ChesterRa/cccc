@@ -1,15 +1,15 @@
 [
   {
-    "id": "T001",
+    "id": "blocked-task",
     "title": "captured blocked task",
     "status": "planned",
-    "blocked_by": ["T002"],
+    "blocked_by": ["blocker-task"],
     "waiting_on": null,
     "task_type": "standard",
     "updated_at": "2026-10-20T19:48:49.494734Z"
   },
   {
-    "id": "T002",
+    "id": "blocker-task",
     "title": "captured planned blocker",
     "status": "planned",
     "blocked_by": [],
