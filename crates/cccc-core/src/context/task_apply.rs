@@ -56,7 +56,14 @@ pub(super) fn create(
     });
     let waiting_on = enum_value(op, "waiting_on", WAITING_ON)?;
     let mut task = op.clone();
-    for key in ["op", "if_task_rev", "rev", "parent_ref", "blocked_by_refs"] {
+    for key in [
+        "op",
+        "if_task_rev",
+        "rev",
+        "parent_ref",
+        "blocked_by_refs",
+        "open_blocked_by",
+    ] {
         task.remove(key);
     }
     let number = doc

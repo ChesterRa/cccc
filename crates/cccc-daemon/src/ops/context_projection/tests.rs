@@ -106,6 +106,26 @@ fn open_blocked_by_is_derived_and_emitted_next_to_the_stored_list() {
 }
 
 #[test]
+fn stored_open_blocked_by_is_recomputed() {
+    let mut document = document();
+    document.tasks[0].insert("waiting_on".into(), json!("none"));
+    document.tasks[0].insert("open_blocked_by".into(), json!([]));
+    document.tasks.push(
+        json!({"id":"dependency","status":"planned"})
+            .as_object()
+            .cloned()
+            .expect("blocker"),
+    );
+
+    let result = project(document, "v1".into(), "summary");
+    let task = &result["coordination"]["tasks"][0];
+
+    assert_eq!(task["open_blocked_by"], json!(["dependency"]));
+    assert_eq!(result["attention"]["blocked"], 1);
+    assert_eq!(result["tasks_summary"]["blocked"], 1);
+}
+
+#[test]
 fn full_and_board_projections_carry_open_blocked_by() {
     let mut document = document();
     document.tasks.push(

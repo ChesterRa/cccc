@@ -3,34 +3,33 @@ use serde_json::{Map, Value, json};
 
 /// Stamps each task with `open_blocked_by`, the derived subset of its stored
 /// `blocked_by` that still blocks (a blocker done or archived stops counting;
-/// an id naming no task keeps blocking). Tasks that already carry the field —
-/// a page slice stamped against the full set — are left alone. Stored data is
-/// never rewritten; the field exists only in projections.
+/// an id naming no task keeps blocking). A stored or client-supplied value is
+/// overwritten. A page slice stamped against the full set is passed through
+/// with `stamp` false instead. Stored data is never rewritten; the field
+/// exists only in projections.
 fn inject_open_blocked_by(tasks: &mut [Map<String, Value>]) {
     let slice: &[Map<String, Value>] = tasks;
     let opens = slice
         .iter()
-        .map(|task| {
-            if task.contains_key("open_blocked_by") {
-                None
-            } else {
-                Some(open_blocked_by(slice, task))
-            }
-        })
+        .map(|task| open_blocked_by(slice, task))
         .collect::<Vec<_>>();
     for (task, open) in tasks.iter_mut().zip(opens) {
-        if let Some(open) = open {
-            task.insert("open_blocked_by".into(), json!(open));
-        }
+        task.insert("open_blocked_by".into(), json!(open));
     }
 }
 
 pub(super) fn project(document: ContextDoc, version: String, detail: &str) -> Value {
+    project_tasks(document, version, detail, true)
+}
+
+fn project_tasks(document: ContextDoc, version: String, detail: &str, stamp: bool) -> Value {
     if detail == "overview" {
         return context_overview::project(document, version);
     }
     let mut tasks = document.tasks;
-    inject_open_blocked_by(&mut tasks);
+    if stamp {
+        inject_open_blocked_by(&mut tasks);
+    }
     let tasks_version = format!("tasksv:{}", document.tasks_revision);
     let full = detail == "full";
     let attention = attention(&tasks, full);
@@ -88,7 +87,7 @@ pub(super) fn project_page(
     loop {
         let mut slice = document.clone();
         slice.tasks = candidates[..take].to_vec();
-        let mut value = project(slice, version.clone(), detail);
+        let mut value = project_tasks(slice, version.clone(), detail, false);
         let truncated = take < candidates.len();
         let next_cursor = truncated
             .then(|| {

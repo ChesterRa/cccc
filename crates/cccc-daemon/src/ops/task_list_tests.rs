@@ -390,3 +390,64 @@ fn every_task_list_response_stamps_open_blocked_by() {
         .expect("indexed task");
     assert_eq!(index_item["open_blocked_by"], json!([]));
 }
+
+#[test]
+fn forged_open_blocked_by_cannot_hide_a_planned_blocker() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("tasks", "").expect("group");
+    let contexts = ContextStore::new(home.clone()).expect("contexts");
+    let ops = [
+        json!({
+            "op":"task.create",
+            "title":"planned blocker",
+            "client_request_id":"planned-blocker",
+        }),
+        json!({
+            "op":"task.create",
+            "title":"blocked task",
+            "client_request_id":"blocked-task",
+            "blocked_by_refs":["planned-blocker"],
+            "open_blocked_by":[],
+        }),
+    ]
+    .into_iter()
+    .map(|op| op.as_object().cloned().expect("op"))
+    .collect::<Vec<Map<String, Value>>>();
+    contexts
+        .sync(&group.group_id, &ops, None, "user", false)
+        .expect("seed");
+
+    let stored = contexts.load(&group.group_id).expect("context");
+    let blocker_id = stored
+        .tasks
+        .iter()
+        .find(|task| task["title"] == "planned blocker")
+        .and_then(|task| task["id"].as_str())
+        .expect("blocker id")
+        .to_owned();
+    let blocked = stored
+        .tasks
+        .iter()
+        .find(|task| task["title"] == "blocked task")
+        .expect("blocked task");
+    assert!(blocked.get("open_blocked_by").is_none());
+
+    let listed = run(&home, &request(&group.group_id, json!({}))).expect("listed");
+    assert_eq!(
+        task_named(&listed["tasks"], "blocked task")["open_blocked_by"],
+        json!([blocker_id.clone()])
+    );
+
+    let projected = super::super::context_projection::project(
+        contexts.load(&group.group_id).expect("context"),
+        "v1".into(),
+        "summary",
+    );
+    assert_eq!(
+        task_named(&projected["coordination"]["tasks"], "blocked task")["open_blocked_by"],
+        json!([blocker_id])
+    );
+    assert_eq!(projected["attention"]["blocked"], 1);
+}
