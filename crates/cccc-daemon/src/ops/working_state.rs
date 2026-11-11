@@ -141,9 +141,11 @@ pub(super) fn fields(
                     },
                     _ => ("waiting", "headless_state_unknown"),
                 };
-                let timestamp = match state {
-                    "working" => updated_at,
-                    "idle" | "waiting" | "stopped" => last_turn_end.or(updated_at),
+                let timestamp = match (state, reason) {
+                    ("working", _) => updated_at,
+                    ("idle" | "waiting" | "stopped", "headless_turn_record") => {
+                        last_turn_end.or(updated_at)
+                    }
                     _ => None,
                 }
                 .map(str::to_owned);
