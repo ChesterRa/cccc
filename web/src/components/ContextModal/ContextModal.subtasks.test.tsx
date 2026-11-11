@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   board: null as null | BoardProps,
   editor: null as null | EditorProps,
   boardTasks: [] as Task[],
+  assignees: [] as string[],
   taskMap: new Map<string, Task>(),
   deleteInfoById: {} as Record<string, unknown>,
   loadTaskDetail: vi.fn(),
@@ -83,7 +84,13 @@ vi.mock("../../features/contextModal/useTaskBoardData", () => ({
     taskIndex: [parent, first, second],
     taskMap: mocks.taskMap,
     tasksSummary: { total: 3, planned: 2, active: 1, done: 0, archived: 0 },
-    facets: { assignees: [], unassigned: 0, blocked: 0, waitingUser: 0, pendingHandoffs: 0 },
+    facets: {
+      assignees: mocks.assignees,
+      unassigned: 0,
+      blocked: 0,
+      waitingUser: 0,
+      pendingHandoffs: 0,
+    },
     error: "",
     loading: false,
     deleteInfoById: mocks.deleteInfoById,
@@ -111,6 +118,8 @@ vi.mock("./coordination/TaskEditorPanel", () => ({
 vi.mock("../modals/settings/CapabilitiesTab", () => ({ CapabilitiesTab: () => null }));
 
 import { ContextModal } from "./index";
+import { useGroupStore } from "../../stores";
+import type { Actor, GroupDoc } from "../../types";
 import {
   finishWorkspaceNavigation,
   requestWorkspaceNavigation,
@@ -184,6 +193,8 @@ beforeEach(() => {
   document.body.append(host);
   mocks.editor = null;
   mocks.boardTasks = [parent, first, second];
+  mocks.assignees = [];
+  useGroupStore.setState({ groupDoc: null, actors: [] });
   mocks.taskMap = new Map([[parent.id, parent]]);
   mocks.deleteInfoById = {};
   mocks.loadTaskDetail.mockReset();
@@ -208,6 +219,21 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
+});
+
+it("offers every member of the Group as an assignee, and keeps IDs tasks already name", async () => {
+  // No member has reported a state: the context carries no agent states at all.
+  mocks.assignees = ["former-member"];
+  useGroupStore.setState({
+    groupDoc: { group_id: "g_subtasks" } as GroupDoc,
+    actors: [{ id: "quiet-peer" }, { id: "lead" }] as Actor[],
+  });
+  await openParent();
+  expect(editor().assigneeChoices).toEqual(["former-member", "lead", "quiet-peer"]);
+
+  // Members held for another Group are not offered here.
+  await act(async () => useGroupStore.setState({ groupDoc: { group_id: "g_other" } as GroupDoc }));
+  expect(editor().assigneeChoices).toEqual(["former-member"]);
 });
 
 it("keeps parent edits made while an unloaded subtask is still loading", async () => {

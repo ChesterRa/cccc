@@ -1037,7 +1037,6 @@ describe("api.message refs", () => {
       replyTo: "evt-original",
       quoteText: "原消息",
       clientId: "local-1",
-      remoteReplyToEventId: "evt-remote-original",
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
@@ -1053,7 +1052,6 @@ describe("api.message refs", () => {
           reply_to: "evt-original",
           quote_text: "原消息",
           client_id: "local-1",
-          remote_reply_to_event_id: "evt-remote-original",
         }),
       }),
     );
@@ -1169,7 +1167,7 @@ describe("api.capability overview", () => {
     sessionStorageMock.clear();
   });
 
-  it("can request capability overview without source instance aggregation", async () => {
+  it("builds the capability overview query from its options", async () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
@@ -1183,14 +1181,13 @@ describe("api.capability overview", () => {
     const api = await import("../../src/services/api");
     await api.fetchCapabilityOverview({
       includeIndexed: true,
-      includeSourceInstances: false,
       limit: 1,
       kind: "skill",
       groupId: "g-demo",
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/capabilities/overview?limit=1&include_indexed=true&include_source_instances=false&kind=skill&group_id=g-demo",
+      "/api/v1/capabilities/overview?limit=1&include_indexed=true&kind=skill&group_id=g-demo",
       expect.any(Object),
     );
   });

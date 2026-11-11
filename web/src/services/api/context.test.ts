@@ -688,7 +688,7 @@ describe("cross-group attachment API helper", () => {
       ["lead"],
       "send",
       [file],
-      { replyTo: "local-parent", clientId: "client-1", remoteReplyToEventId: "remote-parent" },
+      { replyTo: "local-parent", clientId: "client-1" },
     );
 
     expect(response.ok).toBe(true);
@@ -699,7 +699,7 @@ describe("cross-group attachment API helper", () => {
     expect(form.get("to_json")).toBe(JSON.stringify(["lead"]));
     expect(form.get("reply_to")).toBe("local-parent");
     expect(form.get("client_id")).toBe("client-1");
-    expect(form.get("remote_reply_to_event_id")).toBe("remote-parent");
+    expect(form.has("remote_reply_to_event_id")).toBe(false);
     expect((form.get("files") as File).name).toBe("chart.png");
   });
 

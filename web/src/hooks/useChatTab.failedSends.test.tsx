@@ -331,7 +331,6 @@ it("keeps a cross-Group reply's actual destination after recovery and editing", 
         text: "original question",
         remoteDstGroupId: "g-b",
         remoteDstTo: ["peer-1"],
-        remoteReplyToEventId: "remote-event",
       });
     useComposerStore.getState().setComposerText("original answer");
   });
@@ -352,11 +351,7 @@ it("keeps a cross-Group reply's actual destination after recovery and editing", 
     ["g-a", "g-b", ["peer-1"]],
     ["g-a", "g-b", ["peer-1"]],
   ]);
-  expect(calls[1][6]).toMatchObject({
-    replyTo: "source-event",
-    quoteText: "original question",
-    remoteReplyToEventId: "remote-event",
-  });
+  expect(calls[1][6]).toMatchObject({ replyTo: "source-event", quoteText: "original question" });
   expect(api.sendMessage).not.toHaveBeenCalled();
 });
 

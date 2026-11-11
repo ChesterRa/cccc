@@ -22,13 +22,11 @@ struct SendQuery {
     token: String,
     msg_id: String,
     text_b64url: String,
-    title: Option<String>,
 }
 #[derive(Debug, Deserialize)]
 struct SendForm {
     msg_id: String,
     text: String,
-    title: Option<String>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -41,15 +39,7 @@ async fn send_post(
     Query(token): Query<TokenQuery>,
     Form(form): Form<SendForm>,
 ) -> Response {
-    send(
-        &state,
-        &sid,
-        &token.token,
-        &form.msg_id,
-        &form.text,
-        form.title.as_deref().unwrap_or(""),
-    )
-    .await
+    send(&state, &sid, &token.token, &form.msg_id, &form.text).await
 }
 
 async fn send_get(
@@ -64,25 +54,10 @@ async fn send_get(
     let Some(text) = decoded else {
         return failure(StatusCode::BAD_REQUEST, "invalid base64url text");
     };
-    send(
-        &state,
-        &sid,
-        &query.token,
-        &query.msg_id,
-        &text,
-        query.title.as_deref().unwrap_or(""),
-    )
-    .await
+    send(&state, &sid, &query.token, &query.msg_id, &text).await
 }
 
-async fn send(
-    state: &AppState,
-    sid: &str,
-    token: &str,
-    msg_id: &str,
-    text: &str,
-    title: &str,
-) -> Response {
+async fn send(state: &AppState, sid: &str, token: &str, msg_id: &str, text: &str) -> Response {
     if text.len() > 12 * 1024 {
         return failure(StatusCode::PAYLOAD_TOO_LARGE, "message is too large");
     }
@@ -112,7 +87,6 @@ async fn send(
         sid,
         msg_id,
         text,
-        title,
     );
     let response = state
         .client
@@ -138,11 +112,10 @@ fn advisory_message_args(
     sid: &str,
     msg_id: &str,
     text: &str,
-    title: &str,
 ) -> serde_json::Value {
     json!({
         "group_id":group_id,"by":"nomcp-advisory","to":[recipient],
-        "text":text,"title":title,"reply_to":reply_to_event_id,"source_platform":"nomcp",
+        "text":text,"reply_to":reply_to_event_id,"source_platform":"nomcp",
         "source_user_id":sid,"client_id":format!("nomcp:{sid}:{msg_id}"),
         "message_mode":"send",
         "refs":[{"source":"nomcp","cannot_execute_local_tools":true}]
@@ -162,9 +135,9 @@ mod tests {
             "session1",
             "message1",
             "review this",
-            "Review",
         );
         assert_eq!(args["message_mode"], "send");
         assert!(args.get("mode").is_none());
+        assert!(args.get("title").is_none());
     }
 }

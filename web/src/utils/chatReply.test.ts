@@ -91,7 +91,6 @@ it.each([
     replyTarget: { eventId: "local-event" },
   });
   expect(state?.replyTarget.remoteDstGroupId).toBeUndefined();
-  expect(state?.replyTarget.remoteReplyToEventId).toBeUndefined();
 });
 
 it("leaves a reply to Chet without recipients, naming Chet only for this Group's current marker", () => {

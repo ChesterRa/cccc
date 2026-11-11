@@ -29,7 +29,9 @@ struct State {
     state: String,
     transport: String,
     // pending_sources skips malformed state records; latest_state does not.
-    pending: Option<(String, usize, bool)>,
+    // The flag is the record's own `retryable`: true stopped before submission,
+    // false used up its automatic retries, absent is an ordinary record.
+    pending: Option<(String, usize, Option<bool>)>,
 }
 
 impl DeliveryState {
@@ -149,7 +151,7 @@ impl DeliveryState {
                     (
                         state.to_owned(),
                         position,
-                        event.data.get("retryable") == Some(&Value::Bool(true)),
+                        event.data.get("retryable").and_then(Value::as_bool),
                     )
                 })
                 .or_else(|| states.get(source).and_then(|state| state.pending.clone()));
@@ -178,6 +180,20 @@ impl DeliveryState {
             .get(actor)
             .and_then(|states| states.get(source))
             .map(|state| (state.state.clone(), state.transport.clone()))
+    }
+    /// Whether the actor's current delivery of this source failed after using
+    /// up its automatic retries, so that only an explicit request may retry it.
+    pub fn retry_closed(&self, actor: &str, source: &str) -> bool {
+        let generation = self.generations.get(actor).copied();
+        self.latest
+            .get(actor)
+            .and_then(|states| states.get(source))
+            .and_then(|state| state.pending.as_ref())
+            .is_some_and(|(state, position, retryable)| {
+                state == "failed"
+                    && *retryable == Some(false)
+                    && generation.is_none_or(|generation| *position > generation)
+            })
     }
     pub fn pending(&self, group: &GroupDoc, actor: &str, limit: usize) -> Vec<Location> {
         let Some(actor_index) = self.actors.get(actor) else {
@@ -209,11 +225,14 @@ impl DeliveryState {
                     .and_then(|states| states.get(&source.id))
                     .and_then(|state| state.pending.as_ref())
                     .filter(|(_, position, _)| current(*position))
-                    .map(|(state, _, retryable)| (state.as_str(), state == "failed" && *retryable))
-                    .unwrap_or(("", false));
+                    .map(|(state, _, retryable)| (state.as_str(), *retryable))
+                    .unwrap_or(("", None));
+                let failed = state == "failed";
+                let retry = failed && retryable == Some(true);
                 if matches!(state, "accepted" | "ambiguous" | "withdrawn")
-                    || (external_session && state == "failed" && !retryable)
-                    || (source.mail && state != "claimed" && !retryable)
+                    || (failed && retryable == Some(false))
+                    || (external_session && failed && !retry)
+                    || (source.mail && state != "claimed" && !retry)
                 {
                     return false;
                 }

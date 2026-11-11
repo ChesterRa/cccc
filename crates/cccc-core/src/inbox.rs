@@ -68,6 +68,17 @@ pub fn pending_deliveries(
     projection::pending_deliveries(home, group, actor, limit)
 }
 
+/// Whether the actor's delivery of this source failed after using up its
+/// automatic retries (`retryable: false`): only an explicit request retries it.
+pub fn delivery_retry_closed(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    source: &str,
+) -> io::Result<bool> {
+    projection::delivery_retry_closed(home, group, actor, source)
+}
+
 /// Latest delivery state and transport, preserving legacy claim semantics.
 pub fn delivery_states(
     home: &HomeLayout,

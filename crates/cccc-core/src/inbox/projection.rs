@@ -503,6 +503,17 @@ pub(super) fn pending_deliveries(
         snapshot.events(&projection.deliveries.pending(group, actor, limit))
     })
 }
+pub(super) fn delivery_retry_closed(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    source: &str,
+) -> io::Result<bool> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, _| {
+        Ok(projection.deliveries.retry_closed(actor, source))
+    })
+}
 pub(super) fn delivery_states(
     home: &HomeLayout,
     group: &GroupDoc,

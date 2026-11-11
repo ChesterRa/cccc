@@ -499,6 +499,7 @@ fn message_write(op: &str) -> Option<cccc_contracts::message_args::MessageWrite>
         "send_files" => MessageWrite::SendFiles,
         "tracked_send" => MessageWrite::TrackedSend,
         "send_cross_group" => MessageWrite::SendCrossGroup,
+        "connect_send" | "connect_send_files" => MessageWrite::ConnectSend,
         _ => return None,
     })
 }

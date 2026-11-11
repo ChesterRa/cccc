@@ -33,7 +33,6 @@ import {
 import { cn } from "../../lib/utils";
 import type {
   CapabilityOverviewItem,
-  CapabilitySourceInstance,
   CapabilitySourceState,
   CapabilityStateResult,
 } from "../../types";
@@ -229,7 +228,6 @@ export function CapabilityCenterWorkspace({
     selectedId,
     setError: setErr,
     setSelectedId,
-    sourceInstances,
     sources,
     state,
     summaryStats,
@@ -636,54 +634,6 @@ export function CapabilityCenterWorkspace({
     [deleteSource, groupId, t],
   );
 
-  const deleteSourceInstance = useCallback(
-    async (instance: CapabilitySourceInstance) => {
-      const sourceId = String(instance.source_id || "").trim();
-      const sourceInstanceKey = String(instance.source_instance_key || "").trim();
-      if (!groupId || !sourceId || !sourceInstanceKey) return;
-      setBusyKey(`source-instance-delete:${sourceInstanceKey}`);
-      setErr("");
-      try {
-        const resp = await api.deleteCapabilitySource(groupId, sourceId, {
-          actorId: "user",
-          sourceInstanceKey,
-          reason: "capability center source instance delete",
-        });
-        if (!resp.ok) {
-          setErr(resp.error?.message || t("capabilityCenter.sources.deleteFailed"));
-          return;
-        }
-        await refresh();
-        publishCapabilityChanged(groupId);
-      } finally {
-        setBusyKey("");
-      }
-    },
-    [groupId, refresh, setErr, t],
-  );
-
-  const confirmDeleteSourceInstance = useCallback(
-    (instance: CapabilitySourceInstance) => {
-      const sourceId = String(instance.source_id || "").trim();
-      const sourceInstanceKey = String(instance.source_instance_key || "").trim();
-      if (!groupId || !sourceId || !sourceInstanceKey) return;
-      setConfirmDialog({
-        title: t("capabilityCenter.sources.deleteInstanceConfirmTitle", {
-          name: instance.label || sourceInstanceKey,
-          count: Number(instance.record_count || 0),
-        }),
-        description: t("capabilityCenter.sources.deleteInstanceConfirmDescription", {
-          name: instance.label || sourceInstanceKey,
-          count: Number(instance.record_count || 0),
-        }),
-        confirmLabel: t("capabilityCenter.sources.delete"),
-        tone: "destructive",
-        onConfirm: () => deleteSourceInstance(instance),
-      });
-    },
-    [deleteSourceInstance, groupId, t],
-  );
-
   if (!isOpen) return null;
 
   const rootClass = capabilityCenterRootClass(surface);
@@ -922,13 +872,7 @@ export function CapabilityCenterWorkspace({
               </div>
 
               {section === "sources" ? (
-                <SourcesView
-                  sources={sources}
-                  sourceInstances={sourceInstances}
-                  busyKey={busyKey}
-                  onDelete={confirmDeleteSource}
-                  onDeleteInstance={confirmDeleteSourceInstance}
-                />
+                <SourcesView sources={sources} busyKey={busyKey} onDelete={confirmDeleteSource} />
               ) : (
                 <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
                   <CapabilityTable

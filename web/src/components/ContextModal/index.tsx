@@ -199,6 +199,8 @@ export function ContextModal({
   // none: the daemon refuses it there, so nothing offers it.
   const webReadOnly = useUIStore((state) => state.webReadOnly);
   const groupDocLoaded = useGroupStore((state) => state.groupDoc?.group_id === groupId);
+  // The store keeps the selected Group's members beside its document.
+  const groupActors = useGroupStore((state) => state.actors);
   const backlogScopeKey = useGroupStore((state) =>
     state.groupDoc?.group_id === groupId ? String(state.groupDoc.active_scope_key || "") : "",
   );
@@ -319,13 +321,19 @@ export function ContextModal({
   );
 
   const assigneeOptions = taskFacets.assignees;
-  // Who a task can go to: the Group's agents, and anyone tasks already name.
+  // Who a task can go to: the Group's members, whether or not they have reported
+  // a state, and anyone tasks already name.
   const assigneeChoices = useMemo(
     () =>
-      [...new Set([...agents.map((agent) => String(agent.id || "")), ...assigneeOptions])]
+      [
+        ...new Set([
+          ...(groupDocLoaded ? groupActors.map((actor) => String(actor.id || "").trim()) : []),
+          ...assigneeOptions,
+        ]),
+      ]
         .filter((id) => id && id !== "__all__")
         .sort(),
-    [agents, assigneeOptions],
+    [assigneeOptions, groupActors, groupDocLoaded],
   );
   const unassignedCount = taskFacets.unassigned;
   const activeTaskOptions = useMemo(

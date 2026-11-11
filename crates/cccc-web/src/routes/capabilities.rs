@@ -58,7 +58,6 @@ struct OverviewQuery {
     limit: Option<usize>,
     offset: Option<usize>,
     include_indexed: Option<bool>,
-    include_source_instances: Option<bool>,
     kind: Option<String>,
     policy: Option<String>,
     source_id: Option<String>,

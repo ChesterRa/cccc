@@ -149,7 +149,6 @@ export async function dispatchPreparedMessage(input: {
         replyTo: input.replyTarget.eventId,
         quoteText: input.replyTarget.text,
         clientId: input.localId,
-        remoteReplyToEventId: input.replyTarget.remoteReplyToEventId || "",
         ...(input.uploadSignal ? { signal: input.uploadSignal } : {}),
       },
     );

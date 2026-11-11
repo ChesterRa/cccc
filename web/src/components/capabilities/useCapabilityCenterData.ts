@@ -3,7 +3,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../../services/api";
 import type {
   CapabilityOverviewItem,
-  CapabilitySourceInstance,
   CapabilitySourceState,
   CapabilityStateResult,
 } from "../../types";
@@ -46,7 +45,6 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
   } = options;
   const [items, setItems] = useState<CapabilityOverviewItem[]>([]);
   const [sources, setSources] = useState<Record<string, CapabilitySourceState>>({});
-  const [sourceInstances, setSourceInstances] = useState<CapabilitySourceInstance[]>([]);
   const [state, setState] = useState<CapabilityStateResult | null>(null);
   const [summaryStats, setSummaryStats] = useState<CapabilityCenterStats | null>(null);
   const [selectedId, setSelectedId] = useState("");
@@ -95,7 +93,6 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
       setTotalCount(Number(response.result.total_count || nextItems.length) || 0);
       setHasMore(Boolean(response.result.has_more));
       setSources(response.result.sources || {});
-      setSourceInstances(response.result.source_instances || []);
       setSummaryStats({
         total: Number(response.result.total_count || nextItems.length) || 0,
         skills: Number(kindCounts.skill || 0),
@@ -169,7 +166,6 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
     selectedId,
     setError,
     setSelectedId,
-    sourceInstances,
     sources,
     state,
     summaryStats,

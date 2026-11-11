@@ -479,6 +479,11 @@ data: {
   pending for normal recovery. A native rejection or a legacy failed receipt
   without that evidence MUST NOT automatically retry. This flag never permits
   replay after `accepted`, `ambiguous` or `withdrawn`.
+- A daemon-managed runtime that retries a failed turn on its own MAY record the
+  final failure with `retryable=false` once that bounded retry budget is spent.
+  Automatic delivery MUST NOT start that delivery again, including after an
+  Actor or daemon restart; an explicit delivery request MAY still retry it. A
+  failed record without the flag keeps its existing recovery.
 - Eligible native pending work MUST remain recoverable beyond an in-memory
   queue or startup query page. The delivery owner MUST continue bounded ledger
   refill as capacity becomes available, without requiring another message,

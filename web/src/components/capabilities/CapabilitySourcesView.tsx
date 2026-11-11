@@ -2,12 +2,11 @@ import { Trash2 } from "lucide-react";
 import type React from "react";
 import { useTranslation } from "react-i18next";
 
-import type { CapabilitySourceInstance, CapabilitySourceState } from "../../types";
+import type { CapabilitySourceState } from "../../types";
 import {
   capabilityCenterSourceRemovalAction,
   capabilityCenterSourcesGridClass,
 } from "./capabilityCenterModel";
-import { CapabilitySourceInstances } from "./CapabilitySourceInstances";
 import { HoverTooltip } from "../HoverTooltip";
 import { LcdIcon } from "../Icons";
 
@@ -41,10 +40,8 @@ function SourceStat({ label, value }: { label: string; value: number }) {
 
 export function SourcesView(props: {
   sources: Record<string, CapabilitySourceState>;
-  sourceInstances: CapabilitySourceInstance[];
   busyKey: string;
   onDelete: (source: CapabilitySourceState) => void;
-  onDeleteInstance: (instance: CapabilitySourceInstance) => void;
 }) {
   const { t } = useTranslation("settings");
   const rows = Object.values(props.sources || {}).sort((left, right) =>
@@ -95,11 +92,6 @@ export function SourcesView(props: {
           </div>
         ) : null}
       </div>
-      <CapabilitySourceInstances
-        instances={props.sourceInstances}
-        busyKey={props.busyKey}
-        onDelete={props.onDeleteInstance}
-      />
     </div>
   );
 }

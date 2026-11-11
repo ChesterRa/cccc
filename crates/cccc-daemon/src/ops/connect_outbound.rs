@@ -8,6 +8,7 @@ use cccc_contracts::{
     Actor, DaemonRequest, Event,
     connect::{ConnectActor, ConnectGroup},
     connect_message::*,
+    message_args::MessageWrite,
 };
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, connect_catalog, connect_delivery, ledger};
 use serde_json::{Value, json};
@@ -22,6 +23,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
 }
 
 fn send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    super::messaging::accept_arguments(request, MessageWrite::ConnectSend)?;
     send_with_reply(home, request, None, false)
 }
 

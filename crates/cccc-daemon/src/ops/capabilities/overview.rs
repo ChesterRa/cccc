@@ -74,7 +74,6 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "query":query,
         "kind_counts":kind_counts,
         "sources":sources,
-        "source_instances":[],
         "blocked_capabilities":blocked_capabilities,
     }))
 }

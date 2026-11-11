@@ -84,9 +84,6 @@ export function buildReplyComposerState(
   const remoteDstGroupId =
     typeof data?.dst_group_id === "string" ? String(data.dst_group_id || "").trim() : "";
   const remoteDstTo = remoteDstGroupId ? projectCrossGroupRecipients(data) : [];
-  const remoteReplyToEventId =
-    (typeof data?.dst_event_id === "string" ? String(data.dst_event_id || "").trim() : "") ||
-    (typeof data?.remote_event_id === "string" ? String(data.remote_event_id || "").trim() : "");
   const policy = groupSettings?.default_send_to || "foreman";
   // A reply to Chet names no recipient: the daemon returns it to Chet once it has
   // verified that Chet wrote the message in this Group.
@@ -118,13 +115,7 @@ export function buildReplyComposerState(
       by: replyBy,
       text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
       ...(by === CHET_PRINCIPAL ? { toChet: true } : {}),
-      ...(remoteDstGroupId
-        ? {
-            remoteDstGroupId,
-            remoteDstTo: defaultTo,
-            ...(remoteReplyToEventId ? { remoteReplyToEventId } : {}),
-          }
-        : {}),
+      ...(remoteDstGroupId ? { remoteDstGroupId, remoteDstTo: defaultTo } : {}),
     },
   };
 }

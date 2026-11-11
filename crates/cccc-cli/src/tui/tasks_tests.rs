@@ -226,3 +226,47 @@ fn minimum_screen_has_one_focus_and_complete_scrolling_details() {
     }
     assert_eq!(app.tasks_view.selected.as_deref(), Some("T001"));
 }
+
+#[test]
+fn details_show_only_open_dependencies_and_keep_unprojected_relations() {
+    for (open_dependencies, expected) in [
+        (Some(json!(["T003"])), Some("T003")),
+        (Some(json!([])), None),
+        (None, Some("T002, T003")),
+    ] {
+        let mut app = open();
+        press(&mut app, KeyCode::Enter);
+        let request = app.want().tasks.expect("exact read");
+        let mut value = task("T001", "active");
+        value["blocked_by"] = json!(["T002", "T003"]);
+        if let Some(open_dependencies) = open_dependencies {
+            value["open_blocked_by"] = open_dependencies;
+        }
+        let mut snapshot = Snapshot::default();
+        snapshot.record(
+            &request,
+            Ok(Data::Detail(Task::parse(&value).expect("task"))),
+            Instant::now(),
+        );
+        app.set_tasks(snapshot);
+        let shown = rows(&app, 80, 24);
+        let dependency_row = shown
+            .iter()
+            .find(|line| line.trim_start().starts_with("Blocked by"));
+        match expected {
+            Some(expected) => assert_eq!(
+                dependency_row
+                    .expect("unresolved dependencies")
+                    .trim_start()
+                    .strip_prefix("Blocked by")
+                    .expect("label")
+                    .trim(),
+                expected
+            ),
+            None => assert!(
+                dependency_row.is_none(),
+                "completed dependencies are hidden"
+            ),
+        }
+    }
+}

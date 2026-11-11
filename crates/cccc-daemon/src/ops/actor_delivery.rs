@@ -275,6 +275,22 @@ pub(super) fn release_in_flight(job: &DeliveryJob) {
 }
 
 fn fail_job(job: &DeliveryJob, reason: &str) {
+    settle_failure(
+        job,
+        crate::ops::runtime_delivery::DeliveryOutcome::Failed(reason),
+    );
+}
+
+/// The runtime ran this delivery and its bounded retries failed too: the failure
+/// stays visible, and only an explicit delivery request starts it again.
+fn exhaust_job(job: &DeliveryJob, reason: &str) {
+    settle_failure(
+        job,
+        crate::ops::runtime_delivery::DeliveryOutcome::RetriesExhausted(reason),
+    );
+}
+
+fn settle_failure(job: &DeliveryJob, outcome: crate::ops::runtime_delivery::DeliveryOutcome<'_>) {
     if let Err(error) = crate::ops::runtime_delivery::append_state(
         &job.home,
         &job.group.group_id,
@@ -282,7 +298,7 @@ fn fail_job(job: &DeliveryJob, reason: &str) {
         &job.actor.created_at,
         &job.event.id,
         job.transport,
-        crate::ops::runtime_delivery::DeliveryOutcome::Failed(reason),
+        outcome,
     ) {
         tracing::warn!(
             message = %error.message,
@@ -976,7 +992,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 failed_turns.1 += 1;
                 if failed_turns.1 > FAILED_TURN_RETRIES && !batch.is_empty() {
                     let job = batch.remove(0);
-                    fail_job(&job, &reason);
+                    exhaust_job(&job, &reason);
                     tell_sender(&job, false);
                     failed_turns = (String::new(), 0);
                 }
@@ -1381,6 +1397,40 @@ done"#;
             .collect();
         assert_eq!(failures.len(), 1);
         assert!(failures[0].contains("upstream stream ended (HTTP 503)"));
+        // Its retries are used up, so starting the Actor, resuming the Group or
+        // restarting the daemon must not run it again; an explicit retry may.
+        let still_pending =
+            crate::ops::runtime_delivery::pending_sources(&home, &group, &actor, 10)
+                .expect("pending sources")
+                .iter()
+                .any(|source| source.id == event.id);
+        let automatic = crate::ops::runtime_delivery::claim(
+            &home, &group, &actor, &event.id, "deepseek", false,
+        )
+        .expect("automatic claim");
+        assert!(
+            !still_pending
+                && automatic
+                    == crate::ops::runtime_delivery::ClaimResult::Terminal("failed".into()),
+            "used-up delivery: pending={still_pending}, automatic claim={automatic:?}"
+        );
+        let exhausted = events
+            .iter()
+            .rfind(|event| {
+                event.kind == "runtime.delivery"
+                    && event.data.get("state").and_then(serde_json::Value::as_str) == Some("failed")
+            })
+            .expect("failed record");
+        assert_eq!(exhausted.data.get("retryable"), Some(&json!(false)));
+        let (claimed, _) = crate::ops::runtime_delivery::claim_deliveries(
+            &home,
+            &group,
+            &[(&actor, "deepseek")],
+            &event.id,
+            false,
+        )
+        .expect("explicit claim");
+        assert!(claimed, "an explicit retry still claims a used-up delivery");
     }
 
     #[test]

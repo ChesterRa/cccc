@@ -423,6 +423,13 @@ to this qualified route, even when a remote Group ID equals the source Group ID.
 It maps `idempotency_key` to `client_id`, generating a key if omitted. An explicit
 malformed or incomplete remote address fails instead of falling back locally.
 The operation takes only the source Group write permit and performs no network I/O.
+Both `connect_send` and `connect_send_files` reject unknown top-level arguments
+with `unknown_arguments` and
+`details: { unknown: string[], new_side_effects: false }` before replay lookup,
+file/blob handling or durable acceptance. The sorted list contains names only,
+never their values. The public calls accept the qualified destination and
+canonical `client_id`; an internal reply reference is constructed only by the
+existing verified reply path, not supplied to these send calls.
 
 Recipients use the existing recipient normalization and Inbox audience rules.
 Aliases are materialized against the known target catalog into concrete Actor IDs

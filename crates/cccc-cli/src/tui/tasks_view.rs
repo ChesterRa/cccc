@@ -291,7 +291,8 @@ fn details(task: &Task, theme: Theme, width: usize) -> Vec<Line<'static>> {
         (
             "Blocked by",
             fields
-                .get("blocked_by")
+                .get("open_blocked_by")
+                .or_else(|| fields.get("blocked_by"))
                 .and_then(serde_json::Value::as_array)
                 .map(|items| {
                     items

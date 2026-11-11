@@ -160,8 +160,7 @@ it("keeps the ID for a long draft that is sent as a time-named attachment", asyn
   }
 });
 
-it("does not reuse the ID when a remote reply gains its remote parent", async () => {
-  // A receipt that arrives later fills in the remote parent; the retried reply would go elsewhere.
+it("does not reuse the ID when a remote reply changes its parent", async () => {
   const target = {
     eventId: "event-0",
     by: "peer-1",
@@ -175,7 +174,7 @@ it("does not reuse the ID when a remote reply gains its remote parent", async ()
   await act(async () => useComposerStore.getState().setReplyTarget(target));
   await send("answer");
   await act(async () =>
-    useComposerStore.getState().setReplyTarget({ ...target, remoteReplyToEventId: "remote-0" }),
+    useComposerStore.getState().setReplyTarget({ ...target, eventId: "event-1" }),
   );
   await send();
   const [failed, retried] = vi

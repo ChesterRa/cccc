@@ -36,6 +36,10 @@ pub enum DeliveryOutcome<'a> {
     Failed(&'a str),
     /// This attempt stopped before any native transport submission.
     Unsubmitted(&'a str),
+    /// The runtime ran this delivery and it failed again after the delivery
+    /// worker's bounded retries: it stays failed, and automatic delivery does not
+    /// start it again. An explicit delivery request still may.
+    RetriesExhausted(&'a str),
     Ambiguous(&'a str),
     /// Never sent and not to be retried: a newer event supersedes it.
     Withdrawn(&'a str),
@@ -46,7 +50,9 @@ impl<'a> DeliveryOutcome<'a> {
         match self {
             Self::Claimed => ("claimed", ""),
             Self::Accepted => ("accepted", ""),
-            Self::Failed(reason) | Self::Unsubmitted(reason) => ("failed", reason),
+            Self::Failed(reason) | Self::Unsubmitted(reason) | Self::RetriesExhausted(reason) => {
+                ("failed", reason)
+            }
             Self::Ambiguous(reason) => ("ambiguous", reason),
             Self::Withdrawn(reason) => ("withdrawn", reason),
         }
@@ -88,8 +94,14 @@ pub fn append_state(
     .as_object()
     .cloned()
     .expect("runtime delivery data");
-    if matches!(outcome, DeliveryOutcome::Unsubmitted(_)) {
-        event.data.insert("retryable".into(), json!(true));
+    match outcome {
+        DeliveryOutcome::Unsubmitted(_) => {
+            event.data.insert("retryable".into(), json!(true));
+        }
+        DeliveryOutcome::RetriesExhausted(_) => {
+            event.data.insert("retryable".into(), json!(false));
+        }
+        _ => {}
     }
     ledger::append(&store.ledger_path(group_id).map_err(OpError::io)?, &event)
         .map_err(OpError::io)?;
@@ -111,6 +123,8 @@ pub fn latest_state(
     )
 }
 
+/// Claims a delivery for automatic dispatch, which never restarts one whose
+/// automatic retries are used up.
 pub fn claim(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -120,8 +134,14 @@ pub fn claim(
     force_ambiguous: bool,
 ) -> Result<ClaimResult, OpError> {
     let deliveries = [(actor, transport)];
-    let (claimed, states) =
-        claim_deliveries(home, group, &deliveries, source_event_id, force_ambiguous)?;
+    let (claimed, states) = claim_with(
+        home,
+        group,
+        &deliveries,
+        source_event_id,
+        force_ambiguous,
+        true,
+    )?;
     if claimed {
         Ok(ClaimResult::Claimed)
     } else {
@@ -131,12 +151,32 @@ pub fn claim(
     }
 }
 
+/// Claims deliveries for an explicit delivery request, which may also retry a
+/// delivery whose automatic retries are used up.
 pub fn claim_deliveries(
     home: &HomeLayout,
     group: &GroupDoc,
     deliveries: &[(&Actor, &str)],
     source_event_id: &str,
     force_ambiguous: bool,
+) -> Result<(bool, HashMap<String, String>), OpError> {
+    claim_with(
+        home,
+        group,
+        deliveries,
+        source_event_id,
+        force_ambiguous,
+        false,
+    )
+}
+
+fn claim_with(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    deliveries: &[(&Actor, &str)],
+    source_event_id: &str,
+    force_ambiguous: bool,
+    automatic: bool,
 ) -> Result<(bool, HashMap<String, String>), OpError> {
     if std::env::var_os("CCCC_DELIVERY_QUERY_PROBE").is_some_and(|value| value == "1") {
         cccc_runtime::diagnostic(format_args!(
@@ -162,8 +202,13 @@ pub fn claim_deliveries(
                     .map(|state| state.0.clone())
                     .unwrap_or_default();
                 states.insert(actor.id.clone(), state.clone());
+                // Checked under the claim lock: a worker may have used up the
+                // retries after the caller read its pending snapshot.
                 if matches!(state.as_str(), "claimed" | "accepted" | "withdrawn")
                     || (state == "ambiguous" && !force_ambiguous)
+                    || (automatic
+                        && state == "failed"
+                        && inbox::delivery_retry_closed(home, group, &actor.id, source_event_id)?)
                 {
                     claimable = false;
                     break;
@@ -496,10 +541,16 @@ fn legacy_pending_sources(
             if !addressed {
                 continue;
             }
+            let exhausted = state == "failed"
+                && latest
+                    .get(&event.id)
+                    .is_some_and(|value| value["retryable"] == false);
             // Native transport rejections are explicit failures, not an
-            // automatic retry loop that can starve subsequent messages.
+            // automatic retry loop that can starve subsequent messages; nor is a
+            // delivery whose automatic retries are used up.
             // message_deliver still allows an operator to retry them.
             if !matches!(state, "accepted" | "ambiguous" | "withdrawn")
+                && !exhausted
                 && (state != "failed" || actor.external_session_id.is_empty() || retryable)
             {
                 pending.push(event.clone());
@@ -1100,5 +1151,89 @@ mod tests {
             latest_state(&home, &group.group_id, "peer1", "source-1").expect("first state"),
             None
         );
+    }
+
+    #[test]
+    fn a_delivery_that_used_up_its_retries_leaves_automatic_delivery_only() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("used-up retries", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save actor");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut sources = Vec::new();
+        for text in ["used up", "plain failure"] {
+            let mut source = Event::new("chat.message", &group.group_id);
+            source.by = "user".into();
+            source.data = json!({"to":["peer1"],"text":text,"message_mode":"send"})
+                .as_object()
+                .cloned()
+                .expect("source data");
+            ledger::append(&ledger_path, &source).expect("source");
+            assert_eq!(
+                claim(&home, &group, &actor, &source.id, "deepseek", false).expect("claim"),
+                ClaimResult::Claimed
+            );
+            sources.push(source);
+        }
+        let (used_up, plain) = (&sources[0], &sources[1]);
+        let record = append_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &used_up.id,
+            "deepseek",
+            DeliveryOutcome::RetriesExhausted("turn failed: upstream stream ended"),
+        )
+        .expect("used-up failure");
+        assert_eq!(record.data.get("state"), Some(&json!("failed")));
+        assert_eq!(record.data.get("retryable"), Some(&json!(false)));
+        append_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &plain.id,
+            "deepseek",
+            DeliveryOutcome::Failed("delivery worker stopped before runtime acceptance"),
+        )
+        .expect("plain failure");
+
+        // A plain managed failure keeps its automatic recovery; a used-up one
+        // does not, in the projection and in the legacy replay alike.
+        let pending = pending_sources(&home, &group, &actor, 10).expect("pending sources");
+        assert_eq!(
+            pending
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            [plain.id.as_str()]
+        );
+        let legacy = legacy_pending_sources(&home, &group, &actor, 10).expect("legacy pending");
+        assert_eq!(
+            legacy
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            [plain.id.as_str()]
+        );
+        assert_eq!(
+            claim(&home, &group, &actor, &used_up.id, "deepseek", false).expect("automatic claim"),
+            ClaimResult::Terminal("failed".into())
+        );
+        assert_eq!(
+            latest_state(&home, &group.group_id, &actor.id, &used_up.id)
+                .expect("state")
+                .map(|state| state.0),
+            Some("failed".into())
+        );
+        // An explicit delivery request may still retry it.
+        let (claimed, _) =
+            claim_deliveries(&home, &group, &[(&actor, "deepseek")], &used_up.id, false)
+                .expect("explicit claim");
+        assert!(claimed);
     }
 }

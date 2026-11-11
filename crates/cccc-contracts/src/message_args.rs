@@ -24,6 +24,8 @@ pub enum MessageWrite {
     Reply,
     SendFiles,
     SendCrossGroup,
+    /// `connect_send` and `connect_send_files`.
+    ConnectSend,
     TrackedSend,
     SystemNotify,
     SlashSkillDispatch,
@@ -47,6 +49,7 @@ impl MessageWrite {
             Self::Reply => &[CALLER, MESSAGE, CHAT_CHECKED, REPLY, IM],
             Self::SendFiles => &[CALLER, MESSAGE, CHAT_CHECKED, SEND_FILES],
             Self::SendCrossGroup => &[CALLER, MESSAGE, CHAT_CHECKED, SEND_CROSS_GROUP],
+            Self::ConnectSend => &[CALLER, CONNECT_SEND, CHAT_CHECKED],
             Self::TrackedSend => &[CALLER, TRACKED_SEND],
             Self::SystemNotify => &[CALLER, SYSTEM_NOTIFY],
             Self::SlashSkillDispatch => &[CALLER, SLASH_SKILL_DISPATCH],
@@ -112,7 +115,7 @@ const MESSAGE: &[&str] = &[
     "require_peer_insight",
     "client_id",
     "suggested_user_message",
-    // The MCP's idempotency key, accepted as sent; only `client_id` is used.
+    // Only `client_id` selects a replay; this is not a daemon alias.
     "idempotency_key",
 ];
 
@@ -138,8 +141,6 @@ const SEND: &[&str] = &[
     "dst_group_id",
     "dst_to",
     "dst_message_mode",
-    // Sent by the Web's no-MCP send.
-    "title",
 ];
 
 const REPLY: &[&str] = &["reply_to", "quote_text"];
@@ -158,12 +159,24 @@ pub const IM: &[&str] = &[
 
 const SEND_FILES: &[&str] = &["paths", "path", "dst_group_id"];
 
-const SEND_CROSS_GROUP: &[&str] = &[
-    "dst_group_id",
-    "path",
-    "reply_to",
-    "quote_text",
-    "remote_reply_to_event_id",
+const SEND_CROSS_GROUP: &[&str] = &["dst_group_id", "path", "reply_to", "quote_text"];
+
+/// Qualified Connect messages; local file/resource and content restrictions
+/// remain in the operation that owns them.
+const CONNECT_SEND: &[&str] = &[
+    "instance_id",
+    "target_group_id",
+    "client_id",
+    "text",
+    "format",
+    "to",
+    "message_mode",
+    "insight",
+    "require_peer_insight",
+    "attachments",
+    "paths",
+    "refs",
+    "suggested_user_message",
 ];
 
 const TRACKED_SEND: &[&str] = &[
@@ -297,6 +310,20 @@ mod tests {
         assert_eq!(
             unknown(MessageWrite::Send, &keys(&["scope_key"])),
             ["scope_key"]
+        );
+        assert!(
+            unknown(
+                MessageWrite::ConnectSend,
+                &keys(&["instance_id", "target_group_id", "paths", "client_id"])
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            unknown(
+                MessageWrite::ConnectSend,
+                &keys(&["dst_group_id", "idempotency_key", "connect_reply_to"])
+            ),
+            ["connect_reply_to", "dst_group_id", "idempotency_key"]
         );
     }
 

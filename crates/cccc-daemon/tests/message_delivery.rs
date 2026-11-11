@@ -2580,6 +2580,18 @@ fn message_writes_reject_unknown_arguments_before_any_effect() {
         json!({"group_id":group_id,"by":"user","paths":["payload.bin"],"to":["peer1"],"message_mode":"send","caption":"c"}),
         &["caption"],
     );
+    for operation in ["connect_send", "connect_send_files"] {
+        rejected(
+            operation,
+            json!({
+                "group_id":group_id,"by":"user","instance_id":"unresolved-peer",
+                "target_group_id":"remote-group","client_id":"never-accepted",
+                "text":"never-echoed","paths":["payload.bin"],
+                "message_mode":"send","mdoe":"never-echoed"
+            }),
+            &["mdoe"],
+        );
+    }
     rejected(
         "message_upload_preflight",
         json!({

@@ -4121,7 +4121,7 @@ Notes:
 - The managed DeepSeek root manifest and lockfile MUST declare exactly `dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek` as direct dependencies. Every installed `@deepseek-ai/dsh*` package MUST remain on the release declared by `crates/cccc-contracts/src/deepseek.rs`; checking only direct package manifests is insufficient.
 - DeepSeek connection settings MUST use the existing Actor/Profile private environment: `DEEPSEEK_API_KEY` for the credential, `DEEPSEEK_BASE_URL` for the API base URL, and `DEEPSEEK_MODEL` for the provider model ID. Each launch MUST resolve its own trimmed model ID, falling back to `DEEPSEEK_DEFAULT_MODEL` for a missing or blank value. The shared managed ACP config MUST read that process-local model rather than writing an Actor's model into the shared file. Private values MUST remain write-only through the Web API; an unchanged blank field MUST NOT overwrite a saved value. Connection changes take effect on the next explicit launch/restart.
 - For a DeepSeek API base URL with a literal loopback host, the managed Node process MUST bypass the system proxy for that host, preserving its other effective `NO_PROXY` exclusions; non-loopback hosts retain the configured proxy behavior. Failed-turn provider diagnostics MUST replace occurrences of the private environment values actually passed to that process, including an inherited `DEEPSEEK_API_KEY`, before they enter the headless journal or delivery ledger. Changes to saved settings MUST NOT change which values are redacted for an already running process.
-- Each DeepSeek actor MUST set `CCCC_DEEPSEEK_SESSION_ROOT` to `groups/<group_id>/state/deepseek/<actor_id>/sessions` under the active `CCCC_HOME`. A provider turn MUST reach a successful terminal response before its source cursor advances. The shared bounded timeout is a silence window: it restarts after each validated ACP `session/update` is recorded and after each `session/request_permission` is answered and recorded, so the turn times out when neither is recorded within that window. Timeout cancellation MUST be durably projected as a failed turn, or the unconfirmed supervisor MUST be stopped. Output and failed-terminal idempotency keys MUST include the provider-attempt identity so a retry cannot be hidden by partial output from an earlier failed attempt; the successful terminal remains idempotent by source event. Crash recovery MUST query that durable per-source completion marker directly (or through its persistent index) and MUST NOT stop recognizing completed turns merely because the append-only headless event log crossed a size or line-count threshold. A permanent credential or context-window failure MUST persist a manual-restart gate before automatic delivery can run again. The gate MUST be bound to both the actor creation identity and the failed provider launch generation, MUST survive daemon restart, and MUST be cleared only after a lifecycle start/restart operation successfully initializes a replacement provider process; daemon restore and message-triggered auto-wake MUST NOT clear it. A late failure from a replaced generation MUST NOT close the replacement actor's gate.
+- Each DeepSeek actor MUST set `CCCC_DEEPSEEK_SESSION_ROOT` to `groups/<group_id>/state/deepseek/<actor_id>/sessions` under the active `CCCC_HOME`. A provider turn MUST reach a successful terminal response before its source cursor advances. The shared bounded timeout is a silence window: it restarts after each validated ACP `session/update` is recorded and after each `session/request_permission` is answered and recorded, so the turn times out when neither is recorded within that window. Timeout cancellation MUST be durably projected as a failed turn, or the unconfirmed supervisor MUST be stopped. When a failed provider turn uses up the delivery worker's bounded retry budget, its final delivery outcome MUST be recorded as `failed` with `retryable=false`, keeping its reason, so a later Actor start, Group resume or daemon restart does not run it again. Output and failed-terminal idempotency keys MUST include the provider-attempt identity so a retry cannot be hidden by partial output from an earlier failed attempt; the successful terminal remains idempotent by source event. Crash recovery MUST query that durable per-source completion marker directly (or through its persistent index) and MUST NOT stop recognizing completed turns merely because the append-only headless event log crossed a size or line-count threshold. A permanent credential or context-window failure MUST persist a manual-restart gate before automatic delivery can run again. The gate MUST be bound to both the actor creation identity and the failed provider launch generation, MUST survive daemon restart, and MUST be cleared only after a lifecycle start/restart operation successfully initializes a replacement provider process; daemon restore and message-triggered auto-wake MUST NOT clear it. A late failure from a replaced generation MUST NOT close the replacement actor's gate.
 - The managed `dsh-llm-deepseek` profile MUST set `maxTokens` to the shared `DEEPSEEK_MAX_OUTPUT_TOKENS` contract value (currently 65,536), preserving input/tool headroom instead of inheriting the upstream 256k output reservation. Credential absence, recognizable provider authentication rejection (including `Invalid token`, invalid API key, `Authentication Fails`, and a turn failure whose message is `Unauthorized`), and provider context-window overflow are permanent for the current runtime session: they MUST be normalized to stable, secret-free failed-turn errors and MUST stop automatic retries until a lifecycle start/restart successfully initializes the actor again. A rejected credential MUST use `credential_rejected`, distinct from the missing-key `credential_unavailable` error.
 
 #### Voice notification state (trusted local user)
@@ -5008,7 +5008,8 @@ environment. It never copies Analyst, Actor or ASR credentials.
 These message-write operations check the top-level keys of each request before
 they act: `send` and `message_send`, `reply`, `send_files`,
 `send_cross_group`, `tracked_send`, `system_notify`, `slash_skill_dispatch`,
-`local_session_send` and `message_upload_preflight`. Each accepts the Args its
+`local_session_send`, `connect_send`, `connect_send_files` and
+`message_upload_preflight`. Each accepts the Args its
 section lists, the fields it refuses with an error of its own, and the
 metadata CCCC's ports attach; the lists are defined in
 `crates/cccc-contracts/src/message_args.rs`:
@@ -5019,12 +5020,21 @@ metadata CCCC's ports attach; the lists are defined in
 - `_voice_origin`, the Chet voice origin, and `_cccc_chet_web_admin`, Chet
   admission from the Web;
 - `require_peer_insight`, the Agent Insight profile marker;
-- on the chat operations, `idempotency_key` as MCP sends it; only `client_id`
-  selects a replay;
+- on the chat operations, `idempotency_key` is accepted, but only `client_id`
+  selects a replay. MCP normalizes the public `idempotency_key` to `client_id`
+  for message send, reply and file send, including same-instance cross-Group
+  messages and qualified Connect routes;
 - on `send` and `reply`, inbound IM provenance: `transport`, `im_platform`,
   `im_chat_id`, `im_thread_id`, `source_platform`, `source_user_id` and
-  `source_message_id`, which a reply drops; on `send`, the no-MCP advisory's
-  `title`.
+  `source_message_id`, which a reply drops.
+
+Connect writes accept their qualified destination (`instance_id` and
+`target_group_id`), canonical `client_id`, and message content. The operations
+still own their existing content errors: `connect_send` refuses `paths`,
+`connect_send_files` owns copied attachments, and neither shares local refs,
+composer suggestions or a question. Internal replies use the already verified
+original message; callers cannot provide an internal `connect_reply_to` record
+to these public send operations.
 
 The four MCP message-writing tools (`cccc_message_send`, `cccc_message_reply`,
 `cccc_file_send` and `cccc_tracked_send`) and ordinary Web message endpoints
@@ -5657,7 +5667,7 @@ Cross-group send implemented as:
 
 Args:
 ```ts
-{ group_id: string; dst_group_id: string; text?: string; attachments?: AttachmentRefV1[]; by?: string; to?: string[]; message_mode: "send" | "request_reply" | "mail"; insight?: string; require_peer_insight?: boolean; path?: string /* checked against the destination's scopes */; client_id?: string; refs?: ReferenceV1[]; format?: "plain" | "markdown"; suggested_user_message?: string; reply_to?: string; quote_text?: string; remote_reply_to_event_id?: string /* sent by the Web with a reply; stored, not read */ }
+{ group_id: string; dst_group_id: string; text?: string; attachments?: AttachmentRefV1[]; by?: string; to?: string[]; message_mode: "send" | "request_reply" | "mail"; insight?: string; require_peer_insight?: boolean; path?: string /* checked against the destination's scopes */; client_id?: string; refs?: ReferenceV1[]; format?: "plain" | "markdown"; suggested_user_message?: string; reply_to?: string; quote_text?: string }
 ```
 
 Result:
@@ -5897,7 +5907,9 @@ For each concrete recipient handoff, the daemon appends `runtime.delivery`
 using the CCCS contract. `claimed` precedes external I/O; `accepted`, `failed`,
 `ambiguous` or `withdrawn` records the outcome. A transport queue accepting a payload is
 an accepted handoff; it is not a claim that the model understood it. Automatic
-retry is forbidden after `accepted`, `ambiguous` or `withdrawn`. An obsolete
+retry is forbidden after `accepted`, `ambiguous` or `withdrawn`. A `failed`
+record with `retryable=false` has used up its automatic retries: automatic
+delivery MUST NOT start it again, and `message_deliver` MAY retry it. An obsolete
 notice is withdrawn only when its owner can establish that no external submission
 occurred; a stranded claim without that evidence remains ambiguous. Concurrent
 claimants treat `claimed` as in-progress. Daemon startup settles claims stranded by the prior

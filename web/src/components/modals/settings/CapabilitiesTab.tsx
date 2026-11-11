@@ -227,7 +227,6 @@ export function CapabilitiesTab({
         const [overviewResp, groupsResp, stateResp] = await Promise.all([
           api.fetchCapabilityOverview({
             includeIndexed: true,
-            includeSourceInstances: false,
             limit: SELF_PROPOSED_OVERVIEW_LIMIT,
             offset: 0,
             kind: "skill",

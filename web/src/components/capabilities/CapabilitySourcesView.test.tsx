@@ -33,13 +33,7 @@ it("shows source counts and keeps deletion without presenting a source toggle", 
   await act(async () =>
     root.render(
       <>
-        <SourcesView
-          sources={sources}
-          sourceInstances={[]}
-          busyKey=""
-          onDelete={onDelete}
-          onDeleteInstance={vi.fn()}
-        />
+        <SourcesView sources={sources} busyKey="" onDelete={onDelete} />
         <SourcesSummary sources={sources} />
       </>,
     ),

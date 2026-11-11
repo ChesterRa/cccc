@@ -488,17 +488,6 @@ export type CapabilityOverviewItem = {
 
 export type CapabilitySourceState = { source_id: string; record_count?: number };
 
-export type CapabilitySourceInstance = {
-  source_instance_key: string;
-  source_id: string;
-  label?: string;
-  source_uri?: string;
-  record_count?: number;
-  capability_ids?: string[];
-  last_synced_at?: string;
-  sync_state?: string;
-};
-
 export type CapabilityBlockEntry = {
   capability_id: string;
   scope?: string;
@@ -642,7 +631,6 @@ export type ReplyTarget = {
   connectInstanceId?: string;
   remoteDstGroupId?: string;
   remoteDstTo?: string[];
-  remoteReplyToEventId?: string;
 } | null;
 
 export type TaskStep = {

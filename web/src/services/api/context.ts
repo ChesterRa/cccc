@@ -5,7 +5,6 @@ import type {
   CapabilityBlockEntry,
   CapabilityImportRecord,
   CapabilityOverviewItem,
-  CapabilitySourceInstance,
   CapabilitySourceState,
   CapabilityStateResult,
   ContextDetailLevel,
@@ -355,7 +354,6 @@ export async function fetchCapabilityOverview(opts?: {
   policy?: "all" | "actionable" | "blocked" | "indexed";
   sourceId?: string;
   groupId?: string;
-  includeSourceInstances?: boolean;
 }) {
   const params = new URLSearchParams();
   if (String(opts?.query || "").trim()) params.set("query", String(opts?.query || "").trim());
@@ -367,9 +365,6 @@ export async function fetchCapabilityOverview(opts?: {
   }
   if (typeof opts?.includeIndexed === "boolean") {
     params.set("include_indexed", opts.includeIndexed ? "true" : "false");
-  }
-  if (typeof opts?.includeSourceInstances === "boolean") {
-    params.set("include_source_instances", opts.includeSourceInstances ? "true" : "false");
   }
   if (String(opts?.kind || "").trim() && String(opts?.kind || "").trim() !== "all") {
     params.set("kind", String(opts?.kind || "").trim());
@@ -394,7 +389,6 @@ export async function fetchCapabilityOverview(opts?: {
     query?: string;
     kind_counts?: { skill?: number; mcp?: number; pack?: number };
     sources?: Record<string, CapabilitySourceState>;
-    source_instances?: CapabilitySourceInstance[];
     blocked_capabilities?: CapabilityBlockEntry[];
     allowlist_revision?: string;
   }>(`/api/v1/capabilities/overview${suffix}`);
@@ -659,7 +653,7 @@ export async function uninstallCapability(
 export async function deleteCapabilitySource(
   groupId: string,
   sourceId: string,
-  opts?: { actorId?: string; reason?: string; sourceInstanceKey?: string },
+  opts?: { actorId?: string; reason?: string },
 ) {
   return apiJson<Record<string, unknown>>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/sources/delete`,
@@ -667,7 +661,6 @@ export async function deleteCapabilitySource(
       method: "POST",
       body: JSON.stringify({
         source_id: sourceId,
-        source_instance_key: opts?.sourceInstanceKey || "",
         actor_id: opts?.actorId || "user",
         reason: opts?.reason || "",
       }),
@@ -961,21 +954,12 @@ export async function sendCrossGroupMessage(
   to: string[],
   messageMode: MessageMode = "send",
   files?: File[],
-  options?: {
-    replyTo?: string;
-    quoteText?: string;
-    clientId?: string;
-    remoteReplyToEventId?: string;
-    signal?: AbortSignal;
-  },
+  options?: { replyTo?: string; quoteText?: string; clientId?: string; signal?: AbortSignal },
 ) {
   const replyMetadata = {
     ...(options?.replyTo ? { reply_to: options.replyTo } : {}),
     ...(options?.quoteText ? { quote_text: options.quoteText } : {}),
     ...(options?.clientId ? { client_id: options.clientId } : {}),
-    ...(options?.remoteReplyToEventId
-      ? { remote_reply_to_event_id: options.remoteReplyToEventId }
-      : {}),
   };
   if (files && files.length > 0) {
     const tooLarge = attachmentLimitError(files);
