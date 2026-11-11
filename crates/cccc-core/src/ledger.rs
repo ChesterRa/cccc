@@ -1,5 +1,4 @@
 use cccc_contracts::Event;
-use flate2::read::GzDecoder;
 use fs2::FileExt;
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
@@ -8,6 +7,8 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+use crate::ledger_archive::{SegmentCodec, open_segment};
 
 mod reverse;
 pub(crate) mod snapshot;
@@ -353,15 +354,7 @@ pub(crate) fn visit_validated(
     mut visit: impl FnMut(Event) -> io::Result<()>,
 ) -> io::Result<()> {
     for source in source_paths(path)? {
-        if is_gzip(&source) {
-            visit_validated_source(
-                BufReader::new(GzDecoder::new(File::open(&source)?)),
-                &source,
-                &mut visit,
-            )?;
-        } else {
-            visit_validated_source(BufReader::new(File::open(&source)?), &source, &mut visit)?;
-        }
+        visit_validated_source(open_segment(&source)?, &source, &mut visit)?;
     }
     Ok(())
 }
@@ -425,7 +418,8 @@ fn source_paths(path: &Path) -> io::Result<Vec<PathBuf>> {
             .filter(|candidate| is_ledger_segment(candidate))
         {
             let logical = logical_segment_path(&candidate);
-            let replace = !selected.contains_key(&logical) || is_gzip(&candidate);
+            let replace = !selected.contains_key(&logical)
+                || SegmentCodec::from_path(&candidate) == SegmentCodec::Gzip;
             if replace {
                 selected.insert(logical, candidate);
             }
@@ -468,18 +462,14 @@ pub(crate) fn revisions(path: &Path) -> io::Result<Vec<SourceRevision>> {
 }
 
 fn read_source(path: &Path, group_id: &str) -> io::Result<Vec<Event>> {
-    if is_gzip(path) {
-        return read_events(
-            BufReader::new(GzDecoder::new(File::open(path)?)),
-            path,
-            group_id,
-        );
+    if SegmentCodec::from_path(path) == SegmentCodec::Gzip {
+        return read_events(open_segment(path)?, path, group_id);
     }
     read_source_from(path, 0, group_id).map(|(events, _)| events)
 }
 
 fn read_source_from(path: &Path, offset: u64, group_id: &str) -> io::Result<(Vec<Event>, u64)> {
-    if is_gzip(path) {
+    if SegmentCodec::from_path(path) == SegmentCodec::Gzip {
         return if offset == 0 {
             read_source(path, group_id)
                 .and_then(|events| std::fs::metadata(path).map(|metadata| (events, metadata.len())))
@@ -580,12 +570,8 @@ fn is_ledger_segment(path: &Path) -> bool {
     name.ends_with(".jsonl") || name.ends_with(".jsonl.gz")
 }
 
-fn is_gzip(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| extension == "gz")
-}
-
 fn logical_segment_path(path: &Path) -> PathBuf {
-    if !is_gzip(path) {
+    if SegmentCodec::from_path(path) == SegmentCodec::Plain {
         return path.to_path_buf();
     }
     path.with_extension("")
@@ -740,7 +726,7 @@ fn read_source_reverse(
     if limit == 0 {
         return Ok(Vec::new());
     }
-    if is_gzip(path) {
+    if SegmentCodec::from_path(path) == SegmentCodec::Gzip {
         return read_gzip_tail(path, limit, kind, group_id, stop_at);
     }
 
@@ -767,7 +753,7 @@ fn read_gzip_tail(
     group_id: &str,
     stop_at: Option<&str>,
 ) -> io::Result<Vec<Event>> {
-    let mut reader = BufReader::new(GzDecoder::new(File::open(path)?));
+    let mut reader = open_segment(path)?;
     let mut retained = VecDeque::with_capacity(limit.min(1024));
     let mut reached_cursor = stop_at.is_none();
     let mut line = Vec::new();

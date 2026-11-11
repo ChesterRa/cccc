@@ -1,11 +1,9 @@
 //! Short-lock snapshots: retain source identity and committed byte bounds,
 //! pin only the rotating active file, and open immutable archives on demand.
 //! Decoding runs outside the writer lock; caches retain no descriptors.
-use super::{
-    acquire_reader_lock, decode_event_line, is_gzip, ledger_group_id, source_paths, trim_ascii,
-};
+use super::{acquire_reader_lock, decode_event_line, ledger_group_id, source_paths, trim_ascii};
+use crate::ledger_archive::SegmentCodec;
 use cccc_contracts::Event;
-use flate2::read::GzDecoder;
 use std::fs::{File, Metadata};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::ops::ControlFlow;
@@ -162,12 +160,12 @@ impl Snapshot {
         let mut file = self.file(source)?;
         // Cloned descriptors share their offset; each snapshot is used serially.
         file.seek(SeekFrom::Start(0))?;
-        if is_gzip(&token.path) {
+        if SegmentCodec::from_path(&token.path) == SegmentCodec::Gzip {
             #[cfg(test)]
             GZIP_READERS.with(|count| count.set(count.get() + 1));
-            let mut decoded = GzDecoder::new(file.take(token.len));
+            let mut decoded = SegmentCodec::Gzip.open_reader(file.take(token.len));
             io::copy(&mut decoded.by_ref().take(offset), &mut io::sink())?;
-            Ok(Box::new(BufReader::new(decoded)))
+            Ok(decoded)
         } else {
             file.seek(SeekFrom::Start(offset))?;
             Ok(Box::new(BufReader::new(
@@ -265,11 +263,13 @@ impl Snapshot {
                 offset = end;
                 line.clear();
             }
-            ends.push(if is_gzip(&token.path) {
-                u64::MAX
-            } else {
-                offset
-            });
+            ends.push(
+                if SegmentCodec::from_path(&token.path) == SegmentCodec::Gzip {
+                    u64::MAX
+                } else {
+                    offset
+                },
+            );
         }
         Ok(ends)
     }
@@ -289,7 +289,7 @@ impl Snapshot {
                 end += 1;
             }
             let mut position = ordered[start].1.offset;
-            let mut compressed = if is_gzip(&token.path) {
+            let mut compressed = if SegmentCodec::from_path(&token.path) == SegmentCodec::Gzip {
                 Some(self.reader(source, position)?)
             } else {
                 None

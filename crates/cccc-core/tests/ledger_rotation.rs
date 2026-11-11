@@ -1,6 +1,22 @@
 use cccc_contracts::Event;
 use cccc_core::{GroupStore, HomeLayout, ledger, ledger_archive};
+use serde_json::json;
 use std::io::Write;
+
+fn use_plain_segments(store: &GroupStore, group_id: &str) {
+    store
+        .mutate(group_id, |group| {
+            group
+                .extra
+                .entry("settings".to_owned())
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .expect("settings object")
+                .insert("ledger_segment_codec".into(), json!("none"));
+            Ok(())
+        })
+        .expect("plain segment codec");
+}
 
 #[test]
 fn follower_preserves_unseen_events_across_rotation_and_refill() {
@@ -10,6 +26,7 @@ fn follower_preserves_unseen_events_across_rotation_and_refill() {
         let home = HomeLayout::from_path(temp.path()).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("rotation", "").expect("group");
+        use_plain_segments(&store, &group.group_id);
         let path = store.ledger_path(&group.group_id).expect("ledger");
         let mut initial = Event::new("chat.message", &group.group_id);
         initial
@@ -78,6 +95,7 @@ fn missing_rotation_cursor_fails_without_advancing_and_recovers_after_repair() {
     let home = HomeLayout::from_path(temp.path()).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("missing cursor", "").expect("group");
+    use_plain_segments(&store, &group.group_id);
     let path = store.ledger_path(&group.group_id).expect("ledger");
     let initial = Event::new("chat.message", &group.group_id);
     ledger::append(&path, &initial).expect("initial");
