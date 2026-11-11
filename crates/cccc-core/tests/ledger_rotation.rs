@@ -135,7 +135,9 @@ fn missing_rotation_cursor_fails_without_advancing_and_recovers_after_repair() {
         .expect("compact")
         .expect("segment");
     let original = std::fs::read(&segment).expect("original");
-    std::fs::write(&segment, b"").expect("damage isolated archive");
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    let empty = encoder.finish().expect("empty gzip");
+    std::fs::write(&segment, empty).expect("damage isolated archive");
     let next = Event::new("chat.message", &group.group_id);
     ledger::append(&path, &next).expect("next");
     assert_eq!(
