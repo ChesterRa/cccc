@@ -84,7 +84,7 @@ async fn run(
     group_ids.extend(crate::ops::automation_runtime::pending_delivery_group_ids());
     group_ids.extend(exited.keys().cloned());
     let auto_home = home.clone();
-    let auto_groups = group_ids.iter().cloned().collect();
+    let auto_groups = group_ids.clone();
     run_groups(
         home,
         locks,
