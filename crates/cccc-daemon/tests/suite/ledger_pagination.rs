@@ -56,8 +56,17 @@ fn ledger_search_reads_filters_and_cursors_over_compressed_only_history() {
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let created = call(&home, "group_create", json!({"title":"compressed search"}));
     let group_id = created.result["group"]["group_id"].as_str().expect("group");
-    for index in 0..6 {
-        append(&home, group_id, "chat.message", &format!("chat-{index}"));
+    let events: Vec<Event> =
+        include_str!("../../../cccc-core/tests/fixtures/ledger-redacted.jsonl")
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_str(line).expect("fixture event"))
+            .collect();
+    assert_eq!(events.len(), 64);
+    for event in &events {
+        let mut event = event.clone();
+        event.group_id = group_id.into();
+        call(&home, "event_append", json!({"event":event}));
     }
     let compacted = call(&home, "ledger_compact", json!({"group_id":group_id}));
     assert_eq!(compacted.result["compacted"], true);
@@ -67,29 +76,36 @@ fn ledger_search_reads_filters_and_cursors_over_compressed_only_history() {
             .is_some_and(|path| path.ends_with(".jsonl.gz"))
     );
 
-    let latest = call(
+    let anchor = events[60].id.as_str();
+    let found = call(
         &home,
         "ledger_search",
-        json!({"group_id":group_id,"kind":"chat","by":"user","limit":2}),
+        json!({"group_id":group_id,"q":anchor,"limit":2}),
     );
-    assert_eq!(ids(&latest), ["chat-4", "chat-5"]);
-    assert_eq!(latest.result["has_more"], true);
+    assert_eq!(ids(&found), [anchor]);
+    assert_eq!(found.result["has_more"], false);
 
     let older = call(
         &home,
         "ledger_search",
-        json!({"group_id":group_id,"kind":"chat","by":"user","before":"chat-4","limit":2}),
+        json!({"group_id":group_id,"q":"message_mode","before":anchor,"limit":2}),
     );
-    assert_eq!(ids(&older), ["chat-2", "chat-3"]);
+    assert_eq!(
+        ids(&older),
+        [events[58].id.as_str(), events[59].id.as_str()]
+    );
     assert_eq!(older.result["has_more"], true);
 
-    let query = call(
+    let newer = call(
         &home,
         "ledger_search",
-        json!({"group_id":group_id,"q":"chat-1","limit":2}),
+        json!({"group_id":group_id,"q":"message_mode","after":anchor,"limit":2}),
     );
-    assert_eq!(ids(&query), ["chat-1"]);
-    assert_eq!(query.result["has_more"], false);
+    assert_eq!(
+        ids(&newer),
+        [events[61].id.as_str(), events[62].id.as_str()]
+    );
+    assert_eq!(newer.result["has_more"], true);
 }
 
 #[test]

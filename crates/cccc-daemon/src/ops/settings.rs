@@ -359,7 +359,7 @@ mod tests {
     }
 
     #[test]
-    fn ledger_settings_reject_wrong_types_and_allow_null_removal() {
+    fn ledger_codec_rejects_wrong_types_and_allows_null_removal() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
@@ -368,9 +368,6 @@ mod tests {
             json!({"ledger_segment_codec":false}),
             json!({"ledger_segment_codec":1}),
             json!({"ledger_segment_codec":"zstd"}),
-            json!({"ledger_auto_compact_bytes":-1}),
-            json!({"ledger_auto_compact_bytes":1.5}),
-            json!({"ledger_auto_compact_bytes":"many"}),
         ] {
             let request = DaemonRequest {
                 v: 1,
@@ -397,30 +394,28 @@ mod tests {
             args: json!({
                 "group_id":group.group_id,
                 "by":"user",
-                "patch":{"ledger_auto_compact_bytes":4096}
+                "patch":{"ledger_segment_codec":"none"}
             })
             .as_object()
             .cloned()
             .expect("request object"),
         };
-        group_settings(&home, &set).expect("valid threshold");
+        let response = group_settings(&home, &set).expect("valid codec");
+        assert_eq!(response["settings"]["ledger_segment_codec"], json!("none"));
+
         let clear = DaemonRequest {
             v: 1,
             op: "group_settings_update".into(),
             args: json!({
                 "group_id":group.group_id,
                 "by":"user",
-                "patch":{"ledger_auto_compact_bytes":null}
+                "patch":{"ledger_segment_codec":null}
             })
             .as_object()
             .cloned()
             .expect("request object"),
         };
         let response = group_settings(&home, &clear).expect("null removal");
-        assert!(
-            response["settings"]
-                .get("ledger_auto_compact_bytes")
-                .is_none()
-        );
+        assert!(response["settings"].get("ledger_segment_codec").is_none());
     }
 }

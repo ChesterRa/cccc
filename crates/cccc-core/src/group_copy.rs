@@ -1,5 +1,6 @@
 use cccc_contracts::{Event, GroupState, utc_now};
 use flate2::Compression;
+use flate2::bufread::GzDecoder;
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -13,7 +14,6 @@ use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::ledger_archive::{SegmentCodec, SegmentInput};
 use crate::{GroupDoc, GroupStore, Registry, Scope, scope};
 
 const KIND: &str = "cccc.group_copy";
@@ -743,8 +743,7 @@ fn count_unchanged_gzip(data: &[u8], decoded_bytes: &mut u64) -> io::Result<()> 
     // Validate the same first gzip member the ledger reader would read, while
     // retaining the compressed input byte-for-byte when identity is unchanged.
     let remaining = MAX_UNCOMPRESSED_BYTES - *decoded_bytes;
-    let mut reader = SegmentInput::new(SegmentCodec::Gzip, data);
-    let mut decoder = (&mut reader).take(remaining.saturating_add(1));
+    let mut decoder = GzDecoder::new(data).take(remaining.saturating_add(1));
     let count = io::copy(&mut decoder, &mut io::sink())?;
     if count > remaining {
         return Err(io::Error::other("group copy expands beyond 2 GiB"));
@@ -775,10 +774,11 @@ fn rewrite_segment(
     // publication; errors leave the destination unpublished and staging is
     // removed by import_prepared.
     let output = staged_private_file(path)?;
-    if SegmentCodec::from_name(relative).compressed() {
+    if relative.ends_with(".gz") {
         // The ledger reader uses a single-member decoder. A concatenated member
         // or trailing data must not become newly visible after rewriting.
-        let mut reader = SegmentInput::new(SegmentCodec::Gzip, data);
+        let decoder = GzDecoder::new(data);
+        let mut reader = BufReader::new(decoder);
         let mut encoder = GzEncoder::new(output, Compression::default());
         let decoded = rewrite_history_lines(
             &mut reader,
@@ -787,7 +787,7 @@ fn rewrite_segment(
             MAX_REWRITE_LINE_BYTES,
             MAX_UNCOMPRESSED_BYTES - *decoded_bytes,
         )?;
-        if reader.has_trailing_data() {
+        if !reader.into_inner().into_inner().is_empty() {
             return Err(io::Error::other(
                 "group copy history gzip has more than one member or trailing data",
             ));
