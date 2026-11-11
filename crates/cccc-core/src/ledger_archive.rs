@@ -1,5 +1,6 @@
 use cccc_contracts::utc_now;
 use flate2::Compression;
+use flate2::bufread::GzDecoder as BufGzDecoder;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use fs2::FileExt;
@@ -10,6 +11,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::fs::{read_json, write_json};
 use crate::ledger;
@@ -62,15 +64,71 @@ impl SegmentCodec {
     }
 
     pub(crate) fn open_reader<'a, R: Read + 'a>(self, reader: R) -> Box<dyn BufRead + 'a> {
-        match self {
-            Self::Plain => Box::new(BufReader::new(reader)),
-            Self::Gzip => Box::new(BufReader::new(GzDecoder::new(reader))),
-        }
+        open_segment_reader(self, reader)
+    }
+}
+
+pub(crate) fn open_segment_reader<'a, R: Read + 'a>(
+    codec: SegmentCodec,
+    reader: R,
+) -> Box<dyn BufRead + 'a> {
+    match codec {
+        SegmentCodec::Plain => Box::new(BufReader::new(reader)),
+        SegmentCodec::Gzip => Box::new(BufReader::new(GzDecoder::new(reader))),
     }
 }
 
 pub(crate) fn open_segment(path: &Path) -> io::Result<Box<dyn BufRead>> {
     Ok(SegmentCodec::from_path(path).open_reader(fs::File::open(path)?))
+}
+
+/// In-memory segment input used by the copy path. Keeping the concrete gzip
+/// reader lets the caller retain its decoded-byte budget and detect trailing
+/// members without opening a second decoder implementation.
+pub(crate) enum SegmentInput<'a> {
+    Plain(BufReader<&'a [u8]>),
+    Gzip(BufReader<BufGzDecoder<&'a [u8]>>),
+}
+
+impl<'a> SegmentInput<'a> {
+    pub(crate) fn new(codec: SegmentCodec, data: &'a [u8]) -> Self {
+        match codec {
+            SegmentCodec::Plain => Self::Plain(BufReader::new(data)),
+            SegmentCodec::Gzip => Self::Gzip(BufReader::new(BufGzDecoder::new(data))),
+        }
+    }
+
+    pub(crate) fn has_trailing_data(&self) -> bool {
+        match self {
+            Self::Plain(_) => false,
+            Self::Gzip(reader) => !reader.get_ref().get_ref().is_empty(),
+        }
+    }
+}
+
+impl Read for SegmentInput<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Plain(reader) => reader.read(buffer),
+            Self::Gzip(reader) => reader.read(buffer),
+        }
+    }
+}
+
+impl BufRead for SegmentInput<'_> {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        match self {
+            Self::Plain(reader) => reader.fill_buf(),
+            Self::Gzip(reader) => reader.fill_buf(),
+        }
+    }
+
+    fn consume(&mut self, amount: usize) {
+        match self {
+            Self::Plain(reader) => reader.consume(amount),
+            Self::Gzip(reader) => reader.consume(amount),
+        }
+    }
 }
 
 pub fn snapshot(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<LedgerSnapshot> {
@@ -133,29 +191,54 @@ fn snapshot_locked(
     Ok(snapshot)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CompactMode {
+    Manual,
+    Auto,
+}
+
 pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Option<PathBuf>> {
+    compact_with_mode(home, group_id, reason, CompactMode::Manual, None)
+}
+
+fn compact_with_mode(
+    home: &HomeLayout,
+    group_id: &str,
+    reason: &str,
+    mode: CompactMode,
+    cancelled: Option<&AtomicBool>,
+) -> io::Result<Option<PathBuf>> {
     let store = GroupStore::new(home.clone())?;
     let codec = configured_codec(&store.load(group_id)?)?;
     let active = store.ledger_path(group_id)?;
     let lock = ledger::acquire_writer_lock(&active)?;
     let result = (|| {
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Ok(None);
+        }
         if !active.exists() || active.metadata()?.len() == 0 {
             return Ok(None);
         }
-        snapshot_locked(&store, group_id, reason, &active)?;
+        if mode == CompactMode::Manual {
+            snapshot_locked(&store, group_id, reason, &active)?;
+        }
         let state = store.state_dir(group_id)?.join("ledger");
         let segments = state.join("segments");
         fs::create_dir_all(&segments)?;
         let manifest_path = state.join("manifest.json");
-        let mut manifest = reconcile_manifest(load_manifest(&manifest_path)?, &segments)?;
-        let sequence = manifest
-            .get("next_segment_seq")
-            .and_then(Value::as_u64)
-            .unwrap_or(1)
-            .max(1);
+        let mut manifest = load_manifest(&manifest_path)?;
+        if mode == CompactMode::Manual {
+            manifest = reconcile_manifest(manifest, &segments)?;
+        } else if !manifest["segments"].is_array() {
+            manifest["segments"] = json!([]);
+        }
+        let sequence = next_segment_sequence(&manifest, &segments)?;
         let created_at = stamp();
         let base_name = format!("ledger.{created_at}.{sequence:06}.jsonl");
         let plain_destination = segments.join(&base_name);
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Ok(None);
+        }
         // Publish the plain segment first. A crash after this rename leaves a
         // discoverable segment, never an unreadable half-written archive.
         fs::rename(&active, &plain_destination)?;
@@ -166,7 +249,13 @@ pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Op
             let gzip_name = format!("{base_name}.gz");
             let destination = segments.join(&gzip_name);
             let temp = segments.join(format!(".{gzip_name}.tmp"));
-            match compress_verified(&plain_destination, &temp, &plain_sha256, line_count) {
+            match compress_verified(
+                &plain_destination,
+                &temp,
+                &plain_sha256,
+                line_count,
+                cancelled,
+            ) {
                 Ok(()) => {
                     fs::rename(&temp, &destination)?;
                     crate::fs::sync_dir(&segments)?;
@@ -211,13 +300,14 @@ pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Op
         manifest["active"] = json!({"path":"ledger.jsonl"});
         manifest["next_segment_seq"] = json!(sequence + 1);
         manifest["updated_at"] = json!(created_at);
-        if !manifest["segments"].is_array() {
-            manifest["segments"] = json!([]);
-        }
         manifest["segments"]
             .as_array_mut()
             .expect("segments initialized")
             .push(segment);
+        #[cfg(test)]
+        if take_fail_manifest_write() {
+            return Err(io::Error::other("injected ledger manifest write failure"));
+        }
         write_json(&manifest_path, &manifest)?;
         Ok(Some(destination))
     })();
@@ -226,42 +316,97 @@ pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Op
 }
 
 /// Compact the active ledger when the group's configured byte threshold is
-/// exceeded. Zero disables automatic compaction.
-pub fn maybe_compact(home: &HomeLayout, group_id: &str) -> io::Result<Option<PathBuf>> {
+/// exceeded. Zero disables automatic compaction. The automatic path skips the
+/// full-history snapshot and reconciliation; it only touches the active file
+/// and the new segment, so it cannot be used to repair a stale manifest.
+pub fn maybe_compact(
+    home: &HomeLayout,
+    group_id: &str,
+    cancelled: Option<&AtomicBool>,
+) -> io::Result<Option<PathBuf>> {
     let store = GroupStore::new(home.clone())?;
-    let threshold = auto_compact_bytes(&store.load(group_id)?);
+    let threshold = auto_compact_bytes(&store.load(group_id)?)?;
     if threshold == 0 {
+        return Ok(None);
+    }
+    if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
         return Ok(None);
     }
     let active = store.ledger_path(group_id)?;
     if !active.exists() || active.metadata()?.len() <= threshold {
         return Ok(None);
     }
-    compact(home, group_id, "auto")
+    compact_with_mode(home, group_id, "auto", CompactMode::Auto, cancelled)
+}
+
+/// Validate the ledger settings accepted by the normal group-settings patch.
+/// Null is the existing merge API's way to remove a key and restore its
+/// default, so it is accepted separately from a present invalid value.
+pub fn validate_settings(patch: &serde_json::Map<String, Value>) -> io::Result<()> {
+    if let Some(value) = patch.get("ledger_segment_codec")
+        && !value.is_null()
+        && !matches!(value.as_str(), Some("gzip" | "none"))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ledger_segment_codec must be gzip or none",
+        ));
+    }
+    if let Some(value) = patch.get("ledger_auto_compact_bytes")
+        && !value.is_null()
+        && value.as_u64().is_none()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ledger_auto_compact_bytes must be a non-negative integer",
+        ));
+    }
+    Ok(())
 }
 
 fn configured_codec(group: &GroupDoc) -> io::Result<SegmentCodec> {
-    match setting(group, "ledger_segment_codec")
-        .and_then(Value::as_str)
-        .unwrap_or("gzip")
-    {
-        "gzip" => Ok(SegmentCodec::Gzip),
-        "none" => Ok(SegmentCodec::Plain),
-        value => Err(io::Error::new(
+    match setting(group, "ledger_segment_codec") {
+        None => Ok(SegmentCodec::Gzip),
+        Some(Value::String(value)) if value == "gzip" => Ok(SegmentCodec::Gzip),
+        Some(Value::String(value)) if value == "none" => Ok(SegmentCodec::Plain),
+        Some(value) => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("ledger_segment_codec must be gzip or none, got {value:?}"),
+            format!("ledger_segment_codec must be gzip or none, got {value}"),
         )),
     }
 }
 
-fn auto_compact_bytes(group: &GroupDoc) -> u64 {
-    setting(group, "ledger_auto_compact_bytes")
-        .and_then(|value| {
-            value
-                .as_u64()
-                .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
-        })
-        .unwrap_or(0)
+fn auto_compact_bytes(group: &GroupDoc) -> io::Result<u64> {
+    match setting(group, "ledger_auto_compact_bytes") {
+        None => Ok(0),
+        Some(value) => value.as_u64().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("ledger_auto_compact_bytes must be a non-negative integer, got {value}"),
+            )
+        }),
+    }
+}
+
+fn next_segment_sequence(manifest: &Value, segments_dir: &Path) -> io::Result<u64> {
+    let manifested = manifest
+        .get("next_segment_seq")
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .max(1);
+    let mut physical = 0_u64;
+    if segments_dir.is_dir() {
+        for entry in fs::read_dir(segments_dir)? {
+            let entry = entry?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if let Some((_, sequence, _, _)) = parse_segment_name(&name) {
+                physical = physical.max(sequence);
+            }
+        }
+    }
+    Ok(manifested.max(physical.saturating_add(1)).max(1))
 }
 
 fn setting<'a>(group: &'a GroupDoc, key: &str) -> Option<&'a Value> {
@@ -277,10 +422,11 @@ fn compress_verified(
     temp: &Path,
     expected_sha256: &str,
     expected_lines: u64,
+    cancelled: Option<&AtomicBool>,
 ) -> io::Result<()> {
     let mut source = BufReader::new(fs::File::open(plain)?);
     let mut encoder = GzEncoder::new(fs::File::create(temp)?, Compression::default());
-    io::copy(&mut source, &mut encoder)?;
+    copy_with_cancel(&mut source, &mut encoder, cancelled)?;
     let file = encoder.finish()?;
     file.sync_all()?;
     #[cfg(test)]
@@ -295,6 +441,27 @@ fn compress_verified(
         ));
     }
     Ok(())
+}
+
+fn copy_with_cancel(
+    source: &mut impl Read,
+    target: &mut impl Write,
+    cancelled: Option<&AtomicBool>,
+) -> io::Result<()> {
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        if cancelled.is_some_and(|flag| flag.load(Ordering::Acquire)) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "ledger segment compression cancelled",
+            ));
+        }
+        let read = source.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(());
+        }
+        target.write_all(&buffer[..read])?;
+    }
 }
 
 fn segment_stats(path: &Path, codec: SegmentCodec) -> io::Result<(u64, String)> {
@@ -321,6 +488,7 @@ fn segment_stats(path: &Path, codec: SegmentCodec) -> io::Result<(u64, String)> 
 #[cfg(test)]
 thread_local! {
     static TRUNCATE_GZIP_TMP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static FAIL_MANIFEST_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -331,6 +499,16 @@ fn fail_next_gzip_verification() {
 #[cfg(test)]
 fn take_truncate_gzip_tmp() -> bool {
     TRUNCATE_GZIP_TMP.with(|flag| flag.replace(false))
+}
+
+#[cfg(test)]
+fn fail_next_manifest_write() {
+    FAIL_MANIFEST_WRITE.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+fn take_fail_manifest_write() -> bool {
+    FAIL_MANIFEST_WRITE.with(|flag| flag.replace(false))
 }
 
 fn stamp() -> String {
@@ -885,7 +1063,7 @@ mod tests {
             json!(0),
         );
         assert!(
-            maybe_compact(&home, &group.group_id)
+            maybe_compact(&home, &group.group_id, None)
                 .expect("disabled auto compact")
                 .is_none()
         );
@@ -897,7 +1075,7 @@ mod tests {
             "ledger_auto_compact_bytes",
             json!(1),
         );
-        let segment = maybe_compact(&home, &group.group_id)
+        let segment = maybe_compact(&home, &group.group_id, None)
             .expect("auto compact")
             .expect("segment");
         assert!(
@@ -916,9 +1094,122 @@ mod tests {
         assert_eq!(manifest["segments"][0]["reason"], "auto");
         assert_eq!(manifest["segments"][0]["codec"], "gzip");
         assert!(
-            maybe_compact(&home, &group.group_id)
+            maybe_compact(&home, &group.group_id, None)
                 .expect("empty active")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn invalid_ledger_settings_fail_instead_of_defaulting() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("invalid settings", "").expect("group");
+        let active = store.ledger_path(&group.group_id).expect("ledger");
+        fs::write(&active, real_fixture()).expect("fixture ledger");
+
+        set_setting(
+            &store,
+            &group.group_id,
+            "ledger_segment_codec",
+            json!(false),
+        );
+        let error = compact(&home, &group.group_id, "test").expect_err("invalid codec");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+
+        set_setting(
+            &store,
+            &group.group_id,
+            "ledger_segment_codec",
+            json!("gzip"),
+        );
+        set_setting(
+            &store,
+            &group.group_id,
+            "ledger_auto_compact_bytes",
+            json!("many"),
+        );
+        let error = maybe_compact(&home, &group.group_id, None).expect_err("invalid threshold");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(fs::read(&active).expect("active"), real_fixture());
+    }
+
+    #[test]
+    fn auto_compact_does_not_reconcile_old_history() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("auto does not reconcile", "").expect("group");
+        let active = store.ledger_path(&group.group_id).expect("ledger");
+        fs::write(&active, real_fixture()).expect("fixture ledger");
+        let old = compact(&home, &group.group_id, "manual")
+            .expect("manual compact")
+            .expect("segment");
+        let old_bytes = fs::read(&old).expect("old segment");
+        fs::write(&old, b"not a gzip member").expect("corrupt old segment");
+
+        let extra = Event::new("chat.message", &group.group_id);
+        ledger::append(&active, &extra).expect("append");
+        set_setting(
+            &store,
+            &group.group_id,
+            "ledger_auto_compact_bytes",
+            json!(1),
+        );
+        let segment = maybe_compact(&home, &group.group_id, None)
+            .expect("auto compact ignores old history")
+            .expect("segment");
+        assert!(segment.exists());
+        assert_eq!(
+            fs::read(&old).expect("old segment"),
+            b"not a gzip member".as_slice()
+        );
+    }
+
+    #[test]
+    fn published_segment_survives_manifest_write_failure_and_is_reconciled() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("manifest failure", "").expect("group");
+        let active = store.ledger_path(&group.group_id).expect("ledger");
+        let bytes = real_fixture();
+        let expected = fixture_events(&bytes);
+        fs::write(&active, &bytes).expect("fixture ledger");
+
+        fail_next_manifest_write();
+        assert!(compact(&home, &group.group_id, "test").is_err());
+        let segments = store
+            .state_dir(&group.group_id)
+            .expect("state")
+            .join("ledger/segments");
+        assert_eq!(
+            fs::read_dir(&segments)
+                .expect("segments")
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".jsonl.gz"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            ledger::read_all(&active).expect("published gzip").len(),
+            expected.len()
+        );
+
+        ledger::append(&active, &Event::new("chat.message", &group.group_id)).expect("append");
+        compact(&home, &group.group_id, "repair").expect("reconcile");
+        let manifest: Value = read_json(
+            &store
+                .state_dir(&group.group_id)
+                .expect("state")
+                .join("ledger/manifest.json"),
+        )
+        .expect("manifest");
+        assert_eq!(manifest["segments"].as_array().expect("segments").len(), 2);
+        assert_eq!(
+            ledger::read_all(&active).expect("all events").len(),
+            expected.len() + 1
         );
     }
 

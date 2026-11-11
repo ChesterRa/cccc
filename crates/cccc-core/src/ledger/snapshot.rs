@@ -160,10 +160,11 @@ impl Snapshot {
         let mut file = self.file(source)?;
         // Cloned descriptors share their offset; each snapshot is used serially.
         file.seek(SeekFrom::Start(0))?;
-        if SegmentCodec::from_path(&token.path) == SegmentCodec::Gzip {
+        let codec = SegmentCodec::from_path(&token.path);
+        if codec.compressed() {
             #[cfg(test)]
             GZIP_READERS.with(|count| count.set(count.get() + 1));
-            let mut decoded = SegmentCodec::Gzip.open_reader(file.take(token.len));
+            let mut decoded = codec.open_reader(file.take(token.len));
             io::copy(&mut decoded.by_ref().take(offset), &mut io::sink())?;
             Ok(decoded)
         } else {
@@ -263,13 +264,11 @@ impl Snapshot {
                 offset = end;
                 line.clear();
             }
-            ends.push(
-                if SegmentCodec::from_path(&token.path) == SegmentCodec::Gzip {
-                    u64::MAX
-                } else {
-                    offset
-                },
-            );
+            ends.push(if SegmentCodec::from_path(&token.path).compressed() {
+                u64::MAX
+            } else {
+                offset
+            });
         }
         Ok(ends)
     }
@@ -289,7 +288,7 @@ impl Snapshot {
                 end += 1;
             }
             let mut position = ordered[start].1.offset;
-            let mut compressed = if SegmentCodec::from_path(&token.path) == SegmentCodec::Gzip {
+            let mut compressed = if SegmentCodec::from_path(&token.path).compressed() {
                 Some(self.reader(source, position)?)
             } else {
                 None

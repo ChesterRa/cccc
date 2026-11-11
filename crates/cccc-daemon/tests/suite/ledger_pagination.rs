@@ -51,6 +51,48 @@ fn chat_pagination_filters_noise_before_applying_limit() {
 }
 
 #[test]
+fn ledger_search_reads_filters_and_cursors_over_compressed_only_history() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"compressed search"}));
+    let group_id = created.result["group"]["group_id"].as_str().expect("group");
+    for index in 0..6 {
+        append(&home, group_id, "chat.message", &format!("chat-{index}"));
+    }
+    let compacted = call(&home, "ledger_compact", json!({"group_id":group_id}));
+    assert_eq!(compacted.result["compacted"], true);
+    assert!(
+        compacted.result["segment"]
+            .as_str()
+            .is_some_and(|path| path.ends_with(".jsonl.gz"))
+    );
+
+    let latest = call(
+        &home,
+        "ledger_search",
+        json!({"group_id":group_id,"kind":"chat","by":"user","limit":2}),
+    );
+    assert_eq!(ids(&latest), ["chat-4", "chat-5"]);
+    assert_eq!(latest.result["has_more"], true);
+
+    let older = call(
+        &home,
+        "ledger_search",
+        json!({"group_id":group_id,"kind":"chat","by":"user","before":"chat-4","limit":2}),
+    );
+    assert_eq!(ids(&older), ["chat-2", "chat-3"]);
+    assert_eq!(older.result["has_more"], true);
+
+    let query = call(
+        &home,
+        "ledger_search",
+        json!({"group_id":group_id,"q":"chat-1","limit":2}),
+    );
+    assert_eq!(ids(&query), ["chat-1"]);
+    assert_eq!(query.result["has_more"], false);
+}
+
+#[test]
 fn sender_union_uses_one_history_cursor_and_filters_before_limiting() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

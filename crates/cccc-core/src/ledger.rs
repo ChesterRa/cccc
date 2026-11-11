@@ -419,7 +419,7 @@ fn source_paths(path: &Path) -> io::Result<Vec<PathBuf>> {
         {
             let logical = logical_segment_path(&candidate);
             let replace = !selected.contains_key(&logical)
-                || SegmentCodec::from_path(&candidate) == SegmentCodec::Gzip;
+                || SegmentCodec::from_path(&candidate).compressed();
             if replace {
                 selected.insert(logical, candidate);
             }
@@ -462,14 +462,14 @@ pub(crate) fn revisions(path: &Path) -> io::Result<Vec<SourceRevision>> {
 }
 
 fn read_source(path: &Path, group_id: &str) -> io::Result<Vec<Event>> {
-    if SegmentCodec::from_path(path) == SegmentCodec::Gzip {
+    if SegmentCodec::from_path(path).compressed() {
         return read_events(open_segment(path)?, path, group_id);
     }
     read_source_from(path, 0, group_id).map(|(events, _)| events)
 }
 
 fn read_source_from(path: &Path, offset: u64, group_id: &str) -> io::Result<(Vec<Event>, u64)> {
-    if SegmentCodec::from_path(path) == SegmentCodec::Gzip {
+    if SegmentCodec::from_path(path).compressed() {
         return if offset == 0 {
             read_source(path, group_id)
                 .and_then(|events| std::fs::metadata(path).map(|metadata| (events, metadata.len())))
@@ -726,7 +726,7 @@ fn read_source_reverse(
     if limit == 0 {
         return Ok(Vec::new());
     }
-    if SegmentCodec::from_path(path) == SegmentCodec::Gzip {
+    if SegmentCodec::from_path(path).compressed() {
         return read_gzip_tail(path, limit, kind, group_id, stop_at);
     }
 

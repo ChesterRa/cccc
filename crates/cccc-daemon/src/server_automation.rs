@@ -83,7 +83,18 @@ async fn run(
         .collect::<BTreeSet<_>>();
     group_ids.extend(crate::ops::automation_runtime::pending_delivery_group_ids());
     group_ids.extend(exited.keys().cloned());
-    run_groups(home, locks, include_unread, group_ids, exited, cancelled).await;
+    let auto_home = home.clone();
+    let auto_groups = group_ids.iter().cloned().collect();
+    run_groups(
+        home,
+        locks,
+        include_unread,
+        group_ids,
+        exited,
+        cancelled.clone(),
+    )
+    .await;
+    run_auto_compaction(auto_home, auto_groups, cancelled).await;
 }
 
 async fn run_groups(
@@ -134,6 +145,39 @@ async fn run_groups(
         });
     }
     while tasks.join_next().await.is_some() {}
+}
+
+/// Automatic compaction runs after all group ticks, outside the group write
+/// guard and maintenance permits. It is serialized so a small threshold cannot
+/// occupy the whole maintenance pool with gzip work. The writer lock still
+/// excludes appends while a segment is sealed, but cancellation is checked
+/// during compression and the automatic path never scans old history.
+async fn run_auto_compaction(home: HomeLayout, group_ids: Vec<String>, cancelled: Arc<AtomicBool>) {
+    let semaphore = Arc::new(Semaphore::new(1));
+    for group_id in group_ids {
+        if cancelled.load(Ordering::Acquire) {
+            break;
+        }
+        let Ok(permit) = semaphore.clone().acquire_owned().await else {
+            break;
+        };
+        let home = home.clone();
+        let task_cancelled = Arc::clone(&cancelled);
+        let _ = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            if task_cancelled.load(Ordering::Acquire) {
+                return;
+            }
+            if let Err(error) = cccc_core::ledger_archive::maybe_compact(
+                &home,
+                &group_id,
+                Some(&task_cancelled),
+            ) {
+                tracing::warn!(diagnostic_action = "ledger_auto_compact", diagnostic_code = crate::diagnostic_log::io_code(&error), %error, %group_id, "automatic ledger compaction failed");
+            }
+        })
+        .await;
+    }
 }
 
 async fn prepare_exited() -> BTreeMap<String, Vec<cccc_runtime::SessionStatus>> {

@@ -32,9 +32,6 @@ pub fn pending_delivery_group_ids() -> Vec<String> {
 
 pub fn maintain_group(home: &HomeLayout, group_id: &str, exited: Vec<cccc_runtime::SessionStatus>) {
     actor_delivery::drain_group(home, group_id);
-    if let Err(error) = cccc_core::ledger_archive::maybe_compact(home, group_id) {
-        tracing::warn!(diagnostic_action = "ledger_auto_compact", diagnostic_code = crate::diagnostic_log::io_code(&error), %error, %group_id, "automatic ledger compaction failed");
-    }
     if let Err(error) = actor_runtime::reconcile_exited(home, exited) {
         tracing::warn!(diagnostic_action = "runtime_reconcile", diagnostic_code = %error.code, message = %error.message, %group_id, "runtime reconciliation failed");
     }

@@ -90,12 +90,43 @@ fn follower_preserves_unseen_events_across_rotation_and_refill() {
 }
 
 #[test]
+fn follower_reads_gzip_segments_created_by_default_rotation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("default gzip rotation", "").expect("group");
+    let path = store.ledger_path(&group.group_id).expect("ledger");
+    ledger::append(&path, &Event::new("chat.message", &group.group_id)).expect("initial");
+    let (mut follower, _) = ledger::LedgerFollower::at_end(&path).expect("follower");
+    let before = Event::new("chat.message", &group.group_id);
+    ledger::append(&path, &before).expect("unseen before rotation");
+    let first = ledger_archive::compact(&home, &group.group_id, "fixture")
+        .expect("rotate")
+        .expect("segment");
+    assert!(
+        first
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".jsonl.gz"))
+    );
+    let after = Event::new("chat.message", &group.group_id);
+    ledger::append(&path, &after).expect("after rotation");
+    let actual: Vec<_> = follower
+        .poll(&path)
+        .expect("poll gzip rotation")
+        .into_iter()
+        .map(|event| event.id)
+        .collect();
+    assert_eq!(actual, vec![before.id, after.id]);
+    assert!(follower.poll(&path).expect("poll again").is_empty());
+}
+
+#[test]
 fn missing_rotation_cursor_fails_without_advancing_and_recovers_after_repair() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("missing cursor", "").expect("group");
-    use_plain_segments(&store, &group.group_id);
     let path = store.ledger_path(&group.group_id).expect("ledger");
     let initial = Event::new("chat.message", &group.group_id);
     ledger::append(&path, &initial).expect("initial");

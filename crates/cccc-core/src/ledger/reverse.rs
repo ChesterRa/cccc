@@ -35,7 +35,7 @@ pub(super) fn visit_source_newest_first(
     group_id: &str,
     visit: &mut impl FnMut(Event) -> ControlFlow<()>,
 ) -> io::Result<ControlFlow<()>> {
-    if SegmentCodec::from_path(path) == SegmentCodec::Gzip {
+    if SegmentCodec::from_path(path).compressed() {
         // Compressed segments only decode forward; rotation bounds each one.
         for event in read_source(path, group_id)?.into_iter().rev() {
             if visit(event).is_break() {
