@@ -556,16 +556,21 @@ export function BacklogPanel({
     const heading = (
       <>
         <span className="min-w-0 break-words">{sectionLabel(section.name, tr)}</span>
-        <span className={classNames("shrink-0 font-normal tabular-nums", ui.mutedTextClass)}>
+        <span
+          data-backlog-section-count=""
+          className={classNames("shrink-0 font-normal tabular-nums", ui.mutedTextClass)}
+        >
           {section.entries.length}
         </span>
       </>
     );
+    // Framed as a task column is: the head reads "Entries 13", then one record per entry.
     return (
       <section
         key={`${section.line}:${section.name}`}
         aria-labelledby={headingId}
-        className="min-w-0"
+        data-backlog-section=""
+        className="min-w-0 rounded-2xl border glass-panel"
       >
         {section.closed ? (
           <button
@@ -573,7 +578,8 @@ export function BacklogPanel({
             id={headingId}
             aria-expanded={open}
             onClick={() => setClosedOpen(!closedOpen)}
-            className="flex min-h-9 w-full items-center gap-2 rounded-md px-1 text-left text-sm font-semibold hover:bg-[var(--color-bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+            data-backlog-section-head=""
+            className="flex min-h-9 w-full items-center gap-2 px-3 text-left text-sm font-semibold hover:bg-[var(--color-bg-hover)] focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
           >
             {open ? (
               <ChevronDownIcon size={14} aria-hidden="true" />
@@ -583,12 +589,16 @@ export function BacklogPanel({
             {heading}
           </button>
         ) : (
-          <h3 id={headingId} className="flex min-h-9 items-center gap-2 px-1 text-sm font-semibold">
+          <h3
+            id={headingId}
+            data-backlog-section-head=""
+            className="flex min-h-9 items-center gap-2 px-3 text-sm font-semibold"
+          >
             {heading}
           </h3>
         )}
         {open && section.entries.length > 0 ? (
-          <ul className="space-y-0.5">
+          <ul data-backlog-section-items="">
             {section.entries.map((entry) => {
               const key = entryKey(entry);
               const located = { entry, section };

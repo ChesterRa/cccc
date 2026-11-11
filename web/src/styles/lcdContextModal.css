@@ -442,8 +442,9 @@
 
 /* ---------- Columns ---------- */
 /* A column is a rule frame on the main ground: the panel surface would lower the
-   text's contrast. The head reads "Active 4"; a drop target's frame turns dashed. */
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column] {
+   text's contrast. The head reads "Active 4"; a drop target's frame turns dashed.
+   A Backlog section is the same frame. */
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-task-column], [data-backlog-section]) {
   padding: 0;
   border: 1px solid var(--lcd-rule-strong);
   background: transparent;
@@ -454,14 +455,18 @@
   border-color: var(--lcd-ink);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-head] {
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-task-column-head], [data-backlog-section-head]) {
   justify-content: flex-start;
   gap: 1ch;
   padding: 0.375rem 0.75rem;
   border-bottom: 1px solid var(--lcd-rule-strong);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-count] {
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-task-column-count], [data-backlog-section-count]) {
   padding: 0;
   border-width: 0;
   background: none;
@@ -470,12 +475,22 @@
   font-variant-numeric: tabular-nums;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-items] {
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-task-column-items], [data-backlog-section-items]) {
   margin-top: 0;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-items] > * {
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-task-column-items], [data-backlog-section-items])
+  > * {
   margin-block: 0;
+}
+
+/* A folded closed section, or an empty one, is its head alone: the frame closes it. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-backlog-section-head]:last-child {
+  border-bottom-width: 0;
 }
 
 :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-empty] {
@@ -495,8 +510,9 @@
 /* ---------- Rows ---------- */
 /* A task is a record, not a card: title, one line of summary, then the meta line.
    As in the sidebar's group list, the row under the pointer is soft and the row
-   open in the drawer is reversed. */
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-row] {
+   open in the drawer is reversed. A Backlog entry is the same record without the
+   summary line; its open row is reversed above the entry's text. */
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-task-row], [data-backlog-row]) {
   --task-row-bg: var(--lcd-bg);
   position: relative;
   display: flex;
@@ -508,24 +524,31 @@
   cursor: pointer;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-column-items] > * + * > [data-task-row] {
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-task-column-items], [data-backlog-section-items])
+  > *
+  + *
+  > :is([data-task-row], [data-backlog-row]) {
   border-top: 1px solid var(--lcd-rule);
 }
 
 @media (hover: hover) {
-  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-row]:hover {
+  :root[data-ui-style="lcd"] [data-lcd-scope] :is([data-task-row], [data-backlog-row]):hover {
     --task-row-bg: var(--lcd-sel-soft);
   }
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-row][data-selected] {
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-task-row], [data-backlog-row])[data-selected] {
   --task-row-bg: var(--lcd-sel-bg);
   color: var(--lcd-sel-fg);
 }
 
 /* The whole row opens the task on a tap, so the title, which carries keyboard
    focus, needs no touch-size box of its own. */
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-title] {
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-task-title], [data-backlog-title]) {
   display: block;
   width: 100%;
   min-width: 0;
@@ -538,18 +561,25 @@
   overflow-wrap: anywhere;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-title] > span {
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-task-title], [data-backlog-title]) > span {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
 
-/* While a search is on, the whole title shows, so a match in it is always seen. */
+/* While a search is on, the whole title shows, so a match in it is always seen. An
+   open Backlog entry shows its whole title too, as its text below does not repeat it
+   and a phone has no hover tip. */
 :root[data-ui-style="lcd"]
   [data-lcd-scope]
   [data-task-row][data-searching]
   [data-task-title]
+  > span,
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  [data-backlog-row][data-selected]
+  [data-backlog-title]
   > span {
   display: block;
   -webkit-line-clamp: unset;
@@ -581,7 +611,7 @@
   text-underline-offset: 0.15em;
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-meta] {
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-task-meta], [data-backlog-meta]) {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -619,14 +649,34 @@
 
 :root[data-ui-style="lcd"]
   [data-lcd-scope]
-  [data-task-row][data-selected]
+  :is([data-task-row], [data-backlog-row])[data-selected]
   :is(
     [data-task-summary],
     [data-task-excerpt],
     [data-task-meta],
-    [data-task-note]:not([data-task-note="waiting-user"])
+    [data-task-note]:not([data-task-note="waiting-user"]),
+    [data-backlog-meta]
   ) {
   color: var(--lcd-sel-fg);
+}
+
+/* A linked task in a Backlog entry's meta line: its mark and ID, opening the task.
+   It keeps the line's height on touch screens too, as the task title does; the
+   padding reaches into the row's own spacing, so it is easier to tap without
+   moving the text. */
+:root[data-ui-style="lcd"] [data-lcd-scope] [data-backlog-task] {
+  min-height: 0;
+  margin-block: -0.25rem;
+  padding: 0.25rem 0;
+  background: none;
+  color: inherit;
+}
+
+@media (hover: hover) {
+  :root[data-ui-style="lcd"] [data-lcd-scope] [data-backlog-task]:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+  }
 }
 
 /* The danger tone cannot hold on the reversed ground; an underline keeps the
@@ -641,7 +691,7 @@
 
 /* The quick action and the drag handle. A touch screen keeps them in a column
    beside the text, at touch size, so they never add a line to the row. */
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-task-body] {
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-task-body], [data-backlog-body]) {
   flex: 1 1 auto;
   min-width: 0;
 }

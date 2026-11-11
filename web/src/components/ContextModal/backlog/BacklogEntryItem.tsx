@@ -1,7 +1,7 @@
 import { useId } from "react";
 import type { BacklogEntry, BacklogTaskLink, Task } from "../../../types";
 import { classNames } from "../../../utils/classNames";
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "../../Icons";
+import { CheckIcon } from "../../Icons";
 import { LazyMarkdownRenderer } from "../../LazyMarkdownRenderer";
 import { taskStatusLabel, type ContextTranslator } from "../model";
 import type { ContextModalUi } from "../ui";
@@ -138,35 +138,37 @@ export function BacklogEntryItem({
 
   return (
     <li id={domId} data-backlog-entry="" className="min-w-0 scroll-mt-4">
-      <div className="flex min-w-0 items-start gap-1">
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={bodyId}
-          onClick={onToggle}
-          className={classNames(
-            "flex min-h-9 min-w-0 flex-1 items-start gap-1.5 rounded-md px-1 py-1.5 text-left text-sm focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]",
-            "hover:bg-[var(--color-bg-hover)]",
-            closed ? "text-[var(--color-text-secondary)]" : "text-[var(--color-text-primary)]",
-          )}
-        >
-          {expanded ? (
-            <ChevronDownIcon size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
-          ) : (
-            <ChevronRightIcon size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
-          )}
-          <span className="min-w-0 break-words">{entry.title || "—"}</span>
-        </button>
-        {entry.tasks.length > 0 ? (
-          <div className="flex shrink-0 flex-wrap justify-end gap-0.5 pt-0.5">
-            {entry.tasks.map((task) => (
-              <LinkedTask key={task.id} task={task} tr={tr} onOpen={onOpenTask} />
-            ))}
-          </div>
-        ) : null}
+      {/* The same record as a task row, without its summary line: an entry has no field
+          that sums it up, and the first line of its text is often its history. The title,
+          then the linked tasks; the whole row opens the entry's text, and the open one is
+          reversed, as the task open in the drawer is. */}
+      <div data-backlog-row="" data-selected={expanded || undefined} onClick={onToggle}>
+        <div data-backlog-body="">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            aria-controls={bodyId}
+            title={entry.title || undefined}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggle();
+            }}
+            data-backlog-title=""
+          >
+            {/* A span holds the clamp: line clamping is unreliable on a button box. */}
+            <span>{entry.title || "—"}</span>
+          </button>
+          {entry.tasks.length > 0 ? (
+            <div data-backlog-meta="" onClick={(event) => event.stopPropagation()}>
+              {entry.tasks.map((task) => (
+                <LinkedTask key={task.id} task={task} tr={tr} onOpen={onOpenTask} />
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
       {expanded ? (
-        <div id={bodyId} className="space-y-3 pb-3 pl-6 pr-1 pt-1">
+        <div id={bodyId} data-backlog-detail="" className="space-y-3 px-3 pb-3 pt-2">
           {blocked ? (
             <p className="text-xs text-amber-700 dark:text-amber-400">
               {entry.problems

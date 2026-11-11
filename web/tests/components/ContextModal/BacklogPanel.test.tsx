@@ -90,6 +90,7 @@ let reload: ReturnType<typeof vi.fn>;
 let onLinkSource: ReturnType<typeof vi.fn>;
 let onArchiveTask: ReturnType<typeof vi.fn>;
 let onTaskPromoted: ReturnType<typeof vi.fn>;
+let onOpenTask: ReturnType<typeof vi.fn>;
 let dropForm: () => void;
 
 function Harness({
@@ -124,7 +125,7 @@ function Harness({
       isDark={false}
       tr={tr}
       ui={ui}
-      onOpenTask={vi.fn()}
+      onOpenTask={onOpenTask as (taskId: string) => void}
       onTaskPromoted={onTaskPromoted as (taskId: string) => Promise<void>}
       onLinkSource={onLinkSource as never}
       onArchiveTask={onArchiveTask as (taskId: string) => Promise<string>}
@@ -183,6 +184,7 @@ beforeEach(() => {
   }));
   onArchiveTask = vi.fn(async () => "");
   onTaskPromoted = vi.fn(async () => {});
+  onOpenTask = vi.fn();
   Object.defineProperty(window, "confirm", { value: vi.fn(() => true), configurable: true });
 });
 
@@ -446,5 +448,44 @@ describe("BacklogPanel writes that fail part way", () => {
       path: "BACKLOG.md",
     });
     expect(onTaskPromoted).toHaveBeenCalledWith("T50");
+  });
+});
+
+describe("BacklogPanel rows", () => {
+  it("shows a folded entry as its title and linked tasks, and an open one with its text", async () => {
+    const linked: BacklogEntry = {
+      ...entry(
+        SYNC_ID,
+        "Sync speed",
+        5,
+        "## Why\n- Slow on `big` groups, see [the log](log.md).\nMore.\n",
+      ),
+      tasks: [{ id: "T7", title: "Cache tasks", status: "active" }],
+    };
+    await render(snapshot(undefined, undefined, { sections: [section("Now", 3, [linked])] }));
+    const row = host.querySelector<HTMLElement>("[data-backlog-row]");
+    if (!row) throw new Error("Missing row");
+    const title = row.querySelector<HTMLButtonElement>("[data-backlog-title]");
+    if (!title) throw new Error("Missing title");
+    expect(host.querySelector("[data-backlog-section-count]")?.textContent).toBe("1");
+    expect(title.textContent).toBe("Sync speed");
+    // Folded, the row shows no line of the text: its first line is often history, not a summary.
+    expect(row.textContent).not.toContain("Slow on");
+
+    // The linked task sits in the meta line and opens the task, not the entry.
+    const chip = row.querySelector<HTMLButtonElement>("[data-backlog-meta] [data-backlog-task]");
+    expect(chip?.getAttribute("aria-label")).toBe("T7 · Active · Cache tasks");
+    await act(async () => chip?.click());
+    expect(onOpenTask).toHaveBeenCalledWith("T7");
+    expect(row.hasAttribute("data-selected")).toBe(false);
+
+    // The whole row opens the entry; the title is the same switch and toggles once.
+    await act(async () => row.click());
+    expect(row.hasAttribute("data-selected")).toBe(true);
+    expect(title.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector("[data-backlog-detail]")).not.toBeNull();
+    await act(async () => title.click());
+    expect(title.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector("[data-backlog-detail]")).toBeNull();
   });
 });

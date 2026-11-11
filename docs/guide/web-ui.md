@@ -1385,8 +1385,9 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
 
   `##` headings are sections, in your own names and order; only a section named
   exactly `Closed` holds finished topics. `###` headings are topics, and headings
-  inside a topic use `####` or deeper. Expand a topic to read it, with its linked
-  tasks beside the title. **Create task…** makes a Planned task from it, or opens
+  inside a topic use `####` or deeper. A topic is a row like a task's, with its
+  linked tasks under the title; open the row to read the topic, or a linked task
+  to open that task. **Create task…** makes a Planned task from it, or opens
   the topic's unfinished task if it has one. **Edit**, **Move to…** and
   **Close…** change the topic; closing asks for a one-line outcome, adds it with
   the date and moves the topic to Closed, where **Reopen…** moves it back. The
