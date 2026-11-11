@@ -1146,7 +1146,6 @@ mod tests {
         let old = compact(&home, &group.group_id, "manual")
             .expect("manual compact")
             .expect("segment");
-        let old_bytes = fs::read(&old).expect("old segment");
         fs::write(&old, b"not a gzip member").expect("corrupt old segment");
 
         let extra = Event::new("chat.message", &group.group_id);
