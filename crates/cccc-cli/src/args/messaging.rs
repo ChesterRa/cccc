@@ -183,8 +183,47 @@ pub struct LedgerArgs {
     pub action: LedgerAction,
 }
 
+#[derive(Debug, Args)]
+pub struct SearchArgs {
+    /// Target Group ID; omit to use the current Group.
+    #[arg(long = "group")]
+    pub group_id: Option<String>,
+    /// Exact sender identity stored on the event.
+    #[arg(long)]
+    pub by: Option<String>,
+    /// Sender identity to include; repeat to match any one of them.
+    #[arg(long = "by-any")]
+    pub by_any: Vec<String>,
+    /// Exact recipient identity stored in the event's recipient list.
+    #[arg(long)]
+    pub to: Option<String>,
+    /// Inclusive RFC3339 lower bound on event time.
+    #[arg(long, value_name = "RFC3339")]
+    pub since: Option<String>,
+    /// Inclusive RFC3339 upper bound on event time.
+    #[arg(long, value_name = "RFC3339")]
+    pub until: Option<String>,
+    /// Event kind to include: all, chat or notify.
+    #[arg(long, default_value = "all", value_parser = ["all", "chat", "notify"])]
+    pub kind: String,
+    /// Case-insensitive text search over the whole event.
+    #[arg(short = 'q', long = "query", alias = "q")]
+    pub query: Option<String>,
+    /// Exclusive event ID to search before.
+    #[arg(long)]
+    pub before: Option<String>,
+    /// Exclusive event ID to search after.
+    #[arg(long)]
+    pub after: Option<String>,
+    /// Maximum number of matching events to return; the daemon clamps to 1-200.
+    #[arg(short = 'n', long = "limit", default_value_t = 50)]
+    pub limit: u64,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum LedgerAction {
+    /// Search the ledger with sender, recipient, time, kind, text and cursor filters.
+    Search(SearchArgs),
     /// Record a snapshot of the Group's ledger with counts and a hash.
     Snapshot {
         /// Target Group ID; omit to use the current Group.

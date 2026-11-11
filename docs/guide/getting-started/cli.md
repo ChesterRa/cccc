@@ -188,6 +188,7 @@ cccc reply <event_id> "response"   # Reply to message
 cccc inbox --actor-id assistant    # Read and consume an agent's unread Mail
 cccc tail -n 50                    # Recent events
 cccc tail -f                       # Follow events
+cccc ledger search --by assistant  # Search events by sender
 ```
 
 ### Daemon Control
