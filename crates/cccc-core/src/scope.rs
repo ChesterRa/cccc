@@ -120,9 +120,10 @@ mod tests {
         let global = temp.path().join("gitconfig");
         std::fs::write(&global, "").expect("gitconfig");
         let config_home = home.join(".config");
+        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         let env = [
             ("GIT_CONFIG_GLOBAL", global.as_os_str()),
-            ("GIT_CONFIG_SYSTEM", OsStr::new("/dev/null")),
+            ("GIT_CONFIG_SYSTEM", OsStr::new(null)),
             ("GIT_CONFIG_COUNT", OsStr::new("0")),
             ("HOME", home.as_os_str()),
             ("XDG_CONFIG_HOME", config_home.as_os_str()),
