@@ -105,7 +105,54 @@ pub(super) fn fields(
             ),
         }
     } else if runner_effective == "headless" {
-        ("idle".to_owned(), "headless_running".to_owned(), None, None)
+        // The runner's own turn record. `status` is authoritative because a
+        // stopped or waiting runner can leave a stale turn id behind. A live
+        // turn id is still a working fallback for records written before the
+        // status field existed. No runner lock is taken and the ledger is
+        // never rescanned — `actor_state` reads the small per-actor record the
+        // runner updates on its turn events. No record is not "idle": the
+        // state cannot be known, so the reason says so.
+        match super::runtime_state::actor_state(home, group_id, &actor.id) {
+            Ok(runtime) if !runtime.is_null() => {
+                let status = runtime["status"].as_str().filter(|value| !value.is_empty());
+                let active_turn = runtime["active_turn_id"]
+                    .as_str()
+                    .filter(|value| !value.is_empty());
+                let state = match status {
+                    Some(value) if matches!(value, "working" | "idle" | "waiting" | "stopped") => {
+                        value
+                    }
+                    _ if active_turn.is_some() => "working",
+                    _ => "idle",
+                };
+                let updated_at = if state == "working" {
+                    runtime["updated_at"].as_str()
+                } else {
+                    runtime["last_turn_end"].as_str()
+                }
+                .map(str::to_owned);
+                let active_task_id = if state == "working" {
+                    runtime["task_id"]
+                        .as_str()
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned)
+                } else {
+                    None
+                };
+                (
+                    state.to_owned(),
+                    "headless_turn_record".to_owned(),
+                    updated_at,
+                    active_task_id,
+                )
+            }
+            _ => (
+                "waiting".to_owned(),
+                "headless_state_unknown".to_owned(),
+                None,
+                None,
+            ),
+        }
     } else {
         (
             "waiting".to_owned(),

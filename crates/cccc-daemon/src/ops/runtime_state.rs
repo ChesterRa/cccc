@@ -833,7 +833,7 @@ pub(super) fn finish_completion(
     let owns_active_projection =
         runtime["active_turn_id"].as_str() == Some(completion.turn_id.as_str());
     if owns_active_projection {
-        set_runtime_status(home, group, actor_id, "waiting", "", "", &[])?;
+        end_runtime_turn(home, group, actor_id, &receipt.ts)?;
     }
     object(json!({
         "status":completion.status,
@@ -963,7 +963,7 @@ fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResu
         if runtime_state == "failed"
             && actor_state(home, &group.group_id, &actor_id)?["active_turn_id"] == turn_id.as_str()
         {
-            set_runtime_status(home, &group, &actor_id, "waiting", "", "", &[])?;
+            end_runtime_turn(home, &group, &actor_id, &utc_now())?;
         }
     }
     object(json!({"event":event}))
@@ -1133,7 +1133,8 @@ fn default_state(group: &GroupDoc, actor_id: &str) -> Value {
         "active_turn_id":"",
         "latest_event_id":"",
         "active_event_ids":[],
-        "updated_at":utc_now()
+        "updated_at":utc_now(),
+        "last_turn_end":null
     })
 }
 
@@ -1152,6 +1153,25 @@ fn set_runtime_status(
         state["active_turn_id"] = json!(active_turn_id);
         state["latest_event_id"] = json!(latest_event_id);
         state["active_event_ids"] = json!(event_ids);
+        state["updated_at"] = json!(utc_now());
+        Ok(())
+    })
+}
+
+/// Close a turn without letting later empty polls rewrite when it ended.
+fn end_runtime_turn(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    ended_at: &str,
+) -> Result<(), OpError> {
+    update_actor_state(home, &group.group_id, actor_id, |state| {
+        ensure_state(state, group, actor_id);
+        state["status"] = json!("waiting");
+        state["active_turn_id"] = json!("");
+        state["latest_event_id"] = json!("");
+        state["active_event_ids"] = json!([]);
+        state["last_turn_end"] = json!(ended_at);
         state["updated_at"] = json!(utc_now());
         Ok(())
     })
@@ -1282,7 +1302,7 @@ pub(super) fn settle_active_turn(
             outcome,
         )?;
     }
-    set_runtime_status(home, group, &actor.id, "waiting", "", "", &[])
+    end_runtime_turn(home, group, &actor.id, &utc_now())
 }
 
 fn turn_event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
