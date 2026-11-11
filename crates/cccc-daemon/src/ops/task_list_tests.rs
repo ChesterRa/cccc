@@ -3,6 +3,13 @@ use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
 
+fn captured_tasks() -> Vec<Value> {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/open-blocked-by/tasks.json"
+    ))
+    .expect("captured tasks")
+}
+
 fn request(group_id: &str, args: Value) -> DaemonRequest {
     let mut args = args.as_object().cloned().expect("args");
     args.insert("group_id".into(), json!(group_id));
@@ -398,17 +405,24 @@ fn forged_open_blocked_by_cannot_hide_a_planned_blocker() {
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("tasks", "").expect("group");
     let contexts = ContextStore::new(home.clone()).expect("contexts");
+    let captured = captured_tasks();
+    let blocked = &captured[0];
+    let blocker = &captured[1];
     let ops = [
         json!({
             "op":"task.create",
-            "title":"planned blocker",
-            "client_request_id":"planned-blocker",
+            "title":blocker["title"],
+            "status":blocker["status"],
+            "task_type":blocker["task_type"],
+            "client_request_id":"captured-blocker",
         }),
         json!({
             "op":"task.create",
-            "title":"blocked task",
-            "client_request_id":"blocked-task",
-            "blocked_by_refs":["planned-blocker"],
+            "title":blocked["title"],
+            "status":blocked["status"],
+            "task_type":blocked["task_type"],
+            "client_request_id":"captured-blocked",
+            "blocked_by_refs":["captured-blocker"],
             "open_blocked_by":[],
         }),
     ]
@@ -423,20 +437,20 @@ fn forged_open_blocked_by_cannot_hide_a_planned_blocker() {
     let blocker_id = stored
         .tasks
         .iter()
-        .find(|task| task["title"] == "planned blocker")
+        .find(|task| task["title"] == blocker["title"])
         .and_then(|task| task["id"].as_str())
         .expect("blocker id")
         .to_owned();
     let blocked = stored
         .tasks
         .iter()
-        .find(|task| task["title"] == "blocked task")
+        .find(|task| task["title"] == blocked["title"])
         .expect("blocked task");
     assert!(blocked.get("open_blocked_by").is_none());
 
     let listed = run(&home, &request(&group.group_id, json!({}))).expect("listed");
     assert_eq!(
-        task_named(&listed["tasks"], "blocked task")["open_blocked_by"],
+        task_named(&listed["tasks"], blocked["title"].as_str().expect("title"))["open_blocked_by"],
         json!([blocker_id.clone()])
     );
 
@@ -446,7 +460,10 @@ fn forged_open_blocked_by_cannot_hide_a_planned_blocker() {
         "summary",
     );
     assert_eq!(
-        task_named(&projected["coordination"]["tasks"], "blocked task")["open_blocked_by"],
+        task_named(
+            &projected["coordination"]["tasks"],
+            blocked["title"].as_str().expect("title")
+        )["open_blocked_by"],
         json!([blocker_id])
     );
     assert_eq!(projected["attention"]["blocked"], 1);

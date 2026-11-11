@@ -210,6 +210,9 @@ pub(super) fn update(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
     if let Some(value) = task_type {
         task.insert("task_type".into(), Value::String(value.into()));
     }
+    // `open_blocked_by` is derived on every read. An update must not leave a
+    // value written by an older writer in the stored task either.
+    task.remove("open_blocked_by");
     task.insert("updated_at".into(), Value::String(utc_now()));
     Ok(())
 }
@@ -500,5 +503,33 @@ mod tests {
         )
         .expect("delete planned subtree");
         assert!(disposable.tasks.is_empty());
+    }
+
+    #[test]
+    fn update_removes_a_forged_open_blocked_by_field() {
+        let mut doc = ContextDoc {
+            tasks: serde_json::from_str(include_str!(
+                "../../tests/fixtures/task-revision/tasks.json"
+            ))
+            .expect("captured tasks"),
+            ..ContextDoc::default()
+        };
+        let index = doc
+            .tasks
+            .iter()
+            .position(|task| task["id"] == "T792")
+            .expect("captured task");
+        doc.tasks[index].insert("open_blocked_by".into(), json!(["T999"]));
+
+        update(
+            &mut doc,
+            &operation(json!({
+                "op":"task.update","task_id":"T792","title":"renamed"
+            })),
+        )
+        .expect("update");
+
+        assert!(doc.tasks[index].get("open_blocked_by").is_none());
+        assert_eq!(doc.tasks[index]["title"], "renamed");
     }
 }
