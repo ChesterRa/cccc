@@ -31,6 +31,7 @@ pub(super) fn create(
         });
     }
     let title = required(op, "title")?.trim().to_owned();
+    validate_source(op)?;
     let parent = match (
         nullable_id(op, "parent_id")?,
         nullable_id(op, "parent_ref")?,
@@ -56,7 +57,14 @@ pub(super) fn create(
     });
     let waiting_on = enum_value(op, "waiting_on", WAITING_ON)?;
     let mut task = op.clone();
-    for key in ["op", "if_task_rev", "rev", "parent_ref", "blocked_by_refs"] {
+    for key in [
+        "op",
+        "if_task_rev",
+        "rev",
+        "parent_ref",
+        "blocked_by_refs",
+        "ever_executed",
+    ] {
         task.remove(key);
     }
     let number = doc
@@ -68,6 +76,7 @@ pub(super) fn create(
     task.insert("id".into(), Value::String(task_id.clone()));
     task.insert("title".into(), Value::String(title));
     task.insert("status".into(), Value::String(status.into()));
+    mark_executed(&mut task);
     task.insert("task_type".into(), Value::String(task_type.into()));
     match parent {
         Some(parent_id) => task.insert("parent_id".into(), Value::String(parent_id)),
@@ -151,6 +160,7 @@ fn blocked_by_with_refs(
 }
 
 pub(super) fn update(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Result<()> {
+    validate_source(op)?;
     let task_id = required(op, "task_id")?.trim().to_owned();
     find(doc, &task_id)?;
     let title = op
@@ -182,6 +192,7 @@ pub(super) fn update(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
         "task_type",
         "notes",
         "checklist",
+        "source",
     ];
     for key in allowed {
         if let Some(value) = op.get(key) {
@@ -223,12 +234,14 @@ pub(super) fn move_task(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Re
     let status = enum_value(op, "status", TASK_STATUSES)?
         .ok_or_else(|| io::Error::other("status is required"))?;
     let task = find_mut(doc, task_id)?;
+    mark_executed(task);
     let previous = task
         .get("status")
         .and_then(Value::as_str)
         .unwrap_or("planned")
         .to_owned();
     if previous == status {
+        mark_executed(task);
         return Ok(());
     }
     if status == "archived" {
@@ -237,6 +250,7 @@ pub(super) fn move_task(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Re
         task.remove("archived_from");
     }
     task.insert("status".into(), Value::String(status.into()));
+    mark_executed(task);
     task.insert("updated_at".into(), Value::String(utc_now()));
     Ok(())
 }
@@ -252,6 +266,7 @@ pub(super) fn restore(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resu
         .filter(|status| TASK_STATUSES.contains(&status.as_str()) && status != "archived")
         .unwrap_or_else(|| "planned".into());
     task.insert("status".into(), Value::String(restored));
+    mark_executed(task);
     task.insert("updated_at".into(), Value::String(utc_now()));
     Ok(())
 }
@@ -264,7 +279,7 @@ pub(super) fn delete(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Resul
         task.get("id")
             .and_then(Value::as_str)
             .is_some_and(|task_id| removing.iter().any(|candidate| candidate == task_id))
-            && !is_unexecuted(task)
+            && !task_is_unexecuted(task)
     }) {
         let task_id = task.get("id").and_then(Value::as_str).unwrap_or(id);
         return Err(io::Error::other(format!(
@@ -289,7 +304,11 @@ pub(super) fn maximum_task_number(tasks: &[Map<String, Value>]) -> u64 {
         .unwrap_or(0)
 }
 
-fn is_unexecuted(task: &Map<String, Value>) -> bool {
+/// Whether deleting this task can preserve all known execution history.
+pub fn task_is_unexecuted(task: &Map<String, Value>) -> bool {
+    if task.get("ever_executed").and_then(Value::as_bool) == Some(true) {
+        return false;
+    }
     match task
         .get("status")
         .and_then(Value::as_str)
@@ -302,6 +321,31 @@ fn is_unexecuted(task: &Map<String, Value>) -> bool {
             .is_none_or(|status| status.is_empty() || status == "planned"),
         _ => false,
     }
+}
+
+fn mark_executed(task: &mut Map<String, Value>) {
+    if matches!(
+        task.get("status").and_then(Value::as_str),
+        Some("active" | "done")
+    ) || (task.get("status").and_then(Value::as_str) == Some("archived")
+        && matches!(
+            task.get("archived_from").and_then(Value::as_str),
+            Some("active" | "done")
+        ))
+    {
+        task.insert("ever_executed".into(), Value::Bool(true));
+    }
+}
+
+fn validate_source(op: &Map<String, Value>) -> io::Result<()> {
+    if let Some(value) = op.get("source").filter(|value| !value.is_null()) {
+        let source: cccc_contracts::backlog::BacklogSource = serde_json::from_value(value.clone())
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        source
+            .validate()
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    }
+    Ok(())
 }
 
 fn creates_parent_cycle(doc: &ContextDoc, task_id: &str, parent_id: &str) -> bool {
@@ -493,5 +537,93 @@ mod tests {
         )
         .expect("delete planned subtree");
         assert!(disposable.tasks.is_empty());
+    }
+
+    #[test]
+    fn execution_history_cannot_be_cleared_by_returning_to_planned_or_client_fields() {
+        for initial in ["planned", "active", "done"] {
+            let mut doc = ContextDoc::default();
+            create(
+                &mut doc,
+                &operation(json!({"title":"work", "status":initial, "ever_executed":false})),
+                "user",
+            )
+            .expect("valid test fixture");
+            if initial == "planned" {
+                assert!(doc.tasks[0].get("ever_executed").is_none());
+                move_task(
+                    &mut doc,
+                    &operation(json!({"task_id":"T001", "status":"active"})),
+                )
+                .expect("valid test fixture");
+            }
+            move_task(
+                &mut doc,
+                &operation(json!({"task_id":"T001", "status":"planned"})),
+            )
+            .expect("valid test fixture");
+            update(
+                &mut doc,
+                &operation(json!({"task_id":"T001", "ever_executed":false})),
+            )
+            .expect("valid test fixture");
+            assert_eq!(doc.tasks[0]["ever_executed"], true);
+            assert!(delete(&mut doc, &operation(json!({"task_id":"T001"}))).is_err());
+        }
+        let mut legacy = ContextDoc::default();
+        create(
+            &mut legacy,
+            &operation(json!({"title":"old archived"})),
+            "user",
+        )
+        .expect("valid test fixture");
+        legacy.tasks[0].insert("status".into(), json!("archived"));
+        legacy.tasks[0].insert("archived_from".into(), json!("done"));
+        restore(&mut legacy, &operation(json!({"task_id":"T001"}))).expect("valid test fixture");
+        move_task(
+            &mut legacy,
+            &operation(json!({"task_id":"T001", "status":"planned"})),
+        )
+        .expect("valid test fixture");
+        assert!(delete(&mut legacy, &operation(json!({"task_id":"T001"}))).is_err());
+    }
+
+    #[test]
+    fn source_is_structured_optional_and_does_not_change_task_identity() {
+        let source =
+            json!({"scope_key":"s_project", "path":"docs/BACKLOG.md", "entry_id":"abcdef123456"});
+        let mut doc = ContextDoc::default();
+        create(
+            &mut doc,
+            &operation(json!({"title":"work", "source":source})),
+            "user",
+        )
+        .expect("valid test fixture");
+        update(
+            &mut doc,
+            &operation(json!({"task_id":"T001", "title":"renamed"})),
+        )
+        .expect("valid test fixture");
+        assert_eq!(doc.tasks[0]["source"], source);
+        for bad in [
+            json!({}),
+            json!({"scope_key":"s", "path":"../secret", "entry_id":"abcdef123456"}),
+            json!({"scope_key":"s", "path":"BACKLOG.md", "entry_id":"not-an-id"}),
+        ] {
+            assert!(
+                update(
+                    &mut doc,
+                    &operation(json!({"task_id":"T001", "source":bad}))
+                )
+                .is_err()
+            );
+        }
+        update(
+            &mut doc,
+            &operation(json!({"task_id":"T001", "source":null})),
+        )
+        .expect("valid test fixture");
+        assert!(doc.tasks[0]["source"].is_null());
+        assert_eq!(doc.tasks[0]["id"], "T001");
     }
 }

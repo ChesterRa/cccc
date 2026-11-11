@@ -357,12 +357,26 @@ answer HTTP 404 with the error code `group_has_no_scope`. File saves do not
 mutate Context state or reload runtime sessions. The optional team notification
 is a separate chat send.
 
+The repository backlog is a Markdown file the user keeps in the Group's project
+folder: `##` headings are sections and `###` headings are topics. The file is
+the only copy; CCCC does not export, sync or commit it, and Git tracking is
+optional. Creating it from the Web proposes `BACKLOG.md` and, in a Git
+repository, a rule in the clone's local exclude file, so `git add -A` leaves it
+out.
+The daemon parses and edits the file in place for both the Web
+(`GET /api/v1/groups/{group_id}/backlog`, `POST /api/v1/groups/{group_id}/backlog/{op}`)
+and the `cccc_backlog` tool. Every write to an existing topic is fenced on the
+whole-file SHA-256, and a task made from a topic records
+`source:{scope_key,path,entry_id}` while the file never records task IDs. The
+read-only exhibit Web refuses all backlog routes. Operations, the snapshot and
+error codes are specified in the daemon IPC standard under "Repository backlog".
+
 ### Core Collaboration Capability Groups
 
 - Session and guidance: `cccc_bootstrap`, `cccc_help`
 - Messaging and files: `cccc_inbox_read`, `cccc_message_history`, `cccc_message_send`, `cccc_message_reply`, `cccc_file`, `cccc_file_send`
 - Group and actor control: `cccc_group`, `cccc_actor`
-- Coordination and state: `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state`, `cccc_context_sync`
+- Coordination and state: `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_backlog`, `cccc_agent_state`, `cccc_context_sync`
 - Automation: `cccc_automation`
 
 ### Capability-Managed and Optional Groups

@@ -683,6 +683,57 @@ export type Task = {
   current_step?: string | null;
   progress?: number | null;
   children?: Task[];
+  /** The backlog entry this task came from. */
+  source?: BacklogSource | null;
+};
+
+/** A task's link to an entry in the project's backlog file. */
+export type BacklogSource = { scope_key: string; path: string; entry_id: string };
+
+export type BacklogProblem = { code: string; line: number; message: string };
+
+export type BacklogTaskLink = {
+  id: string;
+  title: string;
+  status: string;
+  assignee?: string | null;
+};
+
+export type BacklogEntry = {
+  /** Null until a write adds one; such an entry is addressed by its heading line. */
+  id: string | null;
+  title: string;
+  line: number;
+  /** The exact text after the heading line, as the file holds it. */
+  body: string;
+  problems: BacklogProblem[];
+  tasks: BacklogTaskLink[];
+};
+
+export type BacklogSection = {
+  /** Empty for the text before the first section heading. */
+  name: string;
+  line: number;
+  closed: boolean;
+  entries: BacklogEntry[];
+};
+
+export type BacklogSnapshot = {
+  configured: boolean;
+  scope_key: string;
+  scope_url: string;
+  path: string;
+  exists: boolean;
+  sha256: string;
+  git: { repository: boolean; tracked: boolean; ignored: boolean } | null;
+  problems: BacklogProblem[];
+  sections: BacklogSection[];
+};
+
+export type BacklogWriteResult = BacklogSnapshot & {
+  entry_id?: string;
+  task_id?: string;
+  reused?: boolean;
 };
 
 export type CoordinationBrief = {

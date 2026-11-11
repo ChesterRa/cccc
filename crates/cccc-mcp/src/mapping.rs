@@ -91,6 +91,15 @@ pub fn daemon_call(
         "cccc_actor_notes" => return action(args, actions::actor_notes),
         "cccc_coordination" => return context_action(args, "coordination"),
         "cccc_task" => return context_action(args, "task"),
+        "cccc_backlog" => {
+            let (op, mut args) = action(args, actions::backlog)?;
+            // One entry is cut from the whole snapshot here (backlog_projection.rs);
+            // the daemon reads the file as a whole.
+            if op == "backlog_get" {
+                args.remove("entry");
+            }
+            return Ok((op, args));
+        }
         "cccc_agent_state" => return context_action(args, "agent_state"),
         "cccc_automation" => return action(args, actions::automation),
         "cccc_notify" => {
@@ -264,6 +273,7 @@ fn task_action(
                     "client_request_id",
                     "parent_ref",
                     "blocked_by_refs",
+                    "source",
                 ],
             );
             args.insert("op".into(), Value::String("task.create".into()));
@@ -292,6 +302,7 @@ fn task_action(
                     "notes",
                     "checklist",
                     "if_task_rev",
+                    "source",
                 ],
             );
             let has_patch = args
@@ -842,6 +853,76 @@ mod tests {
         assert_eq!(args["ops"][0]["client_request_id"], "publish");
         assert_eq!(args["ops"][0]["parent_ref"], "release");
         assert_eq!(args["ops"][0]["blocked_by_refs"], json!(["build"]));
+    }
+
+    #[test]
+    fn task_mapping_forwards_the_backlog_source_on_create_and_update() {
+        let source = json!({"scope_key":"s_1","path":"BACKLOG.md","entry_id":"0123456789ab"});
+        let create = json!({
+            "action":"create","group_id":"g_test","by":"lead","title":"t","source":source
+        })
+        .as_object()
+        .cloned()
+        .expect("create args");
+        let (_, args) = daemon_call("cccc_task", create).expect("create mapping");
+        assert_eq!(args["ops"][0]["source"], source);
+
+        let update = json!({
+            "action":"update","group_id":"g_test","by":"lead","task_id":"T1","source":source,
+            "status":"archived"
+        })
+        .as_object()
+        .cloned()
+        .expect("update args");
+        let (_, args) = daemon_call("cccc_task", update).expect("update mapping");
+        assert_eq!(args["ops"][0]["op"], "task.update");
+        assert_eq!(args["ops"][0]["source"], source);
+        assert_eq!(args["ops"][1]["op"], "task.move");
+    }
+
+    #[test]
+    fn backlog_actions_map_to_daemon_operations_and_reads_send_no_entry() {
+        for (action, expected) in [
+            ("get", "backlog_get"),
+            ("use", "backlog_use"),
+            ("create", "backlog_create"),
+            ("exclude", "backlog_exclude"),
+            ("add", "backlog_add"),
+            ("edit", "backlog_edit"),
+            ("move", "backlog_move"),
+            ("close", "backlog_close"),
+            ("promote", "backlog_promote"),
+        ] {
+            let args = json!({
+                "action":action,"group_id":"g_test","by":"lead",
+                "entry":{"id":"0123456789ab"},"if_file_sha256":"a"
+            })
+            .as_object()
+            .cloned()
+            .expect("args");
+            let (op, args) = daemon_call("cccc_backlog", args).expect(action);
+            assert_eq!(op, expected);
+            assert!(args.get("action").is_none());
+            assert_eq!(args.contains_key("entry"), action != "get", "{action}");
+        }
+        let (op, _) = daemon_call(
+            "cccc_backlog",
+            json!({"group_id":"g_test"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .expect("default action");
+        assert_eq!(op, "backlog_get");
+        let error = daemon_call(
+            "cccc_backlog",
+            json!({"action":"delete","group_id":"g_test"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .expect_err("unsupported");
+        assert!(error.contains("delete"), "{error}");
     }
 
     #[test]

@@ -1371,6 +1371,40 @@ Enter/Space. Switching sections retains summary/file drafts and task filters.
   together with its unexecuted subtasks; for other tasks the editor says why,
   and archiving is the alternative. A deletion is refused, deleting nothing, if
   any of it changed after you confirmed.
+
+  Above the board, **Tasks | Backlog** switches to the project's backlog, and
+  each Group keeps the view you left it on in this browser. The backlog is a
+  Markdown file in the Group's project folder for long-lived topics and ideas;
+  tasks made from a topic track the work on it. It stays an ordinary file: CCCC
+  reads and edits it in place, never exports or commits it, and any editor can
+  change it too. A Group without a project folder has no backlog. Until a file is
+  chosen, the view offers to create `BACKLOG.md`, which in a Git repository can
+  be listed in the clone's local exclude file so `git add -A` leaves it out
+  (`.gitignore` is not changed), or to use an existing file. Tasks work without
+  one.
+
+  `##` headings are sections, in your own names and order; only a section named
+  exactly `Closed` holds finished topics. `###` headings are topics, and headings
+  inside a topic use `####` or deeper. Expand a topic to read it, with its linked
+  tasks beside the title. **Create task…** makes a Planned task from it, or opens
+  the topic's unfinished task if it has one. **Edit**, **Move to…** and
+  **Close…** change the topic; closing asks for a one-line outcome, adds it with
+  the date and moves the topic to Closed, where **Reopen…** moves it back. The
+  first change here gives a topic a hidden ID comment in its heading, so it can
+  be renamed or moved and stay linked; task IDs are never written into the file.
+
+  A task made from a topic shows the topic's title in its editor. **Update the
+  entry…** takes the task's outcome to the topic, as a dated paragraph or by
+  closing it. **Put back in the backlog** adds the outcome to the topic, or saves
+  a task from no topic as a new topic and links them, then asks whether to
+  archive the task. Finishing a task never closes its topic.
+
+  Each change applies only to the file as this page read it. If the file changed
+  elsewhere, nothing is written and your text stays; reload and save again. A
+  draft whose topic itself changed is kept to copy, never written over the
+  change. The backlog is read when Project Context opens and again when shown
+  after a change made through CCCC; edits from another editor appear on
+  **Reload**. The read-only exhibit page has no backlog.
 - **AGENTS.md** views and edits the file in the current workspace root, showing
   its actual path. A missing file can be created explicitly; existing documents
   are not renamed, merged, or overwritten as part of setup. Each runtime controls

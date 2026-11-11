@@ -26,6 +26,7 @@ import {
   translateActorLabel,
 } from "./sse/headlessEventUtils";
 import { processLedgerEvent } from "./sse/ledgerEventProcessor";
+import { signalBacklogChanged } from "../stores/backlogSignals";
 import { reconcileLedgerTail } from "./sse/reconcileLedgerTail";
 import { getGroupStreamsHiddenDisconnectDelayMs, shouldStartGroupStreams } from "./sse/visibility";
 import type { UseSSEOptions } from "./sse/types";
@@ -251,6 +252,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
   async function resyncAfterReconnect(groupId: string) {
     const visit = groupVisitRef.current;
+    // A backlog change made while the stream was down left no event here.
+    signalBacklogChanged(groupId);
     await runReconnectCatchup(groupId, {
       invalidateContextRead: api.invalidateContextRead,
       reconcileLedgerTail: reconcileGroupLedger,
@@ -1177,7 +1180,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
             contextRefreshTimerRef.current = scheduleContextOverviewCatchup(groupId, {
               invalidateContextRead: api.invalidateContextRead,
               existingTimer: contextRefreshTimerRef.current,
-              clearTimer: window.clearTimeout,
+              clearTimer: (id) => window.clearTimeout(id),
               setTimer: (callback, delayMs) => window.setTimeout(callback, delayMs),
               fetchContextOverview: (gid, options) => void fetchContext(gid, options),
             });

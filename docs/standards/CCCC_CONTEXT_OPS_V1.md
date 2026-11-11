@@ -149,6 +149,25 @@ type TaskType =
   | "optimization"
 ```
 
+Task source references are optional metadata:
+
+```ts
+type BacklogSource = { scope_key: string; path: string; entry_id: string }
+```
+
+`path` MUST be a normalized workspace-relative path without traversal. `entry_id`
+MUST contain exactly 12 lowercase hexadecimal characters. `scope_key` MUST be
+nonempty. Other source fields are rejected. A source reference does not grant
+file access, read the file, or write backlog content. The referenced file or
+entry may later disappear; clients MUST show a missing source rather than
+silently matching another entry by title.
+
+`ever_executed` is daemon-owned, monotonic execution history. Entering `active`
+or `done` through create, move, or restore records it; clients cannot set or
+clear it. Returning to `planned` does not make executed work deletable. Older
+records which had already returned to planned before this marker existed have
+no reconstructible execution history; no history is invented for them.
+
 Every task read exposes a daemon-owned unsigned `rev`. Existing task files with
 no stored revision read as `rev: 0` without being rewritten; new tasks start at
 `rev: 1`. A semantic task change advances its revision once per operation,
@@ -191,6 +210,7 @@ that bypass its storage lock and metadata.
   task_type?: TaskType
   notes?: string
   checklist?: Array<{ id?: string; text: string; status?: ChecklistStatus }>
+  source?: BacklogSource | null
   client_request_id?: string
   parent_ref?: string
   blocked_by_refs?: string[]
@@ -201,6 +221,8 @@ Permission: any actor.
 
 Rules:
 - `title` is required.
+- `source` is optional. A null source has no association; non-null references are
+  validated as described above. This operation never changes the source file.
 - The daemon assigns the next unused `T<number>` ID. Clients MUST use the assigned
   ID from authoritative task reads, or from the operation's change entry
   (`task_id`, see §6), rather than infer it from the current task count.
@@ -241,12 +263,16 @@ Rules:
   task_type?: TaskType
   notes?: string
   checklist?: Array<{ id?: string; text: string; status?: ChecklistStatus }>
+  source?: BacklogSource | null
 }
 ```
 
 Permission: assignee / handoff target / foreman / user. A peer MAY also claim a
 planned or active task that has neither an assignee nor a handoff target by
 setting `assignee` to itself in this update.
+
+Omitted `source` preserves the existing association; null removes it. Setting a
+source follows the same task authorization and revision guard as other fields.
 
 Rules:
 - Partial patch: omitted editable fields stay unchanged, and each provided field replaces its stored value whole. `notes` is not appended to, and `checklist` is not merged item by item.

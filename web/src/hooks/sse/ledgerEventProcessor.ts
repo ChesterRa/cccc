@@ -1,6 +1,7 @@
 import i18n from "../../i18n";
 import { useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { groupMessagesVisible } from "../../stores/useUIStore";
+import { signalBacklogChanged } from "../../stores/backlogSignals";
 import type { Actor, ChatMessageData, LedgerEvent } from "../../types";
 import {
   extractMailReadData,
@@ -78,7 +79,18 @@ export function processLedgerEvent(
       events?.some((item) => item.id === eventId),
     );
   if (isContextSyncEvent(event)) {
-    deps.onContextSync();
+    // A backlog write is a file change, not a Context write: it carries no version, and the
+    // task board has nothing to read again unless the same event also changed tasks.
+    const data = event.data as { backlog?: unknown; changes?: unknown } | undefined;
+    if (data?.backlog) signalBacklogChanged(groupId);
+    const changes = Array.isArray(data?.changes) ? data.changes : [];
+    const backlogOnly =
+      !!data?.backlog &&
+      changes.length > 0 &&
+      changes.every((change) =>
+        String((change as { op?: unknown } | null)?.op || "").startsWith("backlog."),
+      );
+    if (!backlogOnly) deps.onContextSync();
     return;
   }
   if (isActorActivityEvent(event)) {

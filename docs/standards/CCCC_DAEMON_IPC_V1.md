@@ -6482,6 +6482,114 @@ Notes:
 
 `presence_get` has been removed. Agent state is returned in `context_get.result.agent_states`.
 
+#### Repository backlog
+
+The backlog is a user-owned UTF-8 Markdown file in an attached project, not a
+second Context task store. Git tracking is optional. Selecting a file does not
+rewrite it. Reads MUST NOT assign IDs, create files or start runtime work.
+Configuration is scoped per Group attachment, stored as
+`backlogs[scope_key] = {path}` in the Group document. All entry operations are
+serialized as Group writes, but arbitrary external editors do not share that
+lock.
+
+All operations take `group_id` and the usual port-bound `by`. Reads and entry
+mutations require Group membership. Selecting/creating the file or changing
+local Git exclusion requires the user or foreman. `backlog_get` defaults to the
+caller's effective scope and accepts explicit `scope_key`; other operations
+require the snapshot's `scope_key` and `scope_url`. A changed/missing attachment
+is rejected. Entry mutations, promote and exclude MUST also echo snapshot.path;
+changing the configured file invalidates a pending edit even if both files have
+identical content. Paths remain inside the selected workspace, including symlink
+resolution. Public exhibit Web MUST reject all backlog routes, including GET.
+
+Operations and additional arguments:
+
+| Operation | Arguments | Effect |
+| --- | --- | --- |
+| `backlog_get` | `scope_key?`, `scope_url?` | Read snapshot; missing configuration/file is an empty state |
+| `backlog_use` | `path` | Select existing text file without rewriting it |
+| `backlog_create` | `path`, `keep_local?:boolean` (default true) | Create Open/Closed template only if absent, configure it |
+| `backlog_exclude` | `path` | Add a literal rooted local Git exclude rule; never untrack a file |
+| `backlog_add` | `path`, `section`, `title`, `body`, `if_file_sha256?` | Add topic with stable ID to existing unique section, except Closed |
+| `backlog_edit` | `path`, `entry`, `title`, `body`, `if_file_sha256` | Replace selected topic only |
+| `backlog_move` | `path`, `entry`, `section`, `if_file_sha256` | Move topic to an existing section, except Closed |
+| `backlog_close` | `path`, `entry`, `outcome`, `if_file_sha256` | Append dated outcome, move to Closed; create that section if absent |
+| `backlog_promote` | `path`, `entry`, `if_file_sha256`, `task` | Create execution task from topic, or reuse its unfinished task |
+
+`entry` is exactly `{id:string}` or `{line:number}`. Lines are 1-based heading
+positions from the same SHA snapshot, used only for entries without an ID. ID
+selectors are stable across title edits and moves. Duplicate IDs or target
+section names are ambiguous and MUST reject the corresponding write. New IDs
+use 12 random lowercase hex digits, checked for collision in the file. Reads
+report missing/malformed IDs instead of repairing them. `task` carries the
+Context `task.create` fields except `op` and `source`, which the daemon supplies.
+Peer assignment restrictions apply unchanged.
+
+The snapshot includes `configured`, `scope_key`, `scope_url`, `path`, `exists`,
+`sha256`, `git`, `problems`, and ordered `sections`. Each section has `name`,
+`line`, `closed`, and `entries`; each entry has `id` (nullable), `title`, `line`,
+`body`, `problems`, and linked task summaries. `body` is the raw Markdown after
+the heading line. An unnamed preamble section is always present. Git facts
+(`repository`, `tracked`, `ignored`) are advisory; null means unavailable.
+Files are limited to the workspace text-read limit (1 MiB). Mutation responses
+return the fresh snapshot and `entry_id` where applicable; promote also returns
+`task_id` and `reused`.
+
+Column-zero `## ` headings define sections; `### ` headings define topics.
+Fenced code headings are ignored. Topic subheadings use `####` or deeper.
+Section names and order are user-defined; only exact `Closed` denotes finished
+topics. IDs are trailing heading comments: `<!-- id: 3f9a1c07b2e4 -->`.
+Unrelated bytes are preserved. Submitted replacement text follows the file's
+newline style. An unclosed fence or structural heading in a replacement body is
+rejected. Titles and outcomes must be nonempty single lines. Close uses the
+daemon machine's local date; task completion alone never closes a topic.
+
+Existing-entry writes require the whole-file SHA256, not just an entry-body
+hash: a section move must invalidate old edits too. Stale writes fail with
+`backlog_file_conflict` and current `details.sha256`. Each successful file write
+returns the new SHA. Hash checking plus atomic replacement fences writes in the
+same process; another process/editor can race between the check and replace.
+There is no cross-editor transaction or merge.
+
+Promote validates permissions/task fields before writing a missing ID, then
+creates the task through existing Context semantics. It stores
+`source:{scope_key,path,entry_id}` only on the task, never a private task ID in
+the Markdown. `client_request_id` is passed through for task-create retry
+identity, including tasks already completed; a token for another source is
+rejected. Reusing an unfinished same-source task is deduplication, not a
+substitute for the retry token. A missing ID can have been saved even when task
+creation later fails. Callers MUST reload before retrying an unknown result.
+
+File/configuration changes append `context.sync` with `changes` containing
+`{op:"backlog.<action>",path,entry_id?}`, and
+`backlog:{scope_key,path,sha256}`. Event.scope_key identifies the file's scope.
+These file events do not fabricate a Context `version`, or include topic body
+or title. Promote's actual Context write emits its own ordinary versioned
+event. Consumers MUST reload the backlog explicitly; reloading Context alone
+does not refresh a file. External edits have no event and become visible on
+reopen, reconnect or explicit refresh; this interface does not watch files.
+
+Failures after known writes use `backlog_partial_failure` with
+`details:{applied:{file?:{path,sha256,entry_id?},configured?:boolean,excluded?:boolean},next:"reload",cause_code}`.
+An event-append failure must report the file as applied rather than claim the
+edit did not happen. Other errors include `backlog_not_configured`,
+`backlog_not_found` (also a missing create parent), `backlog_invalid_file`,
+`backlog_invalid_entry`, `backlog_ambiguous`, `backlog_git_unavailable`,
+`backlog_tracked`, `scope_conflict`, and existing permission/task conflicts.
+Local Git exclusion is not a privacy guarantee or a Git commit.
+
+Entry errors expose stable `details.reason`: `entry_not_found`,
+`section_not_found`, `ambiguous_entry`, `ambiguous_section`,
+`unterminated_fence`, `invalid_title`, `structural_body`, `invalid_outcome`,
+`closed_target`, or `entry_problem`. These distinguish a stale selection from
+invalid new text without matching an English message.
+
+An actual task transition into done can return
+`backlog_followup:[{task_id,source,note}]` from `context_sync`, offering an
+explicit source update only if the result affects that topic. It does not read
+the source or assert it remains open. Repeated done, archive and restoring
+already-finished history produce no follow-up.
+
 ### 8.9 Structured Runtime State
 
 #### `headless_status`

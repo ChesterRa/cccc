@@ -1,5 +1,6 @@
 import type {
   AutomationRuleSet,
+  BacklogSource,
   AutomationRunResult,
   CapabilityBlockEntry,
   CapabilityImportRecord,
@@ -216,6 +217,8 @@ export type TaskUpdatePatch = Partial<{
   notes: string;
   checklist: TaskChecklistItem[];
   status: string;
+  /** null removes the link; the entry itself is not changed. */
+  source: BacklogSource | null;
 }>;
 
 export async function updateCoordinationTask(
@@ -236,6 +239,7 @@ export async function updateCoordinationTask(
     "task_type",
     "notes",
     "checklist",
+    "source",
   ] as const;
   const update: Record<string, unknown> = {};
   for (const field of fields) {

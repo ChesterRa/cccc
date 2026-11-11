@@ -7,6 +7,7 @@ pub mod assistant_state;
 pub mod automation;
 mod automation_render;
 mod automation_schedule;
+pub mod backlog;
 pub mod blobs;
 pub mod branding;
 pub mod branding_icon;

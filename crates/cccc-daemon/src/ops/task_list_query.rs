@@ -120,9 +120,9 @@ pub(super) fn delete_info(tasks: &[Map<String, Value>], root: &str) -> Value {
         }
         cursor += 1;
     }
-    let blocked = tasks
-        .iter()
-        .find(|task| ids.iter().any(|id| id == text(task, "id")) && !unexecuted(task));
+    let blocked = tasks.iter().find(|task| {
+        ids.iter().any(|id| id == text(task, "id")) && !cccc_core::context::task_is_unexecuted(task)
+    });
     let reason = blocked.map_or("", |task| {
         if text(task, "id") == root {
             "self_history"
@@ -151,12 +151,6 @@ fn blocked(task: &Map<String, Value>) -> bool {
         .and_then(Value::as_array)
         .is_some_and(|items| !items.is_empty())
         || matches!(text(task, "waiting_on"), "actor" | "external")
-}
-
-fn unexecuted(task: &Map<String, Value>) -> bool {
-    task_status(task) == "planned"
-        || (task_status(task) == "archived"
-            && matches!(text(task, "archived_from"), "" | "planned"))
 }
 
 pub(super) fn task_status(task: &Map<String, Value>) -> &str {

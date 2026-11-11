@@ -45,6 +45,19 @@ const asOption = (value: string) => (value ? `=${value}` : NONE);
 const fromOption = (option: string) => (option.startsWith("=") ? option.slice(1) : "");
 const PRIORITIES = ["low", "normal", "high", "urgent"];
 
+/** The task's place in the backlog, and what the drawer offers there. */
+export type TaskBacklogLink = {
+  /**
+   * The entry the task came from: its title in the current backlog file, "" while that is not
+   * known yet, or null when the file does not have it. Undefined for a task from no entry.
+   */
+  sourceTitle?: string | null;
+  onShowSource?: () => void;
+  /** Take the task's result to its entry. */
+  onUpdateSource?: () => void;
+  onPutBack?: () => void;
+};
+
 interface TaskEditorPanelProps {
   tr: ContextTranslator;
   ui: ContextModalUi;
@@ -76,6 +89,7 @@ interface TaskEditorPanelProps {
   onSaveTask: () => void;
   onOpenTask: (taskId: string) => void;
   onAddSubtask: () => void;
+  backlogLink?: TaskBacklogLink | null;
 }
 
 /** The choices for an actor field: none, the given ones, and a value no longer among them. */
@@ -112,6 +126,7 @@ export function TaskEditorPanel({
   onSaveTask,
   onOpenTask,
   onAddSubtask,
+  backlogLink,
 }: TaskEditorPanelProps) {
   const { i18n } = useTranslation("modals");
   if (taskEditorMode === "none" || !taskDraft) {
@@ -276,6 +291,54 @@ export function TaskEditorPanel({
             >
               {tr("context.reloadLatest", "Reload latest version")}
             </button>
+          </div>
+        ) : null}
+
+        {!isCreate && backlogLink && backlogLink.sourceTitle !== undefined ? (
+          <div
+            data-task-backlog-source=""
+            className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+          >
+            {backlogLink.sourceTitle === null ? (
+              <span className={ui.mutedTextClass}>
+                {tr(
+                  "context.taskSourceMissing",
+                  "This task came from a backlog entry that is not in the current backlog file.",
+                )}
+              </span>
+            ) : (
+              <>
+                <span className={ui.mutedTextClass}>
+                  {tr("context.taskFromBacklog", "From the backlog:")}
+                </span>
+                {backlogLink.sourceTitle && backlogLink.onShowSource ? (
+                  <button
+                    type="button"
+                    onClick={backlogLink.onShowSource}
+                    className="min-w-0 break-words text-left text-[var(--color-text-primary)] underline decoration-[var(--glass-border-subtle)] underline-offset-2 hover:decoration-current focus-visible:outline-2 focus-visible:outline-[var(--color-border-focus)]"
+                  >
+                    {backlogLink.sourceTitle}
+                  </button>
+                ) : (
+                  <span className={ui.mutedTextClass}>…</span>
+                )}
+              </>
+            )}
+            {backlogLink.onUpdateSource ? (
+              <button
+                type="button"
+                onClick={backlogLink.onUpdateSource}
+                disabled={syncBusy || hasTaskUnsaved}
+                title={
+                  hasTaskUnsaved
+                    ? tr("context.saveTaskFirst", "Save or discard your changes first.")
+                    : undefined
+                }
+                className={ui.buttonSecondaryClass}
+              >
+                {tr("context.taskUpdateSource", "Update the entry…")}
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -469,6 +532,21 @@ export function TaskEditorPanel({
               className={ui.buttonDangerClass}
             >
               {tr("context.deleteTask", "Delete")}
+            </button>
+          ) : null}
+          {!isCreate && selectedTask && backlogLink?.onPutBack ? (
+            <button
+              type="button"
+              onClick={backlogLink.onPutBack}
+              disabled={syncBusy || hasTaskUnsaved}
+              title={
+                hasTaskUnsaved
+                  ? tr("context.saveTaskFirst", "Save or discard your changes first.")
+                  : undefined
+              }
+              className={ui.buttonSecondaryClass}
+            >
+              {tr("context.taskPutBack", "Put back in the backlog")}
             </button>
           ) : null}
           <div className="ml-auto flex flex-wrap items-center gap-2">

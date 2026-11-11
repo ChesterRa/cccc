@@ -120,7 +120,7 @@ fn page_too_small(smallest: usize) -> OpError {
     )
 }
 
-fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+pub(super) fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let group = load_group(home, &group_id)?;
     let operations = parse_operations(request)?;
@@ -141,6 +141,7 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         (!dry_run && role == Some(ActorRole::Foreman) && operations.iter().any(is_task_operation))
             .then_some(TEAM_REVIEW_EVERY_FINISHED_TASKS);
     let mut denied = None;
+    let mut finished_sources = std::collections::BTreeSet::new();
     let result = contexts
         .sync_checked(
             &group_id,
@@ -152,6 +153,15 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 review_every,
             },
             |document, operation| {
+                let name = operation.get("op").and_then(Value::as_str).unwrap_or_default();
+                if name == "task.move"
+                    && operation.get("status").and_then(Value::as_str) == Some("done")
+                    && let Some(task) = document.tasks.iter().find(|task| task.get("id").and_then(Value::as_str) == operation.get("task_id").and_then(Value::as_str).map(str::trim))
+                    && task.get("status").and_then(Value::as_str) != Some("done")
+                    && task.get("archived_from").and_then(Value::as_str) != Some("done")
+                {
+                    finished_sources.insert(task.get("id").and_then(Value::as_str).unwrap_or_default().to_owned());
+                }
                 authorize(role, document, operation, &by).map_err(|error| {
                     denied = Some(error);
                     std::io::Error::other("context authorization rejected")
@@ -192,6 +202,16 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "changes": result.changes,
         "version": result.version,
     });
+    if !result.dry_run {
+        let followup = finished_sources.into_iter().filter_map(|id| {
+            let task = result.context.tasks.iter().find(|task| task.get("id").and_then(Value::as_str) == Some(id.as_str()) && task.get("status").and_then(Value::as_str) == Some("done"))?;
+            let source = task.get("source").filter(|source| source.is_object())?;
+            Some(json!({"task_id":id,"source":source,"note":"If this result changes the backlog entry this task came from, update the entry or close it with an outcome; otherwise no backlog action is needed."}))
+        }).collect::<Vec<_>>();
+        if !followup.is_empty() {
+            response["backlog_followup"] = json!(followup);
+        }
+    }
     if let Some(finished) = result.review_due
         && team_review_offered(home, &group_id, &by)
     {

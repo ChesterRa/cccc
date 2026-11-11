@@ -2612,6 +2612,144 @@
               "text"
             ]
           }
+        },
+        "source": {
+          "type": "object",
+          "description": "Create or update: the backlog entry this task comes from, as cccc_backlog shows it. The entry is not read or changed.",
+          "properties": {
+            "scope_key": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "entry_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scope_key",
+            "path",
+            "entry_id"
+          ]
+        }
+      },
+      "required": []
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "cccc_backlog",
+    "description": "The project's backlog file: long-lived topics and ideas; tasks made from an entry track the work on it. action=get|add|edit|move|close|promote|use|create|exclude. get lists the sections and entry titles with their linked tasks; pass entry to read one entry in full. The other actions need scope_key, scope_url and path from your last get (use and create take the path of the file to choose); edit, move, close and promote also need its sha256 as if_file_sha256, and a stale one returns backlog_file_conflict, so get again. promote starts a task from an entry, or returns the entry's unfinished task. close moves an entry to Closed with a one-line outcome. use and create choose the file, and exclude adds a local Git exclude rule for it (a file Git already tracks is refused); these three are for the foreman or the user.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "group_id": {
+          "type": "string",
+          "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
+        },
+        "actor_id": {
+          "type": "string",
+          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "get",
+            "add",
+            "edit",
+            "move",
+            "close",
+            "promote",
+            "use",
+            "create",
+            "exclude"
+          ],
+          "default": "get"
+        },
+        "scope_key": {
+          "type": "string",
+          "description": "From get. On get, omit it to read the backlog of your own workspace scope."
+        },
+        "scope_url": {
+          "type": "string",
+          "description": "From get."
+        },
+        "path": {
+          "type": "string",
+          "description": "From get; for use or create, the file to choose, relative to the project root."
+        },
+        "if_file_sha256": {
+          "type": "string",
+          "description": "The sha256 from your last get."
+        },
+        "entry": {
+          "type": "object",
+          "description": "The entry to read or change: {\"id\": ...} for an entry with an id, or {\"line\": ...}, its heading line from get, for one without.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "line": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "section": {
+          "type": "string",
+          "description": "add and move: a section name from get; \"\" is the part before the first section. Only close puts an entry in Closed."
+        },
+        "title": {
+          "type": "string",
+          "description": "add and edit: one line."
+        },
+        "body": {
+          "type": "string",
+          "description": "add and edit: the text under the title. Use #### for headings in it, never ## or ###."
+        },
+        "outcome": {
+          "type": "string",
+          "description": "close: one line, added to the entry with today's date."
+        },
+        "task": {
+          "type": "object",
+          "description": "promote: the task to create, with the cccc_task create fields; its source is set from the entry.",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "planned",
+                "active"
+              ]
+            },
+            "assignee": {
+              "type": "string"
+            },
+            "priority": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "client_request_id": {
+              "type": "string",
+              "description": "Retrying with the same id returns the task already created."
+            }
+          }
+        },
+        "keep_local": {
+          "type": "boolean",
+          "default": true,
+          "description": "create, in a Git project: keep the new file out of Git through this clone's local exclude list."
         }
       },
       "required": []

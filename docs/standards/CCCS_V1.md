@@ -765,6 +765,11 @@ role assignment; consumers derive current roles from the Group's Actor list.
 ### 13.3 Context Profile (optional)
 - `context.sync` (implementation-defined ops)
 
+Repository-backlog operations may use this event with a `backlog` file snapshot
+reference and `backlog.*` changes. They do not invent a Context version or embed
+the Markdown content; see the daemon IPC backlog contract. A Context-only refresh
+does not reload this external file.
+
 ## 14. Examples
 
 The following examples use placeholder IDs for brevity. Conformance test vectors with complete values may be provided separately.

@@ -169,7 +169,7 @@ fn coordination(
 }
 
 fn summary_task(task: &Map<String, Value>) -> Map<String, Value> {
-    const FIELDS: [&str; 19] = [
+    const FIELDS: [&str; 20] = [
         "id",
         "rev",
         "title",
@@ -189,6 +189,7 @@ fn summary_task(task: &Map<String, Value>) -> Map<String, Value> {
         "updated_at",
         "progress",
         "is_root",
+        "source",
     ];
     FIELDS
         .into_iter()

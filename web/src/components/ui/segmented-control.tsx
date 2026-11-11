@@ -64,7 +64,7 @@ export function SegmentedControl<T extends string>({
               }
             }}
             className={cn(
-              "min-h-8 flex-1 whitespace-nowrap rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed",
+              "min-h-8 flex-auto whitespace-nowrap rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)] disabled:cursor-not-allowed",
               checked
                 ? "bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] shadow-sm"
                 : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",

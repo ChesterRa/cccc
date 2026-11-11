@@ -4,6 +4,7 @@ mod actor_assets;
 mod actor_profiles;
 mod actors;
 mod assistants;
+mod backlog;
 mod blob_download;
 mod capabilities;
 mod chet;
@@ -118,6 +119,7 @@ pub fn router() -> Router<AppState> {
         .merge(web_model_shared_browser::routes())
         .merge(nomcp::routes())
         .merge(context::routes())
+        .merge(backlog::routes())
         .merge(codex_voice::routes())
         .merge(diagnostics::routes())
         .merge(membership::routes())

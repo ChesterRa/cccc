@@ -25,6 +25,7 @@ pub const CORE_TOOL_NAMES: &[&str] = &[
     "cccc_context_get",
     "cccc_coordination",
     "cccc_task",
+    "cccc_backlog",
     "cccc_agent_state",
 ];
 

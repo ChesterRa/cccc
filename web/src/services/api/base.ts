@@ -1,6 +1,7 @@
 import type {
   AgentState,
   ActorRuntimeState,
+  BacklogSource,
   ContextDetailLevel,
   GroupContext,
   GroupPresentation,
@@ -352,6 +353,17 @@ export function asStringArray(value: unknown): string[] {
   return value.map((item) => asString(item).trim()).filter(Boolean);
 }
 
+/** A source is whole or absent: a part of one cannot find its entry. */
+export function normalizeBacklogSource(value: unknown): BacklogSource | null {
+  const record = asRecord(value);
+  const source = {
+    scope_key: asString(record?.scope_key),
+    path: asString(record?.path),
+    entry_id: asString(record?.entry_id),
+  };
+  return source.scope_key && source.path && source.entry_id ? source : null;
+}
+
 function formatDaemonEndpoint(details: UnknownRecord | null): string {
   const endpoint = asRecord(details?.endpoint);
   if (!endpoint) return "";
@@ -469,6 +481,7 @@ export function normalizeTask(value: unknown): Task | null {
     created_at: asOptionalString(record.created_at),
     updated_at: asOptionalString(record.updated_at),
     archived_from: asOptionalString(record.archived_from),
+    source: normalizeBacklogSource(record.source),
     progress:
       typeof record.progress === "number"
         ? record.progress

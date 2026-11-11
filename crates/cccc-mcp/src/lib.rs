@@ -1,5 +1,6 @@
 mod actions;
 mod argument_normalization;
+mod backlog_projection;
 mod bootstrap;
 mod code_mode;
 mod codex_image_result;

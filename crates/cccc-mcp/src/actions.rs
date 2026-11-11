@@ -49,6 +49,20 @@ pub fn automation(value: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+pub fn backlog(value: &str) -> Option<&'static str> {
+    Some(match value {
+        "get" => "backlog_get",
+        "use" => "backlog_use",
+        "create" => "backlog_create",
+        "exclude" => "backlog_exclude",
+        "add" => "backlog_add",
+        "edit" => "backlog_edit",
+        "move" => "backlog_move",
+        "close" => "backlog_close",
+        "promote" => "backlog_promote",
+        _ => return None,
+    })
+}
 pub fn notify(value: &str) -> Option<&'static str> {
     (value == "send").then_some("system_notify")
 }

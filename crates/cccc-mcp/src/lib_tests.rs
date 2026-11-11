@@ -528,6 +528,7 @@ fn unscoped_fallback_includes_the_connect_directory() {
         .collect::<BTreeSet<_>>();
     let expected = [
         "cccc_agent_state",
+        "cccc_backlog",
         "cccc_bootstrap",
         "cccc_capability_search",
         "cccc_capability_use",
