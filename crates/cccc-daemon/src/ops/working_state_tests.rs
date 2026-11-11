@@ -391,6 +391,22 @@ fn headless_group(store: &GroupStore, actor: &Actor) -> cccc_core::GroupDoc {
     group
 }
 
+fn captured_runtime_record() -> Value {
+    serde_json::from_str(include_str!(
+        "../../tests/fixtures/headless-runtime-state/record.json"
+    ))
+    .expect("captured runtime record")
+}
+
+fn runtime_record(fields: Value) -> Value {
+    let mut record = captured_runtime_record();
+    let object = record.as_object_mut().expect("record object");
+    for (key, value) in fields.as_object().expect("fields") {
+        object.insert(key.clone(), value.clone());
+    }
+    record
+}
+
 #[test]
 fn headless_actor_reports_working_while_its_turn_runs() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -407,12 +423,12 @@ fn headless_actor_reports_working_while_its_turn_runs() {
         "runtime_states",
         |value| {
             *value = json!({
-                "hs-actor": {
+                "hs-actor": runtime_record(json!({
                     "status": "working",
                     "active_turn_id": "turn-1",
                     "task_id": "task-7",
                     "updated_at": "2026-11-09T12:00:00Z"
-                }
+                }))
             });
             Ok(())
         },
@@ -443,11 +459,11 @@ fn headless_actor_reports_idle_with_the_last_turn_end() {
         "runtime_states",
         |value| {
             *value = json!({
-                "hs-actor": {
+                "hs-actor": runtime_record(json!({
                     "status": "idle",
                     "last_turn_end": "2026-11-09T12:30:00Z",
                     "updated_at": "2026-11-09T12:31:00Z"
-                }
+                }))
             });
             Ok(())
         },
@@ -511,20 +527,21 @@ fn headless_record_status_wins_over_a_stale_turn_id() {
         "runtime_states",
         |value| {
             *value = json!({
-                "hs-actor": {
+                "hs-actor": runtime_record(json!({
+                    "status": "waiting",
                     "active_turn_id": "turn-stale",
                     "task_id": "task-stale",
                     "updated_at": "2026-11-09T12:00:00Z"
-                }
+                }))
             });
             Ok(())
         },
     )
     .expect("seed stale turn");
-    // The public status writer does not create `last_turn_end`, so its idle
-    // write has no evidence and must not be reported as idle.
+    // The public status writer does not create `last_turn_end`; the write
+    // time it does stamp is the evidence for the reported state.
     for (status, expected, expected_reason) in [
-        ("idle", "waiting", "headless_state_unknown"),
+        ("idle", "idle", "headless_turn_record"),
         ("waiting", "waiting", "headless_turn_record"),
         ("stopped", "stopped", "headless_turn_record"),
     ] {
@@ -542,15 +559,18 @@ fn headless_record_status_wins_over_a_stale_turn_id() {
             ),
         );
         assert!(response.ok, "{:?}", response.error);
+        let written_at = response.result["state"]["updated_at"]
+            .as_str()
+            .expect("status write time");
         let state = fields(&home, &actor, &group.group_id, true, "headless");
         assert_eq!(state["effective_working_state"], expected, "{status}");
         assert_eq!(
             state["effective_working_reason"], expected_reason,
             "{status}"
         );
-        assert!(
-            state["effective_working_updated_at"].is_null(),
-            "{status}: no turn end was written"
+        assert_eq!(
+            state["effective_working_updated_at"], written_at,
+            "{status}: the status write is the evidence"
         );
         assert!(state["effective_active_task_id"].is_null(), "{status}");
     }
@@ -566,14 +586,23 @@ fn headless_unknown_or_empty_record_is_unknown_not_idle() {
     actor.runtime = ActorRuntime::Deepseek;
     actor.runner = RunnerKind::Headless;
     let group = headless_group(&store, &actor);
-    for record in [
-        json!({}),
-        json!({"status": null}),
-        json!({"status": ""}),
-        json!({"status": "paused"}),
-        json!({"status": "paused", "active_turn_id": "turn-1"}),
+    for (fields, empty) in [
+        (json!({}), true),
+        (json!({"status": null}), false),
+        (json!({"status": ""}), false),
+        (json!({"status": "", "active_turn_id": "turn-1"}), false),
+        (json!({"status": null, "active_turn_id": "turn-1"}), false),
+        (json!({"status": "paused"}), false),
+        (
+            json!({"status": "paused", "active_turn_id": "turn-1"}),
+            false,
+        ),
     ] {
-        let record = record.clone();
+        let record = if empty {
+            json!({})
+        } else {
+            runtime_record(fields)
+        };
         cccc_core::integration_state::group_update(
             &store,
             &group.group_id,
@@ -599,6 +628,45 @@ fn headless_unknown_or_empty_record_is_unknown_not_idle() {
 }
 
 #[test]
+fn headless_record_without_status_uses_a_live_turn_as_working() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut actor = Actor::new("hs-actor");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.runner = RunnerKind::Headless;
+    let group = headless_group(&store, &actor);
+    let mut record = captured_runtime_record();
+    record
+        .as_object_mut()
+        .expect("record object")
+        .remove("status");
+    record["active_turn_id"] = json!("turn-legacy");
+    record["task_id"] = json!("task-legacy");
+    cccc_core::integration_state::group_update(
+        &store,
+        &group.group_id,
+        "runtime_states",
+        |value| {
+            *value = json!({"hs-actor": record.clone()});
+            Ok(())
+        },
+    )
+    .expect("seed legacy record");
+
+    let state = fields(&home, &actor, &group.group_id, true, "headless");
+
+    assert_eq!(state["effective_working_state"], "working");
+    assert_eq!(state["effective_working_reason"], "headless_turn_record");
+    assert_eq!(
+        state["effective_working_updated_at"],
+        "2026-11-11T00:45:29.983663Z"
+    );
+    assert_eq!(state["effective_active_task_id"], "task-legacy");
+}
+
+#[test]
 fn headless_turn_end_is_not_rewritten_by_an_empty_poll() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -614,12 +682,12 @@ fn headless_turn_end_is_not_rewritten_by_an_empty_poll() {
         "runtime_states",
         |value| {
             *value = json!({
-                "hs-actor": {
+                "hs-actor": runtime_record(json!({
                     "status": "working",
                     "active_turn_id": "turn-1",
                     "task_id": "task-7",
                     "updated_at": "2026-11-09T12:00:00Z"
-                }
+                }))
             });
             Ok(())
         },
@@ -684,11 +752,11 @@ fn the_headless_snapshot_never_waits_on_the_group_lock_a_writer_holds() {
         "runtime_states",
         |value| {
             *value = json!({
-                "hs-actor": {
+                "hs-actor": runtime_record(json!({
                     "status": "working",
                     "active_turn_id": "turn-9",
                     "updated_at": "2026-11-09T12:00:00Z"
-                }
+                }))
             });
             Ok(())
         },

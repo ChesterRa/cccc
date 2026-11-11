@@ -114,30 +114,37 @@ pub(super) fn fields(
         // state cannot be known, so the reason says so.
         match super::runtime_state::actor_state(home, group_id, &actor.id) {
             Ok(runtime) if !runtime.is_null() => {
-                let status = runtime["status"].as_str().filter(|value| !value.is_empty());
                 let active_turn = runtime["active_turn_id"]
                     .as_str()
                     .filter(|value| !value.is_empty());
                 let last_turn_end = runtime["last_turn_end"]
                     .as_str()
                     .filter(|value| !value.is_empty());
-                // Idle is evidence-backed: an idle status without a turn end
-                // cannot say when the runner last stopped working, so report
-                // the unknown state instead. A live turn id is only the
-                // legacy fallback for records written before `status` existed;
-                // an unrecognized status is not treated as working.
-                let (state, reason) = match status {
-                    Some("working") => ("working", "headless_turn_record"),
-                    Some("idle") if last_turn_end.is_some() => ("idle", "headless_turn_record"),
-                    Some("waiting") => ("waiting", "headless_turn_record"),
-                    Some("stopped") => ("stopped", "headless_turn_record"),
+                let updated_at = runtime["updated_at"]
+                    .as_str()
+                    .filter(|value| !value.is_empty());
+                // Idle is evidence-backed: the turn end when the runner wrote
+                // one, otherwise the record's own write time (a real status
+                // write always stamps it). A live turn id is only the legacy
+                // fallback for records written before `status` existed; an
+                // empty or unrecognized status is not treated as working.
+                let (state, reason) = match runtime.get("status") {
                     None if active_turn.is_some() => ("working", "headless_turn_record"),
+                    Some(Value::String(status)) => match status.as_str() {
+                        "working" => ("working", "headless_turn_record"),
+                        "idle" if last_turn_end.is_some() || updated_at.is_some() => {
+                            ("idle", "headless_turn_record")
+                        }
+                        "waiting" => ("waiting", "headless_turn_record"),
+                        "stopped" => ("stopped", "headless_turn_record"),
+                        _ => ("waiting", "headless_state_unknown"),
+                    },
                     _ => ("waiting", "headless_state_unknown"),
                 };
-                let updated_at = if state == "working" {
-                    runtime["updated_at"].as_str()
-                } else {
-                    last_turn_end
+                let timestamp = match state {
+                    "working" => updated_at,
+                    "idle" | "waiting" | "stopped" => last_turn_end.or(updated_at),
+                    _ => None,
                 }
                 .map(str::to_owned);
                 let active_task_id = if state == "working" {
@@ -151,7 +158,7 @@ pub(super) fn fields(
                 (
                     state.to_owned(),
                     reason.to_owned(),
-                    updated_at,
+                    timestamp,
                     active_task_id,
                 )
             }
