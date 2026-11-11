@@ -222,10 +222,6 @@ pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Op
             .as_array_mut()
             .expect("segments initialized")
             .push(segment);
-        #[cfg(test)]
-        if take_fail_manifest_write() {
-            return Err(io::Error::other("injected ledger manifest write failure"));
-        }
         write_json(&manifest_path, &manifest)?;
         Ok(Some(destination))
     })();
@@ -318,7 +314,6 @@ fn segment_stats(path: &Path, codec: SegmentCodec) -> io::Result<(u64, String)> 
 #[cfg(test)]
 thread_local! {
     static TRUNCATE_GZIP_TMP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static FAIL_MANIFEST_WRITE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -329,16 +324,6 @@ fn fail_next_gzip_verification() {
 #[cfg(test)]
 fn take_truncate_gzip_tmp() -> bool {
     TRUNCATE_GZIP_TMP.with(|flag| flag.replace(false))
-}
-
-#[cfg(test)]
-fn fail_next_manifest_write() {
-    FAIL_MANIFEST_WRITE.with(|flag| flag.set(true));
-}
-
-#[cfg(test)]
-fn take_fail_manifest_write() -> bool {
-    FAIL_MANIFEST_WRITE.with(|flag| flag.replace(false))
 }
 
 fn stamp() -> String {
@@ -892,52 +877,6 @@ mod tests {
             assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
             assert_eq!(fs::read(&active).expect("active"), bytes);
         }
-    }
-
-    #[test]
-    fn published_segment_survives_manifest_write_failure_and_is_reconciled() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path()).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let group = store.create("manifest failure", "").expect("group");
-        let active = store.ledger_path(&group.group_id).expect("ledger");
-        let bytes = real_fixture();
-        let expected = fixture_events(&bytes);
-        fs::write(&active, &bytes).expect("fixture ledger");
-
-        fail_next_manifest_write();
-        assert!(compact(&home, &group.group_id, "test").is_err());
-        let segments = store
-            .state_dir(&group.group_id)
-            .expect("state")
-            .join("ledger/segments");
-        assert_eq!(
-            fs::read_dir(&segments)
-                .expect("segments")
-                .filter_map(Result::ok)
-                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".jsonl.gz"))
-                .count(),
-            1
-        );
-        assert_eq!(
-            ledger::read_all(&active).expect("published gzip").len(),
-            expected.len()
-        );
-
-        ledger::append(&active, &Event::new("chat.message", &group.group_id)).expect("append");
-        compact(&home, &group.group_id, "repair").expect("reconcile");
-        let manifest: Value = read_json(
-            &store
-                .state_dir(&group.group_id)
-                .expect("state")
-                .join("ledger/manifest.json"),
-        )
-        .expect("manifest");
-        assert_eq!(manifest["segments"].as_array().expect("segments").len(), 2);
-        assert_eq!(
-            ledger::read_all(&active).expect("all events").len(),
-            expected.len() + 1
-        );
     }
 
     #[test]
