@@ -211,6 +211,45 @@ fn changed_parts(saved: &Value, receipt: &Value) -> Option<Vec<&'static str>> {
     (!changed.is_empty()).then_some(changed)
 }
 
+/// Whether this launch differs from the one `saved` recorded only in its
+/// launch `PATH`: both splits are this build's and complete, and `path` is the
+/// one part that differs. Such a launch may resume the saved conversation; a
+/// receipt saved without a split never qualifies.
+pub(super) fn only_launch_path_changed(saved: &Value, current: &LaunchParts) -> bool {
+    let current = Value::Object([(PARTS.to_owned(), json!(current))].into_iter().collect());
+    changed_parts(saved, &current).is_some_and(|changed| changed == ["launch_path"])
+}
+
+/// Whether a receipt that matches by `identity` (Pi, native ACP) may resume
+/// under this launch: the identities are equal, or both carry a launch
+/// fingerprint, differ only in it, and that difference is the launch `PATH`
+/// alone. A saved identity without a fingerprint never qualifies.
+pub(super) fn identity_resumes(saved: &Value, identity: &Value, current: &LaunchParts) -> bool {
+    const FINGERPRINT: &str = "launch_fingerprint";
+    fn others(fields: &serde_json::Map<String, Value>) -> impl Iterator<Item = (&String, &Value)> {
+        fields
+            .iter()
+            .filter(|(field, _)| field.as_str() != FINGERPRINT)
+    }
+    let fingerprinted = |fields: &serde_json::Map<String, Value>| {
+        fields
+            .get(FINGERPRINT)
+            .and_then(Value::as_str)
+            .is_some_and(|fingerprint| !fingerprint.is_empty())
+    };
+    if &saved["identity"] == identity {
+        return true;
+    }
+    let (Some(saved_fields), Some(fields)) = (saved["identity"].as_object(), identity.as_object())
+    else {
+        return false;
+    };
+    fingerprinted(saved_fields)
+        && fingerprinted(fields)
+        && others(saved_fields).eq(others(fields))
+        && only_launch_path_changed(saved, current)
+}
+
 fn compared<'a>(receipt: &'a Value, field: &str) -> &'a Value {
     match &receipt[field] {
         Value::Null => &receipt["identity"][field],

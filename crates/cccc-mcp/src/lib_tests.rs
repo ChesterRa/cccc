@@ -176,9 +176,11 @@ async fn initialize_truthfully_disables_tool_list_change_notifications() {
         response["result"]["capabilities"]["tools"]["listChanged"],
         false
     );
-    assert_eq!(
-        response["result"]["_meta"]["cccc/build"],
-        cccc_core::build_info::current()
+    assert!(
+        response["result"]["_meta"]["cccc/build"]
+            .get("source_id")
+            .is_none(),
+        "library initialize must not invent an executable source identity"
     );
 }
 

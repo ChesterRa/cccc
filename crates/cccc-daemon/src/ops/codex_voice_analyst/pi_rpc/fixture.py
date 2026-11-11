@@ -3,6 +3,8 @@
 import json, os, pathlib, sys, uuid
 if '--version' in sys.argv:
     print(os.environ.get('PI_FIXTURE_VERSION','1.1.0'));sys.exit(0)
+if os.environ.get('PI_FIXTURE_LAUNCHES'):
+    with open(os.environ['PI_FIXTURE_LAUNCHES'],'a') as f:f.write(json.dumps({'argv':sys.argv[1:],'path':os.environ.get('PATH','')})+'\n')
 def option(name,default=None):
     return sys.argv[sys.argv.index(name)+1] if name in sys.argv else default
 session_file=option('--session')

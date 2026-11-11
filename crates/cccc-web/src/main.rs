@@ -3,6 +3,7 @@ use cccc_core::HomeLayout;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    cccc_core::build_info::initialize(env!("CCCC_SOURCE_ID"));
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();

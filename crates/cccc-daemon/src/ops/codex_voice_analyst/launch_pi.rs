@@ -97,7 +97,12 @@ impl AnalystSession {
             .map(|(g, a)| super::super::runtime_session::pi::receipt_path(home, g, a))
             .transpose()?;
         let restored = if let Some(path) = &receipt_path {
-            super::super::runtime_session::pi::prepare(path, &identity, &sessions)?
+            super::super::runtime_session::pi::prepare(
+                path,
+                &identity,
+                launch_parts.as_ref(),
+                &sessions,
+            )?
         } else if let Some(id) = resume {
             Some(super::super::runtime_session::pi::Resume {
                 file: Some(super::super::runtime_session::pi::locate(&sessions, &id)?),

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { directoryNameFromPath, driveSuggestions } from "./createGroupDirectoryModel";
+import {
+  directoryNameFromPath,
+  driveSuggestions,
+  suggestionLabelKey,
+} from "./createGroupDirectoryModel";
 
 describe("create group directory model", () => {
   it("extracts directory names from Windows and POSIX paths", () => {
@@ -15,5 +19,21 @@ describe("create group directory model", () => {
         { name: "Drive C:", path: "C:\\", icon: "drive" },
       ]),
     ).toEqual([{ name: "Drive C:", path: "C:\\", icon: "drive" }]);
+  });
+
+  it("translates only the folders the server names in English", () => {
+    expect(suggestionLabelKey({ name: "Home", path: "/home/demo", icon: "home" })).toBe(
+      "modals:createGroup.suggestionHome",
+    );
+    expect(suggestionLabelKey({ name: "Current Dir", path: "/srv/app", icon: "current" })).toBe(
+      "modals:createGroup.suggestionCurrent",
+    );
+    for (const suggestion of [
+      { name: "Desktop", path: "/home/demo/Desktop", icon: "desktop" },
+      { name: "Dev", path: "/home/demo/dev", icon: "folder" },
+      { name: "Drive C:", path: "C:\\", icon: "drive" },
+    ]) {
+      expect(suggestionLabelKey(suggestion)).toBeUndefined();
+    }
   });
 });

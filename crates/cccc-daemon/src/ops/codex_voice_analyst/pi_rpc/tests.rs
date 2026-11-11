@@ -280,16 +280,30 @@ async fn pi_actor_and_secretary_share_control_but_not_receipt_authority() {
         .create("Pi fixture", "")
         .expect("create Actor fixture Group")
         .group_id;
-    let config = || ActorLaunchConfig {
-        workdir: temp.path().into(),
-        group_id: group.clone(),
-        actor_id: "pi-actor".into(),
-        runtime: ActorRuntime::Pi,
-        runtime_mode: RuntimeMode::Default,
-        command: vec![program.clone()],
-        environment: env.clone(),
+    // The launch PATH leads with a directory of its own, so a restart can change PATH alone.
+    let search_path = std::env::var("PATH").unwrap_or_default();
+    let launches = temp.path().join("launches.jsonl");
+    let config = |bin: &str| {
+        let mut environment = env.clone();
+        environment.insert(
+            "PATH".into(),
+            format!("{}:{search_path}", temp.path().join(bin).display()),
+        );
+        environment.insert(
+            "PI_FIXTURE_LAUNCHES".into(),
+            launches.to_string_lossy().into_owned(),
+        );
+        ActorLaunchConfig {
+            workdir: temp.path().into(),
+            group_id: group.clone(),
+            actor_id: "pi-actor".into(),
+            runtime: ActorRuntime::Pi,
+            runtime_mode: RuntimeMode::Default,
+            command: vec![program.clone()],
+            environment,
+        }
     };
-    let actor = AnalystSession::launch_actor(&home, config())
+    let actor = AnalystSession::launch_actor(&home, config("bin"))
         .await
         .expect("launch controlled Pi Actor fixture");
     assert!(actor.structured_only());
@@ -308,11 +322,44 @@ async fn pi_actor_and_secretary_share_control_but_not_receipt_authority() {
         .stop(actor.generation())
         .await
         .expect("stop Actor fixture before restore");
-    let resumed = AnalystSession::launch_actor(&home, config())
+    // A restart whose PATH alone changed reopens the saved session file in a Pi
+    // process that runs with the new PATH.
+    let resumed = AnalystSession::launch_actor(&home, config("moved-bin"))
         .await
         .expect("restore controlled Pi Actor fixture");
     assert_eq!(resumed.thread_id(), id);
     assert!(resumed.thread_resumed);
+    let recorded: Vec<Value> = std::fs::read_to_string(&launches)
+        .expect("read Pi fixture launches")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("decode Pi fixture launch"))
+        .collect();
+    assert_eq!(recorded.len(), 2);
+    let moved = temp.path().join("moved-bin");
+    let on_moved = |launch: &Value| {
+        std::env::split_paths(launch["path"].as_str().expect("launch PATH")).any(|dir| dir == moved)
+    };
+    assert!(!on_moved(&recorded[0]));
+    assert!(on_moved(&recorded[1]));
+    let argv: Vec<&str> = recorded[1]["argv"]
+        .as_array()
+        .expect("launch argv")
+        .iter()
+        .map(|arg| arg.as_str().expect("argument"))
+        .collect();
+    let file = argv
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--session").then_some(pair[1]))
+        .expect("the restore reopens the saved session file");
+    let header: Value = serde_json::from_str(
+        std::fs::read_to_string(file)
+            .expect("read saved Pi session")
+            .lines()
+            .next()
+            .expect("session header"),
+    )
+    .expect("decode session header");
+    assert_eq!(header["id"], id.as_str());
     assert!(
         resumed
             .start_turn(&old_generation, "late", "normal")

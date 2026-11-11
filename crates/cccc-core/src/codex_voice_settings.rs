@@ -104,8 +104,10 @@ impl ResolvedAgentRuntime {
 }
 
 /// A launch fingerprint split into what it was made from, to tell which part
-/// changed between two launches. Diagnostic only: whether a saved conversation
-/// is resumed is decided by the whole fingerprint, never by these.
+/// changed between two launches. A saved conversation resumes when the whole
+/// fingerprint matches, or when the splits of both launches show that only
+/// `path` changed (for Claude, only while no live session of it is found); any
+/// other difference still selects a new conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct LaunchParts {
     /// Format of this split; a reader compares only splits it understands.

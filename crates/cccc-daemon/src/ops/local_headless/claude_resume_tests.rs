@@ -17,6 +17,9 @@ const PRIVATE_ROUTE: &str = "https://synthetic-provider.invalid/v1";
 #[path = "claude_confirmation_tests.rs"]
 mod confirmation;
 
+#[path = "claude_path_resume_tests.rs"]
+mod path_only;
+
 fn isolated(test: &str) -> bool {
     isolated_with_config_dir(test, true)
 }

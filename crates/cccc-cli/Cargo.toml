@@ -47,6 +47,9 @@ uuid.workspace = true
 portable-pty.workspace = true
 retach.workspace = true
 
+[build-dependencies]
+sha2.workspace = true
+
 [target.'cfg(unix)'.dev-dependencies]
 nix = { workspace = true, features = ["term"] }
 

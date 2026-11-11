@@ -34,9 +34,12 @@ pub(crate) fn receipt_path(home: &HomeLayout, group: &str, actor: &str) -> io::R
     path(home, group, actor)
 }
 
+/// The saved conversation this launch resumes. A launch whose `PATH` alone
+/// changed still resumes it: Pi starts as a new process with the new `PATH`.
 pub(crate) fn prepare(
     path: &Path,
     identity: &Value,
+    parts: Option<&LaunchParts>,
     sessions: &Path,
 ) -> io::Result<Option<Resume>> {
     if !resume_enabled() || !path.exists() {
@@ -44,10 +47,14 @@ pub(crate) fn prepare(
     }
     let value: Value = cccc_core::fs::read_json(path)
         .map_err(|_| io::Error::other("Pi session receipt is unreadable; use New Session"))?;
+    let resumes = match parts {
+        Some(parts) => replaced::identity_resumes(&value, identity, parts),
+        None => &value["identity"] == identity,
+    };
     if value["v"] != MANAGED_RECORD_VERSION
         || value["runtime"] != "pi"
         || value["transport"] != "pi_rpc"
-        || &value["identity"] != identity
+        || !resumes
     {
         return Ok(None);
     }
@@ -170,9 +177,14 @@ mod tests {
                 environment,
             }
             .identity_fingerprint();
-            let resumed = prepare(&root.join("receipt.json"), &current, &root.join("sessions"))
-                .expect("prepare under inherited provider environment")
-                .map(|session| session.id);
+            let resumed = prepare(
+                &root.join("receipt.json"),
+                &current,
+                parts.as_ref(),
+                &root.join("sessions"),
+            )
+            .expect("prepare under inherited provider environment")
+            .map(|session| session.id);
             cccc_core::fs::write_json(
                 &root.join("result.json"),
                 &json!({"identity":current,"parts":parts,"voice_fingerprint":voice,"resumed_session_id":resumed}),
@@ -333,7 +345,7 @@ mod tests {
         let (current, parts) =
             launch(temp.path(), &["pi".to_owned()], &environment).expect("Pi launch identity");
         let resumes = || {
-            prepare(&path, &current, &sessions)
+            prepare(&path, &current, parts.as_ref(), &sessions)
                 .expect("prepare")
                 .map(|session| session.id)
         };
@@ -351,6 +363,88 @@ mod tests {
     }
 
     #[test]
+    fn a_launch_whose_path_alone_changed_resumes_the_saved_session() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sessions = temp.path().join("sessions");
+        std::fs::create_dir(&sessions).expect("provider history");
+        let id = uuid::Uuid::new_v4().to_string();
+        let file = sessions.join("session.jsonl");
+        std::fs::write(&file, format!("{}\n", json!({"type":"session","id":id})))
+            .expect("provider-owned session header");
+        let path = temp.path().join("receipt.json");
+        let command = ["pi".to_owned()];
+        // Every provider selector is set, so the process environment is not read.
+        let environment = |changes: &[(&str, &str)]| {
+            let mut environment: BTreeMap<String, String> = [
+                ("CCCC_CLI", "/probe/cccc"),
+                ("HOME", "/probe/home"),
+                ("PATH", "/probe/bin:/usr/bin"),
+                ("PI_CODING_AGENT_DIR", "/probe/pi"),
+                ("PROBE_SETTING", "same"),
+                ("USERPROFILE", "/probe/profile"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect();
+            for (key, value) in changes {
+                environment.insert((*key).to_owned(), (*value).to_owned());
+            }
+            environment
+        };
+        let (saved, parts) =
+            launch(temp.path(), &command, &environment(&[])).expect("Pi launch identity");
+        record(&path, &saved, parts.as_ref(), &id, &file, true).expect("record");
+        let resumes = |cwd: &Path, changes: &[(&str, &str)]| {
+            let (current, parts) =
+                launch(cwd, &command, &environment(changes)).expect("Pi launch identity");
+            prepare(&path, &current, parts.as_ref(), &sessions)
+                .expect("prepare")
+                .map(|session| session.id)
+        };
+        let new_path = [("PATH", "/other/bin:/usr/bin")];
+        assert_eq!(resumes(temp.path(), &[]).as_ref(), Some(&id));
+        assert_eq!(resumes(temp.path(), &new_path).as_ref(), Some(&id));
+        for changes in [
+            &[("CCCC_CLI", "/moved/cccc")][..],
+            &[("PI_CODING_AGENT_DIR", "/other/pi")],
+            &[("PROBE_SETTING", "changed")],
+            &[
+                ("PATH", "/other/bin:/usr/bin"),
+                ("PROBE_SETTING", "changed"),
+            ],
+        ] {
+            assert_eq!(resumes(temp.path(), changes), None, "{changes:?}");
+        }
+        let elsewhere = tempfile::tempdir().expect("another workspace");
+        assert_eq!(resumes(elsewhere.path(), &new_path), None);
+
+        // A saved identity without its fingerprint is incomplete, whatever its split says.
+        let complete: Value = cccc_core::fs::read_json(&path).expect("stored receipt");
+        for fingerprint in [None, Some(json!("")), Some(json!(7))] {
+            let mut incomplete = complete.clone();
+            let identity = incomplete["identity"]
+                .as_object_mut()
+                .expect("identity object");
+            match fingerprint {
+                Some(value) => identity.insert("launch_fingerprint".into(), value),
+                None => identity.remove("launch_fingerprint"),
+            };
+            cccc_core::fs::write_json(&path, &incomplete).expect("incomplete receipt");
+            assert_eq!(resumes(temp.path(), &new_path), None, "{incomplete}");
+        }
+
+        // Without a split the saved receipt cannot tell which part changed.
+        let mut unsplit = complete;
+        unsplit
+            .as_object_mut()
+            .expect("receipt object")
+            .remove("launch_parts");
+        cccc_core::fs::write_json(&path, &unsplit).expect("unsplit receipt");
+        assert_eq!(resumes(temp.path(), &new_path), None);
+        assert_eq!(resumes(temp.path(), &[]).as_ref(), Some(&id));
+    }
+
+    #[test]
     fn pi_recovery_never_replaces_attempted_missing_or_changed_history() {
         let tmp = tempfile::tempdir().expect("tmp");
         let sessions = tmp.path().join("sessions");
@@ -361,14 +455,14 @@ mod tests {
         let identity = json!({"workspace_path":"fixture"});
         record(&path, &identity, None, &id, &file, false)
             .expect("record never-attempted Pi receipt");
-        let empty = prepare(&path, &identity, &sessions)
+        let empty = prepare(&path, &identity, None, &sessions)
             .expect("prepare never-attempted Pi receipt")
             .expect("never-attempted Pi receipt retains its identity");
         assert_eq!(empty.id, id);
         assert!(!empty.attempted);
         assert!(empty.file.is_none());
         record(&path, &identity, None, &id, &file, true).expect("record attempted Pi receipt");
-        assert!(prepare(&path, &identity, &sessions).is_err());
+        assert!(prepare(&path, &identity, None, &sessions).is_err());
         std::fs::write(
             &file,
             format!(
@@ -378,7 +472,7 @@ mod tests {
         )
         .expect("write mismatched session header fixture");
         let original = std::fs::read(&file).expect("read original mismatched history");
-        assert!(prepare(&path, &identity, &sessions).is_err());
+        assert!(prepare(&path, &identity, None, &sessions).is_err());
         assert_eq!(
             std::fs::read(&file).expect("read unchanged rejected history"),
             original
@@ -386,7 +480,7 @@ mod tests {
         std::fs::write(&file, format!("{}\n", json!({"type":"session","id":id})))
             .expect("write matching session header fixture");
         assert_eq!(
-            prepare(&path, &identity, &sessions)
+            prepare(&path, &identity, None, &sessions)
                 .expect("prepare matching persisted Pi history")
                 .expect("matching Pi receipt is resumable")
                 .file,

@@ -31,6 +31,7 @@ const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    cccc_core::build_info::initialize(env!("CCCC_SOURCE_ID"));
     #[cfg(windows)]
     let _console_encoding = console_encoding::use_utf8();
     // rustls refuses to choose a crypto backend once the graph enables both of

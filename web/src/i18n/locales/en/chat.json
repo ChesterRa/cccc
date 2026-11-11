@@ -1026,7 +1026,7 @@
   "searchSenderUser": "User",
   "searchSenderSystem": "System",
   "voiceSecretaryCurrentPrompt": "Current composer text",
-  "voiceSecretaryDocumentsTitle": "Working documents",
+  "voiceSecretaryDocumentsTitle": "Documents",
   "voiceSecretaryCreatingDocument": "Creating...",
   "voiceSecretaryNewDocumentNamePlaceholder": "Document name",
   "voiceSecretaryCreateDocument": "Create",

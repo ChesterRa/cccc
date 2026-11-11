@@ -133,15 +133,25 @@ async fn native_acp_actors_isolate_empty_and_attempted_sessions_and_inject_mcp()
             .expect("store")
             .create("fixture", "")
             .expect("group");
-        let launch = |id: &str| ActorLaunchConfig {
-            workdir: temp.path().into(),
-            group_id: group.group_id.clone(),
-            actor_id: id.into(),
-            runtime,
-            runtime_mode: RuntimeMode::Acp,
-            command: vec![program.clone()],
-            environment: environment(temp.path()),
+        // The launch PATH leads with a directory of its own, so a restart can change PATH alone.
+        let search_path = std::env::var("PATH").unwrap_or_default();
+        let launch_on = |id: &str, bin: &str| {
+            let mut environment = environment(temp.path());
+            environment.insert(
+                "PATH".into(),
+                format!("{}:{search_path}", temp.path().join(bin).display()),
+            );
+            ActorLaunchConfig {
+                workdir: temp.path().into(),
+                group_id: group.group_id.clone(),
+                actor_id: id.into(),
+                runtime,
+                runtime_mode: RuntimeMode::Acp,
+                command: vec![program.clone()],
+                environment,
+            }
         };
+        let launch = |id: &str| launch_on(id, "bin");
         let empty = AnalystSession::launch_actor(&home, launch("alpha"))
             .await
             .expect("empty");
@@ -168,7 +178,9 @@ async fn native_acp_actors_isolate_empty_and_attempted_sessions_and_inject_mcp()
         );
         let id = first.thread_id().to_owned();
         first.stop(first.generation()).await.expect("stop");
-        let resumed = AnalystSession::launch_actor(&home, launch("alpha"))
+        // A restart whose PATH alone changed loads the same session in a provider
+        // process that runs with the new PATH.
+        let resumed = AnalystSession::launch_actor(&home, launch_on("alpha", "moved-bin"))
             .await
             .expect("resume populated");
         assert_eq!(resumed.thread_id(), id);
@@ -192,6 +204,23 @@ async fn native_acp_actors_isolate_empty_and_attempted_sessions_and_inject_mcp()
             .lines()
             .map(|line| serde_json::from_str(line).expect("json"))
             .collect();
+        let loads: Vec<&Value> = requests
+            .iter()
+            .filter(|frame| frame["method"] == "session/load")
+            .collect();
+        assert_eq!(loads.len(), 2, "the moved-PATH load and the rejected one");
+        assert!(loads.iter().all(|frame| frame["params"]["sessionId"] == id));
+        let moved = temp.path().join("moved-bin");
+        let moved_launches = std::fs::read_to_string(temp.path().join("fixture_path.jsonl"))
+            .expect("provider PATHs")
+            .lines()
+            .map(|line| serde_json::from_str::<String>(line).expect("PATH json"))
+            .filter(|path| std::env::split_paths(path).any(|dir| dir == moved))
+            .count();
+        assert_eq!(
+            moved_launches, 1,
+            "only the resumed provider ran with the new PATH"
+        );
         if runtime != ActorRuntime::Copilot {
             for id in ["alpha", "beta"] {
                 assert!(requests.iter().any(|frame| {

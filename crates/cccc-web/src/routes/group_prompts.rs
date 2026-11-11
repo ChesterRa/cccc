@@ -195,7 +195,8 @@ async fn scope_root(state: &AppState, group_id: &str) -> Result<std::path::PathB
         .and_then(|item| item.get("url"))
         .and_then(Value::as_str)
         .map(std::path::PathBuf::from)
-        .ok_or_else(|| ApiError::not_found("group has no scope"))
+        // A stable code lets the Web show a translated empty state instead of this text.
+        .ok_or_else(|| ApiError::not_found_code("group_has_no_scope", "group has no scope"))
 }
 
 async fn scope_path(
@@ -304,6 +305,7 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("groups");
         let group = store.create("instructions", "").expect("group");
+        let unscoped = store.create("no project folder", "").expect("group");
         let workspace = temp.path().join("workspace");
         let other = temp.path().join("other");
         std::fs::create_dir_all(&workspace).expect("workspace");
@@ -355,6 +357,25 @@ mod tests {
             },
             "instructions-test".into(),
         );
+        // Without a project folder, both reads and writes answer with a code the Web translates.
+        for error in [
+            agents_md_get(State(state.clone()), Path(unscoped.group_id.clone()))
+                .await
+                .expect_err("read without a project folder"),
+            agents_md_put(
+                State(state.clone()),
+                Path(unscoped.group_id.clone()),
+                Json(json!({"content":"# Rules", "expected_path":""})),
+            )
+            .await
+            .expect_err("write without a project folder"),
+        ] {
+            assert_eq!(error.to_string(), "group_has_no_scope: group has no scope");
+            assert_eq!(
+                axum::response::IntoResponse::into_response(error).status(),
+                axum::http::StatusCode::NOT_FOUND
+            );
+        }
         let get = || agents_md_get(State(state.clone()), Path(group.group_id.clone()));
         let Json(missing) = get().await.expect("read missing file");
         assert_eq!(missing["result"]["exists"], false);

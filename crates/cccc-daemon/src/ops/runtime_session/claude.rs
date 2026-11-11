@@ -25,6 +25,9 @@ mod failure_tests;
 pub struct ResumeAttempt {
     pub session_id: String,
     pub attempt_id: String,
+    /// A PATH-only launch change may resume a stopped session, but must not
+    /// adopt a live worker that still has its old launch environment.
+    pub cold_only: bool,
 }
 
 #[derive(Debug)]
@@ -69,9 +72,18 @@ pub fn prepare_managed(
         || string(&document, "workspace_path") != workspace_path(cwd)
         || string(&document, "command_fingerprint") != command_fingerprint(base_command)
         || string(&document, "model") != model_from_command(base_command)
-        || string(&document, "identity_fingerprint")
-            != launch_identity(base_command, environment, cwd)?.0
         || !string(&document, "provider_thread_id").is_empty()
+    {
+        return Ok(None);
+    }
+    let (identity, parts) = launch_identity(base_command, environment, cwd)?;
+    let saved_identity = string(&document, "identity_fingerprint");
+    let cold_only = saved_identity != identity;
+    if cold_only
+        && (saved_identity.is_empty()
+            || !parts.is_some_and(|parts| {
+                super::replaced::only_launch_path_changed(&Value::Object(document.clone()), &parts)
+            }))
     {
         return Ok(None);
     }
@@ -98,6 +110,7 @@ pub fn prepare_managed(
     Ok(Some(ResumeAttempt {
         session_id,
         attempt_id,
+        cold_only,
     }))
 }
 

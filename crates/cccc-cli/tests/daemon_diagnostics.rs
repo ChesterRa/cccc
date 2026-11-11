@@ -133,7 +133,7 @@ fn daemon_records_safe_failures_without_stopping() {
             && record["version"] == env!("CARGO_PKG_VERSION")
             && record["source_id"]
                 .as_str()
-                .is_some_and(|value| !value.is_empty())
+                .is_some_and(|value| value.len() == 64 && value == env!("CCCC_SOURCE_ID"))
     }));
     assert!(
         records

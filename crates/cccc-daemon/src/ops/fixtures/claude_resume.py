@@ -12,6 +12,7 @@ import tty
 SAVED = "52b41c61-e23c-4b7c-8b60-809c347451b5"
 FRESH = "ca52e69a-6596-4abd-a0ec-3e8690dc70e1"
 SHORT = "abcdef12"
+LIVE_SHORT = "fedcba98"
 
 
 def write_json(path, value):
@@ -51,7 +52,7 @@ def launch_context(root):
         private = {"settings_arg": True, "private_settings": path.stat().st_mode & 0o077 == 0,
                    "auth_digest": hashlib.sha256(str(environment.get("ANTHROPIC_AUTH_TOKEN", "")).encode()).hexdigest(),
                    "routing_digest": hashlib.sha256(str(environment.get("ANTHROPIC_BASE_URL", "")).encode()).hexdigest()}
-    return {**private, "executable": sys.argv[0], "cwd": os.getcwd(), "config_dir": str(root.resolve()),
+    return {**private, "path": os.environ.get("PATH"), "executable": sys.argv[0], "cwd": os.getcwd(), "config_dir": str(root.resolve()),
             "config_dir_env": os.environ.get("CLAUDE_CONFIG_DIR"), "home": os.environ.get("HOME"),
             "userprofile": os.environ.get("USERPROFILE"),
             "host_oauth_url": os.environ.get("CLAUDE_CODE_CUSTOM_OAUTH_URL")}
@@ -77,19 +78,47 @@ if len(sys.argv) > 1 and sys.argv[1] == "server":
             line = connection.makefile("rb").readline()
             request = json.loads(line)
             op = request["op"]
+            with (root / "control_requests.jsonl").open("a") as log:
+                log.write(json.dumps({"op": op, "short": request.get("short")}) + "\n")
             jobs = []
             if (root / "active").exists():
                 state = json.loads((root / "jobs" / SHORT / "state.json").read_text())
                 jobs = [{"short": SHORT, "sessionId": state["sessionId"], "cwd": state["cwd"], "cliVersion": "2.1.286"}]
-            if op == "list":
+            if (root / "saved_live").exists():
+                state = json.loads((root / "jobs" / LIVE_SHORT / "state.json").read_text())
+                jobs.append({"short": LIVE_SHORT, "sessionId": SAVED, "cwd": state["cwd"], "cliVersion": "2.1.286"})
+            if op == "list" and (root / "deny_control").exists():
+                result = {"ok": False, "op": op, "code": "EAUTH", "error": "fixture control refused"}
+            elif op == "list":
                 result = {"ok": True, "op": op, "jobs": jobs}
             elif op == "kill":
-                (root / "active").unlink(missing_ok=True)
+                if request.get("short") == LIVE_SHORT:
+                    (root / "saved_live").unlink(missing_ok=True)
+                else:
+                    (root / "active").unlink(missing_ok=True)
                 result = {"ok": True, "op": op}
             else:
                 result = {"ok": False, "op": op, "code": "EPROTO", "error": "unexpected fixture operation"}
             connection.sendall(json.dumps(result).encode() + b"\n")
 elif "--version" in sys.argv:
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    if configured:
+        root = pathlib.Path(configured).resolve()
+        # Publish a job after receipt preparation, at the real launch's
+        # version check. The fixture must never read a user's configuration.
+        root.relative_to(pathlib.Path(sys.argv[0]).resolve().parent)
+        pending = root / "publish_saved_live.json"
+        if pending.exists():
+            publish = json.loads(pending.read_text())
+            receipt_path = pathlib.Path(publish["receipt_path"]).resolve()
+            receipt_path.relative_to(pathlib.Path(sys.argv[0]).resolve().parent)
+            receipt = json.loads(receipt_path.read_text())
+            # Earlier CLI checks must not publish it before prepare has
+            # recorded a new attempt. This is the prepare/launch race case.
+            if receipt.get("last_resume_attempt_id"):
+                write_json(root / "jobs" / LIVE_SHORT / "state.json", publish["state"])
+                (root / "saved_live").touch()
+                pending.unlink()
     print("2.1.286 (Claude Code)")
 else:
     configured = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -101,6 +130,8 @@ else:
         stage = confirmation_stage(root, mode)
         with (root / "launches").open("a") as log:
             log.write("resume\n" if "--resume" in sys.argv else "fresh\n")
+        with (root / "argv.jsonl").open("a") as log:
+            log.write(json.dumps(sys.argv[1:]) + "\n")
         with (root / "launch_contexts").open("a") as log:
             log.write(json.dumps(launch_context(root)) + "\n")
         if mode == "untrusted" or stage == "workspace":
@@ -109,7 +140,7 @@ else:
         if stage == "disclaimer":
             print("--bg with bypassPermissions requires accepting the disclaimer first. Run `claude --dangerously-skip-permissions` once interactively.", file=sys.stderr)
             sys.exit(1)
-        if mode == "confirmation_failure":
+        if mode in {"confirmation_failure", "startup_failure"}:
             print("fixture provider startup failed after confirmation", file=sys.stderr)
             sys.exit(1)
         if mode == "delayed_resume" and "--resume" in sys.argv:

@@ -308,7 +308,7 @@ struct Rate {
 
 struct State {
     dir: PathBuf,
-    source_id: String,
+    source_id: Option<&'static str>,
     limit: u64,
     rates: HashMap<Key, Rate>,
     reported_failure: bool,
@@ -316,10 +316,7 @@ struct State {
 
 impl State {
     fn new(dir: PathBuf, limit: u64) -> Self {
-        let source_id = cccc_core::build_info::current()["source_id"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_owned();
+        let source_id = cccc_core::build_info::source_id();
         Self {
             dir,
             source_id,
@@ -679,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn rotation_bounds_both_files_and_records_the_build() {
+    fn rotation_bounds_both_files_and_records_the_version() {
         let temp = tempfile::tempdir().expect("temporary diagnostics");
         let mut state = State::new(temp.path().into(), 512);
         state.marker("start").expect("startup marker");
@@ -693,7 +690,15 @@ mod tests {
             assert!(fs::metadata(&file).expect("rotated file").len() <= 512);
             let text = fs::read_to_string(file).expect("rotated contents");
             assert!(text.contains("rotation"));
-            assert!(text.contains(&state.source_id));
+            for record in text
+                .lines()
+                .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("JSON record"))
+            {
+                if record["kind"] == "rotation" {
+                    assert_eq!(record["version"], env!("CARGO_PKG_VERSION"));
+                    assert_eq!(record["source_id"].as_str(), state.source_id);
+                }
+            }
         }
     }
 

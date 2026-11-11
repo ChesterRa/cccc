@@ -60,7 +60,7 @@ impl AnalystSession {
             })
             .transpose()?;
         let resume = if let Some(path) = &receipt_path {
-            super::super::runtime_session::native_acp::prepare(path, &identity)?
+            super::super::runtime_session::native_acp::prepare(path, &identity, &launch_parts)?
         } else {
             resume
         };

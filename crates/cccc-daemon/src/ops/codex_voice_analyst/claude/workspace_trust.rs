@@ -100,11 +100,13 @@ mod tests {
             "generation-12345678",
             SessionPurpose::Actor,
             None,
+            false,
         )
         .await;
         let Err(error) = result else {
             panic!("an untrusted workspace must not launch");
         };
+        let error = error.error;
         assert_eq!(untrusted_workspace(&error), Some(workspace.as_path()));
         let message = error.to_string();
         assert!(

@@ -18,6 +18,14 @@ def _checkout(root: Path, name: str, *, packaged: bool) -> Path:
         encoding="utf-8",
     )
     shutil.copyfile(ROOT / "crates/cccc-web/build.rs", package / "build.rs")
+    # This dependency-free probe isolates asset paths/cache reuse. The real
+    # fingerprint emitter is exercised by the executable identity tests.
+    identity = package.parent / "cccc-core/build_support"
+    identity.mkdir(parents=True)
+    (identity / "mod.rs").write_text(
+        "pub fn emit(_: &std::path::Path) -> std::io::Result<()> { Ok(()) }\n",
+        encoding="utf-8",
+    )
     # Resolve relative paths from the package root, as RustEmbed does. Absolute
     # paths also work, so the previous cross-checkout bug fails on wrong content.
     (package / "embedded.rs").write_text(

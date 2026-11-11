@@ -112,14 +112,21 @@ impl AnalystSession {
                     &generation,
                     purpose,
                     resume_session_id,
+                    resume_attempt
+                        .as_ref()
+                        .is_some_and(|attempt| attempt.cold_only),
                 ))
                 .await
             }
-            Err(error) => Err(error),
+            Err(error) => Err(claude::LaunchFailure {
+                error,
+                resume_selected: resume_session_id.is_some(),
+            }),
         };
         let mut launched = match result {
             Ok(launched) => launched,
-            Err(error) => {
+            Err(failure) => {
+                let error = failure.error;
                 if purpose == SessionPurpose::VoiceSecretary
                     && claude::cleanup_secretary_owner(home, &binding.root)
                         .await
@@ -128,6 +135,7 @@ impl AnalystSession {
                     claude::remove_secretary_settings(home, &settings_key)?;
                 }
                 if let Some((group_id, actor_id)) = actor
+                    && failure.resume_selected
                     && let Some(attempt) = resume_attempt.as_ref()
                     && let Some((diagnostic, blocked)) = claude::resume_diagnostic(&error)
                 {

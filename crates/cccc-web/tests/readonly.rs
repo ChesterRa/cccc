@@ -173,7 +173,10 @@ async fn exhibit_ping_matches_python_contract() {
         home.root().to_string_lossy().as_ref()
     );
     assert_eq!(payload["result"]["daemon"]["implementation"], "rust");
-    assert_eq!(payload["result"]["build"], cccc_core::build_info::current());
+    // This app is embedded in the test process, which has no registered
+    // executable identity. The process-level build_identity test covers the
+    // real Web entry point; an empty-to-empty comparison would not do that.
+    assert!(payload["result"]["build"].get("source_id").is_none());
     assert_eq!(
         payload["result"]["daemon"]["build"],
         payload["result"]["build"]

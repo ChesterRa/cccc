@@ -14,6 +14,8 @@ sessions_path = home / "fixture_sessions.json"
 sessions = json.loads(sessions_path.read_text()) if sessions_path.exists() else []
 with open(Path.cwd() / "fixture_launch.jsonl", "a") as log:
     log.write(json.dumps(sys.argv) + "\n")
+with open(Path.cwd() / "fixture_path.jsonl", "a") as log:
+    log.write(json.dumps(os.environ.get("PATH", "")) + "\n")
 
 
 def emit(value):

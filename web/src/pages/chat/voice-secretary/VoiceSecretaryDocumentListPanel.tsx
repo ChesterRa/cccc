@@ -59,7 +59,7 @@ export function VoiceSecretaryDocumentListPanel(props: VoiceSecretaryDocumentLis
             isDark ? "text-slate-100" : "text-gray-900",
           )}
         >
-          {t("voiceSecretaryDocumentsTitle", { defaultValue: "Working documents" })}
+          {t("voiceSecretaryDocumentsTitle", { defaultValue: "Documents" })}
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           {headerActions}

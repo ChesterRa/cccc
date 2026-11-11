@@ -4,6 +4,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
+#[path = "../cccc-core/build_support/mod.rs"]
+mod source_id;
+
 const WEB_INPUTS: &[&str] = &[
     "src",
     "public",
@@ -18,6 +21,7 @@ const WEB_INPUTS: &[&str] = &[
 ];
 
 fn main() {
+    source_id::emit(Path::new("../..")).expect("fingerprint CCCC application source");
     println!("cargo:rerun-if-env-changed=CCCC_FORCE_WEB_BUILD");
     // Cargo runs build scripts from the package directory. Keep both watched
     // inputs and the exported asset path relative: a shared target may reuse

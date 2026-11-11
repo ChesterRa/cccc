@@ -86,12 +86,18 @@ pub(crate) fn launch(
     )
 }
 
-pub(crate) fn prepare(path: &Path, identity: &Value) -> std::io::Result<Option<String>> {
+/// The saved session this launch loads. A launch whose `PATH` alone changed
+/// still loads it: the provider starts as a new process with the new `PATH`.
+pub(crate) fn prepare(
+    path: &Path,
+    identity: &Value,
+    parts: &LaunchParts,
+) -> std::io::Result<Option<String>> {
     if !resume_enabled() || !path.exists() {
         return Ok(None);
     }
     let value: Value = cccc_core::fs::read_json(path)?;
-    if value["v"] != 1 || &value["identity"] != identity {
+    if value["v"] != 1 || !replaced::identity_resumes(&value, identity, parts) {
         return Ok(None);
     }
     let attempted = value["attempted"]
@@ -173,7 +179,7 @@ mod tests {
             &["agent".to_owned(), "--acp".to_owned()],
             &environment,
         );
-        let resumes = || prepare(&path, &current).expect("prepare");
+        let resumes = || prepare(&path, &current, &parts).expect("prepare");
         assert_eq!(resumes().as_deref(), Some("acp-saved"));
 
         // The parts go beside the identity, which keeps its fields and its version.
@@ -184,5 +190,76 @@ mod tests {
         assert_eq!(stored["launch_parts"], json!(parts));
         assert_eq!(stored["launch_parts"]["v"], 1);
         assert_eq!(resumes().as_deref(), Some("acp-saved"));
+    }
+
+    #[test]
+    fn a_launch_whose_path_alone_changed_loads_the_saved_session() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("receipt.json");
+        let command = ["agent".to_owned(), "--acp".to_owned()];
+        let environment = |changes: &[(&str, &str)]| {
+            let mut environment: BTreeMap<String, String> = [
+                ("CCCC_CLI", "/probe/cccc"),
+                ("HOME", "/probe/home"),
+                ("PATH", "/probe/bin:/usr/bin"),
+                ("PROBE_SETTING", "same"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
+            .collect();
+            for (key, value) in changes {
+                environment.insert((*key).to_owned(), (*value).to_owned());
+            }
+            environment
+        };
+        let (saved, parts) = launch(temp.path(), &command, &environment(&[]));
+        record(&path, &saved, &parts, "acp-saved", true).expect("record");
+        let resumes = |cwd: &Path, changes: &[(&str, &str)]| {
+            let (current, parts) = launch(cwd, &command, &environment(changes));
+            prepare(&path, &current, &parts).expect("prepare")
+        };
+        let new_path = [("PATH", "/other/bin:/usr/bin")];
+        assert_eq!(resumes(temp.path(), &[]).as_deref(), Some("acp-saved"));
+        assert_eq!(
+            resumes(temp.path(), &new_path).as_deref(),
+            Some("acp-saved")
+        );
+        for changes in [
+            &[("CCCC_CLI", "/moved/cccc")][..],
+            &[("PROBE_SETTING", "changed")],
+            &[
+                ("PATH", "/other/bin:/usr/bin"),
+                ("PROBE_SETTING", "changed"),
+            ],
+        ] {
+            assert_eq!(resumes(temp.path(), changes), None, "{changes:?}");
+        }
+        let elsewhere = tempfile::tempdir().expect("another workspace");
+        assert_eq!(resumes(elsewhere.path(), &new_path), None);
+
+        // A saved identity without its fingerprint is incomplete, whatever its split says.
+        let complete: Value = cccc_core::fs::read_json(&path).expect("stored receipt");
+        for fingerprint in [None, Some(json!("")), Some(json!(7))] {
+            let mut incomplete = complete.clone();
+            let identity = incomplete["identity"]
+                .as_object_mut()
+                .expect("identity object");
+            match fingerprint {
+                Some(value) => identity.insert("launch_fingerprint".into(), value),
+                None => identity.remove("launch_fingerprint"),
+            };
+            cccc_core::fs::write_json(&path, &incomplete).expect("incomplete receipt");
+            assert_eq!(resumes(temp.path(), &new_path), None, "{incomplete}");
+        }
+
+        // Without a split the saved receipt cannot tell which part changed.
+        let mut unsplit = complete;
+        unsplit
+            .as_object_mut()
+            .expect("receipt object")
+            .remove("launch_parts");
+        cccc_core::fs::write_json(&path, &unsplit).expect("unsplit receipt");
+        assert_eq!(resumes(temp.path(), &new_path), None);
+        assert_eq!(resumes(temp.path(), &[]).as_deref(), Some("acp-saved"));
     }
 }

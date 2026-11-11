@@ -35,6 +35,24 @@ impl VersionNotice {
         request: &Value,
         response: &mut Value,
     ) {
+        self.annotate_with_source(
+            home,
+            runtime,
+            request,
+            response,
+            cccc_core::build_info::source_id(),
+        )
+        .await;
+    }
+
+    async fn annotate_with_source(
+        &mut self,
+        home: &HomeLayout,
+        runtime: Option<&str>,
+        request: &Value,
+        response: &mut Value,
+        own_source: Option<&str>,
+    ) {
         if request.get("method").and_then(Value::as_str) != Some("tools/call") {
             return;
         }
@@ -44,11 +62,8 @@ impl VersionNotice {
                 self.source_noticed = None;
                 return;
             }
-            if let Some(source) = source {
-                let own = cccc_core::build_info::current();
-                if let Some(own_source) = own["source_id"].as_str() {
-                    self.annotate_source(own_source, &source, runtime, response, Instant::now());
-                }
+            if let (Some(source), Some(own_source)) = (source, own_source) {
+                self.annotate_source(own_source, &source, runtime, response, Instant::now());
             }
         }
     }
@@ -493,11 +508,12 @@ mod tests {
 
     #[tokio::test]
     async fn source_check_reads_each_address_but_old_addresses_remain_quiet() {
+        const OWN_SOURCE: &str = "fixture-source";
         let (_temp, home) = home_with(Some(&address(SERVER_VERSION)));
         let mut notice = VersionNotice::default();
         let mut old_address = result();
         notice
-            .annotate(&home, None, &call(), &mut old_address)
+            .annotate_with_source(&home, None, &call(), &mut old_address, Some(OWN_SOURCE))
             .await;
         assert_eq!(old_address, result());
 
@@ -507,7 +523,13 @@ mod tests {
         std::fs::write(cccc_client::address_path(&home), new_address.to_string()).expect("rewrite");
         let mut changed = result();
         notice
-            .annotate(&home, Some("codex"), &call(), &mut changed)
+            .annotate_with_source(
+                &home,
+                Some("codex"),
+                &call(),
+                &mut changed,
+                Some(OWN_SOURCE),
+            )
             .await;
         assert!(
             changed["result"]["structuredContent"][NOTICE_KEY]
@@ -515,14 +537,30 @@ mod tests {
                 .is_some_and(|text| text.contains("different-so"))
         );
         let mut repeated = result();
-        notice.annotate(&home, None, &call(), &mut repeated).await;
+        notice
+            .annotate_with_source(&home, None, &call(), &mut repeated, Some(OWN_SOURCE))
+            .await;
         assert_eq!(repeated, result());
 
-        new_address["source_id"] = cccc_core::build_info::current()["source_id"].clone();
+        new_address["source_id"] = json!(OWN_SOURCE);
         std::fs::write(cccc_client::address_path(&home), new_address.to_string()).expect("match");
         let mut matched = result();
-        notice.annotate(&home, None, &call(), &mut matched).await;
+        notice
+            .annotate_with_source(&home, None, &call(), &mut matched, Some(OWN_SOURCE))
+            .await;
         assert_eq!(matched, result());
+
+        new_address["source_id"] = json!("another-source");
+        std::fs::write(cccc_client::address_path(&home), new_address.to_string()).expect("rewrite");
+        let mut unknown = result();
+        notice
+            .annotate_with_source(&home, None, &call(), &mut unknown, None)
+            .await;
+        assert_eq!(
+            unknown,
+            result(),
+            "an embedding without an identity cannot compare sources"
+        );
     }
 
     #[test]

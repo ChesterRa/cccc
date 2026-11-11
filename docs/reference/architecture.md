@@ -105,6 +105,15 @@ This boundary is intentionally separate from persistent sessions and provider
 commands such as Claude Agent View background launch, which must retain their
 provider-owned service after the launcher exits.
 
+The CLI and standalone Web/MCP application packages compile the same content
+fingerprint of workspace sources and bundled resources. Their entry points
+register it before starting services. Core holds the immutable process identity;
+it and the daemon do not depend on the full-workspace hash producer. Web/MCP
+libraries still share their application's build script and can rebuild when its
+hash changes. An embedding without a compiled application identity reports no
+source fingerprint rather than reading the checkout or inventing a value. Web
+assets keep their separate served-bundle identity.
+
 ### Logical Modules
 
 | Module | Responsibility | Boundary |
@@ -343,8 +352,10 @@ file access can read it through the existing `cccc_file` tool. The Web editor
 reads and writes only the active workspace root's file through
 `GET/PUT /api/v1/groups/{group_id}/agents_md`. GET returns `content`, `path`, and
 `exists`; PUT takes `content` and the displayed `expected_path`, rejecting a
-changed workspace with HTTP 409. File saves do not mutate Context state or reload
-runtime sessions. The optional team notification is a separate chat send.
+changed workspace with HTTP 409. For a Group without a project folder, both
+answer HTTP 404 with the error code `group_has_no_scope`. File saves do not
+mutate Context state or reload runtime sessions. The optional team notification
+is a separate chat send.
 
 ### Core Collaboration Capability Groups
 

@@ -613,9 +613,11 @@ mod tests {
             )
             .expect("history")
         };
-        let matching = json!({"version":env!("CARGO_PKG_VERSION"),"source_id":cccc_core::build_info::current()["source_id"]});
+        // Completeness, not equality with the embedding test process, controls
+        // this missing-client-identity notice.
+        let reported = json!({"version":env!("CARGO_PKG_VERSION"),"source_id":"fixture-source"});
         assert!(
-            !read("peer", Some(matching))["delivery_text"]
+            !read("peer", Some(reported))["delivery_text"]
                 .as_str()
                 .expect("text")
                 .contains("source identity")

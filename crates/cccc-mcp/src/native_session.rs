@@ -1391,9 +1391,9 @@ mod tests {
         }
         let identity = &bootstrapped["result"]["structuredContent"]["mcp_server"];
         assert_eq!(identity["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(
-            identity["source_id"],
-            cccc_core::build_info::current()["source_id"]
+        assert!(
+            identity.get("source_id").is_none(),
+            "this test embeds MCP without an application identity"
         );
         let members = bootstrapped["result"]["structuredContent"]["session"]["members"]
             .as_array()

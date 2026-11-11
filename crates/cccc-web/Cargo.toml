@@ -71,6 +71,9 @@ weixin-agent.workspace = true
 http-body-util.workspace = true
 tower.workspace = true
 
+[build-dependencies]
+sha2.workspace = true
+
 [lints]
 workspace = true
 

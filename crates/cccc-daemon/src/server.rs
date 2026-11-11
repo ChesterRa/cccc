@@ -265,8 +265,7 @@ fn write_address(
             port,
             pid: std::process::id(),
             version: env!("CARGO_PKG_VERSION").into(),
-            source_id: cccc_core::build_info::current()["source_id"]
-                .as_str()
+            source_id: cccc_core::build_info::source_id()
                 .unwrap_or_default()
                 .into(),
             ts: utc_now(),
@@ -410,9 +409,7 @@ mod tests {
                 .expect("daemon address");
         assert_eq!(
             address.source_id,
-            cccc_core::build_info::current()["source_id"]
-                .as_str()
-                .expect("source fingerprint")
+            cccc_core::build_info::source_id().unwrap_or_default()
         );
         std::fs::write(paths.daemon_dir.join("restore.started"), b"").expect("mark restore start");
     }

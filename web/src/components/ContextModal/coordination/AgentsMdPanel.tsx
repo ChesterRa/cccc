@@ -11,6 +11,8 @@ interface AgentsMdPanelProps {
   ui: ContextModalUi;
   agentsMdBusy: boolean;
   agentsMdError: string;
+  /** The group has no project folder, so there is no AGENTS.md to show or create. */
+  agentsMdNoScope: boolean;
   notifyError: string;
   agentsMdNotice: string;
   agentsMdPathLabel: string;
@@ -33,6 +35,7 @@ export function AgentsMdPanel({
   ui,
   agentsMdBusy,
   agentsMdError,
+  agentsMdNoScope,
   notifyError,
   agentsMdNotice,
   agentsMdPathLabel,
@@ -90,13 +93,15 @@ export function AgentsMdPanel({
               {tr("context.cancel", "Cancel")}
             </button>
           ) : null}
-          <button type="button" onClick={onEditAgentsMd} className={ui.buttonPrimaryClass}>
-            {editingAgentsMd
-              ? tr("context.editing", "Editing")
-              : agentsMd?.exists
-                ? tr("context.editButton", "Edit")
-                : tr("context.createButton", "Create")}
-          </button>
+          {agentsMdNoScope ? null : (
+            <button type="button" onClick={onEditAgentsMd} className={ui.buttonPrimaryClass}>
+              {editingAgentsMd
+                ? tr("context.editing", "Editing")
+                : agentsMd?.exists
+                  ? tr("context.editButton", "Edit")
+                  : tr("context.createButton", "Create")}
+            </button>
+          )}
         </div>
       </div>
       <p className={classNames("mt-3 text-xs", ui.mutedTextClass)}>
@@ -199,9 +204,14 @@ export function AgentsMdPanel({
               "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]",
             )}
           >
-            {agentsMd?.exists
-              ? tr("context.emptyAgentsMd", "AGENTS.md is empty.")
-              : tr("context.noAgentsMd", "No AGENTS.md in this workspace.")}
+            {agentsMdNoScope
+              ? tr(
+                  "context.agentsMdNoScope",
+                  "This group has no project folder yet, so it has no AGENTS.md. Attach a project folder to create one.",
+                )
+              : agentsMd?.exists
+                ? tr("context.emptyAgentsMd", "AGENTS.md is empty.")
+                : tr("context.noAgentsMd", "No AGENTS.md in this workspace.")}
           </div>
         )}
       </div>

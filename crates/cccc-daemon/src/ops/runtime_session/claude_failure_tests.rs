@@ -107,6 +107,84 @@ fn failed_resume_preserves_identity_and_pauses_automatic_launch_without_new_sess
 }
 
 #[test]
+fn only_a_known_path_change_selects_cold_resume_and_preserves_the_other_fences() {
+    let mut f = Fixture::new();
+    f.env.insert("PATH".into(), "/before/bin:/usr/bin".into());
+    f.success();
+    let saved = f.receipt();
+    assert!(!f.prepare().expect("same launch").expect("resume").cold_only);
+    f.env.insert("PATH".into(), "/after/bin:/usr/bin".into());
+    let attempt = f.prepare().expect("PATH changed").expect("cold resume");
+    assert_eq!(attempt.session_id, SESSION);
+    assert!(attempt.cold_only);
+
+    for field in ["CCCC_CLI", "CLAUDE_CONFIG_DIR", "PROVIDER_SETTING"] {
+        f.env.insert(field.into(), "/other/value".into());
+        assert!(
+            f.prepare().expect("another setting changed").is_none(),
+            "{field}"
+        );
+        f.env.remove(field);
+    }
+    for (name, parts) in [
+        ("missing", None),
+        (
+            "unknown version",
+            Some(json!({"v":99,"path":"old","cccc_cli":"a","rest":"b"})),
+        ),
+        ("incomplete", Some(json!({"v":1,"path":"old"}))),
+        (
+            "wrong type",
+            Some(json!({"v":1,"path":false,"cccc_cli":"a","rest":"b"})),
+        ),
+        (
+            "does not explain the changed total",
+            Some(json!(
+                launch_identity(&f.command, &f.env, &f.cwd)
+                    .expect("identity")
+                    .1
+            )),
+        ),
+    ] {
+        let mut receipt = saved.clone();
+        if let Some(parts) = parts {
+            receipt.insert("launch_parts".into(), parts);
+        } else {
+            receipt.remove("launch_parts");
+        }
+        write(&f.home, &f.group, "worker", &receipt).expect("stored receipt");
+        assert!(f.prepare().expect("unsupported split").is_none(), "{name}");
+    }
+    for fingerprint in [Value::Null, json!(""), json!(false)] {
+        let mut receipt = saved.clone();
+        receipt.insert("identity_fingerprint".into(), fingerprint);
+        write(&f.home, &f.group, "worker", &receipt).expect("incomplete receipt");
+        assert!(f.prepare().expect("missing original fingerprint").is_none());
+    }
+    write(&f.home, &f.group, "worker", &saved).expect("original receipt");
+    f.command.extend(["--model".into(), "other".into()]);
+    assert!(f.prepare().expect("changed model/command").is_none());
+    f.command.truncate(1);
+    let elsewhere = f.cwd.join("elsewhere");
+    std::fs::create_dir(&elsewhere).expect("other workspace");
+    assert!(
+        prepare_managed(&f.home, &f.group, "worker", &elsewhere, &f.command, &f.env)
+            .expect("changed workspace")
+            .is_none()
+    );
+
+    // A PATH allowance is not permission to bypass a previously paused resume.
+    let attempt = f
+        .prepare()
+        .expect("prepare before pause")
+        .expect("cold resume");
+    f.failure(&attempt, true);
+    assert!(is_resume_blocked(
+        &f.prepare().err().expect("paused resume")
+    ));
+}
+
+#[test]
 fn transient_resume_failure_retains_eligibility_and_success_clears_diagnostics() {
     let f = Fixture::new();
     let attempt = f.prepare().expect("prepare").expect("saved session");

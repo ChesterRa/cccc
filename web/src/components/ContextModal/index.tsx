@@ -164,6 +164,7 @@ export function ContextModal({
   const [agentsMd, setAgentsMd] = useState<AgentsMdInfo | null>(null);
   const [agentsMdBusy, setAgentsMdBusy] = useState(false);
   const [agentsMdError, setAgentsMdError] = useState("");
+  const [agentsMdNoScope, setAgentsMdNoScope] = useState(false);
   const [agentsMdNotice, setAgentsMdNotice] = useState("");
   const [editingAgentsMd, setEditingAgentsMd] = useState(false);
   const [agentsMdText, setAgentsMdText] = useState("");
@@ -328,6 +329,7 @@ export function ContextModal({
       const isCurrent = () => modalVisitRef.current === visit && agentsMdReadSeqRef.current === seq;
       setAgentsMdBusy(true);
       setAgentsMdError("");
+      setAgentsMdNoScope(false);
       try {
         const resp = await apiJson<AgentsMdInfo>(
           `/api/v1/groups/${encodeURIComponent(groupId)}/agents_md`,
@@ -335,6 +337,10 @@ export function ContextModal({
         if (!isCurrent()) return null;
         if (!resp.ok) {
           setAgentsMd(null);
+          if (resp.error?.code === "group_has_no_scope") {
+            setAgentsMdNoScope(true);
+            return null;
+          }
           setAgentsMdError(
             resp.error?.message || tr("context.failedToLoadAgentsMd", "Failed to load AGENTS.md"),
           );
@@ -378,6 +384,7 @@ export function ContextModal({
     setAgentsMd(null);
     setAgentsMdBusy(false);
     setAgentsMdError("");
+    setAgentsMdNoScope(false);
     setAgentsMdNotice("");
     setEditingAgentsMd(false);
     setAgentsMdText("");
@@ -425,7 +432,8 @@ export function ContextModal({
       (activeView === "instructions" || editingAgentsMd) &&
       agentsMd === null &&
       !agentsMdBusy &&
-      !agentsMdError
+      !agentsMdError &&
+      !agentsMdNoScope
     ) {
       void loadAgentsMd();
     }
@@ -436,6 +444,7 @@ export function ContextModal({
     loadAgentsMd,
     agentsMdBusy,
     agentsMdError,
+    agentsMdNoScope,
     agentsMd,
     activeView,
   ]);
@@ -1318,6 +1327,7 @@ export function ContextModal({
       ui={ui}
       agentsMdBusy={agentsMdBusy}
       agentsMdError={agentsMdError}
+      agentsMdNoScope={agentsMdNoScope}
       notifyError={notifyError}
       agentsMdNotice={agentsMdNotice}
       agentsMdPathLabel={agentsMdPathLabel}
@@ -1652,6 +1662,7 @@ export function ContextModal({
                     ui={ui}
                     agentsMdBusy={agentsMdBusy}
                     agentsMdError={agentsMdError}
+                    agentsMdNoScope={agentsMdNoScope}
                     notifyError={notifyError}
                     agentsMdNotice={agentsMdNotice}
                     agentsMdPathLabel={agentsMdPathLabel}

@@ -59,11 +59,10 @@ fn source_identity_tracks_content_and_new_files_without_git_or_build_outputs() {
     std::fs::write(root.join("resources/mcp_tools.json"), "new contract")
         .expect("prepare source fixture");
     assert_ne!(original, id());
-    assert_eq!(
-        cccc_core::build_info::current()["source_id"]
-            .as_str()
-            .expect("compiled source id")
-            .len(),
-        64
-    );
+}
+
+#[test]
+fn a_library_does_not_invent_the_embedding_programs_identity() {
+    assert!(cccc_core::build_info::source_id().is_none());
+    assert!(cccc_core::build_info::current().get("source_id").is_none());
 }

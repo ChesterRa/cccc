@@ -502,4 +502,53 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
       "Repository instructions updated at /a/AGENTS.md. Re-read this file if it applies to your work.",
     );
   });
+
+  it("explains a group without a project folder once, without the raw error or a retry loop", async () => {
+    const noFolder =
+      "This group has no project folder yet, so it has no AGENTS.md. Attach a project folder to create one.";
+    const calls: string[] = [];
+    mocks.apiJson.mockImplementation(async (path: string) => {
+      calls.push(path);
+      if (calls.length > 5) throw new Error("Infinite request loop detected");
+      return path.includes("/g_a/")
+        ? {
+            ok: false,
+            error: { code: "group_has_no_scope", message: "group has no scope", details: {} },
+          }
+        : { ok: true, result: { exists: true, path: "/b/AGENTS.md", content: "Group B rules" } };
+    });
+    await renderModal("g_a");
+    await clickTab("AGENTS.md");
+    const panel = () => host.querySelector('[role="tabpanel"]:not([hidden])')!;
+    expect(calls).toHaveLength(1);
+    expect(panel().textContent).toContain(noFolder);
+    expect(panel().textContent).not.toContain("group has no scope");
+    expect(panel().textContent).not.toContain("No AGENTS.md in this workspace.");
+    expect(
+      [...panel().querySelectorAll("button")].map((button) => button.textContent),
+    ).not.toContain("Create");
+    // Coming back to the tab checks again, as after any failed read.
+    await clickTab("Tasks");
+    await clickTab("AGENTS.md");
+    expect(calls).toHaveLength(2);
+    expect(panel().textContent).toContain(noFolder);
+    // Another Group with a folder reads normally and does not inherit the empty state.
+    await renderModal("g_b");
+    await clickTab("AGENTS.md");
+    expect(calls.filter((path) => path.includes("/g_b/"))).toHaveLength(1);
+    expect(panel().textContent).toContain("Group B rules");
+    expect(panel().textContent).not.toContain(noFolder);
+  });
+
+  it("still shows other AGENTS.md read failures as errors", async () => {
+    mocks.apiJson.mockResolvedValue({
+      ok: false,
+      error: { code: "READ_FAILED", message: "Permission denied", details: {} },
+    });
+    await renderModal();
+    await clickTab("AGENTS.md");
+    const panel = host.querySelector('[role="tabpanel"]:not([hidden])')!;
+    expect(panel.textContent).toContain("Permission denied");
+    expect(panel.textContent).not.toContain("This group has no project folder yet");
+  });
 });
