@@ -156,6 +156,7 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
     } else if error.0.contains("permission") {
         StatusCode::FORBIDDEN
     } else if error.0 == "process_recovery_changed"
+        || error.0 == "rotation_confirmation_stale"
         || error.0.ends_with("_busy")
         || error.0.ends_with("_conflict")
         || error.0.ends_with("_lease_lost")

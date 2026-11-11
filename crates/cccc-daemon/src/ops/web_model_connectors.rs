@@ -38,22 +38,63 @@ fn execute(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .as_str()
                 .ok_or_else(|| OpError::new("invalid_argument", "provider must be a string"))?,
         };
-        let create_only = match request.args.get("create_only") {
-            None => false,
-            Some(value) => value
-                .as_bool()
-                .ok_or_else(|| OpError::new("invalid_argument", "create_only must be a boolean"))?,
-        };
-        if create_only {
-            return match store::create_provider_if_absent(home, provider).map_err(OpError::io)? {
-                Some(created) => object(created),
-                None => Err(OpError::new(
-                    "connector_exists",
-                    "A shared connector already exists; its credential was not changed",
+        let flag = |name: &str| -> Result<bool, OpError> {
+            match request.args.get(name) {
+                None => Ok(false),
+                Some(serde_json::Value::Bool(value)) => Ok(*value),
+                Some(_) => Err(OpError::new(
+                    "invalid_argument",
+                    format!("{name} must be a boolean"),
                 )),
-            };
+            }
+        };
+        let rotate = flag("rotate")?;
+        // Accepted for compatibility with older Web clients; it never changes
+        // the safe default. A mistyped value is still refused.
+        let create_only = flag("create_only")?;
+        if rotate && create_only {
+            return Err(OpError::new(
+                "invalid_argument",
+                "rotate and create_only conflict",
+            ));
         }
-        return object(store::configure_provider(home, provider).map_err(OpError::io)?);
+        if rotate {
+            let confirmation = required_arg(request, "confirmation")?;
+            // execute has already authorized this daemon caller as user.
+            // No request attribution field can override that principal.
+            let rotated_by = format!(
+                "local:{}",
+                string_arg(request, "by").expect("authorized caller")
+            );
+            return object(
+                store::rotate_provider(home, provider, &confirmation, &rotated_by).map_err(
+                    |e| match e.to_string().as_str() {
+                        "rotation_confirmation_stale" => OpError::new(
+                            "rotation_confirmation_stale",
+                            "The connector changed since the rotation was previewed; refresh and confirm again",
+                        ),
+                        "connector_unavailable" => OpError::new(
+                            "connector_unavailable",
+                            "No active connector to rotate",
+                        ),
+                        _ => OpError::io(e),
+                    },
+                )?,
+            );
+        }
+        return match store::create_provider_if_absent(home, provider).map_err(OpError::io)? {
+            Some(created) => object(created),
+            None => {
+                // One idempotent success for every non-rotating call: the
+                // existing connector and no credential.
+                let connector = store::load(home)
+                    .map_err(OpError::io)?
+                    .into_iter()
+                    .find(|c| c["provider"] == provider && c["revoked"] != true)
+                    .ok_or_else(|| OpError::new("connector_unavailable", "connector vanished"))?;
+                object(json!({"outcome":"existing","connector":connector}))
+            }
+        };
     }
     let id = required_arg(request, "connector_id")?;
     if request.op == "web_model_connector_revoke" {

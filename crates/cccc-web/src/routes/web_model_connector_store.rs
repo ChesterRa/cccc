@@ -22,6 +22,7 @@ pub(super) fn find_authorized(
     state: &AppState,
     connector_id: &str,
     secret: Option<&str>,
+    transport: &'static str,
 ) -> Result<Value, ApiError> {
     let item = load(state)?
         .into_iter()
@@ -31,6 +32,11 @@ pub(super) fn find_authorized(
         return Err(ApiError::forbidden("web-model connector is revoked"));
     }
     if secret.is_some_and(|secret| !web_model_connectors::secret_matches(&item, secret)) {
+        if let Err(error) =
+            web_model_connectors::record_rejected_secret(&state.home, connector_id, transport)
+        {
+            tracing::warn!(%error, "web-model credential rejection was not recorded");
+        }
         return Err(ApiError::forbidden("invalid web-model connector secret"));
     }
     Ok(item)

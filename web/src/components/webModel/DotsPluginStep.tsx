@@ -79,9 +79,13 @@ export function DotsPluginStep({ isVisible, disabled, sharedSettings, onBusyChan
         } else setError(created.error.message);
         return;
       }
-      const token = created.result.connector.connector_url_path_token || "";
+      const token =
+        created.result.outcome === "existing"
+          ? ""
+          : created.result.connector.connector_url_path_token || "";
       setUrl(token ? new URL(token, window.location.href).toString() : "");
       setShared((previous) => ({ ...previous, exists: true }));
+      if (created.result.outcome === "existing") setError(t("dotsActor.setup.connectorExists"));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

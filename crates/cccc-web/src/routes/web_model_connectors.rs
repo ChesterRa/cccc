@@ -54,7 +54,7 @@ async fn mcp_info(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let secret = connector_secret(&headers, &query)?;
-    store::find_authorized(&state, &connector_id, Some(secret))?;
+    store::find_authorized(&state, &connector_id, Some(secret), "get_probe")?;
     activity::record(
         &state,
         &connector_id,
@@ -74,7 +74,7 @@ async fn mcp_info_token(
     State(state): State<AppState>,
     Path((connector_id, secret)): Path<(String, String)>,
 ) -> Result<Response, ApiError> {
-    store::find_authorized(&state, &connector_id, Some(&secret))?;
+    store::find_authorized(&state, &connector_id, Some(&secret), "get_probe")?;
     activity::record(
         &state,
         &connector_id,
@@ -98,7 +98,7 @@ async fn mcp_with_header(
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
     let secret = connector_secret(&headers, &query)?;
-    let connector = store::find_authorized(&state, &connector_id, Some(secret))?;
+    let connector = store::find_authorized(&state, &connector_id, Some(secret), "post_header")?;
     run_connector_mcp(&state, &connector, body, &headers).await
 }
 
@@ -108,7 +108,8 @@ async fn mcp_with_path_token(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, ApiError> {
-    let connector = store::find_authorized(&state, &connector_id, Some(&secret))?;
+    let connector =
+        store::find_authorized(&state, &connector_id, Some(&secret), "post_path_token")?;
     run_connector_mcp(&state, &connector, body, &headers).await
 }
 

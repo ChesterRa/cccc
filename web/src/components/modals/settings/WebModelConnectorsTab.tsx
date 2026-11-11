@@ -178,7 +178,7 @@ function ProviderSettings({
     [provider],
   );
   const actionsDisabled = busy || !isActive || loadState !== "ready";
-  async function action(kind: "configure" | "revoke" | "open" | "check" | "close") {
+  async function action(kind: "configure" | "rotate" | "revoke" | "open" | "check" | "close") {
     if (actionPending.current || actionsDisabled) return;
     if (kind === "configure" && address.kind !== "https") return;
     actionPending.current = true;
@@ -186,8 +186,15 @@ function ProviderSettings({
     setError("");
     setCopied(false);
     try {
-      if (kind === "configure") {
-        const r = await api.createWebModelConnector(provider);
+      if (kind === "configure" || kind === "rotate") {
+        const confirmation = connector?.rotation?.confirmation;
+        if (kind === "rotate" && !confirmation) {
+          throw new Error(t("common:retry"));
+        }
+        const r =
+          kind === "rotate"
+            ? await api.rotateWebModelConnector(provider, confirmation ?? "")
+            : await api.createWebModelConnector(provider);
         if (!r.ok) throw new Error(r.error.message);
         setConnector(r.result.connector);
         setNeedsSetup(false);
@@ -453,7 +460,11 @@ function ProviderSettings({
                   <button
                     type="button"
                     className={secondaryButtonClass()}
-                    disabled={actionsDisabled || address.kind !== "https"}
+                    disabled={
+                      actionsDisabled ||
+                      address.kind !== "https" ||
+                      !connector.rotation?.confirmation
+                    }
                     onClick={() => setConfirm("rotate")}
                   >
                     {label("rotate")}
@@ -477,9 +488,7 @@ function ProviderSettings({
                             type="button"
                             className={dangerButtonClass()}
                             disabled={actionsDisabled}
-                            onClick={() =>
-                              void action(confirm === "rotate" ? "configure" : "revoke")
-                            }
+                            onClick={() => void action(confirm === "rotate" ? "rotate" : "revoke")}
                           >
                             {label("confirm")}
                           </button>
@@ -495,6 +504,11 @@ function ProviderSettings({
                       }
                     >
                       {label(confirm === "rotate" ? "rotateHint" : "revokeHint")}
+                      {confirm === "rotate" && (
+                        <p>
+                          {connector.rotation?.recorded_binding_count ?? 0} {label("pairedActors")}
+                        </p>
+                      )}
                     </SettingsNotice>
                   </div>
                 )}

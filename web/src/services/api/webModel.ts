@@ -15,6 +15,11 @@ export type WebModelConnector = {
   revoked?: boolean;
   created_at?: string;
   updated_at?: string;
+  credential_generation?: number | null;
+  secret_rotated_at?: string | null;
+  rotated_by?: string | null;
+  /** Non-secret preview used by the explicit rotation flow. */
+  rotation?: WebModelConnectorRotation;
   last_activity_at?: string;
   last_method?: string;
   last_tool_name?: string;
@@ -32,9 +37,13 @@ export type WebModelConnector = {
   secret_available?: boolean;
 };
 
+export type WebModelConnectorRotation = { recorded_binding_count: number; confirmation: string };
+
 export type WebModelConnectorCreateResult = {
+  outcome: "created" | "existing" | "rotated";
   connector: WebModelConnector;
-  secret: string;
+  /** Present only when this call created or rotated the credential. */
+  secret?: string;
   replaced_connector_ids?: string[];
 };
 
@@ -337,9 +346,9 @@ export type WebModelProvider = "chatgpt_web" | "grok_web";
 export type WebModelView = WebModelProvider | "dots";
 
 /**
- * Create (or, by default, rotate) the provider's shared connector. With
- * `createOnly`, an existing connector is refused with `connector_exists` and
- * keeps its credential.
+ * Create the provider's shared connector when absent. An existing connector is
+ * returned unchanged as `outcome:"existing"` with no secret; this call never
+ * rotates a credential.
  */
 export async function createWebModelConnector(
   provider: WebModelProvider = "chatgpt_web",
@@ -348,6 +357,14 @@ export async function createWebModelConnector(
   return apiJson<WebModelConnectorCreateResult>("/api/v1/web-model/connectors", {
     method: "POST",
     body: JSON.stringify(options.createOnly ? { provider, create_only: true } : { provider }),
+  });
+}
+
+/** Explicit, fenced rotation. The server derives its own attribution. */
+export async function rotateWebModelConnector(provider: WebModelProvider, confirmation: string) {
+  return apiJson<WebModelConnectorCreateResult>("/api/v1/web-model/connectors", {
+    method: "POST",
+    body: JSON.stringify({ provider, rotate: true, confirmation }),
   });
 }
 

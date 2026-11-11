@@ -76,6 +76,35 @@ not prove that ChatGPT has added or used it. Shared settings separately show the
 last recorded connector request and the number of verified agent bindings.
 Credential replacement and revocation are under **Manage connector credential**.
 
+Create is safe to repeat: an existing credential is returned unchanged without
+revealing its secret. **Rotate** remains an explicit maintenance action. Its
+confirmation shows the recorded binding count and warns that the old URL stops
+working; update every external plugin that uses it. That count cannot inventory
+external plugin installations. The confirmation is fenced to the listed
+credential generation and bindings: if either changes, refresh and confirm
+again. Rotation preserves existing conversation pairings and Dots state and
+shows the replacement URL once.
+
+The API records credential_generation, secret_rotated_at and rotated_by together
+with rotation. The attribution is the daemon's local authorized caller
+(local:user), not a claimed remote human. Older stores have an unrecorded
+generation (0) and no invented rotation timestamp. Wrong-secret attempts remain
+403 and are recorded separately from rotation/call history. That ten-entry
+rejection log coalesces writes per process/connector over five seconds, with no
+timer flush. Pending hits are lost on restart, so count is a lower bound; at is
+write-time, not last-seen time. Detailed rejection/last-rotation UI is separate
+follow-up work.
+
+#### API migration: create_only callers
+
+Keep sending boolean create_only if needed, but handle success with
+outcome=existing and no secret instead of expecting connector_exists. A flagless
+POST no longer rotates. To intentionally rotate, read the list's
+rotation.confirmation and send rotate=true with that confirmation; do not
+combine rotate=true and create_only=true. Creation/rotation disclose a secret
+once; an existing response has secret_available=false and no token URL.
+
+
 ### Conversation pairing and diagnostics
 
 The connector exposes `cccc_pair({"code":"…"})` and `cccc_connector_status({})` before pairing through ChatGPT's normal connector tool invocation. These connector-level tools are not available inside **CCCC's `cccc_code_exec`**; this restriction does not prescribe how ChatGPT internally dispatches connector calls. On normal startup, an enabled agent without a binding or prior attempt automatically connects its conversation. CCCC sends one setup message, receives a unique receipt through MCP, and verifies its assistant-side echo after that exact message in the same owned window before saving the stable conversation URL. Only then does the existing delivery queue send the pending task. No preliminary pairing click, copied code or second CCCC confirmation is needed; any ChatGPT approval remains user-controlled.

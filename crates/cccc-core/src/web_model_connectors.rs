@@ -1,7 +1,10 @@
 //! Provider-scoped Web Model entrances with explicit Actor routes.
 //! Old Actor-bound credentials are deliberately not promoted to instance authority.
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 use hmac::{Hmac, Mac};
 use serde_json::{Value, json};
@@ -100,6 +103,7 @@ fn update<T>(home: &HomeLayout, change: impl FnOnce(&mut Value) -> io::Result<T>
         let mut root = read(home)?;
         let result = change(&mut root)?;
         fs::write_secret_yaml(&store_path(home), &root)?;
+        prune_rejections(home, &root);
         Ok(result)
     })
 }
@@ -171,16 +175,19 @@ fn configure_inner(
         } else {
             json!({"connector_id":format!("wmc_{}",Uuid::new_v4().simple()),"kind":"web_model_connector","routing_mode":if provider == "grok_web" {"credential"} else {"session"},"provider":provider,"routing_salt":Uuid::new_v4().to_string(),"created_at":now,"bindings":{},"pairings":{}})
         };
-        let secret = format!(
-            "wmcs_{}{}",
-            Uuid::new_v4().simple(),
-            Uuid::new_v4().simple()
-        );
-        connector["secret_hash"] = json!(hash(&secret));
-        connector["secret_preview"] =
-            json!(format!("{}…{}", &secret[..6], &secret[secret.len() - 4..]));
-        connector["updated_at"] = json!(now);
-        connector["revoked"] = json!(false);
+        let existed = old.is_object() && old["revoked"] != true;
+        let generation = if existed {
+            credential_generation(old)
+                .checked_add(1)
+                .ok_or_else(|| error("credential_generation_exhausted"))?
+        } else {
+            1
+        };
+        let secret = install_secret(&mut connector, &now);
+        connector["credential_generation"] = json!(generation);
+        if existed {
+            record_rotation(&mut connector, "local:core", &now);
+        }
         if provider == "grok_web" && !connector["routing_key"].is_string() {
             connector["routing_key"] = json!(format!(
                 "{}{}",
@@ -192,7 +199,222 @@ fn configure_inner(
         if provider == "chatgpt_web" {
             root["requires_reconfiguration"] = json!(false);
         }
-        Ok(Some(json!({"connector":connector,"secret":secret})))
+        Ok(Some(
+            json!({"outcome":if existed {"rotated"} else {"created"},"connector":connector,"secret":secret}),
+        ))
+    })
+}
+
+// Creation and explicit rotation use separate store paths.
+const ROTATION_CONFIRMATION_DOMAIN: &str = "cccc-web-model-rotation-confirmation-v1";
+const UNRECORDED_GENERATION: u64 = 0;
+const EVENTS_LOG_RETAINED: usize = 10;
+const REJECTION_WRITE_INTERVAL: Duration = Duration::from_secs(5);
+
+fn credential_generation(c: &Value) -> u64 {
+    c["credential_generation"]
+        .as_u64()
+        .unwrap_or(UNRECORDED_GENERATION)
+}
+fn active_provider<'a>(root: &'a Value, provider: &str) -> Option<&'a Value> {
+    let c = &root["connectors"][provider];
+    (c.is_object() && c["revoked"] != true).then_some(c)
+}
+fn require_provider(provider: &str) -> io::Result<()> {
+    if matches!(provider, "chatgpt_web" | "grok_web") {
+        Ok(())
+    } else {
+        Err(error("invalid_web_model_provider"))
+    }
+}
+fn install_secret(connector: &mut Value, now: &str) -> String {
+    let secret = format!(
+        "wmcs_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    connector["secret_hash"] = json!(hash(&secret));
+    connector["secret_preview"] =
+        json!(format!("{}…{}", &secret[..6], &secret[secret.len() - 4..]));
+    connector["updated_at"] = json!(now);
+    connector["revoked"] = json!(false);
+    secret
+}
+
+fn push_log(c: &mut Value, field: &str, entry: Value) {
+    let mut log = c[field].as_array().cloned().unwrap_or_default();
+    log.push(entry);
+    log.drain(..log.len().saturating_sub(EVENTS_LOG_RETAINED));
+    c[field] = Value::Array(log);
+}
+fn record_rotation(c: &mut Value, by: &str, now: &str) {
+    c["secret_rotated_at"] = json!(now);
+    c["rotated_by"] = json!(by);
+    let preview = rotation_preview(c);
+    // Existing diagnostics expect method/ok; a successful rotation remains success.
+    push_log(
+        c,
+        "events_log",
+        json!({"at":now,"method":"secret_rotated","ok":true,
+        "reason":"secret_rotated","outcome":"ok","rotated_by":by,
+        "credential_generation":preview["credential_generation"],
+        "recorded_binding_count":preview["recorded_binding_count"]}),
+    );
+}
+/// Non-authorizing fence over connector id, generation and sorted binding keys.
+pub fn rotation_preview(connector: &Value) -> Value {
+    let mut keys: Vec<&String> = connector["bindings"]
+        .as_object()
+        .map(|b| b.keys().collect())
+        .unwrap_or_default();
+    keys.sort();
+    let recorded_binding_count = keys.len();
+    let generation = credential_generation(connector);
+    let confirmation = hash(
+        &json!([
+            ROTATION_CONFIRMATION_DOMAIN,
+            connector["connector_id"],
+            generation,
+            keys
+        ])
+        .to_string(),
+    );
+    json!({
+        "connector_id": connector["connector_id"],
+        "credential_generation": generation,
+        "recorded_binding_count": recorded_binding_count,
+        "dots_binding_recorded": connector["dots"]["actor_id"].is_string(),
+        "secret_rotated_at": connector["secret_rotated_at"],
+        "rotated_by": connector["rotated_by"],
+        "confirmation": confirmation
+    })
+}
+
+/// Explicit rotation preserves routes, pairings and Dots state in one locked update.
+pub fn rotate_provider(
+    home: &HomeLayout,
+    provider: &str,
+    confirmation: &str,
+    rotated_by: &str,
+) -> io::Result<Value> {
+    require_provider(provider)?;
+    if rotated_by.trim().is_empty() {
+        return Err(error("rotated_by_required"));
+    }
+    update(home, |root| {
+        let live = active_provider(root, provider).ok_or_else(|| error("connector_unavailable"))?;
+        let preview = rotation_preview(live);
+        if preview["confirmation"] != confirmation {
+            // `update` only writes on Ok, so a stale fence leaves the file untouched.
+            return Err(error("rotation_confirmation_stale"));
+        }
+        let previous_generation = credential_generation(live);
+        let generation = previous_generation
+            .checked_add(1)
+            .ok_or_else(|| error("credential_generation_exhausted"))?;
+        let mut connector = live.clone();
+        let now = cccc_contracts::utc_now();
+        let secret = install_secret(&mut connector, &now);
+        connector["credential_generation"] = json!(generation);
+        record_rotation(&mut connector, rotated_by, &now);
+        root["connectors"][provider] = connector.clone();
+        Ok(
+            json!({"outcome":"rotated","connector":connector,"secret":secret,
+            "previous_generation":previous_generation}),
+        )
+    })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RejectionRecord {
+    Written { count: u64 },
+    Deferred,
+    UnknownConnector,
+}
+
+/// Process-local 5 s coalescing. Pending counts are lost on restart, so stored
+/// counts are lower bounds; "at" is write-time, not last-seen time.
+#[derive(Default)]
+struct RejectionThrottle {
+    entries: HashMap<(PathBuf, String), (Instant, u64)>,
+}
+impl RejectionThrottle {
+    fn retain(&mut self, home: &HomeLayout, root: &Value) {
+        self.entries.retain(|(path, id), _| {
+            path.as_path() != home.root()
+                || root["connectors"].as_object().is_some_and(|cs| {
+                    cs.values()
+                        .any(|c| c["connector_id"] == id.as_str() && c["revoked"] != true)
+                })
+        });
+    }
+    fn admit(&mut self, home: &HomeLayout, id: &str, now: Instant) -> Option<u64> {
+        let key = (home.root().to_path_buf(), id.to_owned());
+        match self.entries.get_mut(&key) {
+            Some((last, pending)) => {
+                *pending = pending.saturating_add(1);
+                if now.saturating_duration_since(*last) < REJECTION_WRITE_INTERVAL {
+                    return None;
+                }
+                *last = now;
+                Some(std::mem::take(pending))
+            }
+            None => {
+                self.entries.insert(key, (now, 0));
+                Some(1)
+            }
+        }
+    }
+}
+static REJECTIONS: OnceLock<Mutex<RejectionThrottle>> = OnceLock::new();
+fn prune_rejections(home: &HomeLayout, root: &Value) {
+    if let Some(m) = REJECTIONS.get() {
+        m.lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(home, root);
+    }
+}
+/// Wrong-secret diagnostics never contain request material and never evict
+/// rotation/call records: rejection_log has its own ten-entry bound.
+pub fn record_rejected_secret(
+    home: &HomeLayout,
+    id: &str,
+    transport: &str,
+) -> io::Result<RejectionRecord> {
+    fs::with_exclusive_lock(&lock_path(home), || {
+        let mut root = read(home)?;
+        let count = {
+            let mut throttle = REJECTIONS
+                .get_or_init(Default::default)
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            throttle.retain(home, &root);
+            if !root["connectors"].as_object().is_some_and(|cs| {
+                cs.values()
+                    .any(|c| c["connector_id"] == id && c["revoked"] != true)
+            }) {
+                return Ok(RejectionRecord::UnknownConnector);
+            }
+            match throttle.admit(home, id, Instant::now()) {
+                Some(count) => count,
+                None => return Ok(RejectionRecord::Deferred),
+            }
+        };
+        let c = current(&mut root, id)?;
+        let transport = match transport {
+            "get_probe" | "post_header" | "post_path_token" => transport,
+            _ => "other",
+        };
+        let generation = credential_generation(c);
+        push_log(
+            c,
+            "rejection_log",
+            json!({"at":cccc_contracts::utc_now(),
+            "reason":"invalid_secret","outcome":"denied","transport":transport,
+            "count":count,"credential_generation":generation}),
+        );
+        fs::write_secret_yaml(&store_path(home), &root)?;
+        Ok(RejectionRecord::Written { count })
     })
 }
 

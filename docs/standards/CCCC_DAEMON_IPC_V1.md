@@ -9015,7 +9015,7 @@ These IPC operations use the daemon global write permit and require `by=user`; n
 
 | Operation | Required input / effect |
 |---|---|
-| `web_model_connector_configure` | Optional `provider` (`chatgpt_web`, default, or `grok_web`); optional boolean `create_only` (default `false`). Create or rotate only that provider’s instance credential and return its secret once. `create_only=true` atomically rejects an active existing connector with `connector_exists`, preserving its credential, bindings and routing keys; a revoked connector permits fresh creation. A non-boolean flag is `invalid_argument` and MUST NOT fall back to rotation. Rotation retains bindings and routing keys. |
+| `web_model_connector_configure` | Optional provider (chatgpt_web, default, or grok_web). Without rotate=true, atomically create only when absent; return outcome=created with the secret once, or outcome=existing with the unchanged connector and no secret. Explicit rotate=true requires confirmation from the current rotation preview; a stale fence returns rotation_confirmation_stale without changing the credential. It preserves bindings, pairings, routing keys and Dots state. Legacy boolean create_only is accepted but never selects rotation; rotate=true with create_only=true conflicts. Non-boolean flags are invalid_argument. The daemon derives rotated_by from its authorized by principal (local:user); supplied rotated_by/trusted_rotated_by fields are ignored. |
 | `web_model_connector_revoke` | `connector_id`; disable all tool routes and pending pairings. |
 | `web_model_pairing_begin` | `connector_id`, `group_id`, `actor_id`; optional `automatic=true` requires an enabled, unbound Web Model Actor in a running, non-paused Group; otherwise requires a stopped Actor. Issue one 10-minute code, persisting only its hash and automatic intent. |
 | `web_model_pairing_accept` | `connector_id`, `code`, `session_key`; private Web port forwards the authenticated host session hash. Return a unique, idempotent receipt for this candidate/session; receipt alone grants no business authority. |
@@ -9024,6 +9024,27 @@ These IPC operations use the daemon global write permit and require `by=user`; n
 | `web_model_pairing_fail` | `connector_id`, `group_id`, `actor_id`, `pairing_id`, `error_code`; retire the named incomplete attempt, reject later acceptance/confirmation, preserve existing bindings and display the failure. A late failure MUST NOT alter a replacement or committed attempt. |
 | `web_model_grok_bind` | `connector_id`, `group_id`, `actor_id`, `url`; user-only, no active turn and matching Grok connector. The exclusive daemon operation preserves enabled state. Canonical HTTPS `grok.com/bot/<UUID>` URL, unique within the connector. Saving the same current-generation URL is idempotent. A changed URL requires no canonical active turn. |
 | `web_model_binding_remove` | `connector_id`, `group_id`, `actor_id`; stopped Actor with no unresolved delivery; remove only its binding/pairing. |
+
+Connector list responses include rotation.confirmation and recorded_binding_count,
+plus credential_generation, secret_rotated_at and rotated_by. The confirmation
+fences connector identity, credential generation and sorted recorded binding keys;
+it grants no authority. The count covers recorded bindings, not external plugin
+installations. New credentials start at generation 1; absent generation means 0
+(unrecorded), and absent rotation metadata is not evidence of a rotation time.
+
+Rotation metadata and its successful events_log entry commit with the new hash.
+Rejected-secret attempts for a known active connector append to a separate
+ten-entry rejection_log, so they cannot evict rotation or tool-call entries.
+Each rejection contains reason=invalid_secret, outcome=denied, a fixed transport
+label, the credential_generation at write-time and count; no supplied secret,
+URL or request body.
+Writes coalesce per connector and process over five seconds. Pending hits are
+process-local and lost on restart; count is a lower bound, not an exact request
+count, and at is write-time, not last-seen time. There is no timer flush: a later
+rejection after the interval writes accumulated hits. Revoked/removed connectors
+are pruned from that process's throttle state on store updates or the next
+rejection. Denial remains HTTP 403 even if diagnostic persistence fails.
+
 
 Normal Actor startup authorizes one initial automatic setup exchange for an enabled, unbound Actor in a running Group. The Web supervisor prepares its owned window; no business delivery is claimed until a binding is verified. An existing current-generation attempt, including expired, failed, cancelled or orphaned attempts, MUST prevent another automatic send. Unrelated Actor setup MUST NOT prune these attempt fences.
 
