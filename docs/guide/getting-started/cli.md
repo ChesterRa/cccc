@@ -173,6 +173,7 @@ cccc actor add <id> --runtime <r>  # Add agent
 cccc actor start <id>              # Start agent
 cccc actor stop <id>               # Stop agent
 cccc actor restart <id>            # Restart agent
+cccc actor new-session <id>        # Start a fresh session (no restart)
 cccc actor remove <id>             # Remove agent
 ```
 
