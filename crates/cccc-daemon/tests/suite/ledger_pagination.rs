@@ -51,6 +51,64 @@ fn chat_pagination_filters_noise_before_applying_limit() {
 }
 
 #[test]
+fn ledger_search_reads_filters_and_cursors_over_compressed_only_history() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"compressed search"}));
+    let group_id = created.result["group"]["group_id"].as_str().expect("group");
+    let events: Vec<Event> =
+        include_str!("../../../cccc-core/tests/fixtures/ledger-redacted.jsonl")
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_str(line).expect("fixture event"))
+            .collect();
+    assert_eq!(events.len(), 64);
+    for event in &events {
+        let mut event = event.clone();
+        event.group_id = group_id.into();
+        call(&home, "event_append", json!({"event":event}));
+    }
+    let compacted = call(&home, "ledger_compact", json!({"group_id":group_id}));
+    assert_eq!(compacted.result["compacted"], true);
+    assert!(
+        compacted.result["segment"]
+            .as_str()
+            .is_some_and(|path| path.ends_with(".jsonl.gz"))
+    );
+
+    let anchor = events[60].id.as_str();
+    let found = call(
+        &home,
+        "ledger_search",
+        json!({"group_id":group_id,"q":anchor,"limit":2}),
+    );
+    assert_eq!(ids(&found), [anchor]);
+    assert_eq!(found.result["has_more"], false);
+
+    let older = call(
+        &home,
+        "ledger_search",
+        json!({"group_id":group_id,"q":"message_mode","before":anchor,"limit":2}),
+    );
+    assert_eq!(
+        ids(&older),
+        [events[58].id.as_str(), events[59].id.as_str()]
+    );
+    assert_eq!(older.result["has_more"], true);
+
+    let newer = call(
+        &home,
+        "ledger_search",
+        json!({"group_id":group_id,"q":"message_mode","after":anchor,"limit":2}),
+    );
+    assert_eq!(
+        ids(&newer),
+        [events[61].id.as_str(), events[62].id.as_str()]
+    );
+    assert_eq!(newer.result["has_more"], true);
+}
+
+#[test]
 fn sender_union_uses_one_history_cursor_and_filters_before_limiting() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

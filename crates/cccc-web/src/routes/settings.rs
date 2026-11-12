@@ -86,7 +86,8 @@ fn projected_settings(group: &Value) -> Value {
         "mail_notice_after_seconds":1800,
         "mail_notice_idle_after_seconds":60,
         "reply_notice_after_seconds":900,
-        "terminal_transcript_visibility":"foreman"
+        "terminal_transcript_visibility":"foreman",
+        "ledger_segment_codec":"gzip"
     });
     if let (Some(target), Some(source)) = (settings.as_object_mut(), stored.as_object()) {
         cccc_core::settings::merge(target, source);

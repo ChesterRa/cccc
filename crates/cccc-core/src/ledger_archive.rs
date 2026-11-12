@@ -1,17 +1,19 @@
 use cccc_contracts::utc_now;
+use flate2::Compression;
 use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
 use fs2::FileExt;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::fs::{read_json, write_json};
 use crate::ledger;
-use crate::{GroupStore, HomeLayout};
+use crate::{GroupDoc, GroupStore, HomeLayout};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LedgerSnapshot {
@@ -23,6 +25,59 @@ pub struct LedgerSnapshot {
     pub last_event_id: String,
     pub sha256: String,
     pub path: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SegmentCodec {
+    Plain,
+    Gzip,
+}
+
+impl SegmentCodec {
+    pub(crate) fn from_path(path: &Path) -> Self {
+        Self::from_name(
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or(""),
+        )
+    }
+
+    pub(crate) fn from_name(name: &str) -> Self {
+        if name.ends_with(".gz") {
+            Self::Gzip
+        } else {
+            Self::Plain
+        }
+    }
+
+    pub(crate) fn compressed(self) -> bool {
+        self == Self::Gzip
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Plain => "plain",
+            Self::Gzip => "gzip",
+        }
+    }
+
+    pub(crate) fn open_reader<'a, R: Read + 'a>(self, reader: R) -> Box<dyn BufRead + 'a> {
+        open_segment_reader(self, reader)
+    }
+}
+
+pub(crate) fn open_segment_reader<'a, R: Read + 'a>(
+    codec: SegmentCodec,
+    reader: R,
+) -> Box<dyn BufRead + 'a> {
+    match codec {
+        SegmentCodec::Plain => Box::new(BufReader::new(reader)),
+        SegmentCodec::Gzip => Box::new(BufReader::new(GzDecoder::new(reader))),
+    }
+}
+
+pub(crate) fn open_segment(path: &Path) -> io::Result<Box<dyn BufRead>> {
+    Ok(SegmentCodec::from_path(path).open_reader(fs::File::open(path)?))
 }
 
 pub fn snapshot(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<LedgerSnapshot> {
@@ -87,6 +142,7 @@ fn snapshot_locked(
 
 pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Option<PathBuf>> {
     let store = GroupStore::new(home.clone())?;
+    let codec = configured_codec(&store.load(group_id)?)?;
     let active = store.ledger_path(group_id)?;
     let lock = ledger::acquire_writer_lock(&active)?;
     let result = (|| {
@@ -105,32 +161,63 @@ pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Op
             .unwrap_or(1)
             .max(1);
         let created_at = stamp();
-        let name = format!("ledger.{created_at}.{sequence:06}.jsonl");
-        let destination = segments.join(&name);
-        fs::rename(&active, &destination)?;
+        let base_name = format!("ledger.{created_at}.{sequence:06}.jsonl");
+        let plain_destination = segments.join(&base_name);
+        // Publish the plain segment first. A crash after this rename leaves a
+        // discoverable segment, never an unreadable half-written archive.
+        fs::rename(&active, &plain_destination)?;
         fs::File::create(&active)?.sync_all()?;
-        let size = destination.metadata()?.len();
-        let line_count = BufReader::new(fs::File::open(&destination)?)
-            .lines()
-            .try_fold(0_u64, |count, line| line.map(|_| count + 1))?;
-        let segment = json!({
+        let plain_bytes = plain_destination.metadata()?.len();
+        let (line_count, plain_sha256) = segment_stats(&plain_destination, SegmentCodec::Plain)?;
+        let (destination, final_codec) = if codec == SegmentCodec::Gzip {
+            let gzip_name = format!("{base_name}.gz");
+            let destination = segments.join(&gzip_name);
+            let temp = segments.join(format!(".{gzip_name}.tmp"));
+            match compress_verified(&plain_destination, &temp, &plain_sha256, line_count) {
+                Ok(()) => {
+                    fs::rename(&temp, &destination)?;
+                    crate::fs::sync_dir(&segments)?;
+                    fs::remove_file(&plain_destination)?;
+                    crate::fs::sync_dir(&segments)?;
+                    (destination, SegmentCodec::Gzip)
+                }
+                Err(error) => {
+                    let _ = fs::remove_file(&temp);
+                    tracing::warn!(
+                        diagnostic_action = "ledger_segment_compress",
+                        %error,
+                        "ledger segment kept plain after compression verification failed"
+                    );
+                    (plain_destination.clone(), SegmentCodec::Plain)
+                }
+            }
+        } else {
+            (plain_destination.clone(), SegmentCodec::Plain)
+        };
+        let size_bytes = destination.metadata()?.len();
+        let name = destination
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let mut segment = json!({
             "id":format!("{sequence:06}"),
             "seq":sequence,
             "path":format!("state/ledger/segments/{name}"),
-            "compressed":false,
+            "codec":final_codec.as_str(),
+            "compressed":final_codec.compressed(),
             "created_at":created_at,
             "sealed_at":created_at,
             "reason":reason,
-            "size_bytes":size,
+            "size_bytes":size_bytes,
             "line_count":line_count,
         });
+        if final_codec.compressed() {
+            segment["plain_bytes"] = json!(plain_bytes);
+        }
         manifest["schema"] = json!(1);
         manifest["active"] = json!({"path":"ledger.jsonl"});
         manifest["next_segment_seq"] = json!(sequence + 1);
         manifest["updated_at"] = json!(created_at);
-        if !manifest["segments"].is_array() {
-            manifest["segments"] = json!([]);
-        }
         manifest["segments"]
             .as_array_mut()
             .expect("segments initialized")
@@ -140,6 +227,103 @@ pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Op
     })();
     let _ = FileExt::unlock(&lock);
     result
+}
+
+/// Validate the ledger settings accepted by the normal group-settings patch.
+/// Null is the existing merge API's way to remove a key and restore its
+/// default, so it is accepted separately from a present invalid value.
+pub fn validate_settings(patch: &serde_json::Map<String, Value>) -> io::Result<()> {
+    if let Some(value) = patch.get("ledger_segment_codec")
+        && !value.is_null()
+        && !matches!(value.as_str(), Some("gzip" | "none"))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "ledger_segment_codec must be gzip or none",
+        ));
+    }
+    Ok(())
+}
+
+fn configured_codec(group: &GroupDoc) -> io::Result<SegmentCodec> {
+    match setting(group, "ledger_segment_codec") {
+        None => Ok(SegmentCodec::Gzip),
+        Some(Value::String(value)) if value == "gzip" => Ok(SegmentCodec::Gzip),
+        Some(Value::String(value)) if value == "none" => Ok(SegmentCodec::Plain),
+        Some(value) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("ledger_segment_codec must be gzip or none, got {value}"),
+        )),
+    }
+}
+
+fn setting<'a>(group: &'a GroupDoc, key: &str) -> Option<&'a Value> {
+    group
+        .extra
+        .get("settings")
+        .and_then(Value::as_object)
+        .and_then(|settings| settings.get(key))
+}
+
+fn compress_verified(
+    plain: &Path,
+    temp: &Path,
+    expected_sha256: &str,
+    expected_lines: u64,
+) -> io::Result<()> {
+    let mut source = BufReader::new(fs::File::open(plain)?);
+    let mut encoder = GzEncoder::new(fs::File::create(temp)?, Compression::default());
+    io::copy(&mut source, &mut encoder)?;
+    let file = encoder.finish()?;
+    file.sync_all()?;
+    #[cfg(test)]
+    if take_truncate_gzip_tmp() {
+        fs::OpenOptions::new().write(true).open(temp)?.set_len(4)?;
+    }
+    let (lines, sha256) = segment_stats(temp, SegmentCodec::Gzip)?;
+    if lines != expected_lines || sha256 != expected_sha256 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "gzip segment did not decode to the sealed plain segment",
+        ));
+    }
+    Ok(())
+}
+
+fn segment_stats(path: &Path, codec: SegmentCodec) -> io::Result<(u64, String)> {
+    let mut reader = codec.open_reader(fs::File::open(path)?);
+    let mut digest = Sha256::new();
+    let mut newlines = 0_u64;
+    let mut total = 0_u64;
+    let mut last = None;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+        newlines += buffer[..read].iter().filter(|byte| **byte == b'\n').count() as u64;
+        total += read as u64;
+        last = buffer[..read].last().copied();
+    }
+    let lines = newlines + u64::from(total > 0 && last != Some(b'\n'));
+    Ok((lines, format!("{:x}", digest.finalize())))
+}
+
+#[cfg(test)]
+thread_local! {
+    static TRUNCATE_GZIP_TMP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+fn fail_next_gzip_verification() {
+    TRUNCATE_GZIP_TMP.with(|flag| flag.set(true));
+}
+
+#[cfg(test)]
+fn take_truncate_gzip_tmp() -> bool {
+    TRUNCATE_GZIP_TMP.with(|flag| flag.replace(false))
 }
 
 fn stamp() -> String {
@@ -169,7 +353,7 @@ struct PhysicalSegment {
     stamp: String,
     path: PathBuf,
     relative_path: String,
-    compressed: bool,
+    codec: SegmentCodec,
     size_bytes: u64,
     line_count: u64,
 }
@@ -197,7 +381,8 @@ fn reconcile_manifest(mut manifest: Value, segments_dir: &Path) -> io::Result<Va
         item.insert("id".into(), json!(format!("{:06}", segment.sequence)));
         item.insert("seq".into(), json!(segment.sequence));
         item.insert("path".into(), json!(segment.relative_path));
-        item.insert("compressed".into(), json!(segment.compressed));
+        item.insert("codec".into(), json!(segment.codec.as_str()));
+        item.insert("compressed".into(), json!(segment.codec.compressed()));
         item.insert("size_bytes".into(), json!(segment.size_bytes));
         item.insert("line_count".into(), json!(segment.line_count));
         if item
@@ -256,7 +441,7 @@ fn discover_segments(segments_dir: &Path) -> io::Result<BTreeMap<u64, PhysicalSe
         let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
             continue;
         };
-        let Some((stamp, sequence, compressed, logical_name)) = parse_segment_name(name) else {
+        let Some((stamp, sequence, codec, logical_name)) = parse_segment_name(name) else {
             continue;
         };
         let relative_path = format!("state/ledger/segments/{name}");
@@ -264,14 +449,14 @@ fn discover_segments(segments_dir: &Path) -> io::Result<BTreeMap<u64, PhysicalSe
             sequence,
             stamp,
             size_bytes: path.metadata()?.len(),
-            line_count: count_segment_lines(&path, compressed)?,
+            line_count: count_segment_lines(&path, codec)?,
             path,
             relative_path,
-            compressed,
+            codec,
         };
         let replace = logical
             .get(&logical_name)
-            .is_none_or(|current| candidate.compressed && !current.compressed);
+            .is_none_or(|current| candidate.codec.compressed() && !current.codec.compressed());
         if replace {
             logical.insert(logical_name, candidate);
         }
@@ -293,10 +478,12 @@ fn discover_segments(segments_dir: &Path) -> io::Result<BTreeMap<u64, PhysicalSe
     Ok(by_sequence)
 }
 
-pub(crate) fn parse_segment_name(name: &str) -> Option<(String, u64, bool, String)> {
-    let (without_gzip, compressed) = name
+pub(crate) fn parse_segment_name(name: &str) -> Option<(String, u64, SegmentCodec, String)> {
+    let (without_gzip, codec) = name
         .strip_suffix(".gz")
-        .map_or((name, false), |value| (value, true));
+        .map_or((name, SegmentCodec::Plain), |value| {
+            (value, SegmentCodec::Gzip)
+        });
     let logical_name = without_gzip.to_owned();
     let stem = without_gzip.strip_suffix(".jsonl")?;
     let body = stem.strip_prefix("ledger.")?;
@@ -311,25 +498,21 @@ pub(crate) fn parse_segment_name(name: &str) -> Option<(String, u64, bool, Strin
     if sequence == 0 {
         return None;
     }
-    Some((stamp.to_owned(), sequence, compressed, logical_name))
+    Some((stamp.to_owned(), sequence, codec, logical_name))
 }
 
-fn count_segment_lines(path: &Path, compressed: bool) -> io::Result<u64> {
-    if compressed {
-        BufReader::new(GzDecoder::new(fs::File::open(path)?))
-            .lines()
-            .try_fold(0_u64, |count, line| line.map(|_| count + 1))
-    } else {
-        BufReader::new(fs::File::open(path)?)
-            .lines()
-            .try_fold(0_u64, |count, line| line.map(|_| count + 1))
-    }
+fn count_segment_lines(path: &Path, codec: SegmentCodec) -> io::Result<u64> {
+    codec
+        .open_reader(fs::File::open(path)?)
+        .lines()
+        .try_fold(0_u64, |count, line| line.map(|_| count + 1))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use cccc_contracts::Event;
+    use std::path::Path;
     use std::sync::mpsc;
     use std::thread;
     use std::time::Duration;
@@ -500,6 +683,18 @@ mod tests {
         let home = HomeLayout::from_path(temp.path()).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("compact", "").expect("group");
+        store
+            .mutate(&group.group_id, |group| {
+                group
+                    .extra
+                    .entry("settings".to_owned())
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .expect("settings object")
+                    .insert("ledger_segment_codec".into(), json!("none"));
+                Ok(())
+            })
+            .expect("plain segment codec");
         ledger::append(
             &store.ledger_path(&group.group_id).expect("ledger"),
             &Event::new("chat.message", &group.group_id),
@@ -527,11 +722,202 @@ mod tests {
             manifest["segments"][0]["path"],
             format!("state/ledger/segments/{name}")
         );
+        assert_eq!(manifest["segments"][0]["codec"], "plain");
+        assert_eq!(manifest["segments"][0]["compressed"], false);
         assert_eq!(
             ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
                 .expect("events")
                 .len(),
             1
+        );
+    }
+
+    fn real_fixture() -> Vec<u8> {
+        fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ledger-redacted.jsonl"))
+            .expect("real ledger fixture")
+    }
+
+    fn fixture_events(bytes: &[u8]) -> Vec<Event> {
+        bytes
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).expect("fixture event"))
+            .collect()
+    }
+
+    fn set_setting(store: &GroupStore, group_id: &str, key: &str, value: Value) {
+        store
+            .mutate(group_id, |group| {
+                group
+                    .extra
+                    .entry("settings".to_owned())
+                    .or_insert_with(|| json!({}))
+                    .as_object_mut()
+                    .expect("settings object")
+                    .insert(key.to_owned(), value);
+                Ok(())
+            })
+            .expect("group setting");
+    }
+
+    #[test]
+    fn compact_defaults_to_verified_gzip_segments() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("gzip compact", "").expect("group");
+        let active = store.ledger_path(&group.group_id).expect("ledger");
+        let bytes = real_fixture();
+        let expected = fixture_events(&bytes);
+        fs::write(&active, &bytes).expect("fixture ledger");
+
+        let segment = compact(&home, &group.group_id, "test")
+            .expect("compact")
+            .expect("segment");
+        let name = segment
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("name");
+        assert!(name.ends_with(".jsonl.gz"), "{name}");
+        assert_eq!(
+            fs::read_dir(segment.parent().expect("segments"))
+                .expect("segments")
+                .count(),
+            1
+        );
+        let manifest: Value = read_json(
+            &store
+                .state_dir(&group.group_id)
+                .expect("state")
+                .join("ledger/manifest.json"),
+        )
+        .expect("manifest");
+        let sealed = &manifest["segments"][0];
+        assert_eq!(sealed["codec"], "gzip");
+        assert_eq!(sealed["compressed"], true);
+        assert_eq!(sealed["plain_bytes"], bytes.len() as u64);
+        assert_eq!(sealed["line_count"], expected.len() as u64);
+        assert_eq!(
+            sealed["size_bytes"],
+            fs::metadata(&segment).expect("metadata").len()
+        );
+
+        let events = ledger::read_all(&active).expect("events");
+        assert_eq!(
+            events.iter().map(|event| &event.id).collect::<Vec<_>>(),
+            expected.iter().map(|event| &event.id).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            open_segment(&segment).expect("decode").lines().count(),
+            expected.len()
+        );
+        let found = crate::ledger_index::find_event(&active, &expected[0].id)
+            .expect("index")
+            .expect("fixture event in gzip segment");
+        assert_eq!(found.id, expected[0].id);
+    }
+
+    #[test]
+    fn failed_gzip_verification_keeps_the_plain_segment() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("gzip fallback", "").expect("group");
+        let active = store.ledger_path(&group.group_id).expect("ledger");
+        let bytes = real_fixture();
+        let expected = fixture_events(&bytes);
+        fs::write(&active, &bytes).expect("fixture ledger");
+
+        fail_next_gzip_verification();
+        let segment = compact(&home, &group.group_id, "test")
+            .expect("fallback compact")
+            .expect("segment");
+        let name = segment
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("name");
+        assert!(name.ends_with(".jsonl"), "{name}");
+        assert!(
+            fs::read_dir(segment.parent().expect("segments"))
+                .expect("segments")
+                .all(|entry| !entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(".gz"))
+        );
+        let manifest: Value = read_json(
+            &store
+                .state_dir(&group.group_id)
+                .expect("state")
+                .join("ledger/manifest.json"),
+        )
+        .expect("manifest");
+        assert_eq!(manifest["segments"][0]["codec"], "plain");
+        assert_eq!(manifest["segments"][0]["compressed"], false);
+        assert_eq!(
+            ledger::read_all(&active).expect("events").len(),
+            expected.len()
+        );
+    }
+
+    #[test]
+    fn invalid_ledger_codec_fails_instead_of_defaulting() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("invalid settings", "").expect("group");
+        let active = store.ledger_path(&group.group_id).expect("ledger");
+        let bytes = real_fixture();
+        fs::write(&active, &bytes).expect("fixture ledger");
+
+        for invalid in [json!(false), json!(1), json!("zstd")] {
+            set_setting(&store, &group.group_id, "ledger_segment_codec", invalid);
+            let error = compact(&home, &group.group_id, "test").expect_err("invalid codec");
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+            assert_eq!(fs::read(&active).expect("active"), bytes);
+        }
+    }
+
+    #[test]
+    fn gzip_snapshot_resumes_at_a_decoded_offset() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("gzip snapshot", "").expect("group");
+        let active = store.ledger_path(&group.group_id).expect("ledger");
+        let bytes = real_fixture();
+        let expected = fixture_events(&bytes);
+        let first_line = bytes
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .expect("first line") as u64
+            + 1;
+        fs::write(&active, &bytes).expect("fixture ledger");
+        let segment = compact(&home, &group.group_id, "test")
+            .expect("compact")
+            .expect("segment");
+        let snapshot = crate::ledger::snapshot::Snapshot::open(&active).expect("snapshot");
+        let source = snapshot
+            .sources
+            .iter()
+            .position(|source| source.path == segment)
+            .expect("gzip source");
+        let mut offsets = vec![0; snapshot.sources.len()];
+        offsets[source] = first_line;
+        let mut ids = Vec::new();
+        snapshot
+            .visit(&offsets, |event, _| {
+                ids.push(event.id);
+                std::ops::ControlFlow::Continue(())
+            })
+            .expect("resume snapshot");
+        assert_eq!(
+            ids,
+            expected[1..]
+                .iter()
+                .map(|event| event.id.clone())
+                .collect::<Vec<_>>()
         );
     }
 

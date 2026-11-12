@@ -5,9 +5,25 @@ use cccc_core::{group_copy, ledger, ledger_archive, user_requests};
 use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
+use serde_json::json;
 use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
+
+fn use_plain_segments(store: &GroupStore, group_id: &str) {
+    store
+        .mutate(group_id, |group| {
+            group
+                .extra
+                .entry("settings".to_owned())
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .expect("settings object")
+                .insert("ledger_segment_codec".into(), json!("none"));
+            Ok(())
+        })
+        .expect("plain segment codec");
+}
 
 #[test]
 fn compacted_requests_survive_copy_with_a_new_group_and_scope() {
@@ -18,6 +34,7 @@ fn compacted_requests_survive_copy_with_a_new_group_and_scope() {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("copy", "").expect("group");
+        use_plain_segments(&store, &group.group_id);
         group_scope::attach(
             &store,
             &group.group_id,
@@ -163,6 +180,7 @@ fn copied_history_is_byte_identical_when_identity_is_unchanged() {
     let source_home = HomeLayout::from_path(temp.path().join("source")).expect("source home");
     let source_store = GroupStore::new(source_home.clone()).expect("source store");
     let source = source_store.create("source", "").expect("group");
+    use_plain_segments(&source_store, &source.group_id);
     ledger::append(
         &source_store.ledger_path(&source.group_id).expect("ledger"),
         &Event::new("group.create", &source.group_id),
@@ -295,6 +313,7 @@ fn a_multi_member_history_segment_fails_before_the_copy_is_published() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
     let source = store.create("source", "").expect("group");
+    use_plain_segments(&store, &source.group_id);
     ledger::append(
         &store.ledger_path(&source.group_id).expect("ledger"),
         &Event::new("group.create", &source.group_id),

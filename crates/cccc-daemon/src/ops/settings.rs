@@ -62,6 +62,7 @@ fn group_settings(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request)?;
     let mut patch = patch(request)?;
     patch.remove("by");
+    cccc_core::ledger_archive::validate_settings(&patch).map_err(OpError::io)?;
     let settings_value = store(home)?
         .mutate(&group.group_id, |doc| {
             let mut flat = match doc.extra.remove("settings") {
@@ -355,5 +356,66 @@ mod tests {
         assert_eq!(response["settings"]["default_send_to"], json!("foreman"));
         assert_eq!(response["group_id"], json!(group.group_id));
         assert_eq!(response["event"]["kind"], json!("group.settings_update"));
+    }
+
+    #[test]
+    fn ledger_codec_rejects_wrong_types_and_allows_null_removal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("settings", "").expect("group");
+        for patch in [
+            json!({"ledger_segment_codec":false}),
+            json!({"ledger_segment_codec":1}),
+            json!({"ledger_segment_codec":"zstd"}),
+        ] {
+            let request = DaemonRequest {
+                v: 1,
+                op: "group_settings_update".into(),
+                args: json!({"group_id":group.group_id,"by":"user","patch":patch})
+                    .as_object()
+                    .cloned()
+                    .expect("request object"),
+            };
+            assert!(group_settings(&home, &request).is_err(), "{patch}");
+        }
+        let stored = store.load(&group.group_id).expect("stored group");
+        assert!(
+            stored
+                .extra
+                .get("settings")
+                .and_then(Value::as_object)
+                .is_none_or(|flat| !flat.contains_key("ledger_segment_codec"))
+        );
+
+        let set = DaemonRequest {
+            v: 1,
+            op: "group_settings_update".into(),
+            args: json!({
+                "group_id":group.group_id,
+                "by":"user",
+                "patch":{"ledger_segment_codec":"none"}
+            })
+            .as_object()
+            .cloned()
+            .expect("request object"),
+        };
+        let response = group_settings(&home, &set).expect("valid codec");
+        assert_eq!(response["settings"]["ledger_segment_codec"], json!("none"));
+
+        let clear = DaemonRequest {
+            v: 1,
+            op: "group_settings_update".into(),
+            args: json!({
+                "group_id":group.group_id,
+                "by":"user",
+                "patch":{"ledger_segment_codec":null}
+            })
+            .as_object()
+            .cloned()
+            .expect("request object"),
+        };
+        let response = group_settings(&home, &clear).expect("null removal");
+        assert!(response["settings"].get("ledger_segment_codec").is_none());
     }
 }
