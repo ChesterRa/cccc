@@ -103,7 +103,6 @@ fn apply_one(
 ) -> io::Result<()> {
     match name {
         "coordination.brief.update" => update_brief(document, operation, by),
-        "coordination.note.add" => add_note(document, operation, by),
         "task.update" => super::task_apply::update(document, operation),
         "task.move" => super::task_apply::move_task(document, operation),
         "task.restore" => super::task_apply::restore(document, operation),
@@ -136,29 +135,6 @@ fn update_brief(doc: &mut ContextDoc, op: &Map<String, Value>, by: &str) -> io::
     Ok(())
 }
 
-fn add_note(doc: &mut ContextDoc, op: &Map<String, Value>, by: &str) -> io::Result<()> {
-    let summary = required(op, "summary")?;
-    let kind = string(op, "kind").unwrap_or("decision");
-    let key = match kind {
-        "decision" => "recent_decisions",
-        "handoff" => "recent_handoffs",
-        _ => return Err(io::Error::other("note kind must be decision or handoff")),
-    };
-    let notes = doc.coordination.entry(key).or_insert_with(|| json!([]));
-    let target = notes
-        .as_array_mut()
-        .ok_or_else(|| io::Error::other("invalid notes"))?;
-    target.push(json!({
-        "at": utc_now(),
-        "summary": summary, "task_id": op.get("task_id").cloned().unwrap_or(Value::Null),
-        "by": by,
-    }));
-    if target.len() > 100 {
-        target.drain(..target.len() - 100);
-    }
-    Ok(())
-}
-
 fn merge_meta(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Result<()> {
     let data = op
         .get("data")
@@ -168,13 +144,4 @@ fn merge_meta(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Result<()> {
         doc.meta.insert("project_status".into(), value.clone());
     }
     Ok(())
-}
-
-fn required<'a>(op: &'a Map<String, Value>, key: &str) -> io::Result<&'a str> {
-    string(op, key)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| io::Error::other(format!("{key} is required")))
-}
-fn string<'a>(op: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
-    op.get(key).and_then(Value::as_str)
 }

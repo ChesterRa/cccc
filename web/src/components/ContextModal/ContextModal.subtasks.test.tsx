@@ -58,7 +58,6 @@ vi.mock("../../services/api", async () => ({
     await vi.importActual<typeof import("../../services/api/base")>("../../services/api/base")
   ).isTaskRevision,
   apiJson: vi.fn(),
-  addCoordinationNote: vi.fn(),
   contextSync: vi.fn(),
   deleteCoordinationTaskConfirmed: vi.fn(),
   moveCoordinationTask: vi.fn(),

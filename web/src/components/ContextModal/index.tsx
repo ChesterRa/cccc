@@ -11,7 +11,6 @@ import {
 } from "@dnd-kit/core";
 import { useTranslation } from "react-i18next";
 import {
-  addCoordinationNote,
   apiJson,
   contextSync,
   deleteCoordinationTaskConfirmed,
@@ -50,7 +49,6 @@ import { settingsDialogBodyClass, settingsDialogPanelClass } from "../modals/set
 import { AgentsView } from "./agents/AgentsView";
 import { AgentsMdPanel } from "./coordination/AgentsMdPanel";
 import { WorkingSummaryPanel } from "./coordination/WorkingSummaryPanel";
-import { CoordinationLogPanel } from "./coordination/CoordinationLogPanel";
 import { TaskBoard } from "./coordination/TaskBoard";
 import { TaskEditorPanel, type TaskBacklogLink } from "./coordination/TaskEditorPanel";
 import { CapabilitiesTab } from "../modals/settings/CapabilitiesTab";
@@ -58,7 +56,6 @@ import {
   briefDraftMatches,
   briefToDraft,
   directSubtasks,
-  emptyNoteDraft,
   checklistToSave,
   emptyTaskDraft,
   parseLineList,
@@ -73,7 +70,6 @@ import {
   type BoardStatus,
   type BriefDraft,
   type ContextModalView,
-  type NoteDraft,
   type TaskDraft,
   type TaskDeleteInfo,
   type TaskFilterValue,
@@ -187,10 +183,6 @@ export function ContextModal({
   const [notifyAgents, setNotifyAgents] = useState(false);
   const [notifyError, setNotifyError] = useState("");
 
-  const [decisionDraft, setDecisionDraft] = useState<NoteDraft>(emptyNoteDraft());
-  const [handoffDraft, setHandoffDraft] = useState<NoteDraft>(emptyNoteDraft());
-  const [activityBusyKind, setActivityBusyKind] = useState<"decision" | "handoff" | null>(null);
-  const [activityError, setActivityError] = useState("");
   const lastOpenedGroupRef = useRef("");
   const modalVisitRef = useRef({ groupId, isOpen });
   const agentsMdReadSeqRef = useRef(0);
@@ -292,20 +284,6 @@ export function ContextModal({
     [taskFacets],
   );
 
-  const recentDecisions = useMemo(
-    () =>
-      Array.isArray(context?.coordination?.recent_decisions)
-        ? context.coordination.recent_decisions
-        : [],
-    [context],
-  );
-  const recentHandoffs = useMemo(
-    () =>
-      Array.isArray(context?.coordination?.recent_handoffs)
-        ? context.coordination.recent_handoffs
-        : [],
-    [context],
-  );
   const agentsMdPathLabel = useMemo(() => {
     const path = String(agentsMd?.path || "").trim();
     return path || "AGENTS.md";
@@ -446,10 +424,6 @@ export function ContextModal({
     setAgentsMdExpanded(false);
     setNotifyError("");
     setNotifyAgents(false);
-    setDecisionDraft(emptyNoteDraft());
-    setHandoffDraft(emptyNoteDraft());
-    setActivityBusyKind(null);
-    setActivityError("");
     setTasksView(loadTasksView(groupId));
     setBacklogForm(null);
     setBacklogIntent(null);
@@ -1532,50 +1506,6 @@ export function ContextModal({
     }
   }, [agentsMd?.path, groupId, notifyAgents, notifyMessage, agentsMdText, tr]);
 
-  const handleAddCoordinationNote = useCallback(
-    async (kind: "decision" | "handoff") => {
-      if (!groupId) return;
-      const draft = kind === "decision" ? decisionDraft : handoffDraft;
-      const summary = String(draft.summary || "").trim();
-      if (!summary) {
-        setActivityError(tr("context.noteSummaryRequired", "Summary is required."));
-        return;
-      }
-      const visit = modalVisitRef.current;
-      const isCurrent = () => modalVisitRef.current === visit;
-      setActivityBusyKind(kind);
-      setActivityError("");
-      try {
-        const resp = await addCoordinationNote(
-          groupId,
-          kind,
-          summary,
-          String(draft.taskId || "").trim() || null,
-        );
-        const nextResp = await applyContextWriteback(resp);
-        if (!nextResp.ok) {
-          if (isCurrent()) {
-            setActivityError(
-              nextResp.error?.message ||
-                resp.error?.message ||
-                tr("context.failedToApplyChanges", "Failed to apply changes"),
-            );
-          }
-          return;
-        }
-        if (!isCurrent()) return;
-        if (kind === "decision") {
-          setDecisionDraft(emptyNoteDraft());
-        } else {
-          setHandoffDraft(emptyNoteDraft());
-        }
-      } finally {
-        if (isCurrent()) setActivityBusyKind(null);
-      }
-    },
-    [applyContextWriteback, decisionDraft, groupId, handoffDraft, tr],
-  );
-
   const startBriefEdit = useCallback(() => {
     if (!editingBrief) setBriefDraft(briefToDraft(brief));
     setEditingBrief(true);
@@ -1621,7 +1551,6 @@ export function ContextModal({
     { value: "tasks", label: tr("context.tasks", "Tasks") },
     { value: "instructions", label: tr("context.agentsMd", "AGENTS.md") },
     { value: "agents", label: tr("context.agents", "Agent State") },
-    { value: "log", label: tr("context.activityLog", "Coordination log") },
     { value: "self_evolving_skills", label: tr("context.skillsTab", "Skills") },
   ];
 
@@ -1830,21 +1759,6 @@ export function ContextModal({
                     </div>
                   ) : value === "instructions" ? (
                     agentsMdPanel
-                  ) : value === "log" ? (
-                    <CoordinationLogPanel
-                      tr={tr}
-                      ui={ui}
-                      activityBusyKind={activityBusyKind}
-                      activityError={activityError}
-                      recentDecisions={recentDecisions}
-                      recentHandoffs={recentHandoffs}
-                      decisionDraft={decisionDraft}
-                      handoffDraft={handoffDraft}
-                      activeTaskOptions={activeTaskOptions}
-                      onDecisionDraftChange={setDecisionDraft}
-                      onHandoffDraftChange={setHandoffDraft}
-                      onAddCoordinationNote={(kind) => void handleAddCoordinationNote(kind)}
-                    />
                   ) : value === "agents" ? (
                     <AgentsView agents={agents} tr={tr} ui={ui} />
                   ) : (

@@ -952,6 +952,7 @@ function PresentationViewer({
       loading={cardMode !== "inline" && linkedAsset.content === null && !linkedAsset.error}
       loadingLabel={t("common:loading")}
       isDark={isDark}
+      enableMermaid
       className="!rounded-none !border-0 !bg-transparent !p-3 sm:!p-4"
       minHeightClassName={isModal ? undefined : "min-h-0"}
     />

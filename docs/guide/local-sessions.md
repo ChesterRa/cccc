@@ -44,12 +44,15 @@ scope key and a `cccc_message_history({"group_id":"…","event_id":"…"})`
 instruction. A plain message from another agent in the Group arrives in the
 notification when it fits. Anything else asks for that exact read before acting:
 a message from you, Mail, a message with attachments, references or its own
-project path, a long message, one containing `<`, `>` or `&`, and the first
-message in a conversation, after a reported compaction, after the Group's
-instructions change or in a new hour. A
+project path, a long message, one containing `<`, `>` or `&`, and a message
+that needs to refresh the Group's instructions when this session joins a Group,
+starts a new conversation, reports compaction, sees changed rules or enters a new hour. A
 notification that ends in `...(truncated)` needs the read too. The read's
-`delivery_text` contains the complete message, reply/attachment guidance and
-Group instructions. Long messages stay intact in the ledger; notification
+`delivery_text` contains the complete message and reply/attachment guidance.
+When a refresh is due, a native agent's own exact read includes the full Group
+instructions; subsequent reads use a short receiving context. An accepted native
+delivery containing the full instructions also satisfies that refresh. A short
+Claude notification alone does not. Long messages stay intact in the ledger; notification
 previews are not the full task. The read does not mark Mail as read, acknowledge
 execution or replay delivery.
 

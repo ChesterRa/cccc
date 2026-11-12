@@ -6,7 +6,6 @@ import type { GroupContext, AgentsMdInfo } from "../../types";
 
 const mocks = vi.hoisted(() => ({
   apiJson: vi.fn(),
-  addCoordinationNote: vi.fn(),
   contextSync: vi.fn(),
   deleteCoordinationTask: vi.fn(),
   updateCoordinationBrief: vi.fn(),
@@ -24,7 +23,6 @@ vi.mock("react-i18next", () => ({
 
 vi.mock("../../services/api", () => ({
   apiJson: (...args: unknown[]) => mocks.apiJson(...args),
-  addCoordinationNote: (...args: unknown[]) => mocks.addCoordinationNote(...args),
   contextSync: (...args: unknown[]) => mocks.contextSync(...args),
   deleteCoordinationTask: (...args: unknown[]) => mocks.deleteCoordinationTask(...args),
   updateCoordinationBrief: (...args: unknown[]) => mocks.updateCoordinationBrief(...args),
@@ -83,8 +81,6 @@ const emptyContext: GroupContext = {
       project_brief_stale: false,
     },
     tasks: [],
-    recent_decisions: [],
-    recent_handoffs: [],
   },
   agent_states: [],
   tasks_summary: { total: 0, planned: 0, active: 0, done: 0, archived: 0 },
@@ -167,7 +163,6 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
       "Tasks",
       "AGENTS.md",
       "Agent State",
-      "Coordination log",
       "Skills",
     ]);
     for (const tab of tabs) {
@@ -185,7 +180,6 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
     );
     for (const [tab, content] of [
       ["AGENTS.md", "Repository rules"],
-      ["Coordination log", "Recent decisions"],
       ["Agent State", "No agent state"],
       ["Skills", "Group skill candidates"],
     ]) {
@@ -205,7 +199,6 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
     ).toBe("Keep this task filter");
     expect(mocks.updateCoordinationTask).not.toHaveBeenCalled();
     expect(mocks.updateCoordinationBrief).not.toHaveBeenCalled();
-    expect(mocks.addCoordinationNote).not.toHaveBeenCalled();
   });
 
   it("moves focus with arrows without activating or fetching another section", async () => {
@@ -221,9 +214,9 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
     await act(async () =>
       tabs[1].dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })),
     );
-    expect(document.activeElement).toBe(tabs[4]);
+    expect(document.activeElement).toBe(tabs[3]);
     await act(async () =>
-      tabs[4].dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })),
+      tabs[3].dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })),
     );
     expect(document.activeElement).toBe(tabs[0]);
   });
@@ -266,25 +259,6 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
     } finally {
       vi.unstubAllGlobals();
     }
-  });
-
-  it("keeps note drafts across sections and submits only on request", async () => {
-    mocks.addCoordinationNote.mockResolvedValue({ ok: true, result: {} });
-    await renderModal();
-    await clickTab("Coordination log");
-    await changeText(host.querySelector<HTMLTextAreaElement>("textarea")!, "Keep this decision");
-    await clickTab("Tasks");
-    expect(mocks.addCoordinationNote).not.toHaveBeenCalled();
-    await clickTab("Coordination log");
-    expect(host.querySelector("textarea")?.value).toBe("Keep this decision");
-    await clickButton("Add decision");
-    expect(mocks.addCoordinationNote).toHaveBeenCalledOnce();
-    expect(mocks.addCoordinationNote.mock.calls[0]).toEqual([
-      "g_a",
-      "decision",
-      "Keep this decision",
-      null,
-    ]);
   });
 
   it("reads the existing AGENTS.md using the Web endpoint's exists field", async () => {

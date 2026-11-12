@@ -172,7 +172,7 @@ fn assemble_payload(
         "context_hygiene": context_hygiene,
         "next_calls": {
             "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
-            "context_get": "cccc_context_get(detail=\"overview\")  # brief, recent decisions and handoffs, agent states",
+            "context_get": "cccc_context_get(detail=\"overview\")  # brief, agent states",
             "tasks": "cccc_task()  # open tasks, one row each; pass task_id to read one in full",
             "connect": "cccc_connect()  # discover accessible remote Groups/Actors; use both instance_id and target_group_id for an external_groups entry",
             "inbox_read": "cccc_inbox_read()",
@@ -348,8 +348,6 @@ fn build_recovery_pack(
             "assigned_active": assigned_active,
             "attention": attention,
         },
-        "recent_decisions": recent_notes(coordination, "recent_decisions"),
-        "recent_handoffs": recent_notes(coordination, "recent_handoffs"),
         "context_hygiene": hygiene,
     });
     fit_constraints(pack, brief.and_then(|value| value.get("constraints")))
@@ -558,26 +556,6 @@ fn slim_task(task: &Map<String, Value>) -> Value {
     Value::Object(result)
 }
 
-fn recent_notes(coordination: Option<&Map<String, Value>>, key: &str) -> Value {
-    let notes = coordination
-        .and_then(|value| value.get(key))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_object)
-        .take(2)
-        .map(|item| {
-            Value::Object(clean_object(Map::from_iter([
-                ("at".into(), item.get("at").cloned().unwrap_or(Value::Null)),
-                ("by".into(), trimmed_value(item.get("by"), 64)),
-                ("summary".into(), trimmed_value(item.get("summary"), 180)),
-                ("task_id".into(), trimmed_value(item.get("task_id"), 64)),
-            ])))
-        })
-        .collect();
-    Value::Array(notes)
-}
-
 fn build_recovery(pack: &Value) -> Value {
     let agent_state = pack.get("agent_state").and_then(Value::as_object);
     let recovery = Map::from_iter([
@@ -601,13 +579,6 @@ fn build_recovery(pack: &Value) -> Value {
             pack.get("tasks")
                 .cloned()
                 .unwrap_or_else(|| json!({"assigned_active": [], "attention": []})),
-        ),
-        (
-            "recent_notes".into(),
-            json!({
-                "decisions": pack.get("recent_decisions").cloned().unwrap_or_else(|| json!([])),
-                "handoffs": pack.get("recent_handoffs").cloned().unwrap_or_else(|| json!([])),
-            }),
         ),
     ]);
     Value::Object(recovery)
@@ -788,12 +759,6 @@ fn load_runtime_meta(home: &HomeLayout, group_id: &str, actor_id: &str) -> Map<S
 }
 
 fn shrink_recovery_pack(pack: &mut Value) {
-    while estimate_tokens(pack) > RECOVERY_TOKEN_BUDGET && pop_last(pack.get_mut("recent_handoffs"))
-    {
-    }
-    while estimate_tokens(pack) > RECOVERY_TOKEN_BUDGET
-        && pop_last(pack.get_mut("recent_decisions"))
-    {}
     while estimate_tokens(pack) > RECOVERY_TOKEN_BUDGET
         && array_len(pack.pointer("/tasks/attention")) > 1
         && pop_last(pack.pointer_mut("/tasks/attention"))
@@ -1018,9 +983,7 @@ mod tests {
                     "outcome": "The native engine exposes one useful packet.",
                     "status": "active",
                     "assignee": "peer1"
-                }],
-                "recent_decisions": [],
-                "recent_handoffs": []
+                }]
             },
             "agent_states": [{
                 "id": "peer1",
@@ -1105,15 +1068,15 @@ mod tests {
             "GitHub actions are the user's",
             "A parked task stays parked",
         ]);
-        // Many small notes sit just under the budget, as for a busy agent. Trimming
+        // Many small attention rows sit just under the budget, as for a busy agent. Trimming
         // only for the omission notice would free too little for any rule.
-        let note = json!({"summary": "n"});
-        let mut pack = json!({"coordination_brief": {}, "recent_handoffs": []});
-        while estimate_tokens(&pack) + estimate_tokens(&note) < RECOVERY_TOKEN_BUDGET {
-            pack["recent_handoffs"]
+        let row = json!({"id": "T1"});
+        let mut pack = json!({"coordination_brief": {}, "tasks": {"attention": []}});
+        while estimate_tokens(&pack) + estimate_tokens(&row) < RECOVERY_TOKEN_BUDGET {
+            pack["tasks"]["attention"]
                 .as_array_mut()
                 .expect("valid test fixture")
-                .push(note.clone());
+                .push(row.clone());
         }
 
         let pack = fit_constraints(pack, Some(&rules));
@@ -1275,7 +1238,7 @@ mod tests {
         );
         assert_eq!(
             native["next_calls"]["context_get"],
-            "cccc_context_get(group_id=\"g_fixture\", detail=\"overview\")  # brief, recent decisions and handoffs, agent states"
+            "cccc_context_get(group_id=\"g_fixture\", detail=\"overview\")  # brief, agent states"
         );
         assert_eq!(
             native["context_hygiene"]["execution_update_command"],

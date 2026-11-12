@@ -86,8 +86,6 @@ const context: GroupContext = {
       project_brief_stale: false,
     },
     tasks: [],
-    recent_decisions: [],
-    recent_handoffs: [],
   },
   agent_states: [],
   tasks_summary: { total: 0, planned: 0, active: 0, done: 0, archived: 0 },

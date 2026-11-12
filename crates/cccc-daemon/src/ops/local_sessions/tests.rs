@@ -551,6 +551,16 @@ fn claude_compact_notification_recovers_full_message_and_instructions_without_re
     assert!(delivery.contains("CUSTOM_NATIVE_INSTRUCTIONS"));
     assert!(delivery.contains(&format!("You are {} (foreman)", actor.id)));
     assert!(delivery.contains("cccc_message_reply"));
+    let repeated = fixture.call(
+        "message_history",
+        json!({"group_id":group.group_id,"actor_id":actor.id,"by":actor.id,"event_id":id}),
+    );
+    let repeated = repeated["delivery_text"]
+        .as_str()
+        .expect("message remains readable");
+    assert!(repeated.starts_with("[CCCC] Receiving context:"));
+    assert!(repeated.contains(&body));
+    assert!(!repeated.contains("CUSTOM_NATIVE_INSTRUCTIONS"));
     fixture.wait_state(&group, id, "claimed");
     transport::acknowledge(
         &fixture.home,
@@ -1990,8 +2000,27 @@ fn native_codex_rejection_is_failed_and_not_replayed() {
     let receipts = fixture.wait_state(&id, "failed");
     assert_eq!(receipts.len(), 2);
     assert_ne!(receipts[1].data.get("retryable"), Some(&json!(true)));
+    let actor = &fixture.group.actors[0];
+    let read = fixture.fixture.call(
+        "message_history",
+        json!({
+            "group_id":fixture.group.group_id,"actor_id":actor.id,"by":actor.id,"event_id":id
+        }),
+    );
+    assert!(
+        read["delivery_text"]
+            .as_str()
+            .expect("failed message")
+            .contains("[CCCC] You are ")
+    );
     let next = fixture.send("Small message after known rejection");
     fixture.wait_state(&next, "accepted");
+    let payload = std::fs::read_to_string(fixture.provider.join(format!(
+        "payload-{}",
+        fixture.calls().last().expect("accepted call")
+    )))
+    .expect("provider payload");
+    assert!(payload.starts_with("[CCCC] Receiving context:"));
     fixture.assert_settled_not_replayed(2);
 }
 
@@ -2038,6 +2067,17 @@ fn native_codex_preserves_large_quoted_unicode_payload_and_receiving_context() {
         payload.contains(&body),
         "no truncation or implicit splitting"
     );
+    let read = fixture.fixture.call(
+        "message_history",
+        json!({
+            "group_id":fixture.group.group_id,"actor_id":actor.id,"by":actor.id,"event_id":id,
+            "_cccc_mcp_identity":{"version":"fixture","source_id":"fixture"}
+        }),
+    );
+    let delivery = read["delivery_text"].as_str().expect("native exact read");
+    assert!(delivery.starts_with("[CCCC] Receiving context:"));
+    assert!(delivery.contains(&body));
+    assert!(!delivery.contains("[CCCC] You are "));
     println!(
         "accepted exact rendered payload: raw={} bytes / {} chars, queue={} bytes",
         body.len(),
@@ -2728,11 +2768,11 @@ fn native_deliveries_always_identify_the_receiving_group_and_member() {
             "only a member's first notice in a Group withholds the message: {}",
             handoff.text
         );
-        assert!(
-            handoff
-                .text
-                .starts_with("[CCCC] Read full message and instructions:")
-        );
+        assert!(handoff.text.starts_with(if label == "A2" {
+            "[CCCC] Read full message:"
+        } else {
+            "[CCCC] Read full message and instructions:"
+        }));
         assert!(!handoff.text.contains("[CCCC] You are "));
         for identity in [
             group.group_id.as_str(),
@@ -2844,6 +2884,151 @@ fn a_claude_member_reads_when_its_preamble_is_due_and_otherwise_gets_the_whole_m
     native::write_after_compact(&fixture.home, session, Some(false)).expect("compact callback");
     assert_read(&deliver("eighth body"), "eighth body");
     assert_whole(&deliver("ninth body"), "ninth body");
+}
+
+#[test]
+fn native_exact_history_tracks_rules_without_consuming_messages_or_admin_reads() {
+    let fixture = Fixture::new();
+    let group = fixture.conversation();
+    let actor = &group.actors[0];
+    let body = "Literal <markup> 界😀 remains message data.";
+    let sent = fixture.call(
+        "message_send",
+        json!({
+            "group_id":group.group_id,"by":"user","to":[actor.id],
+            "message_mode":"mail","text":body
+        }),
+    );
+    let id = sent["event"]["id"].as_str().expect("event ID");
+    let store = GroupStore::new(fixture.home.clone()).expect("store");
+    let path = store.ledger_path(&group.group_id).expect("ledger");
+    let before = cccc_core::ledger::read_all(&path).expect("ledger");
+    let read = |by: &str| {
+        fixture.call(
+            "message_history",
+            json!({
+                "group_id":group.group_id,"actor_id":actor.id,"by":by,"event_id":id
+            }),
+        )
+    };
+    assert!(
+        read("user")["delivery_text"]
+            .as_str()
+            .expect("admin read")
+            .contains("[CCCC] You are ")
+    );
+    let list = fixture.call(
+        "message_history",
+        json!({
+            "group_id":group.group_id,"actor_id":actor.id,"by":actor.id,"query":"Literal"
+        }),
+    );
+    assert!(list.get("delivery_text").is_none());
+    let unavailable = crate::dispatch::dispatch(
+        &fixture.home,
+        &req(
+            "message_history",
+            json!({
+                "group_id":group.group_id,"actor_id":actor.id,"by":actor.id,
+                "event_id":"00000000000000000000000000000000"
+            }),
+        ),
+    );
+    assert_eq!(
+        unavailable.error.expect("unavailable event").code,
+        "event_not_found"
+    );
+    let first = read(&actor.id);
+    assert!(
+        first["delivery_text"]
+            .as_str()
+            .expect("first own read")
+            .contains("[CCCC] You are ")
+    );
+    let next = read(&actor.id);
+    let next_text = next["delivery_text"].as_str().expect("second own read");
+    assert!(next_text.starts_with("[CCCC] Receiving context:"));
+    assert!(!next_text.contains("[CCCC] You are "));
+    assert!(next_text.contains(body));
+    assert_eq!(next["messages"][0]["data"]["text"], body);
+    assert_eq!(
+        cccc_core::ledger::read_all(&path).expect("ledger").len(),
+        before.len()
+    );
+    assert!(
+        super::super::runtime_delivery::latest_state(&fixture.home, &group.group_id, &actor.id, id)
+            .expect("delivery state")
+            .is_none()
+    );
+    let session = native::read(&fixture.home, &fixture.source.source_id).expect("session");
+    native::write_after_compact(&fixture.home, session, Some(false)).expect("compact");
+    assert!(
+        read(&actor.id)["delivery_text"]
+            .as_str()
+            .expect("after compact")
+            .contains("[CCCC] You are ")
+    );
+}
+
+#[test]
+fn reading_native_rules_before_the_first_claude_notice_preserves_the_message() {
+    let fixture = Fixture::new();
+    let group = fixture.conversation();
+    let actor = &group.actors[0];
+    GroupStore::new(fixture.home.clone())
+        .expect("store")
+        .mutate(&group.group_id, |doc| {
+            doc.actors.push(Actor::new("peer"));
+            Ok(())
+        })
+        .expect("add peer");
+    let mail = fixture.call(
+        "message_send",
+        json!({
+            "group_id":group.group_id,"by":"user","to":[actor.id],
+            "message_mode":"mail","text":"Read before a push"
+        }),
+    );
+    let read = fixture.call(
+        "message_history",
+        json!({
+            "group_id":group.group_id,"actor_id":actor.id,"by":actor.id,
+            "event_id":mail["event"]["id"]
+        }),
+    );
+    assert!(
+        read["delivery_text"]
+            .as_str()
+            .expect("rules")
+            .contains("[CCCC] You are ")
+    );
+    let receiver = fixture.attach();
+    let sent = fixture.call(
+        "message_send",
+        json!({
+            "group_id":group.group_id,"by":"peer","to":[actor.id],
+            "message_mode":"send","text":"This message arrives whole"
+        }),
+    );
+    let handoff = offered(&fixture.home, &receiver);
+    assert!(
+        handoff.text.starts_with("[CCCC] Message below."),
+        "{}",
+        handoff.text
+    );
+    assert!(handoff.text.contains("This message arrives whole"));
+    transport::acknowledge(
+        &fixture.home,
+        &receiver,
+        &handoff.handoff_id,
+        transport::Outcome::Accepted,
+    )
+    .expect("accept message");
+    fixture.wait_state(
+        &group,
+        sent["event"]["id"].as_str().expect("event"),
+        "accepted",
+    );
 }
 
 #[test]

@@ -736,13 +736,6 @@ export type CoordinationBrief = {
   updated_at?: string | null;
 };
 
-export type CoordinationNote = {
-  at?: string | null;
-  by?: string | null;
-  summary?: string | null;
-  task_id?: string | null;
-};
-
 export type GroupTasksSummary = {
   total: number;
   done: number;
@@ -835,12 +828,7 @@ export type ContextDetailLevel = "overview" | "summary" | "full";
 export type GroupContext = {
   version?: string;
   tasks_version?: string;
-  coordination?: {
-    brief?: CoordinationBrief | null;
-    tasks?: Task[];
-    recent_decisions?: CoordinationNote[];
-    recent_handoffs?: CoordinationNote[];
-  };
+  coordination?: { brief?: CoordinationBrief | null; tasks?: Task[] };
   agent_states?: AgentState[];
   actors_runtime?: ActorRuntimeState[];
   attention?: ContextAttention | null;

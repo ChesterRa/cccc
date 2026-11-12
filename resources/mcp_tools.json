@@ -76,7 +76,7 @@
   },
   {
     "name": "cccc_message_history",
-    "description": "Inspect actor-visible chat history without changing Mail read state. Pass event_id from a native notification to read that exact message or system notice: delivery_text has its full text and instructions, and message has the event; mcp_omitted_fields lists fields omitted because they are already shown there. Do not combine event_id with filters or pagination. Otherwise list past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
+    "description": "Inspect actor-visible chat history without changing Mail read state. Pass event_id from a native notification to read that exact message or system notice: delivery_text has its full rendered text and receiving context, with native protocol instructions when due, and message has the event; mcp_omitted_fields lists fields omitted because they are already shown there. Do not combine event_id with filters or pagination. Otherwise list past Send, Send + Reply, or Mail messages; routine Mail handling should use cccc_inbox_read instead.",
     "annotations": {
       "readOnlyHint": true,
       "destructiveHint": false,
@@ -2391,7 +2391,7 @@
   },
   {
     "name": "cccc_coordination",
-    "description": "Shared control-plane tool: action=get|update_brief|add_decision|add_handoff. get returns the brief, decisions, handoffs and task counts, with the tasks needing attention as summary rows, at most 10 per list; a longer list adds <list>_total. For blocked, waiting_user or pending_handoffs, use cccc_task with attention=blocked, waiting_user or handoff respectively and page through the results.",
+    "description": "Shared control-plane tool: action=get|update_brief. get returns the brief and task counts, with the tasks needing attention as summary rows, at most 10 per list; a longer list adds <list>_total. For blocked, waiting_user or pending_handoffs, use cccc_task with attention=blocked, waiting_user or handoff respectively and page through the results.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2407,9 +2407,7 @@
           "type": "string",
           "enum": [
             "get",
-            "update_brief",
-            "add_decision",
-            "add_handoff"
+            "update_brief"
           ],
           "default": "get"
         },
@@ -2431,12 +2429,6 @@
         },
         "project_brief_stale": {
           "type": "boolean"
-        },
-        "summary": {
-          "type": "string"
-        },
-        "task_id": {
-          "type": "string"
         }
       },
       "required": []

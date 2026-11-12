@@ -38,8 +38,13 @@ pub(crate) fn claude_notice(
         "You are {} ({role}); scope={scope_key}; from={}; mode={mode}.\n",
         actor.id, event.by,
     );
+    let instructions_label = if preamble_due {
+        " and instructions"
+    } else {
+        ""
+    };
     let mut text = format!(
-        "[CCCC] Read full message and instructions: cccc_message_history({lookup}).\n{context}"
+        "[CCCC] Read full message{instructions_label}: cccc_message_history({lookup}).\n{context}"
     );
     if encoded_len(&text) > MONITOR_LINE_BYTES {
         return None;
@@ -47,7 +52,7 @@ pub(crate) fn claude_notice(
     if !preamble_due && arrives_whole(group, event) {
         let line = instructions.map_or_else(String::new, |line| format!("{line}\n"));
         let whole = format!(
-            "[CCCC] Message below. If it ends in ...(truncated), read it in full before acting: cccc_message_history({lookup}). The same read returns the exact text and your instructions.\n{context}{line}{rendered}"
+            "[CCCC] Message below. If it ends in ...(truncated), read it in full before acting: cccc_message_history({lookup}). The same read returns the exact text.\n{context}{line}{rendered}"
         );
         if monitor_records::fits_one_notice(&whole) {
             return Some((whole, instructions.is_some()));
@@ -232,6 +237,8 @@ mod tests {
             assert!(notice.contains(&group.group_id));
             assert!(notice.contains("cccc_message_history("));
             assert!(notice.contains("You are receiver ("));
+            assert!(notice.contains("The same read returns the exact text."));
+            assert!(!notice.contains("your instructions"));
             assert!(notice.ends_with(RENDERED), "{notice}");
         }
     }
@@ -280,7 +287,7 @@ mod tests {
             let (notice, _) =
                 claude_notice(&group, &actor, &event, None, RENDERED, false).expect("notice");
             assert!(
-                notice.starts_with("[CCCC] Read full message and instructions:"),
+                notice.starts_with("[CCCC] Read full message:"),
                 "{by}: {notice}"
             );
             assert!(!notice.contains(RENDERED), "{by}: {notice}");
@@ -295,10 +302,7 @@ mod tests {
                 member_message(json!({"text":text,"message_mode":"send"}));
             let (notice, _) =
                 claude_notice(&group, &actor, &event, None, RENDERED, false).expect("notice");
-            assert!(
-                notice.starts_with("[CCCC] Read full message and instructions:"),
-                "{notice}"
-            );
+            assert!(notice.starts_with("[CCCC] Read full message:"), "{notice}");
         }
     }
 
@@ -309,7 +313,7 @@ mod tests {
         event.scope_key = "s_other".into();
         let (notice, _) =
             claude_notice(&group, &actor, &event, None, RENDERED, false).expect("notice");
-        assert!(notice.starts_with("[CCCC] Read full message and instructions:"));
+        assert!(notice.starts_with("[CCCC] Read full message:"));
     }
 
     #[test]
@@ -318,7 +322,7 @@ mod tests {
             member_message(json!({"text":"hello","message_mode":"send"}));
         let (notice, _) = claude_notice(&group, &actor, &event, None, &"界".repeat(3_000), false)
             .expect("notice");
-        assert!(notice.starts_with("[CCCC] Read full message and instructions:"));
+        assert!(notice.starts_with("[CCCC] Read full message:"));
         assert!(encoded_len(&notice) <= MONITOR_LINE_BYTES);
     }
 

@@ -163,14 +163,6 @@ fn coordination(
                 .collect(),
         ),
     );
-    if full {
-        for key in ["recent_decisions", "recent_handoffs"] {
-            result.insert(
-                key.into(),
-                source.get(key).cloned().unwrap_or_else(|| json!([])),
-            );
-        }
-    }
     result
 }
 

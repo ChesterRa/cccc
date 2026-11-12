@@ -121,6 +121,9 @@ fn merge(
     Ok((canonical, mappings))
 }
 
+/// Coordination notes (`recent_decisions`, `recent_handoffs`) were removed as a feature and
+/// nothing reads them; migration still carries them over so moving to the current layout
+/// never drops what an older context file stored.
 fn merge_coordination(target: &mut Map<String, Value>, source: Map<String, Value>) {
     for key in ["brief", "recent_decisions", "recent_handoffs"] {
         let Some(value) = source.get(key) else {

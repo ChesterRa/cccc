@@ -178,22 +178,8 @@ fn context_action(
     if action_name == "get" || action_name == "list" {
         return Ok(("context_get".into(), args));
     }
-    if namespace == "coordination" {
-        match action_name.as_str() {
-            "add_decision" => {
-                args.insert("kind".into(), Value::String("decision".into()));
-            }
-            "add_handoff" => {
-                args.insert("kind".into(), Value::String("handoff".into()));
-            }
-            _ => {}
-        }
-    }
     let op_name = match (namespace, action_name.as_str()) {
         ("coordination", "update_brief" | "brief") => "coordination.brief.update",
-        ("coordination", "add_decision" | "add_handoff" | "add_note" | "note") => {
-            "coordination.note.add"
-        }
         ("agent_state", "update" | "clear") => {
             if action_name == "update" {
                 "agent_state.update"

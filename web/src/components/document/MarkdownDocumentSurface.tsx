@@ -19,6 +19,8 @@ type MarkdownDocumentSurfaceProps = {
   onEditValueChange?: (value: string) => void;
   /** Render on the parent surface; only the editor keeps a field border. */
   bare?: boolean;
+  /** Draw Mermaid fences as diagrams, as the Files preview does. */
+  enableMermaid?: boolean;
 };
 
 export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
@@ -37,6 +39,7 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
   editAriaLabel,
   onEditValueChange,
   bare,
+  enableMermaid,
 }: MarkdownDocumentSurfaceProps) {
   const value = String(editing ? (editValue ?? content) : content || "");
   const hasContent = value.trim().length > 0;
@@ -104,6 +107,7 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
         <LazyMarkdownRenderer
           content={value}
           isDark={isDark}
+          enableMermaid={enableMermaid}
           className={classNames("break-words [overflow-wrap:anywhere]", previewClassName)}
           fallback={
             <div className={classNames("whitespace-pre-wrap break-words", previewClassName)}>

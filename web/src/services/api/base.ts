@@ -622,28 +622,6 @@ export function normalizeContext(raw: unknown): GroupContext {
           }
         : null,
       tasks,
-      recent_decisions: Array.isArray(coordination.recent_decisions)
-        ? coordination.recent_decisions
-            .map((item) => asRecord(item))
-            .filter((item): item is UnknownRecord => !!item)
-            .map((item) => ({
-              at: asOptionalString(item.at),
-              by: asOptionalString(item.by),
-              summary: asString(item.summary),
-              task_id: asOptionalString(item.task_id),
-            }))
-        : [],
-      recent_handoffs: Array.isArray(coordination.recent_handoffs)
-        ? coordination.recent_handoffs
-            .map((item) => asRecord(item))
-            .filter((item): item is UnknownRecord => !!item)
-            .map((item) => ({
-              at: asOptionalString(item.at),
-              by: asOptionalString(item.by),
-              summary: asString(item.summary),
-              task_id: asOptionalString(item.task_id),
-            }))
-        : [],
     },
     agent_states: agentStates,
     actors_runtime: actorsRuntime,

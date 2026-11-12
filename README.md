@@ -187,7 +187,7 @@ Use Mail for updates that can wait, Send when the recipient should know now, and
 - **Messages.** `@` mentions agents and `#` mentions Groups. Point at a message for **Reply**, **Forward** and copy; its **More** menu adds quick replies, **Pin message** and **Copy link**. On touch screens, **More** holds every action.
 - **Tabs.** **Waiting for you** (requests you can answer in place), **All**, **Pinned** and **User-related**. In a filtered view, **Show in chat** opens a message in the whole conversation.
 - **Messages** and **Terminals** in the Group header switch views. The terminal view shows up to four agents per page and takes keyboard input.
-- **Files**, **Presentation** (four pinned slots) and **Project Context** (**Tasks**, **AGENTS.md**, **Coordination log**, **Agent State**, **Skills**).
+- **Files**, **Presentation** (four pinned slots) and **Project Context** (**Tasks**, **AGENTS.md**, **Agent State**, **Skills**).
 - **Settings and more**, then **All settings**: **This group** includes Guidance, Automation, Delivery, Messaging and IM Bridge; **This instance** includes Account, Web Access, Notifications and Voice.
 - **Appearance.** **Theme** is Light, Dark or Auto (follows the light or dark setting of your system), and the language is English, Chinese or Japanese. **More appearance settings** has **Body font**, **Message area width** (Medium, Wide or Full, on screens 768px and wider), **Motion**, **‘Waiting for you’ indicators** and **Text Size** (70%, 90%, 100% or 125%).
 - **Notifications.** **Settings → This instance → Notifications → Enable notifications**, in each browser, over HTTPS or on localhost. On iPhone or iPad (iOS or iPadOS 16.4 or later), add CCCC to the Home Screen first.

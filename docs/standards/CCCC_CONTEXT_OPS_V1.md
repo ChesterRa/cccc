@@ -14,7 +14,7 @@ The key words **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** ar
 ## 1. Overview
 
 `context_sync` applies a batch of small operations to a group's context v3 storage:
-- `coordination` = shared control plane (`brief`, recent notes)
+- `coordination` = shared control plane (`brief`)
 - `tasks` = shared dispatch truth
 - `agent_states` = per-actor short-term working memory
 - `meta` = restricted projection-support metadata
@@ -102,23 +102,9 @@ Notes:
 - Partial patch: only provided fields are updated. A provided `constraints` replaces the whole list.
 - Daemon sets `updated_by` and `updated_at` automatically.
 
-#### `coordination.note.add`
-
-```ts
-{
-  op: "coordination.note.add"
-  kind: "decision" | "handoff"
-  summary: string
-  task_id?: string | null
-}
-```
-
-Permission: any actor.
-
-Notes:
-- Used for compact recent decisions / handoffs.
-- Daemon keeps only the newest bounded slice in context.
-- This operation does not implicitly copy the note into daily or stable memory.
+Coordination notes (`coordination.note.add`, stored as `recent_decisions` and
+`recent_handoffs`) were removed; the op is rejected as unknown. Notes an older
+context file already holds stay in that file unchanged and are never returned.
 
 ### 3.2 Tasks
 
@@ -473,6 +459,6 @@ Curated trigger allowlist:
 |------|------------|
 | `user` | All ops |
 | `foreman` | All ops except changing another actor's `agent_state` |
-| `peer` | `coordination.note.add`, `task.create`, `task.update` (own assigned / handed-off), `task.move` (own assigned / handed-off), `task.restore` (own assigned / handed-off), `task.delete` (own assigned / handed-off), `agent_state.update` (self), `agent_state.clear` (self) |
+| `peer` | `task.create`, `task.update` (own assigned / handed-off), `task.move` (own assigned / handed-off), `task.restore` (own assigned / handed-off), `task.delete` (own assigned / handed-off), `agent_state.update` (self), `agent_state.clear` (self) |
 
 Permission checks use `context_sync.args.by`.

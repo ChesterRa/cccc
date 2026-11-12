@@ -72,7 +72,7 @@ an uncertain send, rather than creating another message.
 
 ### Durable Coordination
 
-- `cccc_coordination` holds shared objectives, constraints, decisions, and handoffs.
+- `cccc_coordination` holds shared objectives and constraints.
 - Use `cccc_task` for user requests and commitments that need multiple steps, coordination or follow-up; `cccc_tracked_send` adds owner, scope, done criteria, and evidence. Use `cccc_backlog` for an observed issue or a user's idea deferred and worth keeping: reuse a matching entry, record why it waits and when to revisit; recording it does not approve the work. If the Group has no backlog file yet, propose one to the user instead of creating it. Otherwise reply/send.
 - Task lifecycle uses `move`; use `update` only when changing other task fields too.
 - Record what a task waits on in `waiting_on`: `user` when its next step needs the user (hand over the action in a message; the mark notifies no one), `external` when it waits outside the Group; set it back, usually to `none`, when the wait ends.
@@ -80,7 +80,7 @@ an uncertain send, rather than creating another message.
 
 ### Recovery
 
-- `cccc_bootstrap` returns recovery state, tasks, recent decisions, and a Mail preview.
+- `cccc_bootstrap` returns recovery state, tasks, and a Mail preview.
 - It is a snapshot, not proof of current external state; verify at the execution boundary.
 
 ### Inbox

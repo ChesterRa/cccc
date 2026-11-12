@@ -4,6 +4,7 @@ import { act, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PresentationViewerModal, PresentationViewerSplitPanel } from "./PresentationViewerModal";
+import { WorkspaceDocumentPreview } from "../workspace/WorkspaceDocumentPreview";
 import type { GroupPresentation } from "../../types";
 import { groupMessagesVisible, useUIStore } from "../../stores/useUIStore";
 
@@ -18,6 +19,8 @@ vi.mock("react-i18next", () => ({
 vi.mock("../viewer/PdfCanvasViewer", () => ({
   PdfCanvasViewer: ({ href }: { href: string }) => <div data-pdf-canvas-viewer={href} />,
 }));
+const mermaidMock = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn() }));
+vi.mock("mermaid", () => ({ default: mermaidMock }));
 
 describe("Presentation refresh", () => {
   let host: HTMLDivElement, root: ReturnType<typeof createRoot>;
@@ -368,6 +371,70 @@ describe("Presentation refresh", () => {
       return title?.querySelector("span")?.textContent;
     });
     expect(names).toEqual(["Drawing", "Plan"]);
+  });
+
+  it("draws a Mermaid block in a Markdown card the way the Files preview does", async () => {
+    mermaidMock.render.mockResolvedValue({ svg: '<svg data-drawn="true"></svg>' });
+    const markdown = "# Plan\n\n```mermaid\nflowchart LR\n  A --> B\n```";
+    const presentation: GroupPresentation = {
+      v: 1,
+      slots: [
+        {
+          slot_id: "slot-1",
+          index: 1,
+          card: {
+            slot_id: "slot-1",
+            title: "Plan",
+            card_type: "markdown",
+            published_at: "one",
+            published_by: "worker",
+            content: { mode: "inline", markdown },
+          },
+        },
+      ],
+    };
+    const file = {
+      scope_key: "s",
+      scope_url: "/repo",
+      path: "plan.md",
+      content: "",
+      mime_type: "text/markdown",
+      binary: false,
+      truncated: false,
+      sha256: "x",
+      bytes: markdown.length,
+    };
+    await act(async () => {
+      await import("../MarkdownRenderer");
+      root.render(
+        <>
+          <PresentationViewerModal
+            isOpen
+            slotId="slot-1"
+            isDark={false}
+            groupId="g"
+            presentation={presentation}
+            onClose={vi.fn()}
+          />
+          <div data-files-preview="">
+            <WorkspaceDocumentPreview
+              kind="markdown"
+              groupId="g"
+              file={file}
+              content={markdown}
+              isDark={false}
+            />
+          </div>
+        </>,
+      );
+    });
+    const state = (scope: Element | null) =>
+      scope?.querySelector("[data-mermaid-block]")?.getAttribute("data-mermaid-state");
+    await vi.waitFor(() => {
+      expect(state(host.querySelector('[role="dialog"]'))).toBe("rendered");
+      expect(state(host.querySelector("[data-files-preview]"))).toBe("rendered");
+    });
+    expect(host.querySelector('[role="dialog"] [data-drawn]')).not.toBeNull();
   });
 
   it("names the card type and publish time in the modal title for phone headers", async () => {

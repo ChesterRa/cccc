@@ -28,8 +28,7 @@ pub(crate) fn apply(
 /// `attention` lists every such task.
 const ATTENTION_ROWS: usize = 10;
 
-/// The brief, recent decisions and handoffs, the open tasks that need attention and the task
-/// counts for every status. Tasks themselves are listed by `cccc_task`, so this view carries no
+/// The brief, the open tasks that need attention and the task counts for every status. Tasks themselves are listed by `cccc_task`, so this view carries no
 /// task list or board.
 fn project_coordination(result: &mut Map<String, Value>) {
     let mut snapshot = std::mem::take(result);

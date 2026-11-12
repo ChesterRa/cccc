@@ -370,7 +370,10 @@ fn process_external_batch(
         };
         let preamble = super::actor_delivery_preamble::render(&job.home, &group, actor);
         let marker = preamble_marker(&session, chrono::Utc::now().timestamp(), &preamble);
-        let first_delivery = *preamble_session != marker;
+        let complete_preamble =
+            super::actor_delivery_preamble::NativeStamp::new(&job.home, &group, actor, &marker);
+        let first_delivery = *preamble_session != marker && complete_preamble.is_due();
+        let includes_preamble = first_delivery && actor.runtime != ActorRuntime::Claude;
         let mut instructions = super::local_sessions::instruction_session(&job.home, actor)
             .and_then(|(session, root)| {
                 super::instruction_files::check(&job.home, &group.group_id, actor, &session, &root)
@@ -400,19 +403,8 @@ fn process_external_batch(
         } else {
             // One native session may serve several Groups. Later messages
             // still identify their receiving member without repeating startup.
-            let scope = cccc_core::group_scope::effective_scope(&group, Some(actor));
-            let context = serde_json::json!({
-                "group_id":group.group_id,
-                "group_title":group.title,
-                "actor_id":actor.id,
-                "role":cccc_core::actors::effective_role(&group, &actor.id),
-                "scope_key":scope.map(|scope| &scope.scope_key),
-                // Shown in the same spelling as the startup prompt's workspace.
-                "scope_root":scope.map(|scope| {
-                    cccc_runtime::compatible_path(std::path::Path::new(&scope.url))
-                }),
-            });
-            text = format!("[CCCC] Receiving context: {context}\n\n{text}");
+            let context = super::actor_delivery_preamble::receiving_context(&group, actor);
+            text = format!("{context}\n\n{text}");
         }
         if actor.runtime != ActorRuntime::Claude {
             if let Some(pending) = &instructions {
@@ -488,6 +480,9 @@ fn process_external_batch(
         match super::local_sessions::submit(&job.home, &group, actor, events, text, cancelled) {
             DeliveryOutcome::Unavailable => return defer_external_job(job),
             DeliveryOutcome::Accepted => {
+                if includes_preamble {
+                    complete_preamble.given();
+                }
                 finish_job(job, CompletedDelivery::Accepted);
                 *preamble_session = marker;
                 if let Some(pending) = instructions {
@@ -514,7 +509,7 @@ fn process_external_batch(
 /// The hour gives a compaction nobody reported one more chance, since a missed
 /// signal looks just like none.
 fn preamble_marker(session: &str, now: i64, preamble: &str) -> String {
-    format!("{session}:{}\n{preamble}", now / 3_600)
+    super::actor_delivery_preamble::native_marker(session, now, preamble)
 }
 
 fn defer_external_job(job: &mut DeliveryJob) -> BatchOutcome {

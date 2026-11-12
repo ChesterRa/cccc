@@ -216,7 +216,8 @@ fn history_event(
         .filter(|actor| !actor.external_session_id.is_empty())
         && let Some(text) = delivery_text.as_mut()
     {
-        let notice = (request.args.get("by").and_then(Value::as_str) == Some(actor_id))
+        let own_read = request.args.get("by").and_then(Value::as_str) == Some(actor_id);
+        let notice = own_read
             .then(|| {
                 super::mcp_identity_notice::for_read(
                     home,
@@ -226,10 +227,28 @@ fn history_event(
                 )
             })
             .flatten();
+        let preamble = super::actor_delivery_preamble::render(home, group, actor);
+        let include_preamble = !own_read
+            || super::local_sessions::session_marker(home, &actor.external_session_id)
+                .map(|session| {
+                    let marker = super::actor_delivery_preamble::native_marker(
+                        &session,
+                        chrono::Utc::now().timestamp(),
+                        &preamble,
+                    );
+                    super::actor_delivery_preamble::NativeStamp::new(home, group, actor, &marker)
+                        .include_on_read()
+                })
+                .unwrap_or(true);
+        let header = if include_preamble {
+            preamble
+        } else {
+            super::actor_delivery_preamble::receiving_context(group, actor)
+        };
         *text = format!(
             "{}{}\n\n{text}",
             notice.map_or_else(String::new, |notice| format!("{notice}\n\n")),
-            super::actor_delivery_preamble::render(home, group, actor)
+            header
         );
     }
     object(json!({"messages":[event],"has_more":false,"delivery_text":delivery_text}))

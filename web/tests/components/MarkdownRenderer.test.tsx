@@ -176,7 +176,7 @@ describe("MarkdownRenderer Mermaid contract", () => {
     host.remove();
   });
 
-  it("enables diagrams only on Chat and Inbox message surfaces", () => {
+  it("enables diagrams on messages, the Files preview and Presentation only", () => {
     const messageBubble = readFileSync(
       resolve(process.cwd(), "src/components/MessageBubble.tsx"),
       "utf8",
@@ -193,11 +193,26 @@ describe("MarkdownRenderer Mermaid contract", () => {
       resolve(process.cwd(), "src/components/document/MarkdownDocumentSurface.tsx"),
       "utf8",
     );
+    const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
     expect(messageBubble).toContain('from "./messageBubble/MessageContent"');
     expect(messageContent).toContain("enableMermaid");
     expect(inbox).toContain("enableMermaid");
-    expect(documentSurface).not.toContain("enableMermaid");
+    expect(read("src/components/workspace/WorkspaceDocumentPreview.tsx")).toContain(
+      "enableMermaid",
+    );
+    expect(read("src/components/presentation/PresentationViewerModal.tsx")).toContain(
+      "enableMermaid",
+    );
+    // The shared document surface draws diagrams only for a caller that asks; the Secretary's
+    // live draft and library viewer do not.
+    expect(documentSurface).not.toMatch(/enableMermaid\s*=\s*true/);
+    expect(read("src/pages/chat/voice-secretary/VoiceSecretaryWorkspacePanel.tsx")).not.toContain(
+      "enableMermaid",
+    );
+    expect(read("src/pages/chat/voice-secretary/VoiceLibraryDialogs.tsx")).not.toContain(
+      "enableMermaid",
+    );
   });
 
   it("ships the complete message diagram labels in every supported locale", () => {

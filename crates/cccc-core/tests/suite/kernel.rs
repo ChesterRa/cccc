@@ -59,15 +59,21 @@ fn context_sync_is_atomic_and_dry_run_does_not_persist() {
         .expect("sync");
     assert_eq!(first.context.tasks.len(), 1);
 
-    let note = json!({"op": "coordination.note.add", "kind": "decision", "summary": "dry"})
+    let dry = json!({"op": "coordination.brief.update", "objective": "dry"})
         .as_object()
         .cloned()
         .expect("operation");
     contexts
-        .sync(&group_id, &[note], Some(&first.version), "user", true)
+        .sync(&group_id, &[dry], Some(&first.version), "user", true)
         .expect("dry run");
     let stored = contexts.load(&group_id).expect("stored context");
-    assert!(stored.coordination.get("notes").is_none());
+    assert_ne!(
+        stored
+            .coordination
+            .get("brief")
+            .and_then(|brief| brief.get("objective")),
+        Some(&json!("dry"))
+    );
 
     let valid_then_invalid = [
         json!({"op":"task.update","task_id":"T001","notes":"must roll back"})
@@ -93,6 +99,56 @@ fn context_sync_is_atomic_and_dry_run_does_not_persist() {
     let stored = contexts.load(&group_id).expect("stored after rejection");
     assert!(stored.tasks[0].get("notes").is_none());
     assert_eq!(stored.tasks[0]["status"], "planned");
+}
+
+#[test]
+fn stored_coordination_notes_survive_brief_and_task_writes() {
+    // Coordination notes were removed. Notes left in an older context file are
+    // never read again, but later writes keep them in the file unchanged.
+    let (_temp, home, _store, group_id) = fixture();
+    let contexts = ContextStore::new(home.clone()).expect("contexts");
+    let brief = |objective: &str| {
+        json!({"op": "coordination.brief.update", "objective": objective})
+            .as_object()
+            .cloned()
+            .expect("operation")
+    };
+    contexts
+        .sync(&group_id, &[brief("first")], None, "user", false)
+        .expect("first write");
+    let context_file = home
+        .groups_dir()
+        .join(&group_id)
+        .join("context/context.yaml");
+    std::fs::write(
+        &context_file,
+        "coordination:\n  brief:\n    objective: first\n  recent_decisions:\n  - at: '2026-10-01T00:00:00Z'\n    by: user\n    summary: old decision\n    task_id: null\n  recent_handoffs:\n  - at: '2026-10-02T00:00:00Z'\n    by: peer\n    summary: old handoff\n    task_id: T001\nmeta: {}\n",
+    )
+    .expect("seed older notes");
+    let notes = |document: &ContextDoc| {
+        (
+            document.coordination.get("recent_decisions").cloned(),
+            document.coordination.get("recent_handoffs").cloned(),
+        )
+    };
+    let before = notes(&contexts.load(&group_id).expect("seeded context"));
+    assert!(before.0.is_some() && before.1.is_some(), "{before:?}");
+
+    contexts
+        .sync(&group_id, &[brief("second")], None, "user", false)
+        .expect("brief write");
+    let task = json!({"op": "task.create", "title": "after notes"})
+        .as_object()
+        .cloned()
+        .expect("operation");
+    contexts
+        .sync(&group_id, &[task], None, "user", false)
+        .expect("task write");
+
+    let stored = contexts.load(&group_id).expect("stored context");
+    assert_eq!(notes(&stored), before);
+    assert_eq!(stored.coordination["brief"]["objective"], "second");
+    assert_eq!(stored.tasks.len(), 1);
 }
 
 #[test]

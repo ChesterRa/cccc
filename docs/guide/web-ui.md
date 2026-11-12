@@ -1271,7 +1271,8 @@ from another scope, where the same path would mean a different file.
 ### Message diagrams
 
 In Chat and Inbox messages, a fenced code block labeled `mermaid` is rendered as a diagram after
-the message is complete. Use **View source** to inspect or copy the original definition. Invalid or
+the message is complete. Markdown opened in the Files preview or shown in Presentation renders these
+blocks the same way. Use **View source** to inspect or copy the original definition. Invalid or
 oversized diagrams fall back to the source automatically; other Markdown surfaces continue to show
 Mermaid fences as ordinary code blocks. Flowchart image shapes (`@{ img: ... }`) also remain as
 source because Mermaid waits on browser image decoding before completing the diagram and can
@@ -1318,8 +1319,8 @@ the messages first, because a retry can send the reply twice.
 Open **Project Context** from the clipboard button in the Group header. The
 header identifies the Group being viewed.
 
-A single navigation row opens **Tasks**, **AGENTS.md**, **Agent State**,
-**Coordination log**, or **Skills**. On narrow screens, scroll the row horizontally;
+A single navigation row opens **Tasks**, **AGENTS.md**, **Agent State**, or
+**Skills**. On narrow screens, scroll the row horizontally;
 keyboard users can move focus with Left/Right or Home/End and activate with
 Enter/Space. Switching sections retains brief and file drafts as well as task filters.
 
@@ -1418,7 +1419,6 @@ Enter/Space. Switching sections retains brief and file drafts as well as task fi
   staleness. Focus, next action and blockers remain visible. Expand working context
   or recovery cues when needed. A task named in a report does not prove that its
   Runtime is currently working on it.
-- **Coordination log** has a dedicated page for recent decisions and handoffs.
   Viewing repository instructions or records does not keep a task board beneath them.
 - **Skills** shows self-evolving candidates originating in this Group. Instance
   capability governance has a wider scope; the two views do not replace each other.

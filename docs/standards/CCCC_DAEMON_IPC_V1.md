@@ -4701,11 +4701,11 @@ The Claude adapter uses an ephemeral receiver lease; Codex hands deliveries to i
 
 Every native message MUST carry its receiving Group ID, Actor ID, current role, and attached scope context in the model-visible text, even when the longer bootstrap is cached. Structured handoff fields alone are insufficient when an adapter forwards only `text`; one source can serve multiple Groups in alternating order.
 
-The Preamble is due on a Group's first native delivery to a conversation, after a reported compaction, whenever its rendered text changes, and on the first delivery after a UTC hour boundary. Claude and Codex report compaction through their `SessionStart` callback with `source=compact`. The hour is one more chance to recover from a compaction nobody reported, not a limit on how long recovery takes: after a missed report a member works from its own summary until a later delivery asks for the Preamble, and writing that delivery does not prove it was read. Runtimes other than Claude receive the complete Preamble with a delivery when it is due, and otherwise a concise receiving-context header.
+The Preamble has a new recovery marker on a Group's first native use in a conversation, after a reported compaction, whenever its rendered text changes, and after a UTC hour boundary. Claude and Codex report compaction through their `SessionStart` callback with `source=compact`. A successful exact history response to the native Actor itself that includes the complete Preamble, or an accepted native delivery that includes it, satisfies that marker. This output-frequency record is scoped to the Group, Actor generation and native source/session; it lives only in daemon memory, so a restart can repeat the Preamble. Subsequent self exact reads and native deliveries other than Claude use a concise receiving-context header while that marker is satisfied. A return or accepted delivery does not prove that the model received or followed the rules. The hour is one more recovery opportunity after an unreported compaction, not a bound on recovery time.
 
-A Claude Monitor notification MUST start with its routing identifiers, receiving role/scope key and an exact `message_history` read instruction. When the Preamble is due, the notification withholds the message, so that the exact read hands back both. Otherwise a Send or Request Reply from a current Group member, with no attachments, refs, source scope or path and no `<`, `>` or `&` in its text or insight, carries the rendered message if it fits in records that all end between words. Claude Code shows those three characters as XML entities, and the model reads each record as JSON, so the exact read remains the literal text. Claude Code labels every Monitor event as not user input, so a message from the user or any other sender is read from the ledger. Every other notification is one JSON stdout record, at most 480 bytes including escaping and its newline, that ends in a preview. An instruction-file notice line, when pending, goes after the routing prefix and before the message or preview; when it does not fit the budget it is left out and stays pending.
+A Claude Monitor notification MUST start with its routing identifiers, receiving role/scope key and an exact `message_history` read instruction. Its notification marker is distinct from the complete-Preamble record: an accepted short pointer advances only the notification marker. The notification withholds the message only when its notification marker is due and the complete Preamble is still owed, so that the subsequent self exact read returns both. Further notifications do not keep withholding messages merely because the Actor has not made that read. Otherwise a Send or Request Reply from a current Group member, with no attachments, refs, source scope or path and no `<`, `>` or `&` in its text or insight, carries the rendered message if it fits in records that all end between words. Claude Code shows those three characters as XML entities, and the model reads each record as JSON, so the exact read remains the literal text. Claude Code labels every Monitor event as not user input, so a message from the user or any other sender is read from the ledger. Every other notification is one JSON stdout record, at most 480 bytes including escaping and its newline, that ends in a preview. An instruction-file notice line, when pending, goes after the routing prefix and before the message or preview; when it does not fit the budget it is left out and stays pending.
 
-The receiver writes a notification as JSON stdout records of at most 480 UTF-16 units each, 2,800 in all, together in one write, and waits 2.1 seconds before taking the next handoff. These are adapter budgets based on Claude Code 2.1.317, not vendor limits: it cuts a record at 500 UTF-16 units and records written together at 3,000, merges events that arrive close together, and drops events past an output rate. Each cut is marked in the model-visible text, and the notification asks the model to read a message that ends in that mark before acting. A receiver that predates these budgets writes one record, so a long notification is cut until that session restarts: on Claude Code 2.1.317, a running Monitor stays in place across `/reload-plugins`. Full content and the Preamble remain available through the authorized exact read. A notification MUST NOT change the canonical ledger message.
+The receiver writes a notification as JSON stdout records of at most 480 UTF-16 units each, 2,800 in all, together in one write, and waits 2.1 seconds before taking the next handoff. These are adapter budgets based on Claude Code 2.1.317, not vendor limits: it cuts a record at 500 UTF-16 units and records written together at 3,000, merges events that arrive close together, and drops events past an output rate. Each cut is marked in the model-visible text, and the notification asks the model to read a message that ends in that mark before acting. A receiver that predates these budgets writes one record, so a long notification is cut until that session restarts: on Claude Code 2.1.317, a running Monitor stays in place across `/reload-plugins`. Full message content remains available through the authorized exact read, which restores the Preamble when due. A notification MUST NOT change the canonical ledger message.
 
 Receipts use existing `runtime.delivery` events with `transport=local_session`. Accepted means transport acceptance, not model execution/read/reply: for a Claude notification, that all of its records were written and flushed. Known rejection is failed; unknown submission is ambiguous and MUST NOT automatically replay. A failed attempt known to have stopped before native submission carries `retryable=true` and remains pending across access/Group pause and resume. Native rejection or an older failed receipt without this evidence stays out of automatic recovery. Accepted, ambiguous and withdrawn receipts MUST NOT replay, regardless of the flag. A missing acknowledgement is bounded to 30 seconds, after which later messages can proceed. Ordinary native delivery MUST keep offline work pending without a durable claim, claiming only when the receive channel is available and the adapter handoff is ready. A definitely unsubmitted unavailable attempt releases its claim with explicit retryable evidence. After a crash, remaining unsettled claims are still ambiguous; moving the claim boundary MUST NOT authorize replay of earlier ambiguous receipts. Other targets remain independent. Native callbacks and receiver polling MUST NOT start synthetic model work.
 
@@ -6184,7 +6184,14 @@ mutate any delivery state.
 
 With `event_id`, return exactly that visible `chat.message` or targeted
 `system.notify` from the Actor's current generation, with complete rendered
-`delivery_text`. Native Actors also receive their current Preamble in that text.
+`delivery_text`. A native Actor's own successful exact read includes its current
+Preamble when the complete-Preamble recovery marker above is not yet satisfied;
+otherwise it includes a concise receiving-context header. Reading on behalf of a
+native Actor still returns the complete Preamble without satisfying that Actor's
+marker. Lists, searches and unsuccessful reads do not satisfy it. This in-memory
+frequency record changes no delivery evidence, claim, acknowledgement or Mail
+cursor. A lost response can consume this recovery opportunity; existing periodic
+and compaction recovery still apply.
 Use the same visibility rules as delivery; unknown, invisible and prior-generation
 IDs all return `event_not_found`. An `event_id` of 8 to 31 lowercase hexadecimal
 characters that matches no event exactly is a short ID, such as the
@@ -6252,8 +6259,6 @@ Result:
       updated_at: string
     }
     tasks?: Array<Record<string, unknown>>
-    recent_decisions?: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
-    recent_handoffs?: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
   }
   agent_states: Array<{
     id: string
@@ -6320,19 +6325,21 @@ Notes:
   `summary` for routine refreshes.
 - `detail="overview"` does not read task files and omits `coordination.tasks`,
   `tasks_summary`, `attention`, and `board`. It retains the coordination brief,
-  recent decisions/handoffs, agent states, `version`, `tasks_version`, and
-  metadata. Web startup and the context modal use this projection before loading
-  task pages separately.
-- `detail="summary"` omits `board`, recent coordination notes, and live runtime
-  probing. Its `attention` fields are counts, but each task in
+  agent states, `version`, `tasks_version`, and metadata. Web startup and the
+  context modal use this projection before loading task pages separately.
+- No detail returns coordination notes (`recent_decisions`, `recent_handoffs`):
+  the feature was removed, and notes an older context file holds stay stored
+  but unread.
+- `detail="summary"` omits `board` and live runtime probing. Its `attention`
+  fields are counts, but each task in
   `coordination.tasks` MUST retain every task-editor field, including
   `outcome`, `notes`, and `checklist`, so a summary refresh cannot erase a
   client's editable draft.
 - `detail="full"` returns the complete task objects and board projections.
 - MCP convenience tools MUST preserve their focused response contracts instead of
   exposing this complete snapshot: `cccc_coordination(action="get")` returns only
-  `version`, `coordination` (brief and recent decisions and handoffs, without the task
-  list), `attention` (each list as at most 10 of the `cccc_task` summary rows, see
+  `version`, `coordination` (the brief, without the task list), `attention`
+  (each list as at most 10 of the `cccc_task` summary rows, see
   `task_list`, plus `<list>_total` when the list is longer) and `tasks_summary`, while
   `cccc_agent_state(action="get")` returns only `version` plus the selected
   `agent_state` (or `agent_states` when no actor is selected). `include_warm=false`

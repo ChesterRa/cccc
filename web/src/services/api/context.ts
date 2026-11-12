@@ -161,21 +161,6 @@ export async function updateCoordinationBrief(groupId: string, brief: Coordinati
   return contextSync(groupId, [op]);
 }
 
-export async function addCoordinationNote(
-  groupId: string,
-  kind: "decision" | "handoff",
-  summary: string,
-  taskId?: string | null,
-) {
-  const op: Record<string, unknown> = {
-    op: "coordination.note.add",
-    kind,
-    summary: String(summary || ""),
-  };
-  if (taskId) op.task_id = String(taskId || "");
-  return contextSync(groupId, [op]);
-}
-
 function revisionUnavailable(): ApiResponse<never> {
   return {
     ok: false,
