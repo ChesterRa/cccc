@@ -47,17 +47,18 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.54
+## What's new in 0.4.55
 
-- **A conversation that was not resumed leaves a record.** When an agent that CCCC starts comes back on a new conversation although an earlier one was saved, its page now shows a small information mark after the status, with the time and the compared settings that had changed, and CCCC attempts to write one notice to the user. Which conversation a start selects is unchanged.
-- **Rotated ledger segments are read in order.** History and the Inbox read a Group's rotated ledger segments in the order they were rotated, even when the system clock went backwards between two rotations. Before, history could show messages out of order and an Inbox read could skip Mail.
-- **Fewer redundant ledger checks on Linux.** CCCC Web no longer checks a Group's ledger again when a program only opens it for reading.
-- **Layout fixes.** On a phone-sized screen, the Edit button under a stopped agent's page no longer breaks its label over two lines. The Group menu is no longer much wider than its items, and three smaller layout defects are fixed.
-- **A removed agent leaves Agent State.** Agent State no longer shows a card for an agent that was removed from the Group.
+- **A backlog next to your tasks.** A Markdown file in your project, such as `BACKLOG.md`, holds long-lived topics and ideas. Tasks shows its entries under a **Tasks | Backlog** switch, edits them in place and links each entry to the tasks made from it; agents use the new `cccc_backlog` tool. The file stays the only copy.
+- **Fewer new conversations after a `PATH` change.** When only the launch `PATH` changed, eligible managed agents can resume their saved conversation; the release notes give the conditions.
+- **Group rules only when due.** When a native session reads one message by its ID, the full Group rules come with it only when they are due, not every time.
+- **Coordination notes removed.** The Coordination log tab, the note actions of `cccc_coordination` and the note lists of the recovery pack are gone. Notes saved earlier stay in the Group's stored context.
+- **Fixes.** A task no longer stays blocked after the tasks it waited for are done (#201). Interrupting a managed Claude Code agent sends the request fields that Claude Code 2.1.317 requires; that version refused the previous request. A delivery that used up its retries no longer runs them again after every restart. Configuring a Web model connector no longer replaces its credential unless you ask to rotate it (#216).
+- **Two contributed commands.** `cccc ledger search` (#217) and `cccc actor new-session` (#207).
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. Saved conversations are matched as before; a start that does not resume one now leaves a record, and CCCC attempts to write one notice. In a Group whose rotated ledger segments were already read in the wrong order, Mail that an Inbox read had passed over may not return to the Inbox; it remains in the Group's history.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages: a page opened before the upgrade sends a removed field with some replies across Groups, and those replies are refused until it is reloaded. A native session keeps the MCP server it started with, and that server's previous tools, until the server is started again, for example by restarting the session. Coordination notes are no longer shown: to keep a copy that is easy to read, copy their text from the Coordination log tab before upgrading.
 
-Details: [0.4.54 release notes](https://chesterra.github.io/cccc/release/v0.4.54_release_notes).
+Details: [0.4.55 release notes](https://chesterra.github.io/cccc/release/v0.4.55_release_notes).
 
 ## Quick start
 

@@ -168,6 +168,9 @@ pub(super) async fn list(endpoint: &Endpoint) -> io::Result<Vec<Value>> {
 
 pub(super) async fn interrupt(endpoint: &Endpoint, short: &str) -> io::Result<()> {
     let mut stream = connect(endpoint).await?;
+    // Claude Code (checked on 2.1.317) refuses an attach whose `caps` lack
+    // `terminal` or `mux` as a malformed request; null means "none". The
+    // refused attach would then deliver no interrupt at all.
     write_frame(
         &mut stream,
         &json!({
@@ -178,7 +181,7 @@ pub(super) async fn interrupt(endpoint: &Endpoint, short: &str) -> io::Result<()
             "cols":120,
             "rows":40,
             "attachId":format!("cccc-cancel-{}", uuid::Uuid::new_v4().simple()),
-            "caps":{"ssh":false,"colorLevel":0},
+            "caps":{"terminal":null,"mux":null,"ssh":false,"colorLevel":0},
         }),
     )
     .await?;
@@ -348,6 +351,68 @@ mod tests {
             response_error(&json!({"code":"EPROTO","error":"changed"}), "reply").kind(),
             io::ErrorKind::Unsupported
         );
+    }
+
+    /// The attach frame carries every caps field Claude Code requires, and the
+    /// single ESC is written only after an accepted answer: a refused attach
+    /// returns an error and leaves nothing behind its frame.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn interrupt_sends_required_attach_caps_and_escapes_only_when_accepted() {
+        use std::os::unix::fs::PermissionsExt;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let key_path = temp.path().join("control.key");
+        std::fs::write(&key_path, "0123456789abcdef0123456789abcdef\n").expect("key");
+        std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600))
+            .expect("permissions");
+        for (answer, accepted) in [
+            (r#"{"ok":true,"op":"attach"}"#, true),
+            (
+                r#"{"ok":false,"code":"EUNKNOWN","error":"malformed request"}"#,
+                false,
+            ),
+        ] {
+            let address = temp.path().join(format!("control-{accepted}.sock"));
+            let listener = tokio::net::UnixListener::bind(&address).expect("bind");
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.expect("accept");
+                let mut stream = BufReader::new(stream);
+                let mut frame = String::new();
+                stream.read_line(&mut frame).await.expect("attach frame");
+                stream
+                    .get_mut()
+                    .write_all(format!("{answer}\n").as_bytes())
+                    .await
+                    .expect("answer");
+                let mut after_frame = Vec::new();
+                stream
+                    .read_to_end(&mut after_frame)
+                    .await
+                    .expect("bytes after the frame");
+                (
+                    serde_json::from_str::<Value>(&frame).expect("frame JSON"),
+                    after_frame,
+                )
+            });
+            let endpoint = Endpoint {
+                address: address.to_string_lossy().into_owned(),
+                key_path: key_path.clone(),
+            };
+
+            let result = interrupt(&endpoint, "abcdef12").await;
+            let (frame, after_frame) = server.await.expect("server");
+
+            assert_eq!(frame["op"], "attach");
+            assert_eq!(
+                frame["caps"],
+                json!({"terminal":null,"mux":null,"ssh":false,"colorLevel":0})
+            );
+            assert_eq!(result.is_ok(), accepted, "{result:?}");
+            let expected: &[u8] = if accepted { &[0x1b] } else { &[] };
+            assert_eq!(after_frame, expected);
+        }
     }
 
     #[cfg(unix)]

@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "cccc"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "anyhow",
  "base64",
@@ -576,11 +576,11 @@ dependencies = [
 
 [[package]]
 name = "cccc-linux-memory"
-version = "0.4.54"
+version = "0.4.55"
 
 [[package]]
 name = "cccc-pair-client"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-pair-core",
@@ -591,7 +591,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-contracts"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "chrono",
  "serde",
@@ -601,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-core"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "aws-lc-rs",
  "base64",
@@ -640,7 +640,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-daemon"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "anyhow",
  "axum",
@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-mcp"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "anyhow",
  "axum",
@@ -710,7 +710,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-notebooklm"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "cookie",
  "mime_guess",
@@ -723,7 +723,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-runtime"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-windows-process",
@@ -766,7 +766,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-web"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "aes",
  "anyhow",
@@ -825,14 +825,14 @@ dependencies = [
 
 [[package]]
 name = "cccc-windows-console"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "cccc-windows-process"
-version = "0.4.54"
+version = "0.4.55"
 dependencies = [
  "windows-sys 0.61.2",
 ]
