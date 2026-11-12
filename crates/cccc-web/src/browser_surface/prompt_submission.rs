@@ -1184,7 +1184,26 @@ pub(crate) fn normalized_chatgpt_conversation_url(value: &str) -> Option<String>
     Some(url.to_string())
 }
 
+fn chatgpt_conversation_identity(value: &str) -> Option<(String, Option<u16>, String)> {
+    let normalized = normalized_chatgpt_conversation_url(value)?;
+    let url = reqwest::Url::parse(&normalized).ok()?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
+    Some((
+        url.host_str()?.to_owned(),
+        url.port(),
+        chatgpt_conversation_id(&url)?,
+    ))
+}
+
 pub(crate) fn conversation_target_matches(expected: &str, observed: &str) -> bool {
+    if let (Some(expected), Some(observed)) = (
+        chatgpt_conversation_identity(expected),
+        chatgpt_conversation_identity(observed),
+    ) {
+        return expected == observed;
+    }
     normalized_chatgpt_conversation_url(expected)
         .zip(normalized_chatgpt_conversation_url(observed))
         .is_some_and(|(expected, observed)| expected == observed)
@@ -1641,6 +1660,23 @@ pub(super) async fn composer_has_attachments(page: &Page) -> Result<bool> {
         .await?
         .into_value::<bool>()
         .map_err(Into::into)
+}
+
+#[cfg(test)]
+mod conversation_target_tests {
+    use super::*;
+
+    #[test]
+    fn project_and_standalone_routes_match_by_conversation_id() {
+        let standalone = "https://chatgpt.com/c/stable-id";
+        let project = "https://chatgpt.com/g/g-p-example/c/stable-id";
+        assert!(conversation_target_matches(standalone, project));
+        assert!(conversation_target_matches(project, standalone));
+        assert!(!conversation_target_matches(
+            standalone,
+            "https://chatgpt.com/g/g-p-example/c/other-id"
+        ));
+    }
 }
 
 #[cfg(test)]
