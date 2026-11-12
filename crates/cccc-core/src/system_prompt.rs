@@ -11,6 +11,8 @@ pub const EXISTING_MESSAGE_REPLY_GUIDANCE: &str =
     "For an existing event, use cccc_message_reply instead of cccc_message_send.";
 /// A reply cannot carry a question, so this follows the reply rule.
 pub const USER_QUESTION_GUIDANCE: &str = "When the user's decision or information is needed, send a new request_reply message to user with a question (options for a choice, free text otherwise) unless the user asked for another channel. Do not ask what you can responsibly decide yourself.";
+pub const TASK_GUIDANCE: &str = "Track user requests and commitments that need multiple steps, coordination or follow-up in `cccc_task`: reuse a matching task, otherwise create one; keep one task per coherent piece of work, with routine steps in its checklist. Update it when you start, hand off, get blocked or a decision changes it, and close it with the outcome once its last step is done. Quick answers need no task.";
+pub const BACKLOG_GUIDANCE: &str = "An observed issue or a user's idea that you defer and judge worth keeping goes in the project's already configured backlog file through `cccc_backlog`: reuse a matching entry and say why it waits and when to revisit; recording it does not start the work. When a decision or finished work settles an entry, close it with the outcome.";
 
 #[must_use]
 pub fn render(group: &GroupDoc, actor: &Actor) -> String {
@@ -154,6 +156,8 @@ fn render_with_body(
         "- Before replying, verify `event_id`; before any message, verify `to` and make the audience explicit when it differs."
             .into(),
         "- Terminal output is not delivered.".into(),
+        format!("- {TASK_GUIDANCE}"),
+        format!("- {BACKLOG_GUIDANCE}"),
     ]);
     if !actor.external_session_id.is_empty() {
         lines.push(format!("- Pass group_id=\"{}\" to every Group tool. On cold start or context reset, call cccc_bootstrap({{\"group_id\":\"{}\"}}).", group.group_id, group.group_id));
@@ -186,8 +190,8 @@ fn enum_name(value: impl serde::Serialize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        EXISTING_MESSAGE_REPLY_GUIDANCE, NATIVE_MESSAGE_MODE_GUIDANCE, NEW_MESSAGE_MODE_GUIDANCE,
-        USER_QUESTION_GUIDANCE, render, render_session,
+        BACKLOG_GUIDANCE, EXISTING_MESSAGE_REPLY_GUIDANCE, NATIVE_MESSAGE_MODE_GUIDANCE,
+        NEW_MESSAGE_MODE_GUIDANCE, TASK_GUIDANCE, USER_QUESTION_GUIDANCE, render, render_session,
     };
     use crate::GroupStore;
     use crate::home::HomeLayout;
@@ -210,6 +214,8 @@ mod tests {
         assert_eq!(prompt.matches(USER_QUESTION_GUIDANCE).count(), 1);
         assert!(prompt.contains("Before replying, verify `event_id`"));
         assert!(prompt.contains("Terminal output is not delivered."));
+        assert_eq!(prompt.matches(TASK_GUIDANCE).count(), 1);
+        assert_eq!(prompt.matches(BACKLOG_GUIDANCE).count(), 1);
         assert!(!prompt.contains("Current Context Snapshot"));
     }
 
@@ -320,6 +326,11 @@ mod tests {
         assert!(!render(&group, &actor).contains(crate::peer_insight::TEAM_MODE_SEED));
 
         let peer = group.actors.last().expect("peer");
+        for member in [&actor, peer] {
+            let prompt = render(&group, member);
+            assert_eq!(prompt.matches(TASK_GUIDANCE).count(), 1);
+            assert_eq!(prompt.matches(BACKLOG_GUIDANCE).count(), 1);
+        }
         assert!(render(&group, peer).contains(crate::peer_insight::TEAM_MODE_SEED));
         assert!(render(&group, peer).contains(crate::peer_insight::TEAM_FEEDBACK_SEED));
         assert!(!render(&group, peer).contains(crate::peer_insight::FOREMAN_TEAM_MODE_SEED));
@@ -344,6 +355,8 @@ mod tests {
         let prompt = render_session(&home, &group, &actor);
         assert_eq!(prompt.matches(NATIVE_MESSAGE_MODE_GUIDANCE).count(), 1);
         assert_eq!(prompt.matches(USER_QUESTION_GUIDANCE).count(), 1);
+        assert_eq!(prompt.matches(TASK_GUIDANCE).count(), 1);
+        assert_eq!(prompt.matches(BACKLOG_GUIDANCE).count(), 1);
         assert!(!prompt.contains(NEW_MESSAGE_MODE_GUIDANCE));
         assert!(prompt.contains(&format!(
             "cccc_bootstrap({{\"group_id\":\"{}\"}})",

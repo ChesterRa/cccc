@@ -1321,11 +1321,12 @@ header identifies the Group being viewed.
 A single navigation row opens **Tasks**, **AGENTS.md**, **Agent State**,
 **Coordination log**, or **Skills**. On narrow screens, scroll the row horizontally;
 keyboard users can move focus with Left/Right or Home/End and activate with
-Enter/Space. Switching sections retains summary/file drafts and task filters.
+Enter/Space. Switching sections retains brief and file drafts as well as task filters.
 
 - **Tasks** is the default section. The goal, current focus and warnings stay
-  visible above the board. Expand **Working summary** for background and
-  constraints, or use Edit directly. The disclosure stays open while editing.
+  visible above the board, except while editing, when the form holds them.
+  Expand **Coordination brief** for the project background and constraints, or
+  use Edit directly. The disclosure stays open while editing.
   While there are tasks to show, Planned, Active and Done stay as columns, empty
   ones included, so each remains a drop target; when there are none, or none
   match the search and attention filters, the board says so instead. Dragging a

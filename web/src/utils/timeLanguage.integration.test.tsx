@@ -91,7 +91,7 @@ it("updates timestamps in the summary, Inbox and headless trace when the UI lang
         </I18nextProvider>,
       ),
     );
-    // The summary's timestamp is inside the expandable working summary.
+    // The brief's timestamp is inside the expandable coordination brief.
     await act(async () =>
       host.querySelector<HTMLButtonElement>("[data-goal-summary-key]")!.click(),
     );

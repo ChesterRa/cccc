@@ -153,6 +153,12 @@ fn entry_flow_keeps_task_history_deduplicates_promote_and_requires_explicit_clos
         )
         .expect("valid test fixture");
     assert_eq!(done["backlog_followup"][0]["source"]["entry_id"], id);
+    // A finished task updates its entry; closing stays reserved for a finished topic.
+    assert!(
+        done["backlog_followup"][0]["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("close the entry only if its topic is finished"))
+    );
     let repeated = f
         .call(
             "context_sync",

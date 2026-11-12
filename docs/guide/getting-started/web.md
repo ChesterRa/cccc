@@ -59,7 +59,7 @@ remaining Agents. Return to **Messages** to read replies or continue the discuss
 ## 5. Keep the work organized
 
 - **Project Context** (clipboard button in the header): **Tasks** opens the board
-  with an expandable working summary. **AGENTS.md** edits repository instructions,
+  with an expandable coordination brief. **AGENTS.md** edits repository instructions,
   and **Coordination log** records decisions and handoffs. **Agent State** shows
   each Agent's latest saved report; it is not a live process monitor. **Skills**
   shows this Group's generated skill candidates.

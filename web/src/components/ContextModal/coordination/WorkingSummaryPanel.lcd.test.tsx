@@ -93,9 +93,10 @@ it("hides the strip's Edit while editing and keeps Cancel and Save in the brief"
   props.editingBrief = true;
   render();
   expect(host.querySelector("[data-goal-edit-key]")).toBeNull();
+  expect(host.querySelector("[data-goal-text]")).toBeNull();
   expect(buttons("Edit")).toHaveLength(0);
   expect(host.querySelector("[data-goal-unsaved]")).not.toBeNull();
-  act(() => buttons("Save summary")[0].click());
+  act(() => buttons("Save brief")[0].click());
   expect(props.onSaveBrief).toHaveBeenCalledTimes(1);
   expect(buttons("Cancel")).toHaveLength(1);
 });

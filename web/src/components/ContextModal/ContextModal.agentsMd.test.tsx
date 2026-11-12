@@ -375,7 +375,7 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
     };
     await renderModal();
     await renderModal("g_a", true, context);
-    await clickButton("Summary needs refresh");
+    await clickButton("Project background needs refresh");
     expect([...host.querySelectorAll("input")].map((el) => el.value)).toContain(
       "Current objective",
     );
@@ -391,7 +391,27 @@ describe("ContextModal AGENTS.md loading and ownership", () => {
       setter.call(draft, "Unsaved summary edit");
       draft!.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    await clickButton("Summary needs refresh");
+    // The form holds the stale mark while editing, so the strip's note is gone.
+    expect(
+      [...host.querySelectorAll("button")].some((el) =>
+        el.textContent?.includes("Project background needs refresh"),
+      ),
+    ).toBe(false);
+    // A newer snapshot arriving while editing keeps the draft.
+    await renderModal("g_a", true, {
+      ...context,
+      coordination: {
+        ...context.coordination,
+        brief: {
+          objective: "Current objective",
+          current_focus: "Current focus",
+          constraints: ["Keep existing behavior"],
+          project_brief: "Newer summary",
+          project_brief_stale: true,
+        },
+      },
+    });
+    expect(host.contains(draft!)).toBe(true);
     expect(draft!.value).toBe("Unsaved summary edit");
   });
 

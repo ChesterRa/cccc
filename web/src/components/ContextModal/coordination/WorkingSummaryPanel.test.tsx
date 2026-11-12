@@ -67,35 +67,49 @@ it("keeps orientation and warnings visible while the summary opens on demand", (
   // Task counts and filters are presented on the board instead of duplicated here.
   expect(host.textContent).not.toContain("Blocked");
   expect(host.textContent).not.toContain("Waiting user");
-  expect(host.textContent).toContain("Summary needs refresh");
-  expect(button("Working summary").getAttribute("aria-expanded")).toBe("false");
+  expect(host.textContent).toContain("Project background needs refresh");
+  expect(button("Coordination brief").getAttribute("aria-expanded")).toBe("false");
   expect(host.textContent).not.toContain("Full working summary");
 
-  act(() => button("Working summary").click());
+  act(() => button("Coordination brief").click());
   expect(host.textContent).toContain("Updated");
-  expect(button("Working summary").getAttribute("aria-expanded")).toBe("true");
+  expect(button("Coordination brief").getAttribute("aria-expanded")).toBe("true");
   expect(host.textContent).toContain("Full working summary");
   expect(host.textContent).toContain("Preserve runtime history");
-  const controlled = button("Working summary").getAttribute("aria-controls");
+  const controlled = button("Coordination brief").getAttribute("aria-controls");
   expect(document.getElementById(controlled!)?.textContent).toContain("Full working summary");
-  act(() => button("Working summary").click());
+  act(() => button("Coordination brief").click());
   expect(host.textContent).not.toContain("Full working summary");
   expect(props.onSaveBrief).not.toHaveBeenCalled();
 });
 
 it("shows and retains the editor even when an external warning opens it", () => {
   render();
-  act(() => button("Summary needs refresh").click());
+  act(() => button("Project background needs refresh").click());
   expect(props.onStartBriefEdit).toHaveBeenCalledOnce();
   props.editingBrief = true;
   render();
   const draft = [...host.querySelectorAll("textarea")].find((el) => el.value === "Unsaved summary");
   expect(draft).toBeDefined();
-  act(() => button("Working summary").click());
+  // The form holds the objective and focus, so the strip does not repeat the saved ones.
+  expect(host.textContent).not.toContain("Ship the maintenance release");
+  expect(host.textContent).not.toContain("Review the layout");
+  act(() => button("Coordination brief").click());
   expect(host.contains(draft!)).toBe(true);
-  expect(button("Working summary").getAttribute("aria-expanded")).toBe("true");
-  act(() => button("Save summary").click());
+  expect(button("Coordination brief").getAttribute("aria-expanded")).toBe("true");
+  act(() => button("Save brief").click());
   expect(props.onSaveBrief).toHaveBeenCalledOnce();
+  props.editingBrief = false;
+  render();
+  expect(host.textContent).toContain("Ship the maintenance release");
+  expect(host.textContent).toContain("Review the layout");
+});
+
+it("marks a missing objective instead of repeating the brief's name", () => {
+  props.brief = { ...props.brief!, objective: "" };
+  render();
+  expect(host.querySelector("[data-goal-objective]")?.textContent).toBe("No objective set");
+  expect(host.textContent).toContain("Review the layout");
 });
 
 it("offers editing for an empty collapsed summary without becoming navigation", () => {
@@ -106,7 +120,7 @@ it("offers editing for an empty collapsed summary without becoming navigation", 
   expect(host.querySelector('[role="tab"]')).toBeNull();
   act(() => button("Edit").click());
   expect(props.onStartBriefEdit).toHaveBeenCalledOnce();
-  expect(button("Working summary").getAttribute("aria-expanded")).toBe("true");
-  expect(host.textContent).toContain("Add a working summary");
+  expect(button("Coordination brief").getAttribute("aria-expanded")).toBe("true");
+  expect(host.textContent).toContain("Add project background");
   expect(props.onSaveBrief).not.toHaveBeenCalled();
 });

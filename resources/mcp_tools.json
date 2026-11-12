@@ -56,7 +56,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "limit": {
           "type": "integer",
@@ -92,7 +92,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "mode": {
           "type": "string",
@@ -143,7 +143,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Your local Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Your local Actor ID; leave it out to use your own."
         },
         "instance_id": {
           "type": "string",
@@ -185,7 +185,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "dst_group_id": {
           "type": "string",
@@ -224,7 +224,7 @@
         },
         "idempotency_key": {
           "type": "string",
-          "description": "Stable retry key for a remote delivery. Reuse unchanged parameters after an uncertain tool response."
+          "description": "Stable retry key for this message, local or remote. Reuse it only with identical parameters after an uncertain tool response."
         },
         "refs": {
           "type": "array",
@@ -334,7 +334,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "title": {
           "type": "string",
@@ -448,7 +448,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "event_id": {
           "type": "string",
@@ -529,7 +529,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Sender actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Sender Actor ID; leave it out to send as yourself."
         },
         "source_event_id": {
           "type": "string",
@@ -573,7 +573,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Sender actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Sender Actor ID; leave it out to send as yourself."
         },
         "source_event_id": {
           "type": "string",
@@ -603,7 +603,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "action": {
           "type": "string",
@@ -649,7 +649,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "path": {
           "anyOf": [
@@ -709,7 +709,7 @@
         },
         "idempotency_key": {
           "type": "string",
-          "description": "Stable retry key across instances."
+          "description": "Stable retry key for this file message, local or remote. Reuse it only with identical parameters."
         }
       },
       "required": [
@@ -1279,7 +1279,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "action": {
           "type": "string",
@@ -1358,7 +1358,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "action": {
           "type": "string",
@@ -1510,7 +1510,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "limit": {
           "type": "integer",
@@ -1540,7 +1540,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "turn_id": {
           "type": "string"
@@ -1588,7 +1588,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "query": {
           "type": "string",
@@ -1735,7 +1735,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         }
       },
       "required": []
@@ -2362,7 +2362,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "ops": {
           "type": "array",
@@ -2401,7 +2401,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "action": {
           "type": "string",
@@ -2450,7 +2450,7 @@
   },
   {
     "name": "cccc_task",
-    "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore|delete. Use for multi-actor, long-horizon, or user-tracked work. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move. list returns planned and active tasks as one summary row each, with counts per status; pass task_id to read one task in full.",
+    "description": "Shared task board the user and teammates see; it survives restarts and context resets: action=list|create|update|move|restore|delete. Use it for user requests and commitments that need multiple steps, coordination or follow-up; keep one task per coherent piece of work, with routine steps in its checklist. Link a task to the backlog entry it works on with source; the entry stays in the file. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move. list returns planned and active tasks as one summary row each, with counts per status; pass task_id to read one task in full.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2460,7 +2460,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "action": {
           "type": "string",
@@ -2577,7 +2577,8 @@
             "user",
             "actor",
             "external"
-          ]
+          ],
+          "description": "Set user when the next step needs the user (a decision, a test, or an action only they can take); this marks the task but does not notify the user, so hand over the action in a message. Set external when it waits on something outside the Group, such as a contributor's report, and actor when it waits on another member; these two count the task as blocked. Set it back, usually to none, when the wait ends."
         },
         "handoff_to": {
           "type": "string",
@@ -2655,7 +2656,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "action": {
           "type": "string",
@@ -2892,7 +2893,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor whose headless state to read or update; leave it out for your own."
         },
         "action": {
           "type": "string",
@@ -2939,7 +2940,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "action": {
           "type": "string",
@@ -2994,7 +2995,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor whose terminal to inspect; leave it out for your own."
         },
         "action": {
           "type": "string",
@@ -3046,7 +3047,7 @@
         },
         "actor_id": {
           "type": "string",
-          "description": "Actor ID (optional if CCCC_ACTOR_ID is set)"
+          "description": "Actor ID; leave it out to act as yourself."
         },
         "action": {
           "type": "string",

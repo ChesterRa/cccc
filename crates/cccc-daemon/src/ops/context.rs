@@ -205,7 +205,7 @@ pub(super) fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         let followup = finished_sources.into_iter().filter_map(|id| {
             let task = result.context.tasks.iter().find(|task| task.get("id").and_then(Value::as_str) == Some(id.as_str()) && task.get("status").and_then(Value::as_str) == Some("done"))?;
             let source = task.get("source").filter(|source| source.is_object())?;
-            Some(json!({"task_id":id,"source":source,"note":"If this result changes the backlog entry this task came from, update the entry or close it with an outcome; otherwise no backlog action is needed."}))
+            Some(json!({"task_id":id,"source":source,"note":"If this result changes the backlog entry this task came from, update it with the relevant outcome; close the entry only if its topic is finished. Otherwise no backlog action is needed."}))
         }).collect::<Vec<_>>();
         if !followup.is_empty() {
             response["backlog_followup"] = json!(followup);

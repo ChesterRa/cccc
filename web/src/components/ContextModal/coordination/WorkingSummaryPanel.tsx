@@ -57,13 +57,13 @@ export function WorkingSummaryPanel({
     <section id={summaryId} hidden={!summaryOpen} className="min-w-0">
       {summaryOpen ? (
         <>
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               {!editingBrief && !hasSummary ? (
                 <p className={classNames("text-sm", ui.subtleTextClass)}>
                   {tr(
                     "context.emptySummaryHint",
-                    "Add a working summary and constraints to guide the next task.",
+                    "Add project background and constraints to guide the next task.",
                   )}
                 </p>
               ) : brief?.updated_at ? (
@@ -98,7 +98,7 @@ export function WorkingSummaryPanel({
                   >
                     {syncBusy
                       ? tr("context.saving", "Saving…")
-                      : tr("context.saveBrief", "Save summary")}
+                      : tr("context.saveBrief", "Save brief")}
                   </button>
                 </>
               ) : null}
@@ -166,7 +166,7 @@ export function WorkingSummaryPanel({
                     ui.mutedTextClass,
                   )}
                 >
-                  {tr("context.projectBrief", "Working summary")}
+                  {tr("context.projectBrief", "Project background")}
                 </span>
                 <textarea
                   value={briefDraft.projectBrief}
@@ -192,7 +192,7 @@ export function WorkingSummaryPanel({
                     }))
                   }
                 />
-                {tr("context.projectBriefStale", "Mark working summary as stale")}
+                {tr("context.projectBriefStale", "Mark project background as stale")}
               </label>
             </div>
           ) : !hasSummary ? null : (
@@ -205,7 +205,7 @@ export function WorkingSummaryPanel({
                       ui.mutedTextClass,
                     )}
                   >
-                    {tr("context.projectBrief", "Working summary")}
+                    {tr("context.projectBrief", "Project background")}
                   </div>
                   <div
                     data-goal-brief
@@ -240,18 +240,21 @@ export function WorkingSummaryPanel({
     </section>
   );
 
-  // One strip: the objective and focus beside the summary and edit keys, clamped
-  // until the summary opens, which shows them whole with the rest of the brief.
+  // One strip: the objective and focus beside the brief and edit keys, clamped
+  // until the brief opens, which shows them whole with the rest of the brief.
+  // While editing, the form holds them, so the strip does not repeat them.
   return (
     <section data-goal-strip data-expanded={summaryOpen || undefined}>
       <div data-goal-head>
-        {hasOverview ? (
+        {hasOverview && !editingBrief ? (
           <div data-goal-text>
-            <p data-goal-objective>{brief?.objective || tr("context.brief", "Summary")}</p>
+            <p data-goal-objective>
+              {brief?.objective || tr("context.noObjective", "No objective set")}
+            </p>
             {brief?.current_focus ? <p data-goal-focus>{brief.current_focus}</p> : null}
             {brief?.project_brief_stale ? (
               <button type="button" onClick={editBrief} data-goal-stale>
-                {tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}
+                {tr("context.projectBriefNeedsRefresh", "Project background needs refresh")}
               </button>
             ) : null}
           </div>
@@ -266,7 +269,7 @@ export function WorkingSummaryPanel({
             }}
             data-goal-summary-key
           >
-            {tr("context.projectBrief", "Working summary")}
+            {tr("context.brief", "Coordination brief")}
             <ChevronDownIcon
               size={14}
               aria-hidden="true"
