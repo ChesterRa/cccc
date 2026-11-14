@@ -47,18 +47,18 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.55
+## What's new in 0.4.56
 
-- **A backlog next to your tasks.** A Markdown file in your project, such as `BACKLOG.md`, holds long-lived topics and ideas. Tasks shows its entries under a **Tasks | Backlog** switch, edits them in place and links each entry to the tasks made from it; agents use the new `cccc_backlog` tool. The file stays the only copy.
-- **Fewer new conversations after a `PATH` change.** When only the launch `PATH` changed, eligible managed agents can resume their saved conversation; the release notes give the conditions.
-- **Group rules only when due.** When a native session reads one message by its ID, the full Group rules come with it only when they are due, not every time.
-- **Coordination notes removed.** The Coordination log tab, the note actions of `cccc_coordination` and the note lists of the recovery pack are gone. Notes saved earlier stay in the Group's stored context.
-- **Fixes.** A task no longer stays blocked after the tasks it waited for are done (#201). Interrupting a managed Claude Code agent sends the request fields that Claude Code 2.1.317 requires; that version refused the previous request. A delivery that used up its retries no longer runs them again after every restart. Configuring a Web model connector no longer replaces its credential unless you ask to rotate it (#216).
-- **Two contributed commands.** `cccc ledger search` (#217) and `cccc actor new-session` (#207).
+- **A short capability list chosen for agents' work.** CCCC ships 10 skills and MCP servers that we tried on that work ourselves, in four work groups, each with the reason it is listed, when not to use it and how far we checked it. Exa is the one primary, for facts where an agent's own search finds no credible source; the others are alternatives.
+- **See who can use what.** The capability page shows, for each member of a Group, whether it can use an entry or what it needs first. An agent that uses a recommended entry also gets our notes on when not to use it. An agent can browse the recommended entries when a task needs one, with when each fits and any setup it needs; bootstrap also gives a short index of them.
+- **Member tokens for remote MCP servers.** A managed agent can use a server that needs a token, with the token from its own private settings or linked Profile.
+- **Recipe updates from CCCC Web.** An administrator can update an installed MCP server for all Groups after confirming.
+- **Steadier MCP servers.** Remote and local servers run on the official Rust MCP SDK. A local server's errors now include the end of its error output, with known credentials and declared environment values removed.
+- **Claude Code agents that CCCC starts** no longer load the CCCC plugin meant for sessions you start yourself.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages: a page opened before the upgrade sends a removed field with some replies across Groups, and those replies are refused until it is reloaded. A native session keeps the MCP server it started with, and that server's previous tools, until the server is started again, for example by restarting the session. Coordination notes are no longer shown: to keep a copy that is easy to read, copy their text from the Coordination log tab before upgrading.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. Restart native sessions to give them the new tool descriptions: `cccc_capability_search` no longer returns a skill's text, which agents now read with `cccc_capability_use`.
 
-Details: [0.4.55 release notes](https://chesterra.github.io/cccc/release/v0.4.55_release_notes).
+Details: [0.4.56 release notes](https://chesterra.github.io/cccc/release/v0.4.56_release_notes).
 
 ## Quick start
 

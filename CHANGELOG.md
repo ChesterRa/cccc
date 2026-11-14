@@ -6,6 +6,95 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.56]
+
+### Added
+
+- CCCC ships a short recommendation list: 10 skills and MCP servers in four work
+  groups, each listed only where we produced a representative result with it. Each
+  has its reason (what that result showed and its limits), notes on when not to use
+  it, verification records (level, outcome, date, build and path, failed checks
+  included) and, for MCP servers, where it runs, how it signs in and what it needs.
+  Release-owned entries are read-only, change with CCCC versions and are never
+  installed or enabled automatically. An entry is a primary only where a trial
+  showed a gain; this release has one, Exa.
+- The capability page has a Recommended view by work group. Each entry shows a status
+  for the Group's members, and its details show the reason, each member's status and
+  why, verification, where it runs, sign-in and requirements. Enable for Group is
+  offered when some member can use the entry, or might; the MCP and Skills lists show
+  the same status and action for recommended entries.
+- `capability_overview` and `capability_state` project each member's availability
+  (`compatible`, `needs_setup`, `unsupported`, `unknown`), enabled scopes, blocks and
+  pending preparation, with localized names and reasons; `capability_search` adds a
+  `for_you` summary for the calling member.
+- Managed members can use remote MCP servers that need a Bearer token from their own
+  private settings or linked Profile. Recipes reference the environment key, never
+  the value; enabling for a Group records intent only and uses no member's token.
+  Native sessions and Web model members have no member-token route.
+- An administrator can update an installed MCP server's recipe for all Groups from
+  CCCC Web, after previewing it and confirming the scope. A failed update keeps the
+  previous installation; agents cannot update recipes.
+- Recommended entries carry CCCC's notes (`avoid_when`, `gotchas`,
+  `requirements_summary`) alongside skill text, MCP preparation results and
+  structured external tool results, including results with `isError: true`; a
+  transport error carries none.
+- `cccc_bootstrap` lists the recommended entries an agent might use, one line each
+  with its role, exact ID and first use case, marked when applicable `enabled`,
+  `discovery pending`, `check requirements` or `setup required` (with the
+  requirements summary); blocked and `unsupported` entries are left out. The section
+  stays within 24 entries and 3,072 bytes of compact JSON and counts the entries it
+  leaves out.
+- When a client connects, CCCC's MCP server returns a short fixed note: CCCC offers optional skills
+  and MCP servers for named kinds of work, and an agent can browse the recommended ones or search
+  with `cccc_capability_search` and should read an entry's limits before enabling it. The MCP
+  `initialize` result and the Web model connector's `server/discover` result carry it; Voice
+  secretary task sessions, which cannot see those tools, do not. Clients decide whether to show it
+  to the model.
+- `cccc_capability_search(recommended=true)` lists the recommended entries for the calling agent, at
+  most ten, without guessing a word: blocked entries and entries it cannot use are left out, entries
+  that need setup stay with their requirements, and a query narrows them. Without the argument,
+  search is unchanged.
+
+### Changed
+
+- `capability_search` returns summaries without skill text or full tool schemas;
+  `cccc_capability_use` returns a skill's full text. `capability_overview` returns
+  skill text only for the self-proposed skill editor.
+- Help points agents to browsing the recommended entries with
+  `cccc_capability_search(recommended=true)`, or to `recommended` in bootstrap, when a capability
+  could fill a gap or improve quality or efficiency, and to keep their own tools when the added
+  option does not help. Help and the `cccc_capability_search` description say to search by a name or
+  one short word, since every space-separated term must appear in an entry; the description also
+  names the kinds of work the recommended entries serve. The `cccc_capability_use` description says
+  what a capability is and that it takes an exact ID or an unambiguous tool name.
+- Remote and local MCP servers use the official Rust MCP SDK 3.9.0. HTTP servers may
+  answer with JSON or SSE; an expired session is not reinitialized and a call is not
+  replayed. A local server's handshake and call share one deadline, and errors keep
+  up to the last 8 KiB of its stderr with known credentials and declared
+  environment values redacted.
+- A tool result with `isError: true` no longer marks a binding verified.
+- HTTP(S) source links are projected without user information, query or fragment.
+- Claude Code sessions that CCCC starts turn off CCCC's own Claude Code plugin in
+  their session settings; user and project plugin settings are unchanged.
+- **Open Capability Center**, in Settings → **Capability Governance** and on a Group's
+  **Skills** tab in **Project Context**, opens the Capability Center over the current page
+  instead of in a new browser tab. Closing it, with its close button or Esc, returns to that
+  page, which then reloads its list. The `/ui/capabilities` address opens the main page.
+
+### Fixed
+
+- CCCC closed a local MCP server's input right after sending its requests, so a call
+  could end before the server answered; input now stays open until the answer or the
+  time limit. Errors also left out the server's error output.
+- Remote MCP servers that answer with SSE, or require clients to accept it, could not
+  be used.
+- Importing a skill kept only the first 2,400 characters of its text; imported skills
+  now keep their full text up to 2 MiB.
+- The capability page filtered the daemon's search results again with a narrower
+  rule, treating the whole query as one string over fewer fields, so some matched
+  entries disappeared, such as those matching several words in different fields; it
+  now keeps the daemon's matches for the same query.
+
 ## [0.4.55]
 
 ### Added
