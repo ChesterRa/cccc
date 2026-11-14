@@ -34,7 +34,7 @@ interface SkillAssignmentManagerModalLabels {
   name: string;
   description: string;
   capsule: string;
-  capsuleLimit: string;
+  capsuleCount: string;
   save: string;
   saving: string;
   blockedBanner: string;
@@ -77,7 +77,6 @@ interface SkillAssignmentManagerModalProps {
   name: string;
   description: string;
   capsuleText: string;
-  capsuleTextMax: number;
   qualificationStatus: "qualified" | "blocked";
   error: string;
   notice: string;
@@ -114,7 +113,6 @@ export function SkillAssignmentManagerModal({
   name,
   description,
   capsuleText,
-  capsuleTextMax,
   qualificationStatus,
   error,
   notice,
@@ -295,12 +293,11 @@ export function SkillAssignmentManagerModal({
                     <textarea
                       value={capsuleText}
                       onChange={(e) => onCapsuleTextChange(e.target.value)}
-                      maxLength={capsuleTextMax}
                       rows={16}
                       className={`mt-1 ${inputClass()} resize-y font-mono text-xs leading-5`}
                     />
                     <span className="mt-1 block text-[0.625rem] text-[var(--color-text-muted)]">
-                      {labels.capsuleLimit}
+                      {labels.capsuleCount}
                     </span>
                   </label>
                 </div>

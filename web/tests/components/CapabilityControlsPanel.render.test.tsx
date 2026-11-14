@@ -36,13 +36,13 @@ describe("CapabilityControlsPanel rendering", () => {
     );
 
     expect(html).toContain("capabilityCenter.controls.title");
-    expect(html).toContain("capabilityCenter.controls.skillHint");
+    expect(html).toContain("capabilityCenter.controls.disableForGroup");
     expect(html).toContain("capabilityCenter.hideFromSlashCommands");
     expect(html).toContain("capabilityCenter.remove.label.remove");
     expect(html).not.toContain("Settings");
   });
 
-  it("uses MCP-specific copy and omits slash visibility when unavailable", () => {
+  it("offers enabling, unblocking and uninstall, and omits slash visibility when unavailable", () => {
     const html = renderToStaticMarkup(
       <CapabilityControlsPanel
         row={row({ capability_id: "mcp:demo/server", kind: "mcp_toolpack" })}
@@ -60,7 +60,8 @@ describe("CapabilityControlsPanel rendering", () => {
       />,
     );
 
-    expect(html).toContain("capabilityCenter.controls.mcpHint");
+    expect(html).toContain("capabilityCenter.controls.enableForGroup");
+    expect(html).toContain("capabilityCenter.block.unblock");
     expect(html).toContain("capabilityCenter.remove.label.uninstall");
     expect(html).not.toContain("capabilityCenter.hideFromSlashCommands");
   });

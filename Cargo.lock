@@ -287,7 +287,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
 dependencies = [
  "axum-core",
- "base64",
+ "base64 0.22.1",
  "bytes",
  "form_urlencoded",
  "futures-util",
@@ -341,6 +341,12 @@ name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
+name = "base64"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "base64ct"
@@ -542,7 +548,7 @@ name = "cccc"
 version = "0.4.55"
 dependencies = [
  "anyhow",
- "base64",
+ "base64 0.22.1",
  "cccc-pair-client",
  "cccc-pair-contracts",
  "cccc-pair-core",
@@ -604,7 +610,7 @@ name = "cccc-pair-core"
 version = "0.4.55"
 dependencies = [
  "aws-lc-rs",
- "base64",
+ "base64 0.22.1",
  "cccc-pair-contracts",
  "cccc-pair-runtime",
  "cccc-windows-process",
@@ -644,7 +650,7 @@ version = "0.4.55"
 dependencies = [
  "anyhow",
  "axum",
- "base64",
+ "base64 0.22.1",
  "cccc-linux-memory",
  "cccc-pair-client",
  "cccc-pair-contracts",
@@ -654,11 +660,14 @@ dependencies = [
  "chrono",
  "fs2",
  "futures-util",
+ "hmac",
  "mime_guess",
  "nix 0.28.0",
  "percent-encoding",
  "regex",
  "reqwest 0.12.28",
+ "reqwest 0.13.4",
+ "rmcp",
  "rustix",
  "rustls 0.23.37",
  "same-file",
@@ -677,6 +686,7 @@ dependencies = [
  "unicode-width",
  "url",
  "uuid",
+ "webpki-roots 1.0.6",
  "win32job",
  "zip",
 ]
@@ -687,7 +697,7 @@ version = "0.4.55"
 dependencies = [
  "anyhow",
  "axum",
- "base64",
+ "base64 0.22.1",
  "cccc-pair-client",
  "cccc-pair-contracts",
  "cccc-pair-core",
@@ -774,7 +784,7 @@ dependencies = [
  "async-trait",
  "aws-lc-rs",
  "axum",
- "base64",
+ "base64 0.22.1",
  "bzip2 0.6.1",
  "cbc",
  "cccc-pair-client",
@@ -871,7 +881,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c18200611490f523adb497ddd4744d6d536e243f6add13e7eeeb1c05904fbb1"
 dependencies = [
  "async-tungstenite",
- "base64",
+ "base64 0.22.1",
  "bytes",
  "cfg-if",
  "chromiumoxide_cdp",
@@ -2084,7 +2094,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -3458,7 +3468,7 @@ version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "futures-channel",
  "futures-core",
@@ -3501,7 +3511,7 @@ version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bytes",
  "encoding_rs",
  "futures-core",
@@ -3570,6 +3580,32 @@ dependencies = [
  "libc",
  "untrusted 0.9.0",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rmcp"
+version = "3.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d24a7e92f4bcaa36b97fa93c4fa7ca8f3e669eced949345b3462dba333c7f909"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "chrono",
+ "futures",
+ "http",
+ "indexmap 2.14.0",
+ "libc",
+ "pin-project-lite",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sse-stream",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -3938,7 +3974,7 @@ version = "3.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "76a5c54c7310e7b8b9577c286d7e399ddd876c3e12b3ed917a8aabc4b96e9e8c"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bs58",
  "chrono",
  "hex",
@@ -3985,7 +4021,7 @@ checksum = "9bde37f42765dfdc34e2a039e0c84afbf79a3101c1941763b0beb816c2f17541"
 dependencies = [
  "arrayvec",
  "async-trait",
- "base64",
+ "base64 0.22.1",
  "bitflags 2.13.0",
  "bytes",
  "flate2",
@@ -4230,6 +4266,19 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
+]
+
+[[package]]
+name = "sse-stream"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c25ac7aff0abd1dbc474536e40416e1102c7dd9bfba0b9861c6d357f835dcfb4"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
 ]
 
 [[package]]
@@ -5024,7 +5073,7 @@ version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02d1a66277ed75f640d608235660df48c8e3c19f3b4edb6a263315626cc3c01d"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "flate2",
  "log",
  "once_cell",
@@ -5292,7 +5341,7 @@ checksum = "9905f7cc5fb0c5a9d00836612a8a0fbc31ca808c2bfcec87d6548aea045111e7"
 dependencies = [
  "aes",
  "async-trait",
- "base64",
+ "base64 0.22.1",
  "cipher",
  "dashmap",
  "ecb",

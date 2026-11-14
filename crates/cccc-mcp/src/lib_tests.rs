@@ -72,6 +72,8 @@ async fn secretary_stdio_exposes_only_its_task_tool_and_rejects_target_overrides
     let temp = tempfile::tempdir().expect("temp");
     let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("init");
+    let initialized = crate::handle_request(&home, &json!({"id":0,"method":"initialize"})).await;
+    assert!(initialized["result"].get("instructions").is_none());
     let tools = crate::handle_request(&home, &json!({"id":1,"method":"tools/list"})).await;
     let list = tools["result"]["tools"].as_array().expect("tools");
     assert_eq!(list.len(), 1);
@@ -176,6 +178,11 @@ async fn initialize_truthfully_disables_tool_list_change_notifications() {
         response["result"]["capabilities"]["tools"]["listChanged"],
         false
     );
+    assert_eq!(
+        response["result"]["instructions"],
+        crate::CAPABILITY_INSTRUCTIONS
+    );
+    assert!(crate::CAPABILITY_INSTRUCTIONS.chars().count() <= 512);
     assert!(
         response["result"]["_meta"]["cccc/build"]
             .get("source_id")
@@ -627,6 +634,8 @@ async fn secretary_profile_without_a_grant_never_falls_back_to_user_tools() {
     let temp = tempfile::tempdir().expect("temp");
     let home = cccc_core::HomeLayout::from_path(temp.path()).expect("home");
     home.initialize().expect("init");
+    let initialized = crate::handle_request(&home, &json!({"id":0,"method":"initialize"})).await;
+    assert!(initialized["result"].get("instructions").is_none());
     let tools = crate::handle_request(&home, &json!({"id":1,"method":"tools/list"})).await;
     assert!(
         tools["result"]["tools"]

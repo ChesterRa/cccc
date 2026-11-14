@@ -36,6 +36,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 const SUPPORTED_LEGACY_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2024-11-05"];
 const DEFAULT_LEGACY_PROTOCOL_VERSION: &str = SUPPORTED_LEGACY_PROTOCOL_VERSIONS[0];
 
+/// General capability discovery guidance shared by MCP handshake transports.
+pub const CAPABILITY_INSTRUCTIONS: &str = "CCCC also offers optional skills and MCP servers for research with cited sources, current web facts, papers, reading office files, spreadsheets, data checks, contract redlines, public repository questions and code that must match a library's version. When a task would clearly gain from one, or your approach has a concrete gap, browse recommended ones or search by a word with cccc_capability_search; read an entry's limits before enabling it with cccc_capability_use. Keep your own tools when they are enough.";
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ToolCallError {
     code: String,
@@ -307,12 +310,18 @@ async fn handle(
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
     let result = match method {
-        "initialize" => json!({
-            "protocolVersion": negotiated_protocol_version(request),
-            "capabilities": {"tools": {"listChanged": false}},
-            "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
-            "_meta": {"cccc/build": cccc_core::build_info::current()},
-        }),
+        "initialize" => {
+            let mut result = json!({
+                "protocolVersion": negotiated_protocol_version(request),
+                "capabilities": {"tools": {"listChanged": false}},
+                "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
+                "_meta": {"cccc/build": cccc_core::build_info::current()},
+            });
+            if !secretary_task_mode() {
+                result["instructions"] = json!(CAPABILITY_INSTRUCTIONS);
+            }
+            result
+        }
         "ping" => json!({}),
         "tools/list" => {
             json!({"tools": visible_tools_with_context(home, client, context).await})
@@ -336,6 +345,9 @@ async fn handle(
                 }
             };
             if !tools::contains(name)
+                // External calls are authorized against the daemon's complete
+                // enabled collection, not the budgeted discovery projection.
+                && !name.starts_with("cccc_ext_")
                 && !visible_tools_with_context(home, client, context)
                     .await
                     .iter()

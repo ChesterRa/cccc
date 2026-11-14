@@ -445,9 +445,81 @@ export type CapabilityReadinessPreview = {
   policy_mode?: string;
 };
 
+/** One area a release recommendation is listed under, and why. */
+export type CapabilityRecommendationEntry = {
+  domain_id: string;
+  role: "primary" | "alternative";
+  reason?: string;
+};
+
+/** One observation of how far a recommendation was checked, on which build. */
+export type CapabilityVerification = {
+  level: "listed" | "install_checked" | "tool_call_checked" | "task_checked";
+  outcome: "passed" | "failed";
+  build?: string;
+  path?: string;
+  result?: string;
+  observed_at?: string;
+};
+
+export type CapabilitySupport = {
+  auth?: "none" | "bearer" | "api_key" | "oauth" | "account";
+  prerequisites?: string[];
+  limitations?: string[];
+  form?: string;
+  runs_on?: string;
+};
+
+/** Whether one member can use a capability, as the daemon projects it. */
+export type CapabilityForYou = {
+  availability: "compatible" | "needs_setup" | "unknown" | "unsupported";
+  enabled: boolean;
+  blocked: boolean;
+  reason_codes: string[];
+  /** The member setting a token is read from, when one is missing. */
+  credential_env?: string;
+  /** Where that setting lives: the member's own private environment or its linked Profile. */
+  credential_source?: "actor" | "profile";
+  /** Enabled with a token, but not yet checked with the current token and recipe. */
+  activation_pending?: boolean;
+};
+
+/** Whether the one global installation of an MCP can be replaced by the current recipe. */
+export type CapabilityUpdateInfo = {
+  available: boolean;
+  scope: "global";
+  enabled_group_count: number;
+  recipe_fingerprint: string | null;
+  installed_recipe_fingerprint: string | null;
+  reason: "not_installed" | "recipe_unknown" | "recipe_changed" | "current";
+  unavailable_reason?: "delivery_form_not_supported" | "credential_route_not_supported" | null;
+};
+
+export type CapabilityBindingScopeName = "session" | "actor" | "group";
+
+export type CapabilityMemberProjection = CapabilityForYou & {
+  actor_id: string;
+  enabled_scope: CapabilityBindingScopeName | null;
+  enabled_scopes: CapabilityBindingScopeName[];
+  last_call: { at: string; ok: boolean } | null;
+};
+
+export type CapabilityDomain = { domain_id: string; name: string };
+
 export type CapabilityOverviewItem = {
   capability_id: string;
   kind?: string;
+  content_origin?: "release_recommendation" | "builtin" | "user_catalog";
+  read_only?: boolean;
+  recommendation?: CapabilityRecommendationEntry[];
+  requirements_summary?: string;
+  verification?: CapabilityVerification[];
+  support?: CapabilitySupport;
+  for_you?: CapabilityForYou;
+  group_enabled?: boolean;
+  members?: CapabilityMemberProjection[];
+  blocked_group?: boolean;
+  update?: CapabilityUpdateInfo;
   name?: string;
   description_short?: string;
   use_when?: string[];

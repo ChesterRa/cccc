@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
 
+/// Claude plugin installed by `cccc sessions setup enable claude`. Managed
+/// Claude sessions share the user's Claude configuration and disable it for
+/// themselves, since it does nothing in a CCCC-owned environment.
+pub const CLAUDE_PLUGIN_ID: &str = "cccc-local-sessions@cccc-local";
+
 /// Global native configuration can also be loaded by CCCC-owned Actors and
 /// assistants. It must not replace their existing identity or receive path.
 pub fn cccc_owned_environment() -> bool {

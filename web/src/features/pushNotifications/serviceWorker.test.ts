@@ -129,25 +129,31 @@ describe("push-only service worker", () => {
     );
   });
 
-  it("sends a click to an existing workbench and focuses it", async () => {
-    const w = worker();
-    const focus = vi.fn().mockResolvedValue(undefined);
-    const postMessage = vi.fn((_: unknown, ports: { postMessage(data: unknown): void }[]) => {
-      ports[0].postMessage({ handled: true });
-    });
-    w.matchAll.mockResolvedValue([{ url: "https://cccc.example/ui/", focus, postMessage }]);
-    await click(w.handlers.get("notificationclick")!, { group_id: "g-1", event_id: "event-1" });
-    expect(postMessage).toHaveBeenCalledOnce();
-    expect(postMessage.mock.calls[0][0]).toEqual(
-      expect.objectContaining({ type: "cccc:push:open", group_id: "g-1", event_id: "event-1" }),
-    );
-    const timing = postMessage.mock.calls[0][0] as { started_at_ms: number; deadline_ms: number };
-    expect(timing.started_at_ms).toBeGreaterThan(0);
-    expect(timing.deadline_ms - timing.started_at_ms).toBe(650);
-    expect(focus).toHaveBeenCalledOnce();
-    expect(focus.mock.invocationCallOrder[0]).toBeLessThan(postMessage.mock.invocationCallOrder[0]);
-    expect(w.openWindow).not.toHaveBeenCalled();
-  });
+  // The former capability center address now opens the workbench, which can show the message.
+  it.each(["https://cccc.example/ui/", "https://cccc.example/ui/capabilities?group_id=g-1"])(
+    "sends a click to an existing workbench at %s and focuses it",
+    async (url) => {
+      const w = worker();
+      const focus = vi.fn().mockResolvedValue(undefined);
+      const postMessage = vi.fn((_: unknown, ports: { postMessage(data: unknown): void }[]) => {
+        ports[0].postMessage({ handled: true });
+      });
+      w.matchAll.mockResolvedValue([{ url, focus, postMessage }]);
+      await click(w.handlers.get("notificationclick")!, { group_id: "g-1", event_id: "event-1" });
+      expect(postMessage).toHaveBeenCalledOnce();
+      expect(postMessage.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ type: "cccc:push:open", group_id: "g-1", event_id: "event-1" }),
+      );
+      const timing = postMessage.mock.calls[0][0] as { started_at_ms: number; deadline_ms: number };
+      expect(timing.started_at_ms).toBeGreaterThan(0);
+      expect(timing.deadline_ms - timing.started_at_ms).toBe(650);
+      expect(focus).toHaveBeenCalledOnce();
+      expect(focus.mock.invocationCallOrder[0]).toBeLessThan(
+        postMessage.mock.invocationCallOrder[0],
+      );
+      expect(w.openWindow).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not replace an existing page when focus resolves after the timeout", async () => {
     vi.useFakeTimers();
@@ -374,9 +380,8 @@ describe("push-only service worker", () => {
       ports[0].postMessage({ handled: true });
     });
     w.matchAll.mockResolvedValue([
-      { url: "https://cccc.example/ui/capabilities?group_id=g-1", focus: elsewhere },
-      { url: "https://cccc.example/ui/capabilities/", focus: elsewhere },
       { url: "https://cccc.example/ui/connect?frame=1", focus: elsewhere },
+      { url: "https://cccc.example/ui/connect/", focus: elsewhere },
       { url: "https://cccc.example/ui/push/", focus: elsewhere },
       { url: "https://cccc.example/ui/?group=g-2", focus, postMessage },
     ]);
@@ -390,9 +395,7 @@ describe("push-only service worker", () => {
   it("opens the workbench when only other CCCC pages are open", async () => {
     const w = worker();
     const elsewhere = vi.fn();
-    w.matchAll.mockResolvedValue([
-      { url: "https://cccc.example/ui/capabilities", focus: elsewhere },
-    ]);
+    w.matchAll.mockResolvedValue([{ url: "https://cccc.example/ui/push", focus: elsewhere }]);
     await click(w.handlers.get("notificationclick")!, { group_id: "g-1", event_id: "event-1" });
     expect(elsewhere).not.toHaveBeenCalled();
     expect(w.openWindow).toHaveBeenCalledExactlyOnceWith(

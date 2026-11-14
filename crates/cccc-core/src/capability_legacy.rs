@@ -153,6 +153,8 @@ fn parse_capability(value: &Value) -> Option<Capability> {
             .get("enable_supported")
             .and_then(Value::as_bool)
             .unwrap_or(true),
+        metadata: crate::capabilities::record_metadata(value),
+        release_owned: false,
     })
 }
 

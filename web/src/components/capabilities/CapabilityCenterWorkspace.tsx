@@ -3,8 +3,10 @@ import type React from "react";
 import {
   BookOpen,
   Boxes,
+  ChevronLeft,
   Eye,
   EyeOff,
+  ListChecks,
   Plug,
   Power,
   PowerOff,
@@ -18,8 +20,11 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
+import { useModalA11y } from "../../hooks/useModalA11y";
+import { normalizeLanguageCode } from "../../i18n/languages";
 import * as api from "../../services/api";
 import { publishCapabilityChanged } from "../../utils/capabilityEvents";
+import { formatFullTime, formatMessageTimestamp } from "../../utils/time";
 import { HoverTooltip } from "../HoverTooltip";
 import { Button } from "../ui/button";
 import {
@@ -32,12 +37,36 @@ import {
 } from "../ui/dialog";
 import { cn } from "../../lib/utils";
 import type {
+  CapabilityDomain,
+  CapabilityMemberProjection,
   CapabilityOverviewItem,
   CapabilitySourceState,
   CapabilityStateResult,
 } from "../../types";
 import { CapabilityControlsPanel } from "./CapabilityControlsPanel";
+import {
+  CapabilityRecommendedView,
+  RecommendationDotIcon,
+  RecommendationVerificationLabel,
+} from "./CapabilityRecommendedView";
 import { SourcesSummary, SourcesView } from "./CapabilitySourcesView";
+import {
+  RECOMMENDATION_REASON_CODES,
+  RECOMMENDATION_SOURCE_ID,
+  firstRecommendation,
+  isReleaseRecommendation,
+  recommendationAuthKey,
+  recommendationBinding,
+  recommendationCanEnableForGroup,
+  recommendationCount,
+  recommendationDate,
+  recommendationDot,
+  recommendationMemberDot,
+  recommendationRows,
+  recommendationRunsOnKey,
+  recommendationSourceLabel,
+  recommendationVerification,
+} from "./recommendationModel";
 import {
   capabilityCenterDescription,
   capabilityCenterDisplayName,
@@ -64,7 +93,6 @@ import {
   normalizeCapabilityCenterPagination,
   summarizeCapabilityCenter,
   type CapabilityCenterSection,
-  type CapabilityCenterSurface,
   type CapabilityCenterStateFilter,
 } from "./capabilityCenterModel";
 import {
@@ -80,7 +108,6 @@ interface CapabilityCenterWorkspaceProps {
   onClose?: () => void;
   groupId?: string;
   isDark?: boolean;
-  surface?: CapabilityCenterSurface;
 }
 
 const stateFilters: Array<{ id: CapabilityCenterStateFilter; label: string }> = [
@@ -93,6 +120,21 @@ const stateFilters: Array<{ id: CapabilityCenterStateFilter; label: string }> = 
 ];
 
 const CAPABILITY_CENTER_QUERY_DEBOUNCE_MS = 200;
+
+/** Update failures the user can act on, said in their language. */
+const UPDATE_ERROR_CODES: ReadonlySet<string> = new Set([
+  "capability_not_installed",
+  "capability_recipe_conflict",
+  "capability_update_unsupported",
+]);
+/** What a finished update did, and why an update cannot be offered here. */
+const UPDATE_OUTCOMES: ReadonlySet<string> = new Set(["configured", "ready", "unchanged"]);
+const UPDATE_UNAVAILABLE: ReadonlySet<string> = new Set([
+  "delivery_form_not_supported",
+  "credential_route_not_supported",
+]);
+
+type UpdateOutcome = { capabilityId: string; state: string };
 
 type CapabilityCenterConfirmDialogState = {
   title: string;
@@ -109,6 +151,13 @@ const sectionItems: Array<{
   label: string;
   hint: string;
 }> = [
+  {
+    id: "recommended",
+    icon: ListChecks,
+    glyph: "list-checks",
+    label: "Recommended",
+    hint: "Grouped by the work members do",
+  },
   { id: "skill", icon: BookOpen, glyph: "book-open", label: "Skills", hint: "Procedural skills" },
   { id: "mcp", icon: Plug, glyph: "plug", label: "MCP", hint: "Tool servers" },
   { id: "sources", icon: Boxes, glyph: "package", label: "Sources", hint: "Capability origins" },
@@ -176,10 +225,17 @@ export function CapabilityCenterWorkspace({
   onClose,
   groupId = "",
   isDark: _isDark,
-  surface = "overlay",
 }: CapabilityCenterWorkspaceProps) {
-  const { t } = useTranslation("settings");
-  const [section, setSection] = useState<CapabilityCenterSection>("skill");
+  const { t, i18n } = useTranslation("settings");
+  // Escape closes only the top layer: a confirmation first, then the center, then the panel below.
+  const closeCenter = useCallback(() => onClose?.(), [onClose]);
+  const { modalRef } = useModalA11y(isOpen, closeCenter);
+  const locale = normalizeLanguageCode(i18n.resolvedLanguage || i18n.language);
+  const [section, setSection] = useState<CapabilityCenterSection>("recommended");
+  // The recommendations keep their own selection; on a narrow screen a pick opens its detail.
+  const [recommendedId, setRecommendedId] = useState("");
+  const [recommendedDetailOpen, setRecommendedDetailOpen] = useState(false);
+  const [groupTitle, setGroupTitle] = useState("");
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query.trim(), CAPABILITY_CENTER_QUERY_DEBOUNCE_MS);
   const [stateFilter, setStateFilter] = useState<CapabilityCenterStateFilter>("all");
@@ -189,6 +245,8 @@ export function CapabilityCenterWorkspace({
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(CAPABILITY_CENTER_DEFAULT_PAGE_SIZE);
   const [busyKey, setBusyKey] = useState("");
+  // What the last update did, said under that capability until another update.
+  const [updateOutcome, setUpdateOutcome] = useState<UpdateOutcome | null>(null);
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<CapabilityCenterConfirmDialogState | null>(
     null,
@@ -211,7 +269,8 @@ export function CapabilityCenterWorkspace({
     [t],
   );
 
-  const scopedStateFilter = section === "sources" ? "all" : stateFilter;
+  const listSection = section === "skill" || section === "mcp";
+  const scopedStateFilter = listSection ? stateFilter : "all";
   const scopedTypeFilter = capabilityCenterSectionTypeFilter(section);
   const paginationMode = useMemo(
     () => capabilityCenterPaginationMode({ section, stateFilter: scopedStateFilter }),
@@ -219,11 +278,13 @@ export function CapabilityCenterWorkspace({
   );
   const clientPagination = paginationMode === "client";
   const {
+    domains,
     error: err,
     hasMore,
     items,
     loadState,
     loading,
+    matchedQuery,
     refresh,
     selectedId,
     setError: setErr,
@@ -238,12 +299,43 @@ export function CapabilityCenterWorkspace({
     failedStateMessage: t("capabilityCenter.failedLoadState"),
     groupId,
     isOpen,
+    locale,
     pageIndex,
     pageSize,
-    query: section === "sources" ? "" : debouncedQuery,
+    query: listSection ? debouncedQuery : "",
+    sourceId: section === "recommended" ? RECOMMENDATION_SOURCE_ID : undefined,
     stateFilter: scopedStateFilter,
     typeFilter: scopedTypeFilter,
   });
+  const recommendedRows = useMemo(
+    () => (section === "recommended" ? recommendationRows(items, domains) : []),
+    [domains, items, section],
+  );
+  const recommendedSelected = useMemo(() => {
+    if (section !== "recommended") return null;
+    const id = items.some((item) => item.capability_id === recommendedId)
+      ? recommendedId
+      : firstRecommendation(recommendedRows);
+    return items.find((item) => item.capability_id === id) || null;
+  }, [items, recommendedId, recommendedRows, section]);
+
+  useEffect(() => {
+    setRecommendedDetailOpen(false);
+  }, [section]);
+
+  // The page names the Group its Group-scoped actions apply to.
+  useEffect(() => {
+    const gid = String(groupId || "").trim();
+    setGroupTitle("");
+    if (!isOpen || !gid) return;
+    let current = true;
+    void api.fetchGroup(gid).then((response) => {
+      if (current && response.ok) setGroupTitle(String(response.result.group?.title || "").trim());
+    });
+    return () => {
+      current = false;
+    };
+  }, [groupId, isOpen]);
   const hiddenIds = useMemo(() => capabilityCenterHiddenIds(state), [state]);
   const loadedStats = useMemo(() => summarizeCapabilityCenter(items, state), [items, state]);
   const stats = useMemo(
@@ -258,31 +350,38 @@ export function CapabilityCenterWorkspace({
       filterCapabilityCenterRemovedItems(
         filterCapabilityCenterItems(items, {
           query,
+          matchedQuery,
           typeFilter: scopedTypeFilter,
           stateFilter: scopedStateFilter,
           state,
         }),
         removedCapabilityIds,
       ),
-    [items, query, removedCapabilityIds, scopedStateFilter, scopedTypeFilter, state],
+    [items, matchedQuery, query, removedCapabilityIds, scopedStateFilter, scopedTypeFilter, state],
   );
   const baseMatchingItems = useMemo(
     () =>
-      capabilityCenterFilterItemsForSystemVisibility(filteredItems, { showSystem, query, state }),
-    [filteredItems, query, showSystem, state],
+      capabilityCenterFilterItemsForSystemVisibility(filteredItems, {
+        showSystem,
+        query,
+        matchedQuery,
+        state,
+      }),
+    [filteredItems, matchedQuery, query, showSystem, state],
   );
   const stickyMatchingItems = useMemo(
     () =>
       capabilityCenterFilterItemsForSystemVisibility(
         filterCapabilityCenterItems(stickyItems, {
           query,
+          matchedQuery,
           typeFilter: scopedTypeFilter,
           stateFilter: "all",
           state,
         }),
-        { showSystem, query, state },
+        { showSystem, query, matchedQuery, state },
       ),
-    [query, scopedTypeFilter, showSystem, state, stickyItems],
+    [matchedQuery, query, scopedTypeFilter, showSystem, state, stickyItems],
   );
   const matchingItems = useMemo(
     () => mergeCapabilityCenterStickyItems(baseMatchingItems, stickyMatchingItems),
@@ -422,11 +521,14 @@ export function CapabilityCenterWorkspace({
       setBusyKey(`block:${capId}`);
       setErr("");
       try {
-        const resp = await api.blockCapabilityGlobal(
+        // Blocking applies everywhere; lifting a block an agent set for this Group lifts it here.
+        const scope = !nextBlocked && row.blocked_group && !row.blocked_global ? "group" : "global";
+        const resp = await api.setCapabilityBlocked(
           capId,
           nextBlocked,
           "capability center policy update",
           groupId,
+          scope,
         );
         if (!resp.ok) {
           setErr(resp.error?.message || t("capabilityCenter.block.failed"));
@@ -589,6 +691,61 @@ export function CapabilityCenterWorkspace({
     [executeDisableCapability, executeEnableCapability, groupId, state, t],
   );
 
+  const executeUpdateCapability = useCallback(
+    async (row: CapabilityOverviewItem) => {
+      const capId = String(row.capability_id || "").trim();
+      const fingerprint = String(row.update?.recipe_fingerprint || "").trim();
+      if (!capId || !fingerprint) return;
+      setBusyKey(`update:${capId}`);
+      setErr("");
+      setUpdateOutcome(null);
+      try {
+        const resp = await api.updateCapabilityInstallation(capId, fingerprint, groupId);
+        if (!resp.ok) {
+          const code = String(resp.error?.code || "");
+          setErr(
+            UPDATE_ERROR_CODES.has(code)
+              ? t(`capabilityCenter.update.error.${code}`)
+              : resp.error?.message || t("capabilityCenter.update.failed"),
+          );
+          return;
+        }
+        setUpdateOutcome({ capabilityId: capId, state: String(resp.result?.state || "") });
+        await refresh();
+        if (groupId) publishCapabilityChanged(groupId);
+      } finally {
+        setBusyKey("");
+      }
+    },
+    [groupId, refresh, setErr, t],
+  );
+
+  const confirmUpdateCapability = useCallback(
+    (row: CapabilityOverviewItem) => {
+      const capId = String(row.capability_id || "").trim();
+      if (!capId || !row.update?.available) return;
+      setConfirmDialog({
+        title: t("capabilityCenter.update.confirmTitle", {
+          name: capabilityCenterDisplayName(row),
+        }),
+        // A token MCP is switched without a check; each member checks it on next use.
+        description: t(
+          row.support?.auth === "bearer"
+            ? "capabilityCenter.update.confirmDescriptionBearer"
+            : "capabilityCenter.update.confirmDescription",
+          { groups: Number(row.update.enabled_group_count || 0) },
+        ),
+        confirmLabel: t(
+          row.update.reason === "recipe_changed"
+            ? "capabilityCenter.update.update"
+            : "capabilityCenter.update.verify",
+        ),
+        onConfirm: () => executeUpdateCapability(row),
+      });
+    },
+    [executeUpdateCapability, t],
+  );
+
   const deleteSource = useCallback(
     async (source: CapabilitySourceState) => {
       const sourceId = String(source.source_id || "").trim();
@@ -636,18 +793,16 @@ export function CapabilityCenterWorkspace({
 
   if (!isOpen) return null;
 
-  const rootClass = capabilityCenterRootClass(surface);
-  const frameClass = capabilityCenterFrameClass(surface);
-
   return (
     <div
-      className={rootClass}
-      role={surface === "overlay" ? "dialog" : undefined}
-      aria-modal={surface === "overlay" ? true : undefined}
+      ref={modalRef}
+      className={capabilityCenterRootClass()}
+      role="dialog"
+      aria-modal
       aria-label={t("capabilityCenter.title")}
       data-capability-center
     >
-      <div className={frameClass}>
+      <div className={capabilityCenterFrameClass()}>
         <aside className="hidden w-[248px] shrink-0 border-r border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] md:flex md:flex-col">
           <div className="border-b border-[var(--glass-border-subtle)] px-4 py-4">
             <div className="text-sm font-semibold">{t("capabilityCenter.title")}</div>
@@ -683,10 +838,15 @@ export function CapabilityCenterWorkspace({
             })}
           </nav>
           <div className="border-t border-[var(--glass-border-subtle)] px-4 py-3 text-xs text-[var(--color-text-muted)]">
-            {t("capabilityCenter.sidebarSummary", {
-              capabilities: totalCount || stats.total,
-              sources: Object.keys(sources || {}).length,
-            })}
+            {section === "recommended"
+              ? t("capabilityCenter.recommended.summary", {
+                  total: recommendationCount(recommendedRows),
+                  domains: recommendedRows.length,
+                })
+              : t("capabilityCenter.sidebarSummary", {
+                  capabilities: totalCount || stats.total,
+                  sources: Object.keys(sources || {}).length,
+                })}
           </div>
         </aside>
 
@@ -700,7 +860,9 @@ export function CapabilityCenterWorkspace({
                 </h2>
               </div>
               <p className="mt-0.5 hidden truncate text-xs text-[var(--color-text-muted)] sm:block">
-                {t("capabilityCenter.headerHint")}
+                {groupId
+                  ? t("capabilityCenter.scopeGroup", { name: groupTitle || groupId })
+                  : t("capabilityCenter.headerHint")}
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
@@ -736,21 +898,7 @@ export function CapabilityCenterWorkspace({
                     </span>
                   )}
                 </TooltipIconButton>
-              ) : (
-                <Button
-                  asChild
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 bg-[var(--glass-panel-bg)] sm:w-auto sm:px-3"
-                >
-                  <a href="/ui/">
-                    <LcdIcon icon={X} glyph="close" size={15} aria-hidden="true" />
-                    <span className="sr-only sm:not-sr-only sm:truncate">
-                      {t("capabilityCenter.backToApp")}
-                    </span>
-                  </a>
-                </Button>
-              )}
+              ) : null}
             </div>
           </header>
 
@@ -782,97 +930,166 @@ export function CapabilityCenterWorkspace({
           </nav>
 
           <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px]">
-            <section className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden border-r border-[var(--glass-border-subtle)]">
-              <div
-                className={`min-w-0 border-[var(--glass-border-subtle)] ${
-                  section === "sources" && !err
-                    ? "sm:border-b sm:px-4 sm:py-3 lg:px-6"
-                    : "border-b px-3 py-2 sm:px-4 sm:py-3 lg:px-6"
-                }`}
-              >
-                <div className="hidden grid-cols-2 gap-2 sm:grid sm:grid-cols-4">
-                  <Stat label={t("capabilityCenter.stats.skills")} value={stats.skills} />
-                  <Stat label={t("capabilityCenter.stats.mcp")} value={stats.mcp} />
-                  <Stat label={t("capabilityCenter.stats.packs")} value={stats.packs} />
-                  <Stat label={t("capabilityCenter.stats.enabled")} value={stats.enabled} />
-                </div>
-                {section !== "sources" ? (
-                  <>
-                    <div className="flex items-center gap-2 sm:hidden">
-                      <button
-                        type="button"
-                        className="inline-flex min-h-[36px] items-center gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 text-xs font-medium text-[var(--color-text-secondary)]"
-                        aria-expanded={mobileControlsOpen}
-                        onClick={() => setMobileControlsOpen((value) => !value)}
-                        data-lcd-key
-                      >
-                        <LcdIcon
-                          icon={SlidersHorizontal}
-                          glyph="sliders-horizontal"
-                          size={14}
-                          aria-hidden="true"
-                        />
-                        <span>{t("capabilityCenter.stateFilter")}</span>
-                      </button>
-                      <span className="min-w-0 truncate text-xs text-[var(--color-text-muted)]">
-                        {`${t(`capabilityCenter.stateOptions.${scopedStateFilter}`)} · ${pageRange.total || totalCount || stats.total}`}
-                      </span>
+            <section
+              className={`grid min-h-0 min-w-0 overflow-hidden border-[var(--glass-border-subtle)] lg:border-r ${
+                section === "recommended" && !err
+                  ? "grid-rows-[minmax(0,1fr)]"
+                  : "grid-rows-[auto_minmax(0,1fr)]"
+              }`}
+            >
+              {section === "recommended" && !err ? null : (
+                <div
+                  className={`min-w-0 border-[var(--glass-border-subtle)] ${
+                    section === "sources" && !err
+                      ? "sm:border-b sm:px-4 sm:py-3 lg:px-6"
+                      : "border-b px-3 py-2 sm:px-4 sm:py-3 lg:px-6"
+                  }`}
+                >
+                  {section !== "recommended" ? (
+                    <div className="hidden grid-cols-2 gap-2 sm:grid sm:grid-cols-4">
+                      <Stat label={t("capabilityCenter.stats.skills")} value={stats.skills} />
+                      <Stat label={t("capabilityCenter.stats.mcp")} value={stats.mcp} />
+                      <Stat label={t("capabilityCenter.stats.packs")} value={stats.packs} />
+                      <Stat label={t("capabilityCenter.stats.enabled")} value={stats.enabled} />
                     </div>
-                    <div
-                      className={`${mobileControlsOpen ? "mt-2 flex" : "hidden"} flex-col gap-2 sm:mt-3 sm:flex xl:flex-row xl:items-center`}
-                      data-capability-filters
-                    >
-                      <div className="relative min-w-0 flex-1">
-                        <LcdIcon
-                          icon={Search}
-                          glyph="search"
-                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
-                          size={15}
-                          aria-hidden="true"
-                        />
-                        <input
-                          className="h-9 w-full rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] pl-9 pr-3 text-sm outline-none focus:border-[rgba(59,130,246,0.42)] sm:h-10"
-                          data-lcd-field
-                          value={query}
-                          placeholder={t("capabilityCenter.searchPlaceholder")}
-                          onChange={(event) => setQuery(event.target.value)}
-                        />
-                      </div>
-                      <div className="flex min-w-0 items-center gap-2">
-                        <SegmentedControl
-                          label={t("capabilityCenter.stateFilter")}
-                          value={scopedStateFilter}
-                          options={localizedStateFilters}
-                          onChange={(value) => setStateFilter(value as CapabilityCenterStateFilter)}
-                        />
+                  ) : null}
+                  {listSection ? (
+                    <>
+                      <div className="flex items-center gap-2 sm:hidden">
                         <button
                           type="button"
-                          className={`min-h-[36px] self-start rounded-lg border px-3 text-xs font-medium sm:h-9 ${
-                            showSystem
-                              ? "border-[rgba(59,130,246,0.35)] bg-[var(--glass-bg-active)] text-[var(--color-text-primary)]"
-                              : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-bg-hover)]"
-                          }`}
-                          aria-pressed={showSystem}
-                          onClick={() => setShowSystem((value) => !value)}
+                          className="inline-flex min-h-[36px] items-center gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 text-xs font-medium text-[var(--color-text-secondary)]"
+                          aria-expanded={mobileControlsOpen}
+                          onClick={() => setMobileControlsOpen((value) => !value)}
+                          data-lcd-key
                         >
-                          {t("capabilityCenter.showSystem")}
+                          <LcdIcon
+                            icon={SlidersHorizontal}
+                            glyph="sliders-horizontal"
+                            size={14}
+                            aria-hidden="true"
+                          />
+                          <span>{t("capabilityCenter.stateFilter")}</span>
                         </button>
+                        <span className="min-w-0 truncate text-xs text-[var(--color-text-muted)]">
+                          {`${t(`capabilityCenter.stateOptions.${scopedStateFilter}`)} · ${pageRange.total || totalCount || stats.total}`}
+                        </span>
                       </div>
+                      <div
+                        className={`${mobileControlsOpen ? "mt-2 flex" : "hidden"} flex-col gap-2 sm:mt-3 sm:flex xl:flex-row xl:items-center`}
+                        data-capability-filters
+                      >
+                        <div className="relative min-w-0 flex-1">
+                          <LcdIcon
+                            icon={Search}
+                            glyph="search"
+                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)]"
+                            size={15}
+                            aria-hidden="true"
+                          />
+                          <input
+                            className="h-9 w-full rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] pl-9 pr-3 text-sm outline-none focus:border-[rgba(59,130,246,0.42)] sm:h-10"
+                            data-lcd-field
+                            value={query}
+                            placeholder={t("capabilityCenter.searchPlaceholder")}
+                            onChange={(event) => setQuery(event.target.value)}
+                          />
+                        </div>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <SegmentedControl
+                            label={t("capabilityCenter.stateFilter")}
+                            value={scopedStateFilter}
+                            options={localizedStateFilters}
+                            onChange={(value) =>
+                              setStateFilter(value as CapabilityCenterStateFilter)
+                            }
+                          />
+                          <button
+                            type="button"
+                            className={`min-h-[36px] self-start rounded-lg border px-3 text-xs font-medium sm:h-9 ${
+                              showSystem
+                                ? "border-[rgba(59,130,246,0.35)] bg-[var(--glass-bg-active)] text-[var(--color-text-primary)]"
+                                : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-bg-hover)]"
+                            }`}
+                            aria-pressed={showSystem}
+                            onClick={() => setShowSystem((value) => !value)}
+                          >
+                            {t("capabilityCenter.showSystem")}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  ) : null}
+                  {err ? (
+                    <div
+                      className="mt-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300"
+                      data-status-tone="error"
+                    >
+                      {err}
                     </div>
-                  </>
-                ) : null}
-                {err ? (
-                  <div
-                    className="mt-2 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 dark:text-rose-300"
-                    data-status-tone="error"
-                  >
-                    {err}
-                  </div>
-                ) : null}
-              </div>
+                  ) : null}
+                </div>
+              )}
 
               {section === "sources" ? (
                 <SourcesView sources={sources} busyKey={busyKey} onDelete={confirmDeleteSource} />
+              ) : section === "recommended" ? (
+                <div className="grid min-h-0">
+                  <div
+                    className={recommendedDetailOpen ? "hidden min-h-0 lg:grid" : "grid min-h-0"}
+                  >
+                    <CapabilityRecommendedView
+                      rows={recommendedRows}
+                      groupTitle={groupId ? groupTitle || groupId : ""}
+                      loading={loading}
+                      selectedId={String(recommendedSelected?.capability_id || "")}
+                      explicit={
+                        Boolean(recommendedId) &&
+                        recommendedSelected?.capability_id === recommendedId
+                      }
+                      onSelect={(capabilityId) => {
+                        setRecommendedId(capabilityId);
+                        setRecommendedDetailOpen(true);
+                      }}
+                    />
+                  </div>
+                  {recommendedDetailOpen && recommendedSelected ? (
+                    <div className="min-h-0 overflow-y-auto lg:hidden" data-capability-detail-page>
+                      <div className="px-3 pt-3 sm:px-4">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          autoFocus
+                          onClick={() => setRecommendedDetailOpen(false)}
+                        >
+                          <LcdIcon
+                            icon={ChevronLeft}
+                            glyph="chevron-left"
+                            size={14}
+                            aria-hidden="true"
+                          />
+                          <span>{t("capabilityCenter.recommended.backToList")}</span>
+                        </Button>
+                      </div>
+                      <CapabilityDetails
+                        layout="page"
+                        item={recommendedSelected}
+                        state={state}
+                        hiddenIds={hiddenIds}
+                        groupId={groupId}
+                        domains={domains}
+                        busyKey={busyKey}
+                        onToggleSlash={toggleSlashVisibility}
+                        onToggleBlock={toggleBlockCapability}
+                        onToggleEnable={toggleEnableCapability}
+                        onRemove={removeCapability}
+                        onUpdate={confirmUpdateCapability}
+                        updateOutcome={updateOutcome}
+                      />
+                    </div>
+                  ) : null}
+                </div>
               ) : (
                 <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
                   <CapabilityTable
@@ -911,15 +1128,18 @@ export function CapabilityCenterWorkspace({
               <SourcesSummary sources={sources} />
             ) : (
               <CapabilityDetails
-                item={selected}
+                item={section === "recommended" ? recommendedSelected : selected}
                 state={state}
                 hiddenIds={hiddenIds}
                 groupId={groupId}
+                domains={domains}
                 busyKey={busyKey}
                 onToggleSlash={toggleSlashVisibility}
                 onToggleBlock={toggleBlockCapability}
                 onToggleEnable={toggleEnableCapability}
                 onRemove={removeCapability}
+                onUpdate={confirmUpdateCapability}
+                updateOutcome={updateOutcome}
               />
             )}
           </div>
@@ -1048,14 +1268,14 @@ function CapabilityTable(props: {
   return (
     <div className="h-full min-h-0 overflow-auto scrollbar-subtle">
       <div className="hidden md:block">
-        <div className="sticky top-0 z-[1] grid min-w-[980px] grid-cols-[minmax(260px,1.8fr)_88px_150px_130px_170px] gap-3 border-b border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)] lg:px-6">
+        <div className="sticky top-0 z-[1] grid min-w-[812px] grid-cols-[minmax(176px,1.8fr)_88px_150px_130px_170px] gap-3 border-b border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--color-text-muted)] lg:px-6">
           <div>{t("capabilityCenter.table.capability")}</div>
           <div>{t("capabilityCenter.table.type")}</div>
           <div>{t("capabilityCenter.table.state")}</div>
           <div>{t("capabilityCenter.table.source")}</div>
           <div>{t("capabilityCenter.table.actions")}</div>
         </div>
-        <div className="min-w-[860px] divide-y divide-[var(--glass-border-subtle)]">
+        <div className="min-w-[812px] divide-y divide-[var(--glass-border-subtle)]">
           {props.items.map((row) => {
             const capId = String(row.capability_id || "").trim();
             const selected = capId === props.selectedId;
@@ -1065,13 +1285,14 @@ function CapabilityTable(props: {
             const canShowSlashToggle = enabled && canManageSlashCommandVisibility(row);
             const blocked = capabilityCenterIsBlocked(row);
             const needsSetup = capabilityCenterNeedsSetup(row);
+            const recommended = isReleaseRecommendation(row);
             const removalAction = capabilityCenterRemovalAction(row, { enabled });
             return (
               <div
                 key={capId}
                 role="button"
                 tabIndex={0}
-                className={`grid w-full grid-cols-[minmax(260px,1.8fr)_88px_150px_130px_170px] items-center gap-3 px-4 py-2.5 text-left text-sm lg:px-6 ${
+                className={`grid w-full grid-cols-[minmax(176px,1.8fr)_88px_150px_130px_170px] items-center gap-3 px-4 py-2.5 text-left text-sm lg:px-6 ${
                   selected ? "bg-[var(--glass-bg-active)]" : "hover:bg-[var(--glass-bg-hover)]"
                 }`}
                 aria-current={selected ? "true" : undefined}
@@ -1090,8 +1311,9 @@ function CapabilityTable(props: {
                 <div>
                   <MiniBadge>{capabilityCenterTypeLabel(type)}</MiniBadge>
                 </div>
-                <div className="flex flex-wrap gap-1">
-                  {enabled ? (
+                <div className="flex flex-wrap items-center gap-1">
+                  <UpdateMark row={row} />
+                  {enabled && !recommended ? (
                     <MiniBadge kind="good">{t("capabilityCenter.status.enabled")}</MiniBadge>
                   ) : null}
                   {row.legacy_search_unverified ? (
@@ -1102,7 +1324,11 @@ function CapabilityTable(props: {
                       {t("capabilityCenter.status.legacySearchUnverified")}
                     </MiniBadge>
                   ) : null}
-                  {blocked ? (
+                  {recommended ? (
+                    // The recommended table's own summary of the members, so no list says "Ready"
+                    // for something no member can use.
+                    <RecommendationDotIcon dot={recommendationDot(row)} />
+                  ) : blocked ? (
                     <MiniBadge kind="danger">{t("capabilityCenter.status.blocked")}</MiniBadge>
                   ) : needsSetup ? (
                     <MiniBadge kind="warn">{t("capabilityCenter.status.setup")}</MiniBadge>
@@ -1111,13 +1337,14 @@ function CapabilityTable(props: {
                   ) : null}
                 </div>
                 <div className="truncate text-xs text-[var(--color-text-secondary)]">
-                  {row.source_id || "-"}
+                  {recommended ? <RecommendedMark /> : row.source_id || "-"}
                 </div>
                 <CapabilityRowActions
                   row={row}
                   enabled={enabled}
                   hidden={hidden}
                   blocked={blocked}
+                  canEnable={!recommended || recommendationCanEnableForGroup(row)}
                   canShowSlashToggle={canShowSlashToggle}
                   removalAction={removalAction}
                   busyKey={props.busyKey}
@@ -1146,6 +1373,7 @@ function CapabilityTable(props: {
           const canShowSlashToggle = enabled && canManageSlashCommandVisibility(row);
           const blocked = capabilityCenterIsBlocked(row);
           const needsSetup = capabilityCenterNeedsSetup(row);
+          const recommended = isReleaseRecommendation(row);
           const removalAction = capabilityCenterRemovalAction(row, { enabled });
           return (
             <div
@@ -1173,10 +1401,14 @@ function CapabilityTable(props: {
                     {capId}
                   </div>
                 </div>
-                <MiniBadge>{capabilityCenterTypeLabel(type)}</MiniBadge>
+                <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                  {recommended ? <RecommendedMark /> : null}
+                  <MiniBadge>{capabilityCenterTypeLabel(type)}</MiniBadge>
+                </div>
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {enabled ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <UpdateMark row={row} />
+                {enabled && !recommended ? (
                   <MiniBadge kind="good">{t("capabilityCenter.status.enabled")}</MiniBadge>
                 ) : null}
                 {row.legacy_search_unverified ? (
@@ -1187,14 +1419,16 @@ function CapabilityTable(props: {
                     {t("capabilityCenter.status.legacySearchUnverified")}
                   </MiniBadge>
                 ) : null}
-                {blocked ? (
+                {recommended ? (
+                  <RecommendationDotIcon dot={recommendationDot(row)} />
+                ) : blocked ? (
                   <MiniBadge kind="danger">{t("capabilityCenter.status.blocked")}</MiniBadge>
                 ) : needsSetup ? (
                   <MiniBadge kind="warn">{t("capabilityCenter.status.setup")}</MiniBadge>
                 ) : !row.legacy_search_unverified ? (
                   <MiniBadge>{t("capabilityCenter.status.ready")}</MiniBadge>
                 ) : null}
-                {row.source_id ? <MiniBadge>{row.source_id}</MiniBadge> : null}
+                {row.source_id && !recommended ? <MiniBadge>{row.source_id}</MiniBadge> : null}
               </div>
               {row.legacy_search_unverified && selected ? (
                 <p className="mt-2 text-xs text-[var(--color-text-secondary)]">
@@ -1206,6 +1440,7 @@ function CapabilityTable(props: {
                 enabled={enabled}
                 hidden={hidden}
                 blocked={blocked}
+                canEnable={!recommended || recommendationCanEnableForGroup(row)}
                 canShowSlashToggle={canShowSlashToggle}
                 removalAction={removalAction}
                 busyKey={props.busyKey}
@@ -1228,11 +1463,31 @@ function CapabilityTable(props: {
   );
 }
 
+/** Where a release recommendation comes from, said instead of its catalog id. */
+function RecommendedMark() {
+  const { t } = useTranslation("settings");
+  return (
+    <MiniBadge title={t("capabilityCenter.recommended.badgeHint")}>
+      {t("capabilityCenter.recommended.badge")}
+    </MiniBadge>
+  );
+}
+
+/** A recipe that changed since it was installed. */
+function UpdateMark({ row }: { row: CapabilityOverviewItem }) {
+  const { t } = useTranslation("settings");
+  return row.update?.available && row.update.reason === "recipe_changed" ? (
+    <MiniBadge kind="warn">{t("capabilityCenter.update.badge")}</MiniBadge>
+  ) : null;
+}
+
 function CapabilityRowActions(props: {
   row: CapabilityOverviewItem;
   enabled: boolean;
   hidden: boolean;
   blocked: boolean;
+  /** False hides enabling when no member of the Group could use it; disabling stays. */
+  canEnable?: boolean;
   canShowSlashToggle: boolean;
   removalAction: ReturnType<typeof capabilityCenterRemovalAction>;
   busyKey: string;
@@ -1249,15 +1504,17 @@ function CapabilityRowActions(props: {
   const capId = String(props.row.capability_id || "").trim();
   return (
     <div className={cn("flex gap-1.5", props.compact ? "mt-3 justify-start" : "justify-end")}>
-      <EnableCapabilityButton
-        enabled={props.enabled}
-        busy={props.busyKey === `enable:${capId}`}
-        compact={props.compact}
-        onClick={(event) => {
-          event.stopPropagation();
-          props.onToggleEnable(props.row);
-        }}
-      />
+      {props.enabled || props.canEnable !== false ? (
+        <EnableCapabilityButton
+          enabled={props.enabled}
+          busy={props.busyKey === `enable:${capId}`}
+          compact={props.compact}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onToggleEnable(props.row);
+          }}
+        />
+      ) : null}
       {props.canShowSlashToggle ? (
         <IconToggle
           hidden={props.hidden}
@@ -1547,7 +1804,10 @@ function CapabilityDetails(props: {
   state: CapabilityStateResult | null;
   hiddenIds: string[];
   groupId: string;
+  domains: CapabilityDomain[];
   busyKey: string;
+  /** "page" fills a narrow screen in place of the list; the default is the side panel. */
+  layout?: "aside" | "page";
   onToggleSlash: (row: CapabilityOverviewItem) => void;
   onToggleBlock: (row: CapabilityOverviewItem) => void;
   onToggleEnable: (row: CapabilityOverviewItem) => void;
@@ -1555,18 +1815,27 @@ function CapabilityDetails(props: {
     row: CapabilityOverviewItem,
     action: Exclude<ReturnType<typeof capabilityCenterRemovalAction>, "none">,
   ) => void;
+  onUpdate: (row: CapabilityOverviewItem) => void;
+  updateOutcome: UpdateOutcome | null;
 }) {
   const { t } = useTranslation("settings");
+  // In place of the list on a narrow screen it is the page's main content, not a side panel.
+  const Frame = props.layout === "page" ? "section" : "aside";
+  const frame =
+    props.layout === "page"
+      ? "min-w-0 p-3 sm:p-4"
+      : "hidden min-h-0 min-w-0 overflow-x-hidden overflow-y-auto bg-[var(--glass-panel-bg)] p-5 lg:block";
   if (!props.item) {
     return (
-      <aside className="hidden min-h-0 min-w-0 overflow-x-hidden overflow-y-auto p-5 text-sm text-[var(--color-text-muted)] lg:block">
+      <Frame className={cn(frame, "text-sm text-[var(--color-text-muted)]")}>
         {t("capabilityCenter.details.selectCapability")}
-      </aside>
+      </Frame>
     );
   }
   const row = props.item;
   const capId = String(row.capability_id || "").trim();
   const type = capabilityCenterType(row);
+  const recommended = isReleaseRecommendation(row);
   const enabledIds = new Set([
     ...(props.state?.enabled_capabilities || []),
     ...(props.state?.enabled || []).map((item) => item.capability_id),
@@ -1578,21 +1847,33 @@ function CapabilityDetails(props: {
   const needsSetup = capabilityCenterNeedsSetup(row);
   const preview = row.readiness_preview;
   const removalAction = capabilityCenterRemovalAction(row, { enabled });
+  const binding = recommendationBinding(row);
 
   return (
-    <aside className="hidden min-h-0 min-w-0 overflow-x-hidden overflow-y-auto bg-[var(--glass-panel-bg)] p-5 lg:block">
+    <Frame className={frame}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-xs uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-            {capabilityCenterTypeLabel(type)}
+            {recommended
+              ? t("capabilityCenter.recommended.kicker", { type: capabilityCenterTypeLabel(type) })
+              : capabilityCenterTypeLabel(type)}
           </div>
           <h3 className="mt-1 break-words text-lg font-semibold [overflow-wrap:anywhere]">
             {capabilityCenterDisplayName(row)}
           </h3>
           <p className="mt-1 break-all text-xs text-[var(--color-text-muted)]">{capId}</p>
         </div>
-        <div className="flex flex-wrap justify-end gap-1">
-          {blocked ? (
+        <div className="flex shrink-0 flex-wrap justify-end gap-1">
+          {recommended ? (
+            blocked ? (
+              <MiniBadge kind="danger">{t("capabilityCenter.status.blocked")}</MiniBadge>
+            ) : binding !== "none" ? (
+              // Nothing enabled needs no word: the enable control below already says so.
+              <MiniBadge kind={binding === "group" ? "good" : "neutral"}>
+                {t(`capabilityCenter.recommended.binding.${binding}`)}
+              </MiniBadge>
+            ) : null
+          ) : blocked ? (
             <MiniBadge kind="danger">{t("capabilityCenter.status.blocked")}</MiniBadge>
           ) : needsSetup ? (
             <MiniBadge kind="warn">{t("capabilityCenter.status.needsSetup")}</MiniBadge>
@@ -1609,52 +1890,13 @@ function CapabilityDetails(props: {
         </div>
       </div>
 
-      <div className="mt-5 space-y-4">
-        {row.legacy_search_unverified ? (
-          <p className="text-xs text-[var(--color-text-secondary)]">
-            {t("capabilityCenter.status.legacySearchUnverifiedHint")}
-          </p>
-        ) : null}
-        <DetailBlock title={t("capabilityCenter.details.description")}>
-          {capabilityCenterDescription(row, t) || t("capabilityCenter.details.noDescription")}
-        </DetailBlock>
-        <DetailBlock title={t("capabilityCenter.details.source")}>
-          {row.source_id || t("capabilityCenter.emptyDash")}
-          {row.source_uri ? ` · ${row.source_uri}` : ""}
-        </DetailBlock>
-        <DetailBlock title={t("capabilityCenter.details.policy")}>
-          {row.policy_level || t("capabilityCenter.emptyDash")}
-          {row.legacy_search_unverified
-            ? ` · ${t("capabilityCenter.status.legacySearchUnverified")}`
-            : row.qualification_status
-              ? ` · ${row.qualification_status}`
-              : ""}
-        </DetailBlock>
-        {preview ? (
-          <DetailBlock title={t("capabilityCenter.details.readiness")}>
-            {[preview.preview_status, preview.next_step, preview.enable_block_reason]
-              .filter(Boolean)
-              .join(" · ") || t("capabilityCenter.emptyDash")}
-          </DetailBlock>
-        ) : null}
-        {row.tool_names?.length ? (
-          <DetailBlock title={t("capabilityCenter.details.tools")}>
-            {row.tool_names.join(", ")}
-          </DetailBlock>
-        ) : null}
-        {row.use_when?.length ? (
-          <DetailList title={t("capabilityCenter.details.useWhen")} items={row.use_when} />
-        ) : null}
-        {row.gotchas?.length ? (
-          <DetailList title={t("capabilityCenter.details.gotchas")} items={row.gotchas} />
-        ) : null}
-      </div>
-
       <CapabilityControlsPanel
         row={row}
         enabled={enabled}
         hidden={hidden}
         blocked={blocked}
+        canEnable={!recommended || recommendationCanEnableForGroup(row)}
+        blockScope={row.blocked_group && !row.blocked_global ? "group" : "global"}
         canShowSlashToggle={canShowSlashToggle}
         removalAction={removalAction}
         busyKey={props.busyKey}
@@ -1664,7 +1906,287 @@ function CapabilityDetails(props: {
         onToggleBlock={props.onToggleBlock}
         onRemove={props.onRemove}
       />
-    </aside>
+      <UpdateNotice
+        row={row}
+        busy={props.busyKey === `update:${capId}`}
+        outcome={props.updateOutcome?.capabilityId === capId ? props.updateOutcome.state : ""}
+        onUpdate={props.onUpdate}
+      />
+
+      <div className="mt-5 space-y-4">
+        {recommended ? (
+          <RecommendationSections row={row} domains={props.domains} />
+        ) : (
+          <>
+            {row.legacy_search_unverified ? (
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                {t("capabilityCenter.status.legacySearchUnverifiedHint")}
+              </p>
+            ) : null}
+            <DetailBlock title={t("capabilityCenter.details.description")}>
+              {capabilityCenterDescription(row, t) || t("capabilityCenter.details.noDescription")}
+            </DetailBlock>
+            <DetailBlock title={t("capabilityCenter.details.source")}>
+              {row.source_id || t("capabilityCenter.emptyDash")}
+              {row.source_uri ? ` · ${row.source_uri}` : ""}
+            </DetailBlock>
+            <DetailBlock title={t("capabilityCenter.details.policy")}>
+              {row.policy_level || t("capabilityCenter.emptyDash")}
+              {row.legacy_search_unverified
+                ? ` · ${t("capabilityCenter.status.legacySearchUnverified")}`
+                : row.qualification_status
+                  ? ` · ${row.qualification_status}`
+                  : ""}
+            </DetailBlock>
+            {preview ? (
+              <DetailBlock title={t("capabilityCenter.details.readiness")}>
+                {[preview.preview_status, preview.next_step, preview.enable_block_reason]
+                  .filter(Boolean)
+                  .join(" · ") || t("capabilityCenter.emptyDash")}
+              </DetailBlock>
+            ) : null}
+            {row.tool_names?.length ? (
+              <DetailBlock title={t("capabilityCenter.details.tools")}>
+                {row.tool_names.join(", ")}
+              </DetailBlock>
+            ) : null}
+            {row.use_when?.length ? (
+              <DetailList title={t("capabilityCenter.details.useWhen")} items={row.use_when} />
+            ) : null}
+            {row.gotchas?.length ? (
+              <DetailList title={t("capabilityCenter.details.gotchas")} items={row.gotchas} />
+            ) : null}
+          </>
+        )}
+      </div>
+    </Frame>
+  );
+}
+
+/** A changed recipe is offered as a global update; an unrecorded one only as a check. */
+function UpdateNotice(props: {
+  row: CapabilityOverviewItem;
+  busy: boolean;
+  /** The state the last update of this capability returned, if any. */
+  outcome: string;
+  onUpdate: (row: CapabilityOverviewItem) => void;
+}) {
+  const { t } = useTranslation("settings");
+  if (UPDATE_OUTCOMES.has(props.outcome)) {
+    return (
+      <p className="mt-3 text-xs text-[var(--color-text-muted)]" role="status">
+        {t(`capabilityCenter.update.outcome.${props.outcome}`)}
+      </p>
+    );
+  }
+  const update = props.row.update;
+  if (!update) return null;
+  const changed = update.reason === "recipe_changed";
+  if (!update.available) {
+    // Only worth saying when there is something to update.
+    const reason = String(update.unavailable_reason || "");
+    return (changed || update.reason === "recipe_unknown") && UPDATE_UNAVAILABLE.has(reason) ? (
+      <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+        {t(`capabilityCenter.update.unavailable.${reason}`)}
+      </p>
+    ) : null;
+  }
+  return (
+    <section className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--glass-border-subtle)] px-3 py-2">
+      <span
+        className={cn(
+          "min-w-0 text-xs leading-5",
+          changed ? "text-amber-700 dark:text-amber-300" : "text-[var(--color-text-muted)]",
+        )}
+        data-status-tone={changed ? "warning" : undefined}
+      >
+        {t(changed ? "capabilityCenter.update.changed" : "capabilityCenter.update.unknown")}
+      </span>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={props.busy}
+        onClick={() => props.onUpdate(props.row)}
+      >
+        {t(changed ? "capabilityCenter.update.update" : "capabilityCenter.update.verify")}
+      </Button>
+    </section>
+  );
+}
+
+function RecommendationSections(props: {
+  row: CapabilityOverviewItem;
+  domains: CapabilityDomain[];
+}) {
+  const { t } = useTranslation("settings");
+  const { row } = props;
+  const domainName = (domainId: string) =>
+    props.domains.find((domain) => domain.domain_id === domainId)?.name || domainId;
+  const authKey = recommendationAuthKey(row.support);
+  const runsOnKey = recommendationRunsOnKey(row.support);
+  const where = [
+    authKey ? t(`capabilityCenter.recommended.auth.${authKey}`) : "",
+    runsOnKey ? t(`capabilityCenter.recommended.runsOn.${runsOnKey}`) : "",
+  ].filter(Boolean);
+  const verification = recommendationVerification(row.verification);
+  return (
+    <>
+      <DetailBlock title={t("capabilityCenter.recommended.sections.why")}>
+        <div className="space-y-2">
+          {(row.recommendation || []).map((entry) => (
+            <div key={entry.domain_id}>
+              <div className="text-xs text-[var(--color-text-muted)]">
+                {`${domainName(entry.domain_id)} · ${t(
+                  entry.role === "primary"
+                    ? "capabilityCenter.recommended.primary"
+                    : "capabilityCenter.recommended.alternative",
+                )}`}
+              </div>
+              {entry.reason ? <div>{entry.reason}</div> : null}
+            </div>
+          ))}
+        </div>
+      </DetailBlock>
+      {row.use_when?.length ? (
+        <DetailList
+          title={t("capabilityCenter.recommended.sections.useWhen")}
+          items={row.use_when}
+        />
+      ) : null}
+      {row.avoid_when?.length ? (
+        <DetailList
+          title={t("capabilityCenter.recommended.sections.avoidWhen")}
+          items={row.avoid_when}
+        />
+      ) : null}
+      {row.gotchas?.length ? (
+        <DetailList
+          title={t("capabilityCenter.recommended.sections.gotchas")}
+          items={row.gotchas}
+        />
+      ) : null}
+      {where.length || row.requirements_summary ? (
+        <DetailBlock title={t("capabilityCenter.recommended.sections.requirements")}>
+          {where.length ? <div>{where.join(" · ")}</div> : null}
+          {row.requirements_summary ? <div>{row.requirements_summary}</div> : null}
+        </DetailBlock>
+      ) : null}
+      <RecommendationMembers row={row} />
+      <DetailBlock title={t("capabilityCenter.recommended.sections.verification")}>
+        {verification ? (
+          // The label's hover tip carries the check's own words.
+          <div>
+            <RecommendationVerificationLabel item={row} className="text-sm" />
+            {recommendationDate(verification.observed_at)
+              ? ` · ${recommendationDate(verification.observed_at)}`
+              : ""}
+          </div>
+        ) : (
+          t("capabilityCenter.recommended.verification.none")
+        )}
+      </DetailBlock>
+      <DetailBlock title={t("capabilityCenter.recommended.sections.source")}>
+        {row.source_uri ? (
+          <a
+            href={row.source_uri}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-2"
+          >
+            {recommendationSourceLabel(row.source_uri)}
+          </a>
+        ) : (
+          t("capabilityCenter.emptyDash")
+        )}
+        {row.license ? (
+          <div className="text-xs text-[var(--color-text-muted)]">{row.license}</div>
+        ) : null}
+      </DetailBlock>
+    </>
+  );
+}
+
+const MEMBER_SCOPE_ORDER = ["session", "actor", "group"] as const;
+
+export function RecommendationMembers({ row }: { row: CapabilityOverviewItem }) {
+  const { t } = useTranslation("settings");
+  const members = row.members || [];
+  const describe = (member: CapabilityMemberProjection): string[] => {
+    const parts: string[] = [];
+    if (member.blocked) {
+      parts.push(t("capabilityCenter.recommended.member.blocked"));
+    } else if (member.availability === "compatible") {
+      parts.push(
+        t(
+          member.activation_pending
+            ? "capabilityCenter.recommended.member.pending"
+            : "capabilityCenter.recommended.member.compatible",
+        ),
+      );
+    } else {
+      const reasons = (member.reason_codes || [])
+        .filter((code) => !code.startsWith("blocked_by_"))
+        .map((code) => {
+          const env = member.credential_env || "";
+          const source = member.credential_source;
+          // Say where to put the token when the daemon knows which setting it reads.
+          if (code === "missing_member_credential" && (source === "actor" || source === "profile"))
+            return t(`capabilityCenter.recommended.credential.${source}`, { env });
+          return RECOMMENDATION_REASON_CODES.has(code)
+            ? t(`capabilityCenter.recommended.reason.${code}`, { env })
+            : code;
+        });
+      parts.push(
+        reasons.length
+          ? reasons.join(" · ")
+          : t(`capabilityCenter.recommended.member.${member.availability}`),
+      );
+    }
+    // Where it is enabled is a separate fact from whether the member can run it now.
+    const scopes = member.enabled_scopes || [];
+    for (const scope of MEMBER_SCOPE_ORDER) {
+      if (scopes.includes(scope)) parts.push(t(`capabilityCenter.recommended.member.${scope}`));
+    }
+    if (member.last_call) {
+      parts.push(
+        t(
+          member.last_call.ok
+            ? "capabilityCenter.recommended.member.lastCallOk"
+            : "capabilityCenter.recommended.member.lastCallFailed",
+          { time: formatMessageTimestamp(member.last_call.at) },
+        ),
+      );
+    }
+    return parts;
+  };
+  return (
+    <DetailBlock title={t("capabilityCenter.recommended.sections.members")}>
+      {members.length === 0 ? (
+        t("capabilityCenter.recommended.member.none")
+      ) : (
+        <ul className="space-y-1.5">
+          {members.map((member) => (
+            <li
+              key={member.actor_id}
+              className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2"
+              title={member.last_call ? formatFullTime(member.last_call.at) : undefined}
+            >
+              <RecommendationDotIcon
+                dot={recommendationMemberDot(row, member)}
+                className="mt-1.5"
+              />
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
+                <span className="font-medium text-[var(--color-text-primary)]">
+                  {member.actor_id}
+                </span>
+                {` ${describe(member).join(" · ")}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </DetailBlock>
   );
 }
 

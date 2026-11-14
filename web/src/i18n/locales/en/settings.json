@@ -267,7 +267,8 @@
     "manageName": "Name",
     "manageDescription": "Description",
     "manageCapsule": "Capsule text",
-    "manageCapsuleLimit": "{{count}} / {{max}} characters",
+    "manageCapsuleCount_one": "{{count}} character",
+    "manageCapsuleCount_other": "{{count}} characters",
     "manageSave": "Save skill",
     "manageSaved": "Skill record saved.",
     "manageSaveFailed": "Failed to save skill record.",
@@ -352,11 +353,11 @@
   },
   "capabilityCenter": {
     "title": "Capability Center",
-    "subtitle": "Skills, MCP, and packs",
+    "subtitle": "Recommended, skills, MCP, and sources",
     "headerHint": "Global workspace for browsing, filtering, and managing capabilities.",
+    "scopeGroup": "Applies to group: {{name}}",
     "refresh": "Refresh",
     "close": "Close",
-    "backToApp": "Back to app",
     "builtin": {
       "groupRuntime": "Lets agents, within their permissions, manage the Group: add, remove, start and stop members, list runtimes, and edit agent notes.",
       "imBind": "Lets agents bind an IM chat to this Group with a bind key.",
@@ -375,6 +376,7 @@
     "failedSlashVisibility": "Failed to update slash command visibility.",
     "sectionNavigation": "Capability sections",
     "sections": {
+      "recommended": { "label": "Recommended", "hint": "Grouped by the work members do" },
       "library": { "label": "Library", "hint": "All capabilities" },
       "skill": { "label": "Skills", "hint": "Procedural skills" },
       "mcp": { "label": "MCP", "hint": "Tool servers" },
@@ -449,14 +451,16 @@
     },
     "controls": {
       "title": "Controls",
-      "skillHint": "Group use, slash visibility, block state, and removal.",
-      "mcpHint": "Group use, block state, runtime install binding, and removal.",
       "enabledMeta": "Currently active in this group",
       "disabledMeta": "Not active in this group",
       "slashVisibleMeta": "Shown in / commands",
       "slashHiddenMeta": "Hidden from / commands",
       "blockMeta": "Policy-block enablement and use",
       "blockedMeta": "Policy-blocked until unblocked",
+      "enableForGroup": "Enable for this group",
+      "disableForGroup": "Disable in this group",
+      "blockEverywhere": "Block everywhere",
+      "unblockGroupTitle": "Lift this group's block",
       "openGroup": "Open a group to use these controls."
     },
     "remove": {
@@ -493,7 +497,7 @@
       "confirmBlock": "Block {{name}}?\n\nAgents cannot use {{id}} until it is unblocked.",
       "confirmUnblock": "Unblock {{name}}?\n\nAgents can use {{id}} again if it is enabled and allowed by policy.",
       "confirmBlockTitle": "Block {{name}}?",
-      "confirmBlockDescription": "This adds a policy block for {{id}}. It cannot be enabled or used until the block is removed.",
+      "confirmBlockDescription": "This blocks {{id}} in every group. It cannot be enabled or used until the block is removed.",
       "confirmUnblockTitle": "Unblock {{name}}?",
       "confirmUnblockDescription": "This removes the policy block for {{id}}. Agents can use it again if it is enabled and allowed by policy."
     },
@@ -509,7 +513,134 @@
       "stillEnabled": "{{name}} is still enabled. Its state may have changed in the meantime; try again."
     },
     "confirm": { "cancel": "Cancel", "confirm": "Confirm" },
-    "showSystem": "System"
+    "showSystem": "System",
+    "update": {
+      "changed": "A newer recommended version is available (its address or package version changed).",
+      "unknown": "Version not recorded.",
+      "update": "Update everywhere",
+      "verify": "Check and update",
+      "badge": "Update available",
+      "confirmTitle": "Update {{name}}?",
+      "confirmDescription": "The update applies to every later call of this MCP in all groups. Groups with it enabled now: {{groups}}.",
+      "confirmDescriptionBearer": "The update applies to every later call of this MCP in all groups. Groups with it enabled now: {{groups}}. An MCP that needs a token isn't checked now; members check it with their own token on next use.",
+      "failed": "The update failed.",
+      "unavailable": {
+        "delivery_form_not_supported": "This version can't update this delivery form here.",
+        "credential_route_not_supported": "This installation's token setup can't be updated here in this version."
+      },
+      "outcome": {
+        "configured": "Recipe updated. Members check it with their own token on next use.",
+        "ready": "Updated to the new recommended version.",
+        "unchanged": "Already on the recommended version."
+      },
+      "error": {
+        "capability_not_installed": "It isn't installed yet. Enable it once, then update.",
+        "capability_recipe_conflict": "The recommended version changed before you confirmed. Refresh and review it again.",
+        "capability_update_unsupported": "This version can't update this MCP here."
+      }
+    },
+    "recommended": {
+      "intro": "Ships with this version of CCCC. Members can enable these themselves when they need them; you can also enable them for this group in advance.",
+      "domain": "Work",
+      "mcp": "MCP",
+      "skill": "Skill",
+      "primary": "First pick",
+      "alternative": "Alternative",
+      "emptyCell": "No recommendation in this version",
+      "empty": "This version has no recommendations.",
+      "summary": "Recommended: {{total}} · Groups: {{domains}}",
+      "legend": "Legend",
+      "kicker": "{{type}} · Recommended by CCCC",
+      "backToList": "Back to list",
+      "badge": "Recommended",
+      "badgeHint": "Recommended with this version of CCCC",
+      "binding": { "group": "Enabled for this group", "member": "Enabled by a member" },
+      "dot": {
+        "group": "Enabled for this group",
+        "member": "A member enabled it",
+        "available": "A member can use it; nobody has enabled it yet",
+        "setup": "Needs setup first",
+        "pending": "Set up; checked on next use",
+        "unknown": "Depends on the member's own tools; CCCC can't tell",
+        "uncertain": "Not yet known whether it works",
+        "unsupported": "No member of this group can use it",
+        "blocked": "Blocked",
+        "none": "This group has no members yet"
+      },
+      "verification": {
+        "none": "Not verified",
+        "listedHint": "Source, license and delivery checked; not installed",
+        "passed": {
+          "listed": "Listed",
+          "install_checked": "Install verified",
+          "text_checked": "Text verified",
+          "tool_call_checked": "Call verified",
+          "task_checked": "Task verified"
+        },
+        "failed": {
+          "listed": "Check failed",
+          "install_checked": "Install failed",
+          "text_checked": "Text check failed",
+          "tool_call_checked": "Call failed",
+          "task_checked": "Task failed"
+        }
+      },
+      "sections": {
+        "why": "Why it's recommended",
+        "useWhen": "Use when",
+        "avoidWhen": "Avoid when",
+        "gotchas": "Watch out",
+        "requirements": "Needs and where it runs",
+        "members": "Members of this group",
+        "verification": "Verification",
+        "source": "Source and license"
+      },
+      "runsOn": {
+        "daemon_host": "Runs on the machine running CCCC",
+        "actor_tools": "Runs in each member's own environment",
+        "reference": "Listed only; this version can't enable it from CCCC"
+      },
+      "auth": {
+        "none": "No key needed",
+        "bearer": "Needs a token",
+        "api_key": "Needs an API key",
+        "oauth": "Needs an OAuth sign-in",
+        "account": "Needs an account"
+      },
+      "member": {
+        "compatible": "Can use",
+        "pending": "Checked with its own token on next use",
+        "needs_setup": "Needs setup",
+        "unknown": "To be confirmed",
+        "unsupported": "Can't use",
+        "blocked": "Blocked",
+        "session": "Enabled for this session",
+        "actor": "Enabled by this member",
+        "group": "Enabled for this group",
+        "lastCallOk": "Last call succeeded {{time}}",
+        "lastCallFailed": "Last call failed {{time}}",
+        "none": "This group has no members yet."
+      },
+      "credential": {
+        "actor": "Missing {{env}}: set it in this member's private environment variables",
+        "profile": "Missing {{env}}: set it in the member's linked Profile"
+      },
+      "reason": {
+        "actor_tool_prerequisites_unknown": "Depends on the member's own tools; CCCC can't tell",
+        "blocked_by_global_policy": "Blocked everywhere",
+        "blocked_by_group_policy": "Blocked in this group",
+        "credential_permission_denied": "The token lacks permission",
+        "credential_rejected": "The token was rejected (missing or expired)",
+        "credential_route_not_supported": "No way to give this member a token yet",
+        "delivery_form_not_supported": "This version doesn't support this delivery form",
+        "delivery_form_unknown": "Delivery form not confirmed",
+        "external_mcp_not_supported_by_actor": "Web model members can't use external MCP",
+        "missing_daemon_environment": "A required environment variable was not set when CCCC started",
+        "missing_daemon_executable": "A required command is missing on the machine running CCCC",
+        "missing_member_credential": "Missing {{env}} (set it in the member's private environment variables or linked Profile)",
+        "unverified_remote_search": "Unverified old search result"
+      }
+    }
   },
   "assistants": {
     "openFromGroup": "Open this tab from a group.",

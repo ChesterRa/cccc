@@ -124,6 +124,14 @@ mod tests {
             .iter()
             .find(|tool| tool["name"] == "cccc_capability_search")
             .expect("capability search tool");
+        assert_eq!(
+            search["inputSchema"]["properties"]["recommended"]["type"],
+            "boolean"
+        );
+        assert_eq!(
+            search["inputSchema"]["properties"]["recommended"]["default"],
+            false
+        );
         for name in [
             "kind",
             "source_id",

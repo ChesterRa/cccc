@@ -264,7 +264,8 @@
     "manageName": "名前",
     "manageDescription": "説明",
     "manageCapsule": "Capsule 本文",
-    "manageCapsuleLimit": "{{count}} / {{max}} 文字",
+    "manageCapsuleCount_one": "{{count}} 文字",
+    "manageCapsuleCount_other": "{{count}} 文字",
     "manageSave": "Skill を保存",
     "manageSaved": "Skill レコードを保存しました。",
     "manageSaveFailed": "Skill レコードの保存に失敗しました。",
@@ -352,11 +353,11 @@
   },
   "capabilityCenter": {
     "title": "Capability Center",
-    "subtitle": "Skills、MCP、Packs",
+    "subtitle": "おすすめ、Skills、MCP、Sources",
     "headerHint": "グローバル capability を一覧、絞り込み、管理するワークスペースです。",
+    "scopeGroup": "対象グループ：{{name}}",
     "refresh": "更新",
     "close": "閉じる",
-    "backToApp": "アプリに戻る",
     "builtin": {
       "groupRuntime": "エージェントが権限の範囲でグループを管理できます。メンバーの追加・削除・起動・停止、ランタイムの一覧、エージェントノートの編集。",
       "imBind": "エージェントがバインドキーで IM チャットをこのグループにバインドできます。",
@@ -375,6 +376,7 @@
     "failedSlashVisibility": "スラッシュコマンドの表示状態を更新できませんでした。",
     "sectionNavigation": "Capability セクション",
     "sections": {
+      "recommended": { "label": "おすすめ", "hint": "メンバーの作業ごとに分類" },
       "library": { "label": "ライブラリ", "hint": "すべての capability" },
       "skill": { "label": "Skills", "hint": "手順型 capability" },
       "mcp": { "label": "MCP", "hint": "Tool servers" },
@@ -449,14 +451,16 @@
     },
     "controls": {
       "title": "操作",
-      "skillHint": "現在のグループでの有効化、/ 表示、ブロック、除去を管理します。",
-      "mcpHint": "現在のグループでの有効化、ブロック、runtime install binding、アンインストールを管理します。",
       "enabledMeta": "現在のグループで有効",
       "disabledMeta": "現在のグループでは無効",
       "slashVisibleMeta": "/ コマンドに表示",
       "slashHiddenMeta": "/ コマンドから非表示",
       "blockMeta": "Policy で有効化と使用をブロック",
       "blockedMeta": "解除するまで policy でブロック",
+      "enableForGroup": "このグループで有効化",
+      "disableForGroup": "このグループで無効化",
+      "blockEverywhere": "全体でブロック",
+      "unblockGroupTitle": "このグループでのブロックを解除",
       "openGroup": "これらの操作にはグループを開いてください。"
     },
     "remove": {
@@ -493,7 +497,7 @@
       "confirmBlock": "{{name}} をブロックしますか？\n\n解除するまでエージェントは {{id}} を使用できません。",
       "confirmUnblock": "{{name}} のブロックを解除しますか？\n\n{{id}} が有効で policy で許可されていれば、エージェントが再び使用できます。",
       "confirmBlockTitle": "{{name}} をブロックしますか？",
-      "confirmBlockDescription": "{{id}} に policy block を追加します。解除するまで有効化も使用もできません。",
+      "confirmBlockDescription": "すべてのグループで {{id}} をブロックします。解除するまで有効化も使用もできません。",
       "confirmUnblockTitle": "{{name}} のブロックを解除しますか？",
       "confirmUnblockDescription": "{{id}} の policy block を削除します。有効化済みで policy が許可していればエージェントが再び使用できます。"
     },
@@ -509,7 +513,134 @@
       "stillEnabled": "{{name}} はまだ有効です。処理中に状態が変わった可能性があります。再試行してください。"
     },
     "confirm": { "cancel": "キャンセル", "confirm": "確認" },
-    "showSystem": "システム"
+    "showSystem": "システム",
+    "update": {
+      "changed": "新しいおすすめ版があります（アドレスかパッケージのバージョンが変わりました）。",
+      "unknown": "バージョンが記録されていません。",
+      "update": "全体で更新",
+      "verify": "確認して更新",
+      "badge": "更新あり",
+      "confirmTitle": "{{name}} を更新しますか？",
+      "confirmDescription": "更新は、すべてのグループでのこの MCP の以後の呼び出しに適用されます。現在 {{groups}} 個のグループで有効です。",
+      "confirmDescriptionBearer": "更新は、すべてのグループでのこの MCP の以後の呼び出しに適用されます。現在 {{groups}} 個のグループで有効です。トークンが必要な MCP は今は確認せず、メンバーが次回の使用時に自身のトークンで確認します。",
+      "failed": "更新に失敗しました。",
+      "unavailable": {
+        "delivery_form_not_supported": "この版では、この提供形態をここから更新できません。",
+        "credential_route_not_supported": "このインストールのトークン設定方法は、この版ではここから更新できません。"
+      },
+      "outcome": {
+        "configured": "レシピを更新しました。メンバーは次回の使用時に自身のトークンで確認します。",
+        "ready": "新しいおすすめ版に更新しました。",
+        "unchanged": "すでにおすすめ版です。"
+      },
+      "error": {
+        "capability_not_installed": "まだインストールされていません。一度有効化してから更新してください。",
+        "capability_recipe_conflict": "確認する前におすすめ版が変わりました。再読み込みして見直してください。",
+        "capability_update_unsupported": "この版では、この MCP をここから更新できません。"
+      }
+    },
+    "recommended": {
+      "intro": "この版の CCCC に同梱されています。メンバーは必要なときに自分で有効化できます。このグループで先に有効化しておくこともできます。",
+      "domain": "作業",
+      "mcp": "MCP",
+      "skill": "Skill",
+      "primary": "第一候補",
+      "alternative": "代替",
+      "emptyCell": "この版ではおすすめなし",
+      "empty": "この版にはおすすめがありません。",
+      "summary": "おすすめ {{total}} 件 · {{domains}} グループ",
+      "legend": "凡例",
+      "kicker": "{{type}} · CCCC のおすすめ",
+      "backToList": "一覧に戻る",
+      "badge": "おすすめ",
+      "badgeHint": "この版の CCCC に同梱のおすすめ",
+      "binding": { "group": "このグループで有効", "member": "有効化したメンバーあり" },
+      "dot": {
+        "group": "このグループで有効",
+        "member": "メンバーが自分で有効化",
+        "available": "使えるメンバーはいるが、まだ誰も有効化していない",
+        "setup": "先に設定が必要",
+        "pending": "設定済み。次回の使用時に確認",
+        "unknown": "メンバー自身のツール次第で、CCCC では判断できない",
+        "uncertain": "使えるかどうかまだ分からない",
+        "unsupported": "このグループに使えるメンバーがいない",
+        "blocked": "ブロック中",
+        "none": "このグループにはまだメンバーがいない"
+      },
+      "verification": {
+        "none": "未検証",
+        "listedHint": "出所・ライセンス・提供形態を確認済み（インストールはしていない）",
+        "passed": {
+          "listed": "掲載のみ",
+          "install_checked": "導入済み",
+          "text_checked": "本文確認済み",
+          "tool_call_checked": "呼び出し済み",
+          "task_checked": "タスク確認済み"
+        },
+        "failed": {
+          "listed": "確認失敗",
+          "install_checked": "導入失敗",
+          "text_checked": "本文の確認失敗",
+          "tool_call_checked": "呼び出し失敗",
+          "task_checked": "タスク失敗"
+        }
+      },
+      "sections": {
+        "why": "おすすめの理由",
+        "useWhen": "使う場面",
+        "avoidWhen": "使わない場面",
+        "gotchas": "注意点",
+        "requirements": "前提と実行場所",
+        "members": "このグループのメンバー",
+        "verification": "検証",
+        "source": "出所とライセンス"
+      },
+      "runsOn": {
+        "daemon_host": "CCCC を動かしているマシンで実行",
+        "actor_tools": "各メンバー自身の環境で実行",
+        "reference": "この版では掲載のみで、CCCC から有効化できない"
+      },
+      "auth": {
+        "none": "キー不要",
+        "bearer": "トークンが必要",
+        "api_key": "API キーが必要",
+        "oauth": "OAuth ログインが必要",
+        "account": "アカウントが必要"
+      },
+      "member": {
+        "compatible": "利用可",
+        "pending": "次回の使用時に自身のトークンで確認",
+        "needs_setup": "先に設定が必要",
+        "unknown": "未確認",
+        "unsupported": "利用不可",
+        "blocked": "ブロック中",
+        "session": "このセッションで有効",
+        "actor": "本人が有効化",
+        "group": "このグループで有効",
+        "lastCallOk": "前回の呼び出し成功 {{time}}",
+        "lastCallFailed": "前回の呼び出し失敗 {{time}}",
+        "none": "このグループにはまだメンバーがいません。"
+      },
+      "credential": {
+        "actor": "{{env}} が未設定：このメンバーの非公開環境変数で設定",
+        "profile": "{{env}} が未設定：リンク先の Profile で設定"
+      },
+      "reason": {
+        "actor_tool_prerequisites_unknown": "メンバー自身のツール次第で、CCCC では判断できない",
+        "blocked_by_global_policy": "全体でブロック中",
+        "blocked_by_group_policy": "このグループでブロック中",
+        "credential_permission_denied": "トークンの権限が足りない",
+        "credential_rejected": "トークンが拒否された（未設定か期限切れ）",
+        "credential_route_not_supported": "このメンバーにトークンを渡す経路がまだない",
+        "delivery_form_not_supported": "この版はこの提供形態に未対応",
+        "delivery_form_unknown": "インストール形態が未確認",
+        "external_mcp_not_supported_by_actor": "Web モデルのメンバーは外部 MCP を使えない",
+        "missing_daemon_environment": "CCCC の起動時に必要な環境変数が設定されていない",
+        "missing_daemon_executable": "CCCC を動かしているマシンに必要なコマンドがない",
+        "missing_member_credential": "{{env}} が未設定（メンバーの非公開環境変数かリンク先の Profile で設定）",
+        "unverified_remote_search": "未確認の旧検索結果"
+      }
+    }
   },
   "assistants": {
     "openFromGroup": "このタブはグループから開いてください。",

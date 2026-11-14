@@ -246,6 +246,10 @@ async fn authenticated_modern_scan_and_legacy_catalog_share_the_same_connector()
                     json!([protocol::VERSION])
                 );
                 assert!(response["result"]["capabilities"]["events"].is_object());
+                assert_eq!(
+                    response["result"]["instructions"],
+                    cccc_mcp::CAPABILITY_INSTRUCTIONS
+                );
             }
             "events/list" => {
                 let event = &response["result"]["events"][0];
@@ -263,6 +267,12 @@ async fn authenticated_modern_scan_and_legacy_catalog_share_the_same_connector()
             ),
         }
     }
+    let (status, initialized) = fixture.mcp("initialize", json!({}), false).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        initialized["result"]["instructions"],
+        cccc_mcp::CAPABILITY_INSTRUCTIONS
+    );
     let (status, legacy) = fixture.mcp("tools/list", json!({}), false).await;
     assert_eq!(status, StatusCode::OK);
     assert!(legacy["result"]["resultType"].is_null());
@@ -1415,6 +1425,10 @@ async fn grok_modern_discovery_does_not_advertise_chatgpt_events() {
     assert_eq!(status, StatusCode::OK);
     assert!(response["result"]["capabilities"]["tools"].is_object());
     assert!(response["result"]["capabilities"]["events"].is_null());
+    assert_eq!(
+        response["result"]["instructions"],
+        cccc_mcp::CAPABILITY_INSTRUCTIONS
+    );
     fixture.close().await;
 }
 

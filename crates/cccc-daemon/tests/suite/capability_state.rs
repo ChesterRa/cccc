@@ -8,6 +8,464 @@ const SELF_EVOLUTION_CAPABILITY_ID: &str = "skill:cccc:self-evolution";
 const LEGACY_SELF_EVOLUTION_CAPABILITY_ID: &str = "skill:agent_self_proposed:cccc-self-evolution";
 
 #[test]
+fn capability_projections_share_member_policy_and_keep_discovery_body_free() {
+    use cccc_core::capabilities::CapabilityStore;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let mut group = groups.create("projection", "").expect("group");
+    let mut native = cccc_contracts::Actor::new("native");
+    native.external_session_id = "fixture-session".into();
+    let mut web = cccc_contracts::Actor::new("web");
+    web.runtime = cccc_contracts::ActorRuntime::GrokWebModel;
+    group.actors.extend([native, web]);
+    groups.save(&group).expect("actors");
+    let store = CapabilityStore::new(home.clone());
+    let mcp = "mcp:test:projection";
+    let skill = "skill:test:projection";
+    store.import_record(json!({"capability_id":mcp,"kind":"mcp_toolpack","name":"Fixture MCP",
+        "description_short":"English description","source_uri":"https://fixture:private-source@example.test/?key=private-query",
+        "install_mode":"remote_only","install_spec":{"url":"https://example.test/mcp","bearer_token":"fixture-private-token"},
+        "use_when":["first use", "second use"],"avoid_when":[],"gotchas":[],
+        "support":{"form":"remote_http","runs_on":"daemon_host","auth":"none","prerequisites":[],"limitations":[]},
+        "l10n":{"zh":{"description_short":"中文说明","use_when":["第一个场景","第二个场景"]}}})).expect("MCP");
+    store
+        .import_record(
+            json!({"capability_id":skill,"kind":"skill","name":"Fixture skill",
+        "capsule_text":"complete private rules\n".repeat(200),
+        "support":{"form":"text_skill","runs_on":"actor_tools","auth":"none",
+            "prerequisites":["member shell and browser"],"limitations":[]}}),
+        )
+        .expect("skill");
+    store
+        .set_enabled_for(mcp, true, &group.group_id, "native", "actor", 3600)
+        .expect("binding");
+    cccc_core::fs::write_json(
+        &home.root().join("state/capabilities/runtime.json"),
+        &json!({
+            "actor_instances":{group.group_id.clone():{
+                "native":{mcp:{"state":"verified","updated_at":"2026-11-12T16:00:00Z"}},
+                "web":{mcp:{"last_call":{"at":"2026-11-12T16:00:01Z","ok":false}}}
+            }}
+        }),
+    )
+    .expect("historical call state");
+
+    let search = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"native","query":mcp}),
+    );
+    let summary = &search["capabilities"][0];
+    assert!(summary.get("capsule_text").is_none());
+    assert_eq!(summary["use_when"], json!(["first use"]));
+    assert_eq!(summary["for_you"]["availability"], "compatible");
+    assert_eq!(summary["for_you"]["enabled"], true);
+    assert_eq!(summary["source_uri"], "https://example.test/");
+    assert!(
+        summary.get("avoid_when").is_none(),
+        "unreviewed user notes are not release notes"
+    );
+    let published = store
+        .catalog()
+        .expect("catalog")
+        .into_iter()
+        .find(|capability| capability.is_release_recommendation())
+        .expect("release entry");
+    let published_search = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"native","query":published.id}),
+    );
+    assert_eq!(
+        published_search["capabilities"][0]["avoid_when"],
+        published.metadata["avoid_when"]
+    );
+    assert!(published_search["capabilities"][0].get("gotchas").is_none());
+    assert!(
+        published_search["capabilities"][0]
+            .get("capsule_text")
+            .is_none()
+    );
+
+    let overview = call(
+        &home,
+        "capability_overview",
+        json!({"group_id":group.group_id,"locale":"zh-CN","query":mcp}),
+    );
+    let row = &overview["items"][0];
+    assert_eq!(row["description_short"], "中文说明");
+    assert_eq!(row["use_when"], json!(["第一个场景", "第二个场景"]));
+    assert!(!row.to_string().contains("fixture-private-token"));
+    let members = row["members"].as_array().expect("members");
+    let native = members
+        .iter()
+        .find(|row| row["actor_id"] == "native")
+        .expect("native");
+    let web = members
+        .iter()
+        .find(|row| row["actor_id"] == "web")
+        .expect("web");
+    assert_eq!(native["enabled_scope"], "actor");
+    assert_eq!(
+        native["last_call"],
+        Value::Null,
+        "old updated_at is not a call receipt"
+    );
+    assert_eq!(web["availability"], "unsupported");
+    assert_eq!(web["last_call"]["ok"], false);
+
+    store
+        .set_enabled_for(mcp, true, &group.group_id, "native", "group", 3600)
+        .expect("group binding");
+    store
+        .set_enabled_for(mcp, true, &group.group_id, "native", "session", 3600)
+        .expect("session binding");
+    let scopes = call(
+        &home,
+        "capability_overview",
+        json!({"group_id":group.group_id,"query":mcp}),
+    );
+    assert_eq!(scopes["items"][0]["group_enabled"], true);
+    let native = scopes["items"][0]["members"]
+        .as_array()
+        .expect("members")
+        .iter()
+        .find(|row| row["actor_id"] == "native")
+        .expect("native");
+    assert_eq!(native["enabled_scope"], "session");
+    assert_eq!(
+        native["enabled_scopes"],
+        json!(["session", "actor", "group"])
+    );
+    for (id, record, expected, reasons) in [
+        (
+            "mcp:test:old-format",
+            json!({"install_mode":"remote_only","install_spec":{"url":"https://example.test/mcp"}}),
+            "compatible",
+            json!([]),
+        ),
+        (
+            "mcp:test:no-executable",
+            json!({"install_mode":"command","install_spec":{"command_candidates":[["cccc-fixture-executable-not-installed-6f214e"]]}}),
+            "needs_setup",
+            json!(["missing_daemon_executable"]),
+        ),
+        (
+            "mcp:test:missing-environment",
+            json!({"install_mode":"command","required_env":["CCCC_FIXTURE_MISSING_ENV_4610"],
+                "install_spec":{"command_candidates":[[std::env::current_exe().expect("test binary")]],
+                    "required_env":["CCCC_FIXTURE_MISSING_ENV_4610"]}}),
+            "needs_setup",
+            json!(["missing_daemon_environment"]),
+        ),
+        (
+            "mcp:test:bearer",
+            json!({"support":{"form":"remote_http","auth":"bearer"}}),
+            "unsupported",
+            json!(["credential_route_not_supported"]),
+        ),
+    ] {
+        let mut record = record;
+        record["capability_id"] = json!(id);
+        record["kind"] = json!("mcp_toolpack");
+        record["name"] = json!(id);
+        store.import_record(record).expect("compatibility fixture");
+        let found = call(
+            &home,
+            "capability_search",
+            json!({"group_id":group.group_id,"by":"native","query":id}),
+        );
+        let for_you = &found["capabilities"][0]["for_you"];
+        assert_eq!(for_you["availability"], expected, "{id}: {for_you}");
+        assert_eq!(for_you["reason_codes"], reasons, "{id}");
+    }
+
+    let skill_search = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"web","query":skill}),
+    );
+    assert_eq!(
+        skill_search["capabilities"][0]["for_you"]["availability"], "unknown",
+        "a Web Model can have shell tools; its actual browser prerequisites are unknown"
+    );
+    let full = call(
+        &home,
+        "capability_tool_call",
+        json!({"group_id":group.group_id,"by":"user","capability_id":skill}),
+    );
+    assert_eq!(
+        full["capability"]["capsule_text"],
+        "complete private rules\n".repeat(200)
+    );
+    let skill_overview = call(
+        &home,
+        "capability_overview",
+        json!({"group_id":group.group_id,"query":skill}),
+    );
+    assert!(skill_overview["items"][0].get("capsule_text").is_none());
+
+    store
+        .set_blocked_for(mcp, true, &group.group_id, "fixture policy", "user", 0)
+        .expect("group policy");
+    let blocked = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"native","query":mcp}),
+    );
+    assert_eq!(blocked["capabilities"][0]["for_you"]["blocked"], true);
+    assert_eq!(
+        blocked["capabilities"][0]["for_you"]["availability"], "compatible",
+        "policy does not rewrite technical compatibility"
+    );
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"by":"native","actor_id":"native"}),
+    );
+    assert!(
+        !state["enabled_capabilities"]
+            .as_array()
+            .expect("enabled")
+            .contains(&json!(mcp))
+    );
+    assert!(
+        state["recommended"]
+            .as_array()
+            .expect("release recommendations")
+            .iter()
+            .all(|item| item.get("capsule_text").is_none())
+    );
+    assert_eq!(
+        state["recommended"]
+            .as_array()
+            .expect("release recommendations")
+            .iter()
+            .map(|item| item["capability_id"].clone())
+            .collect::<Vec<_>>(),
+        cccc_core::capability_recommendations::records()
+            .expect("release records")
+            .iter()
+            .map(|record| record["capability_id"].clone())
+            .collect::<Vec<_>>(),
+        "recommendations keep the manifest's order, not the catalog's ID order"
+    );
+    assert_eq!(
+        state["domains"].as_array().expect("domains").len(),
+        cccc_core::capability_recommendations::domains("en")
+            .expect("release domains")
+            .len()
+    );
+    let removed = state["recommended"][0]["capability_id"]
+        .as_str()
+        .expect("published id");
+    store
+        .uninstall_for_group(removed, &group.group_id)
+        .expect("remove published recommendation from this Group");
+    let after = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"by":"native","actor_id":"native"}),
+    );
+    assert!(
+        after["recommended"]
+            .as_array()
+            .expect("recommendations")
+            .iter()
+            .all(|item| item["capability_id"] != removed)
+    );
+}
+
+#[test]
+fn recommended_browse_preserves_catalog_search_and_uses_member_projection_without_mutation() {
+    use cccc_core::capabilities::CapabilityStore;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let mut group = groups.create("browse recommendations", "").expect("group");
+    group.actors.push(cccc_contracts::Actor::new("m1"));
+    groups.save(&group).expect("actor");
+    let store = CapabilityStore::new(home.clone());
+    let private = "skill:private:catalog";
+    let overridden = "skill:recommended:knowledge-synthesis";
+    let enabled = "skill:recommended:source-driven-development";
+    let blocked = "mcp:recommended:exa";
+    let removed = "mcp:recommended:parallel-search";
+    // A private catalog can predate release recommendations; current imports protect those IDs.
+    let records = [private, overridden]
+        .into_iter()
+        .map(|id| {
+            (
+                id.to_owned(),
+                json!({"capability_id":id,"kind":"skill","name":id,
+                    "capsule_text":"PRIVATE_RULES_NOT_FOR_DISCOVERY"}),
+            )
+        })
+        .collect::<Map<String, Value>>();
+    cccc_core::fs::write_json(
+        &home.root().join("state/capabilities/catalog.json"),
+        &json!({"records":records}),
+    )
+    .expect("pre-existing private catalog");
+    store
+        .set_enabled_for(enabled, true, &group.group_id, "m1", "actor", 3600)
+        .expect("enabled skill");
+    store
+        .set_blocked_for(blocked, true, &group.group_id, "fixture block", "user", 0)
+        .expect("blocked recommendation");
+    store
+        .uninstall_for_group(removed, &group.group_id)
+        .expect("removed recommendation");
+    let snapshot = || {
+        ["state.json", "runtime.json"]
+            .map(|name| std::fs::read(home.root().join("state/capabilities").join(name)).ok())
+    };
+    let before = snapshot();
+    let all = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"m1"}),
+    );
+    let explicitly_all = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"m1","recommended":false}),
+    );
+    assert_eq!(all, explicitly_all);
+    // Some clients send unused optional fields as null; that is not a browse request.
+    let null_as_absent = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"m1","recommended":null}),
+    );
+    assert_eq!(all, null_as_absent);
+    let all_rows = all["capabilities"].as_array().expect("all capabilities");
+    for id in [private, overridden, "pack:group-runtime", blocked] {
+        assert!(all_rows.iter().any(|row| row["id"] == id), "{id}");
+    }
+    let browse = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"m1","recommended":true}),
+    );
+    let rows = browse["capabilities"].as_array().expect("recommendations");
+    let expected = cccc_core::capability_recommendations::records()
+        .expect("manifest")
+        .iter()
+        .map(|row| row["capability_id"].as_str().expect("id").to_owned())
+        .filter(|id| ![overridden, blocked, removed].contains(&id.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.iter()
+            .map(|row| row["id"].as_str().expect("id").to_owned())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row["id"] == enabled && row["for_you"]["enabled"] == true),
+        "browsing keeps skills the member has already enabled"
+    );
+    for row in rows {
+        assert_eq!(row["content_origin"], "release_recommendation");
+        assert!(row.get("capsule_text").is_none());
+        assert_eq!(
+            Some(row),
+            all_rows
+                .iter()
+                .find(|candidate| candidate["id"] == row["id"]),
+            "browsing reuses the complete search summary"
+        );
+    }
+    assert!(
+        !serde_json::to_string(&browse)
+            .expect("browse JSON")
+            .contains("PRIVATE_RULES_NOT_FOR_DISCOVERY")
+    );
+    let ordinary_query = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"m1","query":enabled}),
+    );
+    let narrowed = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"m1","query":enabled,"recommended":true}),
+    );
+    assert_eq!(narrowed, ordinary_query);
+    assert_eq!(
+        narrowed["capabilities"]
+            .as_array()
+            .expect("one result")
+            .len(),
+        1
+    );
+    let none = call(
+        &home,
+        "capability_search",
+        json!({"group_id":group.group_id,"by":"m1","query":private,"recommended":true}),
+    );
+    assert_eq!(none["capabilities"], json!([]));
+    assert_eq!(
+        snapshot(),
+        before,
+        "browsing does not install or change enablement"
+    );
+}
+
+#[test]
+fn recommended_browse_requires_a_boolean_option() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    for invalid in [json!("true"), json!(1)] {
+        let result = response(&home, "capability_search", json!({"recommended":invalid}));
+        assert!(!result.ok);
+        assert_eq!(result.error.expect("error").code, "invalid_args");
+    }
+}
+
+#[test]
+fn skill_import_preserves_complete_rules_and_rejects_an_oversized_update() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("full rules", "")
+        .expect("group");
+    let id = "skill:manual:complete-rules";
+    let text = format!(
+        "\n# Procedure\n{}\n# Verification\nKeep the final safety check.\n\n",
+        "检查一次具体结果。\n".repeat(500)
+    );
+    let args = |text: &str| {
+        json!({"group_id":group.group_id,"by":"user","probe":false,
+        "record":{"capability_id":id,"kind":"skill","capsule_text":text}})
+    };
+    call(&home, "capability_import", args(&text));
+    let read = || {
+        call(
+            &home,
+            "capability_tool_call",
+            json!({"group_id":group.group_id,"capability_id":id,"by":"user"}),
+        )["capability"]["capsule_text"]
+            .clone()
+    };
+    assert_eq!(read(), json!(text));
+    let rejected = response(
+        &home,
+        "capability_import",
+        args(&"x".repeat(2 * 1024 * 1024 + 1)),
+    );
+    assert!(!rejected.ok);
+    assert_eq!(
+        rejected.error.expect("oversized error").code,
+        "capability_import_invalid"
+    );
+    assert_eq!(read(), json!(text));
+}
+
+#[test]
 fn user_authority_gets_group_controls_without_widening_actor_core_tools() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -350,8 +808,13 @@ fn legacy_registered_skills_are_projected_for_slash_commands() {
         "capability_overview",
         json!({"kind":"skill","limit":80,"offset":0}),
     );
-    assert_eq!(overview["total_count"], 2);
-    assert_eq!(overview["kind_counts"]["skill"], 2);
+    let published_skills = cccc_core::capability_recommendations::catalog()
+        .expect("release catalog")
+        .iter()
+        .filter(|item| item.kind == "skill")
+        .count();
+    assert_eq!(overview["total_count"], 2 + published_skills);
+    assert_eq!(overview["kind_counts"]["skill"], 2 + published_skills);
     let review = overview["items"]
         .as_array()
         .expect("overview items")
@@ -492,10 +955,13 @@ fn legacy_skillsmp_search_snapshots_are_not_recommended_or_deleted() {
         json!({"group_id":group.group_id,"query":"skill:test:old"}),
     );
     assert_eq!(search["capabilities"][0]["sync_state"], "imported");
-    assert_eq!(
-        search["capabilities"][0]["capsule_text"],
-        "user supplied content"
+    assert!(search["capabilities"][0].get("capsule_text").is_none());
+    let full = call(
+        &home,
+        "capability_tool_call",
+        json!({"group_id":group.group_id,"by":"user","capability_id":"skill:test:old"}),
     );
+    assert_eq!(full["capability"]["capsule_text"], "user supplied content");
     let overview = call(
         &home,
         "capability_overview",
@@ -1578,7 +2044,13 @@ fn capability_import_normalizes_qualification_and_preserves_valid_record_on_reje
         .expect("catalog")
         .expect("preserved record");
     assert_eq!(stored["name"], "Review Flow");
-    assert_eq!(stored["capsule_text"], capsule.trim_end());
+    assert_eq!(stored["capsule_text"], capsule);
+    let editable = call(
+        &home,
+        "capability_overview",
+        json!({"group_id":group.group_id,"query":capability_id}),
+    );
+    assert_eq!(editable["items"][0]["capsule_text"], capsule);
 }
 
 #[test]
@@ -1618,6 +2090,37 @@ fn capability_import_rejects_missing_skill_capsule_and_wrong_self_proposed_names
         wrong_namespace.error.expect("namespace rejection").code,
         "capability_import_invalid"
     );
+    assert!(!home.root().join("state/capabilities/catalog.json").exists());
+}
+
+#[test]
+fn capability_import_rejects_a_support_field_that_is_not_an_object() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("capability support validation", "")
+        .expect("group");
+
+    // Later reads write `support.form` into the record; a string or list there would make
+    // every overview and search that meets the record fail.
+    for support in [json!("stdio"), json!(["stdio"])] {
+        let rejected = response(
+            &home,
+            "capability_import",
+            json!({
+                "group_id":group.group_id,"by":"user","probe":false,
+                "record":{
+                    "capability_id":"skill:manual:shaped","kind":"skill",
+                    "capsule_text":"Procedure only.","support":support
+                }
+            }),
+        );
+        assert_eq!(
+            rejected.error.expect("support shape rejection").code,
+            "capability_import_invalid"
+        );
+    }
     assert!(!home.root().join("state/capabilities/catalog.json").exists());
 }
 

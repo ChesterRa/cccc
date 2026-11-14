@@ -23,16 +23,49 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let limit = usize_arg(request, "limit", 400, 2_000);
     let catalog = store.catalog().map_err(OpError::io)?;
     let removed = store.removed_for_group(&group_id).map_err(OpError::io)?;
+    let group = if group_id.is_empty() {
+        None
+    } else {
+        cccc_core::GroupStore::new(home.clone())
+            .map_err(OpError::io)?
+            .load(&group_id)
+            .ok()
+    };
+    let projection = super::projection::Projection::new(home, &store, &group_id, group.as_ref())?;
+    let locale = string_arg(request, "locale").unwrap_or_else(|| "en".into());
+    let known_groups = cccc_core::GroupStore::new(home.clone())
+        .map_err(OpError::io)?
+        .list()
+        .map_err(OpError::io)?
+        .into_iter()
+        .map(|group| group.group_id)
+        .collect();
+    let matching = store
+        .search(&query)
+        .map_err(OpError::io)?
+        .into_iter()
+        .map(|capability| capability.id)
+        .collect::<std::collections::BTreeSet<_>>();
 
     let mut rows = catalog
         .iter()
-        .filter(|capability| !removed.contains(&capability.id))
+        .filter(|capability| !removed.contains(&capability.id) && matching.contains(&capability.id))
         .cloned()
         .map(|capability| {
             let blocked = effective.blocked.contains(&capability.id);
-            overview_row(capability, blocked)
+            let detail = projection.detail(&capability, "user", &locale, &known_groups);
+            let global_blocked = state.blocked.contains(&capability.id);
+            let mut row = overview_row(
+                cccc_core::capability_recommendations::localized(&capability, &locale),
+                blocked,
+            );
+            row.as_object_mut()
+                .expect("overview row")
+                .extend(detail.as_object().expect("detail").clone());
+            row["blocked_global"] = json!(global_blocked);
+            row["blocked_group"] = json!(blocked && !global_blocked);
+            row
         })
-        .filter(|row| overview_matches(row, &query))
         .collect::<Vec<_>>();
 
     let mut kind_counts = BTreeMap::from([("skill", 0usize), ("mcp", 0), ("pack", 0)]);
@@ -44,11 +77,23 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
     rows.retain(|row| matches_filters(row, &kind_filter, &policy_filter, &source_filter));
     rows.sort_by(|left, right| {
-        row_name(left).cmp(&row_name(right)).then_with(|| {
-            left["capability_id"]
-                .as_str()
-                .cmp(&right["capability_id"].as_str())
-        })
+        let priority = |row: &Value| {
+            (
+                !(row["capability_id"]
+                    .as_str()
+                    .is_some_and(|id| id.to_lowercase() == query)
+                    || row_name(row) == query),
+                row["content_origin"] != "release_recommendation",
+            )
+        };
+        priority(left)
+            .cmp(&priority(right))
+            .then_with(|| row_name(left).cmp(&row_name(right)))
+            .then_with(|| {
+                left["capability_id"]
+                    .as_str()
+                    .cmp(&right["capability_id"].as_str())
+            })
     });
 
     let total_count = rows.len();
@@ -61,7 +106,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let blocked_capabilities = effective
         .blocked
         .iter()
-        .map(|id| json!({"capability_id":id,"scope":"global"}))
+        .map(|id| json!({"capability_id":id,"scope":if state.blocked.contains(id){"global"}else{"group"}}))
         .collect::<Vec<_>>();
 
     object(json!({
@@ -75,6 +120,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "kind_counts":kind_counts,
         "sources":sources,
         "blocked_capabilities":blocked_capabilities,
+        "domains":cccc_core::capability_recommendations::domains(&locale).map_err(OpError::io)?,
     }))
 }
 
@@ -94,7 +140,7 @@ fn overview_row(capability: Capability, blocked: bool) -> Value {
     };
     let enable_supported = capability.enable_supported && qualification_status != "blocked";
     let tool_count = capability.tool_names.len();
-    json!({
+    let mut row = json!({
         "capability_id":capability.id,
         "kind":kind,
         "name":capability.name,
@@ -104,7 +150,6 @@ fn overview_row(capability: Capability, blocked: bool) -> Value {
         "sync_state":capability.sync_state,
         "legacy_search_unverified":legacy_search_unverified,
         "tags":capability.tags,
-        "capsule_text":capability.capsule_text,
         "tool_names":capability.tool_names,
         "tool_count":tool_count,
         "blocked_global":blocked,
@@ -112,7 +157,11 @@ fn overview_row(capability: Capability, blocked: bool) -> Value {
         "enable_supported":enable_supported,
         "autoload_candidate":!blocked && enable_supported,
         "qualification_status":qualification_status,
-    })
+    });
+    if capability.source == "agent_self_proposed" {
+        row["capsule_text"] = json!(capability.capsule_text);
+    }
+    row
 }
 
 fn inferred_kind(id: &str) -> &'static str {
@@ -144,21 +193,6 @@ fn matches_filters(row: &Value, kind: &str, policy: &str, source: &str) -> bool 
             "actionable" => !row["blocked_global"].as_bool().unwrap_or(false),
             _ => true,
         }
-}
-
-fn overview_matches(row: &Value, query: &str) -> bool {
-    query.is_empty()
-        || ["capability_id", "name", "description_short", "source_id"]
-            .iter()
-            .filter_map(|key| row.get(key).and_then(Value::as_str))
-            .chain(
-                row.get("tags")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str),
-            )
-            .any(|value| value.to_lowercase().contains(query))
 }
 
 fn source_counts(catalog: &[Capability]) -> BTreeMap<String, Value> {

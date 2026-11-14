@@ -11,7 +11,7 @@ mod inspection;
 pub(crate) use inspection::{SetupInspection, inspect};
 
 const MARKER: &str = "CCCC local session connection";
-const PLUGIN: &str = "cccc-local-sessions@cccc-local";
+const PLUGIN: &str = cccc_core::local_sessions::CLAUDE_PLUGIN_ID;
 
 const RESTART_REQUIRED: &str = "This running CCCC executable was replaced or removed. Restart CCCC before running setup again. No provider configuration was changed";
 

@@ -185,7 +185,7 @@ where
     })?
 }
 
-fn block_on_managed<F>(future: F) -> F::Output
+pub(super) fn block_on_managed<F>(future: F) -> F::Output
 where
     F: Future + Send,
     F::Output: Send,

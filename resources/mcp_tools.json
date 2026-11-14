@@ -1578,7 +1578,7 @@
   },
   {
     "name": "cccc_capability_search",
-    "description": "Search the configured local and built-in capability registry. Returns matching capabilities without enabling, installing or executing them. Unverified historical SkillsMP search snapshots are excluded; saved records and existing bindings are not changed.",
+    "description": "Find optional skills and MCP tools for the task at hand, such as research with cited sources, current web facts, papers, reading office files, spreadsheets, data checks, contract redlines, public repository questions and code that must match a library's version. Set recommended=true to browse CCCC's recommended entries for you without guessing a word. Otherwise search the local catalog, built-in packs and release recommendations by name or a short word; each space-separated term must appear in an entry (case-insensitive), and an empty query lists the whole catalog. Consider ones that fill a gap or improve quality or efficiency; keep your existing tools when the added option does not help. Returns summaries with use cases, cases to avoid, requirements, verification and suitability for you, without enabling, installing or executing them. Skill bodies and full tool schemas are not included; use cccc_capability_use with an exact capability_id for complete skill rules. Unverified historical SkillsMP search snapshots are excluded; saved records and existing bindings are unchanged.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1592,7 +1592,13 @@
         },
         "query": {
           "type": "string",
+          "description": "A capability or tool name, or one short word such as a file type; each space-separated term must appear in the entry (case-insensitive).",
           "default": ""
+        },
+        "recommended": {
+          "type": "boolean",
+          "description": "true lists CCCC's recommended entries for you, at most ten: blocked entries and ones known not to work for you are left out; entries that still need setup are listed with their requirements. A query narrows them as usual.",
+          "default": false
         }
       },
       "required": []
@@ -1795,7 +1801,7 @@
   },
   {
     "name": "cccc_capability_import",
-    "description": "Foreman/admin governance tool to import an agent-prepared normalized capability record (mcp_toolpack or skill). Alternatively pass source_uri for a GitHub skill repository; repositories containing multiple skills/*/SKILL.md files are expanded into one CCCC skill capability per SKILL.md and may be enabled together. Use source_id=agent_self_proposed and capability_id=skill:agent_self_proposed:<stable-slug> for low-risk autonomous capsule skill proposals. Self-proposed skills must include When to use, Avoid when, Procedure, Pitfalls, and Verification sections; reuse the same capability_id for updates instead of duplicating. record.source_id is optional; empty/unknown values are normalized to manual_import. Use dry_run before unclear-risk records or immediate enablement; reuse the same capability_id to update stale/incomplete/wrong self-proposed skills instead of duplicating; import results report scope/import_action/record_changed/already_active/active_after_import; import_action is the primary create/update/unchanged signal, while record_changed only compares an existing record; already_active is the pre-import binding and active_after_import is the post-import runnable binding; when active/readiness_preview.active, do not enable again; verify activation in capability_state and read the full capsule with cccc_capability_search; use scope=session for a temporary trial, scope=actor for cross-session reusable self-proposed skills, and scope=group only for shared team-wide behavior. Dry runs return readiness_preview; external capability actionability follows external capability safety mode.",
+    "description": "Foreman/admin governance tool to import an agent-prepared normalized capability record (mcp_toolpack or skill). Alternatively pass source_uri for a GitHub skill repository; repositories containing multiple skills/*/SKILL.md files are expanded into one CCCC skill capability per SKILL.md and may be enabled together. Use source_id=agent_self_proposed and capability_id=skill:agent_self_proposed:<stable-slug> for low-risk autonomous capsule skill proposals. Self-proposed skills must include When to use, Avoid when, Procedure, Pitfalls, and Verification sections; reuse the same capability_id for updates instead of duplicating. record.source_id is optional; empty/unknown values are normalized to manual_import. Use dry_run before unclear-risk records or immediate enablement; reuse the same capability_id to update stale/incomplete/wrong self-proposed skills instead of duplicating; import results report scope/import_action/record_changed/already_active/active_after_import; import_action is the primary create/update/unchanged signal, while record_changed only compares an existing record; already_active is the pre-import binding and active_after_import is the post-import runnable binding; when active/readiness_preview.active, do not enable again; verify activation in capability_state and read the full capsule with cccc_capability_use(capability_id=...); use scope=session for a temporary trial, scope=actor for cross-session reusable self-proposed skills, and scope=group only for shared team-wide behavior. Dry runs return readiness_preview; external capability actionability follows external capability safety mode.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2046,7 +2052,7 @@
   },
   {
     "name": "cccc_capability_use",
-    "description": "Use an existing capability: enable it and optionally call one target tool. This is the preferred path for built-in capability pack tools that may be hidden from tools/list. For skill:* capabilities this activates the skill and returns its rules in capsule_text, ready to follow; it is not a local package install. Use scope=session for temporary activation and scope=actor for reuse by the selected actor; group scope requires foreman. If a capability that adds tools returns activation_pending, relist/reconnect before claiming success; inspect diagnostics/resolution_plan for blockers.",
+    "description": "Use an optional skill or MCP capability, usually one found with cccc_capability_search, by its exact capability_id or an unambiguous tool name: enable it and optionally call one target tool. For an external MCP with an explicit capability_id, tool_name accepts its real name or its advertised cccc_ext_ name. This is the preferred path for built-in capability pack tools that may be hidden from tools/list. For skill:* capabilities this activates the skill and returns its rules in capsule_text, ready to follow; it is not a local package install. For a release recommendation, every result also carries CCCC's notes in avoid_when, gotchas and requirements_summary; read them before following the text or relying on a tool result. Use scope=session for temporary activation and scope=actor for reuse by the selected actor; group scope requires foreman. If a capability that adds tools returns activation_pending, relist/reconnect before claiming success; inspect diagnostics/resolution_plan for blockers.",
     "inputSchema": {
       "type": "object",
       "properties": {

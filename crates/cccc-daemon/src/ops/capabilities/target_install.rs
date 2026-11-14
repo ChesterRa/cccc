@@ -191,15 +191,14 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     )
 }
 
-pub(super) fn enable(
-    home: &HomeLayout,
+/// Check policy and qualification before installation or credential discovery.
+pub(super) fn preflight_enable(
+    store: &CapabilityStore,
     group_id: &str,
     actor_id: &str,
     scope: &str,
-    ttl_seconds: i64,
     capability_id: &str,
-) -> Result<Map<String, Value>, OpError> {
-    let store = CapabilityStore::new(home.clone());
+) -> Result<Option<Map<String, Value>>, OpError> {
     if let Some((blocked_scope, block)) = store
         .blocked_for_group(capability_id, group_id)
         .map_err(OpError::io)?
@@ -215,7 +214,8 @@ pub(super) fn enable(
             "refresh_required":false,"reason":reason,
             "policy_level":"blocked","blocked_scope":blocked_scope,
             "blocked_reason":block.get("reason").and_then(Value::as_str).unwrap_or("")
-        }));
+        }))
+        .map(Some);
     }
     let builtin = CapabilityStore::builtin(capability_id);
     if let Some(builtin) = builtin {
@@ -226,8 +226,27 @@ pub(super) fn enable(
                     "qualification_status":builtin.qualification_status}),
             capability_id,
         )?;
-    } else if let Some(record) = store.catalog_record(capability_id).map_err(OpError::io)? {
+    } else if let Some(record) = store.resolved_record(capability_id).map_err(OpError::io)? {
         validate_enableable(&record, capability_id)?;
+    }
+    Ok(None)
+}
+
+pub(super) fn enable(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    scope: &str,
+    ttl_seconds: i64,
+    capability_id: &str,
+) -> Result<Map<String, Value>, OpError> {
+    let store = CapabilityStore::new(home.clone());
+    if let Some(blocked) = preflight_enable(&store, group_id, actor_id, scope, capability_id)? {
+        return Ok(blocked);
+    }
+    if CapabilityStore::builtin(capability_id).is_none()
+        && let Some(record) = store.resolved_record(capability_id).map_err(OpError::io)?
+    {
         package_install::ensure_installed(home, capability_id, &record)?;
     }
     let already_enabled = store

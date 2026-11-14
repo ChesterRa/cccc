@@ -210,8 +210,8 @@ the page reloads.
   app, an unsent draft there is lost.
 - Other browsers hand the same message to CCCC's service worker. Opening the
   notification then brings an open CCCC page forward and shows the message
-  there, or opens a page at it when none is open; other CCCC pages, such as
-  the Capability Center, are passed over. A page the browser reports as open
+  there, or opens a page at it when none is open; other CCCC pages that
+  cannot show it are passed over. A page the browser reports as open
   is not reloaded, so a draft there is kept. A page that wakes from the
   background still goes to the message if it hears of the click within about
   ten seconds; an older click arriving after a newer one is ignored. When the

@@ -5,7 +5,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { CapabilityCenterWorkspace } from "../../src/components/capabilities/CapabilityCenterWorkspace";
 
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (key: string) => key, i18n: { language: "en" } }),
+}));
 
 vi.mock("../../src/services/api", () => ({
   fetchCapabilityOverview: vi.fn(),
@@ -20,9 +22,7 @@ vi.mock("../../src/services/api", () => ({
 
 describe("CapabilityCenterWorkspace rendering", () => {
   it("keeps the empty details rail vertical-only", () => {
-    const html = renderToStaticMarkup(
-      <CapabilityCenterWorkspace isOpen groupId="g-demo" surface="page" />,
-    );
+    const html = renderToStaticMarkup(<CapabilityCenterWorkspace isOpen groupId="g-demo" />);
 
     expect(html).toContain("overflow-x-hidden");
     expect(html).toContain("overflow-y-auto");

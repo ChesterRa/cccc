@@ -2,9 +2,7 @@ use cccc_core::HomeLayout;
 use cccc_core::fs::{read_json, with_exclusive_lock, write_json};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::dispatch::OpError;
 
@@ -20,13 +18,32 @@ pub(super) fn ensure_installed(
     if let Some(artifact) = installed_artifact(home, capability_id)? {
         return Ok(Some(artifact));
     }
-    let artifact = if mode == "remote_only" {
-        install_remote(capability_id, record)?
-    } else {
-        install_stdio(capability_id, &mode, record)?
-    };
+    let artifact = prepare(capability_id, record)?;
     persist(home, capability_id, &artifact)?;
     Ok(Some(artifact))
+}
+
+/// Prepare without changing the active installation. Explicit updates commit
+/// their candidate together with every affected pointer in one state write.
+pub(super) fn prepare(capability_id: &str, record: &Value) -> Result<Value, OpError> {
+    let mode = text(record, "install_mode");
+    let mut artifact = match mode.as_str() {
+        "remote_only" => install_remote(capability_id, record)?,
+        "command" | "package" => install_stdio(capability_id, &mode, record)?,
+        _ => return Err(install_error("unsupported execution recipe")),
+    };
+    let fingerprint = super::recipe::fingerprint(record)?;
+    // Different recipes must not overwrite an older artifact still referenced
+    // elsewhere, even when they happen to resolve to the same command today.
+    let identity = Sha256::digest(format!(
+        "{capability_id}:{fingerprint}:{}",
+        artifact["invoker"]
+    ));
+    let artifact_id = format!("art_{identity:x}");
+    artifact["artifact_id"] = json!(artifact_id);
+    artifact["install_key"] = json!(artifact_id);
+    artifact["recipe_fingerprint"] = json!(fingerprint);
+    Ok(artifact)
 }
 
 fn install_stdio(capability_id: &str, mode: &str, record: &Value) -> Result<Value, OpError> {
@@ -34,10 +51,11 @@ fn install_stdio(capability_id: &str, mode: &str, record: &Value) -> Result<Valu
         .get("install_spec")
         .and_then(Value::as_object)
         .ok_or_else(|| install_error("install_spec is required"))?;
-    require_environment(record, spec)?;
+    require_environment(record)?;
     let command = resolve_command(mode, spec)?;
     ensure_command_available(&command[0])?;
-    let tools = probe_stdio(capability_id, &command)?;
+    let environment = required_environment_values(record);
+    let tools = probe_stdio(capability_id, &command, &environment)?;
     let installer = installer_name(&command[0], mode);
     Ok(artifact(
         capability_id,
@@ -46,6 +64,18 @@ fn install_stdio(capability_id: &str, mode: &str, record: &Value) -> Result<Valu
         json!({"type":if mode=="command"{"command_stdio"}else{"package_stdio"},"command":command}),
         tools,
     ))
+}
+
+/// Read inherited values only when starting a probe or call; artifacts retain no values.
+pub(super) fn required_environment_values(record: &Value) -> Map<String, Value> {
+    required_environment_names(record)
+        .into_iter()
+        .filter_map(|name| {
+            std::env::var(&name)
+                .ok()
+                .map(|value| (name, Value::String(value)))
+        })
+        .collect()
 }
 
 fn install_remote(capability_id: &str, record: &Value) -> Result<Value, OpError> {
@@ -59,12 +89,28 @@ fn install_remote(capability_id: &str, record: &Value) -> Result<Value, OpError>
         .map(str::trim)
         .filter(|value| value.starts_with("http://") || value.starts_with("https://"))
         .ok_or_else(|| install_error("remote MCP URL must use http or https"))?;
-    let tools = probe_http(capability_id, url)?;
+    let credential = if super::credentials::bearer(record) {
+        let env = super::credentials::env_name(record).ok_or_else(|| {
+            install_error("Bearer MCP requires a valid environment-key reference")
+        })?;
+        Some(json!({"kind":"bearer","env":env}))
+    } else {
+        None
+    };
+    let tools = if credential.is_some() {
+        Vec::new()
+    } else {
+        probe_http(capability_id, url)?
+    };
+    let mut invoker = json!({"type":"remote_http","url":url});
+    if let Some(credential) = credential {
+        invoker["credential"] = credential;
+    }
     Ok(artifact(
         capability_id,
         "remote_only",
         "remote_http",
-        json!({"type":"remote_http","url":url}),
+        invoker,
         tools,
     ))
 }
@@ -143,131 +189,33 @@ fn resolve_command(mode: &str, spec: &Map<String, Value>) -> Result<Vec<String>,
     }
 }
 
-fn probe_stdio(capability_id: &str, command: &[String]) -> Result<Vec<Value>, OpError> {
-    let mut child = Command::new(&command[0])
-        .args(&command[1..])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(install_error)?;
-    let requests = [
-        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cccc-capability-runtime","version":"1.0"}}}),
-        json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
-        json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
-    ];
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| install_error("stdio stdin unavailable"))?;
-    for request in requests {
-        serde_json::to_writer(&mut stdin, &request).map_err(install_error)?;
-        stdin.write_all(b"\n").map_err(install_error)?;
-    }
-    drop(stdin);
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| install_error("stdio stdout unavailable"))?;
-    let reader = std::thread::spawn(move || {
-        BufReader::new(stdout)
-            .lines()
-            .map_while(Result::ok)
-            .collect::<Vec<_>>()
-    });
-    let timeout = timeout();
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(install_error(format!(
-                    "MCP tools/list timed out after {}s",
-                    timeout.as_secs()
-                )));
-            }
-            Err(error) => return Err(install_error(error)),
-        }
-    }
-    let lines = reader.join().unwrap_or_default();
-    let response = lines
-        .iter()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .find(|value| value["id"] == 2)
-        .ok_or_else(|| install_error("MCP tools/list returned no response"))?;
-    if let Some(error) = response.get("error") {
-        return Err(install_error(format!("MCP tools/list failed: {error}")));
-    }
-    Ok(normalize_tools(
-        capability_id,
-        response.pointer("/result/tools"),
-    ))
+pub(super) fn prerequisites_available(record: &Value) -> bool {
+    let Some(spec) = record.get("install_spec").and_then(Value::as_object) else {
+        return false;
+    };
+    resolve_command(&text(record, "install_mode"), spec)
+        .ok()
+        .and_then(|command| command.into_iter().next())
+        .is_some_and(|command| command_available(&command))
+}
+
+fn probe_stdio(
+    capability_id: &str,
+    command: &[String],
+    environment: &Map<String, Value>,
+) -> Result<Vec<Value>, OpError> {
+    let tools = super::mcp_stdio::list_tools(command, environment, timeout())
+        .map_err(|error| install_error(error.message))?;
+    Ok(normalize_tools(capability_id, Some(&Value::Array(tools))))
 }
 
 fn probe_http(capability_id: &str, url: &str) -> Result<Vec<Value>, OpError> {
-    let mut builder = reqwest::blocking::Client::builder()
-        .timeout(timeout())
-        .redirect(reqwest::redirect::Policy::none());
-    if reqwest::Url::parse(url).is_ok_and(|url| cccc_core::local_network::is_loopback_url(&url)) {
-        builder = builder.no_proxy();
-    }
-    let client = builder.build().map_err(install_error)?;
-    let initialize = client
-        .post(url)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cccc-capability-runtime","version":"1.0"}}}))
-        .send()
-        .map_err(install_error)?;
-    if !initialize.status().is_success() {
-        return Err(install_error(format!(
-            "remote MCP initialize returned {}",
-            initialize.status()
-        )));
-    }
-    let session = initialize
-        .headers()
-        .get("Mcp-Session-Id")
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
-    let mut initialized = client
-        .post(url)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .json(&json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}));
-    if let Some(session) = session.as_ref() {
-        initialized = initialized.header("Mcp-Session-Id", session);
-    }
-    let initialized = initialized.send().map_err(install_error)?;
-    if !initialized.status().is_success() {
-        return Err(install_error(format!(
-            "remote MCP initialized notification returned {}",
-            initialized.status()
-        )));
-    }
-    let mut request = client
-        .post(url)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
-    if let Some(session) = session {
-        request = request.header("Mcp-Session-Id", session);
-    }
-    let response = request.send().map_err(install_error)?;
-    let status = response.status();
-    let value = response.json::<Value>().map_err(install_error)?;
-    if !status.is_success() || value.get("error").is_some() {
-        return Err(install_error(format!(
-            "remote MCP tools/list failed: {status} {value}"
-        )));
-    }
-    Ok(normalize_tools(
-        capability_id,
-        value.pointer("/result/tools"),
-    ))
+    let tools = super::mcp_http::list_tools(url, timeout())
+        .map_err(|error| install_error(error.message))?;
+    Ok(normalize_tools(capability_id, Some(&Value::Array(tools))))
 }
 
-fn normalize_tools(capability_id: &str, tools: Option<&Value>) -> Vec<Value> {
+pub(super) fn normalize_tools(capability_id: &str, tools: Option<&Value>) -> Vec<Value> {
     tools
         .and_then(Value::as_array)
         .into_iter()
@@ -277,13 +225,8 @@ fn normalize_tools(capability_id: &str, tools: Option<&Value>) -> Vec<Value> {
             if real.is_empty() {
                 return None;
             }
-            let digest = Sha256::digest(format!("{capability_id}:{real}"));
-            let safe = real
-                .chars()
-                .map(|character| if character.is_ascii_alphanumeric() { character } else { '_' })
-                .collect::<String>();
             Some(json!({
-                "name":format!("cccc_ext_{:02x}{:02x}{:02x}{:02x}_{safe}",digest[0],digest[1],digest[2],digest[3]),
+                "name":cccc_core::capabilities::external_tool_name(capability_id, real),
                 "real_tool_name":real,
                 "description":tool.get("description").and_then(Value::as_str).unwrap_or(""),
                 "inputSchema":tool.get("inputSchema").filter(|value| value.is_object()).cloned().unwrap_or_else(||json!({"type":"object","properties":{},"required":[]})),
@@ -331,7 +274,10 @@ fn persist(home: &HomeLayout, capability_id: &str, artifact: &Value) -> Result<(
     .map_err(OpError::io)
 }
 
-fn installed_artifact(home: &HomeLayout, capability_id: &str) -> Result<Option<Value>, OpError> {
+pub(super) fn installed_artifact(
+    home: &HomeLayout,
+    capability_id: &str,
+) -> Result<Option<Value>, OpError> {
     let path = home.root().join("state/capabilities/runtime.json");
     if !path.exists() {
         return Ok(None);
@@ -358,17 +304,30 @@ fn installed_artifact(home: &HomeLayout, capability_id: &str) -> Result<Option<V
         .cloned())
 }
 
-fn require_environment(record: &Value, spec: &Map<String, Value>) -> Result<(), OpError> {
-    let mut names = required_environment(spec);
+fn required_environment_names(record: &Value) -> Vec<String> {
+    let mut names = record
+        .get("install_spec")
+        .and_then(Value::as_object)
+        .map(required_environment)
+        .unwrap_or_default();
     if let Some(record) = record.as_object() {
         names.extend(required_environment(record));
     }
     names.sort();
     names.dedup();
-    let missing = names
+    names
+}
+
+/// Return key names only; suitability reads must never expose environment values.
+pub(super) fn missing_environment(record: &Value) -> Vec<String> {
+    required_environment_names(record)
         .into_iter()
-        .filter(|name| std::env::var(name).is_err())
-        .collect::<Vec<_>>();
+        .filter(|name| std::env::var(name).map_or(true, |value| value.trim().is_empty()))
+        .collect()
+}
+
+fn require_environment(record: &Value) -> Result<(), OpError> {
+    let missing = missing_environment(record);
     if missing.is_empty() {
         Ok(())
     } else {
@@ -573,35 +532,62 @@ mod tests {
         );
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["real_tool_name"], "create-issue");
+        assert_eq!(tools[0]["name"], "cccc_ext_b309fafe_create_issue");
+    }
+
+    #[test]
+    fn missing_required_environment_is_shared_with_installation() {
+        let record = json!({
+            "install_mode":"command",
+            "required_env":["CCCC_FIXTURE_MISSING_ENV_B_4610", "CCCC_FIXTURE_MISSING_ENV_A_4610"],
+            "install_spec":{
+                "command_candidates":[[std::env::current_exe().expect("test executable")]],
+                "required_env":[" CCCC_FIXTURE_MISSING_ENV_A_4610 "]
+            }
+        });
+        assert_eq!(
+            super::missing_environment(&record),
+            [
+                "CCCC_FIXTURE_MISSING_ENV_A_4610",
+                "CCCC_FIXTURE_MISSING_ENV_B_4610"
+            ]
+        );
+        let error = super::prepare("mcp:fixture:environment", &record)
+            .expect_err("missing environment must prevent starting the process");
+        assert_eq!(error.code, "capability_install_failed");
+        assert_eq!(
+            error.message,
+            "missing required environment: CCCC_FIXTURE_MISSING_ENV_A_4610, CCCC_FIXTURE_MISSING_ENV_B_4610"
+        );
         assert!(
-            tools[0]["name"]
-                .as_str()
-                .expect("synthetic tool name")
-                .ends_with("_create_issue")
+            super::missing_environment(&json!({
+                "required_env":["PATH"], "install_spec":{"required_env":[" PATH "]}
+            }))
+            .is_empty()
         );
     }
 
-    #[cfg(unix)]
     #[test]
     fn command_install_probes_and_persists_python_compatible_artifact() {
-        use std::os::unix::fs::PermissionsExt;
-
         let temp = tempfile::tempdir().expect("temp");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize home");
-        let probe = temp.path().join("probe-mcp.sh");
-        std::fs::write(
-            &probe,
-            "#!/bin/sh\nread initialize\nread list\nprintf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"echo\"}]}}'\n",
-        )
-        .expect("write probe");
-        let mut permissions = std::fs::metadata(&probe).expect("metadata").permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&probe, permissions).expect("executable");
+        let probe = temp.path().join("probe-mcp.py");
+        std::fs::write(&probe, super::super::mcp_stdio::STDIO_FIXTURE).expect("write probe");
+        let evidence = temp.path().join("evidence.jsonl");
+        let python = ["python3", "python"]
+            .into_iter()
+            .find(|name| {
+                std::process::Command::new(name)
+                    .arg("--version")
+                    .output()
+                    .is_ok_and(|output| output.status.success())
+            })
+            .expect("Python is required for the protocol fixture");
 
         let record = json!({
             "install_mode":"command",
-            "install_spec":{"command_candidates":[[probe.to_string_lossy()]]},
+            "install_spec":{"command_candidates":[[python,"-u",probe,"normal",evidence]]},
         });
         let artifact = ensure_installed(&home, "mcp:test", &record)
             .expect("install")

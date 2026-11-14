@@ -11,7 +11,7 @@ CCCC routes and shared-state reference, including the peer collaboration contrac
 - Promote/retry with `cccc_message_deliver`; a new claim wakes a paused/stopped Group; confirm `ambiguous` retries.
 - `cccc_inbox_read` consumes Mail; `cccc_message_history` inspects messages without changing Mail state.
 - Read shared truth with `cccc_context_get(detail="overview")` and open tasks with `cccc_task()`; reserve `cccc_agent_state` for cross-turn recovery.
-- Invoke known hidden tools with `cccc_capability_use`; search only when unknown.
+- When a capability could fill a gap or improve quality or efficiency, browse the recommended entries you might use with `cccc_capability_search(recommended=true)`; bootstrap's `recommended` lists them too, with when each fits and any setup it needs. Check its requirements and limitations, then use it with `cccc_capability_use`. Keep your existing tools when the added option does not help.
 
 If the client blocks a tool call, report the actual tool name and error. A host refusal is not evidence that CCCC executed the operation. Await user guidance before retrying that operation, including through a different tool.
 
@@ -98,8 +98,8 @@ an uncertain send, rather than creating another message.
 
 - `cccc_capability_use(tool_name="...", tool_arguments={...})` invokes hidden tools without exposing the full pack.
 - Hidden tools include `cccc_tracked_send`; pass their arguments in `tool_arguments`.
-- `cccc_capability_use(capability_id="skill:...")` returns that skill's rules in `capsule_text`, ready to follow.
-- Use `cccc_capability_search` only when the capability or tool name is unknown.
+- `cccc_capability_use(capability_id="skill:...")` returns that skill's rules in `capsule_text`, ready to follow; recommended entries also return CCCC's `gotchas` and `avoid_when`.
+- Browse recommended entries with `cccc_capability_search(recommended=true)`, or search by a name or one short word (for example `paper` or `xlsx`); each space-separated term must appear in an entry (case-insensitive), so every added term narrows the results. When you know the exact capability_id or an unambiguous tool name, call `cccc_capability_use` directly.
 - When a capability that adds tools reports `activation_pending` or `refresh_required=true`, relist or reconnect. On failure, inspect `diagnostics` and `resolution_plan`.
 - State, enablement, installation, cleanup, and governance are on demand; expose them only when needed.
 

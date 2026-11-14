@@ -13,6 +13,12 @@ const MAX_RECOVERY_CONSTRAINTS: usize = 6;
 const STALE_AFTER_SECONDS: i64 = 20 * 60;
 const MIND_HOT_ONLY_UPDATE_THRESHOLD: u64 = 3;
 const MAX_LISTED_SKILLS: usize = 8;
+const MAX_RECOMMENDED_ENTRIES: usize = 24;
+const MAX_RECOMMENDED_BYTES: usize = 3072;
+const MAX_USE_WHEN_CHARS: usize = 96;
+const MAX_REQUIREMENTS_CHARS: usize = 90;
+const RECOMMENDED_NOTE: &str = "Entries are optional; listing does not enable them. Search an exact ID with cccc_capability_search to check requirements and limitations before use. Use cccc_capability_use(capability_id=...) to enable an MCP or read a skill. Meet setup requirements first. Keep your own tools when they fit. Roles apply only to the stated use case.";
+const RECOMMENDED_SEARCH: &str = "cccc_capability_search(query=...) by name or a short word";
 
 pub(crate) async fn build(
     home: &HomeLayout,
@@ -105,7 +111,7 @@ pub(crate) async fn build(
     {
         payload["mail_pending"] = pending;
     }
-    // Bootstrap must survive a failed read; the agent only misses the list of skills.
+    // Bootstrap must survive a failed read; the agent only misses the capability lists.
     let capabilities = daemon(
         client,
         "capability_state",
@@ -113,8 +119,20 @@ pub(crate) async fn build(
     )
     .await
     .unwrap_or_default();
-    if let Some(skills) = available_skills(&capabilities) {
+    let skills = available_skills(&capabilities);
+    // A skill the agent already sees in available_skills is not listed twice.
+    let listed = skills
+        .as_ref()
+        .and_then(|skills| skills["skills"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|skill| skill["capability_id"].as_str().map(str::to_owned))
+        .collect::<HashSet<_>>();
+    if let Some(skills) = skills {
         payload["available_skills"] = skills;
+    }
+    if let Some(recommended) = recommended(&capabilities, &listed) {
+        payload["recommended"] = recommended;
     }
     crate::local_tools::revalidate(home, &args)?;
     Ok(payload)
@@ -157,6 +175,95 @@ fn available_skills(capabilities: &Map<String, Value>) -> Option<Value> {
         });
     }
     Some(result)
+}
+
+/// Every release recommendation this agent might use, one line each: its role, exact ID and
+/// first use case, and what it still needs. Blocked and unsupported entries are left out, and so
+/// are skills already in available_skills. needs_setup and unknown entries stay, marked with their
+/// requirements: an option the agent cannot use yet is still one it should know about. Pending
+/// entries come first, then primaries, then alternatives in manifest order. Both bounds (entries,
+/// and the compact JSON size of the whole section) keep the packet small however long the catalog
+/// grows; the omitted count says how many eligible entries were left out.
+fn recommended(capabilities: &Map<String, Value>, listed: &HashSet<String>) -> Option<Value> {
+    let entries = capabilities.get("recommended")?.as_array()?;
+    let mut seen = HashSet::new();
+    let items = cccc_core::capability_recommendations::for_member(entries)
+        .into_iter()
+        .filter(|entry| {
+            entry["capability_id"]
+                .as_str()
+                .is_some_and(|id| !listed.contains(id) && seen.insert(id.to_owned()))
+        })
+        .filter_map(index_item)
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        return None;
+    }
+    let eligible = items.len();
+    let mut lines = items
+        .into_iter()
+        .take(MAX_RECOMMENDED_ENTRIES)
+        .collect::<Vec<_>>();
+    // Whole lines leave from the end until the section fits, so an ID is never cut. The note and
+    // the omitted object alone stay far below the bound.
+    let mut section = index_section(&lines, eligible);
+    while section.to_string().len() > MAX_RECOMMENDED_BYTES && lines.pop().is_some() {
+        section = index_section(&lines, eligible);
+    }
+    Some(section)
+}
+
+fn index_section(lines: &[String], eligible: usize) -> Value {
+    let mut section = json!({"lines": lines, "note": RECOMMENDED_NOTE});
+    if eligible > lines.len() {
+        section["omitted"] = json!({
+            "count": eligible - lines.len(),
+            "search": RECOMMENDED_SEARCH,
+        });
+    }
+    section
+}
+
+/// Format a member recommendation without copying its full rules.
+fn index_item(entry: &Value) -> Option<String> {
+    let for_you = &entry["for_you"];
+    let id = entry["capability_id"].as_str()?;
+    // A role applies to the use case on its line, never to the catalog as a whole.
+    let primary = entry["recommendation"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item["role"] == "primary"));
+    let role = if primary { "primary" } else { "alternative" };
+    let mut text = match entry["use_when"].get(0).and_then(Value::as_str) {
+        Some(when) if !when.trim().is_empty() => {
+            format!("[{role}] {id} ({})", trim_text(when, MAX_USE_WHEN_CHARS))
+        }
+        _ => format!("[{role}] {id}"),
+    };
+    let requirements = |label: &str| match entry["requirements_summary"].as_str() {
+        Some(requires) if !requires.trim().is_empty() => {
+            format!("{label}: {}", trim_text(requires, MAX_REQUIREMENTS_CHARS))
+        }
+        _ => label.to_owned(),
+    };
+    let pending = for_you["activation_pending"] == true;
+    let mut marks = Vec::new();
+    if for_you["enabled"] == true {
+        marks.push("enabled".to_owned());
+    }
+    match for_you["availability"].as_str() {
+        // Discovery with the agent's own credential has yet to be tried, which
+        // says nothing about whether it will succeed.
+        Some("compatible") if pending => marks.push("discovery pending".to_owned()),
+        Some("compatible") => {}
+        // CCCC cannot see the agent's own tools, so it cannot say what is missing.
+        Some("unknown") => marks.push(requirements("check requirements")),
+        Some("needs_setup") => marks.push(requirements("setup required")),
+        _ => return None,
+    }
+    if !marks.is_empty() {
+        text.push_str(&format!(" [{}]", marks.join("; ")));
+    }
+    Some(text)
 }
 
 fn assemble_payload(
@@ -1210,6 +1317,164 @@ mod tests {
         );
         assert_eq!(result["omitted"]["count"], 12);
         assert!(available_skills(&Map::new()).is_none());
+    }
+
+    #[test]
+    fn recommended_lists_every_entry_the_agent_might_use() {
+        let entry = |id: &str, kind: &str, roles: &[(&str, &str)], for_you: Value| {
+            json!({
+                "capability_id": id, "kind": kind,
+                "recommendation": roles.iter().map(|(domain, role)|
+                    json!({"domain_id": domain, "role": role, "reason": "r"})).collect::<Vec<_>>(),
+                "use_when": [format!("when {id}")],
+                "requirements_summary": format!("needs for {id}"),
+                "capsule_text": "CCCC_FIXTURE_FULL_SKILL_BODY",
+                "for_you": for_you,
+            })
+        };
+        let compatible = json!({"availability":"compatible","enabled":false,"blocked":false});
+        let state = json!({
+            "recommended": [
+                entry("mcp:alt", "mcp_toolpack", &[("research", "alternative")], compatible.clone()),
+                entry("skill:listed", "skill", &[("research", "primary")], compatible.clone()),
+                entry("skill:unknown", "skill", &[("writing", "alternative")],
+                    json!({"availability":"unknown","enabled":true,"blocked":false})),
+                entry("mcp:setup", "mcp_toolpack", &[("documents", "alternative")],
+                    json!({"availability":"needs_setup","enabled":false,"blocked":false})),
+                entry("mcp:blocked", "mcp_toolpack", &[("research", "primary")],
+                    json!({"availability":"compatible","enabled":false,"blocked":true})),
+                entry("mcp:unsupported", "mcp_toolpack", &[("data", "primary")],
+                    json!({"availability":"unsupported","enabled":false,"blocked":false})),
+                // Primary in one domain and alternative in another: one line, marked primary.
+                entry("mcp:primary", "mcp_toolpack", &[("data", "alternative"), ("research", "primary")],
+                    compatible.clone()),
+                entry("mcp:alt", "mcp_toolpack", &[("research", "alternative")], compatible),
+            ],
+        });
+        let listed = HashSet::from(["skill:listed".to_owned()]);
+
+        let result = recommended(state.as_object().expect("state"), &listed).expect("recommended");
+
+        assert_eq!(
+            result["lines"],
+            json!([
+                "[primary] mcp:primary (when mcp:primary)",
+                "[alternative] mcp:alt (when mcp:alt)",
+                "[alternative] skill:unknown (when skill:unknown) [enabled; check requirements: needs for skill:unknown]",
+                "[alternative] mcp:setup (when mcp:setup) [setup required: needs for mcp:setup]",
+            ])
+        );
+        assert_eq!(result["note"], RECOMMENDED_NOTE);
+        assert!(result.get("omitted").is_none());
+        assert!(result.get("routes").is_none());
+        let text = result.to_string();
+        assert!(!text.contains("CCCC_FIXTURE_FULL_SKILL_BODY"));
+        assert!(!text.contains("skill:listed"));
+    }
+
+    #[test]
+    fn recommended_is_absent_when_no_entry_is_eligible() {
+        let state = json!({
+            "recommended": [
+                {"capability_id":"mcp:blocked","recommendation":[{"domain_id":"research","role":"primary"}],
+                    "for_you":{"availability":"compatible","blocked":true}},
+                {"capability_id":"mcp:unsupported","recommendation":[{"domain_id":"research","role":"alternative"}],
+                    "for_you":{"availability":"unsupported","blocked":false}},
+                {"capability_id":"mcp:unreported","recommendation":[{"domain_id":"research","role":"alternative"}],
+                    "for_you":{"blocked":false}},
+            ],
+        });
+
+        assert!(recommended(state.as_object().expect("state"), &HashSet::new()).is_none());
+        assert!(recommended(&Map::new(), &HashSet::new()).is_none());
+    }
+
+    #[test]
+    fn recommended_keeps_pending_first_and_counts_what_the_bounds_leave_out() {
+        let total = MAX_RECOMMENDED_ENTRIES + 8;
+        let entries = (0..total)
+            .map(|index| {
+                let pending = index == total - 1;
+                json!({
+                    "capability_id": format!("mcp:e{index:02}"), "kind": "mcp_toolpack",
+                    "recommendation": [{"domain_id": "d", "role": if index == 3 { "primary" } else { "alternative" }}],
+                    "for_you": {"availability":"compatible","enabled": pending, "blocked": false,
+                        "activation_pending": pending},
+                })
+            })
+            .collect::<Vec<_>>();
+        let state = json!({"recommended": entries});
+
+        let result =
+            recommended(state.as_object().expect("state"), &HashSet::new()).expect("recommended");
+
+        let lines = result["lines"].as_array().expect("lines");
+        assert_eq!(lines.len(), MAX_RECOMMENDED_ENTRIES);
+        let last = total - 1;
+        assert_eq!(
+            lines[0],
+            format!("[alternative] mcp:e{last:02} [enabled; discovery pending]").as_str()
+        );
+        assert_eq!(lines[1], "[primary] mcp:e03");
+        assert_eq!(lines[2], "[alternative] mcp:e00");
+        assert_eq!(result["omitted"]["count"], 8);
+        assert_eq!(result["omitted"]["search"], RECOMMENDED_SEARCH);
+    }
+
+    #[test]
+    fn recommended_stays_within_its_byte_bound_without_cutting_an_id() {
+        let long_id = |index: usize| format!("mcp:recommended:{index:02}-{}", "x".repeat(80));
+        let entries = (0..MAX_RECOMMENDED_ENTRIES)
+            .map(|index| {
+                json!({
+                    "capability_id": long_id(index), "kind": "mcp_toolpack",
+                    "recommendation": [{"domain_id": "d", "role": "alternative"}],
+                    // Multi-byte text past both character limits: the bound counts UTF-8 bytes.
+                    "use_when": ["界".repeat(110)],
+                    "requirements_summary": "設".repeat(104),
+                    "for_you": {"availability":"needs_setup","enabled": false, "blocked": false},
+                })
+            })
+            .collect::<Vec<_>>();
+        let state = json!({"recommended": entries});
+
+        let result =
+            recommended(state.as_object().expect("state"), &HashSet::new()).expect("recommended");
+
+        let size = result.to_string().len();
+        assert!(size <= MAX_RECOMMENDED_BYTES, "{size} bytes");
+        let lines = result["lines"].as_array().expect("lines");
+        assert!(!lines.is_empty() && lines.len() < MAX_RECOMMENDED_ENTRIES);
+        assert_eq!(
+            result["omitted"]["count"],
+            MAX_RECOMMENDED_ENTRIES - lines.len()
+        );
+        for (index, line) in lines.iter().enumerate() {
+            let line = line.as_str().expect("line");
+            assert!(line.contains(&long_id(index)), "{line}");
+            assert!(
+                line.contains(&format!(" ({}...)", "界".repeat(93))),
+                "{line}"
+            );
+            assert!(
+                line.contains(&format!("[setup required: {}...]", "設".repeat(87))),
+                "{line}"
+            );
+        }
+
+        // An ID longer than the whole bound leaves no line rather than a cut one.
+        let state = json!({"recommended": [{
+            "capability_id": format!("mcp:{}", "x".repeat(MAX_RECOMMENDED_BYTES)),
+            "recommendation": [{"domain_id": "d", "role": "primary"}],
+            "for_you": {"availability":"compatible","enabled": false, "blocked": false},
+        }]});
+
+        let result =
+            recommended(state.as_object().expect("state"), &HashSet::new()).expect("recommended");
+
+        assert!(result.to_string().len() <= MAX_RECOMMENDED_BYTES);
+        assert_eq!(result["lines"], json!([]));
+        assert_eq!(result["omitted"]["count"], 1);
     }
 
     #[test]

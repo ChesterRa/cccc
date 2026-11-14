@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
-import { buildCapabilityCenterUrl } from "../../capabilities/capabilityCenterRoute";
+import { useModalStore } from "../../../stores/useModalStore";
 import { publishCapabilityChanged } from "../../../utils/capabilityEvents";
 import { SlashCommandVisibilityButton } from "./SlashCommandVisibilityButton";
 import { SkillAssignmentManagerModal } from "./SkillAssignmentManagerModal";
@@ -40,7 +40,6 @@ type ManageQualificationStatus = "qualified" | "blocked";
 
 const SELF_PROPOSED_OVERVIEW_LIMIT = 200;
 const SELF_PROPOSED_SOURCE_ID = "agent_self_proposed";
-const SELF_PROPOSED_CAPSULE_TEXT_MAX = 2400;
 
 function selfProposedFallbackCapsule(row: CapabilityOverviewItem) {
   const name = String(row.name || row.capability_id || "Self-Proposed Skill").trim();
@@ -304,6 +303,16 @@ export function CapabilitiesTab({
       actionRequestSeqRef.current += 1;
     };
   }, [closeSelfProposedManager, groupId, isActive, load, surface]);
+
+  // The capability center opens over this page, which stays mounted; reload on the way back.
+  const openCapabilityCenter = useModalStore((state) => state.setCapabilityCenter);
+  const capabilityCenterOpen = useModalStore((state) => state.capabilityCenterGroupId !== null);
+  const capabilityCenterWasOpenRef = useRef(capabilityCenterOpen);
+  useEffect(() => {
+    const wasOpen = capabilityCenterWasOpenRef.current;
+    capabilityCenterWasOpenRef.current = capabilityCenterOpen;
+    if (wasOpen && !capabilityCenterOpen && isActive) void load();
+  }, [capabilityCenterOpen, isActive, load]);
 
   const selfProposedCandidates = useMemo(() => {
     const gid = String(groupId || "").trim();
@@ -615,10 +624,15 @@ export function CapabilitiesTab({
     setManageCapabilityId(capId);
     setManageName(String(row.name || capId));
     setManageDescription(String(row.description_short || ""));
+    // Keep the stored text exactly, so saving or blocking without an edit does
+    // not rewrite it; only blank text starts from the template.
+    const capsuleText = String(row.capsule_text || "");
     setManageCapsuleText(
-      canEditSkillRecord(row)
-        ? String(row.capsule_text || "").trim() || selfProposedFallbackCapsule(row)
-        : "",
+      !canEditSkillRecord(row)
+        ? ""
+        : capsuleText.trim()
+          ? capsuleText
+          : selfProposedFallbackCapsule(row),
     );
     setManageQualificationStatus(
       String(row.qualification_status || "")
@@ -644,7 +658,7 @@ export function CapabilitiesTab({
   ) => {
     const gid = String(groupId || "").trim();
     const capId = String(manageCapabilityId || "").trim();
-    const capsuleText = String(manageCapsuleText || "").trim();
+    const capsuleText = String(manageCapsuleText || "");
     const nextQualification = qualificationOverride || manageQualificationStatus;
     if (!gid) {
       setManageErr(t("capabilities.manageRequiresGroup"));
@@ -658,7 +672,7 @@ export function CapabilitiesTab({
       setManageErr(t("capabilities.manageInvalidNamespace"));
       return;
     }
-    if (!capsuleText) {
+    if (!capsuleText.trim()) {
       setManageErr(t("capabilities.manageCapsuleRequired"));
       return;
     }
@@ -728,8 +742,8 @@ export function CapabilitiesTab({
               .filter(Boolean)
           : [];
         if (savedReasons[0]) setManageQualificationReason(savedReasons[0]);
-        const savedCapsuleText = String(savedRecord.capsule_text || "").trim();
-        if (savedCapsuleText) setManageCapsuleText(savedCapsuleText);
+        const savedCapsuleText = String(savedRecord.capsule_text || "");
+        if (savedCapsuleText.trim()) setManageCapsuleText(savedCapsuleText);
         setManageNotice(t(noticeKey));
       }
       // Content and qualification updates leave assignment and usage records unchanged.
@@ -1013,9 +1027,7 @@ export function CapabilitiesTab({
               <button
                 type="button"
                 className={secondaryButtonClass("sm")}
-                onClick={() => {
-                  window.open(buildCapabilityCenterUrl(groupId), "_blank", "noopener,noreferrer");
-                }}
+                onClick={() => openCapabilityCenter(groupId)}
               >
                 {t("capabilities.openCenter")}
               </button>
@@ -1074,6 +1086,16 @@ export function CapabilitiesTab({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {/* The overview above carries this button on the global page. */}
+            {selfEvolvingSurface ? (
+              <button
+                type="button"
+                className={secondaryButtonClass("sm")}
+                onClick={() => openCapabilityCenter(groupId)}
+              >
+                {t("capabilities.openCenter")}
+              </button>
+            ) : null}
             <button
               type="button"
               className={secondaryButtonClass("sm")}
@@ -1250,7 +1272,6 @@ export function CapabilitiesTab({
           name={manageName}
           description={manageDescription}
           capsuleText={manageCapsuleText}
-          capsuleTextMax={SELF_PROPOSED_CAPSULE_TEXT_MAX}
           qualificationStatus={manageQualificationStatus}
           error={manageErr}
           notice={manageNotice}
@@ -1286,10 +1307,7 @@ export function CapabilitiesTab({
             name: t("capabilities.manageName"),
             description: t("capabilities.manageDescription"),
             capsule: t("capabilities.manageCapsule"),
-            capsuleLimit: t("capabilities.manageCapsuleLimit", {
-              count: manageCapsuleText.length,
-              max: SELF_PROPOSED_CAPSULE_TEXT_MAX,
-            }),
+            capsuleCount: t("capabilities.manageCapsuleCount", { count: manageCapsuleText.length }),
             save: t("capabilities.manageSave"),
             saving: t("common:saving"),
             blockedBanner: t("capabilities.manageBlockedBanner"),

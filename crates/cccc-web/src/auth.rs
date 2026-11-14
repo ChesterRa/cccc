@@ -157,21 +157,18 @@ pub async fn authorize(
             "group access denied",
         );
     }
-    if request.uri().path() == "/api/v1/debug/snapshot" && !principal.is_admin {
-        let Some(group_id) = group_from_query(&request) else {
-            return failure_text(
-                StatusCode::FORBIDDEN,
-                "permission_denied",
-                "group access denied",
-            );
-        };
-        if !principal.allows(&group_id) {
-            return failure_text(
-                StatusCode::FORBIDDEN,
-                "permission_denied",
-                "group access denied",
-            );
-        }
+    let query_group = group_from_query(&request);
+    if !principal.is_admin
+        && (query_group
+            .as_ref()
+            .is_some_and(|group_id| !principal.allows(group_id))
+            || (request.uri().path() == "/api/v1/debug/snapshot" && query_group.is_none()))
+    {
+        return failure_text(
+            StatusCode::FORBIDDEN,
+            "permission_denied",
+            "group access denied",
+        );
     }
     request.extensions_mut().insert(principal);
     with_bootstrap_cookie(next.run(request).await, bootstrap_cookie.as_deref())
@@ -293,6 +290,7 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path == "/api/v1/debug/clear_logs"
         || path.starts_with("/api/v1/capabilities/allowlist")
         || path == "/api/v1/capabilities/block"
+        || path == "/api/v1/capabilities/update"
         || (path == "/api/v1/groups" && *method == Method::POST)
         || (*method == Method::DELETE && group_from_path(path).is_some())
         || path.ends_with("/reset")
@@ -303,7 +301,10 @@ fn is_codex_voice_path(path: &str) -> bool {
 }
 
 fn group_from_query(request: &Request) -> Option<String> {
-    if request.uri().path() != "/api/v1/debug/snapshot" {
+    if !matches!(
+        request.uri().path(),
+        "/api/v1/debug/snapshot" | "/api/v1/capabilities/overview"
+    ) {
         return None;
     }
     request

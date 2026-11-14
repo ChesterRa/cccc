@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as api from "../../services/api";
 import type {
+  CapabilityDomain,
   CapabilityOverviewItem,
   CapabilitySourceState,
   CapabilityStateResult,
@@ -23,9 +24,13 @@ interface CapabilityCenterDataOptions {
   failedStateMessage: string;
   groupId: string;
   isOpen: boolean;
+  /** The language release recommendations are read in. */
+  locale: string;
   pageIndex: number;
   pageSize: number;
   query: string;
+  /** Lists one catalog source only, such as the release recommendations. */
+  sourceId?: string;
   stateFilter: CapabilityCenterStateFilter;
   typeFilter: CapabilityCenterTypeFilter;
 }
@@ -37,13 +42,17 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
     failedStateMessage,
     groupId,
     isOpen,
+    locale,
     pageIndex,
     pageSize,
     query,
+    sourceId,
     stateFilter,
     typeFilter,
   } = options;
   const [items, setItems] = useState<CapabilityOverviewItem[]>([]);
+  const [matchedQuery, setMatchedQuery] = useState<string | null>(null);
+  const [domains, setDomains] = useState<CapabilityDomain[]>([]);
   const [sources, setSources] = useState<Record<string, CapabilitySourceState>>({});
   const [state, setState] = useState<CapabilityStateResult | null>(null);
   const [summaryStats, setSummaryStats] = useState<CapabilityCenterStats | null>(null);
@@ -79,7 +88,9 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
         query: query || undefined,
         kind: typeFilter,
         policy: stateFilter === "blocked" ? "blocked" : "all",
+        sourceId,
         groupId,
+        locale,
       });
       if (sequence !== requestSequence.current) return;
       if (!response.ok) {
@@ -90,6 +101,8 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
       const nextStats = summarizeCapabilityCenter(nextItems, null);
       const kindCounts = response.result.kind_counts || {};
       setItems(nextItems);
+      setMatchedQuery(query);
+      setDomains(Array.isArray(response.result.domains) ? response.result.domains : []);
       setTotalCount(Number(response.result.total_count || nextItems.length) || 0);
       setHasMore(Boolean(response.result.has_more));
       setSources(response.result.sources || {});
@@ -116,9 +129,11 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
     clientPagination,
     failedLoadMessage,
     groupId,
+    locale,
     pageIndex,
     pageSize,
     query,
+    sourceId,
     stateFilter,
     typeFilter,
   ]);
@@ -157,9 +172,11 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
   }, [isOpen, loadState]);
 
   return {
+    domains,
     error: error || stateError,
     hasMore,
     items,
+    matchedQuery,
     loading,
     loadState,
     refresh,

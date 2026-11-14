@@ -1,0 +1,1338 @@
+{
+  "schema_version": 1,
+  "domains": [
+    {
+      "domain_id": "research",
+      "name": "Find and check facts",
+      "l10n": {
+        "zh": {
+          "name": "找资料与核事实"
+        },
+        "ja": {
+          "name": "情報収集と事実確認"
+        }
+      }
+    },
+    {
+      "domain_id": "documents",
+      "name": "Read documents and materials",
+      "l10n": {
+        "zh": {
+          "name": "读懂文档与材料"
+        },
+        "ja": {
+          "name": "文書と資料の読み取り"
+        }
+      }
+    },
+    {
+      "domain_id": "data",
+      "name": "Compute and analyze data",
+      "l10n": {
+        "zh": {
+          "name": "计算与分析数据"
+        },
+        "ja": {
+          "name": "データの計算と分析"
+        }
+      }
+    },
+    {
+      "domain_id": "writing",
+      "name": "Write for people and review",
+      "l10n": {
+        "zh": {
+          "name": "写给人看与复核"
+        },
+        "ja": {
+          "name": "人に向けた文章とレビュー"
+        }
+      }
+    }
+  ],
+  "entries": [
+    {
+      "capability_id": "mcp:recommended:exa",
+      "kind": "mcp_toolpack",
+      "name": "Exa",
+      "description_short": "Search public web sources when the member's own search lacks a credible source",
+      "use_when": [
+        "The member's own search found no credible source for a current fact"
+      ],
+      "avoid_when": [
+        "The answer is in local files, source code or the project's own docs",
+        "The official page or registry is already known; fetch it directly"
+      ],
+      "gotchas": [
+        "Anonymous access is subject to service limits; the quota was not measured",
+        "One current-fact trial mixed stale versions with the current one and omitted the exact publish time; check dates and primary sources"
+      ],
+      "requirements_summary": "Outbound HTTPS from the machine running CCCC; the recorded calls used no account or key",
+      "recommendation": [
+        {
+          "domain_id": "research",
+          "role": "primary",
+          "reason": "In two current-fact trials it reached sources that the compared built-in search missed; one answer still mixed stale versions and lacked the exact publish time. Direct access to a known official source or registry was better in both; keep that route first."
+        }
+      ],
+      "source_uri": "https://github.com/exa-labs/exa-mcp-server",
+      "license": "LicenseRef-Proprietary",
+      "install_mode": "remote_only",
+      "install_spec": {
+        "url": "https://mcp.exa.ai/mcp"
+      },
+      "support": {
+        "form": "remote_http",
+        "runs_on": "daemon_host",
+        "auth": "none",
+        "prerequisites": [
+          "Outbound HTTPS from the daemon host"
+        ],
+        "limitations": [
+          "Default tools are web_search_exa and web_fetch_exa"
+        ]
+      },
+      "verification": [
+        {
+          "level": "tool_call_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-12T15:09:12Z",
+          "build": "debug binary 385d5350 (0.4.55 with uncommitted changes)",
+          "platform": "linux-x86_64",
+          "path": "cccc_capability_use -> web_search_exa, no key",
+          "result": "non-empty result; isError false"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "failed",
+          "observed_at": "2026-11-13T01:35:17.817655+00:00",
+          "build": "CCCC 0.4.55 development build; binary SHA256 678f5cb32a39",
+          "platform": "linux-x86_64",
+          "path": "CCCC member MCP -> web_search_exa; package-version question",
+          "result": "The version appeared, but the exact registry publish time was missing and stale versions were mixed in. Direct registry queries were better for this question."
+        },
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T02:15:24.277557+00:00",
+          "build": "CCCC 0.4.55 development build; binary SHA256 678f5cb32a39",
+          "platform": "linux-x86_64",
+          "path": "CCCC member MCP -> web_search_exa; public runner-image status question",
+          "result": "Found the official source and correct status facts in one search call. Known-source direct fetching remained the simpler control; this does not establish a general advantage."
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "description_short": "成员自己的搜索找不到可信出处时，补查公开网页来源",
+          "use_when": [
+            "成员自己的搜索没给出可信出处，需要核较新的事实"
+          ],
+          "avoid_when": [
+            "答案在本地文件、源码或项目自己的文档里",
+            "已经知道官方页面或登记库，直接取原件"
+          ],
+          "gotchas": [
+            "匿名访问受服务限流，未测具体额度",
+            "一次最新事实试用混入了旧版本，也没给精确发布时间；日期和主张要回主要来源核"
+          ],
+          "requirements_summary": "运行 CCCC 的机器要能向外发起 HTTPS；记录里的调用没有用账号或密钥",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "两道最新事实题都取到了对照内置搜索没拿到的来源；其中一道答案仍混入旧版本，也缺精确发布时间。两题直接取已知官方来源或登记库都更好，先走直取。"
+            }
+          ]
+        },
+        "ja": {
+          "description_short": "メンバー自身の検索で信頼できる出典が見つからないときに公開 Web を補助検索する",
+          "use_when": [
+            "新しい事実を調べたいが、自分の検索で信頼できる出典が得られない"
+          ],
+          "avoid_when": [
+            "答えがローカルファイル、ソースコード、プロジェクトの文書にある",
+            "公式ページや登録情報の場所が分かっている。直接取得する"
+          ],
+          "gotchas": [
+            "匿名利用にはサービス側の制限がある。具体的な利用枠は未計測",
+            "最新情報を調べた 1 例では古い版が混ざり、正確な公開時刻もなかった。日付と主張は一次資料で確かめる"
+          ],
+          "requirements_summary": "CCCC を動かすマシンから外部へ HTTPS 接続できること。記録した呼び出しはアカウントやキーを使っていない",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "最新情報の 2 例で、比較した組み込み検索では得られなかった出典を取得した。ただし 1 例では古い版が混ざり、正確な公開時刻もなかった。どちらも既知の公式出典や登録情報を直接取得する方法のほうがよく、その経路を優先する。"
+            }
+          ]
+        }
+      },
+      "tags": [
+        "web search",
+        "网页搜索",
+        "ウェブ検索",
+        "current facts",
+        "最新事实",
+        "最新情報検索",
+        "fact check",
+        "verify claim",
+        "find sources",
+        "核实事实",
+        "查证",
+        "查找出处",
+        "事実確認",
+        "ファクトチェック",
+        "出典を探す"
+      ]
+    },
+    {
+      "capability_id": "skill:recommended:knowledge-synthesis",
+      "kind": "skill",
+      "name": "knowledge-synthesis",
+      "description_short": "Merge results from several sources into one answer with citations and stated confidence",
+      "use_when": [
+        "Several searches, documents or messages must become one cited answer",
+        "Sources disagree and the report must show the conflict instead of picking one"
+      ],
+      "avoid_when": [
+        "Finding the sources in the first place; the text starts from results already gathered"
+      ],
+      "gotchas": [
+        "Its ~~chat, ~~email, ~~cloud storage and ~~project tracker placeholders name workplace tools; read them as the sources the member actually searched",
+        "The authority table ranks workplace sources such as wikis, email, chat and task comments; it does not rank web pages or papers",
+        "It has no step for checking that each citation supports its claim; that check stays with the member or a reviewer",
+        "It makes a summary clearer to read; it does not guarantee the facts are more correct or replace checking each source"
+      ],
+      "requirements_summary": "Nothing to install; the member follows the text with its own tools",
+      "recommendation": [
+        {
+          "domain_id": "research",
+          "role": "alternative",
+          "reason": "Rules that make a summary lead with the answer, mark confidence claim by claim and merge repeated points under all their sources. In our trial on three meeting transcripts, the summary written with it differed from an earlier one in exactly these points"
+        }
+      ],
+      "source_uri": "https://github.com/anthropics/knowledge-work-plugins/tree/main/enterprise-search/skills/knowledge-synthesis",
+      "license": "Apache-2.0",
+      "source_record_version": "SKILL.md sha256 8dc66c66ef00 (read 2026-11-13)",
+      "capsule_path": "knowledge-synthesis/SKILL.md",
+      "support": {
+        "form": "text_skill",
+        "runs_on": "actor_tools",
+        "auth": "none",
+        "prerequisites": [],
+        "limitations": []
+      },
+      "verification": [
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-14T01:38:19Z",
+          "build": "SKILL.md sha256 8dc66c66 (the release text)",
+          "platform": "linux-x86_64",
+          "path": "a member followed the text to merge three transcripts of public meeting recordings into one cited summary",
+          "result": "the summary led with the answer, marked confidence per claim and merged a repeated recap under both sources; citations still had to be checked against the transcripts. The same member had written an earlier summary of the same material, so the difference is not credited to the text alone"
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "description_short": "把多个来源的结果合成一个答案，附出处并说明可信度",
+          "use_when": [
+            "多次搜索、多份文档或多条消息的结果，要合成一个注明出处的答案",
+            "来源之间说法不一，报告要把分歧摆出来，而不是挑一个"
+          ],
+          "avoid_when": [
+            "还在找来源的阶段；正文从已经收集到的结果开始"
+          ],
+          "gotchas": [
+            "正文里的 ~~chat、~~email、~~cloud storage、~~project tracker 占位符指办公工具；按成员实际搜过的来源来理解",
+            "权威度表只给 wiki、邮件、聊天、任务评论这类办公来源排了序，没有给网页和论文排序",
+            "它没有「核对每条出处是否支撑结论」这一步；这一步仍要成员自己或另一人来做",
+            "它让综述更好读，但不保证事实更准确，也代替不了逐条回原文核对"
+          ],
+          "requirements_summary": "不用安装；成员用自己的工具照着做",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "规定综述先给答案、逐条标可信度、重复的内容合成一条并列全所有出处。试用中用三场会议的逐字稿做综述，照它写的一版和之前不照它写的一版，区别正好在这几处"
+            }
+          ]
+        },
+        "ja": {
+          "description_short": "複数の情報源の結果を、出典と確信度つきの一つの回答にまとめる",
+          "use_when": [
+            "複数の検索、文書、メッセージの結果を、出典を示した一つの回答にまとめる必要があるとき",
+            "情報源どうしの内容が食い違い、どちらかを選ぶのではなく食い違いを示す必要があるとき"
+          ],
+          "avoid_when": [
+            "情報源を探す段階。本文は集め終わった結果から始まる"
+          ],
+          "gotchas": [
+            "本文の ~~chat、~~email、~~cloud storage、~~project tracker というプレースホルダーは職場のツールを指す。メンバーが実際に調べた情報源として読み替える",
+            "権威度の表は wiki、メール、チャット、タスクのコメントといった職場の情報源だけを順位付けしている。Web ページや論文は扱っていない",
+            "各出典が主張を裏付けているかを確かめる手順はない。その確認はメンバー自身か別のレビュアーが行う",
+            "まとめは読みやすくなるが、事実がより正確になる保証はなく、出典ごとの確認の代わりにもならない"
+          ],
+          "requirements_summary": "インストール不要。メンバーが自分のツールで本文に従う",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "まとめを結論から書き、主張ごとに確度を示し、重複する内容を 1 つにまとめてすべての出典を並べるための規則。試用では 3 回分の会議の書き起こしをまとめ、これに従って書いた版と、その前に従わずに書いた版の違いがちょうどこれらの点だった"
+            }
+          ]
+        }
+      },
+      "tags": [
+        "knowledge synthesis",
+        "综合整理",
+        "知識の統合",
+        "cited synthesis",
+        "多来源综合",
+        "複数資料の総合",
+        "source comparison",
+        "资料对照",
+        "情報源の比較",
+        "summarize sources",
+        "meeting notes",
+        "汇总多份资料",
+        "会议纪要",
+        "複数資料の要約",
+        "議事録"
+      ]
+    },
+    {
+      "capability_id": "mcp:recommended:parallel-search",
+      "kind": "mcp_toolpack",
+      "name": "Parallel Search",
+      "description_short": "An alternative hosted search for public web sources",
+      "use_when": [
+        "A search fallback is needed for current public sources"
+      ],
+      "avoid_when": [
+        "A known official source or local file already answers the question"
+      ],
+      "gotchas": [
+        "The one compared question was answered correctly, with about four times Exa's returned text; this is not a general quality or speed ranking",
+        "Anonymous access has service limits; authenticated research tools were not tested"
+      ],
+      "requirements_summary": "Outbound HTTPS from the machine running CCCC; the recorded search used the keyless endpoint",
+      "recommendation": [
+        {
+          "domain_id": "research",
+          "role": "alternative",
+          "reason": "On one current-fact question it found the official source and correct answer, with about four times Exa's text. Retain as an alternative, without a general superiority claim."
+        }
+      ],
+      "source_uri": "https://docs.parallel.ai/integrations/mcp/quickstart",
+      "license": "LicenseRef-Proprietary",
+      "tags": [
+        "research",
+        "parallel-search",
+        "web search",
+        "网页搜索",
+        "ウェブ検索",
+        "current public sources",
+        "最新公开来源",
+        "最新情報検索",
+        "fact check",
+        "verify claim",
+        "find sources",
+        "核实事实",
+        "查证",
+        "查找出处",
+        "事実確認",
+        "ファクトチェック",
+        "出典を探す"
+      ],
+      "install_mode": "remote_only",
+      "install_spec": {
+        "url": "https://mcp.parallel.ai/mcp"
+      },
+      "support": {
+        "form": "remote_http",
+        "runs_on": "daemon_host",
+        "auth": "none",
+        "prerequisites": [
+          "Network access to https://mcp.parallel.ai/mcp"
+        ],
+        "limitations": []
+      },
+      "verification": [
+        {
+          "level": "listed",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T01:01:32+00:00",
+          "build": "not run",
+          "path": "https://docs.parallel.ai/integrations/mcp/quickstart",
+          "result": "Source, delivery form and licensing scope reviewed; installation and tool calls not run"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T02:15:25.890076+00:00",
+          "build": "CCCC 0.4.55 development build; binary SHA256 678f5cb32a39",
+          "platform": "linux-x86_64",
+          "path": "CCCC member MCP -> web_search; public runner-image status question",
+          "result": "Found the official source and correct status facts. Returned about four times Exa's text on this one question; authenticated research tools were not tested."
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "name": "Parallel Search",
+          "description_short": "查询公开网络来源的另一个托管搜索备选",
+          "use_when": [
+            "需要用搜索补查较新的公开来源"
+          ],
+          "avoid_when": [
+            "已知官方来源或本地文件已经能回答问题"
+          ],
+          "gotchas": [
+            "对照的那道题答对了，返回文字约是 Exa 的四倍；不据此排通用质量或速度名次",
+            "匿名访问有服务限流；需要认证的研究工具没试"
+          ],
+          "requirements_summary": "运行 CCCC 的机器要能向外发起 HTTPS；记录中的搜索使用免令牌端点",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "在一道最新事实题中找到官方来源并答对，返回文字约是 Exa 的四倍；留作备选，不宣称普遍更好。"
+            }
+          ]
+        },
+        "ja": {
+          "name": "Parallel Search",
+          "description_short": "公開 Web の出典を探すための別のホスト型検索候補",
+          "use_when": [
+            "新しい公開情報を調べる補助検索が必要"
+          ],
+          "avoid_when": [
+            "既知の公式出典やローカルファイルで答えが得られる"
+          ],
+          "gotchas": [
+            "比較した 1 問には正答したが、返る文章は Exa の約 4 倍だった。一般的な品質や速度の順位ではない",
+            "匿名利用にはサービス側の制限がある。認証が必要な調査ツールは未検証"
+          ],
+          "requirements_summary": "CCCC を動かすマシンから外部へ HTTPS 接続できること。記録した検索はキー不要のエンドポイントを使用",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "最新情報の 1 問で公式出典と正答を得たが、文章量は Exa の約 4 倍だった。一般的な優位性は主張せず、代替候補として残す。"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "capability_id": "mcp:recommended:arxiv",
+      "kind": "mcp_toolpack",
+      "name": "arXiv MCP",
+      "description_short": "Search arXiv and retrieve versioned extracted text and BibTeX",
+      "use_when": [
+        "A task needs arXiv search, a specified paper version, text continuation or versioned citations"
+      ],
+      "avoid_when": [
+        "A known paper link and the member's existing reader already meet the task",
+        "The task requires proven verbatim preservation of figures, formulas or references"
+      ],
+      "gotchas": [
+        "Tested arxiv-mcp-server 0.8.2 base with HTML text; PDF fallback and semantic-search extras were not tested",
+        "Paper files default to storage shared by the user account running CCCC, not isolated per group; the trial used an explicit separate storage root",
+        "The tested download returned the first 12,000 characters with continuation fields; follow those fields. Extracted text is not proven lossless"
+      ],
+      "requirements_summary": "uv/uvx, Python >=3.11, network access and writable paper storage; the base trial needed no key",
+      "recommendation": [
+        {
+          "domain_id": "research",
+          "role": "alternative",
+          "reason": "Five member MCP calls checked search metadata, a pinned paper version, reading saved text again in a new process and versioned BibTeX. Useful for that interface; not shown to be more accurate or faster than direct reading."
+        }
+      ],
+      "source_uri": "https://github.com/blazickjp/arxiv-mcp-server",
+      "license": "Apache-2.0",
+      "tags": [
+        "research",
+        "arxiv",
+        "paper search",
+        "论文检索",
+        "論文検索",
+        "paper version",
+        "论文版本",
+        "論文の版指定",
+        "academic paper",
+        "preprint",
+        "学术论文",
+        "预印本",
+        "论文引用",
+        "学術論文",
+        "プレプリント",
+        "論文の引用"
+      ],
+      "support": {
+        "form": "stdio",
+        "runs_on": "daemon_host",
+        "auth": "none",
+        "prerequisites": [
+          "uv/uvx, Python >=3.11 and network access; basic search needs no key"
+        ],
+        "limitations": []
+      },
+      "verification": [
+        {
+          "level": "listed",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T01:01:32+00:00",
+          "build": "not run",
+          "path": "https://github.com/blazickjp/arxiv-mcp-server",
+          "result": "Source, delivery form and licensing scope reviewed; installation and tool calls not run"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T17:27:23.088504+00:00",
+          "build": "CCCC 0.4.56; binary SHA256 c4a24f813c02; arxiv-mcp-server 0.8.2 base",
+          "platform": "linux-x86_64",
+          "path": "CCCC member MCP -> search, download, read, list and citation export; explicit separate paper storage",
+          "result": "Five calls checked metadata against official Atom, a pinned paper version, cross-process saved-text reads and versioned BibTeX. HTML path only; not lossless extraction or default group-isolated storage."
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "name": "arXiv MCP",
+          "description_short": "检索 arXiv，取得指定版本的提取文字和 BibTeX",
+          "use_when": [
+            "任务需要 arXiv 检索、指定论文版本、分段续取或带版本的引用"
+          ],
+          "avoid_when": [
+            "已知论文链接，成员现有阅读办法已满足任务",
+            "要求图、公式或参考文献已经逐字无损验证"
+          ],
+          "gotchas": [
+            "只验了 arxiv-mcp-server 0.8.2 基础版的 HTML 取文；PDF 回退和语义搜索扩展没验",
+            "默认论文存储由运行 CCCC 的系统用户共享，不按组隔离；试用显式配置了独立存储根",
+            "本题下载先返回 12,000 字符并给出续取字段，要按字段接着取；提取文字未证明无损"
+          ],
+          "requirements_summary": "需有 uv/uvx、Python >=3.11、网络和可写论文目录；基础版试用没用密钥",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "五次成员 MCP 调用核了检索元数据、指定论文版本、另起进程后接着读已保存的文字和带版本 BibTeX；这些接口可用，未证明比直接阅读更准或更快。"
+            }
+          ]
+        },
+        "ja": {
+          "name": "arXiv MCP",
+          "description_short": "arXiv を検索し、版を指定した抽出テキストと BibTeX を取得する",
+          "use_when": [
+            "arXiv 検索、論文の版指定、本文の続きの取得、版付き引用が必要"
+          ],
+          "avoid_when": [
+            "既知の論文リンクと現在の閲覧手段で足りる",
+            "図、数式、参考文献の逐字的な保全が検証済みである必要がある"
+          ],
+          "gotchas": [
+            "arxiv-mcp-server 0.8.2 の base 版で HTML 本文を検証。PDF の代替取得や意味検索の追加機能は未検証",
+            "既定の論文保存先は CCCC を動かすユーザーで共有され、グループ別ではない。試用では独立した保存先を明示した",
+            "試用のダウンロードは先頭 12,000 文字と続きの取得用フィールドを返した。そのフィールドに従って取得する。抽出の無損失性は未証明"
+          ],
+          "requirements_summary": "uv/uvx、Python >=3.11、通信環境、書き込み可能な論文保存先が必要。base 版の試用はキー不要",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "メンバー経由の MCP 呼び出し 5 回で検索メタデータ、論文の版指定、新しいプロセスで保存済みの本文を再び読むこと、版付き BibTeX を確認。これらのインターフェースは使えるが、直接読む場合より正確・高速とは証明していない。"
+            }
+          ]
+        }
+      },
+      "install_mode": "command",
+      "install_spec": {
+        "command_candidates": [
+          [
+            "uvx",
+            "arxiv-mcp-server@0.8.2"
+          ]
+        ]
+      }
+    },
+    {
+      "capability_id": "skill:recommended:source-driven-development",
+      "kind": "skill",
+      "name": "source-driven-development",
+      "description_short": "Use the project's library versions and official sources when writing code",
+      "use_when": [
+        "Correct framework or library code depends on the project's actual version"
+      ],
+      "avoid_when": [
+        "The edit is version independent, such as a rename, typo fix or plain logic"
+      ],
+      "gotchas": [
+        "Read dependency files and installed source to establish versions; unresolved ambiguity still needs clarification",
+        "Official documentation may not match the pinned version; verify the API and compile the result",
+        "The text refers deeper prompt-injection threat modeling to a separate security-and-hardening skill, which is not included; its own fetched-content rules remain available"
+      ],
+      "requirements_summary": "No runtime package to install; the member needs project files, official-source access and appropriate checking tools",
+      "recommendation": [
+        {
+          "domain_id": "research",
+          "role": "alternative",
+          "reason": "In one pinned-library task, code was correct with and without the text; the text-guided output also cited version-specific sources. Retain for this structure, without a speed or general quality claim."
+        }
+      ],
+      "source_uri": "https://github.com/addyosmani/agent-skills/tree/main/skills/source-driven-development",
+      "license": "MIT",
+      "source_record_version": "SKILL.md sha256 df38a8526586 (read 2026-11-13)",
+      "capsule_path": "source-driven-development/SKILL.md",
+      "support": {
+        "form": "text_skill",
+        "runs_on": "actor_tools",
+        "auth": "none",
+        "prerequisites": [],
+        "limitations": []
+      },
+      "verification": [
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T12:06:29+09:00",
+          "build": "Rust rmcp =3.9.0 client; delivered skill text SHA256 df38a8526586",
+          "platform": "linux-x86_64",
+          "path": "Local skill text -> member-written Rust client -> compiler checks",
+          "result": "Code with and without the text met the API, token-format and feature checks. The text-guided code added version-specific sources. One run per arm; timing was confounded."
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "description_short": "按项目实际库版本和官方来源写代码",
+          "use_when": [
+            "框架或库代码的正确写法取决于项目实际版本"
+          ],
+          "avoid_when": [
+            "改动与版本无关，例如改名、修错别字或纯逻辑"
+          ],
+          "gotchas": [
+            "先读依赖文件和已装源码确认版本；仍有歧义时需要澄清",
+            "官方文档也可能与锁定版本不同，要核 API 并编译结果",
+            "正文把更深的提示词注入威胁模型交给未随附的 security-and-hardening；正文自己的取源内容处理规则仍可用"
+          ],
+          "requirements_summary": "不用安装运行包；成员要能读项目文件和官方来源，并有相应检查工具",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "一道锁定库版本的任务里，用与不用正文的代码都正确；照正文做的输出还给了版本对应出处。保留这个结构，不宣称更快或普遍更好。"
+            }
+          ]
+        },
+        "ja": {
+          "description_short": "プロジェクトの実際のライブラリ版と公式出典に基づいてコードを書く",
+          "use_when": [
+            "フレームワークやライブラリの正しい書き方が実際の版で変わる"
+          ],
+          "avoid_when": [
+            "名前変更、誤字修正、単純なロジックなど、版に依存しない変更"
+          ],
+          "gotchas": [
+            "依存ファイルと導入済みソースで版を確認し、なお曖昧なら確認を求める",
+            "公式文書も固定した版と一致するとは限らない。API とコンパイル結果を確かめる",
+            "深いプロンプトインジェクションの脅威モデルは同梱されない security-and-hardening に委ねるが、取得内容の扱いに関する本文自身の規則は利用できる"
+          ],
+          "requirements_summary": "実行用パッケージの導入は不要。プロジェクト、公式出典、適切な検証ツールへのアクセスが必要",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "版を固定したライブラリの 1 課題では本文の有無にかかわらずコードは正しく、本文に沿った出力には版に対応する出典もあった。この構成を使う候補とし、高速化や一般的な品質向上は主張しない。"
+            }
+          ]
+        }
+      },
+      "tags": [
+        "version-specific API",
+        "固定版本 API",
+        "バージョン別 API",
+        "pinned library version",
+        "库版本核对",
+        "ライブラリの版確認",
+        "official documentation",
+        "official docs",
+        "API docs",
+        "官方文档",
+        "API 文档",
+        "公式ドキュメント",
+        "API ドキュメント"
+      ]
+    },
+    {
+      "capability_id": "mcp:recommended:deepwiki",
+      "kind": "mcp_toolpack",
+      "name": "DeepWiki",
+      "description_short": "Get generated explanations of an indexed public repository",
+      "use_when": [
+        "A public repository's structure or behavior needs explanation and it is indexed by DeepWiki"
+      ],
+      "avoid_when": [
+        "Local source or official documentation already resolves the question at the exact pinned version"
+      ],
+      "gotchas": [
+        "Generated hosted explanations do not establish your exact source version; check the relevant code",
+        "One public-repository API question was checked; a task with no local source available was not tested"
+      ],
+      "requirements_summary": "Outbound HTTPS from the machine running CCCC and a public repository covered by the service",
+      "recommendation": [
+        {
+          "domain_id": "research",
+          "role": "alternative",
+          "reason": "One API question received a complete code answer in one call; local source confirmed the pinned version. Retain as a repository-reading alternative, without claiming greater accuracy or speed."
+        }
+      ],
+      "source_uri": "https://docs.devin.ai/work-with-devin/deepwiki-mcp",
+      "license": "LicenseRef-Proprietary",
+      "tags": [
+        "tech_docs",
+        "deepwiki",
+        "repository documentation",
+        "仓库文档",
+        "リポジトリのドキュメント",
+        "repository Q&A",
+        "仓库问答",
+        "リポジトリの質問",
+        "GitHub repository",
+        "open source project",
+        "codebase explanation",
+        "GitHub 仓库",
+        "开源项目",
+        "代码库说明",
+        "GitHub リポジトリ",
+        "オープンソース",
+        "コードベースの説明"
+      ],
+      "install_mode": "remote_only",
+      "install_spec": {
+        "url": "https://mcp.deepwiki.com/mcp"
+      },
+      "support": {
+        "form": "remote_http",
+        "runs_on": "daemon_host",
+        "auth": "none",
+        "prerequisites": [
+          "Network access to https://mcp.deepwiki.com/mcp"
+        ],
+        "limitations": []
+      },
+      "verification": [
+        {
+          "level": "listed",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T01:01:32+00:00",
+          "build": "not run",
+          "path": "https://docs.devin.ai/work-with-devin/deepwiki-mcp",
+          "result": "Source, delivery form and licensing scope reviewed; installation and tool calls not run"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T01:35:22.506129+00:00",
+          "build": "CCCC 0.4.55 development build; binary SHA256 678f5cb32a39",
+          "platform": "linux-x86_64",
+          "path": "CCCC member MCP -> ask_wiki_question; public rmcp repository",
+          "result": "One call returned a complete Bearer-client code answer, checked against local rmcp 3.9.0 source. Exact pin confirmation still came from local source; the no-local-source scenario was not tested."
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "name": "DeepWiki",
+          "description_short": "取得已索引公开仓库的生成式解释",
+          "use_when": [
+            "需要解释公开仓库的结构或行为，且服务已索引该仓库"
+          ],
+          "avoid_when": [
+            "本地源码或官方文档已经能按准确锁定版本回答"
+          ],
+          "gotchas": [
+            "托管服务生成的解释不能证明你的准确源码版本，仍要回对应代码核",
+            "只核了一道公开仓库 API 题；没有本地源码的任务没试"
+          ],
+          "requirements_summary": "运行 CCCC 的机器要能向外发起 HTTPS，目标公开仓库在服务覆盖范围内",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "一道 API 题一次调用就给了完整代码答案，本地源码核定了锁定版本；留作读仓库备选，不宣称更准或更快。"
+            }
+          ]
+        },
+        "ja": {
+          "name": "DeepWiki",
+          "description_short": "索引済みの公開リポジトリについて生成された説明を読む",
+          "use_when": [
+            "公開リポジトリの構成や動作を理解したい。対象はサービスに索引されている"
+          ],
+          "avoid_when": [
+            "ローカルソースや公式文書で、固定した正確な版について答えが得られる"
+          ],
+          "gotchas": [
+            "ホスト側が生成した説明だけでは正確なソースの版は確認できない。該当コードで確かめる",
+            "公開リポジトリの API に関する 1 問のみ確認。ローカルソースがない状況は未検証"
+          ],
+          "requirements_summary": "CCCC を動かすマシンから外部へ HTTPS 接続でき、対象の公開リポジトリがサービスの対象に含まれること",
+          "recommendation": [
+            {
+              "domain_id": "research",
+              "reason": "API の 1 問では 1 回の呼び出しで完全なコード例を得た。固定版はローカルソースで確認した。正確さや速さの優位性は主張せず、リポジトリ読解の代替候補とする。"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "capability_id": "mcp:recommended:markitdown",
+      "kind": "mcp_toolpack",
+      "name": "MarkItDown",
+      "description_short": "Convert PDF, Word, PowerPoint and Excel files into Markdown",
+      "use_when": [
+        "You want a first Markdown draft of a Word or PowerPoint file to read its body text or summarize it, without writing code for the format"
+      ],
+      "avoid_when": [
+        "You must check where something is, such as paragraph numbers, merged cells, comments or tracked changes: the Markdown does not keep them, so read the file with a library for its format",
+        "Reading a PDF, especially its tables: values can land in the wrong rows and exponents get flattened (10^20 becomes 1020); when numbers matter, check them against an image of the page"
+      ],
+      "gotchas": [
+        "The MCP server is an alpha release (markitdown-mcp 0.0.1a8)",
+        "The recipe passes --prerelease=allow to uvx: markitdown[all] 0.1.9 depends on a pre-release package",
+        "The first start downloads a large set of dependencies (about 414 MiB of uv cache in one cold run; network dependent)",
+        "Also fetches http(s) URIs, and runs with the privileges of the user running it (README)",
+        "Converts a whole workbook at once (114,734 characters for one public workbook in our trial); to read one cell, open it directly",
+        "Two tables on one slide can come out as a single table, and chart axis units can be missing",
+        "Our Word and PowerPoint check called the markitdown 0.1.9 library directly, which this server wraps; the server itself was not rerun end to end on those formats"
+      ],
+      "requirements_summary": "uv (uvx) on the machine running CCCC; the first start downloads a large set of dependencies",
+      "recommendation": [
+        {
+          "domain_id": "documents",
+          "role": "alternative",
+          "reason": "One call gives a first Markdown draft of Word or PowerPoint body text, tables, slide notes and chart values. In our 16-question check, through the library it wraps, the 9 it could answer matched the truth; 7 needed structure it drops"
+        }
+      ],
+      "source_uri": "https://github.com/microsoft/markitdown/tree/main/packages/markitdown-mcp",
+      "license": "MIT",
+      "source_record_version": "PyPI markitdown-mcp 0.0.1a8",
+      "install_mode": "command",
+      "install_spec": {
+        "command_candidates": [
+          [
+            "uvx",
+            "--prerelease=allow",
+            "markitdown-mcp@0.0.1a8"
+          ]
+        ]
+      },
+      "support": {
+        "form": "stdio",
+        "runs_on": "daemon_host",
+        "auth": "none",
+        "prerequisites": [
+          "uv (uvx) on the daemon host"
+        ],
+        "limitations": [
+          "Runs with the daemon user's file and network access"
+        ]
+      },
+      "verification": [
+        {
+          "level": "install_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-12T17:41:50Z",
+          "build": "debug binary 7ec912dd (0.4.55 with uncommitted changes)",
+          "platform": "linux-x86_64",
+          "path": "cccc_capability_use enabled the release entry with an empty uv cache",
+          "result": "started and listed 1 tool in 6.11 s"
+        },
+        {
+          "level": "tool_call_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-12T17:41:53Z",
+          "build": "debug binary 7ec912dd (0.4.55 with uncommitted changes)",
+          "platform": "linux-x86_64",
+          "path": "convert_to_markdown {uri: file URI of a small HTML file}, once through cccc_capability_use and once through the listed tool",
+          "result": "both returned the expected heading and marker text (Markdown escaped its underscores); isError false"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "failed",
+          "observed_at": "2026-11-13T02:19:56Z",
+          "build": "debug binary 678f5cb3 (0.4.55 with uncommitted changes)",
+          "platform": "linux-x86_64",
+          "path": "convert_to_markdown through cccc_capability_use on arXiv 1706.03762v7, asking for Table 2 on page 8 as rows",
+          "result": "all BLEU values were right, but two cost cells sat on the wrong rows, exponents were flattened (10^20 became 1020) and words in the running text were joined together"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T02:20:10Z",
+          "build": "debug binary 678f5cb3 (0.4.55 with uncommitted changes)",
+          "platform": "linux-x86_64",
+          "path": "convert_to_markdown through cccc_capability_use on a public EIA Monthly Energy Review workbook (Table 1.1), asking for the 2024 total primary energy consumption",
+          "result": "the value matched the cell; the whole workbook came back (114,734 characters)"
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "description_short": "把 PDF、Word、PowerPoint 和 Excel 文件转成 Markdown",
+          "use_when": [
+            "想先把 Word 或 PowerPoint 文件转成 Markdown 初稿，读正文、摘大意，又不想为这种格式写代码"
+          ],
+          "avoid_when": [
+            "要核对位置，比如段落编号、合并单元格、批注或修订：Markdown 里不保留这些，要用对应格式的库读原文件",
+            "读 PDF，尤其是表格：数值可能落到错误的行，指数会被压平（10^20 变成 1020）；数字要紧时，对照页面图片核对"
+          ],
+          "gotchas": [
+            "MCP 服务是 alpha 版本（markitdown-mcp 0.0.1a8）",
+            "配方给 uvx 加了 --prerelease=allow：markitdown[all] 0.1.9 依赖一个预发布包",
+            "第一次启动要下载一大批依赖（一次冷启动用了约 414 MiB 的 uv 缓存；和网络有关）",
+            "也会抓取 http(s) 地址，并以运行它的用户的权限运行（README）",
+            "工作簿会整本转换（试用中一本公开工作簿转出 114,734 个字符）；只读一个单元格时直接去读那一格",
+            "同一页幻灯片上的两张表可能被转成一张，图表的坐标轴单位可能丢失",
+            "我们核 Word 和 PowerPoint 时直接调用的是它封装的 markitdown 0.1.9 库；这个 MCP 服务本身没在这两种格式上端到端重跑"
+          ],
+          "requirements_summary": "运行 CCCC 的机器上要有 uv（uvx）；第一次启动要下载一大批依赖",
+          "recommendation": [
+            {
+              "domain_id": "documents",
+              "reason": "一次调用就能把 Word 或 PowerPoint 的正文、表格、幻灯片备注和图表数值转成 Markdown 初稿。我们通过它封装的库核了 16 道题：能答的 9 道与真值一致，另 7 道要用到它丢掉的结构"
+            }
+          ]
+        },
+        "ja": {
+          "description_short": "PDF、Word、PowerPoint、Excel ファイルを Markdown に変換する",
+          "use_when": [
+            "Word や PowerPoint のファイルを、形式ごとのコードを書かずにまず Markdown の下書きにして、本文を読んだり要点をまとめたりしたいとき"
+          ],
+          "avoid_when": [
+            "段落番号、結合セル、コメント、変更履歴など、どこに何があるかを確かめる必要があるとき。Markdown には残らないので、その形式用のライブラリで元のファイルを読む",
+            "PDF、特に表を読むとき。値が別の行にずれたり、指数が平坦になったりする（10^20 が 1020 になる）。数値が重要なら、ページの画像と照合する"
+          ],
+          "gotchas": [
+            "MCP サーバーはアルファ版（markitdown-mcp 0.0.1a8）",
+            "レシピは uvx に --prerelease=allow を渡す。markitdown[all] 0.1.9 がプレリリース版のパッケージに依存しているため",
+            "初回起動時に大量の依存パッケージをダウンロードする（コールドスタート 1 回で uv キャッシュ約 414 MiB。ネットワーク次第）",
+            "http(s) の URI も取得し、実行したユーザーの権限で動く（README）",
+            "ワークブックは丸ごと変換される（試用した公開ワークブックでは 114,734 文字）。1 つのセルだけ読むなら直接開く",
+            "1 枚のスライドにある 2 つの表が 1 つの表として出てきたり、グラフの軸の単位が抜けたりすることがある",
+            "Word と PowerPoint の確認では、このサーバーが包む markitdown 0.1.9 ライブラリを直接呼び出した。サーバー自体はこの 2 形式でエンドツーエンドに再実行していない"
+          ],
+          "requirements_summary": "CCCC を動かすマシンに uv（uvx）が必要。初回起動時に大量の依存パッケージをダウンロードする",
+          "recommendation": [
+            {
+              "domain_id": "documents",
+              "reason": "1 回の呼び出しで Word や PowerPoint の本文、表、スライドのノート、グラフの数値を Markdown の下書きにできる。包んでいるライブラリ経由で 16 問を確かめたところ、答えられた 9 問は正解と一致し、残る 7 問は失われる構造が必要だった"
+            }
+          ]
+        }
+      },
+      "tags": [
+        "docx",
+        "pptx",
+        "xlsx",
+        "Word to Markdown",
+        "Word 转 Markdown",
+        "Word を Markdown に変換",
+        "read document body",
+        "读取文档正文",
+        "文書の本文を読む",
+        "PowerPoint to Markdown",
+        "PowerPoint 转 Markdown",
+        "PowerPoint を Markdown に変換",
+        "convert to Markdown",
+        "extract text",
+        "slide notes",
+        "转成 Markdown",
+        "提取正文",
+        "幻灯片备注",
+        "Markdown に変換",
+        "テキスト抽出",
+        "スライドのノート"
+      ]
+    },
+    {
+      "capability_id": "skill:recommended:validate-data",
+      "kind": "skill",
+      "name": "validate-data",
+      "description_short": "QA an analysis before sharing it: methodology, accuracy and bias checks, with a confidence assessment",
+      "use_when": [
+        "Before sharing numbers, a SQL result or conclusions drawn from data"
+      ],
+      "avoid_when": [
+        "Exploratory work that nobody else will read"
+      ],
+      "gotchas": [
+        "Links to CONNECTORS.md, which is not delivered; it only explains optional tool placeholders",
+        "Explanations added during the self-check can be wrong as well; recheck each new statement against the numbers (seen in our trial)",
+        "Its generic checks, such as timestamps in UTC or plausible ranges, do not replace the task's own rules, such as a required time zone or allowed negative amounts"
+      ],
+      "requirements_summary": "Nothing to install; the member follows the text with its own tools",
+      "recommendation": [
+        {
+          "domain_id": "data",
+          "role": "alternative",
+          "reason": "Gives a self-review fixed steps. In our trial it found one wrong explanation and four missing premises and added useful checks, but two of its own new explanations were wrong; recheck what it adds. The member had read three related checklists first"
+        }
+      ],
+      "source_uri": "https://github.com/anthropics/knowledge-work-plugins/tree/main/data/skills/validate-data",
+      "license": "Apache-2.0",
+      "source_record_version": "SKILL.md sha256 1e4248220434 (read 2026-11-12)",
+      "capsule_path": "validate-data/SKILL.md",
+      "support": {
+        "form": "text_skill",
+        "runs_on": "actor_tools",
+        "auth": "none",
+        "prerequisites": [],
+        "limitations": []
+      },
+      "verification": [
+        {
+          "level": "install_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-12T15:16:16Z",
+          "build": "debug binary 385d5350 (0.4.55 with uncommitted changes)",
+          "platform": "linux-x86_64",
+          "path": "generic import, then cccc_capability_use returned the text",
+          "result": "14,916 bytes, byte-identical to the upstream SKILL.md"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-14T00:29:23Z",
+          "build": "SKILL.md sha256 1e424822 (the release text)",
+          "platform": "linux-x86_64",
+          "path": "a member followed the text to self-review its own finished analysis of a synthetic sales, payments and budget dataset",
+          "result": "the review ran to its report: all numbers were already right, and it found one wrong explanation and four missing premises in the original narrative. The member had read three related checklists first, so the gain is not credited to this text alone"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "failed",
+          "observed_at": "2026-11-14T02:20:55Z",
+          "build": "SKILL.md sha256 1e424822 (the release text)",
+          "platform": "linux-x86_64",
+          "path": "independent check of the explanations added during that self-review",
+          "result": "two new explanations were wrong: a claim about all negative October orders held for 4 of 6, and a comparison switched to a filtered subset's median"
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "description_short": "分析结果交出去之前做质检：方法、准确性和偏差检查，附可信度评估",
+          "use_when": [
+            "在交出数字、SQL 结果或基于数据的结论之前"
+          ],
+          "avoid_when": [
+            "只有自己看的探索性分析"
+          ],
+          "gotchas": [
+            "正文链接了 CONNECTORS.md，这个文件不随附；它只解释可选工具的占位符",
+            "自查时新写的解释也可能出错；每条新说法都要再对一遍数（试用中出现过）",
+            "正文里的通用检查（比如时间按 UTC、数值是否合理）代替不了任务自己的规则，比如指定的时区、允许出现负数金额"
+          ],
+          "requirements_summary": "不用安装；成员用自己的工具照着做",
+          "recommendation": [
+            {
+              "domain_id": "data",
+              "reason": "把自查变成固定步骤。试用中它查出一处解释错误和四处缺前提，还补了有用的核查，但自己新写的解释里也有两处错，新补的内容要再核。这名成员事先还读过另外三份相关清单"
+            }
+          ]
+        },
+        "ja": {
+          "description_short": "分析を共有する前の品質チェック：手法、正確さ、バイアスを確認し、確信度を評価する",
+          "use_when": [
+            "数値、SQL の結果、データから導いた結論を共有する前"
+          ],
+          "avoid_when": [
+            "他の人が読まない探索的な作業"
+          ],
+          "gotchas": [
+            "本文は CONNECTORS.md にリンクしているが同梱されない。任意のツールのプレースホルダーを説明しているだけ",
+            "自己点検の途中で書き足した説明も誤ることがある。新しい記述は 1 つずつ数値と照合し直す（試用で見られた）",
+            "UTC のタイムスタンプや妥当な範囲といった一般的なチェックは、指定されたタイムゾーンや負の金額を認めるといった、そのタスク固有のルールの代わりにはならない"
+          ],
+          "requirements_summary": "インストール不要。メンバーが自分のツールで本文に従う",
+          "recommendation": [
+            {
+              "domain_id": "data",
+              "reason": "自己点検を決まった手順にする。試用では説明の誤り 1 件と前提の抜け 4 件を見つけ、有用な確認も加えたが、書き足した説明にも誤りが 2 件あった。加えた内容は確かめ直す。このメンバーは事前に関連するチェックリストを他に 3 つ読んでいた"
+            }
+          ]
+        }
+      },
+      "tags": [
+        "data validation",
+        "数据自查",
+        "データ検証",
+        "SQL result review",
+        "核查数据结论",
+        "集計結果の確認",
+        "sanity check",
+        "check analysis",
+        "verify numbers",
+        "分析复核",
+        "核对数字",
+        "检查分析结果",
+        "分析のチェック",
+        "数値の検証",
+        "検算"
+      ]
+    },
+    {
+      "capability_id": "mcp:recommended:excel",
+      "kind": "mcp_toolpack",
+      "name": "Excel MCP Server",
+      "description_short": "Use structured tools to create, read and edit local xlsx workbooks",
+      "use_when": [
+        "A task benefits from structured workbook operations and saved-file handoff"
+      ],
+      "avoid_when": [
+        "The task only needs tabular analysis that existing local code already handles",
+        "The task requires verified lossless round-tripping of complex workbooks or desktop Excel behavior"
+      ],
+      "gotchas": [
+        "Tested Excel MCP Server 2.3.0 on one simple workbook; complex formulas, macros, external references and actual Excel editing were not tested",
+        "Tool reads can return correct formula values while saved formula caches are empty; recalculate and verify a delivery copy when cached values are needed",
+        "Adding a column did not expand the print area; check print areas, repeated titles and rendered pages before delivery",
+        "Use absolute paths. The recipe has no allow-dir restriction; calls run with the file access of the user account running CCCC, and only saved changes survive a new process"
+      ],
+      "requirements_summary": "uv/uvx, Python >=3.11 and access to target workbook paths; a separate recalculation/rendering tool is needed for those delivery checks",
+      "recommendation": [
+        {
+          "domain_id": "documents",
+          "role": "alternative",
+          "reason": "The tested edit retained a few chart settings that a direct openpyxl save dropped. There was no visible difference in the LibreOffice rendering; desktop Excel was not tested. Caches and other format details still needed checking."
+        }
+      ],
+      "source_uri": "https://github.com/haris-musa/excel-mcp-server",
+      "license": "MIT",
+      "tags": [
+        "data",
+        "excel",
+        "spreadsheet cells",
+        "电子表格单元格",
+        "表計算のセル",
+        "xlsx",
+        "workbook editing",
+        "工作簿编辑",
+        "ワークブック編集",
+        "edit Excel",
+        "Excel workbook",
+        "编辑 Excel",
+        "Excel 工作簿",
+        "Excel 編集",
+        "Excel ブック"
+      ],
+      "support": {
+        "form": "stdio",
+        "runs_on": "daemon_host",
+        "auth": "none",
+        "prerequisites": [
+          "uv/uvx, Python >=3.11 and access to the target workbook paths"
+        ],
+        "limitations": []
+      },
+      "verification": [
+        {
+          "level": "listed",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T01:01:32+00:00",
+          "build": "not run",
+          "path": "https://github.com/haris-musa/excel-mcp-server",
+          "result": "Source, delivery form and licensing scope reviewed; installation and tool calls not run"
+        },
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-13T13:22:03.317798+00:00",
+          "build": "CCCC 0.4.56; binary SHA256 c4a24f813c02; Excel MCP Server 2.3.0",
+          "platform": "linux-x86_64",
+          "path": "CCCC member MCP -> workbook creation, reads and same-input edit; saved XLSX plus independent file checks",
+          "result": "Created an 85-row workbook with 12 formulas and a native chart; tool reads matched expected values and the tested edit retained a few chart settings. LibreOffice showed no visible difference; complex workbooks and actual Excel were not tested."
+        },
+        {
+          "level": "task_checked",
+          "outcome": "failed",
+          "observed_at": "2026-11-13T13:22:03.317798+00:00",
+          "build": "CCCC 0.4.56; binary SHA256 c4a24f813c02; Excel MCP Server 2.3.0",
+          "platform": "linux-x86_64",
+          "path": "Saved-workbook formula-cache probe after member MCP calls",
+          "result": "All 12 formula caches were empty despite correct values returned by tool reads. Later edited files also needed separate recalculation; adding a column did not expand the print area."
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "name": "Excel MCP Server",
+          "description_short": "通过结构化工具新建、读取和修改本机 xlsx 工作簿",
+          "use_when": [
+            "任务需要结构化工作簿操作，并通过保存后的文件交接"
+          ],
+          "avoid_when": [
+            "只是表格分析，现有本机代码已经能处理",
+            "要求复杂工作簿无损往返或已经验证真实 Excel 的行为"
+          ],
+          "gotchas": [
+            "只在一份简单工作簿上验了 Excel MCP Server 2.3.0；复杂公式、宏、外部引用和真实 Excel 编辑未验",
+            "工具读出的公式值正确，文件缓存仍可能为空；交付需要缓存值时，另存副本重算并核对",
+            "新增一列时打印区没有自动扩展；交付前核打印区、重复表头和逐页预览",
+            "使用绝对路径；配方没有 allow-dir 限制，按运行 CCCC 的系统用户的文件权限运行；重启进程后只保留已经存盘的修改"
+          ],
+          "requirements_summary": "需有 uv/uvx、Python >=3.11 和目标工作簿的访问权限；重算、渲染核对还要有相应本机工具",
+          "recommendation": [
+            {
+              "domain_id": "documents",
+              "reason": "本题修改保住了直接用 openpyxl 保存会丢的几项图表设置；LibreOffice 预览没有可见差异，真实 Excel 没测；缓存及其它格式仍要核。"
+            }
+          ]
+        },
+        "ja": {
+          "name": "Excel MCP Server",
+          "description_short": "構造化ツールでローカルの xlsx ブックを作成・読取・編集する",
+          "use_when": [
+            "構造化されたブック操作と、保存したファイルによる受け渡しが必要"
+          ],
+          "avoid_when": [
+            "表データの分析だけで、既存のローカルコードで足りる",
+            "複雑なブックの無損失な往復保存や、実際の Excel での動作保証が必要"
+          ],
+          "gotchas": [
+            "単純な 1 ブックで Excel MCP Server 2.3.0 を検証。複雑な数式、マクロ、外部参照、実際の Excel 編集は未検証",
+            "ツールが正しい数式値を返しても、保存ファイルのキャッシュは空の場合がある。キャッシュ値が必要なら納品用コピーを再計算して確認する",
+            "列の追加では印刷範囲が広がらなかった。納品前に印刷範囲、繰り返し見出し、各ページの出力を確認する",
+            "絶対パスを使う。allow-dir 制限はなく、CCCC を動かすユーザーのファイル権限で動く。新しいプロセスに引き継げるのは保存済みの変更のみ"
+          ],
+          "requirements_summary": "uv/uvx、Python >=3.11、対象ブックへのアクセスが必要。再計算と描画の確認には別途対応するローカルツールが必要",
+          "recommendation": [
+            {
+              "domain_id": "documents",
+              "reason": "試用の編集では openpyxl でそのまま保存すると失われるグラフ設定をいくつか保持した。LibreOffice の描画には目に見える差がなく、実際の Excel は未検証。キャッシュや他の書式は別途確認が必要。"
+            }
+          ]
+        }
+      },
+      "install_mode": "command",
+      "install_spec": {
+        "command_candidates": [
+          [
+            "uvx",
+            "excel-mcp-server@2.3.0",
+            "stdio"
+          ]
+        ]
+      }
+    },
+    {
+      "capability_id": "skill:recommended:review-contract",
+      "kind": "skill",
+      "name": "review-contract",
+      "description_short": "First-pass contract review: clause flags, redline language and negotiation priorities",
+      "use_when": [
+        "Preparing redlines, fallback positions and an order of concessions before negotiating a contract",
+        "A first-pass review is done and the issues now need draft wording"
+      ],
+      "avoid_when": [
+        "Someone will rely on the result as legal advice; the text says qualified lawyers must review it first",
+        "You only need a first-pass list of issues: in our trial the member's own clause-by-clause review already gave that, with quotes, impact and priority"
+      ],
+      "gotchas": [
+        "Links to CONNECTORS.md, which is not delivered; without a connected CLM, skip the routing step as the text says",
+        "The @$1 placeholder is slash-command syntax and is not filled in; put the contract file or text in the request",
+        "Looks for the organization's playbook (for example legal.local.md); without one it says so and can review against general commercial standards",
+        "Asks four context questions first (which side, deadline, focus, deal context); with partial answers it proceeds and notes its assumptions",
+        "Calibrate its general ratings to the user's side and jurisdiction first: its cross-border data rules name only SCCs, adequacy decisions and binding corporate rules, and it rates a missing liability cap RED, which in a mutual NDA has to be weighed against both sides' obligations",
+        "Have a lawyer check redlines on governing law, courts and personal data before they go to the other side"
+      ],
+      "requirements_summary": "Nothing to install; the member follows the text with its own tools",
+      "recommendation": [
+        {
+          "domain_id": "writing",
+          "role": "alternative",
+          "reason": "Adds draft redlines, fallback positions and negotiation tiers to a first-pass review; in our trial on one English mutual NDA these were the visible additions. It is not a more reliable verdict before signing"
+        }
+      ],
+      "source_uri": "https://github.com/anthropics/knowledge-work-plugins/tree/main/legal/skills/review-contract",
+      "license": "Apache-2.0",
+      "source_record_version": "SKILL.md sha256 3a6413475f51 (read 2026-11-13)",
+      "capsule_path": "review-contract/SKILL.md",
+      "support": {
+        "form": "text_skill",
+        "runs_on": "actor_tools",
+        "auth": "none",
+        "prerequisites": [],
+        "limitations": []
+      },
+      "verification": [
+        {
+          "level": "task_checked",
+          "outcome": "passed",
+          "observed_at": "2026-11-14T03:38:10Z",
+          "build": "SKILL.md sha256 3a641347 (the release text)",
+          "platform": "linux-x86_64",
+          "path": "after its own first-pass review, a member followed the text to review the Common Paper Mutual NDA (public standard terms, cover page set by the trial) for a 10-person software company in Japan",
+          "result": "added draft redlines, fallbacks and negotiation tiers; quotes checked 20/20. A later review corrected the order of next steps (lawyer before sending) and narrowed two points on personal data and assignment. The same member wrote both reviews"
+        }
+      ],
+      "l10n": {
+        "zh": {
+          "description_short": "合同初审：逐条标出问题，给出修改文本和谈判优先级",
+          "use_when": [
+            "和对方谈合同之前，准备修改文本、退让方案和让步顺序",
+            "初审已经做完，问题要写成具体的修改文本"
+          ],
+          "avoid_when": [
+            "结果要被当作法律意见直接使用；正文要求先由合格的法律专业人士审核",
+            "只需要一份初审问题清单：试用中成员自己逐条初审就已经给出了，每条带原文、影响和优先级"
+          ],
+          "gotchas": [
+            "正文链接了 CONNECTORS.md，这个文件不随附；没接 CLM 时，按正文跳过审批流转这一步",
+            "@$1 是斜杠命令的参数写法，不会被替换；合同文件或全文要放在请求里",
+            "正文会找组织自己的谈判手册（例如 legal.local.md）；找不到时会说明，并可改按通行的商业标准审查",
+            "开始前先问四个背景问题（站哪一方、截止时间、关注点、交易背景）；只答了一部分也会继续，并写明所做的假设",
+            "先按用户的立场和所在法域校准它的通用判定：个人数据跨境只列了标准合同条款、充分性认定和约束性企业规则；正文把没有责任上限判为 RED，而双向保密协议里要结合双方的义务来权衡",
+            "管辖法律、管辖法院和个人信息相关的修改文本，发给对方之前先请律师看"
+          ],
+          "requirements_summary": "不用安装；成员用自己的工具照着做",
+          "recommendation": [
+            {
+              "domain_id": "writing",
+              "reason": "在初审之上补出修改文本草稿、退让方案和谈判层次；试用中用一份英文双向保密协议，多出来的正是这些。它不是更可靠的签约前结论"
+            }
+          ]
+        },
+        "ja": {
+          "description_short": "契約書の一次レビュー：条項ごとの指摘、修正文案、交渉の優先度",
+          "use_when": [
+            "契約の交渉前に、修正文案、代替案、譲歩の順番を用意するとき",
+            "一次レビューが済み、指摘を具体的な修正文案にしたいとき"
+          ],
+          "avoid_when": [
+            "結果を法的助言としてそのまま使うとき。本文は資格のある法律専門家が先に確認するよう求めている",
+            "一次レビューの指摘一覧だけが必要なとき。試用ではメンバー自身の条項ごとのレビューで、引用、影響、優先度つきの一覧がすでに出ていた"
+          ],
+          "gotchas": [
+            "本文は CONNECTORS.md にリンクしているが同梱されない。CLM を接続していなければ、本文どおり承認ルートの手順は飛ばす",
+            "@$1 はスラッシュコマンドの引数の書き方で、置き換えられない。契約書のファイルか本文は依頼の中で渡す",
+            "組織自身のプレイブック（例：legal.local.md）を探す。なければその旨を伝え、一般的な商取引の基準でレビューできる",
+            "最初に 4 つの前提（どちら側か、期限、重点、取引の背景）を尋ねる。答えが一部だけでも、仮定を明記して進める",
+            "まずユーザーの立場と法域に合わせて一般的な判定を調整する。個人データの越境移転は標準契約条項、十分性認定、拘束的企業準則だけを挙げている。責任上限がないことを本文は RED とするが、相互 NDA では双方の義務と比べて判断する",
+            "準拠法、管轄裁判所、個人情報に関わる修正文案は、相手に送る前に弁護士に確認してもらう"
+          ],
+          "requirements_summary": "インストール不要。メンバーが自分のツールで本文に従う",
+          "recommendation": [
+            {
+              "domain_id": "writing",
+              "reason": "一次レビューに、修正文案の下書き、代替案、交渉の段階を加える。試用では英文の相互 NDA 1 件で、増えたのはまさにこれらだった。署名前の結論としてより信頼できるわけではない"
+            }
+          ]
+        }
+      },
+      "tags": [
+        "contract redlines",
+        "合同修改",
+        "契約の修正",
+        "negotiation wording",
+        "谈判措辞",
+        "交渉文案",
+        "NDA",
+        "contract negotiation",
+        "保密协议",
+        "合同谈判",
+        "秘密保持契約",
+        "契約交渉"
+      ]
+    }
+  ]
+}

@@ -264,7 +264,8 @@
     "manageName": "名称",
     "manageDescription": "描述",
     "manageCapsule": "Capsule 内容",
-    "manageCapsuleLimit": "{{count}} / {{max}} 字符",
+    "manageCapsuleCount_one": "{{count}} 字符",
+    "manageCapsuleCount_other": "{{count}} 字符",
     "manageSave": "保存 skill",
     "manageSaved": "Skill 记录已保存。",
     "manageSaveFailed": "保存 skill 记录失败。",
@@ -349,11 +350,11 @@
   },
   "capabilityCenter": {
     "title": "能力工作台",
-    "subtitle": "Skills、MCP 与 Packs",
+    "subtitle": "推荐、Skills、MCP 与来源",
     "headerHint": "集中浏览、筛选和管理全局能力。",
+    "scopeGroup": "作用于工作组：{{name}}",
     "refresh": "刷新",
     "close": "关闭",
-    "backToApp": "回到主应用",
     "builtin": {
       "groupRuntime": "让智能体在权限范围内管理工作组：添加、移除、启动和停止成员，查看可用的运行时，编辑智能体提示词。",
       "imBind": "让智能体用绑定密钥把 IM 聊天绑定到本工作组。",
@@ -372,6 +373,7 @@
     "failedSlashVisibility": "更新 / 命令显示状态失败。",
     "sectionNavigation": "能力分区",
     "sections": {
+      "recommended": { "label": "推荐", "hint": "按成员干的活分组" },
       "library": { "label": "能力库", "hint": "全部能力" },
       "skill": { "label": "Skills", "hint": "流程型能力" },
       "mcp": { "label": "MCP", "hint": "工具服务" },
@@ -446,14 +448,16 @@
     },
     "controls": {
       "title": "操作",
-      "skillHint": "管理当前工作组启用、/ 命令显示、阻止状态和移除。",
-      "mcpHint": "管理当前工作组启用、阻止状态、runtime 安装绑定和卸载。",
       "enabledMeta": "当前工作组已启用",
       "disabledMeta": "当前工作组未启用",
       "slashVisibleMeta": "会出现在 / 命令中",
       "slashHiddenMeta": "已从 / 命令隐藏",
       "blockMeta": "策略层阻止启用和使用",
       "blockedMeta": "已被策略阻止，解除后才能用",
+      "enableForGroup": "在本工作组启用",
+      "disableForGroup": "在本工作组停用",
+      "blockEverywhere": "全局阻止",
+      "unblockGroupTitle": "解除本工作组的阻止",
       "openGroup": "请打开一个工作组后再使用这些操作。"
     },
     "remove": {
@@ -490,7 +494,7 @@
       "confirmBlock": "阻止 {{name}}？\n\n解除阻止前，智能体不能使用 {{id}}。",
       "confirmUnblock": "解除阻止 {{name}}？\n\n如果 {{id}} 已启用且策略允许，智能体可以再次使用它。",
       "confirmBlockTitle": "阻止 {{name}}？",
-      "confirmBlockDescription": "这会为 {{id}} 增加策略阻止；解除阻止前不能被启用或使用。",
+      "confirmBlockDescription": "这会在所有工作组阻止 {{id}}；解除阻止前不能被启用或使用。",
       "confirmUnblockTitle": "解除阻止 {{name}}？",
       "confirmUnblockDescription": "这会移除 {{id}} 的策略阻止；如果它已启用且策略允许，智能体可以再次使用。"
     },
@@ -506,7 +510,134 @@
       "stillEnabled": "{{name}} 仍然启用。这期间它的状态可能有变化，请重试。"
     },
     "confirm": { "cancel": "取消", "confirm": "确认" },
-    "showSystem": "系统项"
+    "showSystem": "系统项",
+    "update": {
+      "changed": "有新的推荐版本（地址或包版本变了）。",
+      "unknown": "版本未记录。",
+      "update": "全局更新",
+      "verify": "核验并更新",
+      "badge": "可更新",
+      "confirmTitle": "更新 {{name}}？",
+      "confirmDescription": "更新会作用于所有工作组里这个 MCP 之后的调用；目前有 {{groups}} 个工作组启用了它。",
+      "confirmDescriptionBearer": "更新会作用于所有工作组里这个 MCP 之后的调用；目前有 {{groups}} 个工作组启用了它。带令牌的 MCP 现在不验证，成员下次使用时用自己的令牌验证。",
+      "failed": "更新失败。",
+      "unavailable": {
+        "delivery_form_not_supported": "这种交付方式这一版不能在这里更新。",
+        "credential_route_not_supported": "这次安装的令牌配置方式这一版不能在这里更新。"
+      },
+      "outcome": {
+        "configured": "配方已更新，成员下次使用时用自己的令牌验证。",
+        "ready": "已更新到新的推荐版本。",
+        "unchanged": "已经是推荐版本。"
+      },
+      "error": {
+        "capability_not_installed": "还没有安装。先启用一次，再更新。",
+        "capability_recipe_conflict": "推荐版本在你确认之前又变了。请刷新后重新查看。",
+        "capability_update_unsupported": "这个 MCP 这一版不能在这里更新。"
+      }
+    },
+    "recommended": {
+      "intro": "随这一版 CCCC 发布。成员需要时可以自己启用；你也可以替本工作组提前启用。",
+      "domain": "工作",
+      "mcp": "MCP",
+      "skill": "Skill",
+      "primary": "首选",
+      "alternative": "备选",
+      "emptyCell": "这一版没有推荐",
+      "empty": "这一版没有推荐内容。",
+      "summary": "{{total}} 条推荐 · {{domains}} 组",
+      "legend": "图例",
+      "kicker": "{{type}} · CCCC 推荐",
+      "backToList": "返回列表",
+      "badge": "推荐",
+      "badgeHint": "随这一版 CCCC 发布的推荐",
+      "binding": { "group": "已为本工作组启用", "member": "有成员已启用" },
+      "dot": {
+        "group": "已为本工作组启用",
+        "member": "有成员自己启用了",
+        "available": "有成员能用，还没人启用",
+        "setup": "要先设置",
+        "pending": "已配好，下次使用时验证",
+        "unknown": "要看成员自己的工具，CCCC 判断不了",
+        "uncertain": "还不确定能不能用",
+        "unsupported": "本工作组没有成员能用",
+        "blocked": "已阻止",
+        "none": "本工作组还没有成员"
+      },
+      "verification": {
+        "none": "未验证",
+        "listedHint": "核过出处、许可和交付方式，没有安装",
+        "passed": {
+          "listed": "已列出",
+          "install_checked": "已装上",
+          "text_checked": "正文已核对",
+          "tool_call_checked": "已调通",
+          "task_checked": "做过小任务"
+        },
+        "failed": {
+          "listed": "核对未通过",
+          "install_checked": "安装未通过",
+          "text_checked": "正文核对未通过",
+          "tool_call_checked": "调用未通过",
+          "task_checked": "任务未通过"
+        }
+      },
+      "sections": {
+        "why": "为什么推荐",
+        "useWhen": "什么时候用",
+        "avoidWhen": "什么时候别用",
+        "gotchas": "注意",
+        "requirements": "门槛与运行位置",
+        "members": "本工作组成员",
+        "verification": "验证",
+        "source": "出处与许可"
+      },
+      "runsOn": {
+        "daemon_host": "在运行 CCCC 的机器上运行",
+        "actor_tools": "在成员自己的环境里运行",
+        "reference": "这一版只列出，不能从 CCCC 启用"
+      },
+      "auth": {
+        "none": "不要密钥",
+        "bearer": "要令牌",
+        "api_key": "要 API 密钥",
+        "oauth": "要 OAuth 登录",
+        "account": "要账号"
+      },
+      "member": {
+        "compatible": "可用",
+        "pending": "下次使用时用自己的令牌验证",
+        "needs_setup": "要先设置",
+        "unknown": "待确认",
+        "unsupported": "用不了",
+        "blocked": "已阻止",
+        "session": "本次会话已启用",
+        "actor": "本人已启用",
+        "group": "已为本工作组启用",
+        "lastCallOk": "上次调用成功 {{time}}",
+        "lastCallFailed": "上次调用失败 {{time}}",
+        "none": "本工作组还没有成员。"
+      },
+      "credential": {
+        "actor": "缺少 {{env}}：在这个成员的私密环境变量里设置",
+        "profile": "缺少 {{env}}：在它关联的 Profile 里设置"
+      },
+      "reason": {
+        "actor_tool_prerequisites_unknown": "要看成员自己的工具，CCCC 判断不了",
+        "blocked_by_global_policy": "已全局阻止",
+        "blocked_by_group_policy": "已在本工作组阻止",
+        "credential_permission_denied": "令牌权限不够",
+        "credential_rejected": "令牌被拒绝（缺失或已失效）",
+        "credential_route_not_supported": "这个成员还没有提供令牌的通路",
+        "delivery_form_not_supported": "这一版不支持这种交付方式",
+        "delivery_form_unknown": "安装形态待确认",
+        "external_mcp_not_supported_by_actor": "网页模型成员不能用外部 MCP",
+        "missing_daemon_environment": "启动 CCCC 时没有设置所需的环境变量",
+        "missing_daemon_executable": "运行 CCCC 的机器上缺少所需命令",
+        "missing_member_credential": "缺少 {{env}}（在成员的私密环境变量或关联的 Profile 里设置）",
+        "unverified_remote_search": "未核实的旧搜索结果"
+      }
+    }
   },
   "assistants": {
     "openFromGroup": "请从工作组中打开此标签页。",

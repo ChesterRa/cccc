@@ -10,8 +10,9 @@ import {
   canManageSlashCommandVisibility,
   isCapabilityHiddenFromSlashCommands,
 } from "../modals/settings/capabilityManagementModel";
+import { isReleaseRecommendation, recommendationDot } from "./recommendationModel";
 
-export type CapabilityCenterSection = "skill" | "mcp" | "sources";
+export type CapabilityCenterSection = "recommended" | "skill" | "mcp" | "sources";
 export type CapabilityCenterTypeFilter = "all" | "skill" | "mcp" | "pack";
 export type CapabilityCenterStateFilter =
   | "all"
@@ -22,7 +23,6 @@ export type CapabilityCenterStateFilter =
   | "needs_setup";
 export type CapabilityCenterRemovalAction = "delete" | "remove" | "uninstall" | "none";
 export type CapabilityCenterSourceRemovalAction = "delete" | "none";
-export type CapabilityCenterSurface = "overlay" | "page";
 
 export type CapabilityCenterStats = {
   total: number;
@@ -57,7 +57,9 @@ export function capabilityCenterRemovalAction(
   const sourceId = String(row.source_id || "").trim();
   if (!sourceId) return "none";
   // A built-in cannot be removed; the Group switch is the one place that turns it off.
-  if (sourceId === "cccc_builtin") return "none";
+  // A release recommendation ships with the version: disable or block it instead, so it
+  // stays listed and can be enabled again.
+  if (sourceId === "cccc_builtin" || sourceId === "cccc_recommended") return "none";
   const type = capabilityCenterType(row);
   if (type === "skill" && sourceId === "agent_self_proposed") return "delete";
   const hasLocalFootprint = Boolean(
@@ -89,14 +91,12 @@ export function capabilityCenterSourcesGridClass(): string {
   return "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3 text-sm md:py-2";
 }
 
-export function capabilityCenterRootClass(surface: CapabilityCenterSurface): string {
-  if (surface === "page")
-    return "h-dvh w-full overflow-hidden bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]";
-  return "fixed inset-0 z-[120] flex overflow-hidden bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]";
+/** A full-screen layer over the panel it opened from; on phones it keeps clear of the notch and home bar. */
+export function capabilityCenterRootClass(): string {
+  return "fixed inset-0 z-[120] flex overflow-hidden bg-[var(--color-bg-primary)] pt-[env(safe-area-inset-top,0px)] pr-[env(safe-area-inset-right,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)] text-[var(--color-text-primary)]";
 }
 
-export function capabilityCenterFrameClass(surface: CapabilityCenterSurface): string {
-  if (surface === "page") return "flex h-dvh w-full";
+export function capabilityCenterFrameClass(): string {
   return "flex min-h-0 w-full";
 }
 
@@ -104,6 +104,8 @@ export function capabilityCenterPaginationMode(input: {
   section: CapabilityCenterSection;
   stateFilter: CapabilityCenterStateFilter;
 }): "server" | "client" {
+  // The recommendations are one release's short list, shown whole.
+  if (input.section === "recommended") return "client";
   if (["enabled", "slash_visible", "slash_hidden", "needs_setup"].includes(input.stateFilter))
     return "client";
   return "server";
@@ -286,9 +288,18 @@ export function capabilityCenterIsBlocked(
 export function capabilityCenterNeedsSetup(
   row: Pick<
     CapabilityOverviewItem,
-    "readiness_preview" | "enable_supported" | "cached_install_state"
+    | "readiness_preview"
+    | "enable_supported"
+    | "cached_install_state"
+    | "content_origin"
+    | "blocked_global"
+    | "blocked_group"
+    | "group_enabled"
+    | "members"
   >,
 ): boolean {
+  // A release recommendation's readiness is the daemon's per-member projection.
+  if (isReleaseRecommendation(row)) return recommendationDot(row) === "setup";
   const preview = row.readiness_preview;
   const status = String(preview?.preview_status || "")
     .trim()
@@ -306,11 +317,17 @@ export function capabilityCenterNeedsSetup(
   return row.enable_supported === false && status !== "already_active";
 }
 
-export function capabilityCenterMatchesQuery(row: CapabilityOverviewItem, query: string): boolean {
+export function capabilityCenterMatchesQuery(
+  row: CapabilityOverviewItem,
+  query: string,
+  matchedQuery?: string | null,
+): boolean {
   const needle = String(query || "")
     .trim()
     .toLowerCase();
-  if (!needle) return true;
+  // A successful server result is authoritative for that query, including metadata matches.
+  if (!needle || (matchedQuery != null && matchedQuery.trim().toLowerCase() === needle))
+    return true;
   const haystack = [
     row.capability_id,
     row.name,
@@ -374,11 +391,17 @@ export function capabilityCenterIsSlashHidden(
 
 export function capabilityCenterFilterItemsForSystemVisibility(
   items: CapabilityOverviewItem[],
-  input: { showSystem: boolean; query?: string; state?: CapabilityStateResult | null },
+  input: {
+    showSystem: boolean;
+    query?: string;
+    matchedQuery?: string | null;
+    state?: CapabilityStateResult | null;
+  },
 ): CapabilityOverviewItem[] {
   const query = String(input.query || "").trim();
   if (input.showSystem) return items;
-  if (query) return items.filter((row) => capabilityCenterMatchesQuery(row, query));
+  if (query)
+    return items.filter((row) => capabilityCenterMatchesQuery(row, query, input.matchedQuery));
   return items.filter((row) => !capabilityCenterIsReadonlySystem(row, input.state));
 }
 
@@ -386,6 +409,8 @@ export function filterCapabilityCenterItems(
   items: CapabilityOverviewItem[],
   input: {
     query?: string;
+    /** The query the server successfully matched for these items. */
+    matchedQuery?: string | null;
     typeFilter?: CapabilityCenterTypeFilter;
     stateFilter?: CapabilityCenterStateFilter;
     state?: CapabilityStateResult | null;
@@ -398,7 +423,7 @@ export function filterCapabilityCenterItems(
   return items.filter((row) => {
     const type = capabilityCenterType(row);
     if (typeFilter !== "all" && type !== typeFilter) return false;
-    if (!capabilityCenterMatchesQuery(row, input.query || "")) return false;
+    if (!capabilityCenterMatchesQuery(row, input.query || "", input.matchedQuery)) return false;
 
     const capId = String(row.capability_id || "").trim();
     if (stateFilter === "enabled") return enabledIds.has(capId);

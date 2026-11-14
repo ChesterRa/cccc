@@ -393,6 +393,33 @@ fn normalize_record(raw: &Value) -> Result<Value, OpError> {
         ("health_status".into(), json!("imported")),
     ]);
     copy_recommendation_fields(raw, &mut record);
+    // Reads fill in `support.form` and `support.auth`, which only an object (or null) takes.
+    if record
+        .get("support")
+        .is_some_and(|support| !support.is_object() && !support.is_null())
+    {
+        return Err(OpError::new(
+            "capability_import_invalid",
+            "support must be an object",
+        ));
+    }
+    if record
+        .get("support")
+        .and_then(|support| support.get("credential"))
+        .is_some()
+        && (record
+            .get("support")
+            .and_then(|support| support.get("auth"))
+            .and_then(Value::as_str)
+            != Some("bearer")
+            || cccc_core::capability_recommendations::bearer_env(&Value::Object(record.clone()))
+                .is_none())
+    {
+        return Err(OpError::new(
+            "capability_import_invalid",
+            "credential must contain only kind=bearer and an environment-key name",
+        ));
+    }
 
     if kind == "mcp_toolpack" {
         let install_mode = map_text(raw, "install_mode").to_ascii_lowercase();
@@ -453,8 +480,12 @@ fn normalize_record(raw: &Value) -> Result<Value, OpError> {
         return Ok(Value::Object(record));
     }
 
-    let capsule_text = map_text(raw, "capsule_text");
-    if capsule_text.is_empty() {
+    let capsule_text = raw
+        .get("capsule_text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    if capsule_text.trim().is_empty() {
         return Err(OpError::new(
             "capability_import_invalid",
             "skill import requires record.capsule_text",
@@ -482,10 +513,13 @@ fn normalize_record(raw: &Value) -> Result<Value, OpError> {
         "enable_supported".into(),
         json!(record["qualification_status"] != "blocked"),
     );
-    record.insert(
-        "capsule_text".into(),
-        json!(capsule_text.chars().take(2400).collect::<String>()),
-    );
+    if capsule_text.len() > 2 * 1024 * 1024 {
+        return Err(OpError::new(
+            "capability_import_invalid",
+            "skill capsule exceeds the 2 MiB limit",
+        ));
+    }
+    record.insert("capsule_text".into(), json!(capsule_text));
     record.insert(
         "requires_capabilities".into(),
         json!(string_list(raw.get("requires_capabilities"), 32)),
@@ -531,7 +565,7 @@ fn probe_record(home: &HomeLayout, record: &Value, enabled: bool) -> (Value, Vec
                 .collect::<Vec<_>>();
             (
                 json!({
-                    "state":"runnable","kind":"mcp_toolpack",
+                    "state":if super::credentials::bearer(record){"configured"}else{"runnable"},"kind":"mcp_toolpack",
                     "install_state":"installed",
                     "tool_count":names.len(),"tool_names":names
                 }),
@@ -712,6 +746,17 @@ fn has_command_candidates(value: Option<&Value>) -> bool {
 }
 
 fn copy_recommendation_fields(raw: &Map<String, Value>, record: &mut Map<String, Value>) {
+    for key in [
+        "support",
+        "requirements_summary",
+        "recommendation",
+        "verification",
+        "l10n",
+    ] {
+        if let Some(value) = raw.get(key) {
+            record.insert(key.into(), value.clone());
+        }
+    }
     for field in ["use_when", "avoid_when", "gotchas"] {
         let values = recommendation_lines(raw.get(field));
         if !values.is_empty() {

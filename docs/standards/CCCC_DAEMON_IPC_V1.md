@@ -407,6 +407,13 @@ Notes:
 - `cccc doctor` includes its own build and the daemon's reported build. MCP
   `initialize` includes the server's build under `_meta["cccc/build"]`; this reports
   the MCP process actually answering, not the executable currently on disk.
+  MCP `initialize` also returns `instructions`: a fixed English note of at most 512
+  characters saying that CCCC offers optional skills and MCP servers for named kinds of
+  work, and pointing to `cccc_capability_search` and `cccc_capability_use`. Voice
+  secretary task sessions, which cannot see those tools, receive no `instructions`. The
+  Web model connector's MCP 2026-07-28 `server/discover` result carries the same note.
+  Clients decide whether and how to show it to the model; it changes no tool,
+  permission or capability state.
 - `executable` is the effective daemon executable path for local diagnosis. Web
   exposes local paths only to administrators requesting `include_home`; ordinary
   authenticated ping and all health projections omit the executable path.
@@ -787,14 +794,97 @@ Result:
 }
 ```
 
+#### Recommendation projections
+
+The release includes a versioned recommendation manifest and licensed skill texts.
+It does not synchronize an online registry. Existing local records and bindings are
+preserved; a local record occupying a recommendation ID wins without being relabeled
+as a release recommendation. External recommended MCPs still use the real installer.
+Release-owned recommendation records are read-only; private copies use other IDs.
+
+Discovery, current-member applicability and verification observations are separate:
+
+```ts
+type CapabilityRecommendation = {
+  domain_id: string
+  role: "primary" | "alternative"
+  reason: string
+}
+type CapabilityVerification = {
+  level: "listed" | "install_checked" | "tool_call_checked" | "task_checked"
+  outcome: "passed" | "failed"
+  observed_at: string
+  build: string
+  path: string
+  result: string
+  platform?: string
+}
+type CapabilityForYou = {
+  availability: "compatible" | "needs_setup" | "unsupported" | "unknown"
+  enabled: boolean
+  blocked: boolean
+  credential_env?: string // environment-key name only, never its value
+  credential_source?: "actor" | "profile"
+  activation_pending?: boolean // enabled, compatible Bearer member lacks discovery for its current credential and installed recipe
+  reason_codes: Array<
+    "external_mcp_not_supported_by_actor" | "credential_route_not_supported" |
+    "missing_daemon_executable" | "missing_daemon_environment" |
+    "actor_tool_prerequisites_unknown" |
+    "blocked_by_global_policy" | "blocked_by_group_policy" |
+    "unverified_remote_search" | "delivery_form_not_supported" | "delivery_form_unknown" |
+    "missing_member_credential" | "credential_rejected" | "credential_permission_denied"
+  >
+}
+```
+
+`compatible` describes the delivery mechanism and known prerequisites; it does not
+promise service health or successful task completion. `needs_setup` requires an
+actual supported setup route. Member-owned tool prerequisites that CCCC cannot
+inspect are `unknown`, including on Web Model members. Unknown suitability is not
+a new permission gate for existing private records. Policy remains in `blocked`.
+Web Model members do not support external MCP execution through this port.
+For stdio recipes, record-level and `install_spec.required_env` keys are combined
+and deduplicated. Missing or blank values in the daemon's startup environment
+produce `needs_setup` with `missing_daemon_environment`, using the same check as
+installation. No environment values are included in the projection; the public
+requirements summary names the required setup.
+Managed members support remote HTTP Bearer references declared as
+`support.credential = {kind: "bearer", env: "ENVIRONMENT_KEY"}`. Only the referenced
+key is selected from the member's effective custom/private environment or linked
+Profile. The daemon environment and other members are not credential fallbacks.
+Native members have no credential setup route through CCCC. Missing values are
+`needs_setup`; HTTP 401 and 403 retain distinct reason codes. No alternate identity
+or automatic credential retry is used.
+
+Authenticated discovery metadata is cached only in daemon memory, scoped by
+member generation, public execution recipe and credential context. An ephemeral
+random HMAC key identifies that context without persisting tokens or their hashes.
+Credential rotation or a new public recipe prevents old metadata from being
+projected. State, overview and tool-list reads do not start network discovery.
+Explicit member preparation discovers tools. Once a call's capability is identified,
+it reuses matching in-memory metadata, discovering on a cache miss or an unknown tool
+with the same identity snapshot used for its call. An unqualified synthetic name can
+recover a cold Bearer capability only when its suffix reconstructs the real name and
+the complete naming hash matches exactly one enabled, unblocked capability. Names that
+lose punctuation during sanitization require explicit preparation or `capability_id`;
+ownership lookup never discovers unrelated endpoints. Group-scope enable records intent
+and public configuration only, including when requested by a foreman; it does not
+choose a member for discovery. `activation_pending` becomes false after
+successful current-identity discovery, which is distinct from `last_call` or task
+verification. Authenticated tool lists and schemas never enter shared runtime files.
+Reference-only, OAuth, bundled-script skills and stateful MCP entries can be listed
+without becoming enable-able. A failed verification never counts as a passed one;
+an empty verification list means unverified. Observations refer to the recorded
+build, delivery path and environment, not continuous health.
+
 #### `capability_overview`
 
 Return a global capability library snapshot for Settings/Policy views (no actor scope required).
 `legacy_search_unverified` identifies historical SkillsMP search snapshots whose
 contents have not been verified; their stored `qualification_status` is not evidence
 that their names and contents match. Existing bindings and direct access are unchanged.
-For skill records, an HTTP(S) `source_uri` is projected without userinfo, query or
-fragment, including for records saved before this rule. MCP toolpack sources are unchanged.
+HTTP(S) `source_uri` values are projected without userinfo, query or fragment,
+including existing MCP and skill records. Execution recipes remain separate.
 
 Args:
 ```ts
@@ -802,6 +892,12 @@ Args:
   query?: string
   limit?: number          // default 400, max 2000
   include_indexed?: boolean // default true
+  offset?: number           // default 0
+  group_id?: string         // projects each member of this Group
+  kind?: string
+  policy?: string
+  source_id?: string
+  locale?: "en" | "zh" | "ja" | string // default en; language variants accepted
 }
 ```
 
@@ -833,9 +929,42 @@ Result:
     tags?: string[]
     tool_count?: number
     tool_names?: string[]
+    content_origin: "release_recommendation" | "builtin" | "user_catalog"
+    read_only: boolean
+    recommendation?: CapabilityRecommendation[]
+    use_when?: string[]
+    avoid_when?: string[]
+    gotchas?: string[]
+    requirements_summary?: string
+    verification?: CapabilityVerification[]
+    support?: {
+      form: "remote_http" | "stdio" | "text_skill" | "stateful_stdio" | "skill_bundle" | "reference"
+      runs_on: "daemon_host" | "actor_tools"
+      auth: "none" | "bearer" | "api_key" | "oauth" | "account"
+      credential?: {kind: "bearer"; env: string}
+      prerequisites: string[]
+      limitations: string[]
+    }
+    for_you: CapabilityForYou // the user view; per-member applicability is below
+    group_enabled: boolean // configured binding, independent of compatibility/policy
+    members: Array<CapabilityForYou & {
+      actor_id: string
+      enabled_scope: "group" | "actor" | "session" | null
+      enabled_scopes: Array<"session" | "actor" | "group"> // all active bindings, in this order
+      last_call: { at: string; ok: boolean } | null
+    }>
     cached_install_state?: string
     cached_install_error_code?: string
     cached_install_error?: string
+    update?: {
+      available: boolean // explicit update can be offered for this recipe
+      scope: "global"
+      enabled_group_count: number // existing Groups with any active group/actor/session binding
+      recipe_fingerprint: string | null
+      installed_recipe_fingerprint: string | null
+      reason: "not_installed" | "recipe_unknown" | "recipe_changed" | "current"
+      unavailable_reason?: "delivery_form_not_supported" | "credential_route_not_supported" | null
+    }
     recent_success?: {
       success_count: number
       last_success_at?: string
@@ -845,6 +974,11 @@ Result:
     }
   }>
   count: number
+  total_count: number
+  offset: number
+  limit: number
+  has_more: boolean
+  domains: Array<{domain_id: string; name: string}> // manifest order
   query: string
   sources: Record<string, {
     source_id: string
@@ -852,7 +986,7 @@ Result:
   }>
   blocked_capabilities: Array<{
     capability_id: string
-    scope: "global"
+    scope: "global" | "group"
     reason?: string
     by?: string
     blocked_at?: string
@@ -866,7 +1000,22 @@ Result:
 
 Search built-in capabilities and locally stored catalog records. Records removed for
 the requested Group are excluded. Search matches every whitespace-separated query
-term, case-insensitively, against the capability ID, name, description and tags.
+term, case-insensitively, against the capability ID, name, description, tags and
+presentation metadata (including localized use cases and recommendation reasons).
+Exact ID/name matches precede other matches; release recommendations then precede
+ordinary matches. Recommendations are never inserted when they do not match.
+Empty queries continue to enumerate the catalog, not just the recommendation list.
+With `recommended: true`, results are limited to release recommendations for the caller,
+at most ten, in the order `cccc_bootstrap.recommended` uses: entries with
+`activation_pending` first, then primaries, then alternatives in manifest order. Entries
+blocked for the caller, and entries whose `for_you.availability` is not `compatible`,
+`needs_setup` or `unknown`, are left out; `needs_setup` and `unknown` entries stay with
+their requirements. A locally stored record that reuses a recommendation's ID is not a
+release recommendation and is not listed. A query narrows the entries with the same term
+matching. Results are the same summaries as other search results, without skill bodies,
+and listing enables or installs nothing. A null `recommended` counts as absent; any other
+non-boolean value is rejected with `invalid_args`. When `recommended` is absent, null or
+false, search is unchanged.
 It does not query remote registries. Historical SkillsMP search snapshots are also
 excluded when the stored source is `skillsmp_remote`, their tags contain `remote_search`,
 and `sync_state` is not `imported`. They can have mismatched content; this does
@@ -875,7 +1024,10 @@ change bindings or prevent direct access by ID. MCP actors can still use
 `cccc_capability_use(capability_id=...)` to access a known record, subject to
 normal authorization; that call can enable it for the session. Explicitly imported
 records and other locally stored remote records can still appear in results.
-Skill `source_uri` values use the same redacted projection as `capability_overview`.
+Source URLs use the same redacted projection as `capability_overview`.
+Search returns summaries without skill bodies or full tool schemas. Read complete
+skill text by ID with `cccc_capability_use(capability_id=...)`, or the daemon's
+`capability_tool_call` ID form; overview retains the detail used by the Web editor.
 
 Args:
 ```ts
@@ -884,6 +1036,7 @@ Args:
   actor_id?: string
   by?: string
   query?: string
+  recommended?: boolean
 }
 ```
 
@@ -901,12 +1054,19 @@ Result:
     description: string
     tool_names: string[]
     tags: string[]
-    capsule_text: string
     source: string
     source_uri: string
     sync_state?: string
     qualification_status: string
     enable_supported: boolean
+    content_origin: "release_recommendation" | "builtin" | "user_catalog"
+    read_only: boolean
+    recommendation: CapabilityRecommendation[]
+    use_when: string[] // at most the first use case in the selected presentation
+    avoid_when?: string[] // release recommendations only; at most two cases to avoid
+    requirements_summary: string
+    verification: CapabilityVerification[]
+    for_you: CapabilityForYou
   }>
 }
 ```
@@ -921,11 +1081,28 @@ Notes:
 2. Skills (`kind=skill`) use the same `capability_enable` op for activate/deactivate and can auto-apply
    declared dependencies.
 3. External MCP execution path supports `remote_only`, `package`, and `command`.
+   HTTP MCP installation and calls accept JSON and Streamable HTTP SSE responses,
+   forward the negotiated session, and retain the existing Mozilla certificate roots
+   and proxy support (including SOCKS and system proxies).
+   An expired-session tool POST is not automatically reinitialized or replayed.
+   One-shot external calls do not automatically drive interactive `input_required` rounds or
+   asynchronous task lifecycles. Unsupported result forms are reported without another tool call.
 4. `package` mode supports npm (`npx`), pypi (`uvx`/`pipx`), OCI (`docker`/`podman`) and can fall back to
-   command candidates when package metadata is incomplete.
-5. External enable runs preflight first (required env, runtime binary availability, remote URL sanity) and returns
-   `reason=preflight_failed:<code>` on deterministic blockers.
-6. `activation_pending` means relist/reconnect is still required; `runnable` means binding is live enough to try; `verified` is reserved for post-call proof, not plain enable.
+   command candidates when package metadata is incomplete. Stdio uses negotiated MCP initialization,
+   waits for the target response before closing input, and reaps its direct child under bounded
+   operation and cleanup budgets. Failed stdio installation and calls retain a bounded, redacted stderr tail.
+   Stdio calls remain one-shot; process-local state is not retained between calls.
+   The existing PyPI `runtime_arguments`, when provided, replace the default `package@version`
+   invocation; they are not the MCP Registry's additive `runtimeArguments`. Explicit `command`
+   mode can express a complete runtime argv without that package-specific convention.
+5. External enable checks required environment/runtime availability and URL validity.
+   Anonymous installations are probed; declared Bearer installations persist only
+   public endpoint/key references. A member may explicitly prepare its own
+   authenticated tool list; user/Group enable never borrows a member credential.
+6. `activation_pending` means exposure or member preparation is still pending;
+   `runnable` means binding is live enough to try; `verified` is reserved for post-call proof, not plain enable.
+   A tool result with `isError=true` does not mark its binding verified or increase recent-success
+   counts. MCP delegation preserves that error flag and remains runnable rather than verified.
 7. `cleanup` is accepted but currently ignored. Disabling removes the capability from the given scope's
    enablement, but does not clean runtime caches, runtime bindings or installations, and this op returns
    no removal counts. `capability_uninstall` removes a capability from a group and reports what it removed.
@@ -938,6 +1115,7 @@ Args:
   scope?: "group" | "actor" | "session"   // default: session
   enabled?: boolean                         // default: true
   cleanup?: boolean                         // currently ignored; see note 7
+  prepare?: boolean                         // default true; false defers Bearer discovery to the following call
   reason?: string                           // optional short audit reason
   ttl_seconds?: number                      // session scope only
   by?: string
@@ -1053,7 +1231,17 @@ Result:
 #### `capability_state`
 
 Read effective capability exposure and visible MCP tool names for caller scope.
-Skill `source_uri` values use the same redacted projection as `capability_overview`.
+Dynamic-tool discovery has a configurable display budget (default 32). This budget does not
+limit calls to a known synthetic external tool name: execution still checks the complete effective
+enabled set, block policy and caller authority. Hidden discovery entries do not grant any permission.
+Source URLs use the same redacted projection as `capability_overview`.
+`recommended` contains the same member-specific discovery summaries as search,
+using `capability_id` and `description_short` instead of search's `id` and
+`description`; it contains no skill body. `recommended` and `domains` preserve manifest order.
+Web requests may select `locale` (default English, per-field fallback to English).
+MCP-facing search stays English. Locale changes presentation only, never recipes,
+authority or verification. Bootstrap lists a bounded index of release recommendations the
+caller might use, independently of its recovery budget and assigned skills.
 
 Args:
 ```ts
@@ -1062,6 +1250,7 @@ Args:
   actor_id?: string
   by?: string
   capability_id?: string // optional; returns capability_usage for this id
+  locale?: string // Web presentation language; default en
   view?: "mcp_catalog" // reserved for actor-scoped MCP tool discovery
 }
 ```
@@ -1096,6 +1285,18 @@ Result:
   group_id: string
   actor_id: string
   default_profile: "core"
+  domains: Array<{domain_id: string; name: string}>
+  recommended: Array<{
+    capability_id: string
+    kind: string
+    name: string
+    description_short: string
+    recommendation: CapabilityRecommendation[]
+    use_when: string[]
+    requirements_summary: string
+    verification: CapabilityVerification[]
+    for_you: CapabilityForYou
+  }>
   core_tool_count: number
   visible_tool_count: number
   visible_tools: string[]
@@ -1253,6 +1454,22 @@ for an enabled `skill:*` capability. `cccc_bootstrap.available_skills` lists up 
 assigned to the caller or active for it, without their rules, and counts any it left out. It is
 absent when there are none or the capability state could not be read. An assigned skill is listed
 before the actor restarts, because `cccc_capability_use` enables it when used.
+`cccc_bootstrap.recommended` lists primary and alternative entries from
+`capability_state.recommended`, skipping skills already listed in `available_skills`. Each line
+contains its role, exact capability ID and first `use_when`, trimmed to 96 characters. Roles apply
+only to that use case. Blocked and `unsupported` entries are excluded. `unknown` entries are marked
+`check requirements`; `needs_setup` entries are marked `setup required`; both carry the requirements
+summary when present, trimmed to 90 characters. Enabled entries are marked `enabled`, and entries
+with `activation_pending` are marked `discovery pending`; listing does not enable or install
+anything. A pending Bearer MCP lists no tools until the caller's next explicit
+`cccc_capability_use`, which tries to list them with the caller's own credential. Pending entries
+come first, then other primary entries, then alternatives in manifest order. Each ID appears at
+most once. The section contains at most 24 entries and its complete compact JSON encoding is at
+most 3,072 UTF-8 bytes, including `note` and any `omitted` object. When the bounds omit eligible
+entries, `omitted.count` counts entries, and `omitted.search` points to search by name or a short
+keyword. Entries excluded by policy, support or assigned-skill deduplication do not count as
+omitted. The section is absent when no entry is eligible or capability state could not be read.
+It has no `routes` field.
 
 #### `capability_import`
 
@@ -1266,6 +1483,9 @@ Notes:
 1. This op does not parse arbitrary web/forum text; caller must provide structured `record`.
 2. `kind=mcp_toolpack` requires `install_mode` + `install_spec`.
 3. `kind=skill` requires `capsule_text`.
+   The complete UTF-8 text is preserved, up to the same 2 MiB limit as `SKILL.md`
+   target installation. An oversized import is rejected before changing an existing record;
+   it is not silently shortened.
 4. `dry_run=true` validates/probes only (no catalog persistence).
 5. `command*` and `fallback_command*` may be provided as top-level shortcuts; daemon copies them into
    `install_spec` when missing.
@@ -1292,8 +1512,8 @@ Notes:
     in the comparison. `import_action` is the primary create/update/unchanged signal; `record_changed` only compares
     existing records. `already_active` is pre-import state; `active_after_import` is the post-import runnable binding.
 13. If `readiness_preview.preview_status=active` or `active_after_import=true`, agents must not re-enable the same skill
-    just to refresh its capsule text. Use `capability_state` to confirm it is active and `capability_search` by ID to
-    read the full registered text of the imported record; `capsule_preview` is only a compact display summary.
+    just to refresh its capsule text. Use `capability_state` to confirm it is active and MCP
+    `cccc_capability_use` by ID to read the full registered text; `capsule_preview` is only a compact display summary.
 
 Args:
 ```ts
@@ -1625,9 +1845,74 @@ Result:
 }
 ```
 
+#### `capability_update`
+
+Explicitly replace the globally cached installation for one MCP capability. Only
+the user may initiate it; agents and ordinary enable/use calls never update an
+existing installation. The caller first reads the recipe fingerprint from overview
+and submits it with confirmation. The Group count describes configured bindings,
+not current usability or the complete impact: every subsequent call of this
+capability uses the new installation, including from Groups enabled later.
+
+Args:
+```ts
+{
+  capability_id: string
+  expected_recipe_fingerprint: string
+  by?: "user"
+}
+```
+
+The operation takes global write ownership, waiting for in-flight calls and their
+state writes to finish. A mismatched fingerprint fails with
+`capability_recipe_conflict` before installation. A candidate is validated (and
+probed for anonymous execution) before a single atomic state write changes the global pointer and all
+member pointers for this capability. Preparation failure preserves the existing
+runtime state. Other capability IDs and their referenced artifacts are retained.
+The prior installation must exist; otherwise it fails with
+`capability_not_installed`. Unsupported authentication and legacy inline-credential
+installations fail with `capability_update_unsupported`. Remote HTTP Bearer updates
+validate and atomically switch only the public recipe, without choosing a member
+or probing with a token. They return `configured`; each member discovers with its
+own identity at its next explicit use. Changed recipe fingerprints invalidate the
+memory-only discovery projection. Configuration success is not authentication or
+tool-call verification.
+
+Result:
+```ts
+{
+  capability_id: string
+  updated: boolean
+  state: "ready" | "configured" | "unchanged"
+  previous_artifact_id?: string
+  artifact_id: string
+  recipe_fingerprint: string
+  scope: "global"
+  enabled_group_count: number
+  refresh_required: boolean
+  refresh_mode?: "relist_or_reconnect"
+}
+```
+
+The fingerprint describes declared execution inputs: endpoint, package/runtime
+invocation, arguments and environment references. It excludes descriptions,
+recommendation ordering and translations. It does not pin a remote server's
+implementation or transitive package dependencies. Environment references remain
+unresolved in the fingerprint, so values fetched from the environment are not
+fingerprint inputs. Literal values already present in a legacy recipe remain
+part of that recipe's identity.
+Legacy installations with no stored recipe remain `recipe_unknown`; the current
+catalog must not be substituted as evidence of what was installed previously.
+Only `recipe_changed` merits a list-level update hint. Unknown versions may show
+“version not recorded” and an explicit verify/update action in the detail view.
+An unchanged fingerprint returns `unchanged` without running an installer.
+
 #### `capability_tool_call`
 
 Invoke an enabled dynamic external capability tool by synthetic tool name.
+The inner `arguments` object is forwarded unchanged. CCCC identity and binding
+metadata travel only in the outer envelope; external parameters may themselves
+be named `group_id`, `actor_id` or `by` without becoming CCCC authority.
 
 Args:
 ```ts
@@ -1635,7 +1920,8 @@ Args:
   group_id: string
   actor_id?: string
   by?: string
-  tool_name: string
+  tool_name: string // an advertised external name, or the real name when capability_id is explicit
+  capability_id?: string // scopes real-name resolution and discovery after a cold member cache
   arguments?: Record<string, unknown>
 }
 ```
@@ -1646,8 +1932,31 @@ Result:
   tool_name: string
   capability_id: string
   result: Record<string, unknown>
+  avoid_when?: string[] // CCCC's release recommendation notes, outside the upstream result
+  gotchas?: string[]
+  requirements_summary?: string
 }
 ```
+
+For release recommendations, external tool-call results carry CCCC's English
+`avoid_when`, `gotchas` and `requirements_summary` alongside the unchanged upstream
+`result`. The MCP bridge returns the same notes when delivering a skill body or
+preparing an MCP. In `cccc_capability_use` with a tool name, the notes appear next
+to `tool_result`, and are not repeated inside it. Direct `cccc_ext_*` calls also
+include the notes. They are guidance, not an authorization check; skill text is
+unchanged. Built-in packs and user catalog records, including pre-existing ID
+collisions with release content, do not acquire release notes. Every structured
+tool result carries them; there is no per-member read-acknowledgement state.
+The release manifest rejects more than two `avoid_when` entries, including in
+translations, to keep search summaries bounded.
+
+An explicit external `capability_id` binds a real tool name to that capability's
+enabled, unblocked installation. The MCP bridge keeps such names in the external
+namespace, including names that coincide with CCCC operations. An unqualified
+real name does not gain access to another capability by this rule. The bridge's
+`cccc_capability_use` may reuse its existing unique capability inference; a name
+found in multiple capabilities still requires an explicit `capability_id`. CCCC
+core and built-in pack names take precedence over unqualified external names.
 
 #### `group_show`
 

@@ -559,6 +559,7 @@ async fn scoped_token_cannot_access_global_management_routes() {
         ("GET", "/api/v1/capabilities/allowlist"),
         ("POST", "/api/v1/capabilities/allowlist/validate"),
         ("POST", "/api/v1/capabilities/block"),
+        ("POST", "/api/v1/capabilities/update"),
     ] {
         let response = cccc_web::app(home.clone())
             .oneshot(
@@ -656,35 +657,51 @@ async fn long_lived_query_token_is_rejected_for_event_streams() {
 }
 
 #[tokio::test]
-async fn scoped_token_cannot_snapshot_a_query_selected_group() {
+async fn scoped_token_cannot_read_a_query_selected_group_outside_its_scope() {
     let (_temp, home) = home();
     let token = AccessTokenStore::new(home.clone())
         .expect("store")
         .create("member", vec!["g_allowed".into()], false, None)
         .expect("token");
     let app = cccc_web::app(home);
-    let response = app
-        .clone()
-        .oneshot(
-            Request::get("/api/v1/debug/snapshot?group%5Fid=g%5Fdenied")
-                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-    let response = app
-        .oneshot(
-            Request::get("/api/v1/debug/snapshot?group_id=g_allowed&group_id=g_denied")
-                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
-                .body(Body::empty())
-                .expect("request"),
-        )
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    for path in ["/api/v1/debug/snapshot", "/api/v1/capabilities/overview"] {
+        for query in [
+            "group%5Fid=g%5Fdenied",
+            "group_id=g_allowed&group_id=g_denied",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get(format!("{path}?{query}"))
+                        .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                        .body(Body::empty())
+                        .expect("request"),
+                )
+                .await
+                .expect("response");
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}?{query}");
+        }
+    }
+    for path in [
+        "/api/v1/capabilities/overview",
+        "/api/v1/capabilities/overview?group_id=g_allowed",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(path)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "authorized request reaches daemon: {path}"
+        );
+    }
 }
 
 #[tokio::test]

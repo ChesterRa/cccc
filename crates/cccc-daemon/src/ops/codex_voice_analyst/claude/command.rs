@@ -1,5 +1,5 @@
 use super::super::{SessionPurpose, launch::ANALYST_INSTRUCTIONS, launch_command};
-use cccc_core::HomeLayout;
+use cccc_core::{HomeLayout, local_sessions};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -56,6 +56,7 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     // Agent View forwards a selected environment, not arbitrary caller keys.
     // Task grants use its per-job private settings env, then expire with the job.
     merge_environment(&mut settings, environment)?;
+    disable_native_integration(&mut settings)?;
     network_environment::inherit(&mut settings, std::env::vars())?;
     let mut launch_environment = launcher_environment(environment);
     let config_dir = config_dir(&launch_environment)?;
@@ -447,6 +448,31 @@ fn merge_environment(
     Ok(())
 }
 
+/// The native integration plugin comes from the user's Claude configuration,
+/// which managed sessions share. In a CCCC-owned session its hooks and receive
+/// Monitor return at once, and Claude can report that Monitor exit to the model
+/// as a notification, costing a turn at startup. Only this session's settings
+/// disable it; native sessions never read this file.
+fn disable_native_integration(settings: &mut Map<String, Value>) -> io::Result<()> {
+    let value = settings
+        .entry("enabledPlugins")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if value.is_null() {
+        *value = Value::Object(Map::new());
+    }
+    let plugins = value.as_object_mut().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Claude settings enabledPlugins must be an object",
+        )
+    })?;
+    plugins.insert(
+        local_sessions::CLAUDE_PLUGIN_ID.to_owned(),
+        Value::Bool(false),
+    );
+    Ok(())
+}
+
 fn launcher_environment(environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     const PRELAUNCH_KEYS: &[&str] = &[
         "PATH",
@@ -689,6 +715,58 @@ mod tests {
         assert!(first.settings_path.is_file());
         remove_settings_owner(&home, "actor:g1:claude-1").expect("remove owner settings");
         assert!(!first.settings_path.exists());
+    }
+
+    #[test]
+    fn managed_settings_disable_only_the_native_integration_plugin() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let executable = temp.path().join(if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        });
+        std::fs::write(&executable, "fixture").expect("fake Claude executable");
+        let executable = executable.to_string_lossy().into_owned();
+        let user_settings = json!({
+            "model": "sonnet",
+            "enabledPlugins": {"other@market": true, "cccc-local-sessions@cccc-local": true}
+        })
+        .to_string();
+        for (command, other_plugin, model) in [
+            (
+                vec![executable.clone(), "--settings".into(), user_settings],
+                Value::Bool(true),
+                json!("sonnet"),
+            ),
+            (vec![executable.clone()], Value::Null, Value::Null),
+        ] {
+            let prepared = prepare(
+                &home,
+                &command,
+                &BTreeMap::new(),
+                temp.path(),
+                "actor:g1:claude-1",
+                SessionPurpose::Actor,
+                json!({}),
+            )
+            .expect("managed settings");
+            let written: Value = serde_json::from_str(
+                &std::fs::read_to_string(&prepared.settings_path).expect("read settings"),
+            )
+            .expect("settings JSON");
+            assert_eq!(
+                written["enabledPlugins"]["cccc-local-sessions@cccc-local"],
+                false
+            );
+            assert_eq!(written["enabledPlugins"]["other@market"], other_plugin);
+            assert_eq!(written["model"], model);
+        }
+
+        let mut settings = Map::new();
+        settings.insert("enabledPlugins".into(), json!(["not", "an", "object"]));
+        assert!(disable_native_integration(&mut settings).is_err());
     }
 
     #[cfg(unix)]

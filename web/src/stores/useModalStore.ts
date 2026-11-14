@@ -50,6 +50,8 @@ interface ModalState {
   relaySource: RelaySource | null;
   contextTaskId: string | null;
   groupConnectionsId: string | null;
+  /** The Group the capability center was opened for; "" opens it without one, null keeps it closed. */
+  capabilityCenterGroupId: string | null;
   presentationViewer: PresentationViewerState | null;
   presentationPin: PresentationPinState | null;
   presentationAttention: PresentationAttentionState;
@@ -87,6 +89,7 @@ interface ModalState {
   openContextTask: (taskId: string) => void;
   clearContextTask: () => void;
   setGroupConnections: (groupId: string | null) => void;
+  setCapabilityCenter: (groupId: string | null) => void;
   setPresentationViewer: (viewer: PresentationViewerState | null) => void;
   setPresentationPin: (pin: PresentationPinState | null) => void;
   setVisiblePresentationResource: (
@@ -117,6 +120,7 @@ export const useModalStore = create<ModalState>((set) => ({
   relaySource: null,
   contextTaskId: null,
   groupConnectionsId: null,
+  capabilityCenterGroupId: null,
   presentationViewer: null,
   presentationPin: null,
   presentationAttention: {},
@@ -161,6 +165,8 @@ export const useModalStore = create<ModalState>((set) => ({
       },
     })),
   setGroupConnections: (groupId) => set({ groupConnectionsId: groupId }),
+  setCapabilityCenter: (groupId) =>
+    set({ capabilityCenterGroupId: groupId === null ? null : String(groupId || "").trim() }),
 
   setRecipientsModal: (eventId) => set({ recipientsEventId: eventId }),
   setRelayModal: (eventId, groupId, event) =>
