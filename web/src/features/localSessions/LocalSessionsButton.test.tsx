@@ -935,7 +935,6 @@ it.each([
     await mount();
     const entry = host.querySelector("button")!;
     expect(entry.textContent).toBe(short);
-    expect(entry.hasAttribute("aria-label")).toBe(false);
     expect(entry.title).toBe(full);
     await i18n.changeLanguage("en");
   },

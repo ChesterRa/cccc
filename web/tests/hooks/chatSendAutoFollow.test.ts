@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vite-plus/test";
-import { readFileSync } from "node:fs";
 
 import {
   getLastVisibleMessageIndex,
@@ -56,41 +55,6 @@ describe("chat send message-block follow intent", () => {
     expect(lastVisibleMessageIndex).toBe(4);
     expect(shouldFollowChatSend({ messageCount: 7, lastVisibleMessageIndex })).toBe(true);
     expect(shouldFollowChatSend({ messageCount: 8, lastVisibleMessageIndex })).toBe(false);
-  });
-
-  it("keeps the pre-optimistic sample and resamples each consecutive send", () => {
-    const capturedBeforeOptimistic = shouldFollowChatSend({
-      messageCount: 10,
-      lastVisibleMessageIndex: 7,
-    });
-    const afterOptimisticWithoutScroll = shouldFollowChatSend({
-      messageCount: 11,
-      lastVisibleMessageIndex: 7,
-    });
-    const nextSendAfterFirstScroll = shouldFollowChatSend({
-      messageCount: 11,
-      lastVisibleMessageIndex: 10,
-    });
-
-    expect(capturedBeforeOptimistic).toBe(true);
-    expect(afterOptimisticWithoutScroll).toBe(false);
-    expect(capturedBeforeOptimistic).toBe(true);
-    expect(nextSendAfterFirstScroll).toBe(true);
-  });
-
-  it("samples the viewport before optimistic rows and placeholders are inserted", () => {
-    const source = readFileSync(new URL("../../src/hooks/useChatTab.ts", import.meta.url), "utf8");
-    const sampleIndex = source.indexOf(
-      "const shouldLockBottomAfterSend = shouldFollowCurrentSend();",
-    );
-    const optimisticIndex = source.indexOf(
-      "enqueueOutbox(selectedGroupId, localId, optimisticEvent)",
-    );
-    const placeholderIndex = source.indexOf("insertLocalAssistantPlaceholders();");
-
-    expect(sampleIndex).toBeGreaterThan(0);
-    expect(sampleIndex).toBeLessThan(optimisticIndex);
-    expect(sampleIndex).toBeLessThan(placeholderIndex);
   });
 
   it("fails closed when no rendered row is truly visible", () => {

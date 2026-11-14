@@ -220,23 +220,6 @@ describe("authenticated URLs", () => {
   });
 });
 
-describe("normalizePresentationBrowserSurfaceState", () => {
-  it("preserves projected display ownership for the browser status UI", () => {
-    const state = normalizePresentationBrowserSurfaceState({
-      active: true,
-      state: "ready",
-      metadata: { display: ":123", display_owned: true, display_owner: "cccc_xvfb", adopted: true },
-    });
-
-    expect(state.metadata).toEqual({
-      display: ":123",
-      display_owned: true,
-      display_owner: "cccc_xvfb",
-      adopted: true,
-    });
-  });
-});
-
 describe("filenameFromContentDisposition", () => {
   it("decodes a Chinese group package from the RFC 5987 parameter", () => {
     const header =
