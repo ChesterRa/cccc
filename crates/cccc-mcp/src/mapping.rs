@@ -612,10 +612,10 @@ mod tests {
             };
             for action in actions {
                 let args = json!({"action":action,"group_id":"g_fixture","by":"lead","task_id":"T001", "title":"fixture", "summary":"fixture"}).as_object().cloned().expect("args");
-                if let Err(error) = daemon_call(name, args) {
-                    if !error.starts_with("tool is not a daemon operation:") {
-                        failures.push(format!("{name} {action}: {error}"));
-                    }
+                if let Err(error) = daemon_call(name, args)
+                    && !error.starts_with("tool is not a daemon operation:")
+                {
+                    failures.push(format!("{name} {action}: {error}"));
                 }
             }
         }

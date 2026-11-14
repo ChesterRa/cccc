@@ -515,13 +515,12 @@ mod tests {
         let pid = child.id().expect("orphan pid");
         let snapshot = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if let Some(snapshot) = process_snapshot(pid).await.expect("process snapshot") {
-                    if snapshot
+                if let Some(snapshot) = process_snapshot(pid).await.expect("process snapshot")
+                    && snapshot
                         .command
                         .contains(canonical_profile.to_string_lossy().as_ref())
-                    {
-                        break snapshot;
-                    }
+                {
+                    break snapshot;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }

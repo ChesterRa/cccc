@@ -43,6 +43,7 @@ pub(crate) mod process_recovery;
 mod realtime;
 mod remote_access;
 mod remote_access_projection;
+mod session_nodes;
 mod settings;
 mod streams;
 mod system;
@@ -96,6 +97,7 @@ pub fn router() -> Router<AppState> {
         .merge(access_tokens::routes())
         .merge(groups::routes())
         .merge(local_sessions::routes())
+        .merge(session_nodes::routes())
         .merge(group_copy::routes())
         .merge(actors::routes())
         .merge(assistants::routes())

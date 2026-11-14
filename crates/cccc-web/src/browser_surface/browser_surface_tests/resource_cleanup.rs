@@ -267,7 +267,7 @@ async fn closed_actor_windows_retire_with_their_generation() {
             }
             "prefix" => {
                 manager
-                    .close_prefixes(&[key.clone()])
+                    .close_prefixes(std::slice::from_ref(&key))
                     .await
                     .expect("Web deletion cleanup");
             }

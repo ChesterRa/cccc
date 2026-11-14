@@ -12,6 +12,7 @@ export function DirectReceiveForm({
   inviteMode = false,
   name: initialName,
   busy,
+  unavailable = false,
   onSave,
   onStop,
 }: {
@@ -20,6 +21,7 @@ export function DirectReceiveForm({
   inviteMode?: boolean;
   name: string;
   busy: boolean;
+  unavailable?: boolean;
   onSave: (listener: DirectListener, name: string, previous: DirectListener | null) => void;
   onStop: () => void;
 }) {
@@ -49,7 +51,7 @@ export function DirectReceiveForm({
         onSave({ bind: bind.trim(), address: address.trim() }, name.trim(), savedListener);
       }}
     >
-      <fieldset disabled={busy} className="space-y-4 min-w-0">
+      <fieldset disabled={busy || unavailable} className="space-y-4 min-w-0">
         <p className="text-[var(--color-text-secondary)]">
           {t(inviteMode ? "direct.inviteHint" : "direct.setupHint")}
         </p>
@@ -158,7 +160,7 @@ export function DirectReceiveForm({
           </div>
         </details>
         <div className="space-y-2">
-          <Button type="submit" disabled={busy || !address.trim() || !bind.trim()}>
+          <Button type="submit" disabled={busy || unavailable || !address.trim() || !bind.trim()}>
             {t(
               busy
                 ? inviteMode

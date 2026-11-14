@@ -13,6 +13,7 @@ mod local_sessions;
 mod local_tools;
 mod mapping;
 mod native_session;
+mod remote_native;
 mod repo;
 mod repo_inspect;
 mod response_projection;
@@ -282,6 +283,28 @@ pub async fn handle_request_for_binding(
             actor_id: binding["actor_id"].as_str().unwrap_or_default(),
             native_binding: None,
             binding: Some(binding),
+        }),
+    )
+    .await
+}
+
+/// Called only after a session-node gateway has authenticated the remote key
+/// and captured a current native membership. Every operation revalidates it.
+pub async fn handle_request_for_native_binding(
+    home: &HomeLayout,
+    request: &Value,
+    binding: &cccc_contracts::local_session::LocalSessionBinding,
+) -> Value {
+    let client = DaemonClient::new(home.clone()).without_voice_origin();
+    handle(
+        home,
+        &client,
+        request,
+        Some(RequestContext {
+            group_id: &binding.group_id,
+            actor_id: &binding.actor_id,
+            binding: None,
+            native_binding: Some(binding),
         }),
     )
     .await

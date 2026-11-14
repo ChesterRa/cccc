@@ -135,7 +135,7 @@ jobs:
           path: web/dist
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.91.0
 
       - uses: Swatinem/rust-cache@v2
 
@@ -211,7 +211,7 @@ jobs:
         with:
           name: bundled-web
           path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.91.0
       - uses: Swatinem/rust-cache@v2
       - name: Verify foreground terminal lifecycle on macOS
         run: >-
@@ -234,7 +234,7 @@ jobs:
         with:
           name: bundled-web
           path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2

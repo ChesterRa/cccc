@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { invitation, relation } from "./DirectConnectionsPanel.fixtures";
 import { DirectConnectionsPanel } from "./DirectConnectionsPanel";
 const mocks = vi.hoisted(() => ({ request: vi.fn(), copy: vi.fn() }));
 vi.mock("../../utils/copy", () => ({ copyTextToClipboard: mocks.copy }));
@@ -17,6 +18,7 @@ beforeEach(() => {
   mocks.copy.mockReset().mockResolvedValue(true);
   value = {
     display_name: "Office",
+    capabilities: { reusable_invitations: true },
     listener: null,
     runtime: null,
     relations: [],
@@ -68,15 +70,26 @@ it("clears a recovered polling error and treats cached online status as unconfir
   expect(host.textContent).toContain("direct.states.online");
 });
 const button = (label: string) =>
-  Array.from(host.querySelectorAll("button")).find((button) => button.textContent === label)!;
+  Array.from(document.querySelectorAll("button")).find(
+    (button) => button.getAttribute("aria-label") === label || button.textContent === label,
+  )!;
 const render = async () => {
   await act(async () => root.render(<DirectConnectionsPanel groupId="group-a" />));
 };
 it("does not mutate on initial status polling or claim a listener is ready from configuration", async () => {
+  vi.useFakeTimers();
+  value.capabilities = {};
   value.listener = { bind: "0.0.0.0:8847", address: "office:8847" };
   await render();
   expect(host.textContent).toContain("direct.listenerPending");
   await act(async () => button("direct.inviteGroup").click());
+  expect(button("direct.create").disabled).toBe(true);
+  expect(host.textContent).toContain("direct.reusableUnavailable");
+  expect(mocks.request.mock.calls.every(([, init]) => !init?.method)).toBe(true);
+  value.capabilities = { reusable_invitations: true };
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
   expect(button("direct.create").disabled).toBe(false);
   expect(button("direct.cancel")).toBeUndefined();
   await act(async () => button("direct.back").click());
@@ -85,7 +98,7 @@ it("does not mutate on initial status polling or claim a listener is ready from 
   expect(mocks.request.mock.calls.every(([, init]) => !init?.method)).toBe(true);
 });
 it("creates an invitation for this Group only after verified listener status", async () => {
-  const text = invitation();
+  const text = invitation(undefined, 2);
   value.listener = { bind: "0.0.0.0:8847", address: "office:8847" };
   value.runtime = { listener: true, error: null };
   mocks.request.mockImplementation(async (_url, init) =>
@@ -98,7 +111,13 @@ it("creates an invitation for this Group only after verified listener status", a
   await act(async () => button("direct.create").click());
   expect(
     JSON.parse(mocks.request.mock.calls.find(([, init]) => init?.method === "POST")![1].body),
-  ).toEqual({ action: "invite", group_id: "group-a", expected_listener: value.listener });
+  ).toEqual({
+    action: "invite",
+    group_id: "group-a",
+    expected_listener: value.listener,
+    reusable: true,
+    expires_in_seconds: 604800,
+  });
   expect(host.querySelector<HTMLTextAreaElement>("textarea[readonly]")?.value).toBe(text);
 });
 it("approves the requesting pair in one click and never presents pending as connected", async () => {
@@ -124,7 +143,7 @@ it("approves the requesting pair in one click and never presents pending as conn
   // Declining stays a guarded, destructive action that needs its own confirmation.
   await act(async () => button("direct.cancelInvite").click());
   expect(posts()).toHaveLength(0);
-  expect(host.textContent).toContain("direct.cancelPairHint");
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("direct.cancelPairHint");
   await act(async () => button("direct.cancel").click());
   expect(posts()).toHaveLength(0);
   await act(async () => button("direct.approve").click());
@@ -179,42 +198,6 @@ it("automatically removes expired invitations without approving a replaced Group
   expect(button("direct.remove")).toBeUndefined();
   expect(postBodies()).toEqual([{ action: "remove", group_id: "group-a", id: "direct-id" }]);
 });
-function invitation(expires = Date.now() + 1800000) {
-  return `cccc-direct:${btoa(
-    String.fromCharCode(
-      ...new TextEncoder().encode(
-        JSON.stringify({
-          v: 1,
-          id: "direct-fixture",
-          address: "office.test:8847",
-          secret: "a".repeat(64),
-          expires_at: new Date(expires).toISOString(),
-          host: {
-            instance_id: "peer-a",
-            name: "办公室",
-            group_id: "remote-group",
-            title: "Review",
-          },
-        }),
-      ),
-    ),
-  )}`;
-}
-function relation(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "direct-fixture",
-    local: { title: "Local A" },
-    remote: null,
-    state: "invited",
-    initiated: false,
-    current: true,
-    expired: false,
-    online: false,
-    error: null,
-    expires_at: new Date(Date.now() + 1800000).toISOString(),
-    ...overrides,
-  };
-}
 async function fill(field: HTMLInputElement | HTMLTextAreaElement, text: string) {
   await act(async () => {
     const proto =
@@ -270,7 +253,7 @@ it("creates from the detected address with one confirmation and waits for readin
         value.listener = request.listener;
         return { ok: true, result: { configured: true } };
       }
-      return { ok: true, result: { invitation: invitation() } };
+      return { ok: true, result: { invitation: invitation(undefined, 2) } };
     }
     return { ok: true, result: { ...value } };
   });
@@ -323,7 +306,7 @@ it("previews the invited pair, blocks expired content and joins without configur
 });
 it("keeps a confirmed invitation copyable on a failed refresh and retires the copy with its relation", async () => {
   vi.useFakeTimers();
-  const text = invitation();
+  const text = invitation(undefined, 2);
   value.listener = { bind: "0.0.0.0:8847", address: "office:8847" };
   value.runtime = { listener: true, error: null };
   let failPoll = false;
@@ -340,6 +323,9 @@ it("keeps a confirmed invitation copyable on a failed refresh and retires the co
   await act(async () => button("direct.inviteGroup").click());
   await act(async () => button("direct.create").click());
   expect(host.querySelector<HTMLTextAreaElement>("textarea[readonly]")?.value).toBe(text);
+  expect(host.querySelector<HTMLTextAreaElement>("textarea[readonly]")?.hidden).toBe(true);
+  await act(async () => button("direct.showInvitation").click());
+  expect(host.querySelector<HTMLTextAreaElement>("textarea[readonly]")?.hidden).toBe(false);
   await act(async () => button("direct.copy").click());
   expect(mocks.copy).toHaveBeenCalledWith(text, host.querySelector("textarea[readonly]"));
   expect(host.textContent).toContain("direct.copied");
@@ -439,7 +425,7 @@ it("rechecks an uncertain request without retrying the mutation", async () => {
   expect(host.textContent).toContain("direct.invitationLost");
 });
 it("keeps the invitation available when clipboard permission is denied", async () => {
-  const text = invitation();
+  const text = invitation(undefined, 2);
   value.listener = { bind: "0.0.0.0:8847", address: "office:8847" };
   value.runtime = { listener: true, error: null };
   mocks.copy.mockResolvedValue(false);
@@ -502,7 +488,7 @@ it("does not create an invitation after a bind failure, but can retry after reco
         value.runtime = { listener: false, error: "Address already in use" };
         return { ok: true, result: {} };
       }
-      return { ok: true, result: { invitation: invitation() } };
+      return { ok: true, result: { invitation: invitation(undefined, 2) } };
     }
     return { ok: true, result: { ...value } };
   });

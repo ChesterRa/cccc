@@ -406,10 +406,10 @@ pub(crate) async fn launch(
             daemon: daemon_result,
             log_path: home.daemon_dir().join("cccc-web.log"),
         };
-        if let Err(error) = interface.finish(report).await {
-            if result.is_ok() {
-                result = Err(error);
-            }
+        if let Err(error) = interface.finish(report).await
+            && result.is_ok()
+        {
+            result = Err(error);
         }
     }
     if let Some(watchdog) = plain_watchdog {

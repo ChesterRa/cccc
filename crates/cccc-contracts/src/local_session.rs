@@ -32,7 +32,7 @@ pub struct LocalSessionSource {
     pub native_session_id: String,
     pub cwd: String,
     pub title: String,
-    /// Optional native creation origin (cli/vscode); display only.
+    /// Optional creation origin (cli/vscode) or remote:<device name>; display only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     /// Current receive capability (native queue or Monitor lease), not proof

@@ -24,6 +24,13 @@ pub(crate) async fn call_with_context(
     context: Option<RequestContext<'_>>,
     via_capability_use: bool,
 ) -> Result<Value, ToolCallError> {
+    if let Some(binding) = context.and_then(|context| context.native_binding) {
+        crate::remote_native::authorize(home, binding, name, &arguments)?;
+        if name == "cccc_session" && cccc_core::session_nodes::is_remote_source(&binding.source_id)
+        {
+            return crate::remote_native::session(home, client, binding, arguments).await;
+        }
+    }
     if name == "cccc_session" {
         return Err(
             "This tool requires native local-session integration; use cccc sessions enable".into(),
@@ -125,6 +132,14 @@ pub(crate) async fn call_with_context(
         }
         "cccc_bootstrap" => {
             let mut payload = crate::bootstrap::build(home, client, arguments).await?;
+            if let Some(binding) = context.and_then(|context| context.native_binding)
+                && cccc_core::session_nodes::is_remote_source(&binding.source_id)
+            {
+                let source = cccc_core::session_nodes::source(home, &binding.source_id)
+                    .map_err(|error| error.to_string())?;
+                payload["session"]["effective_scope"] = json!({"path":source.source.cwd,"source":"remote_native","node_id":source.node_id});
+                payload["remote_execution"] = json!({"cwd":source.source.cwd,"node_name":source.node_name,"collaboration_only":true,"instructions":"Use this native application's own file, command and approval tools on its original machine. CCCC filesystem/exec and attachment transfer are unavailable through this LAN connector."});
+            }
             if context.is_none_or(|context| context.native_binding.is_some()) {
                 payload["mcp_server"] = current_mcp_identity();
             }

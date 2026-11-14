@@ -313,17 +313,17 @@ fn rollback_install(
 ) -> Result<(), OpError> {
     let mut failures = Vec::new();
     for snapshot in snapshots.iter().rev() {
-        if !snapshot.enabled {
-            if let Err(error) = store.set_enabled_for(
+        if !snapshot.enabled
+            && let Err(error) = store.set_enabled_for(
                 &snapshot.capability_id,
                 false,
                 group_id,
                 actor_id,
                 scope,
                 3600,
-            ) {
-                failures.push(error.to_string());
-            }
+            )
+        {
+            failures.push(error.to_string());
         }
         if snapshot.hidden
             && let Err(error) =

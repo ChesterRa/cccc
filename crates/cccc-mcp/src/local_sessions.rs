@@ -317,12 +317,11 @@ fn schedule_expiration(id: String, session: &Arc<LocalSession>, timeout: Duratio
             Ok(())
         })
         .await;
-        if let Some(session) = weak.upgrade() {
-            if let Err(error) = result {
-                if let Ok(mut stored) = session.cleanup_error.lock() {
-                    *stored = Some(error);
-                }
-            }
+        if let Some(session) = weak.upgrade()
+            && let Err(error) = result
+            && let Ok(mut stored) = session.cleanup_error.lock()
+        {
+            *stored = Some(error);
         }
         // Bound abandoned completed results; no polling creates new runtime work.
         tokio::time::sleep(FINISHED_RETENTION).await;

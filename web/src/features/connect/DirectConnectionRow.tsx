@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { DIRECT_PERMANENT_EXPIRY } from "./directConnectionModel";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { DirectInvitationShare } from "./DirectPairingForms";
+import { DirectActionDialog } from "./DirectActionDialog";
 import {
   directRelationClosed,
   directRelationState,
@@ -33,25 +35,26 @@ export function DirectConnectionRow({
   const closed = directRelationClosed(relation);
   const canApprove = state === "needsApproval";
   const pending = relation.state === "invited" || relation.state === "pending";
+  const sharing = state === "invited" && !!invitation;
   const hint = "text-xs text-[var(--color-text-secondary)]";
   return (
     <li className="space-y-2 rounded-lg border border-[var(--glass-border-subtle)] p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0 flex-1 basis-48">
-          <p className="break-words font-medium">
-            {relation.remote
-              ? `${relation.local.title} ↔ ${relation.remote.name} · ${relation.remote.title}`
-              : t("direct.waitingPeer")}
-          </p>
-          <p role="status" className="mt-1 flex items-center gap-1.5 text-xs">
-            <span
-              aria-hidden
-              className={`h-1.5 w-1.5 shrink-0 rounded-full ${stateDot(state, closed)}`}
-            />
-            {t(`direct.states.${state}`)}
-          </p>
-        </div>
-        {!confirmRevoke && (
+      {!sharing && (
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 basis-48">
+            <p className="break-words font-medium">
+              {relation.remote
+                ? `${relation.local.title} ↔ ${relation.remote.name} · ${relation.remote.title}`
+                : t("direct.waitingPeer")}
+            </p>
+            <p role="status" className="mt-1 flex items-center gap-1.5 text-xs">
+              <span
+                aria-hidden
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${stateDot(state, closed)}`}
+              />
+              {t(`direct.states.${state}`)}
+            </p>
+          </div>
           <div className="flex shrink-0 flex-wrap gap-2">
             {canApprove && (
               <Button
@@ -77,8 +80,8 @@ export function DirectConnectionRow({
               )}
             </Button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
       {canApprove && <p className={hint}>{t("direct.approveHint")}</p>}
       {state === "pending" && <p className={hint}>{t("direct.pendingHint")}</p>}
       {state === "checkingApproval" && <p className={hint}>{t("direct.checkingApprovalHint")}</p>}
@@ -94,40 +97,38 @@ export function DirectConnectionRow({
           </div>
         )}
       {state === "invited" && invitation && (
-        <DirectInvitationShare key={invitation} text={invitation} />
+        <DirectInvitationShare
+          key={invitation}
+          text={invitation}
+          framed={false}
+          onDelete={() => setConfirmRevoke(true)}
+        />
       )}
       {state === "invited" && !invitation && <p className={hint}>{t("direct.invitationLost")}</p>}
       {pending && !relation.expired && relation.expires_at && !invitation && (
         <p className={hint}>
-          {t("direct.expiresAt", {
-            time: new Date(relation.expires_at).toLocaleString(i18n.language),
-          })}
+          {relation.expires_at === DIRECT_PERMANENT_EXPIRY
+            ? t("direct.neverExpires")
+            : t("direct.expiresAt", {
+                time: new Date(relation.expires_at).toLocaleString(i18n.language),
+              })}
         </p>
       )}
-      {confirmRevoke && (
-        <div className="space-y-2 rounded-md bg-[var(--glass-panel-bg)] p-2">
-          <p>{t(pending ? "direct.cancelPairHint" : "direct.revokeHint")}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              disabled={busy}
-              onClick={async () => {
-                if (await onAction("revoke", relation.id)) setConfirmRevoke(false);
-              }}
-            >
-              {t("direct.confirm")}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => setConfirmRevoke(false)}
-            >
-              {t("direct.cancel")}
-            </Button>
-          </div>
-        </div>
-      )}
+      <DirectActionDialog
+        open={confirmRevoke}
+        busy={busy}
+        title={t(
+          pending
+            ? relation.initiated
+              ? "direct.cancelRequest"
+              : "direct.cancelInvite"
+            : "direct.disconnect",
+        )}
+        description={t(pending ? "direct.cancelPairHint" : "direct.revokeHint")}
+        confirm={t("direct.confirm")}
+        onClose={() => setConfirmRevoke(false)}
+        onConfirm={() => onAction("revoke", relation.id)}
+      />
       {relation.remote && (
         <details className={hint}>
           <summary className="cursor-pointer">{t("direct.identity")}</summary>

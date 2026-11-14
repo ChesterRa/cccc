@@ -747,10 +747,10 @@ pub fn restore(home: &HomeLayout, entries: &[Value]) -> io::Result<()> {
             let key = entry["key"]
                 .as_str()
                 .ok_or_else(|| error("invalid route snapshot"))?;
-            if let Some(existing) = c[collection].get(key) {
-                if existing != &entry["value"] {
-                    return Err(error("route changed during rollback"));
-                }
+            if let Some(existing) = c[collection].get(key)
+                && existing != &entry["value"]
+            {
+                return Err(error("route changed during rollback"));
             }
             c[collection][key] = entry["value"].clone();
         }

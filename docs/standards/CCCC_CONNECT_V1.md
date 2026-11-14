@@ -784,7 +784,7 @@ account-peer endpoints MUST reject Direct authority; ordinary HTTPS certificate
 validation is unchanged. A copied Home is the same cryptographic identity and
 must not be run as an independent instance.
 
-An invitation is `cccc-direct:` plus base64url JSON with version `v:1`, a fresh
+A legacy single-use invitation is `cccc-direct:` plus base64url JSON with version `v:1`, a fresh
 `direct-<UUID>` ID, address, exact host instance/key/Group generation, expiry and
 random secret. The 30-minute invitation is shared through a trusted channel;
 it is not a navigation URL. The receiving store holds a secret digest. The
@@ -802,6 +802,21 @@ expired invitation can be newly imported or approved; this recovery only checks
 requests already persisted on the joining side. Revocation cannot be undone;
 reconnection requires a new invitation. A Group replacement or identity change
 invalidates its grants. Names are descriptive snapshots, not authority.
+
+Reusable invitations use the same envelope fields with `v:2` and a selected
+24-hour, 7-day (default), or 30-day deadline. Both endpoints must support them;
+legacy invitation generation/import and existing grants remain compatible. A permanent reusable key uses `v:3` with the explicit `expires_at:"never"` marker. V1/v2 require a finite RFC3339 deadline, and v3 requires this marker; neither may be silently converted to the other.
+The receiving store retains the reusable invitation in owner-only state, separate
+from its per-Group grants. A fresh request derives its connection ID from the first
+16 bytes of SHA-256 over the UTF-8 JSON array
+`[invitation_id, joining_instance_id, joining_group_id, joining_generation]`,
+formatted as `direct-` plus a UUID. The mutual-TLS hello adds `invitation_id` only
+for reusable v2/v3 tickets; the receiver verifies this derivation, the secret and the TLS peer before
+creating a separate pending grant. V1 hello messages omit the added field entirely.
+Each exact Group pair still requires explicit approval; replaying the same request
+does not create another grant or consume another use. Copying a shared invitation
+is an explicit local administrator action, never a status poll. Deletion requires
+Web confirmation and immediately retires the key and all grants minted from it, including approved pairs. The receiver denies their requests/reconnects and closes existing channels on its authorization check. Retired IDs remain non-reusable; deleting a key frees its grant quota. A joining client may replace a definitively revoked/expired record only through an explicit fresh-key import, which still needs new approval. Expiry alone preserves approved grants. Group retirement removes its shared invitations too.
 
 `direct_connections.json` is owner-only daemon state. Removed grant IDs remain
 as compact retirement markers, so removing a row cannot make an old invitation

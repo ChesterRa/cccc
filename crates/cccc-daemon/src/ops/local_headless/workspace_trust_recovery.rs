@@ -74,13 +74,12 @@ impl Recovery {
 
 impl Drop for Recovery {
     fn drop(&mut self) {
-        if let Ok(mut items) = pending().lock() {
-            if items
+        if let Ok(mut items) = pending().lock()
+            && items
                 .get(&self.key)
                 .is_some_and(|current| Arc::ptr_eq(current, &self.cancelled))
-            {
-                items.remove(&self.key);
-            }
+        {
+            items.remove(&self.key);
         }
     }
 }

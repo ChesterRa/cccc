@@ -14,6 +14,7 @@ use std::sync::atomic::AtomicBool;
 
 mod codex;
 mod conversations;
+mod node_delivery;
 mod resume;
 mod store;
 mod transport;
@@ -24,6 +25,13 @@ mod tests;
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "local_session_list" => Operation::new(Read, list),
+        "session_node_incoming" => Operation::new(ResourceOwned, node_delivery::receive),
+        "session_node_capabilities" => Operation::new(Read, |_, request| {
+            local(request)?;
+            object(
+                json!({"protocol":cccc_contracts::session_node::SESSION_NODE_PROTOCOL,"relay_ticket_version":cccc_contracts::session_node::SESSION_NODE_RELAY_TICKET,"runtimes":["codex","claude"]}),
+            )
+        }),
         "local_session_recovery" => Operation::new(Read, recovery),
         "local_session_refresh" => Operation::new(ResourceOwned, refresh),
         "local_session_receiver_attach" => Operation::new(GlobalWrite, attach),
@@ -163,6 +171,17 @@ fn recovery_for_actor(
 ) -> OpResult {
     use LocalSessionRecoveryState as State;
     use cccc_core::local_sessions::{self as native, NativeHost, RetireReason};
+
+    if cccc_core::session_nodes::is_remote_source(&actor.external_session_id) {
+        return object(
+            json!({"group_id":required_arg(request,"group_id")?,"actor_id":actor.id,"source_id":actor.external_session_id,"recovery": LocalSessionRecovery {
+            state: if connected(home, &actor.external_session_id) { State::Connected } else { State::Disconnected },
+            cwd: cccc_core::session_nodes::source(home, &actor.external_session_id).ok().map(|source| source.source.cwd),
+            shell: LocalSessionShell::Posix,
+            command: String::new(),
+        }, "remote": true}),
+        );
+    }
 
     let disabled = native::integration_disabled(home, runtime).map_err(|_| {
         OpError::new(
@@ -337,7 +356,9 @@ fn attach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         &required_arg(request, "source_id")?,
         &native_id(request, "connection_id")?,
     )?;
-    if let Err(error) = resume::restore_memberships(home, &receiver) {
+    if !cccc_core::session_nodes::is_remote_source(&receiver.source_id)
+        && let Err(error) = resume::restore_memberships(home, &receiver)
+    {
         // Recovery is an additional lifecycle action, not the receive lease.
         // An unavailable registry must not disconnect already joined Groups.
         cccc_runtime::diagnostic(format_args!(
@@ -399,6 +420,9 @@ fn acknowledge(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "accepted" => transport::Outcome::Accepted,
         "failed" => transport::Outcome::Rejected(reason),
         "ambiguous" => transport::Outcome::Ambiguous(reason),
+        "unavailable" if cccc_core::session_nodes::is_remote_source(&receiver.source_id) => {
+            transport::Outcome::Unavailable
+        }
         _ => {
             return Err(OpError::new(
                 "invalid_args",
@@ -437,6 +461,11 @@ pub(super) fn provider(runtime: LocalSessionRuntime) -> ActorRuntime {
 
 /// The title a native source reports for its conversation, if known.
 pub(super) fn source_title(home: &HomeLayout, source_id: &str) -> Option<String> {
+    if cccc_core::session_nodes::is_remote_source(source_id) {
+        return cccc_core::session_nodes::source(home, source_id)
+            .ok()
+            .map(|source| source.source.title);
+    }
     cccc_core::local_sessions::read_record(home, source_id)
         .ok()
         .map(|record| record.title)
@@ -457,6 +486,11 @@ fn detach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 pub(super) fn session_marker(home: &HomeLayout, source_id: &str) -> Option<String> {
+    if cccc_core::session_nodes::is_remote_source(source_id) {
+        return cccc_core::session_nodes::source(home, source_id)
+            .ok()
+            .map(|source| source.session_revision);
+    }
     cccc_core::local_sessions::read(home, source_id)
         .ok()
         .filter(cccc_core::local_sessions::NativeSession::host_alive)
@@ -513,6 +547,8 @@ pub(super) enum PreflightError {
     Rejected(String),
 }
 
+pub(super) use node_delivery::preflight_event;
+
 /// Validate the fully rendered native payload without crossing a handoff or
 /// recording a claim. Claude's receiver transport has no argv message limit.
 pub(super) fn preflight(
@@ -520,7 +556,9 @@ pub(super) fn preflight(
     actor: &Actor,
     text: &str,
 ) -> Result<(), PreflightError> {
-    if actor.runtime == ActorRuntime::Codex {
+    if actor.runtime == ActorRuntime::Codex
+        && !cccc_core::session_nodes::is_remote_source(&actor.external_session_id)
+    {
         codex::preflight(home, &actor.external_session_id, text)?;
     }
     Ok(())
@@ -537,7 +575,9 @@ pub(super) fn submit(
     if !actor.enabled || matches!(group.state, GroupState::Paused | GroupState::Stopped) {
         return transport::Outcome::Unavailable;
     }
-    if actor.runtime == ActorRuntime::Codex {
+    if actor.runtime == ActorRuntime::Codex
+        && !cccc_core::session_nodes::is_remote_source(&actor.external_session_id)
+    {
         return codex::submit(home, &actor.external_session_id, &text, cancelled);
     }
     transport::submit(
@@ -549,6 +589,7 @@ pub(super) fn submit(
             group_id: group.group_id.clone(),
             actor_id: actor.id.clone(),
             actor_generation: cccc_core::actors::generation_identity(actor),
+            remote_membership: None,
             event_ids: events.iter().map(|e| e.id.clone()).collect(),
             text,
         },

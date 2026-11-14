@@ -160,7 +160,7 @@ async fn queued_native_output_survives_early_rpc_and_previous_idle() {
             if event.requested_delegation_id.as_deref() == Some("native") {
                 assert_eq!(
                     completed,
-                    [old_turn.clone()],
+                    std::slice::from_ref(&old_turn),
                     "native receipt must follow the old turn's terminal"
                 );
                 native_turn = Some(

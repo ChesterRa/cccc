@@ -25,7 +25,7 @@ version = "0.4.55"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/ChesterRa/cccc"
-rust-version = "1.88"
+rust-version = "1.91"
 
 [workspace.dependencies]
 anyhow = "1.0"

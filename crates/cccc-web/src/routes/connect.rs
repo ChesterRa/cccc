@@ -104,7 +104,14 @@ async fn direct_action(
     let action = body["action"].as_str().unwrap_or("").to_owned();
     if !matches!(
         action.as_str(),
-        "configure" | "invite" | "join" | "approve" | "revoke" | "remove"
+        "configure"
+            | "invite"
+            | "join"
+            | "approve"
+            | "revoke"
+            | "remove"
+            | "copy_invite"
+            | "delete_invite"
     ) {
         return Err(ApiError::forbidden("Unknown direct action"));
     }

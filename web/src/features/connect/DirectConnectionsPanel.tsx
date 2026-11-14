@@ -1,21 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useDirectActions } from "./useDirectActions";
+import { DirectSharedInvitations } from "./DirectSharedInvitations";
+import { DirectConnectionTask } from "./DirectConnectionTask";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft } from "lucide-react";
-import { apiJson } from "../../services/api/base";
 import { Button } from "../../components/ui/button";
 import { DirectConnectionStart } from "./DirectConnectionStart";
-import { DirectConnectionRow } from "./DirectConnectionRow";
-import { DirectInvitationShare, DirectJoinForm, DirectReceiveForm } from "./DirectPairingForms";
-import {
-  directRelationClosed,
-  readDirectInvitation,
-  type DirectListener,
-  type DirectStatus,
-} from "./directConnectionModel";
-
-import { useDirectStatus } from "./useDirectStatus";
-import { prepareDirectInvitation } from "./prepareDirectInvitation";
-import { LcdIcon } from "../../components/Icons";
+import { DirectConnectionsList } from "./DirectConnectionsList";
+import { DirectInvitationShare } from "./DirectPairingForms";
+import { directRelationClosed } from "./directConnectionModel";
 
 export function DirectConnectionsPanel({
   groupId,
@@ -27,161 +18,23 @@ export function DirectConnectionsPanel({
   fill?: boolean;
 }) {
   const { t } = useTranslation("layout");
-  const [error, setError] = useState("");
-  const [submittedId, setSubmittedId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [revision, setRevision] = useState(0);
-  const { status, setStatus, pollFailed } = useDirectStatus(groupId, revision);
-  const [task, setTask] = useState<"invite" | "join" | "settings" | null>(null);
-  const [incoming, setIncoming] = useState("");
-  // Invitations stay only in this open panel, never in browser storage or polling.
-  const [invitations, setInvitations] = useState<Record<string, string>>({});
-  const observedInvitations = useRef(new Set<string>());
-  const actionRequest = useRef<AbortController | null>(null);
-  const panel = useRef<HTMLDivElement>(null);
-  const taskHeading = useRef<HTMLHeadingElement>(null);
-  const previousTask = useRef(task);
-  useEffect(() => {
-    if (task) taskHeading.current?.focus();
-    else if (previousTask.current) {
-      const target =
-        panel.current?.querySelector<HTMLElement>("textarea[readonly]") ||
-        panel.current?.querySelector<HTMLElement>(
-          `button[data-direct-start="${previousTask.current === "join" ? "join" : "invite"}"]`,
-        );
-      target?.focus();
-    }
-    previousTask.current = task;
-  }, [task]);
-  useEffect(
-    () => () => {
-      actionRequest.current?.abort();
-      actionRequest.current = null;
-    },
-    [],
-  );
-  useEffect(() => {
-    if (!status) return;
-    setSubmittedId((id) => (status.relations.some((r) => r.id === id) ? null : id));
-    setInvitations((previous) =>
-      Object.fromEntries(
-        Object.entries(previous).filter(([id]) => {
-          const relation = status.relations.find((r) => r.id === id);
-          const seen = observedInvitations.current.has(id);
-          if (relation) observedInvitations.current.add(id);
-          return relation
-            ? relation.state === "invited" && relation.current && !relation.expired
-            : !seen;
-        }),
-      ),
-    );
-  }, [status]);
-
-  const act = async (action: string, extra: Record<string, unknown> = {}): Promise<boolean> => {
-    if (actionRequest.current) return false;
-    setBusy(true);
-    setError("");
-    setSubmittedId(null);
-    const controller = new AbortController();
-    actionRequest.current = controller;
-    const deadline = setTimeout(() => controller.abort(), 15000);
-    const result =
-      action === "invite"
-        ? await prepareDirectInvitation(
-            groupId,
-            extra.expected_listener as DirectListener | null,
-            extra.listener as DirectListener,
-            String(extra.display_name || ""),
-            controller.signal,
-          )
-        : await apiJson<{ invitation?: string; id?: string }>("/api/v1/connect/direct", {
-            method: "POST",
-            signal: controller.signal,
-            body: JSON.stringify({ action, group_id: groupId, ...extra }),
-          });
-    clearTimeout(deadline);
-    if (actionRequest.current !== controller) return false;
-    actionRequest.current = null;
-    setBusy(false);
-    // Always read back the outcome, including an uncertain POST response.
-    setRevision((n) => n + 1);
-    if (!result.ok) {
-      const messages: Record<string, string> = {
-        direct_listener_failed: "direct.listenerFailed",
-        direct_listener_timeout: "direct.prepareTimedOut",
-        direct_settings_changed: "direct.settingsChanged",
-      };
-      setError(
-        controller.signal.aborted
-          ? t("direct.actionUnconfirmed")
-          : messages[result.error.code]
-            ? t(messages[result.error.code])
-            : result.error.message,
-      );
-      return false;
-    }
-    if (result.result.invitation) {
-      const text = result.result.invitation;
-      const preview = readDirectInvitation(text);
-      if (preview) setInvitations((previous) => ({ ...previous, [preview.id]: text }));
-      setTask(null);
-    }
-    if (action === "join") {
-      setIncoming("");
-      setTask(null);
-      setSubmittedId(
-        "id" in result.result && typeof result.result.id === "string" ? result.result.id : null,
-      );
-    }
-    if (action === "configure") {
-      // Configuration acknowledgement is not listener readiness.
-      setStatus((previous) =>
-        previous
-          ? {
-              ...previous,
-              listener: (extra.listener as DirectStatus["listener"]) ?? null,
-              runtime: null,
-              display_name:
-                typeof extra.display_name === "string" ? extra.display_name : previous.display_name,
-            }
-          : previous,
-      );
-      if (task === "settings") setTask(null);
-    }
-    if (action === "revoke" && typeof extra.id === "string") {
-      setInvitations((previous) => {
-        const next = { ...previous };
-        delete next[String(extra.id)];
-        return next;
-      });
-    }
-    return true;
-  };
+  const actions = useDirectActions(groupId);
+  const {
+    error,
+    submittedId,
+    busy,
+    status,
+    pollFailed,
+    task,
+    start,
+    invitations,
+    act,
+    copyInvitation,
+    panel,
+  } = actions;
   const ready = !!status?.listener && !!status.runtime?.listener && !pollFailed;
-  const start = (next: "invite" | "join" | "settings") => {
-    setTask(next);
-    setError("");
-    setSubmittedId(null);
-  };
-  const closeTask = () => {
-    setTask(null);
-    setError("");
-  };
   const relations = status?.relations || [];
   const current = relations.filter((r) => !directRelationClosed(r));
-  const rows = (items: typeof relations) => (
-    <ul className="space-y-2">
-      {items.map((r) => (
-        <DirectConnectionRow
-          key={r.id}
-          relation={r}
-          invitation={invitations[r.id]}
-          busy={busy}
-          onAction={(action, id) => act(action, { id })}
-        />
-      ))}
-    </ul>
-  );
 
   return (
     <div
@@ -197,104 +50,57 @@ export function DirectConnectionsPanel({
         <p role="status">{t("direct.requestSubmitted")}</p>
       )}
       {!status && !pollFailed && <p role="status">{t("direct.loading")}</p>}
-      {/* Keep a confirmed invitation copyable even if its first status refresh fails. */}
-      {Object.entries(invitations)
-        .filter(([id]) => !relations.some((r) => r.id === id))
-        .map(([id, text]) => (
-          <DirectInvitationShare key={id} text={text} />
-        ))}
-      {/* Live relations stay visible in a task: approvals and uncertain outcomes surface here. */}
-      {current.length > 0 && rows(current)}
-      {task ? (
-        <section
-          className={
-            current.length > 0
-              ? "space-y-3 border-t border-[var(--glass-border-subtle)] pt-3"
-              : "space-y-3"
-          }
+      {status && !status.capabilities?.reusable_invitations && (
+        <div
+          role="status"
+          className="space-y-1 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-4"
         >
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              className="-ml-3 shrink-0 gap-1"
-              disabled={busy}
-              onClick={closeTask}
-            >
-              <LcdIcon
-                icon={ChevronLeft}
-                glyph="chevron-left"
-                className="h-4 w-4"
-                aria-hidden="true"
-              />
-              {t("direct.back")}
-            </Button>
-            <h3 ref={taskHeading} tabIndex={-1} className="text-base font-semibold outline-none">
-              {t(
-                task === "invite"
-                  ? "direct.inviteGroup"
-                  : task === "join"
-                    ? "direct.useInvite"
-                    : "direct.configure",
-              )}
-            </h3>
-          </div>
-          {task === "join" ? (
-            <DirectJoinForm
-              groupTitle={groupTitle}
-              incoming={incoming}
-              setIncoming={setIncoming}
-              busy={busy}
-              onJoin={() => {
-                const preview = readDirectInvitation(incoming);
-                if (!preview || Date.parse(preview.expires_at) <= Date.now()) {
-                  setError(t("direct.expiredHint"));
-                  return;
-                }
-                void act("join", { invitation: incoming.trim() });
-              }}
-            />
-          ) : (
-            <>
-              <DirectReceiveForm
-                key={task}
-                listener={status?.listener || null}
-                addresses={status?.addresses || []}
-                inviteMode={task === "invite"}
-                name={status?.display_name || ""}
-                busy={busy}
-                onSave={(listener, name, previous) =>
-                  void act(task === "invite" ? "invite" : "configure", {
-                    listener,
-                    display_name: name,
-                    expected_listener: previous,
-                  })
-                }
-                onStop={() =>
-                  void act("configure", { listener: null, expected_listener: status?.listener })
-                }
-              />
-              {busy && (
-                <p role="status">{t(task === "invite" ? "direct.preparing" : "direct.saving")}</p>
-              )}
-              {status?.runtime?.error && (
-                <p className="break-words text-[var(--color-danger)]" role="alert">
-                  {t("direct.listenerFailed")} {status.runtime.error}
-                </p>
-              )}
-            </>
-          )}
-        </section>
+          <p className="font-medium">{t("direct.reusableUnavailable")}</p>
+          <p className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
+            {t("direct.reusableUnavailableHint")}
+          </p>
+        </div>
+      )}
+      {task ? (
+        <DirectConnectionTask groupTitle={groupTitle} actions={actions} />
       ) : (
         <DirectConnectionStart
           empty={
             !!status &&
             current.length === 0 &&
+            !status.shared_invitations?.length &&
             !submittedId &&
             Object.keys(invitations).length === 0
           }
           disabled={busy || !status || pollFailed}
           onStart={start}
+        />
+      )}
+      {/* Keep a confirmed invitation copyable even if its first status refresh fails. */}
+      {Object.entries(invitations)
+        .filter(
+          ([id]) =>
+            !relations.some((r) => r.id === id) &&
+            !status?.shared_invitations?.some((link) => link.id === id),
+        )
+        .map(([id, text]) => (
+          <DirectInvitationShare key={id} text={text} />
+        ))}
+      <DirectSharedInvitations
+        invitations={status?.shared_invitations || []}
+        values={invitations}
+        busy={busy}
+        onCopy={copyInvitation}
+        onDelete={(id) => act("delete_invite", { id })}
+        deleteAllowed={!!status?.capabilities?.invitation_revocation}
+      />
+      {/* Live relations stay visible in a task: approvals and uncertain outcomes surface here. */}
+      {current.length > 0 && (
+        <DirectConnectionsList
+          relations={current}
+          invitations={invitations}
+          busy={busy}
+          onAction={(action, id) => act(action, { id })}
         />
       )}
       {status?.listener && task !== "settings" && task !== "invite" && (

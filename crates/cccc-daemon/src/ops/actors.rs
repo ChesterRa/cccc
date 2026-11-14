@@ -358,18 +358,18 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             Ok(final_actor)
         })
         .map_err(OpError::invalid)?;
-    if let Some(secrets) = converted_secrets {
-        if let Err(error) = actor_secrets::replace(home, &group_id, &actor_id, secrets) {
-            return Err(rollback_actor_update(
-                home,
-                &group,
-                &original_actor,
-                original_secrets.as_ref(),
-                None,
-                ActorUpdateEffect::None,
-                error,
-            ));
-        }
+    if let Some(secrets) = converted_secrets
+        && let Err(error) = actor_secrets::replace(home, &group_id, &actor_id, secrets)
+    {
+        return Err(rollback_actor_update(
+            home,
+            &group,
+            &original_actor,
+            original_secrets.as_ref(),
+            None,
+            ActorUpdateEffect::None,
+            error,
+        ));
     }
     let updated_group =
         match store(home).and_then(|store| store.load(&group_id).map_err(OpError::io)) {

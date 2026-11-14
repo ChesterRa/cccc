@@ -13,6 +13,9 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         | "connect_direct_approve"
         | "connect_direct_revoke"
         | "connect_direct_remove" => Operation::new(Policy::Write, mutate),
+        "connect_direct_copy_invite" | "connect_direct_delete_invite" => {
+            Operation::new(Policy::Write, mutate)
+        }
         _ => return None,
     })
 }
@@ -32,6 +35,9 @@ fn user(request: &DaemonRequest) -> Result<(), OpError> {
     Ok(())
 }
 #[cfg(test)]
+#[path = "direct_shared_tests.rs"]
+mod shared_tests;
+#[cfg(test)]
 #[path = "direct_tests.rs"]
 mod tests;
 
@@ -46,7 +52,10 @@ fn management_group(home: &HomeLayout, request: &DaemonRequest) -> Result<String
             if error.kind() == std::io::ErrorKind::NotFound
                 && matches!(
                     request.op.as_str(),
-                    "connect_direct_status" | "connect_direct_revoke" | "connect_direct_remove"
+                    "connect_direct_status"
+                        | "connect_direct_revoke"
+                        | "connect_direct_remove"
+                        | "connect_direct_delete_invite"
                 ) => {}
         Err(error) => return Err(OpError::not_found(error)),
     }
@@ -89,7 +98,12 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         json!({"id":r.id,"local":r.local,"remote":r.remote,"state":r.state,"initiated":r.invitation.is_some(),"current":current,"expired":!direct::unexpired(&r.expires_at),"expires_at":r.expires_at,"online":online,"error":if online{Value::Null}else{runtime["errors"][&r.id].clone()}})
     }).collect::<Vec<_>>();
     object(
-        json!({"listener":store.listener,"display_name":store.display_name,"addresses":addresses,"runtime":if fresh{runtime}else{Value::Null},"relations":relations}),
+        json!({"listener":store.listener,"display_name":store.display_name,"addresses":addresses,"runtime":if fresh{runtime}else{Value::Null},"relations":relations,
+        "capabilities":{"reusable_invitations":true,"permanent_invitations":true,"invitation_revocation":true},
+        "shared_invitations":store.shared_invitations.iter().filter(|link|link.invitation.host.group_id==group).map(|link|json!({
+            "id":link.invitation.id,"created_at":link.created_at,"expires_at":link.invitation.expires_at,"uses":link.uses,
+            "current":direct::current(home,&link.invitation.host).unwrap_or(false),"expired":!direct::unexpired(&link.invitation.expires_at)
+        })).collect::<Vec<_>>() }),
     )
 }
 fn configure(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -149,7 +163,31 @@ fn mutate(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map(|value| serde_json::from_value(value.clone()))
                 .transpose()
                 .map_err(OpError::invalid)?;
-            json!({"invitation":direct::invite_checked(home,&group,expected.as_ref()).map_err(OpError::io)?})
+            let text = match request.args.get("reusable") {
+                Some(Value::Bool(true)) => {
+                    let seconds = match request.args.get("expires_in_seconds") {
+                        Some(value) => value.as_i64().ok_or_else(|| {
+                            OpError::invalid("Invitation lifetime must be an integer")
+                        })?,
+                        None => 604_800,
+                    };
+                    direct::shared::create(home, &group, expected.as_ref(), seconds)
+                }
+                Some(Value::Bool(false)) | None => {
+                    direct::invite_checked(home, &group, expected.as_ref())
+                }
+                _ => return Err(OpError::invalid("reusable must be a boolean")),
+            }
+            .map_err(OpError::io)?;
+            json!({"invitation":text})
+        }
+        "connect_direct_copy_invite" => {
+            json!({"invitation":direct::shared::copy(home,&group,&required_arg(request,"id")?).map_err(OpError::io)?})
+        }
+        "connect_direct_delete_invite" => {
+            direct::shared::revoke(home, &group, &required_arg(request, "id")?)
+                .map_err(OpError::io)?;
+            json!({"removed":true})
         }
         "connect_direct_join" => {
             json!({"id":direct::join(home,&group,&required_arg(request,"invitation")?).map_err(OpError::io)?})

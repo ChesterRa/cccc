@@ -406,21 +406,23 @@ fn process_external_batch(
             let context = super::actor_delivery_preamble::receiving_context(&group, actor);
             text = format!("{context}\n\n{text}");
         }
-        if actor.runtime != ActorRuntime::Claude {
-            if let Some(pending) = &instructions {
-                let noticed = format!("{text}\n\n{}", pending.delivery_line());
-                // The notice is never why a message cannot be delivered.
-                if matches!(
-                    super::local_sessions::preflight(&job.home, actor, &noticed),
-                    Err(super::local_sessions::PreflightError::Rejected(_))
-                ) {
-                    instructions = None;
-                } else {
-                    text = noticed;
-                }
+        if actor.runtime != ActorRuntime::Claude
+            && let Some(pending) = &instructions
+        {
+            let noticed = format!("{text}\n\n{}", pending.delivery_line());
+            // The notice is never why a message cannot be delivered.
+            if matches!(
+                super::local_sessions::preflight(&job.home, actor, &noticed),
+                Err(super::local_sessions::PreflightError::Rejected(_))
+            ) {
+                instructions = None;
+            } else {
+                text = noticed;
             }
         }
-        match super::local_sessions::preflight(&job.home, actor, &text) {
+        match super::local_sessions::preflight_event(actor, &job.event)
+            .and_then(|()| super::local_sessions::preflight(&job.home, actor, &text))
+        {
             Ok(()) => {}
             Err(super::local_sessions::PreflightError::Unavailable) => {
                 return defer_external_job(job);

@@ -14,6 +14,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import * as api from "../../services/api";
+import { nativeSessionOptions } from "../localSessions/remoteSessionPolicy";
 import { fetchLocalSessions } from "../../services/api/localSessions";
 import { useGroupStore } from "../../stores";
 import {
@@ -116,12 +117,10 @@ export function RuntimeSwitchControls({
         if (!sessions.ok || !actors.ok) {
           setLoadError(true);
         } else {
-          setSources(sessions.result.sources);
+          const native = nativeSessionOptions(sessions.result.sources, actor.external_session_id);
+          setSources(native.sources);
           setMembers(actors.result.actors);
-          onCurrentSourceDirectory?.(
-            sessions.result.sources.find((source) => source.source_id === actor.external_session_id)
-              ?.cwd || "",
-          );
+          onCurrentSourceDirectory?.(native.currentDirectory);
         }
         setLoading(false);
       })

@@ -409,6 +409,9 @@ pub fn validate_binding(
     home: &HomeLayout,
     binding: &cccc_contracts::local_session::LocalSessionBinding,
 ) -> io::Result<()> {
+    if crate::session_nodes::is_remote_source(&binding.source_id) {
+        return crate::session_nodes::binding_valid(home, binding);
+    }
     let group = crate::GroupStore::new(home.clone())?.load(&binding.group_id)?;
     let actor = crate::actors::find(&group, &binding.actor_id)
         .ok_or_else(|| io::Error::other("Native membership is unavailable"))?;

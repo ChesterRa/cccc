@@ -134,10 +134,10 @@ impl DeepSeekSupervisor {
             Err(RecvTimeoutError::Disconnected) => return Err(SupervisorError::Eof),
         };
         let value = self.protocol.feed_line(frame.trim_ascii_end())?;
-        if value.get("method") == Some(&serde_json::json!("session/request_permission")) {
-            if let Some(id) = value.get("id") {
-                self.pending_permissions.insert(id.to_string());
-            }
+        if value.get("method") == Some(&serde_json::json!("session/request_permission"))
+            && let Some(id) = value.get("id")
+        {
+            self.pending_permissions.insert(id.to_string());
         }
         if value.get("method").is_none()
             && self

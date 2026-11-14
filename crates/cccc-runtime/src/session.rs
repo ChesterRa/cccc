@@ -362,10 +362,10 @@ impl Session {
             // an in-flight input operation still pins the stopped Session.
             self.master.take();
         }
-        if let Some(reader) = self.reader.take() {
-            if !reader.finish()? {
-                self.history.seal_output()?;
-            }
+        if let Some(reader) = self.reader.take()
+            && !reader.finish()?
+        {
+            self.history.seal_output()?;
         }
         self.history.flush()
     }

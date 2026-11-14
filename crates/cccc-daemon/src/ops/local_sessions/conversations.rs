@@ -61,6 +61,10 @@ fn resolve_scopes(
 ) -> Result<Vec<cccc_core::Scope>, OpError> {
     let mut scopes = Vec::<cccc_core::Scope>::new();
     for source in sources {
+        // A remote cwd is display metadata, never a path on this machine.
+        if cccc_core::session_nodes::is_remote_source(&source.source_id) {
+            continue;
+        }
         let scope =
             cccc_core::scope::detect(std::path::Path::new(&source.cwd)).map_err(OpError::io)?;
         if let Some(existing) = attached
@@ -261,6 +265,9 @@ fn initialize_added_foremen(home: &HomeLayout, group: &GroupDoc, added: &[Actor]
     }
     for added_actor in added {
         if let Some(actor) = actors::find(group, &added_actor.id) {
+            if cccc_core::session_nodes::is_remote_source(&actor.external_session_id) {
+                continue;
+            }
             super::super::capabilities::apply_native_foreman_startup_baseline(home, group, actor);
         }
     }
@@ -272,7 +279,18 @@ fn add_sources(
     scopes: &[cccc_core::Scope],
 ) -> Result<Vec<Actor>, OpError> {
     let mut added = Vec::new();
-    for (source, scope) in sources.iter().zip(scopes) {
+    let mut local_scopes = scopes.iter();
+    for source in sources {
+        let scope = if cccc_core::session_nodes::is_remote_source(&source.source_id) {
+            None
+        } else {
+            Some(local_scopes.next().ok_or_else(|| {
+                OpError::new(
+                    "local_session_scope_conflict",
+                    "Native working directory is unavailable",
+                )
+            })?)
+        };
         let mut index = 1;
         let id = loop {
             let id = format!("{}-{index}", source.runtime.as_str());
@@ -285,7 +303,9 @@ fn add_sources(
         actor.runtime = actor_runtime(source.runtime);
         actor.external_session_id = source.source_id.clone();
         actor.title.clone_from(&source.title);
-        actor.default_scope_key.clone_from(&scope.scope_key);
+        if let Some(scope) = scope {
+            actor.default_scope_key.clone_from(&scope.scope_key);
+        }
         added.push(actors::add(group, actor).map_err(OpError::invalid)?);
     }
     Ok(added)

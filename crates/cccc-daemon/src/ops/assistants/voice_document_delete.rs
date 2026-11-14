@@ -108,9 +108,9 @@ fn rollback(
 }
 
 fn cleanup_copy(trash: &std::path::Path) {
-    if let Err(error) = std::fs::remove_file(trash) {
-        if error.kind() != io::ErrorKind::NotFound {
-            tracing::warn!(%error, path = %trash.display(), "could not remove voice document transaction backup");
-        }
+    if let Err(error) = std::fs::remove_file(trash)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        tracing::warn!(%error, path = %trash.display(), "could not remove voice document transaction backup");
     }
 }

@@ -2,20 +2,36 @@
 use crate::dispatch_concurrency::DispatchLocks;
 use cccc_contracts::{DaemonRequest, connect::ConnectPeerRequest, direct::*};
 use cccc_core::{HomeLayout, direct, instance_identity::InstanceIdentity};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncRead, AsyncWrite},
     sync::{Mutex, Semaphore, mpsc, oneshot},
     task::JoinSet,
+    time::Instant,
 };
 
-const MAX_FRAME: usize = 14 * 1024 * 1024;
+#[path = "direct_channel_retry.rs"]
+mod retry;
+use retry::RetryState;
+
+#[path = "direct_channel_frames.rs"]
+mod frames;
+use frames::{Frame, MAX_FRAME, read, write};
+#[path = "direct_channel_handshake.rs"]
+mod handshake;
+use handshake::{accept, dial};
+#[cfg(test)]
+#[path = "direct_channel_lifecycle_tests.rs"]
+mod lifecycle_tests;
+#[cfg(test)]
+#[path = "direct_channel_shared_tests.rs"]
+mod shared_tests;
 #[cfg(test)]
 #[path = "direct_channel_tests.rs"]
 mod tests;
 type Job = (ConnectPeerRequest, oneshot::Sender<Result<Value, String>>);
+type ConnectionTaskResult = (Option<(String, RetryState)>, Result<(), String>);
 #[derive(Clone, Default)]
 pub(crate) struct Channels(Arc<Mutex<HashMap<String, mpsc::Sender<Job>>>>);
 impl Channels {
@@ -42,61 +58,12 @@ impl Channels {
             .map_err(|_| "Direct channel closed")?
     }
 }
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Hello {
-    id: String,
-    secret: String,
-    endpoint: DirectEndpoint,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum Frame {
-    Request { request: Box<ConnectPeerRequest> },
-    Response { id: String, response: Value },
-    Ping,
-}
-async fn read<T: DeserializeOwned>(
-    stream: &mut (impl AsyncRead + Unpin),
-    limit: usize,
-) -> Result<T, String> {
-    let length = stream
-        .read_u32()
-        .await
-        .map_err(|_| "Direct channel closed")? as usize;
-    if length == 0 || length > limit {
-        return Err("Direct frame exceeds its limit".into());
-    }
-    let mut raw = vec![0; length];
-    stream
-        .read_exact(&mut raw)
-        .await
-        .map_err(|_| "Direct frame was interrupted")?;
-    serde_json::from_slice(&raw).map_err(|_| "Invalid direct frame".into())
-}
-async fn write(
-    stream: &mut (impl AsyncWrite + Unpin),
-    value: &impl Serialize,
-) -> Result<(), String> {
-    let raw = serde_json::to_vec(value).map_err(|e| e.to_string())?;
-    if raw.len() > MAX_FRAME {
-        return Err("Direct frame exceeds its limit".into());
-    }
-    tokio::time::timeout(Duration::from_secs(10), async {
-        stream.write_u32(raw.len() as u32).await?;
-        stream.write_all(&raw).await?;
-        stream.flush().await
-    })
-    .await
-    .map_err(|_| "Direct write timed out")?
-    .map_err(|_| "Direct write was interrupted".into())
-}
-
 pub(crate) async fn run(home: HomeLayout, locks: DispatchLocks, channels: Channels) {
     let mut listener: Option<tokio::net::TcpListener> = None;
     let mut configured = None;
     let mut dialing = HashMap::new();
-    let mut work = JoinSet::new();
+    let mut retries: HashMap<String, RetryState> = HashMap::new();
+    let mut work: JoinSet<ConnectionTaskResult> = JoinSet::new();
     let mut errors = serde_json::Map::new();
     let permits = Arc::new(Semaphore::new(64));
     let mut tick = tokio::time::interval(Duration::from_secs(2));
@@ -106,7 +73,12 @@ pub(crate) async fn run(home: HomeLayout, locks: DispatchLocks, channels: Channe
             Some(result)=work.join_next_with_id(), if !work.is_empty() => {
                 let task=result.as_ref().map_or_else(|e|e.id(),|(id,_)|*id);
                 dialing.retain(|_,(id,_)|*id!=task);
-                if let Ok((_,(Some(id),result)))=result {match result {Ok(())=>{errors.remove(&id);},Err(error)=>{errors.insert(id,json!(error));}}}
+                if let Ok((_,(Some((id,mut retry)),result)))=result {
+                    let awaiting_expired=direct::load(&home).is_ok_and(|store|store.relations.iter().any(|r|r.id==id && r.state==DirectState::Pending && !direct::unexpired(&r.expires_at)));
+                    retry.completed(Instant::now(),result.is_ok(),awaiting_expired);
+                    retries.insert(id.clone(),retry);
+                    match result {Ok(())=>{errors.remove(&id);},Err(error)=>{errors.insert(id,json!(error));}}
+                }
             }
             incoming=async { match &listener { Some(listener)=>listener.accept().await, None=>std::future::pending().await } } => {
                 if let Ok((stream,_))=incoming && let Ok(permit)=permits.clone().try_acquire_owned() {
@@ -128,21 +100,18 @@ pub(crate) async fn run(home: HomeLayout, locks: DispatchLocks, channels: Channe
                 for relation in &store.relations {
                     if relation.invitation.is_none() || !matches!(relation.state, DirectState::Pending | DirectState::Active) || !direct::current(&home,&relation.local).unwrap_or(false) { continue; }
                     keep.insert(relation.id.clone());
-                    if dialing.contains_key(&relation.id) { continue; }
+                    if dialing.contains_key(&relation.id) || retries.get(&relation.id).is_some_and(|retry|!retry.ready(Instant::now())) { continue; }
                     let relation=relation.clone();let id=relation.id.clone();let home=home.clone();let locks=locks.clone();let channels=channels.clone();
+                    let mut retry=retries.remove(&id).unwrap_or_default();
                     let handle=work.spawn(async move {
                         let id=relation.id.clone();
-                        // Only the receiver knows whether approval preceded expiry.
-                        // Keep reconciliation possible, at a slower cadence after the deadline.
-                        let result=dial(home.clone(),locks,channels,relation).await;
-                        let delay=if direct::load(&home).is_ok_and(|store| store.relations.iter().any(|r|r.id==id && r.state==DirectState::Pending && !direct::unexpired(&r.expires_at))) {60} else {5};
-                        // A bounded retry cadence avoids a failure loop; outbox retries are separate.
-                        tokio::time::sleep(Duration::from_secs(delay)).await;
-                        (Some(id),result)
+                        let result=dial(home,locks,channels,relation,&mut retry).await;
+                        (Some((id,retry)),result)
                     });
                     dialing.insert(id,(handle.id(),handle));
                 }
                 dialing.retain(|id,(_,task)| { if keep.contains(id) {true} else {task.abort();false} });
+                retries.retain(|id,_|keep.contains(id));
                 let online={let mut channels=channels.0.lock().await;channels.retain(|_,s|!s.is_closed());channels.keys().cloned().collect::<Vec<_>>()};
                 errors.retain(|id,_|store.relations.iter().any(|r|&r.id==id));
                 if store.listener.is_none() && store.relations.is_empty() {continue;}
@@ -151,126 +120,6 @@ pub(crate) async fn run(home: HomeLayout, locks: DispatchLocks, channels: Channe
             }
         }
     }
-}
-
-async fn accept(
-    home: HomeLayout,
-    locks: DispatchLocks,
-    channels: Channels,
-    stream: tokio::net::TcpStream,
-) -> Result<(), String> {
-    let identity = InstanceIdentity::load(&home).map_err(|e| e.to_string())?;
-    let acceptor = tokio_rustls::TlsAcceptor::from(
-        crate::direct_tls::server(identity).map_err(|e| e.to_string())?,
-    );
-    let (stream, hello, state) = tokio::time::timeout(Duration::from_secs(10), async {
-        let mut stream = acceptor
-            .accept(stream)
-            .await
-            .map_err(|_| "Direct TLS handshake failed")?;
-        if stream.get_ref().1.alpn_protocol() != Some(b"cccc-direct/1".as_slice()) {
-            return Err("Unsupported direct protocol".into());
-        }
-        let cert = stream
-            .get_ref()
-            .1
-            .peer_certificates()
-            .and_then(|c| c.first())
-            .ok_or("Missing peer identity")?;
-        let key = crate::direct_tls::public_key(cert.as_ref()).map_err(|e| e.to_string())?;
-        let hello: Hello = read(&mut stream, 8192).await?;
-        let state = direct::hello(&home, &hello.id, &hello.secret, &hello.endpoint, &key)
-            .map_err(|e| e.to_string())?;
-        write(&mut stream, &state).await?;
-        Ok::<_, String>((stream, hello, state))
-    })
-    .await
-    .map_err(|_| "Direct handshake timed out")??;
-    if state != DirectState::Active {
-        return Ok(());
-    }
-    channel(
-        home,
-        locks,
-        channels,
-        hello.id,
-        hello.endpoint.instance_id,
-        stream,
-    )
-    .await
-}
-async fn dial(
-    home: HomeLayout,
-    locks: DispatchLocks,
-    channels: Channels,
-    relation: DirectRelation,
-) -> Result<(), String> {
-    let invitation = relation
-        .invitation
-        .as_ref()
-        .ok_or("Missing direct invitation")?;
-    let identity = InstanceIdentity::load(&home).map_err(|e| e.to_string())?;
-    let connector = tokio_rustls::TlsConnector::from(
-        crate::direct_tls::client(identity, invitation.host.public_key.clone())
-            .map_err(|e| e.to_string())?,
-    );
-    let (stream, state) = tokio::time::timeout(Duration::from_secs(10), async {
-        let tcp = tokio::net::TcpStream::connect(&invitation.address)
-            .await
-            .map_err(|_| "Direct endpoint is unreachable")?;
-        let name =
-            rustls::pki_types::ServerName::try_from("direct.invalid").map_err(|e| e.to_string())?;
-        let mut stream = connector
-            .connect(name, tcp)
-            .await
-            .map_err(|_| "Direct TLS identity check failed")?;
-        if stream.get_ref().1.alpn_protocol() != Some(b"cccc-direct/1".as_slice()) {
-            return Err("Unsupported direct protocol".into());
-        }
-        write(
-            &mut stream,
-            &Hello {
-                id: relation.id.clone(),
-                secret: invitation.secret.clone(),
-                endpoint: relation.local.clone(),
-            },
-        )
-        .await?;
-        let state: DirectState = read(&mut stream, 1024).await?;
-        Ok::<_, String>((stream, state))
-    })
-    .await
-    .map_err(|_| "Direct connection timed out")??;
-    direct::update(&home, |store| {
-        let current = store
-            .relations
-            .iter_mut()
-            .find(|r| r.id == relation.id)
-            .ok_or_else(|| std::io::Error::other("Connection was removed"))?;
-        if matches!(current.state, DirectState::Revoked | DirectState::Expired) {
-            return Err(std::io::Error::other("Connection was revoked"));
-        }
-        if matches!(
-            state,
-            DirectState::Active | DirectState::Revoked | DirectState::Expired
-        ) {
-            current.state = state.clone();
-        }
-        Ok(())
-    })
-    .map_err(|e| e.to_string())?;
-    if state != DirectState::Active {
-        return Ok(());
-    }
-    channel(
-        home,
-        locks,
-        channels,
-        relation.id,
-        invitation.host.instance_id.clone(),
-        stream,
-    )
-    .await
 }
 
 async fn channel<S>(
@@ -302,13 +151,10 @@ where
                 read::<Frame>(&mut reader, MAX_FRAME),
             )
             .await;
-            match frame {
-                Ok(Ok(frame)) => {
-                    if incoming_tx.send(frame).await.is_err() {
-                        break;
-                    }
-                }
-                _ => break,
+            let frame = frame.unwrap_or_else(|_| Err("Direct peer heartbeat timed out".into()));
+            let failed = frame.is_err();
+            if incoming_tx.send(frame).await.is_err() || failed {
+                break;
             }
         }
     });
@@ -339,7 +185,7 @@ where
                     write(&mut writer,&Frame::Response{id:request_id,response}).await?;
                 }
                 frame=incoming.recv()=> {
-                    let Some(frame)=frame else {break;};
+                    let frame=frame.ok_or("Direct reader stopped")??;
                     match frame {
                         Frame::Ping=>{},
                         Frame::Response{id,response}=>{if let Some(reply)=pending.remove(&id) {let _=reply.send(Ok(response));}},

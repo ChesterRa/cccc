@@ -16,10 +16,12 @@ export function useLocalSessionsConnection({
   onClose,
   onSelectGroup,
   initialTargetGroupId = "",
+  reviewing = true,
 }: {
   onClose: () => void;
   onSelectGroup: (id: string) => void;
   initialTargetGroupId?: string;
+  reviewing?: boolean;
 }) {
   const { t } = useTranslation("layout");
   const groups = useGroupStore((state) => state.groups);
@@ -63,7 +65,7 @@ export function useLocalSessionsConnection({
   }, []);
   useEffect(() => {
     setNotice("");
-    if (!targetGroupId) return;
+    if (!targetGroupId || !reviewing) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     setMembership({ groupId: targetGroupId, actors: [], loaded: false, failed: false });
@@ -77,7 +79,7 @@ export function useLocalSessionsConnection({
       membersRequest.current += 1;
       clearTimeout(timer);
     };
-  }, [targetGroupId, loadMembers]);
+  }, [targetGroupId, loadMembers, reviewing]);
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
@@ -128,6 +130,7 @@ export function useLocalSessionsConnection({
   );
   const targetUnavailable = joining && !groups.some((group) => group.group_id === targetGroupId);
   const canSubmit =
+    reviewing &&
     !busy &&
     !loading &&
     !error &&
@@ -135,7 +138,8 @@ export function useLocalSessionsConnection({
     membersReady &&
     selected.length > 0 &&
     selected.length <= MAX_SELECTED_SESSIONS &&
-    unavailableCount === 0;
+    unavailableCount === 0 &&
+    !selected.some((source) => members.has(source.source_id));
   const start = async () => {
     if (!canSubmit || submitting.current) return;
     submitting.current = true;

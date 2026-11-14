@@ -161,10 +161,10 @@ async fn run_connector_mcp(
     } else if method == "tools/call" {
         match store::resolve(state, connector, &request) {
             Ok(binding) => {
-                if connector["provider"] == "grok_web" || binding["transport"] == "mcp_events" {
-                    if let Some(arguments) = request["params"]["arguments"].as_object_mut() {
-                        arguments.remove("actor_token");
-                    }
+                if (connector["provider"] == "grok_web" || binding["transport"] == "mcp_events")
+                    && let Some(arguments) = request["params"]["arguments"].as_object_mut()
+                {
+                    arguments.remove("actor_token");
                 }
                 let response = if binding["transport"] == "mcp_events"
                     && tool_name == "cccc_runtime_wait_next_turn"

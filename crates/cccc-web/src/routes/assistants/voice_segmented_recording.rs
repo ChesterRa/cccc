@@ -42,7 +42,7 @@ impl SegmentedPcmRecording {
         segment_bytes: usize,
         session_limit: usize,
     ) -> Result<Self, voice_asr::VoiceError> {
-        if segment_bytes == 0 || segment_bytes % 2 != 0 || session_limit < segment_bytes {
+        if segment_bytes == 0 || !segment_bytes.is_multiple_of(2) || session_limit < segment_bytes {
             return Err(voice_asr::VoiceError::new(
                 "invalid_audio_limit",
                 "PCM16 recording limits must be positive, aligned, and ordered",
@@ -66,7 +66,7 @@ impl SegmentedPcmRecording {
         &mut self,
         pcm: &[u8],
     ) -> Result<Vec<SegmentBoundary>, voice_asr::VoiceError> {
-        if pcm.len() % 2 != 0 {
+        if !pcm.len().is_multiple_of(2) {
             return Err(voice_asr::VoiceError::new(
                 "invalid_audio",
                 "PCM16 byte length must be even",

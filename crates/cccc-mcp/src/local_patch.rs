@@ -44,15 +44,15 @@ pub(super) fn apply(root: &Path, patch: &str) -> Result<Vec<String>, String> {
         };
         let mut destination = source.clone();
         let mut names = vec![raw.to_owned()];
-        if kind == "update" {
-            if let Some(path) = lines[index].strip_prefix("*** Move to: ") {
-                destination = resolve(root, path, true)?;
-                if destination == source || destination.exists() {
-                    return Err(format!("move destination already exists: {path}"));
-                }
-                names.push(path.to_owned());
-                index += 1;
+        if kind == "update"
+            && let Some(path) = lines[index].strip_prefix("*** Move to: ")
+        {
+            destination = resolve(root, path, true)?;
+            if destination == source || destination.exists() {
+                return Err(format!("move destination already exists: {path}"));
             }
+            names.push(path.to_owned());
+            index += 1;
         }
         let start = index;
         while index < lines.len() - 1 && !is_file_header(lines[index]) {

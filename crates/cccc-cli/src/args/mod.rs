@@ -4,6 +4,8 @@ mod integrations;
 mod messaging;
 mod sessions;
 pub use sessions::{SessionsAction, SessionsArgs};
+mod session_nodes;
+pub use session_nodes::SessionNodeAction;
 
 pub use actor::{ActorAction, ActorArgs, ActorTarget};
 pub use group::{GroupAction, GroupArgs};

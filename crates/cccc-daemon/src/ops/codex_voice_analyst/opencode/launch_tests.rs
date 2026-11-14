@@ -120,7 +120,7 @@ fn direct_executables_are_unchanged_and_custom_wrappers_stay_unsupported() {
         for filename in [name.to_owned(), format!("{name}.exe")] {
             let executable = temp.path().join(filename).to_string_lossy().into_owned();
             fs::write(&executable, "fixture").expect("direct executable fixture");
-            let prepared = prepare(&[executable.clone()], &BTreeMap::new(), runtime)
+            let prepared = prepare(std::slice::from_ref(&executable), &BTreeMap::new(), runtime)
                 .expect("direct executable");
             assert_eq!(prepared.launch_prefix, [executable]);
         }

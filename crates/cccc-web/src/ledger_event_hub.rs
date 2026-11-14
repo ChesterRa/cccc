@@ -503,14 +503,18 @@ mod tests {
                 EventKind::Any,
                 EventKind::Other,
             ] {
-                assert_eq!(queued(kind, path), [path.clone()], "{kind:?} {path:?}");
+                assert_eq!(
+                    queued(kind, path),
+                    std::slice::from_ref(path),
+                    "{kind:?} {path:?}"
+                );
             }
         }
         // A path that is gone still reaches the monitor, which prunes deleted Groups.
         let removed_group = root.join("g_removed");
         assert_eq!(
             queued(EventKind::Remove(RemoveKind::Folder), &removed_group),
-            [removed_group.clone()]
+            std::slice::from_ref(&removed_group)
         );
         assert!(queued(open, &removed_group).is_empty());
         assert!(!rescan_required.load(Ordering::Acquire));

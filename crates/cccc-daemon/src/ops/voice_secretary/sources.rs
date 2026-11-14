@@ -59,30 +59,31 @@ impl Manager {
             .map(str::to_owned)
             .map(Ok)
             .unwrap_or_else(|| super::super::assistants::secretary_guidance(home, group_id))?;
-        if target.kind == SecretaryTaskKind::Document && target.request_id.is_empty() {
-            if let Some(task) = tasks.iter().rev().find(|task| {
+        if target.kind == SecretaryTaskKind::Document
+            && target.request_id.is_empty()
+            && let Some(task) = tasks.iter().rev().find(|task| {
                 task.target == target
                     && task.guidance == guidance
                     && task.phase == SecretaryTaskPhase::Queued
                     && task.inputs.len() < 32
                     && input_bytes(&task.inputs) + input["text"].as_str().unwrap_or("").len()
                         <= MAX_BATCH_BYTES
-            }) {
-                let joined = manager.store.update(&task.task_id, |task| {
-                    if task.phase != SecretaryTaskPhase::Queued {
-                        return Ok(false);
-                    }
-                    task.inputs.push(input.clone());
-                    Ok(true)
-                })?;
-                if joined {
-                    self.pending_sources
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&key);
-                    manager.notify();
-                    return Ok(Some(task.task_id.clone()));
+            })
+        {
+            let joined = manager.store.update(&task.task_id, |task| {
+                if task.phase != SecretaryTaskPhase::Queued {
+                    return Ok(false);
                 }
+                task.inputs.push(input.clone());
+                Ok(true)
+            })?;
+            if joined {
+                self.pending_sources
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&key);
+                manager.notify();
+                return Ok(Some(task.task_id.clone()));
             }
         }
         if tasks

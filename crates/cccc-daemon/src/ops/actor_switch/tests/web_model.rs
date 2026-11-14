@@ -359,7 +359,7 @@ fn entering_a_web_model_starts_nothing_and_waits_for_its_connection() {
     let message = fixture.message("before it is connected");
     actor_delivery::dispatch(&fixture.home, &fixture.group(), &message);
     assert_eq!(fixture.delivery_state(&message), None);
-    assert_eq!(fixture.pending(), [message.id.clone()]);
+    assert_eq!(fixture.pending(), std::slice::from_ref(&message.id));
     // The handoff waits with it, ahead of it.
     let handoff = fixture.notices().pop().expect("handoff");
     assert_eq!(fixture.delivery_state(&handoff), None);

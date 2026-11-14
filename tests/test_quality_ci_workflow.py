@@ -41,12 +41,30 @@ def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> N
     }
     assert all(job.get("timeout-minutes") for job in jobs.values())
     assert max(int(job["timeout-minutes"]) for job in jobs.values()) <= 60
-    rust_toolchain = next(
-        step["uses"]
-        for step in jobs["rust-linux"]["steps"]
-        if step.get("uses", "").startswith("dtolnay/rust-toolchain")
-    )
-    assert rust_toolchain == "dtolnay/rust-toolchain@1.88.0"
+
+
+def test_rust_build_entrypoints_share_the_pinned_compatible_toolchain() -> None:
+    with (ROOT / "rust-toolchain.toml").open("rb") as handle:
+        pinned = tomllib.load(handle)["toolchain"]["channel"]
+    with (ROOT / "Cargo.toml").open("rb") as handle:
+        minimum = tomllib.load(handle)["workspace"]["package"]["rust-version"]
+    assert tuple(map(int, pinned.split("."))) >= tuple(map(int, minimum.split(".")))
+    for candidate in (_workflow(), _nightly_workflow(), _release_workflow()):
+        pins = [
+            step["uses"]
+            for job in candidate["jobs"].values()
+            for step in job.get("steps", [])
+            if step.get("uses", "").startswith("dtolnay/rust-toolchain@")
+        ]
+        assert pins
+        assert set(pins) == {f"dtolnay/rust-toolchain@{pinned}"}
+    stages = [
+        line.split()
+        for line in (ROOT / "docker/Dockerfile").read_text().splitlines()
+        if line.startswith("FROM ")
+    ]
+    rust_builder = next(stage[1] for stage in stages if stage[-1] == "rust-builder")
+    assert rust_builder == f"rust:{minimum}-bookworm"
 
 
 def test_pr_jobs_keep_quality_web_package_and_native_boundaries() -> None:

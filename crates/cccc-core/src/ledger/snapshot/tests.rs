@@ -155,7 +155,7 @@ fn incremental_snapshot_retry_resets_partially_visited_state() {
     let mut cursor = ledger::SnapshotCursor::default();
     let mut events = Vec::new();
     collect_incremental(&mut cursor, &f.ledger, &mut events).expect("warm cursor");
-    assert_eq!(events, [active.id.clone()]);
+    assert_eq!(events, std::slice::from_ref(&active.id));
 
     let archived = f.message("send", 1);
     let mut plain = File::create(f.segments.join("ledger.000001.jsonl")).expect("plain archive");
@@ -167,7 +167,7 @@ fn incremental_snapshot_retry_resets_partially_visited_state() {
     assert!(collect_incremental(&mut cursor, &f.ledger, &mut events).is_err());
     assert_eq!(
         events,
-        [archived.id.clone()],
+        std::slice::from_ref(&archived.id),
         "the failed visit stopped after one source"
     );
 

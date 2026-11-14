@@ -716,6 +716,7 @@ async fn actor_scope_bootstrap_keeps_group_active_separate_from_effective_worksp
 
 #[cfg(unix)]
 impl ActorScopeFixture {
+    #[cfg(target_os = "linux")]
     fn same_key_git_scopes(&self) -> [cccc_core::Scope; 2] {
         for root in &self.roots {
             for args in [
@@ -762,6 +763,7 @@ impl ActorScopeFixture {
         Value::Object(response.result)
     }
 
+    #[cfg(target_os = "linux")]
     async fn fixture_process(&self, actor: &str) {
         self.ipc(
             "actor_update",
@@ -834,6 +836,7 @@ impl ActorScopeFixture {
         serde_json::from_slice(&output.stdout).expect("MCP JSON response")
     }
 
+    #[cfg(target_os = "linux")]
     async fn pid(&self, actor: &str) -> u32 {
         let listed = self.ipc("actor_list", json!({})).await;
         listed["actors"]

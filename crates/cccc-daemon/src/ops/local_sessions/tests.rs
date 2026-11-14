@@ -76,6 +76,7 @@ impl Fixture {
             group_id: group.group_id.clone(),
             actor_id: group.actors[0].id.clone(),
             actor_generation: cccc_core::actors::generation_identity(&group.actors[0]),
+            remote_membership: None,
             event_ids: vec!["event-fixture".into()],
             text: "Synthetic notification".into(),
         }

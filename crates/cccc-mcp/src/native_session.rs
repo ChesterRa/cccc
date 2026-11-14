@@ -99,6 +99,7 @@ impl Context {
                             .is_some_and(|name| name == "cccc_session" || names.contains(name))
                     })
                     .map(|mut tool| {
+                        tool["inputSchema"]["properties"]["hub_id"] = json!({"type":"string","description":"Remote hub ID from self_memberships, required when local and remote Group IDs collide"});
                         if tool["name"] != "cccc_session" {
                             let schema = &mut tool["inputSchema"];
                             // Native calls require an explicit group_id rather than the shared environment fallback.
@@ -167,6 +168,12 @@ impl Context {
         args.remove("_cccc_native_binding");
         args.remove("_cccc_native_source_binding");
         args.remove("_cccc_web_binding");
+        let hub = args.remove("hub_id");
+        let hub = match hub.as_ref() {
+            None | Some(Value::Null) => None,
+            Some(Value::String(hub)) if !hub.is_empty() => Some(hub.as_str()),
+            _ => return Err("hub_id must be a nonempty string".into()),
+        };
         let (session_action, session_mode) = if name == "cccc_session" {
             // Identity comes from the native host, never the model's selector.
             args.remove("source_id");
@@ -199,6 +206,7 @@ impl Context {
             if sources.get("self_memberships").is_none() {
                 sources["self_memberships"] = json!([]);
             }
+            crate::remote_native::append_memberships(home, source_id.as_deref(), &mut sources);
             return Ok(result(sources));
         }
         let source_id =
@@ -228,6 +236,15 @@ impl Context {
             return Err(
                 "The OpenCode MCP process does not belong to this source's captured backend".into(),
             );
+        }
+        let mut remote_args = args.clone();
+        if let Some(mode) = &session_mode {
+            remote_args.insert("mode".into(), json!(mode));
+        }
+        if let Some(result) =
+            crate::remote_native::route(home, &session, hub, name, &remote_args).await?
+        {
+            return Ok(result);
         }
         let session_op = if let Some(action) = session_action {
             args.insert("source_id".into(), json!(source_id));
@@ -516,6 +533,7 @@ mod tests {
     use super::*;
 
     /// Every call cccc_bootstrap suggests, with the key it is returned under.
+    #[cfg(target_os = "linux")]
     fn bootstrap_examples(payload: &Value) -> Vec<(String, String)> {
         let text = |example: &Value| example.as_str().expect("example").to_owned();
         payload["next_calls"]

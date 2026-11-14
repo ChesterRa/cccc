@@ -10,7 +10,7 @@ macro_rules! require_chrome {
         let _chrome_guard = chrome_test_guard().await;
     };
 }
-
+#[cfg(target_os = "linux")]
 async fn wait_for_fixture_document(page: &Page) {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {

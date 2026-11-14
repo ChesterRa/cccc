@@ -62,12 +62,12 @@ pub(crate) fn remember_history(key: Key, history: SessionHistory) -> Result<(), 
     while completed.order.len() > COMPLETED_HISTORY_COUNT
         || completed.total_bytes > COMPLETED_HISTORY_TOTAL_BYTES
     {
-        if let Some(expired) = completed.order.pop_front() {
-            if let Some(history) = completed.entries.remove(&expired) {
-                completed.total_bytes = completed
-                    .total_bytes
-                    .saturating_sub(history.retained_bytes()?);
-            }
+        if let Some(expired) = completed.order.pop_front()
+            && let Some(history) = completed.entries.remove(&expired)
+        {
+            completed.total_bytes = completed
+                .total_bytes
+                .saturating_sub(history.retained_bytes()?);
         }
     }
     Ok(())

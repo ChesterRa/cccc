@@ -33,7 +33,9 @@ const posts = () =>
 const render = () => act(async () => root.render(<DirectConnectionsPanel groupId="group-a" />));
 const click = (label: string) =>
   act(async () => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const button = [...document.querySelectorAll("button")].find(
+      (b) => b.getAttribute("aria-label") === label || b.textContent === label,
+    );
     expect(button).toBeDefined();
     button!.click();
   });

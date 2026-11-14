@@ -447,8 +447,9 @@ async fn deliver_once(
             json!({"last_delivery_status":"resolved","last_error":""}),
         )?;
     }
-    if target["kind"] == "existing_chat" && is_chatgpt_url(target_url) {
-        if let Err(error) = state
+    if target["kind"] == "existing_chat"
+        && is_chatgpt_url(target_url)
+        && let Err(error) = state
             .browser_surfaces
             .align_chatgpt_conversation_target(
                 session_key,
@@ -456,25 +457,24 @@ async fn deliver_once(
                 std::time::Duration::from_secs(5),
             )
             .await
-        {
-            let message = error.to_string();
-            update_target(
-                state,
-                group_id,
-                actor_id,
-                json!({
-                    "last_delivery_status":"failed",
-                    "last_submission_evidence":{
-                        "submitted":false,
-                        "submission_evidence":"bound_conversation_unavailable",
-                        "error":message.as_str()
-                    },
-                    "last_error":message.as_str()
-                }),
-            )?;
-            record_connector(state, group_id, actor_id, "failed", "", &message)?;
-            return Ok(DeliveryOutcome::Stopped);
-        }
+    {
+        let message = error.to_string();
+        update_target(
+            state,
+            group_id,
+            actor_id,
+            json!({
+                "last_delivery_status":"failed",
+                "last_submission_evidence":{
+                    "submitted":false,
+                    "submission_evidence":"bound_conversation_unavailable",
+                    "error":message.as_str()
+                },
+                "last_error":message.as_str()
+            }),
+        )?;
+        record_connector(state, group_id, actor_id, "failed", "", &message)?;
+        return Ok(DeliveryOutcome::Stopped);
     }
     let mut wait_args = browser_wait_args(group_id, actor_id);
     if target["last_delivery_status"] == "deferred" {

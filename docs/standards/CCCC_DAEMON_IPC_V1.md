@@ -9086,7 +9086,9 @@ of records left by an interrupted deletion; another Group ID cannot remove them.
 | --- | --- | --- |
 | `connect_direct_status` | `group_id` | Listener configuration, local `addresses: [{interface, bind, address}]` suggestions, fresh runtime diagnostics, redacted relations for this Group |
 | `connect_direct_configure` | `listener: {bind, address} \| null`, `display_name?`, `expected_listener?` | `{configured:true}`; actual listener state is checked separately |
-| `connect_direct_invite` | `group_id`, `expected_listener?: {bind, address}` | `{invitation}`; explicit secret-bearing response, never polled |
+| `connect_direct_invite` | `group_id`, `expected_listener?: {bind, address}`, `reusable?: bool`, `expires_in_seconds?: 0 \| 86400 \| 604800 \| 2592000` | `{invitation}`; omitted/false `reusable` retains the legacy single-use flow; reusable default lifetime is 7 days; `0` creates a permanent v3 key with `expires_at:"never"` |
+| `connect_direct_copy_invite` | `group_id`, `id` | `{invitation}`; explicit administrator-only retrieval of an unexpired shared invitation |
+| `connect_direct_delete_invite` | `group_id`, `id` | `{removed:true}`; retires the key and all its pending/approved grants; existing channels lose authorization and old IDs cannot reconnect |
 | `connect_direct_join` | `group_id`, `invitation` | `{id}`; persists the request, not approval |
 | `connect_direct_approve` | `group_id`, `id` | `{updated:true}`; receiver approves the exact pending pair |
 | `connect_direct_revoke` | `group_id`, `id` | `{updated:true}`; authorization is revoked before return |
@@ -9101,6 +9103,16 @@ multicast and link-local addresses; suggestions do not promise reachability or
 change saved settings. Enumeration failure yields an empty list, allowing manual
 configuration. Each suggestion carries a matching IPv4/IPv6 wildcard bind and the
 configured local port (default 8847). No discovery packet is sent.
+
+Reusable-invitation support is advertised as `capabilities.reusable_invitations:true`; permanent v3 keys and key-wide deletion additionally advertise `permanent_invitations:true` and `invitation_revocation:true`
+in Direct status. `shared_invitations` contains only this Group's invitation
+metadata (`id`, `created_at`, `expires_at`, `uses`, `current`, `expired`), never
+bearer material. New Web clients must check this capability rather than silently
+requesting a reusable invitation from an older daemon. Receivers persist the
+reusable bearer invitation in the existing private Direct store so an explicit
+administrator copy action can retrieve it later. Every unique joining Group
+creates a separate pending grant, still requiring receiver approval. Duplicate
+requests do not increment `uses`. Passing a deadline preserves already approved grants. Explicit key deletion retires all of its pending and approved grants, denies old IDs on reconnect, and prevents queued requests from obtaining new authority through that key.
 When supplied, `expected_listener` compares the full saved listener under the store
 lock: configure accepts null to mean previously disabled; invite requires an object.
 A mismatch rejects the mutation instead of overwriting another setup or issuing an
@@ -9408,3 +9420,20 @@ does not revoke an already admitted execution; that turn may finish with its
 existing execution credential. Replacing or unsubscribing the native
 subscription retires its epoch and requires explicit resolution of any
 unfinished turn; refreshing the same subscription does not.
+
+
+### LAN session-node extension (protocol 1)
+
+Existing local-session source IDs remain opaque. A hub MAY also project enrolled remote sources as `remote:<node-id>:<grant-id>:<source-digest>` with display-only `origin: "remote:<device name>"`. A verified iroh peer key identifies its device; it is not Group authority. Remote native process/cwd metadata MUST NOT be interpreted as a local PID or attached filesystem scope. Administrator selection still uses `local_session_join` or `local_session_conversation`; native and cloud callers MUST NOT gain remote admission authority.
+
+- `session_node_capabilities` (read): `{}` returns `{ protocol: 1, relay_ticket_version: 2, runtimes: ["codex","claude"] }`. An absent capability MUST fail explicitly before enrollment; connectors MUST NOT take over a running daemon.
+- `session_node_incoming` (resource-owned, local bridge only): `{ secret, delivery: { handoff_id, source_id, source_revision, membership, event_ids, text } }`. The private local descriptor binds the live connector's host identity, loopback broker, secret and hub/membership snapshot. The handler revalidates that descriptor, the local native lifecycle revision and the exact enabled membership before durable admission. Returns `outcome: { status: "accepted"|"unavailable" }` or `{ status: "rejected"|"ambiguous", reason }`. Text is bounded to 512 KiB and frames to 1 MiB. Only the active table of pending/ambiguous attempts is bounded to 8,192 records; a table full of unresolved attempts MUST fail before native submission. Determinate results (`accepted`, `rejected`, `unavailable`) MUST be durably archived as exact identity/payload-fingerprint receipts before their active slots are released. Completed receipts are retained indefinitely without TTL/LRU deletion: old identical requests return their recorded outcome, and identifier/payload collisions are rejected. Receipt storage grows with delivery history; total disk usage is not bounded. Unfinished attempts MUST remain ambiguous across restart and MUST NOT be reclaimed under capacity pressure. The active journal uses a version-2 storage envelope, independently of protocol/ticket versions, so old readers fail closed instead of bypassing archived deduplication; direct downgrade or mixed old/new daemons on the same Home is unsupported.
+- Hub receiver leases MAY represent remote Codex sources; the node uses its own official Codex queue/steer. This MUST NOT change local Codex's existing queue path. `local_session_receiver_next` adds `actor_generation` for trusted bridge fencing and optional `remote_membership` for a node's locally verified original receiver; ordinary local consumers MAY ignore the extra fields. Every handoff constructor MUST provide the actor generation; ordinary hub/local submissions set `remote_membership` to absent, while a node delivery to its original receiver carries the exact locally verified membership. These are additive receiver fields, not authority supplied by an untrusted caller.
+- `local_session_receiver_ack` additionally accepts `state: "unavailable"` **only for remote source aliases**, and only as positive evidence that the remote native adapter did not submit the payload. Timeout/disconnect after offer remains ambiguous, never unavailable.
+- A remote actor's administrator recovery projection adds `remote: true`, retains the same Group/actor/source shape, and returns an empty local recovery command. Recovery MUST NOT synthesize a local resume command from a remote native ID.
+
+Device management lives at administrator-only HTTP endpoints `GET /api/v1/session_nodes`, `POST /api/v1/session_nodes/invitations`, and `POST /api/v1/session_nodes/{node_id}/revoke`. The foreground node channel uses iroh ALPN `cccc/session-node/1` with bounded hello/sync/tool/deliver frames. Enrollment tickets last ten minutes and enroll one device; authenticated resume uses the saved key. Revocation and re-enrollment create separate grant/source identities. The private broker secret MUST NOT appear in those endpoints, native tool results, network frames or logs.
+
+IP-only pairing tickets retain version 1. Public-relay tickets use version 2 with optional-origin routing fields `relay_url` and a distinct private `relay_token`; the application protocol remains version 1. Old descriptors without relay fields and version-1 IP-only tickets MUST stay readable; the version-2 private journal format does not change that ticket compatibility. Old implementations cannot consume version-2 relay tickets and MUST reject them explicitly rather than silently using a direct route. Relay-aware connectors MUST check the daemon’s `relay_ticket_version` before persisting a relay route. The saved endpoint/status contains only the relay origin, never its bootstrap token. `/relay` is a device-key/scoped-bootstrap WebSocket endpoint, independent of Web principals; `/ping` and `/generate_204` expose no private data and are required for native relay selection. Read-only Web modes MUST reject these routes. Relay bootstrap authorization MUST NOT be usable as application enrollment authority or prevent a valid direct enrollment. Device revocation closes relay streams and fences application authority; failed/unknown writes are not replayed on reconnection.
+
+Only explicitly allowed collaboration MCP tools cross the channel, with source, revision, Group and actor-generation checks on every call. Peer roles remain subject to existing MCP/Daemon authorization. The transport MUST NOT expose arbitrary daemon ops, local filesystem/exec/capability/code-mode tools, or native provider credentials. Attachment delivery fails before native handoff in this MVP.

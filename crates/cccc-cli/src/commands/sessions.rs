@@ -14,6 +14,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 mod extension;
+mod node;
 pub(crate) mod setup;
 
 /// Claude Code merges Monitor events that arrive close together and drops them
@@ -30,6 +31,7 @@ const IDLE_RECEIVE_POLL: Duration = Duration::from_millis(500);
 pub async fn run(home: &HomeLayout, action: SessionsAction) -> Result<()> {
     let client = DaemonClient::new(home.clone());
     match action {
+        SessionsAction::Node { action } => node::run(home, action).await,
         SessionsAction::Enable { runtime } => setup::enable(home, &runtime).await?.print(),
         SessionsAction::Disable { runtime } => setup::disable(home, &runtime).await?.print(),
         SessionsAction::List { include_offline } => print(

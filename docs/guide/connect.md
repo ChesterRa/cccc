@@ -227,11 +227,21 @@ provide a relay, discover devices or change firewall/router settings.
    needed after the port becomes ready. Failure shows a corrective next step;
    nothing creates invitations later from background polling. Receiving is shared
    across this instance's Groups, while each Group pair needs its own approval.
-   Click **Copy invitation** and send it through a trusted
-   channel. Its exact expiry is shown: it is valid for 30 minutes and can pair one
-   exact Group. Copy before closing or leaving this panel; the secret cannot be
-   retrieved afterward. If you already sent it, wait for the request. If you lost
-   the copy, cancel that invitation and create another.
+   On upgraded instances, choose **24 hours**, **7 days** (default), **30 days**, or **Permanent**. Permanent keys use the v3 ticket format and require a compatible build on both endpoints.
+   The invitation appears under **Invitation keys**, with a short management ID and a prominent **Uses** count. Copy it and send it through
+   a trusted channel; multiple Groups can use it until its displayed deadline, or until manual deletion for a permanent key.
+   You can copy it again after reopening the panel. The request count counts each
+   joining Group once, including requests still awaiting your approval.
+   Deleting a key requires confirmation, cancels pending requests and disconnects all Group pairs created with that key. Its old grants cannot reconnect. A fresh key can request new approval for the same pair after the client learns the revocation. Expiry alone does not disconnect already approved pairs.
+   Invitation cards show their type and deadline, with **Copy invitation** as the
+   primary action. The long code stays collapsed under **Show invitation code**.
+   Both instances must support reusable invitations; permanent creation and key-wide revocation have separate backend capabilities. If the running backend has
+   not loaded this capability, the Web explains that it must be updated and
+   restarted, and disables creation rather than silently issuing a single-use
+   invitation. Reloading the browser or updating source files alone does not
+   replace a running backend. Existing invitations marked **Single-use · Legacy**
+   still connect only one Group and cannot be retrieved after closing the panel.
+   The CLI `invite` command retains the single-use, 30-minute flow.
 4. On the joining instance, open the intended Group's **Direct connection** panel,
    choose **I have an invitation**, paste it and check the displayed instance,
    Group and expiry, then click **Request connection**. The preview separates your
@@ -244,6 +254,10 @@ provide a relay, discover devices or change firewall/router settings.
    **Connection failed · retrying**, with the cause under **Technical details**.
    The status clears when connectivity recovers; a failed connection is not
    treated as a closed record or removed from the panel.
+   Transport failures use independent retry backoff for each connection, with
+   randomized delays capped at 60 seconds. A successful connection resets the
+   backoff; awaiting approval keeps its normal polling cadence. The joining
+   instance retains disconnect and heartbeat timeout causes in **Technical details**.
    If the deadline passes before a result arrives, it keeps checking for approval
    granted before the deadline. Without a connection error, the panel shows
    **Checking the inviter’s approval**, not confirmed expiry. You can cancel at

@@ -8,6 +8,7 @@ use thiserror::Error;
 use tokio::sync::RwLock;
 
 mod connection;
+pub mod session_node;
 use connection::Connection;
 pub use connection::DaemonStream;
 

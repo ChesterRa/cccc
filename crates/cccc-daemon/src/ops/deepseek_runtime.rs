@@ -145,10 +145,10 @@ fn start_with_private_values(
 
 pub fn stop(group_id: &str, actor_id: &str) {
     let key = (group_id.to_owned(), actor_id.to_owned());
-    if let Ok(flags) = cancel_flags().read() {
-        if let Some(flag) = flags.get(&key) {
-            flag.store(true, Ordering::Release);
-        }
+    if let Ok(flags) = cancel_flags().read()
+        && let Some(flag) = flags.get(&key)
+    {
+        flag.store(true, Ordering::Release);
     }
     if let Some(holder) = sessions().write().ok().and_then(|mut map| map.remove(&key)) {
         holder.running.store(false, Ordering::Release);

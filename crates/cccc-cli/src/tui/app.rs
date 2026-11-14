@@ -690,15 +690,14 @@ impl App {
                 } else if !self.stopping()
                     && self.screen == Screen::Pending
                     && self.pending_view.editing
+                    && let Some(row) = self.pending_view.detail.as_ref()
                 {
-                    if let Some(row) = self.pending_view.detail.as_ref() {
-                        let draft = self
-                            .reply_drafts
-                            .entry((self.pending_view.group_id.clone(), row.event.id.clone()))
-                            .or_default();
-                        draft.text.insert_str(draft.input_cursor, &pasted);
-                        draft.input_cursor += pasted.len();
-                    }
+                    let draft = self
+                        .reply_drafts
+                        .entry((self.pending_view.group_id.clone(), row.event.id.clone()))
+                        .or_default();
+                    draft.text.insert_str(draft.input_cursor, &pasted);
+                    draft.input_cursor += pasted.len();
                 }
                 None
             }

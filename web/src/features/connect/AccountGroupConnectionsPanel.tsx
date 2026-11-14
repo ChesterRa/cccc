@@ -61,10 +61,10 @@ export function AccountGroupConnectionsPanel({
         className={fill ? "flex min-w-0 flex-1 flex-col justify-center" : "min-w-0"}
       >
         {links.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-6 text-center">
+          <div className="flex flex-col items-start gap-4 rounded-xl border border-[var(--glass-border-subtle)] p-5 sm:flex-row sm:items-center">
             <div
               aria-hidden="true"
-              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
             >
               {failed ? (
                 <LcdIcon icon={TriangleAlert} glyph="warning-diamond" className="h-6 w-6" />
@@ -72,7 +72,7 @@ export function AccountGroupConnectionsPanel({
                 <LcdIcon icon={Link2} glyph="link" className="h-6 w-6" />
               )}
             </div>
-            <div className="min-w-0 w-full max-w-sm space-y-4">
+            <div className="min-w-0 w-full flex-1">
               <div
                 className="space-y-1.5"
                 role={failed ? "alert" : confirming ? "status" : undefined}
@@ -94,8 +94,8 @@ export function AccountGroupConnectionsPanel({
                   <p className="break-words text-xs text-[var(--color-danger)]">{error}</p>
                 )}
               </div>
-              {primary}
             </div>
+            <div className="w-full shrink-0 sm:w-auto">{primary}</div>
           </div>
         ) : (
           <div className="space-y-3 py-2">

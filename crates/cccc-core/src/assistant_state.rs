@@ -402,14 +402,13 @@ fn configuration_only(value: &Value) -> Value {
             configurations.insert(key.clone(), config);
         }
     }
-    if !configurations.contains_key(ASSISTANT_ID) {
-        if let Some(config) = root
+    if !configurations.contains_key(ASSISTANT_ID)
+        && let Some(config) = root
             .get("assistant")
             .and_then(config_fields)
             .or_else(|| root.get(ASSISTANT_ID).and_then(config_fields))
-        {
-            configurations.insert(ASSISTANT_ID.into(), config);
-        }
+    {
+        configurations.insert(ASSISTANT_ID.into(), config);
     }
     Value::Object(configurations)
 }

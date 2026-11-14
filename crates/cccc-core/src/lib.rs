@@ -60,6 +60,7 @@ pub mod registry;
 pub mod runtime_mcp;
 pub mod runtime_switches;
 pub mod scope;
+pub mod session_nodes;
 pub mod settings;
 pub mod space_credentials;
 pub mod system_prompt;

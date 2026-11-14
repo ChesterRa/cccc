@@ -49,7 +49,19 @@ fn leases() -> &'static Mutex<HashMap<Key, Lease>> {
     LEASES.get_or_init(Mutex::default)
 }
 
-fn metadata(home: &HomeLayout, source_id: &str) -> Result<native::NativeSession, OpError> {
+struct Metadata {
+    source: LocalSessionSource,
+    revision: String,
+}
+
+fn metadata(home: &HomeLayout, source_id: &str) -> Result<Metadata, OpError> {
+    if cccc_core::session_nodes::is_remote_source(source_id) {
+        let remote = cccc_core::session_nodes::source(home, source_id).map_err(OpError::io)?;
+        return Ok(Metadata {
+            source: remote.source,
+            revision: remote.session_revision,
+        });
+    }
     let session = native::read(home, source_id).map_err(OpError::io)?;
     if !session.host_alive() {
         return Err(OpError::new(
@@ -57,17 +69,20 @@ fn metadata(home: &HomeLayout, source_id: &str) -> Result<native::NativeSession,
             "The native session host has exited",
         ));
     }
-    Ok(session)
+    Ok(Metadata {
+        source: session.source(session.codex_can_receive),
+        revision: session.revision,
+    })
 }
 
-fn make_receiver(session: native::NativeSession, connection_id: &str) -> Receiver {
+fn make_receiver(session: Metadata, connection_id: &str) -> Receiver {
     Receiver {
-        source_id: session.source_id,
-        runtime: session.runtime,
-        native_session_id: session.native_session_id,
+        source_id: session.source.source_id,
+        runtime: session.source.runtime,
+        native_session_id: session.source.native_session_id,
         connection_id: connection_id.into(),
-        cwd: session.cwd,
-        title: session.title,
+        cwd: session.source.cwd,
+        title: session.source.title,
         revision: session.revision,
     }
 }
@@ -78,7 +93,9 @@ pub(super) fn attach(
     connection_id: &str,
 ) -> Result<Receiver, OpError> {
     let session = metadata(home, source_id)?;
-    if session.runtime == LocalSessionRuntime::Codex {
+    if session.source.runtime == LocalSessionRuntime::Codex
+        && !cccc_core::session_nodes::is_remote_source(source_id)
+    {
         return Err(OpError::new(
             "invalid_args",
             "Codex uses its official native queue rather than a receive lease",
@@ -153,7 +170,7 @@ pub(super) fn sources(home: &HomeLayout) -> Result<Vec<LocalSessionSource>, OpEr
         tracing::warn!(%error,"Native session metadata is unavailable");
     }
     let leases = leases().lock().map_err(|_| unavailable())?;
-    Ok(sessions
+    let mut sources = sessions
         .into_iter()
         .map(|session| {
             let connected = match session.runtime {
@@ -166,15 +183,28 @@ pub(super) fn sources(home: &HomeLayout) -> Result<Vec<LocalSessionSource>, OpEr
             };
             session.source(connected)
         })
-        .collect())
+        .collect::<Vec<_>>();
+    for remote in cccc_core::session_nodes::list_sources(home).map_err(OpError::io)? {
+        let mut source = remote.source;
+        source.connected &= remote.alive
+            && leases
+                .get(&(home.root().to_owned(), source.source_id.clone()))
+                .is_some_and(|lease| lease.at.elapsed() < LEASE);
+        sources.push(source);
+    }
+    Ok(sources)
 }
 
 pub(super) fn connected(home: &HomeLayout, source_id: &str) -> bool {
     let Ok(session) = metadata(home, source_id) else {
         return false;
     };
-    match session.runtime {
-        LocalSessionRuntime::Codex => session.codex_can_receive,
+    if cccc_core::session_nodes::is_remote_source(source_id) {
+        return session.source.connected
+            && by_source(home, source_id).is_ok_and(|value| value.is_some());
+    }
+    match session.source.runtime {
+        LocalSessionRuntime::Codex => session.source.connected,
         LocalSessionRuntime::Claude | LocalSessionRuntime::Pi | LocalSessionRuntime::Opencode => {
             by_source(home, source_id).is_ok_and(|value| value.is_some())
         }

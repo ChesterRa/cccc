@@ -47,10 +47,8 @@ async fn ping(
     }
     let include_local_paths = query.include_home && principal.is_some_and(|value| value.is_admin);
     let mut daemon = response.0["result"].clone();
-    if !include_local_paths {
-        if let Some(value) = daemon.as_object_mut() {
-            value.remove("executable");
-        }
+    if !include_local_paths && let Some(value) = daemon.as_object_mut() {
+        value.remove("executable");
     }
     let assets = crate::web_assets_info();
     let mut result = json!({

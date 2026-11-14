@@ -17,7 +17,7 @@ export function LocalSessionsDefaults({
   if (!firstSelected) return null;
   return (
     <section
-      className="space-y-2 rounded-xl border border-[var(--glass-border-subtle)] p-3 text-xs text-[var(--color-text-secondary)]"
+      className="space-y-2 rounded-xl border border-[var(--glass-border-subtle)] p-3 text-sm text-[var(--color-text-secondary)]"
       aria-label={t("localSessions.newGroupDefaults")}
     >
       <h3 className="font-medium text-[var(--color-text-primary)]">
@@ -41,8 +41,8 @@ export function LocalSessionsDefaults({
               }
               disabled={busy}
               align="start"
-              className="w-full"
-              contentClassName="w-[var(--radix-popover-trigger-width)]"
+              className="min-h-11 w-full text-sm"
+              contentClassName="w-[var(--radix-popover-trigger-width)] [&_[role=menuitemradio]]:text-sm"
             />
           ) : (
             firstSelected.title
@@ -51,7 +51,6 @@ export function LocalSessionsDefaults({
         <dt>{t("actors:workingDirectory")}</dt>
         <dd className="break-all">{firstSelected.cwd}</dd>
       </dl>
-      {selected.length > 1 ? <p>{t("localSessions.foremanDirectoryHint")}</p> : null}
     </section>
   );
 }

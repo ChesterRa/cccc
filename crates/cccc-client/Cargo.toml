@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.55", path = "../cccc-contracts" }
 cccc-core = { package = "cccc-pair-core", version = "=0.4.55", path = "../cccc-core" }
+serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
