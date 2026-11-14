@@ -384,6 +384,7 @@ mod tests {
             "https://chatgpt.com/?model=fixture",
             "https://chatgpt.com/c/WEB:00000000-0000-4000-8000-000000000001",
             "https://chatgpt.com/c/WEB%3A00000000-0000-4000-8000-000000000001",
+            "https://chatgpt.com/c/local-chatgpt%3A00000000-0000-4000-8000-000000000001",
             "https://chat.openai.com/c/WEB:pending",
         ] {
             assert!(pending_new_chat_url(url), "{url}");

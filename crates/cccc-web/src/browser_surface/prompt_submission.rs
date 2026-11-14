@@ -1206,7 +1206,10 @@ fn chatgpt_conversation_id(url: &reqwest::Url) -> Option<String> {
 
 pub(super) fn provisional_conversation_id(value: &str) -> bool {
     let value = value.trim().to_ascii_uppercase();
-    value.starts_with("WEB:") || value.starts_with("WEB%3A")
+    value.starts_with("WEB:")
+        || value.starts_with("WEB%3A")
+        || value.starts_with("LOCAL-CHATGPT:")
+        || value.starts_with("LOCAL-CHATGPT%3A")
 }
 
 fn submission_needles(prompt: &str) -> Vec<String> {
