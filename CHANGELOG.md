@@ -6,6 +6,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+
+- A cron automation rule that already owes a run, for example one enabled again after
+  missing its time, reports that run as its next fire time instead of the following
+  occurrence, as interval and one-time rules already did. The Web labels that time as
+  pending. The missed run still fires once.
+- The capability page's Enabled count covers all matches of the current search, like the
+  Skills, MCP and Packs counts, instead of only the page on screen. `capability_overview`
+  returns `enabled_count`; the standard now also documents `kind_counts`.
+- MCP recipes that declare `command` as a string or argv array, or a fallback command
+  without a package identifier, install as the published contract describes. A string
+  names one executable and is never split by a shell; arguments need an argv array.
+  Malformed command fields are rejected before the catalog changes.
+- ChatGPT Web members treat `local-chatgpt:` conversation URLs as provisional, like
+  `WEB:` ones, and a conversation moved into a Project keeps its binding and delivery
+  receipts (#226, #227).
+- The documentation home page's getting-started button links to the page's own address,
+  so opening the link directly no longer returns 404.
+
+### Added
+
+- The operations guide lists what a daemon restart keeps and what it does not, with a
+  FAQ entry pointing to it.
+
 ## [0.4.56]
 
 ### Added

@@ -1130,7 +1130,7 @@ fn conversation_route_changed(before: &str, after: &str) -> bool {
         .is_some_and(|id| !provisional_conversation_id(&id))
 }
 
-pub(crate) fn conversation_url_for_target(target: &str, current: &str) -> Option<String> {
+fn conversation_url_for_target(target: &str, current: &str) -> Option<String> {
     let target = reqwest::Url::parse(target).ok()?;
     let mut current = reqwest::Url::parse(current).ok()?;
     if target.scheme() != current.scheme()
@@ -1679,6 +1679,35 @@ mod conversation_target_tests {
             standalone,
             "https://chatgpt.com/g/g-p-example/c/other-id"
         ));
+    }
+
+    #[test]
+    fn conversation_identity_keeps_origin_and_rejects_provisional_ids() {
+        let stable = "https://chatgpt.com/c/stable-id";
+        assert!(conversation_target_matches(
+            stable,
+            "https://chatgpt.com/g/g-p-example/c/stable-id?model=fixture#reply"
+        ));
+        for other in [
+            "https://chat.openai.com/c/stable-id",
+            "https://chatgpt.com:8443/c/stable-id",
+            "https://user@chatgpt.com/c/stable-id",
+            "http://chatgpt.com/c/stable-id",
+            "https://chatgpt.com.example/c/stable-id",
+            "https://chatgpt.com/",
+        ] {
+            assert!(!conversation_target_matches(stable, other), "{other}");
+        }
+        for id in [
+            "WEB:pending",
+            "WEB%3Apending",
+            "local-chatgpt:pending",
+            "local-chatgpt%3Apending",
+        ] {
+            let provisional = format!("https://chatgpt.com/c/{id}");
+            assert!(normalized_chatgpt_conversation_url(&provisional).is_none());
+            assert!(!conversation_target_matches(&provisional, &provisional));
+        }
     }
 }
 

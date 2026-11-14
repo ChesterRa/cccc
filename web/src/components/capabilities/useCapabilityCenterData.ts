@@ -111,7 +111,7 @@ export function useCapabilityCenterData(options: CapabilityCenterDataOptions) {
         skills: Number(kindCounts.skill || 0),
         mcp: Number(kindCounts.mcp || 0),
         packs: Number(kindCounts.pack || 0),
-        enabled: 0,
+        enabled: Number(response.result.enabled_count || 0),
         slashHidden: nextStats.slashHidden,
         blocked: nextStats.blocked,
         needsSetup: nextStats.needsSetup,

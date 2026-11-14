@@ -72,6 +72,8 @@ export function AutomationTab(props: AutomationTabProps) {
   });
   const [rulesVersion, setRulesVersion] = useState<number | undefined>(undefined);
   const [status, setStatus] = useState<Record<string, AutomationRuleStatus>>({});
+  // The daemon's clock when `status` was computed, so a due rule can be told apart.
+  const [serverNow, setServerNow] = useState<string | undefined>(undefined);
   const [configPath, setConfigPath] = useState("");
   const [supportedVars, setSupportedVars] = useState<string[]>([]);
 
@@ -118,6 +120,7 @@ export function AutomationTab(props: AutomationTabProps) {
       );
       setRulesVersion(typeof resp.result.version === "number" ? resp.result.version : undefined);
       setStatus(resp.result.status || {});
+      setServerNow(resp.result.server_now);
       setConfigPath(String(resp.result.config_path || ""));
       setSupportedVars(
         Array.isArray(resp.result.supported_vars) ? resp.result.supported_vars.map(String) : [],
@@ -137,6 +140,7 @@ export function AutomationTab(props: AutomationTabProps) {
     setSnippetCatalog({ built_in: {}, built_in_overrides: {}, custom: {} });
     setRulesVersion(undefined);
     setStatus({});
+    setServerNow(undefined);
     setConfigPath("");
     setSupportedVars([]);
     setRulesErr("");
@@ -590,7 +594,10 @@ export function AutomationTab(props: AutomationTabProps) {
     setRunNotice({ ruleId, ...notice });
     try {
       const refreshed = await api.fetchAutomation(groupId);
-      if (isCurrent() && refreshed.ok) setStatus(refreshed.result.status || {});
+      if (isCurrent() && refreshed.ok) {
+        setStatus(refreshed.result.status || {});
+        setServerNow(refreshed.result.server_now);
+      }
     } catch {
       // The notice already says what is known; the status refreshes on reopen.
     } finally {
@@ -748,6 +755,7 @@ export function AutomationTab(props: AutomationTabProps) {
           groupState={props.groupState}
           visibleRules={visibleRules}
           status={status}
+          serverNow={serverNow}
           rulesBusy={rulesBusy}
           showCompletedRules={showCompletedRules}
           completedRuleIds={completedRuleIds}
@@ -769,6 +777,7 @@ export function AutomationTab(props: AutomationTabProps) {
         isDark={isDark}
         ruleDraft={editingRuleDraft}
         ruleStatus={editingRuleStatus}
+        serverNow={serverNow}
         isNewRule={editingRuleIsNew}
         errorMessage={rulesErr}
         saveBusy={rulesBusy}

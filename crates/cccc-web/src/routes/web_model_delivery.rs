@@ -9,8 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::AppState;
 use crate::api::ApiError;
 use crate::browser_surface::{
-    BOUND_CONVERSATION_ERROR_MARKER, PromptSubmissionOutcome, conversation_url_for_target,
-    is_chatgpt_url,
+    BOUND_CONVERSATION_ERROR_MARKER, PromptSubmissionOutcome, is_chatgpt_url,
 };
 
 use super::web_model_browser::key;
@@ -1011,8 +1010,6 @@ async fn recover_verified_ambiguous_submission(
     );
     let recovered = daemon_call(state, "web_model_runtime_recover_turn", recover_args).await?;
     let turn = &recovered["turn"];
-    let observed_url = submission["observed"]["url"].as_str().unwrap_or("");
-    let conversation_url = conversation_url_for_target(target_url, observed_url);
     let (_, bootstrap_seed) = build_browser_prompt(
         turn,
         target,
@@ -1043,13 +1040,8 @@ async fn recover_verified_ambiguous_submission(
     )
     .await?;
     if let Some(seed) = &bootstrap_seed {
-        mark_bootstrap_seed_delivered(
-            state,
-            group_id,
-            actor_id,
-            conversation_url.as_deref().unwrap_or(target_url),
-            seed,
-        )?;
+        // The receipt proved the bound conversation, even when its Project route changed.
+        mark_bootstrap_seed_delivered(state, group_id, actor_id, target_url, seed)?;
     }
     let mut recovered_submission = submission.clone();
     if let Some(object) = recovered_submission.as_object_mut() {
@@ -1074,7 +1066,6 @@ async fn recover_verified_ambiguous_submission(
         actor_id,
         turn_id,
         submission_evidence,
-        conversation_bound = conversation_url.is_some(),
         "Recovered a browser submission from direct delivery evidence"
     );
     Ok(true)

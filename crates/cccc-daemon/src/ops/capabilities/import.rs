@@ -451,6 +451,8 @@ fn normalize_record(raw: &Value) -> Result<Value, OpError> {
                 install_spec.insert(key.into(), value.clone());
             }
         }
+        super::recipe::command_candidates(&install_spec)
+            .map_err(|error| OpError::new("capability_import_invalid", error.message))?;
         if install_mode == "command"
             && !has_command(install_spec.get("command"))
             && !has_command_candidates(install_spec.get("command_candidates"))
@@ -704,8 +706,8 @@ fn unsupported_mcp_reason(mode: &str, spec: &Map<String, Value>) -> String {
                     | "podman"
             );
             if supported_registry && !identifier.is_empty()
-                || has_command(spec.get("fallback_command"))
-                || has_command_candidates(spec.get("fallback_command_candidates"))
+                || super::recipe::command_candidates(spec)
+                    .is_ok_and(|commands| !commands.is_empty())
             {
                 String::new()
             } else if !supported_registry {

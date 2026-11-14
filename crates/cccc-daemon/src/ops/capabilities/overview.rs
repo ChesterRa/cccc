@@ -8,8 +8,23 @@ use crate::dispatch::{OpError, OpResult, object, string_arg};
 
 pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let store = CapabilityStore::new(home.clone());
-    let state = store.load().map_err(OpError::io)?;
     let group_id = string_arg(request, "group_id").unwrap_or_default();
+    let group = if group_id.is_empty() {
+        None
+    } else {
+        cccc_core::GroupStore::new(home.clone())
+            .map_err(OpError::io)?
+            .load(&group_id)
+            .ok()
+    };
+    // The Web reads this and the Group's capability state together; seeding here too
+    // keeps a first visit from counting fewer enabled capabilities than the state shows.
+    if group.is_some() {
+        store
+            .seed_default_group_capabilities(&group_id)
+            .map_err(OpError::io)?;
+    }
+    let state = store.load().map_err(OpError::io)?;
     let effective =
         super::effective_state::load(home, &group_id, "user", &state).map_err(OpError::io)?;
     let query = string_arg(request, "query")
@@ -23,14 +38,6 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let limit = usize_arg(request, "limit", 400, 2_000);
     let catalog = store.catalog().map_err(OpError::io)?;
     let removed = store.removed_for_group(&group_id).map_err(OpError::io)?;
-    let group = if group_id.is_empty() {
-        None
-    } else {
-        cccc_core::GroupStore::new(home.clone())
-            .map_err(OpError::io)?
-            .load(&group_id)
-            .ok()
-    };
     let projection = super::projection::Projection::new(home, &store, &group_id, group.as_ref())?;
     let locale = string_arg(request, "locale").unwrap_or_else(|| "en".into());
     let known_groups = cccc_core::GroupStore::new(home.clone())
@@ -69,9 +76,17 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .collect::<Vec<_>>();
 
     let mut kind_counts = BTreeMap::from([("skill", 0usize), ("mcp", 0), ("pack", 0)]);
+    let mut enabled_count = 0usize;
     for row in &rows {
         if let Some(count) = kind_counts.get_mut(overview_kind(row)) {
             *count += 1;
+        }
+        // The same set a capability state read for the user returns as enabled.
+        if row["capability_id"]
+            .as_str()
+            .is_some_and(|id| effective.enabled.contains(id) && !effective.blocked.contains(id))
+        {
+            enabled_count += 1;
         }
     }
 
@@ -118,6 +133,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "has_more":offset.saturating_add(items.len()) < total_count,
         "query":query,
         "kind_counts":kind_counts,
+        "enabled_count":enabled_count,
         "sources":sources,
         "blocked_capabilities":blocked_capabilities,
         "domains":cccc_core::capability_recommendations::domains(&locale).map_err(OpError::io)?,

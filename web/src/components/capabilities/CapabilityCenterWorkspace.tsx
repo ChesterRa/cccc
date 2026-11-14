@@ -338,11 +338,10 @@ export function CapabilityCenterWorkspace({
   }, [groupId, isOpen]);
   const hiddenIds = useMemo(() => capabilityCenterHiddenIds(state), [state]);
   const loadedStats = useMemo(() => summarizeCapabilityCenter(items, state), [items, state]);
+  // The daemon counts kinds and enabled entries over the whole query, so every card
+  // keeps the same scope on every page.
   const stats = useMemo(
-    () =>
-      summaryStats
-        ? { ...summaryStats, enabled: loadedStats.enabled, slashHidden: loadedStats.slashHidden }
-        : loadedStats,
+    () => (summaryStats ? { ...summaryStats, slashHidden: loadedStats.slashHidden } : loadedStats),
     [loadedStats, summaryStats],
   );
   const filteredItems = useMemo(

@@ -23,6 +23,8 @@ interface AutomationRuleListProps {
   groupState?: string;
   visibleRules: AutomationRule[];
   status: Record<string, AutomationRuleStatus>;
+  /** The daemon's clock when `status` was computed. */
+  serverNow?: string;
   rulesBusy: boolean;
   showCompletedRules: boolean;
   completedRuleIds: string[];
@@ -42,6 +44,7 @@ export function AutomationRuleList({
   groupState,
   visibleRules,
   status,
+  serverNow,
   rulesBusy,
   showCompletedRules,
   completedRuleIds,
@@ -280,7 +283,7 @@ export function AutomationRuleList({
             </div>
             <div className="mt-1 text-xs text-[var(--color-text-muted)]">
               {lastRun ? `${t("ruleList.lastShort")}: ${lastRun} • ` : ""}
-              {t("ruleList.nextShort")}: {formatAutomationNext(ruleStatus, t)}
+              {t("ruleList.nextShort")}: {formatAutomationNext(ruleStatus, t, serverNow)}
             </div>
             {runNotice && runNotice.ruleId === ruleId ? (
               <div

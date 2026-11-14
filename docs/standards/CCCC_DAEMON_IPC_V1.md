@@ -980,6 +980,10 @@ Result:
   has_more: boolean
   domains: Array<{domain_id: string; name: string}> // manifest order
   query: string
+  // Both count every match of `query` not removed for the Group, before the kind,
+  // policy and source filters and paging.
+  kind_counts: {skill: number; mcp: number; pack: number}
+  enabled_count: number // matches in `capability_state` `enabled_capabilities` for `user` in `group_id`
   sources: Record<string, {
     source_id: string
     record_count: number
@@ -1488,7 +1492,14 @@ Notes:
    it is not silently shortened.
 4. `dry_run=true` validates/probes only (no catalog persistence).
 5. `command*` and `fallback_command*` may be provided as top-level shortcuts; daemon copies them into
-   `install_spec` when missing.
+   `install_spec` when missing. A string names one executable, spaces included, and is never split
+   by a shell. Arguments need an argv array: its first item names a non-empty executable, and the
+   later items, empty ones included, are passed as given. Candidates are tried in the order
+   `command_candidates`, `command`, `fallback_command_candidates`, `fallback_command`, and the first
+   one whose executable is available on the daemon host is installed; an absent or null field takes
+   no part. Any other type, an empty argv or a non-string item is rejected. `package` mode runs its
+   package recipe when the registry is supported and the identifier is non-empty, and otherwise the
+   same declared commands. A failed install does not move on to another candidate.
 6. `record.source_id` is optional; empty or unknown source ids are normalized to `manual_import`.
 7. `record.source_id=agent_self_proposed` preserves autonomous skill-proposal provenance. Default policy treats
    `kind=skill` capsule records from this source as mounted, while non-skill toolpacks remain indexed unless
@@ -3946,6 +3957,12 @@ Notes:
   while the Group is paused or stopped, or while the built-in `standup` is
   suppressed by an idle Group. This uses the daemon Group state, not the Web
   activity projection. Disabled or completed rules have no suppression reason.
+- For a rule that is already due, `next_fire_at` is the time its firing was
+  owed, at or before `server_now`. This happens, for example, when an interval
+  or cron rule is enabled again with a clock older than its latest occurrence.
+  It fires once, not once per missed occurrence, on the first tick that can
+  carry it out; until then, for example while a notify rule's `to` matches no
+  enabled actor, it keeps reporting that time.
 - `group.yaml:automation` and `state/automation.json` are the shared config and
   runtime authorities. The single-daemon process lock owns scheduling; engine
   handoff consumes these files and does not introduce a second scheduler lease

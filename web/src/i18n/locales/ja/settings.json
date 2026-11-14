@@ -1058,6 +1058,7 @@
     "runNowHint": "このルールの通知を今すぐ送ります。受信者が動き出し、モデルの利用枠を消費する場合があります。実行回数の上限には数えず、スケジュールも変わりません。",
     "lastRunManual": "{{time}}（手動）",
     "idleStandup": "待機中のグループでは実行しません",
+    "pending": "実行待ち（予定 {{time}}）",
     "completedLabel": "完了",
     "runProgress": "実行 {{done}} / {{max}} 回",
     "completedLimitHint": "上限を増やすか削除すると、このルールを有効にできます。"

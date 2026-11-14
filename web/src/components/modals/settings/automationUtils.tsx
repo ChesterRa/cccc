@@ -165,11 +165,21 @@ export function formatAutomationTime(value: string | undefined): string {
 
 // The daemon reports why a rule will not fire from its own Group state; the
 // Web's "idle" only means no member is working, so it is not used here.
-export function formatAutomationNext(status: AutomationRuleStatus, t: TFunction): string {
+// A rule that is already due reports the time it was owed, at or before the
+// daemon's clock, until a scheduler tick carries it out.
+export function formatAutomationNext(
+  status: AutomationRuleStatus,
+  t: TFunction,
+  serverNow?: string,
+): string {
   if (status.suppressed_reason === "group_paused") return t("layout:statusPaused");
   if (status.suppressed_reason === "group_stopped") return t("layout:statusStopped");
   if (status.suppressed_reason === "idle_standup") return t("ruleList.idleStandup");
-  return status.next_fire_at ? formatAutomationTime(status.next_fire_at) : "—";
+  if (!status.next_fire_at) return "—";
+  const time = formatAutomationTime(status.next_fire_at);
+  const next = Date.parse(status.next_fire_at);
+  const now = serverNow ? Date.parse(serverNow) : Number.NaN;
+  return next <= now ? t("ruleList.pending", { time }) : time;
 }
 
 // Only a notification that reached the ledger counts; older state has no such record.

@@ -549,6 +549,11 @@ async fn verified_legacy_draft_recovers_through_rebuilt_prompt_once() {
 
 #[tokio::test]
 async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
+    use chromiumoxide::cdp::browser_protocol::fetch::{
+        EnableParams, EventRequestPaused, FulfillRequestParams, HeaderEntry,
+    };
+    use futures_util::StreamExt;
+
     if crate::system_browser_path().is_none() {
         return;
     }
@@ -622,7 +627,8 @@ async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listen");
-    let url = format!("http://{}/", listener.local_addr().expect("addr"));
+    let entry_url = format!("http://{}/", listener.local_addr().expect("addr"));
+    let url = "https://chatgpt.com/c/recovery-fixture".to_owned();
     let server = tokio::spawn(async move {
         axum::serve(
             listener,
@@ -633,7 +639,13 @@ async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
     });
     let session_key = key(&group.group_id, "browser-test");
     surfaces
-        .open(&session_key, &temp.path().join("profile"), &url, 800, 600)
+        .open(
+            &session_key,
+            &temp.path().join("profile"),
+            &entry_url,
+            800,
+            600,
+        )
         .await
         .expect("browser");
     let page = surfaces
@@ -644,6 +656,29 @@ async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
         .expect("session")
         .page
         .clone();
+    // Serve a synthetic ChatGPT origin so the same chat can change Project routes.
+    // Every request is fulfilled locally, including navigation and subresources.
+    let mut requests = page
+        .event_listener::<EventRequestPaused>()
+        .await
+        .expect("intercept");
+    page.execute(EnableParams::default())
+        .await
+        .expect("enable interception");
+    let control = page.clone();
+    let intercept = tokio::spawn(async move {
+        while let Some(request) = requests.next().await {
+            let mut response = FulfillRequestParams::new(request.request_id.clone(), 200);
+            response.response_headers = Some(vec![HeaderEntry::new("Content-Type", "text/html")]);
+            response.body = Some(
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, HTML).into(),
+            );
+            if control.execute(response).await.is_err() {
+                break;
+            }
+        }
+    });
+    page.goto(&url).await.expect("offline ChatGPT page");
     super::login_tests::pair_fixture(&state, &group.group_id, &url);
     update_target(
         &state,
@@ -768,10 +803,14 @@ async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
         .data
         .insert("text".into(), json!("Only later work should follow."));
     ledger::append(&ledger_path, &second).expect("second");
-    page.evaluate("send();const b=document.createElement('button');b.id='generating';b.setAttribute('aria-label','Stop generating');b.textContent='Stop';document.querySelector('main').append(b)").await.expect("manual send");
+    page.evaluate("history.replaceState(null,'','/g/g-p-fixture/c/recovery-fixture');send();const b=document.createElement('button');b.id='generating';b.setAttribute('aria-label','Stop generating');b.textContent='Stop';document.querySelector('main').append(b)").await.expect("manual send");
     assert!(
         surfaces
-            .inspect_delivery_receipt(&session_key, &format!("{url}?other-chat"), &marker)
+            .inspect_delivery_receipt(
+                &session_key,
+                "https://chatgpt.com/c/other-conversation",
+                &marker
+            )
             .await
             .expect("wrong conversation")
             .is_none()
@@ -793,6 +832,11 @@ async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
         }
     }).await.expect("manual send reconciled");
+    let recovered = load_target(&state, &group.group_id, "browser-test").expect("recovered target");
+    assert_eq!(
+        recovered["bootstrap_seed_conversation_url"], url,
+        "a Project-route receipt must keep the bootstrap seed on the bound URL"
+    );
     let events = std::fs::read_to_string(&ledger_path)
         .expect("ledger")
         .lines()
@@ -858,6 +902,11 @@ async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
         .into_value::<Vec<String>>()
         .expect("messages");
     assert!(sent[0].contains(&first.id));
+    assert!(sent[0].contains("Session bootstrap"));
+    assert!(
+        !sent[1].contains("Session bootstrap"),
+        "the next delivery must not seed the same conversation again"
+    );
     assert!(!sent[1].contains(&first.id));
     assert!(sent[1].contains(&second.id));
     assert_eq!(
@@ -871,6 +920,7 @@ async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
     );
     let _ = shutdown.send(());
     surfaces.close(&session_key).await.expect("close browser");
+    intercept.abort();
     server.abort();
     client
         .call(&DaemonRequest {

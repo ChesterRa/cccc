@@ -95,6 +95,22 @@ it("offers state reloads only through its checked read, never a raw state setter
   expect(data.error).toBe("state read failed");
 });
 
+it("takes the enabled count for the whole query from the daemon, not the loaded page", async () => {
+  vi.mocked(api.fetchCapabilityOverview).mockResolvedValue({
+    ok: true,
+    result: {
+      items: [{ capability_id: "skill:fixture:page", kind: "skill", name: "page" }],
+      total_count: 3,
+      has_more: true,
+      kind_counts: { skill: 3 },
+      enabled_count: 2,
+    },
+  } as never);
+  await act(async () => void (await data.refresh()));
+  expect(data.summaryStats?.skills).toBe(3);
+  expect(data.summaryStats?.enabled).toBe(2);
+});
+
 it("reads the list in the page's language and keeps the release's areas", async () => {
   const domains = [{ domain_id: "research", name: "搜索与调研" }];
   vi.mocked(api.fetchCapabilityOverview).mockResolvedValue({

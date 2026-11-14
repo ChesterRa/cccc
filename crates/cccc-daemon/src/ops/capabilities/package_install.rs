@@ -117,15 +117,16 @@ fn install_remote(capability_id: &str, record: &Value) -> Result<Value, OpError>
 
 fn resolve_command(mode: &str, spec: &Map<String, Value>) -> Result<Vec<String>, OpError> {
     if mode == "command" {
-        return command_candidates(spec)
-            .into_iter()
-            .find(|command| command.first().is_some_and(|item| command_available(item)))
-            .ok_or_else(|| install_error("no available command candidate"));
+        return resolve_declared_command(spec);
     }
     let registry = text_map(spec, "registry_type").to_ascii_lowercase();
     let identifier = text_map(spec, "identifier");
     if identifier.is_empty() {
-        return Err(install_error("package identifier is required"));
+        return if super::recipe::command_candidates(spec)?.is_empty() {
+            Err(install_error("package identifier is required"))
+        } else {
+            resolve_declared_command(spec)
+        };
     }
     let version = text_map(spec, "version");
     let runtime = arguments(spec.get("runtime_arguments"));
@@ -182,10 +183,10 @@ fn resolve_command(mode: &str, spec: &Map<String, Value>) -> Result<Vec<String>,
             command.extend(package);
             Ok(command)
         }
-        _ => command_candidates(spec)
-            .into_iter()
-            .next()
-            .ok_or_else(|| install_error(format!("unsupported package registry: {registry}"))),
+        _ if super::recipe::command_candidates(spec)?.is_empty() => Err(install_error(format!(
+            "unsupported package registry: {registry}"
+        ))),
+        _ => resolve_declared_command(spec),
     }
 }
 
@@ -372,26 +373,36 @@ fn arguments(value: Option<&Value>) -> Vec<String> {
         .collect()
 }
 
-fn command_candidates(spec: &Map<String, Value>) -> Vec<Vec<String>> {
-    ["command_candidates", "fallback_command_candidates"]
+fn resolve_declared_command(spec: &Map<String, Value>) -> Result<Vec<String>, OpError> {
+    let commands = super::recipe::command_candidates(spec)?;
+    if let Some(command) = commands
         .into_iter()
-        .flat_map(|key| {
-            spec.get(key)
-                .and_then(Value::as_array)
+        .find(|command| command_available(&command[0]))
+    {
+        return Ok(command);
+    }
+    let command_line_string = ["command", "fallback_command"]
+        .into_iter()
+        .filter_map(|key| spec.get(key).and_then(Value::as_str))
+        .chain(
+            ["command_candidates", "fallback_command_candidates"]
                 .into_iter()
-                .flatten()
-                .filter_map(|candidate| candidate.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect()
+                .flat_map(|key| {
+                    spec.get(key)
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
                 })
-                .collect::<Vec<_>>()
-        })
-        .filter(|items: &Vec<String>| !items.is_empty())
-        .collect()
+                .filter_map(Value::as_str),
+        )
+        .any(|value| {
+            value.chars().any(char::is_whitespace) && !std::path::Path::new(value).exists()
+        });
+    Err(install_error(if command_line_string {
+        "no available command candidate; a string names one executable; use an argv array for arguments, for example [\"npx\",\"-y\",\"some-server\"]"
+    } else {
+        "no available command candidate"
+    }))
 }
 
 fn expand_environment(value: &str) -> String {
@@ -533,6 +544,38 @@ mod tests {
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["real_tool_name"], "create-issue");
         assert_eq!(tools[0]["name"], "cccc_ext_b309fafe_create_issue");
+    }
+
+    #[test]
+    fn declared_executables_resolve_without_shell_and_package_fallback_needs_no_identifier() {
+        let executable = std::env::current_exe()
+            .expect("test executable")
+            .to_string_lossy()
+            .into_owned();
+        for spec in [
+            json!({"command":executable}),
+            json!({"command_candidates":[executable]}),
+            json!({"fallback_command":executable}),
+        ] {
+            assert_eq!(
+                resolve_command("command", spec.as_object().expect("spec")).expect("executable"),
+                vec![executable.clone()]
+            );
+        }
+        let fallback =
+            json!({"registry_type":"npm", "fallback_command":[executable,"literal argument"]});
+        assert_eq!(
+            resolve_command("package", fallback.as_object().expect("spec")).expect("fallback"),
+            vec![executable, "literal argument".into()]
+        );
+        let error = resolve_command(
+            "command",
+            json!({"command":"cccc-missing-fixture --argument"})
+                .as_object()
+                .expect("spec"),
+        )
+        .expect_err("no shell parsing");
+        assert!(error.message.contains("argv array"));
     }
 
     #[test]

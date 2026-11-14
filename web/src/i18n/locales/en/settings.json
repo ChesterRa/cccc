@@ -1058,6 +1058,7 @@
     "runNowHint": "Send this rule's notification now. It may wake the recipients and use model credits. It does not count toward the run limit or change the schedule.",
     "lastRunManual": "{{time}} (manual)",
     "idleStandup": "Not while the Group is idle",
+    "pending": "Pending (scheduled {{time}})",
     "completedLabel": "Completed",
     "runProgress": "{{done}} / {{max}} runs",
     "completedLimitHint": "Increase or remove the limit to enable this rule."

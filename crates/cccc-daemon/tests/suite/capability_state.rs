@@ -762,6 +762,58 @@ fn blocked_default_self_evolution_is_not_active() {
 }
 
 #[test]
+fn overview_counts_enabled_matches_on_every_page_as_the_state_read_does() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("enabled count", "")
+        .expect("group");
+
+    // A new Group's first read is the overview, before any state read.
+    let first = call(
+        &home,
+        "capability_overview",
+        json!({"group_id":group.group_id,"limit":1,"offset":0}),
+    );
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    let enabled = state["enabled_capabilities"]
+        .as_array()
+        .expect("enabled")
+        .len();
+    assert!(enabled > 0, "a new Group starts with default capabilities");
+    assert_eq!(first["enabled_count"], json!(enabled));
+
+    // The last page and a kind filter count the same matches.
+    let total = first["total_count"].as_u64().expect("total");
+    assert!(total > 1, "the count must hold beyond the first page");
+    let last = call(
+        &home,
+        "capability_overview",
+        json!({"group_id":group.group_id,"limit":1,"offset":total - 1}),
+    );
+    let mcp = call(
+        &home,
+        "capability_overview",
+        json!({"group_id":group.group_id,"kind":"mcp"}),
+    );
+    assert_eq!(last["enabled_count"], json!(enabled));
+    assert_eq!(mcp["enabled_count"], json!(enabled));
+
+    let none = call(
+        &home,
+        "capability_overview",
+        json!({"group_id":group.group_id,"query":"zzqx-no-such-capability"}),
+    );
+    assert_eq!(none["total_count"], 0);
+    assert_eq!(none["enabled_count"], 0);
+}
+
+#[test]
 fn legacy_registered_skills_are_projected_for_slash_commands() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -1559,6 +1611,99 @@ fn capability_enable_returns_the_declared_lifecycle_shape() {
     assert_eq!(disabled["enabled"], false);
     assert_eq!(disabled["state"], "disabled");
     assert_eq!(disabled["refresh_required"], true);
+}
+
+#[test]
+fn imported_command_forms_install_and_call_with_literal_arguments() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("command forms", "")
+        .expect("group");
+    let server = temp.path().join("command fixture.py");
+    std::fs::write(&server, r#"import json, sys
+for raw in sys.stdin:
+    m = json.loads(raw)
+    method = m.get('method')
+    if method == 'initialize':
+        result = {'protocolVersion':'2024-11-05','capabilities':{},'serverInfo':{'name':'argv-fixture','version':'1'}}
+    elif method == 'tools/list':
+        result = {'tools':[{'name':'echo','inputSchema':{'type':'object','properties':{}}}]}
+    elif method == 'tools/call':
+        result = {'content':[{'type':'text','text':json.dumps({'argv':sys.argv[1:],'value':m['params']['arguments']['value']})}]}
+    else:
+        continue
+    print(json.dumps({'jsonrpc':'2.0','id':m['id'],'result':result}), flush=True)
+"#).expect("fixture");
+    let python = ["python3", "python"]
+        .into_iter()
+        .find(|program| {
+            std::process::Command::new(program)
+                .arg("--version")
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+        .expect("Python fixture executable");
+    let literal = "$HOME; echo not-a-shell-command";
+    let argv = json!([python, "-u", server.to_string_lossy(), literal, ""]);
+    for (index, (mode, spec)) in [
+        ("command", json!({"command":argv})),
+        ("command", json!({"command_candidates":[argv]})),
+        (
+            "package",
+            json!({"registry_type":"npm","fallback_command":argv}),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = format!("mcp:test:command-form-{index}");
+        let record = json!({"capability_id":id,"kind":"mcp_toolpack","name":"Command fixture",
+            "qualification_status":"qualified","install_mode":mode,"install_spec":spec});
+        call(
+            &home,
+            "capability_import",
+            json!({"group_id":group.group_id,"by":"user","record":record}),
+        );
+        call(
+            &home,
+            "capability_enable",
+            json!({"group_id":group.group_id,"actor_id":"user","by":"user",
+            "capability_id":id,"scope":"actor","enabled":true}),
+        );
+        let invoked = call(
+            &home,
+            "capability_tool_call",
+            json!({"group_id":group.group_id,"actor_id":"user","by":"user",
+            "capability_id":id,"tool_name":"echo","arguments":{"value":"received"}}),
+        );
+        let result: Value = serde_json::from_str(
+            invoked["result"]["content"][0]["text"]
+                .as_str()
+                .expect("text"),
+        )
+        .expect("fixture JSON");
+        assert_eq!(result["argv"], json!([literal, ""]));
+        assert_eq!(result["value"], "received");
+        let catalog = home.root().join("state/capabilities/catalog.json");
+        let before = std::fs::read(&catalog).expect("catalog");
+        let mut invalid = record.clone();
+        invalid["install_spec"]["command"] = json!([python, 42]);
+        let rejected = response(
+            &home,
+            "capability_import",
+            json!({"group_id":group.group_id,"by":"user","record":invalid}),
+        );
+        assert_eq!(
+            rejected.error.expect("invalid argv").code,
+            "capability_import_invalid"
+        );
+        assert_eq!(
+            std::fs::read(&catalog).expect("catalog after rejection"),
+            before
+        );
+    }
 }
 
 #[test]

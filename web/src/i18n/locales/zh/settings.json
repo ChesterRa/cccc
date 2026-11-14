@@ -1055,6 +1055,7 @@
     "runNowHint": "现在发出这条规则的通知。可能唤醒收件人并消耗模型额度；不计入执行次数上限，也不改变定时。",
     "lastRunManual": "{{time}}（手动）",
     "idleStandup": "工作组待机时不运行",
+    "pending": "待运行（原定 {{time}}）",
     "completedLabel": "已完成",
     "runProgress": "已执行 {{done}} / {{max}} 次",
     "completedLimitHint": "提高或移除上限后可启用此规则。"
