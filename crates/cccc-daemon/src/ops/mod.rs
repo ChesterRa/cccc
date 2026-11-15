@@ -21,7 +21,7 @@ mod automation_manage;
 mod automation_rule_access;
 pub(crate) mod automation_runtime;
 mod backlog;
-mod capabilities;
+pub(crate) mod capabilities;
 mod chet_history;
 mod codex_mcp;
 pub(crate) mod codex_voice_analyst;
@@ -78,6 +78,7 @@ mod messaging_status;
 mod presentation;
 mod profile_access;
 mod profiles;
+mod quick_reply_templates;
 mod remote_access;
 mod reply_requests;
 mod runtime_completion;
@@ -122,6 +123,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         message_pins::resolve_operation,
         presentation::resolve_operation,
         profiles::resolve_operation,
+        quick_reply_templates::resolve_operation,
         diagnostics::resolve_operation,
         remote_access::resolve_operation,
         membership::resolve_operation,

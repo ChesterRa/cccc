@@ -8,6 +8,7 @@ use crate::fs::{read_json, with_exclusive_lock, write_json};
 use cccc_contracts::utc_now;
 use serde_json::{Map, Value, json};
 
+pub mod revocations;
 mod state;
 pub use state::CapabilityState;
 
@@ -189,6 +190,7 @@ impl CapabilityStore {
             let blocked = object_field(raw, "global_blocked");
             blocked.clear();
             for id in &state.blocked {
+                revocations::invalidate(&self.home, id, "", "");
                 blocked.insert(
                     id.clone(),
                     json!({"reason":"","by":"user","blocked_at":utc_now(),"expires_at":""}),
@@ -319,6 +321,13 @@ impl CapabilityStore {
             } else {
                 json!({"v":1,"created_at":utc_now(),"sources":{},"records":{}})
             };
+            if raw
+                .get("records")
+                .and_then(|items| items.get(id))
+                .is_some_and(|old| old != &record)
+            {
+                revocations::invalidate(&self.home, id, "", "");
+            }
             raw["updated_at"] = json!(utc_now());
             object_field(&mut raw, "records").insert(id.to_owned(), record);
             write_json(&path, &raw)
@@ -379,6 +388,7 @@ impl CapabilityStore {
             } else {
                 json!({})
             };
+            revocations::invalidate(&self.home, id, "", "");
             let removed = object_field(&mut raw, "records").remove(id).is_some();
             raw["updated_at"] = json!(utc_now());
             write_json(&path, &raw)?;
@@ -387,7 +397,10 @@ impl CapabilityStore {
     }
 
     pub fn remove_bindings_for_group(&self, id: &str, group_id: &str) -> io::Result<usize> {
-        self.mutate_state(|raw| Ok(remove_enabled_bindings(raw, id, Some(group_id))))
+        self.mutate_state(|raw| {
+            revocations::invalidate(&self.home, id, group_id, "");
+            Ok(remove_enabled_bindings(raw, id, Some(group_id)))
+        })
     }
 
     pub fn uninstall_for_group(&self, id: &str, group_id: &str) -> io::Result<(usize, bool, bool)> {
@@ -395,6 +408,7 @@ impl CapabilityStore {
             return Err(io::Error::other("group_id is required"));
         }
         self.mutate_state(|raw| {
+            revocations::invalidate(&self.home, id, group_id, "");
             let removed_bindings = remove_enabled_bindings(raw, id, Some(group_id));
             let groups = object_field(raw, "group_removed");
             let items = groups.entry(group_id).or_insert_with(|| json!([]));
@@ -409,7 +423,10 @@ impl CapabilityStore {
     }
 
     pub fn remove_all_bindings(&self, id: &str) -> io::Result<usize> {
-        self.mutate_state(|raw| Ok(remove_id(raw, id)))
+        self.mutate_state(|raw| {
+            revocations::invalidate(&self.home, id, "", "");
+            Ok(remove_id(raw, id))
+        })
     }
 
     pub fn has_bindings(&self, id: &str) -> io::Result<bool> {
@@ -450,6 +467,9 @@ impl CapabilityStore {
             return Err(io::Error::other("group_id is required"));
         }
         self.mutate_state(|raw| {
+            if removed {
+                revocations::invalidate(&self.home, id, group_id, "");
+            }
             let groups = object_field(raw, "group_removed");
             let items = groups.entry(group_id).or_insert_with(|| json!([]));
             let was_present = array_contains_id(items, id);
@@ -753,7 +773,23 @@ impl CapabilityStore {
             BindingMutation::SetEnabled(enabled) => (enabled, false),
             BindingMutation::EnableAndUnhide => (true, true),
         };
+        if !matches!(scope, "group" | "actor" | "session") {
+            return Err(io::Error::other("scope must be group, actor, or session"));
+        }
+        if scope != "group" && actor_id.is_empty() {
+            return Err(io::Error::other(
+                "actor_id is required for actor/session scope",
+            ));
+        }
         self.mutate_state(|raw| {
+            if !enabled {
+                revocations::invalidate(
+                    &self.home,
+                    id,
+                    group_id,
+                    if scope == "group" { "" } else { actor_id },
+                );
+            }
             if enabled {
                 let groups = object_field(raw, "group_removed");
                 if let Some(items) = groups.get_mut(group_id) {
@@ -870,6 +906,9 @@ impl CapabilityStore {
             })
         });
         let removed_bindings = self.mutate_state(|raw| {
+            if blocked {
+                revocations::invalidate(&self.home, id, group_id, "");
+            }
             {
                 let target = if group_id.is_empty() {
                     object_field(raw, "global_blocked")
@@ -904,6 +943,9 @@ impl CapabilityStore {
             return Err(io::Error::other("group_id and actor_id are required"));
         }
         self.mutate_state(|raw| {
+            if hidden {
+                revocations::invalidate(&self.home, id, group_id, actor_id);
+            }
             let groups = object_field(raw, "actor_hidden");
             let group = ensure_object(groups.entry(group_id).or_insert_with(|| json!({})));
             let items = group.entry(actor_id).or_insert_with(|| json!([]));

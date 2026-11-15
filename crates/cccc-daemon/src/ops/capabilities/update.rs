@@ -218,6 +218,7 @@ fn commit(home: &HomeLayout, id: &str, candidate: &Value) -> Result<(), OpError>
         let candidate_id = candidate["artifact_id"]
             .as_str()
             .ok_or_else(|| std::io::Error::other("candidate artifact id is missing"))?;
+        cccc_core::capabilities::revocations::invalidate(home, id, "", "");
         let mut superseded = BTreeSet::new();
         if let Some(old) = state["capability_artifacts"][id].as_str() {
             superseded.insert(old.to_owned());

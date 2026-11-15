@@ -6,8 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+
+- Reading a parent task through MCP keeps the parent's full details and returns its
+  subtasks as summary rows. Read a subtask by its own ID for its notes and checklist.
+
 ### Fixed
 
+- Preserve trailing mention highlights when undoing a text replacement or deletion in the chat composer.
+
+- Enabling a capability or calling an external tool no longer holds up other operations
+  while it waits for the external service. Superseded preparation cannot reverse a later
+  disable, and an old call cannot restore a changed binding or installation. Already
+  admitted external calls are never automatically replayed.
 - A cron automation rule that already owes a run, for example one enabled again after
   missing its time, reports that run as its next fire time instead of the following
   occurrence, as interval and one-time rules already did. The Web labels that time as
@@ -24,11 +35,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
   receipts (#226, #227).
 - The documentation home page's getting-started button links to the page's own address,
   so opening the link directly no longer returns 404.
+- Web slash commands for capability tools pass their arguments to the tool. They were sent
+  under a field the daemon does not read, so the tool ran without them.
 
 ### Added
 
+- Personal quick reply templates. Settings › Quick Replies keeps up to 20 replies of your
+  own, each with a name and a text sent exactly as written. A message's quick reply menu
+  lists them after the built-in replies and sends one at once; the composer's template
+  button inserts one at the cursor to edit before sending. The daemon keeps one list per
+  signed-in user, so other browsers and phones signed in as that user see the same list; a
+  browser on this computer that is not signed in has its own.
 - The operations guide lists what a daemon restart keeps and what it does not, with a
   FAQ entry pointing to it.
+- `cccc_bootstrap` recovery includes the Group brief's last update time
+  (`coordination_brief.updated_at`), so an agent resuming work can see that a brief is
+  old. It is omitted when the brief has no recorded update time.
 
 ## [0.4.56]
 

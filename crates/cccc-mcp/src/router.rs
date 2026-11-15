@@ -198,8 +198,10 @@ async fn call_scoped(
                     if let Some(value) = arguments.get("capability_id").cloned() {
                         dynamic.insert("capability_id".into(), value);
                     }
-                    if let Some(value) = arguments.get("_cccc_native_binding").cloned() {
-                        dynamic.insert("_cccc_native_binding".into(), value);
+                    for key in ["_cccc_native_binding", "_cccc_web_binding"] {
+                        if let Some(value) = arguments.get(key).cloned() {
+                            dynamic.insert(key.into(), value);
+                        }
                     }
                     dynamic.insert("tool_name".into(), Value::String(name.into()));
                     // Host authority stays in the daemon envelope. External
@@ -606,6 +608,13 @@ async fn capability_use(
             .pointer("/structuredContent/result/isError")
             .and_then(Value::as_bool)
             == Some(true);
+    let state_update_skipped = nested
+        .pointer("/structuredContent/state_update_skipped")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let state_update_skipped_reason = nested
+        .pointer("/structuredContent/state_update_skipped_reason")
+        .cloned();
     let mut nested_payload = nested.get("structuredContent").cloned().unwrap_or(nested);
     let mut notes = Map::new();
     if routed_tool_name.starts_with("cccc_ext_")
@@ -624,9 +633,9 @@ async fn capability_use(
         "scope":scope,
         "requested_scope":requested_scope,
         "enabled":true,
-        "state":if tool_failed {"runnable"} else {"verified"},
+        "state":if state_update_skipped {"state_update_skipped"} else if tool_failed {"runnable"} else {"verified"},
         "refresh_required":false,
-        "verification_source":if tool_failed {"tool_error"} else {"tool_call"},
+        "verification_source":if state_update_skipped {""} else if tool_failed {"tool_error"} else {"tool_call"},
         "reused_existing_binding":reused_existing_binding,
         "enable_result":enable_result,
         "tool_called":true,
@@ -637,6 +646,16 @@ async fn capability_use(
         .as_object_mut()
         .expect("capability response")
         .extend(notes);
+    if state_update_skipped {
+        payload
+            .as_object_mut()
+            .expect("capability response")
+            .remove("enabled");
+        payload["state_update_skipped"] = json!(true);
+        if let Some(reason) = state_update_skipped_reason {
+            payload["state_update_skipped_reason"] = reason;
+        }
+    }
     let mut result = tool_result(payload);
     if tool_failed {
         result["isError"] = json!(true);
@@ -718,6 +737,7 @@ fn postprocess_task_result(
     {
         return Err("archived_hidden: archived task is hidden by default".into());
     }
+    crate::task_summary::summarize_children(result);
     crate::task_summary::list_page(result, arguments)
 }
 
@@ -1041,7 +1061,7 @@ mod tests {
         remove_untrusted_authority, runtime_group_id, with_post_message_context,
     };
     use crate::RequestContext;
-    use serde_json::{Value, json};
+    use serde_json::{Map, Value, json};
 
     #[tokio::test]
     async fn message_tools_reject_model_supplied_im_provenance() {
@@ -2128,6 +2148,83 @@ mod tests {
     }
 
     #[test]
+    fn task_reads_keep_parent_details_and_only_summarize_children() {
+        let original = json!({
+            "task": {
+                "id": "T100", "title": "Release", "status": "active", "rev": 9,
+                "notes": "Keep the parent's complete working history",
+                "outcome": "Package is awaiting review",
+                "checklist": [{"text": "Review the package", "status": "pending"}],
+                "children": [
+                    {"id": "T101", "title": "Check delivery", "status": "planned",
+                     "parent_id": "T100", "assignee": "worker", "waiting_on": "user", "rev": 4,
+                     "notes": "The child's detailed history", "outcome": "Not delivered yet",
+                     "checklist": [{"text": "Build", "status": "done"},
+                                   {"text": "Smoke the package", "status": "pending"}]},
+                    {"id": "T102", "title": "Old investigation", "status": "archived", "rev": 2,
+                     "notes": "Archived child details", "outcome": "Investigation complete"}
+                ]
+            },
+            "tasks_version": "tasksv:17",
+            "delete_info": {"allowed": false, "total": 3, "reason": "has_children"}
+        });
+        let mut expected = original.clone();
+        expected["task"]["children"] = json!([
+            {"id": "T101", "title": "Check delivery", "status": "planned",
+             "parent_id": "T100", "assignee": "worker", "waiting_on": "user",
+             "checklist": "1/2", "rev": 4},
+            {"id": "T102", "title": "Old investigation", "status": "archived", "rev": 2}
+        ]);
+        expected["note"] =
+            json!("Rows are summaries; read the full task by task_id before updating its fields.");
+        for action in [None, Some("list"), Some("get")] {
+            let mut arguments = json!({"task_id": "T100"});
+            if let Some(action) = action {
+                arguments["action"] = json!(action);
+            }
+            let mut result = original.as_object().expect("response").clone();
+            postprocess_task_result(&mut result, arguments.as_object().expect("arguments"))
+                .expect("task projection");
+            assert_eq!(Value::Object(result), expected);
+        }
+    }
+
+    #[test]
+    fn task_leaf_reads_and_write_responses_keep_their_full_fields() {
+        let leaf = json!({"task": {
+            "id": "T101", "status": "planned", "rev": 4, "children": [],
+            "notes": "Read the full child before editing it", "outcome": "Pending",
+            "checklist": [{"text": "Smoke the package", "status": "pending"}]
+        }, "tasks_version": "tasksv:17"});
+        let mut read = leaf.as_object().expect("leaf response").clone();
+        postprocess_task_result(
+            &mut read,
+            json!({"action": "list", "task_id": "T101"})
+                .as_object()
+                .expect("read arguments"),
+        )
+        .expect("full leaf read");
+        assert_eq!(Value::Object(read), leaf);
+
+        let mut parent = leaf;
+        parent["task"]["children"] = json!([
+            {"id": "T102", "notes": "Write responses are not read projections",
+             "checklist": [{"text": "Review", "status": "pending"}]}
+        ]);
+        for action in ["create", "update", "move"] {
+            let mut result = parent.as_object().expect("write response").clone();
+            postprocess_task_result(
+                &mut result,
+                json!({"action": action})
+                    .as_object()
+                    .expect("write arguments"),
+            )
+            .expect("unmodified write response");
+            assert_eq!(Value::Object(result), parent);
+        }
+    }
+
+    #[test]
     fn identifies_message_operations_for_compact_mail_context() {
         assert!(is_message_operation("cccc_message_send"));
         assert!(is_message_operation("cccc_file_send"));
@@ -2261,5 +2358,133 @@ mod tests {
             assert!(help.contains(required), "missing help contract: {required}");
         }
         assert_eq!(help.matches("## Peer Insight Contract").count(), 1);
+    }
+    #[tokio::test]
+    async fn delegated_and_direct_external_results_preserve_skipped_verification() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        for skipped in [false, true] {
+            for failed in [false, true] {
+                let temp = tempfile::tempdir().expect("fixture");
+                let home =
+                    cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+                let group = cccc_core::GroupStore::new(home.clone())
+                    .expect("groups")
+                    .create("MCP outcome fixture", "")
+                    .expect("group");
+                let id = "mcp:test:skipped-proof";
+                cccc_core::capabilities::CapabilityStore::new(home.clone())
+                    .import_record(
+                        json!({"capability_id":id,"kind":"mcp_toolpack","name":"Fixture"}),
+                    )
+                    .expect("record");
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                    .await
+                    .expect("IPC fixture");
+                cccc_core::fs::write_json(&cccc_client::address_path(&home), &json!({
+                    "v":1,"transport":"tcp","host":"127.0.0.1","port":listener.local_addr().expect("address").port(),
+                    "pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"ts":"2026-11-15T00:00:00Z"
+                })).expect("address");
+                let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let seen = calls.clone();
+                let server = tokio::spawn(async move {
+                    loop {
+                        let (stream, _) = listener.accept().await.expect("accept");
+                        let mut stream = BufReader::new(stream);
+                        let mut line = String::new();
+                        stream.read_line(&mut line).await.expect("request");
+                        let request: cccc_contracts::DaemonRequest =
+                            serde_json::from_str(&line).expect("request JSON");
+                        let payload = match request.op.as_str() {
+                            "capability_state" => json!({"enabled_capabilities":[id]}),
+                            "capability_tool_call" => {
+                                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                let mut result = json!({"capability_id":id,"tool_name":request.args["tool_name"],
+                                    "result":{"isError":failed,"content":[{"type":"text","text":"actual external result"}]}});
+                                if skipped {
+                                    result["state_update_skipped"] = json!(true);
+                                    result["state_update_skipped_reason"] =
+                                        json!("installation_changed");
+                                }
+                                result
+                            }
+                            other => panic!("unexpected fixture operation {other}"),
+                        };
+                        let response = cccc_contracts::DaemonResponse::success(
+                            payload.as_object().expect("result").clone(),
+                        );
+                        let mut bytes = serde_json::to_vec(&response).expect("response JSON");
+                        bytes.push(b'\n');
+                        stream.get_mut().write_all(&bytes).await.expect("response");
+                    }
+                });
+                let client = cccc_client::DaemonClient::new(home.clone()).without_voice_origin();
+                let context = || {
+                    Some(RequestContext {
+                        native_binding: None,
+                        binding: None,
+                        group_id: &group.group_id,
+                        actor_id: "user",
+                    })
+                };
+                let delegated = super::call_with_context(
+                    &home,
+                    &client,
+                    "cccc_capability_use",
+                    json!({"capability_id":id,"tool_name":"echo","arguments":{}})
+                        .as_object()
+                        .expect("args")
+                        .clone(),
+                    context(),
+                    false,
+                )
+                .await
+                .expect("delegated call");
+                let payload = &delegated["structuredContent"];
+                assert_eq!(
+                    payload["state"],
+                    if skipped {
+                        "state_update_skipped"
+                    } else if failed {
+                        "runnable"
+                    } else {
+                        "verified"
+                    }
+                );
+                if skipped {
+                    assert_eq!(payload["state_update_skipped"], true);
+                    assert_eq!(
+                        payload["state_update_skipped_reason"],
+                        "installation_changed"
+                    );
+                    assert!(
+                        payload.get("enabled").is_none(),
+                        "a historical enable is not proof of a current binding"
+                    );
+                }
+                assert_eq!(delegated["isError"] == true, failed);
+                let direct = super::call_with_context(
+                    &home,
+                    &client,
+                    &cccc_core::capabilities::external_tool_name(id, "echo"),
+                    Map::new(),
+                    context(),
+                    false,
+                )
+                .await
+                .expect("direct call");
+                assert_eq!(
+                    direct["structuredContent"]["state_update_skipped"] == true,
+                    skipped
+                );
+                assert_eq!(
+                    direct["structuredContent"]["result"]["content"][0]["text"],
+                    "actual external result"
+                );
+                assert_eq!(direct["isError"] == true, failed);
+                assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+                server.abort();
+                let _ = server.await;
+            }
+        }
     }
 }

@@ -594,7 +594,12 @@ export function CapabilityCenterWorkspace({
           reason: "capability center enable",
         });
         if (!resp.ok) {
-          setErr(resp.error?.message || t("capabilityCenter.enable.failed"));
+          if (resp.error?.code === "capability_conflict") await refresh();
+          setErr(
+            resp.error?.code === "capability_conflict"
+              ? t("capabilityCenter.enable.conflict")
+              : resp.error?.message || t("capabilityCenter.enable.failed"),
+          );
           return;
         }
         rememberStickyItem(row);

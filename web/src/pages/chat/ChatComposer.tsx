@@ -2,6 +2,7 @@ import { ComposerSendControl } from "./ComposerSendControl";
 import { ComposerTypingPlaceholder } from "./ComposerTypingPlaceholder";
 import { ComposerResizeHandle } from "./ComposerResizeHandle";
 import { ComposerFailedSends } from "./ComposerFailedSends";
+import { ComposerTemplatePicker } from "./ComposerTemplatePicker";
 import { useComposerHeightResize } from "./useComposerHeightResize";
 
 // ChatComposer renders the chat message composer.
@@ -373,22 +374,28 @@ export function ChatComposer({
     },
     [composerRef, isSmallScreen],
   );
-  const { clearActiveMention, rememberSelection, selectMention, updateMenu, updateText } =
-    useComposerMentionInput({
-      text: composerText,
-      composerRef,
-      setText: setComposerText,
-      setGroupTokens: setComposerGroupMentionTokens,
-      setAgentTokens: setComposerAgentMentionTokens,
-      setShowMenu: setShowMentionMenu,
-      setSelectedIndex: setMentionSelectedIndex,
-      setFilter: setMentionFilter,
-      setKind: setMentionKind,
-      setActorScope: setMentionActorScope,
-      setTargetGroupId: setMentionTargetGroupId,
-      setTriggerIndex: setMentionTriggerIndex,
-      updateMenuPosition: updateMentionMenuPosition,
-    });
+  const {
+    clearActiveMention,
+    rememberSelection,
+    selectMention,
+    updateMenu,
+    updateText,
+    insertTextAtSelection,
+  } = useComposerMentionInput({
+    text: composerText,
+    composerRef,
+    setText: setComposerText,
+    setGroupTokens: setComposerGroupMentionTokens,
+    setAgentTokens: setComposerAgentMentionTokens,
+    setShowMenu: setShowMentionMenu,
+    setSelectedIndex: setMentionSelectedIndex,
+    setFilter: setMentionFilter,
+    setKind: setMentionKind,
+    setActorScope: setMentionActorScope,
+    setTargetGroupId: setMentionTargetGroupId,
+    setTriggerIndex: setMentionTriggerIndex,
+    updateMenuPosition: updateMentionMenuPosition,
+  });
 
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -552,16 +559,20 @@ export function ChatComposer({
   };
 
   // Handle text changes.
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const applyInput = (
+    value: string,
+    selectionStart: number,
+    selectionEnd: number,
+    composing = false,
+    inputType?: string,
+  ) => {
     exitComposerHistory();
     // Rewriting the value mid-composition would break the IME; normalize once committed.
-    const val = (e.nativeEvent as InputEvent).isComposing
-      ? e.target.value
-      : normalizeSlashCommandInput(e.target.value);
+    const val = composing ? value : normalizeSlashCommandInput(value);
     if (showSuggestedUserMessage && val.trim()) {
       markSuggestedUserMessageConsumed();
     }
-    const caret = updateText(val, e.target.selectionStart, e.target.selectionEnd);
+    const caret = updateText(val, selectionStart, selectionEnd, inputType);
     const slashModeActive =
       val === val.trimStart() &&
       normalizeSlashCommandInput(val).startsWith("/") &&
@@ -593,7 +604,16 @@ export function ChatComposer({
     }
     setShowSlashMenu(false);
     setSlashVisibleCount(SLASH_COMMAND_PAGE_SIZE);
-    updateMenu(val, caret, Math.min(e.target.selectionEnd, val.length));
+    updateMenu(val, caret, Math.min(selectionEnd, val.length));
+  };
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    applyInput(
+      e.target.value,
+      e.target.selectionStart,
+      e.target.selectionEnd,
+      (e.nativeEvent as InputEvent).isComposing,
+      (e.nativeEvent as InputEvent).inputType,
+    );
   };
 
   // Handle keyboard shortcuts and mention navigation.
@@ -908,6 +928,15 @@ export function ChatComposer({
       )?.focus();
     });
   };
+
+  const composerToolButtonClassName = classNames(
+    "flex h-[44px] w-[44px] items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors duration-150 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 @min-[600px]/composer:h-9 @min-[600px]/composer:w-9",
+    busy !== "send" && selectedGroupId
+      ? isDark
+        ? "hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+        : "hover:bg-black/5 hover:text-gray-800"
+      : "",
+  );
 
   return (
     <footer
@@ -1315,14 +1344,7 @@ export function ChatComposer({
               >
                 <button
                   data-composer-attach
-                  className={classNames(
-                    "flex h-[44px] w-[44px] items-center justify-center rounded-lg text-[var(--color-text-secondary)] transition-colors duration-150 disabled:cursor-not-allowed disabled:text-[var(--color-text-tertiary)] disabled:opacity-60 @min-[600px]/composer:h-9 @min-[600px]/composer:w-9",
-                    busy !== "send" && selectedGroupId
-                      ? isDark
-                        ? "hover:bg-white/10 hover:text-[var(--color-text-primary)]"
-                        : "hover:bg-black/5 hover:text-gray-800"
-                      : "",
-                  )}
+                  className={composerToolButtonClassName}
                   onClick={() => fileInputRef.current?.click()}
                   disabled={!selectedGroupId || busy === "send"}
                   aria-label={t("attachFile")}
@@ -1330,6 +1352,17 @@ export function ChatComposer({
                 >
                   <AttachmentIcon size={18} />
                 </button>
+
+                <ComposerTemplatePicker
+                  className={composerToolButtonClassName}
+                  disabled={!selectedGroupId || busy === "send" || sendInFlight}
+                  onRememberSelection={() => {
+                    if (composerRef.current) rememberSelection(composerRef.current);
+                  }}
+                  onInsert={(text) => {
+                    insertTextAtSelection(text, (value, caret) => applyInput(value, caret, caret));
+                  }}
+                />
 
                 <div data-composer-voice className="min-w-0 shrink-0 @min-[600px]/composer:shrink">
                   <LazyVoiceSecretaryComposerControl

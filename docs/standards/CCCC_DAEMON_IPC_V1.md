@@ -1110,6 +1110,14 @@ Notes:
 7. `cleanup` is accepted but currently ignored. Disabling removes the capability from the given scope's
    enablement, but does not clean runtime caches, runtime bindings or installations, and this op returns
    no removal counts. `capability_uninstall` removes a capability from a group and reports what it removed.
+8. The daemon connection prepares a direct enable outside dispatch permits, then rechecks the
+   original port binding, Group/member generation, relevant configuration, recipe, installation
+   and revocation intent before publishing. A later disable, hide, block or uninstall supersedes
+   earlier preparation even if the control already had that value. `capability_conflict` with
+   `details.reason` reports superseded preparation without enabling it; CCCC does not retry it.
+   Equal concurrent first installations may reuse the winner without replacing its tool metadata.
+   This staging applies to direct enable and external tool calls, not import, explicit update,
+   target installation or startup autoload; those paths may still hold permits during external work.
 
 Args:
 ```ts
@@ -1920,6 +1928,12 @@ An unchanged fingerprint returns `unchanged` without running an installer.
 
 #### `capability_tool_call`
 
+With `capability_id` and no non-empty string `tool_name`, read the complete capability
+record without enabling it, installing it or calling an external tool. This ID form
+returns `{ capability, input, ready: true }`, where `input` echoes the supplied value
+(or null when omitted). It keeps the ordinary Group write dispatch permit; it does not
+perform external work.
+
 Invoke an enabled dynamic external capability tool by synthetic tool name.
 The inner `arguments` object is forwarded unchanged. CCCC identity and binding
 metadata travel only in the outer envelope; external parameters may themselves
@@ -1931,18 +1945,22 @@ Args:
   group_id: string
   actor_id?: string
   by?: string
-  tool_name: string // an advertised external name, or the real name when capability_id is explicit
-  capability_id?: string // scopes real-name resolution and discovery after a cold member cache
+  tool_name?: string // required for a tool call: advertised name, or real name with capability_id
+  capability_id?: string // required for the ID read; otherwise scopes real-name resolution and cold discovery
+  input?: unknown // echoed only by the ID read
   arguments?: Record<string, unknown>
 }
 ```
 
-Result:
+Tool-call result:
 ```ts
 {
   tool_name: string
   capability_id: string
   result: Record<string, unknown>
+  real_tool_name?: string
+  state_update_skipped?: boolean
+  state_update_skipped_reason?: string
   avoid_when?: string[] // CCCC's release recommendation notes, outside the upstream result
   gotchas?: string[]
   requirements_summary?: string
@@ -1968,6 +1986,19 @@ real name does not gain access to another capability by this rule. The bridge's
 `cccc_capability_use` may reuse its existing unique capability inference; a name
 found in multiple capabilities still requires an explicit `capability_id`. CCCC
 core and built-in pack names take precedence over unqualified external names.
+
+External discovery and the tool call run outside the Group/global dispatch permits. Cold
+member discovery is authorized again before any business call. Once admitted, a call is
+never automatically replayed, including after transport failure or concurrent revocation.
+On return, CCCC rechecks the original authority and conditionally records verification and
+recent-success metadata. If the same caller remains valid but the binding, credential,
+configuration or installation changed, the actual result is returned with
+`state_update_skipped=true` and a non-secret `state_update_skipped_reason`; old metadata is
+not published. MCP `cccc_capability_use` preserves these fields and does not label that
+binding `verified`. A replaced Group/member or invalid port binding receives a permission
+error instead of the original caller's result. Errors after business-call admission carry
+`details.external_action_may_have_occurred=true` and `details.automatic_retry=false`:
+absence of a result does not establish that the external action did not happen.
 
 #### `group_show`
 
@@ -5519,6 +5550,74 @@ parameter.
 Web clients reload the state when entering a Group or returning to a visible
 page, so two continuously visible clients do not promise immediate updates.
 
+#### `quick_reply_templates_get`
+
+Return the reply templates of one person. A template has a short `name`, shown
+where it is chosen, and the `text` that is sent or inserted. This is a user
+operation: `by` may be omitted or `user`; an Actor, `system` or another value is
+rejected with `permission_denied`. The owner is `caller_id`, which the Web port
+sets to the signed-in access identity's `user_id` (`local` for the loopback
+administrator); a request without `caller_id` reads the `local` list. Templates
+are global to the instance, not per Group, and are never translated.
+
+```ts
+{
+  by?: "user"
+  caller_id?: string
+}
+```
+
+Result:
+```ts
+{
+  templates: Array<{ id: string, name: string, text: string }> // display order
+  revision: number // 0 before the first save
+  updated_at: string // empty before the first save
+  limit: number // 20
+}
+```
+
+An unreadable store returns `quick_reply_templates_invalid` instead of an empty
+list.
+
+#### `quick_reply_templates_set`
+
+Replace the caller's whole list, in display order. The same user restriction
+and owner rules as `quick_reply_templates_get` apply, and the result has the
+same shape.
+
+```ts
+{
+  by?: "user"
+  caller_id?: string
+  if_revision: number // the revision last read
+  templates: Array<{ id?: string, name: string, text: string }>
+}
+```
+
+- `if_revision` is required. When the stored revision differs, the call fails
+  with `quick_reply_templates_conflict` and `details.revision`, so a save from
+  another browser is reported instead of overwritten.
+- Saving an identical list returns the current revision unchanged. Any other
+  save, including an empty list, advances the revision by one.
+- A name is trimmed and is 1–40 characters on one line. A text is stored and
+  returned exactly as written, leading and trailing line breaks and indentation
+  included; it is at most 10,000 characters, counted as stored, and not only
+  white space. A list holds at most 20 templates. An `id` is up to 64 ASCII
+  letters, digits, `_` or `-`, unique in the list; a missing `id` is generated.
+  A violation returns `invalid_args` and changes nothing.
+- An unreadable store returns `quick_reply_templates_invalid` and is not written
+  over.
+
+On the Web, `GET /api/v1/quick-reply-templates` reads the signed-in identity's
+list and `PUT` to the same path accepts `{ if_revision, templates }`. Every
+authorized Web identity, administrator or not, reaches only its own list;
+Exhibit Web and Actor ports do not expose it. A message's quick reply menu sends
+a template's text at once, as it sends the built-in replies, without touching
+the composer's draft, attachments or reply target. The composer's template
+button inserts the text at the remembered caret, replacing a selection as typing
+would, and leaves the rest of the draft in place.
+
 
 #### `send`
 
@@ -6832,6 +6931,10 @@ Notes:
   `assignee` and `attention`. `limit` (rows, default 50, 1..100) and `offset`
   (default 0) apply after the status filter; a caller paging on restarts from offset 0
   when `tasks_version` changes.
+- With `task_id`, MCP `cccc_task` keeps the selected task in full and projects each
+  entry of `children` as the same summary row. A non-empty child list adds the same
+  `note`. Read a subtask's notes and checklist with its own `task_id`. The daemon's
+  response and Web task tree retain full child records.
 - For MCP task lists, a null or blank `task_id` counts as omitted and list filters
   remain in effect; a non-string, non-null value fails with `invalid_args`.
 - Filters are applied before pagination. Planned tasks sort newest-created first;

@@ -100,6 +100,11 @@ async fn response(
     shutdown: &watch::Sender<bool>,
     dispatch_locks: &DispatchLocks,
 ) -> DaemonResponse {
+    if crate::ops::capabilities::staged::handles(&request) {
+        return crate::dispatch::response(
+            crate::ops::capabilities::staged::run(home, &request, dispatch_locks).await,
+        );
+    }
     let should_shutdown = request.op == "shutdown";
     let permit = dispatch_locks.acquire_for(home, &request).await;
     let home = home.clone();

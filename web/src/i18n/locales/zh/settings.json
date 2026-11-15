@@ -2,6 +2,30 @@
   "saveFeedback": { "saved": "设置已保存。", "failed": "未能保存设置。你的修改仍然保留，请重试。" },
   "title": "设置",
   "closeAriaLabel": "关闭设置",
+  "quickReplies": {
+    "title": "快速回复",
+    "description": "你自己的回复模板，排在内置回复后面。在消息的快速回复菜单里点选即发送；从输入框的模板按钮选中时，先填进输入框，改好再发。",
+    "listTitle": "我的模板",
+    "count": "{{used}} / {{limit}}",
+    "add": "添加模板",
+    "full": "最多保存 {{limit}} 个模板。",
+    "empty": "还没有模板。添加后会出现在快速回复菜单和输入框的模板列表里。",
+    "name": "名称",
+    "text": "正文",
+    "moveUp": "上移",
+    "moveDown": "下移",
+    "unsaved": "有未保存的修改",
+    "conflict": "模板已在别的窗口或设备上保存过。请重新加载后再继续；这里未保存的修改会被替换。",
+    "reload": "重新加载",
+    "loadFailed": "无法加载模板：{{error}}",
+    "saveFailed": "无法保存模板：{{error}}",
+    "problem": {
+      "name": "请给模板起个名称。",
+      "nameTooLong": "名称只能一行，最多 40 个字。",
+      "text": "请填写要发送的正文。",
+      "textTooLong": "正文最多 10000 个字。"
+    }
+  },
   "tabs": {
     "guidance": "引导",
     "assistants": "语音",
@@ -16,6 +40,7 @@
     "actorProfiles": "智能体配置库",
     "myProfiles": "我的配置",
     "notifications": "通知",
+    "quickReplies": "快速回复",
     "branding": "品牌",
     "account": "账户",
     "developer": "开发者",
@@ -507,7 +532,8 @@
       "confirmDisableTitle": "为当前工作组停用 {{name}}？",
       "confirmDisableDescription": "这会在当前工作组关闭 {{id}}，包括你自己在本组对它的使用；各智能体自己的使用保持不变。不会阻止之后再次启用。",
       "partlyFailed": "只关闭了一部分：{{message}}",
-      "stillEnabled": "{{name}} 仍然启用。这期间它的状态可能有变化，请重试。"
+      "stillEnabled": "{{name}} 仍然启用。这期间它的状态可能有变化，请重试。",
+      "conflict": "能力准备期间设置已变更。请查看当前状态后重新启用。"
     },
     "confirm": { "cancel": "取消", "confirm": "确认" },
     "showSystem": "系统项",

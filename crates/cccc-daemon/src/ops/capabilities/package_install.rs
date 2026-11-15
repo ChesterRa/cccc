@@ -26,10 +26,26 @@ pub(super) fn ensure_installed(
 /// Prepare without changing the active installation. Explicit updates commit
 /// their candidate together with every affected pointer in one state write.
 pub(super) fn prepare(capability_id: &str, record: &Value) -> Result<Value, OpError> {
+    prepare_inner(capability_id, record, None)
+}
+
+pub(super) fn prepare_guarded(
+    home: &HomeLayout,
+    capability_id: &str,
+    record: &Value,
+) -> Result<Value, OpError> {
+    prepare_inner(capability_id, record, Some(home))
+}
+
+fn prepare_inner(
+    capability_id: &str,
+    record: &Value,
+    home: Option<&HomeLayout>,
+) -> Result<Value, OpError> {
     let mode = text(record, "install_mode");
     let mut artifact = match mode.as_str() {
         "remote_only" => install_remote(capability_id, record)?,
-        "command" | "package" => install_stdio(capability_id, &mode, record)?,
+        "command" | "package" => install_stdio(capability_id, &mode, record, home)?,
         _ => return Err(install_error("unsupported execution recipe")),
     };
     let fingerprint = super::recipe::fingerprint(record)?;
@@ -46,7 +62,12 @@ pub(super) fn prepare(capability_id: &str, record: &Value) -> Result<Value, OpEr
     Ok(artifact)
 }
 
-fn install_stdio(capability_id: &str, mode: &str, record: &Value) -> Result<Value, OpError> {
+fn install_stdio(
+    capability_id: &str,
+    mode: &str,
+    record: &Value,
+    home: Option<&HomeLayout>,
+) -> Result<Value, OpError> {
     let spec = record
         .get("install_spec")
         .and_then(Value::as_object)
@@ -55,7 +76,13 @@ fn install_stdio(capability_id: &str, mode: &str, record: &Value) -> Result<Valu
     let command = resolve_command(mode, spec)?;
     ensure_command_available(&command[0])?;
     let environment = required_environment_values(record);
-    let tools = probe_stdio(capability_id, &command, &environment)?;
+    let tools = if let Some(home) = home {
+        let tools = super::mcp_stdio::list_tools_guarded(home, &command, &environment, timeout())
+            .map_err(|error| install_error(error.message))?;
+        normalize_tools(capability_id, Some(&Value::Array(tools)))
+    } else {
+        probe_stdio(capability_id, &command, &environment)?
+    };
     let installer = installer_name(&command[0], mode);
     Ok(artifact(
         capability_id,
@@ -256,7 +283,11 @@ fn artifact(
     })
 }
 
-fn persist(home: &HomeLayout, capability_id: &str, artifact: &Value) -> Result<(), OpError> {
+pub(super) fn persist(
+    home: &HomeLayout,
+    capability_id: &str,
+    artifact: &Value,
+) -> Result<(), OpError> {
     let path = home.root().join("state/capabilities/runtime.json");
     with_exclusive_lock(&path.with_extension("json.lock"), || {
         let mut runtime = if path.exists() {

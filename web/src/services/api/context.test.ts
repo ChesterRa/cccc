@@ -13,6 +13,7 @@ import {
   restoreCoordinationTask,
   uninstallCapability,
   updateGroupCapabilityVisibility,
+  useGroupCapability,
   updateCoordinationTask,
   replyMessage,
   sendCrossGroupMessage,
@@ -385,6 +386,24 @@ describe("capability state API helpers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("sends a slash command's tool arguments under the name the daemon reads", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, result: {} })));
+
+    await useGroupCapability("g1", {
+      capabilityId: "mcp:fixture",
+      toolName: "search",
+      toolArguments: { query: "release notes" },
+    });
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(request.body));
+    expect(body).toMatchObject({ tool_name: "search", arguments: { query: "release notes" } });
+    expect(body).not.toHaveProperty("tool_arguments");
   });
 
   it("requests the compact slash-command capability view", async () => {

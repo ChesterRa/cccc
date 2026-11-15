@@ -97,7 +97,7 @@ fn is_mutating_get(path: &str) -> bool {
             })
 }
 
-/// The user's open reply requests, message pins and notification subscriptions.
+/// The user's open reply requests, message pins, reply templates and notification subscriptions.
 /// An exhibit's viewers are spectators, not the Group's user, so these reads
 /// are refused there, not only the changes.
 fn is_user_obligation_get(path: &str) -> bool {
@@ -105,6 +105,7 @@ fn is_user_obligation_get(path: &str) -> bool {
         || path.starts_with("/api/v1/chet/")
         || path == "/api/v1/reply-requests/summary"
         || path == "/api/v1/push/config"
+        || path == "/api/v1/quick-reply-templates"
         || path
             .strip_prefix("/api/v1/groups/")
             .and_then(|rest| rest.split_once('/'))
@@ -207,6 +208,13 @@ mod tests {
     fn read_only_refuses_message_pins_for_reads_and_writes() {
         for method in [Method::GET, Method::HEAD, Method::POST] {
             assert!(!is_read_only_safe(&method, "/api/v1/groups/g_1/pins"));
+        }
+    }
+
+    #[test]
+    fn read_only_refuses_reply_templates_for_reads_and_writes() {
+        for method in [Method::GET, Method::HEAD, Method::PUT] {
+            assert!(!is_read_only_safe(&method, "/api/v1/quick-reply-templates"));
         }
     }
 

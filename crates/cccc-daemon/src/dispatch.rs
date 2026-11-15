@@ -10,7 +10,11 @@ use crate::ops::operation::{Operation, Policy};
 pub type OpResult = Result<Map<String, Value>, OpError>;
 
 pub fn dispatch(home: &HomeLayout, request: &DaemonRequest) -> DaemonResponse {
-    match dispatch_result(home, request) {
+    response(dispatch_result(home, request))
+}
+
+pub(crate) fn response(result: OpResult) -> DaemonResponse {
+    match result {
         Ok(result) => DaemonResponse::success(result),
         Err(error) => {
             let mut response = DaemonResponse::failure(error.code, error.message);

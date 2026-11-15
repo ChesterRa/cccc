@@ -150,7 +150,7 @@ function MessageActionMenu({
       <PopoverContent
         align={align}
         side="top"
-        className="min-w-36 p-1"
+        className="min-w-36 max-w-[min(20rem,calc(100vw-1rem))] p-1"
         onCloseAutoFocus={(event) => {
           // Reply moves focus to the composer; keep it there.
           if (replySelected.current) {
@@ -196,7 +196,8 @@ function MessageActionMenu({
                     {action.emoji}
                   </span>
                 ) : null}
-                {action.label}
+                {/* A reply template's name can be long; the menu keeps its width. */}
+                <span className="min-w-0 truncate">{action.label}</span>
               </Button>
             ))}
           </div>

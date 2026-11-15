@@ -3,6 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { useUIStore } from "../../stores";
+import {
+  loadQuickReplyTemplates,
+  resetQuickReplyTemplatesForTest,
+} from "../../features/quickReplies/templateStore";
 import type { Actor, LedgerEvent } from "../../types";
 import { MessageBubble } from "../MessageBubble";
 import { MessageActions } from "./MessageActions";
@@ -23,7 +27,17 @@ vi.mock("../../services/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../services/api")>()),
   replyMessage,
 }));
+const fetchQuickReplyTemplates = vi.hoisted(() => vi.fn());
+vi.mock("../../services/api/quickReplyTemplates", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../services/api/quickReplyTemplates")>()),
+  fetchQuickReplyTemplates,
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+
+const templateList = (templates: { id: string; name: string; text: string }[], revision = 1) => ({
+  ok: true,
+  result: { templates, revision, updated_at: "2026-11-15T00:00:00Z", limit: 20 },
+});
 
 const QUICK = ["quickReply.proceed", "quickReply.why", "quickReply.rethink", "quickReply.choices"];
 const worker = { id: "worker", title: "Worker", runtime: "codex", enabled: true } as Actor;
@@ -84,6 +98,9 @@ async function touchMenuLabels() {
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   replyMessage.mockReset();
+  fetchQuickReplyTemplates.mockReset();
+  fetchQuickReplyTemplates.mockResolvedValue(templateList([], 0));
+  resetQuickReplyTemplatesForTest();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -234,6 +251,66 @@ describe("quick replies", () => {
     replyMessage.mockResolvedValue({ ok: true, result: { event: { id: "reply-1" } } });
     await act(async () => notice.onAction());
     expect(replyMessage).toHaveBeenCalledTimes(2);
+    expect(replyMessage.mock.calls[1][5]).toBe(replyMessage.mock.calls[0][5]);
+    expect(showNotice).toHaveBeenLastCalledWith({ message: "quickReply.sent" });
+  });
+
+  it("list the person's own templates after the built-in replies, without an emoji", async () => {
+    fetchQuickReplyTemplates.mockResolvedValue(
+      templateList([
+        { id: "t1", name: "Ship it", text: "Ship it now." },
+        { id: "t2", name: "Tests first", text: "Add the tests first." },
+      ]),
+    );
+    // The chat page reads them; a row only shows what was read.
+    await act(async () => {
+      await loadQuickReplyTemplates();
+    });
+    await renderBubble(agentMessage);
+    expect(fetchQuickReplyTemplates).toHaveBeenCalledOnce();
+    const labels = await touchMenuLabels();
+    const start = labels.indexOf(QUICK[0]);
+    expect(labels.slice(start, start + 6)).toEqual([...QUICK, "Ship it", "Tests first"]);
+    const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+    await act(async () => touch.click());
+    const own = menuItems().find((item) => labelOf(item) === "Ship it")!;
+    expect(own.querySelector("[data-action-emoji]")).toBeNull();
+  });
+
+  it("send a template's text as written and retry with that text after the template changes", async () => {
+    const showNotice = vi.fn();
+    useUIStore.setState({ showNotice });
+    const written = "\n  Ship it now:\n    - run the gate\n";
+    fetchQuickReplyTemplates.mockResolvedValue(
+      templateList([{ id: "t1", name: "Ship it", text: written }]),
+    );
+    replyMessage.mockResolvedValue({
+      ok: false,
+      error: { code: "NETWORK_ERROR", message: "Network request failed" },
+    });
+    await act(async () => {
+      await loadQuickReplyTemplates();
+    });
+    await renderBubble(agentMessage);
+    const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+    await act(async () => touch.click());
+    await act(async () =>
+      menuItems()
+        .find((item) => labelOf(item) === "Ship it")!
+        .click(),
+    );
+    expect(replyMessage.mock.calls[0][1]).toBe(written);
+    const notice = showNotice.mock.calls[0][0];
+    // The template is edited elsewhere before the retry; the retry repeats the first request.
+    fetchQuickReplyTemplates.mockResolvedValue(
+      templateList([{ id: "t1", name: "Ship it", text: "Changed." }], 2),
+    );
+    await act(async () => {
+      await loadQuickReplyTemplates();
+    });
+    replyMessage.mockResolvedValue({ ok: true, result: { event: { id: "reply-1" } } });
+    await act(async () => notice.onAction());
+    expect(replyMessage.mock.calls[1][1]).toBe(written);
     expect(replyMessage.mock.calls[1][5]).toBe(replyMessage.mock.calls[0][5]);
     expect(showNotice).toHaveBeenLastCalledWith({ message: "quickReply.sent" });
   });

@@ -74,6 +74,17 @@ function clearAllReadRequestCaches(): void {
   recentReadGenerations.clear();
 }
 
+const authChangeListeners = new Set<() => void>();
+
+/** Run `listener` whenever this browser's credentials change: a sign-in, a sign-out, or a
+ *  session the server stopped accepting. What belonged to the previous person is dropped there. */
+export function onAuthChange(listener: () => void): () => void {
+  authChangeListeners.add(listener);
+  return () => {
+    authChangeListeners.delete(listener);
+  };
+}
+
 export function setAuthToken(token: string): void {
   clearAllReadRequestCaches();
   cachedToken = token;
@@ -82,6 +93,7 @@ export function setAuthToken(token: string): void {
   } catch {
     void 0;
   }
+  authChangeListeners.forEach((listener) => listener());
 }
 
 export function clearAuthToken(): void {
@@ -92,6 +104,7 @@ export function clearAuthToken(): void {
   } catch {
     void 0;
   }
+  authChangeListeners.forEach((listener) => listener());
 }
 
 export function setForceTokenLogin(): void {

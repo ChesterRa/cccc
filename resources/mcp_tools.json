@@ -1906,7 +1906,7 @@
                   }
                 }
               ],
-              "description": "Command mode shortcut; alternatively provide install_spec.command"
+              "description": "Command mode shortcut; alternatively provide install_spec.command. A string is one executable, never split by a shell; give arguments as an argv array such as [\"npx\",\"-y\",\"<package>\"]."
             },
             "command_candidates": {
               "type": "array",
@@ -2448,7 +2448,7 @@
   },
   {
     "name": "cccc_task",
-    "description": "Shared task board the user and teammates see; it survives restarts and context resets: action=list|create|update|move|restore|delete. Use it for user requests and commitments that need multiple steps, coordination or follow-up; keep one task per coherent piece of work, with routine steps in its checklist. Link a task to the backlog entry it works on with source; the entry stays in the file. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move. list returns planned and active tasks as one summary row each, with counts per status; pass task_id to read one task in full.",
+    "description": "Shared task board the user and teammates see; it survives restarts and context resets: action=list|create|update|move|restore|delete. Use it for user requests and commitments that need multiple steps, coordination or follow-up; keep one task per coherent piece of work, with routine steps in its checklist. Link a task to the backlog entry it works on with source; the entry stays in the file. Lifecycle transitions are canonical via move; update with status auto-applies the matching lifecycle move. list returns planned and active tasks as one summary row each, with counts per status; pass task_id to read one task in full, with its subtasks as summary rows that you read by their own task_id.",
     "inputSchema": {
       "type": "object",
       "properties": {

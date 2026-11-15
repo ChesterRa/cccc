@@ -71,6 +71,11 @@ const WebModelConnectorsTab = lazy(() =>
 const DeveloperTab = lazy(() =>
   import("./modals/settings/DeveloperTab").then((module) => ({ default: module.DeveloperTab })),
 );
+const QuickRepliesTab = lazy(() =>
+  import("./modals/settings/QuickRepliesTab").then((module) => ({
+    default: module.QuickRepliesTab,
+  })),
+);
 const NotificationsTab = lazy(() =>
   import("./modals/settings/NotificationsTab").then((module) => ({
     default: module.NotificationsTab,
@@ -451,6 +456,10 @@ export function SettingsModal({
         : []),
       ...(notificationsAllowed && (globalSettingsEnabled || currentBrowserSignedIn)
         ? [{ id: "notifications" as const, label: t("tabs.notifications") }]
+        : []),
+      // Each signed-in identity keeps its own reply templates, administrator or not.
+      ...(globalSettingsEnabled || currentBrowserSignedIn
+        ? [{ id: "quickReplies" as const, label: t("tabs.quickReplies") }]
         : []),
       ...(globalSettingsEnabled
         ? [
@@ -843,6 +852,8 @@ export function SettingsModal({
                 )}
 
                 {activeTab === "notifications" && notificationsAllowed && <NotificationsTab />}
+
+                {activeTab === "quickReplies" && <QuickRepliesTab />}
 
                 {activeTab === "branding" && (
                   <BrandingTab

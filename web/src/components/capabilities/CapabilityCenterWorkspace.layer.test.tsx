@@ -24,9 +24,11 @@ const data = vi.hoisted(() => ({
   summaryStats: null,
   totalCount: 0,
 }));
+const enableGroupCapability = vi.hoisted(() => vi.fn());
 vi.mock("./useCapabilityCenterData", () => ({ useCapabilityCenterData: () => data }));
 vi.mock("../../services/api", () => ({
   fetchGroup: async () => ({ ok: true, result: { group: { title: "Fixture Group" } } }),
+  enableGroupCapability,
 }));
 import { CapabilityCenterWorkspace } from "./CapabilityCenterWorkspace";
 
@@ -127,5 +129,55 @@ it("shows the daemon's enabled count for the whole query, not the loaded page's"
   } finally {
     await act(async () => root.unmount());
     Object.assign(data, saved);
+  }
+});
+
+it("refreshes the current state after an enable conflict and keeps the conflict visible", async () => {
+  const saved = { ...data };
+  const id = "skill:fixture:changed";
+  const refresh = vi.fn(async () => {
+    // Refresh clears prior errors while replacing the displayed state.
+    Object.assign(data, { error: "", state: { enabled_capabilities: [id] } });
+  });
+  Object.assign(data, {
+    items: [{ capability_id: id, kind: "skill", name: "Changed skill" }],
+    totalCount: 1,
+    state: { enabled_capabilities: [] },
+    refresh,
+    setError: (message: string) => {
+      data.error = message;
+    },
+  });
+  enableGroupCapability.mockResolvedValue({
+    ok: false,
+    error: { code: "capability_conflict", message: "preparation superseded" },
+  });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<CapabilityCenterWorkspace isOpen groupId="g1" />));
+    const skills = Array.from(document.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("capabilityCenter.sections.skill.label"),
+    )!;
+    await act(async () => skills.click());
+    const enable = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="capabilityCenter.enable.enable"]',
+    )!;
+    expect(enable).not.toBeNull();
+    await act(async () => enable.click());
+    expect(enableGroupCapability).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledOnce();
+    // The data hook is a static fixture here; show the snapshot its refresh just replaced.
+    await act(async () => root.render(<CapabilityCenterWorkspace isOpen groupId="g1" />));
+    expect(document.body.textContent).toContain("capabilityCenter.enable.conflict");
+    expect(
+      document.querySelector('button[aria-label="capabilityCenter.enable.disable"]'),
+    ).not.toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    Object.assign(data, saved);
+    enableGroupCapability.mockReset();
+    host.remove();
   }
 });

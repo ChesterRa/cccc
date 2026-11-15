@@ -122,10 +122,30 @@ export function useComposerMentionInput({
     requestAnimationFrame(() => updateMenuPosition(value.slice(0, trigger.start + 1)));
   };
 
-  const updateText = (value: string, selectionStart: number, selectionEnd: number) => {
+  const updateText = (
+    value: string,
+    selectionStart: number,
+    selectionEnd: number,
+    inputType?: string,
+  ) => {
     const current = useComposerStore.getState();
     const caret = Math.min(selectionStart, value.length);
-    const edit = getComposerTextEdit(current.composerText, value, selectionRef.current, caret);
+    let edit = getComposerTextEdit(current.composerText, value, selectionRef.current, caret);
+    if (
+      !edit &&
+      (inputType === "historyUndo" || inputType === "historyRedo") &&
+      selectionStart !== selectionEnd
+    ) {
+      // Undo can restore a selected replacement rather than a collapsed caret.
+      // Use that range only when its unchanged prefix/suffix still match. The
+      // normal rebase/prune below drops overlapping tokens; it never revives them.
+      edit = getComposerTextEdit(
+        current.composerText,
+        value,
+        { text: current.composerText, start: selectionStart, end: selectionEnd },
+        selectionEnd,
+      );
+    }
     const trigger = findComposerMentionAtCaret(value, caret, Math.min(selectionEnd, value.length));
     const rebasedGroups = rebaseComposerMentionTokens(current.composerGroupMentionTokens, edit);
     const rebasedAgents = rebaseComposerMentionTokens(current.composerAgentMentionTokens, edit);
@@ -136,6 +156,38 @@ export function useComposerMentionInput({
     setAgentTokens(retainComposerMentionSuffix(value, rebasedAgents, liveAgents, trigger?.end));
     selectionRef.current = { text: value, start: caret, end: caret };
     return caret;
+  };
+
+  const insertTextAtSelection = (
+    value: string,
+    applyFallback: (value: string, caret: number) => void,
+  ) => {
+    const input = composerRef.current;
+    if (!input || input.disabled || input.readOnly) return;
+    const before = input.value;
+    const remembered = selectionRef.current;
+    const start = remembered?.text === before ? remembered.start : input.selectionStart;
+    const end = remembered?.text === before ? remembered.end : input.selectionEnd;
+    input.focus();
+    input.setSelectionRange(start, end);
+    rememberSelection(input);
+    // Native insertion keeps the browser's undo history and runs the ordinary
+    // input handler, including mention rebasing. Older engines may lack it.
+    try {
+      if (document.execCommand?.("insertText", false, value)) return;
+    } catch {
+      // Fall back to the same controlled input path when insertion is unsupported.
+    }
+    const next = before.slice(0, start) + value + before.slice(end);
+    const caret = start + value.length;
+    pendingCaretRef.current = { text: next, caret };
+    applyFallback(next, caret);
+    // Replacing text with itself need not cause a render.
+    if (input.value === next) {
+      input.setSelectionRange(caret, caret);
+      rememberSelection(input);
+      pendingCaretRef.current = null;
+    }
   };
 
   const selectMention = (selected: ComposerMentionSuggestion | undefined) => {
@@ -209,5 +261,12 @@ export function useComposerMentionInput({
     });
   };
 
-  return { clearActiveMention, rememberSelection, selectMention, updateMenu, updateText };
+  return {
+    clearActiveMention,
+    rememberSelection,
+    selectMention,
+    updateMenu,
+    updateText,
+    insertTextAtSelection,
+  };
 }

@@ -1,7 +1,7 @@
 use cccc_core::HomeLayout;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
 
 type Gates = HashMap<PathBuf, bool>;
 
@@ -38,6 +38,21 @@ pub fn permit(home: &HomeLayout) -> Result<StartPermit, &'static str> {
         return Err("runtime is shutting down");
     }
     Ok(StartPermit { _guard: guard })
+}
+
+/// Dispatch phases must never wait for an existing runtime launch while holding
+/// their permits: that launch may need an MCP read to finish. A busy result lets
+/// the caller release its dispatch permit before waiting for the gate.
+pub(crate) fn try_permit(home: &HomeLayout) -> Result<Option<StartPermit>, &'static str> {
+    let guard = match gates().try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::WouldBlock) => return Ok(None),
+        Err(TryLockError::Poisoned(_)) => return Err("runtime start gate is poisoned"),
+    };
+    if !guard.get(home.root()).copied().unwrap_or(true) {
+        return Err("runtime is shutting down");
+    }
+    Ok(Some(StartPermit { _guard: guard }))
 }
 
 #[cfg(test)]

@@ -573,7 +573,7 @@ export async function useGroupCapability(
     reason: args.reason || "",
   };
   if (String(args.toolName || "").trim()) body.tool_name = String(args.toolName || "").trim();
-  if (args.toolArguments) body.tool_arguments = args.toolArguments;
+  if (args.toolArguments) body.arguments = args.toolArguments;
   clearCapabilityStateRequests(groupId);
   try {
     return await apiJson<Record<string, unknown>>(

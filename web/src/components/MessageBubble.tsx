@@ -30,7 +30,7 @@ import {
   QUICK_REPLY_EMOJI,
   QUICK_REPLY_KINDS,
   sendQuickReply,
-  type QuickReplyKind,
+  type QuickReplySource,
   type QuickReplyTarget,
 } from "./messageBubble/quickReplies";
 import { MessageFooter } from "./messageBubble/MessageBubbleChrome";
@@ -53,6 +53,7 @@ import { MessageRoutingMetadata } from "./messageBubble/MessageRoutingMetadata";
 import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
 import { PendingReplyStoreContext } from "../features/pendingReplies/store";
 import { useMessagePinned } from "../features/pins/pinStore";
+import { useQuickReplyTemplateStore } from "../features/quickReplies/templateStore";
 import { PinIcon } from "./Icons";
 import { useGroupStore, useUIStore } from "../stores";
 import { CHET_NAME, CHET_PRINCIPAL, chetGeneration, isChetMessage } from "../utils/chetIdentity";
@@ -552,11 +553,12 @@ export const MessageBubble = memo(
       };
     }, [actors, ev, groupGeneration, groupId, isStreaming, msgData, senderActor, srcGroupId]);
     const showNotice = useUIStore((state) => state.showNotice);
+    const replyTemplates = useQuickReplyTemplateStore((state) => state.templates);
     const quickReplies = useMemo(() => {
       if (!quickReplyTarget) return undefined;
-      const send = async (kind: QuickReplyKind) => {
-        const label = t(`quickReply.${kind}`);
-        const result = await sendQuickReply(quickReplyTarget, kind, t(`quickReply.${kind}Text`));
+      // The text is fixed when the entry is clicked, so a retry sends what was first sent.
+      const send = async (kind: QuickReplySource, label: string, text: string) => {
+        const result = await sendQuickReply(quickReplyTarget, kind, text);
         if (result.status === "sent") {
           showNotice({ message: t("quickReply.sent", { name: senderDisplayName, label }) });
         } else if (result.status === "failed") {
@@ -567,17 +569,28 @@ export const MessageBubble = memo(
               ? t("quickReply.unknown")
               : t("quickReply.failed", { error: result.message }),
             actionLabel: t("quickReply.retry"),
-            onAction: () => void send(kind),
+            onAction: () => void send(kind, label, text),
           });
         }
       };
-      return QUICK_REPLY_KINDS.map((kind) => ({
-        key: `quick-${kind}`,
-        label: t(`quickReply.${kind}`),
-        emoji: QUICK_REPLY_EMOJI[kind],
-        run: () => void send(kind),
-      }));
-    }, [quickReplyTarget, senderDisplayName, showNotice, t]);
+      // The built-in replies come first, then the person's own templates in their order.
+      return [
+        ...QUICK_REPLY_KINDS.map((kind) => {
+          const label = t(`quickReply.${kind}`);
+          return {
+            key: `quick-${kind}`,
+            label,
+            emoji: QUICK_REPLY_EMOJI[kind],
+            run: () => void send(kind, label, t(`quickReply.${kind}Text`)),
+          };
+        }),
+        ...replyTemplates.map((template) => ({
+          key: `quick-custom-${template.id}`,
+          label: template.name,
+          run: () => void send(`custom:${template.id}`, template.name, template.text),
+        })),
+      ];
+    }, [quickReplyTarget, replyTemplates, senderDisplayName, showNotice, t]);
 
     const routingMetadata = (
       <MessageRoutingMetadata

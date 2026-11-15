@@ -19,6 +19,7 @@ export type GlobalTabId =
   | "actorProfiles"
   | "myProfiles"
   | "notifications"
+  | "quickReplies"
   | "branding"
   | "webAccess"
   | "webModels"

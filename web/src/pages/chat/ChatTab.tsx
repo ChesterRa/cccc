@@ -66,6 +66,7 @@ import {
 import { useRuntimeDockWorkCards } from "./useRuntimeDockWorkCards";
 import { useFloatingDockReserve } from "./useFloatingDockReserve";
 import { useWorkspaceTabChoice } from "./useWorkspaceTabChoice";
+import { usePreloadQuickReplyTemplates } from "../../features/quickReplies/templateStore";
 import { type ComposerMentionKind } from "./chatMentionSuggestions";
 import { useWorkspaceFiles } from "../../components/workspace/useWorkspaceFiles";
 import { WorkspaceFilesTrigger } from "../../components/workspace/WorkspaceFilesTrigger";
@@ -238,6 +239,7 @@ export function ChatTab({
   setMentionActorScope,
   setMentionTargetGroupId,
 }: ChatTabProps) {
+  usePreloadQuickReplyTemplates(!readOnly);
   const shortTouchViewport = useShortTouchViewport();
   const [composerInputFocused, setComposerInputFocused] = useState(false);
   const [mentionTriggerIndex, setMentionTriggerIndex] = useState<number | null>(null);

@@ -55,6 +55,7 @@ pub(super) fn list_tools(
     })
 }
 
+#[cfg(test)]
 pub(super) fn call_tool(
     command: &[String],
     env: &Map<String, Value>,
@@ -73,20 +74,63 @@ pub(super) fn call_tool(
     )
 }
 
+pub(super) fn list_tools_guarded(
+    home: &cccc_core::HomeLayout,
+    command: &[String],
+    env: &Map<String, Value>,
+    timeout: Duration,
+) -> Result<Vec<Value>, Failure> {
+    run_guarded(Some(home), command, env, Request::List, timeout).and_then(|value| {
+        serde_json::from_value(value)
+            .map_err(|error| Failure::transport("tools/list result", error))
+    })
+}
+
+pub(super) fn call_tool_guarded(
+    home: &cccc_core::HomeLayout,
+    command: &[String],
+    env: &Map<String, Value>,
+    name: &str,
+    arguments: Map<String, Value>,
+    timeout: Duration,
+) -> Result<Value, Failure> {
+    run_guarded(
+        Some(home),
+        command,
+        env,
+        Request::Call {
+            name: name.into(),
+            arguments,
+        },
+        timeout,
+    )
+}
+
 fn run(
     command: &[String],
     env: &Map<String, Value>,
     request: Request,
     timeout: Duration,
 ) -> Result<Value, Failure> {
+    run_guarded(None, command, env, request, timeout)
+}
+
+fn run_guarded(
+    home: Option<&cccc_core::HomeLayout>,
+    command: &[String],
+    env: &Map<String, Value>,
+    request: Request,
+    timeout: Duration,
+) -> Result<Value, Failure> {
     let secrets = diagnostic_secrets(command, env);
-    block_on_managed(exchange(command, env, request, timeout)).map_err(|mut error| {
+    block_on_managed(exchange_guarded(home, command, env, request, timeout)).map_err(|mut error| {
         error.message = redact_diagnostic(&error.message, &secrets);
         error
     })
 }
 
-async fn exchange(
+async fn exchange_guarded(
+    home: Option<&cccc_core::HomeLayout>,
     command: &[String],
     env: &Map<String, Value>,
     request: Request,
@@ -110,9 +154,15 @@ async fn exchange(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = process
-        .spawn()
-        .map_err(|error| Failure::transport("spawn", error))?;
+    let mut child = {
+        let _permit = home
+            .map(crate::runtime_start_gate::permit)
+            .transpose()
+            .map_err(|error| Failure::transport("spawn", error))?;
+        process
+            .spawn()
+            .map_err(|error| Failure::transport("spawn", error))?
+    };
     let stdout = child.stdout.take().expect("piped stdout");
     let stdin = child.stdin.take().expect("piped stdin");
     let mut stderr = child.stderr.take().expect("piped stderr");

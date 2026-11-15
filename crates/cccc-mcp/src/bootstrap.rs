@@ -450,6 +450,9 @@ fn build_recovery_pack(
             ),
             ("project_brief".into(), trimmed_value(brief.and_then(|value| value.get("project_brief")), 260)),
             ("project_brief_stale".into(), Value::Bool(brief.and_then(|value| value.get("project_brief_stale")).and_then(Value::as_bool).unwrap_or(false))),
+            // When the brief itself was last edited, so a reader can see an old brief. Not the
+            // context document's time, which other writes advance; absent stays absent.
+            ("updated_at".into(), brief.and_then(|value| value.get("updated_at")).and_then(Value::as_str).map_or(Value::Null, |value| Value::String(value.to_owned()))),
         ])),
         "tasks": {
             "assigned_active": assigned_active,
@@ -1113,6 +1116,31 @@ mod tests {
     }
 
     #[test]
+    fn brief_edit_time_comes_from_the_brief_and_is_never_invented() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 8, 9, 5, 1, 0)
+            .single()
+            .expect("timestamp");
+        let pack = build_recovery_pack(&fixture_context(), "peer1", &Map::new(), now);
+        assert!(pack["coordination_brief"].get("updated_at").is_none());
+
+        let mut context = fixture_context();
+        context.insert("updated_at".into(), json!("2026-08-09T04:59:00Z"));
+        context
+            .get_mut("coordination")
+            .and_then(|value| value.pointer_mut("/brief"))
+            .and_then(Value::as_object_mut)
+            .expect("brief")
+            .insert("updated_at".into(), json!("2026-08-07T10:43:13Z"));
+        let pack = build_recovery_pack(&context, "peer1", &Map::new(), now);
+        assert_eq!(
+            pack["coordination_brief"]["updated_at"],
+            "2026-08-07T10:43:13Z"
+        );
+        assert_eq!(pack["agent_state"]["updated_at"], "2026-08-09T05:00:00Z");
+    }
+
+    #[test]
     fn recovery_restores_owned_work_without_raw_context() {
         let now = Utc
             .with_ymd_and_hms(2026, 8, 9, 5, 1, 0)
@@ -1198,8 +1226,14 @@ mod tests {
             let mut context = fixture_context();
             context.get_mut("coordination").expect("valid test fixture")["brief"]["constraints"] =
                 json!(vec![rule.clone(); 8]);
+            context.get_mut("coordination").expect("valid test fixture")["brief"]["updated_at"] =
+                json!("2026-08-07T10:43:13Z");
             let pack = build_recovery_pack(&context, "peer1", &Map::new(), Utc::now());
             assert!(estimate_tokens(&pack) <= RECOVERY_TOKEN_BUDGET);
+            assert_eq!(
+                pack["coordination_brief"]["updated_at"],
+                "2026-08-07T10:43:13Z"
+            );
             let constraints = pack["coordination_brief"]["constraints"]
                 .as_array()
                 .expect("valid test fixture");

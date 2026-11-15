@@ -249,6 +249,19 @@ pub(super) fn enable(
     {
         package_install::ensure_installed(home, capability_id, &record)?;
     }
+    enable_prepared(home, group_id, actor_id, scope, ttl_seconds, capability_id)
+}
+
+/// Publish controls after the caller has committed a checked installation candidate.
+pub(super) fn enable_prepared(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    scope: &str,
+    ttl_seconds: i64,
+    capability_id: &str,
+) -> Result<Map<String, Value>, OpError> {
+    let store = CapabilityStore::new(home.clone());
     let already_enabled = store
         .is_enabled_for(capability_id, group_id, actor_id, scope)
         .map_err(OpError::io)?;

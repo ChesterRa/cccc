@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use crate::dispatch::{OpError, OpResult, object, string_arg};
+use crate::dispatch::{OpError, string_arg};
 
 pub(super) fn all_dynamic_tools(
     home: &HomeLayout,
@@ -94,211 +94,7 @@ pub(super) fn dynamic_tools(
     Ok(tools)
 }
 
-pub(super) fn call(home: &HomeLayout, request: &DaemonRequest, tool_name: &str) -> OpResult {
-    let group_id = string_arg(request, "group_id").unwrap_or_default();
-    // `by` is injected from the MCP process environment and is authoritative.
-    // `actor_id` is model-controlled and may also mean a target actor on other
-    // tools, so it must never override the caller identity here.
-    let actor_id = caller_actor_id(request);
-    let store = cccc_core::capabilities::CapabilityStore::new(home.clone());
-    let native = store.load().map_err(OpError::io)?;
-    let effective =
-        super::effective_state::load(home, &group_id, &actor_id, &native).map_err(OpError::io)?;
-    let enabled = effective
-        .enabled
-        .difference(&effective.blocked)
-        .cloned()
-        .collect::<Vec<_>>();
-    let enabled_set = enabled.iter().cloned().collect::<BTreeSet<_>>();
-    let explicit_capability = string_arg(request, "capability_id").filter(|id| !id.is_empty());
-    if explicit_capability
-        .as_ref()
-        .is_some_and(|id| !enabled_set.contains(id))
-    {
-        return Err(OpError::new(
-            "capability_tool_not_found",
-            "capability is not enabled for this caller",
-        ));
-    }
-    let mut capability_hint = explicit_capability.clone().or_else(|| {
-        super::credentials::known_capability(home, &group_id, &actor_id, &enabled_set, tool_name)
-    });
-    if capability_hint.is_none() {
-        capability_hint = cold_bearer_capability(home, &store, &enabled_set, tool_name)?;
-    }
-    if let Some(id) = capability_hint
-        && let Some(record) = cccc_core::capabilities::CapabilityStore::new(home.clone())
-            .resolved_record(&id)
-            .map_err(OpError::io)?
-    {
-        let record = super::credentials::installed_record(home, &record)?;
-        if super::credentials::bearer(&record) {
-            let notes = cccc_core::capability_recommendations::notes(
-                &store.require(&id).map_err(OpError::io)?,
-            );
-            if string_arg(request, "by").as_deref() != Some(actor_id.as_str()) {
-                return Err(OpError::new(
-                    "credential_route_not_supported",
-                    "member credential calls require an explicit bound caller",
-                ));
-            }
-            let arguments = request
-                .args
-                .get("arguments")
-                .or_else(|| request.args.get("args"))
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            let result =
-                super::credentials::call(home, &group_id, &actor_id, &record, tool_name, arguments);
-            let (state, error) = match &result {
-                Ok(result) if result["isError"] == true => {
-                    ("tool_call_failed", "external tool returned isError")
-                }
-                Ok(_) => ("verified", ""),
-                Err(error) => ("tool_call_failed", error.message.as_str()),
-            };
-            if let Err(error) = record_call_state(home, &group_id, &actor_id, &id, "", state, error)
-            {
-                tracing::warn!(code=%error.code,"failed to persist member MCP call state");
-            }
-            let mut payload = json!({"capability_id":id,"tool_name":tool_name,"result":result?});
-            payload
-                .as_object_mut()
-                .expect("tool response")
-                .extend(notes);
-            return object(payload);
-        }
-    }
-    let tools = all_dynamic_tools(home, &group_id, &actor_id, &enabled)?;
-    let tool = tools
-        .iter()
-        .find(|item| {
-            item["name"] == tool_name
-                || explicit_capability.as_deref().is_some_and(|id| {
-                    item["capability_id"] == id && item["real_tool_name"] == tool_name
-                })
-        })
-        .ok_or_else(|| {
-            OpError::new(
-                "capability_tool_not_found",
-                format!(
-                    "tool not found or not enabled: {tool_name}; prepare with cccc_capability_use(capability_id=...) before retrying a direct tool name"
-                ),
-            )
-        })?;
-    let capability_id = tool["capability_id"].as_str().unwrap_or("");
-    if explicit_capability
-        .as_ref()
-        .is_some_and(|id| id != capability_id)
-    {
-        return Err(OpError::new(
-            "capability_tool_not_found",
-            "tool does not belong to the requested capability",
-        ));
-    }
-    let real_name = tool["real_tool_name"].as_str().unwrap_or("");
-    let notes = cccc_core::capability_recommendations::notes(
-        &store.require(capability_id).map_err(OpError::io)?,
-    );
-    let runtime = load(home)?;
-    let artifact_id =
-        runtime["actor_instances"][&group_id][&actor_id][capability_id]["artifact_id"]
-            .as_str()
-            .or_else(|| runtime["capability_artifacts"][capability_id].as_str())
-            .ok_or_else(|| {
-                OpError::new(
-                    "capability_tool_not_found",
-                    "capability runtime artifact is missing",
-                )
-            })?;
-    let artifact = &runtime["artifacts"][artifact_id];
-    let invoker = artifact["invoker"].as_object().ok_or_else(|| {
-        OpError::new(
-            "capability_runtime_unavailable",
-            "external capability invoker is missing",
-        )
-    })?;
-    let kind = invoker.get("type").and_then(Value::as_str).unwrap_or("");
-    let arguments = request
-        .args
-        .get("arguments")
-        .or_else(|| request.args.get("args"))
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let result = match kind {
-        "remote_http" | "streamable_http" | "http" => call_http(invoker, real_name, arguments),
-        "npm_stdio" | "package_stdio" | "command_stdio" => {
-            let record = store.resolved_record(capability_id).map_err(OpError::io)?;
-            call_stdio(
-                invoker,
-                real_name,
-                arguments,
-                record.as_ref().unwrap_or(&Value::Null),
-            )
-        }
-        _ => {
-            return Err(OpError::new(
-                "capability_runtime_unavailable",
-                format!("unsupported Rust external capability invoker: {kind}"),
-            ));
-        }
-    };
-    let result = match result {
-        Ok(result) => {
-            if let Err(error) = record_call_state(
-                home,
-                &group_id,
-                &actor_id,
-                capability_id,
-                artifact_id,
-                if result.get("isError").and_then(Value::as_bool) == Some(true) {
-                    "tool_call_failed"
-                } else {
-                    "verified"
-                },
-                if result.get("isError").and_then(Value::as_bool) == Some(true) {
-                    "external tool returned isError"
-                } else {
-                    ""
-                },
-            ) {
-                tracing::warn!(
-                    %group_id,
-                    %actor_id,
-                    %capability_id,
-                    message = %error.message,
-                    "failed to persist capability tool result state"
-                );
-            }
-            result
-        }
-        Err(error) => {
-            let _ = record_call_state(
-                home,
-                &group_id,
-                &actor_id,
-                capability_id,
-                artifact_id,
-                "tool_call_failed",
-                &error.message,
-            );
-            return Err(error);
-        }
-    };
-    let mut payload = json!({
-        "capability_id":capability_id,
-        "tool_name":tool_name,
-        "real_tool_name":real_name,
-        "result":result
-    });
-    payload
-        .as_object_mut()
-        .expect("tool response")
-        .extend(notes);
-    object(payload)
-}
-
-fn caller_actor_id(request: &DaemonRequest) -> String {
+pub(super) fn caller_actor_id(request: &DaemonRequest) -> String {
     string_arg(request, "by")
         .or_else(|| string_arg(request, "actor_id"))
         .unwrap_or_else(|| "user".into())
@@ -341,7 +137,27 @@ fn call_http(
     )
 }
 
-fn call_stdio(
+pub(super) fn invoke_guarded(
+    home: &HomeLayout,
+    invoker: &Map<String, Value>,
+    real: &str,
+    arguments: Value,
+    record: &Value,
+) -> Result<Value, OpError> {
+    match invoker.get("type").and_then(Value::as_str).unwrap_or("") {
+        "remote_http" | "streamable_http" | "http" => call_http(invoker, real, arguments),
+        "npm_stdio" | "package_stdio" | "command_stdio" => {
+            call_stdio_inner(home, invoker, real, arguments, record)
+        }
+        kind => Err(OpError::new(
+            "capability_runtime_unavailable",
+            format!("unsupported Rust external capability invoker: {kind}"),
+        )),
+    }
+}
+
+fn call_stdio_inner(
+    home: &HomeLayout,
     invoker: &Map<String, Value>,
     real_name: &str,
     arguments: Value,
@@ -379,14 +195,15 @@ fn call_stdio(
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(45)
         .clamp(5, 180);
-    super::mcp_stdio::call_tool(
+    let result = super::mcp_stdio::call_tool_guarded(
+        home,
         &command,
         &env,
         real_name,
         arguments,
         Duration::from_secs(timeout),
-    )
-    .map_err(|error| {
+    );
+    result.map_err(|error| {
         OpError::new(
             if error.remote {
                 "capability_tool_failed"
@@ -400,7 +217,7 @@ fn call_stdio(
 
 /// Recover only aliases whose suffix reconstructs the original name and verifies
 /// the complete hash. Never discover unrelated endpoints to guess ownership.
-fn cold_bearer_capability(
+pub(super) fn cold_bearer_capability(
     home: &HomeLayout,
     store: &cccc_core::capabilities::CapabilityStore,
     enabled: &BTreeSet<String>,
@@ -433,7 +250,7 @@ fn cold_bearer_capability(
     Ok(first)
 }
 
-fn load(home: &HomeLayout) -> Result<Value, OpError> {
+pub(super) fn load(home: &HomeLayout) -> Result<Value, OpError> {
     let path = home.root().join("state/capabilities/runtime.json");
     if !path.exists() {
         return Ok(json!({}));
@@ -441,7 +258,7 @@ fn load(home: &HomeLayout) -> Result<Value, OpError> {
     read_json(&path).map_err(OpError::io)
 }
 
-fn record_call_state(
+pub(super) fn record_call_state(
     home: &HomeLayout,
     group_id: &str,
     actor_id: &str,
@@ -573,6 +390,12 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
+    fn call(home: &HomeLayout, request: &DaemonRequest, name: &str) -> crate::dispatch::OpResult {
+        let mut request = request.clone();
+        request.args.insert("tool_name".into(), json!(name));
+        super::super::staged::run_sync(home, &request)
+    }
+
     #[test]
     fn reads_python_runtime_dynamic_tools() {
         let temp = tempdir().expect("temp");
@@ -674,7 +497,7 @@ mod tests {
                 .expect("args")
                 .clone(),
         };
-        let result = super::call(&home, &request, last).expect("undisplayed authorized tool");
+        let result = call(&home, &request, last).expect("undisplayed authorized tool");
         assert_eq!(
             result["result"]["content"][0]["text"],
             "stdio-fixture-result"
@@ -683,7 +506,7 @@ mod tests {
         qualified
             .args
             .insert("capability_id".into(), json!("mcp:fixture"));
-        let result = super::call(&home, &qualified, "echo").expect("qualified real name");
+        let result = call(&home, &qualified, "echo").expect("qualified real name");
         assert_eq!(
             result["result"]["content"][0]["text"],
             "stdio-fixture-result"
@@ -692,7 +515,7 @@ mod tests {
             .args
             .insert("capability_id".into(), json!("mcp:other"));
         assert_eq!(
-            super::call(&home, &qualified, "echo")
+            call(&home, &qualified, "echo")
                 .expect_err("wrong capability")
                 .code,
             "capability_tool_not_found"
@@ -700,13 +523,13 @@ mod tests {
         cccc_core::capabilities::CapabilityStore::new(home.clone())
             .set_blocked_for("mcp:fixture", true, &group, "fixture", "user", 0)
             .expect("block");
-        let denied = super::call(&home, &request, last).expect_err("blocked tool must stay denied");
+        let denied = call(&home, &request, last).expect_err("blocked tool must stay denied");
         assert_eq!(denied.code, "capability_tool_not_found");
         qualified
             .args
             .insert("capability_id".into(), json!("mcp:fixture"));
         assert_eq!(
-            super::call(&home, &qualified, "echo")
+            call(&home, &qualified, "echo")
                 .expect_err("blocked real name")
                 .code,
             "capability_tool_not_found"
@@ -724,8 +547,8 @@ mod tests {
                 .expect("args")
                 .clone(),
         };
-        let result = super::call(&home, &request, tools[0]["name"].as_str().expect("name"))
-            .expect("tool result");
+        let result =
+            call(&home, &request, tools[0]["name"].as_str().expect("name")).expect("tool result");
         assert_eq!(result["result"]["isError"], true);
         let runtime = super::load(&home).expect("runtime");
         assert_eq!(runtime["recent_success"]["mcp:fixture"]["success_count"], 7);
@@ -787,7 +610,7 @@ mod tests {
                 .clone(),
         };
         let name = tools[0]["name"].as_str().expect("tool name");
-        let error = super::call(&home, &request, name).expect_err("fixture exits");
+        let error = call(&home, &request, name).expect_err("fixture exits");
         assert!(error.message.contains("fixture connection failed"));
         assert!(error.message.contains("<redacted>"));
         assert!(
@@ -806,7 +629,7 @@ mod tests {
             &runtime,
         )
         .expect("explicit invoker override");
-        let error = super::call(&home, &request, name).expect_err("fixture exits");
+        let error = call(&home, &request, name).expect_err("fixture exits");
         assert!(
             !error.message.contains(OVERRIDE),
             "override escaped in diagnostics"

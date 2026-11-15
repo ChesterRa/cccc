@@ -5,6 +5,30 @@
   },
   "title": "Settings",
   "closeAriaLabel": "Close settings",
+  "quickReplies": {
+    "title": "Quick Replies",
+    "description": "Your own reply templates, listed after the built-in ones. In a message's quick reply menu, choosing one sends it at once; from the composer's template button, it is inserted so you can edit it first.",
+    "listTitle": "My templates",
+    "count": "{{used}} of {{limit}}",
+    "add": "Add template",
+    "full": "You can keep up to {{limit}} templates.",
+    "empty": "No templates yet. Add one to see it in the quick reply menu and the composer.",
+    "name": "Name",
+    "text": "Text",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "unsaved": "Unsaved changes",
+    "conflict": "These templates were saved from another window or device. Reload to continue; your unsaved edits here will be replaced.",
+    "reload": "Reload",
+    "loadFailed": "Could not load templates: {{error}}",
+    "saveFailed": "Could not save templates: {{error}}",
+    "problem": {
+      "name": "Give this template a name.",
+      "nameTooLong": "Keep the name to one line of at most 40 characters.",
+      "text": "Write the text to send.",
+      "textTooLong": "The text can be at most 10,000 characters."
+    }
+  },
   "tabs": {
     "guidance": "Guidance",
     "assistants": "Voice",
@@ -19,6 +43,7 @@
     "actorProfiles": "Agent Profiles",
     "myProfiles": "My Profiles",
     "notifications": "Notifications",
+    "quickReplies": "Quick Replies",
     "branding": "Branding",
     "account": "Account",
     "developer": "Developer",
@@ -510,7 +535,8 @@
       "confirmDisableTitle": "Disable {{name}} for this group?",
       "confirmDisableDescription": "This turns off {{id}} in the current group, including your own use of it here. Agents keep their own use of it. It does not block future enablement.",
       "partlyFailed": "Only part of it was turned off: {{message}}",
-      "stillEnabled": "{{name}} is still enabled. Its state may have changed in the meantime; try again."
+      "stillEnabled": "{{name}} is still enabled. Its state may have changed in the meantime; try again.",
+      "conflict": "Settings changed while this capability was being prepared. Review its current state before enabling it again."
     },
     "confirm": { "cancel": "Cancel", "confirm": "Confirm" },
     "showSystem": "System",

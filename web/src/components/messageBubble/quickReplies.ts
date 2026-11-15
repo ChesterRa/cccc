@@ -4,6 +4,8 @@ import { newClientId } from "../../utils/clientId";
 /** The replies a person sends an agent most: go ahead, explain, rethink, or turn it into a choice. */
 export const QUICK_REPLY_KINDS = ["proceed", "why", "rethink", "choices"] as const;
 export type QuickReplyKind = (typeof QUICK_REPLY_KINDS)[number];
+/** A built-in reply, or one of the person's own templates by its ID. */
+export type QuickReplySource = QuickReplyKind | `custom:${string}`;
 
 /** Shown before each label so the replies read as quick responses; the label carries the meaning. */
 export const QUICK_REPLY_EMOJI: Record<QuickReplyKind, string> = {
@@ -40,9 +42,11 @@ const UNKNOWN_RESULT_CODES = new Set([
   "daemon_unavailable",
 ]);
 
+/** Send `text` as a reply. A retry passes the same text it first sent, so it keeps the same
+ *  client ID even if the template or the interface language has changed since. */
 export async function sendQuickReply(
   target: QuickReplyTarget,
-  kind: QuickReplyKind,
+  kind: QuickReplySource,
   text: string,
 ): Promise<QuickReplyResult> {
   const key = [target.groupId, target.replyEventId, kind, text].join("\u0000");

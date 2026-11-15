@@ -2,7 +2,7 @@
 use cccc_contracts::Actor;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use hmac::{Hmac, Mac};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::Sha256;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -82,6 +82,7 @@ pub(super) fn execution_record(record: &Value, runtime: &Value) -> Value {
     result
 }
 
+#[cfg(test)]
 pub(super) fn installed_record(home: &HomeLayout, record: &Value) -> Result<Value, OpError> {
     let path = home.root().join("state/capabilities/runtime.json");
     let runtime = if path.exists() {
@@ -92,7 +93,7 @@ pub(super) fn installed_record(home: &HomeLayout, record: &Value) -> Result<Valu
     Ok(execution_record(record, &runtime))
 }
 
-struct Identity {
+pub(super) struct Identity {
     scope: Scope,
     tag: Vec<u8>,
     token: String,
@@ -165,7 +166,7 @@ fn identity(
     })
 }
 
-fn load_identity(
+pub(super) fn load_identity(
     home: &HomeLayout,
     group_id: &str,
     actor_id: &str,
@@ -183,7 +184,7 @@ fn load_identity(
     )
 }
 
-fn remember(identity: &Identity, tools: Vec<Value>, failure: Option<&'static str>) {
+pub(super) fn remember(identity: &Identity, tools: Vec<Value>, failure: Option<&'static str>) {
     let mut cache = cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -221,7 +222,17 @@ fn remember(identity: &Identity, tools: Vec<Value>, failure: Option<&'static str
     );
 }
 
-fn discover(identity: &Identity, id: &str) -> Result<Vec<Value>, OpError> {
+/// Discovery and call workers carry secrets only in memory and never publish metadata.
+pub(super) struct Pending {
+    pub result: Result<Vec<Value>, OpError>,
+    pub failure: Option<&'static str>,
+}
+
+pub(super) fn same_identity(first: &Identity, second: &Identity) -> bool {
+    first.scope == second.scope && first.tag == second.tag
+}
+
+pub(super) fn discover_unpublished(identity: &Identity, id: &str) -> Pending {
     match super::mcp_http::list_tools_with_token(
         &identity.url,
         Some(&identity.token),
@@ -231,40 +242,91 @@ fn discover(identity: &Identity, id: &str) -> Result<Vec<Value>, OpError> {
             for tool in &mut tools {
                 redact(tool, &identity.token);
             }
-            let tools = super::package_install::normalize_tools(id, Some(&Value::Array(tools)));
-            remember(identity, tools.clone(), None);
-            Ok(tools)
+            Pending {
+                result: Ok(super::package_install::normalize_tools(
+                    id,
+                    Some(&Value::Array(tools)),
+                )),
+                failure: None,
+            }
         }
-        Err(failure) => Err(failed(identity, failure, true)),
+        Err(failure) => {
+            let (error, code) = failure_unpublished(identity, failure);
+            Pending {
+                result: Err(error),
+                failure: Some(code),
+            }
+        }
     }
 }
 
-fn failed(
+#[cfg(test)]
+fn discover(identity: &Identity, id: &str) -> Result<Vec<Value>, OpError> {
+    let pending = discover_unpublished(identity, id);
+    remember(
+        identity,
+        pending.result.as_ref().ok().cloned().unwrap_or_default(),
+        pending.failure,
+    );
+    pending.result
+}
+
+fn failure_unpublished(
     identity: &Identity,
     failure: super::mcp_http::Failure,
-    discovery_failed: bool,
-) -> OpError {
+) -> (OpError, &'static str) {
     let code = match failure.status {
         Some(401) => "credential_rejected",
         Some(403) => "credential_permission_denied",
         _ if failure.remote => "capability_tool_failed",
         _ => "capability_transport_error",
     };
-    if discovery_failed || matches!(failure.status, Some(401 | 403)) {
-        remember(identity, Vec::new(), Some(code));
-    }
-    if failure
-        .status
-        .is_some_and(|status| matches!(status, 401 | 403))
-    {
+    let result = if matches!(failure.status, Some(401 | 403)) {
         error(code, Some(&identity.env))
     } else {
-        let mut result = OpError::new(code, failure.message);
+        let mut result = OpError::new(code, failure.message.replace(&identity.token, "<redacted>"));
         result.details.insert("reason_codes".into(), json!([code]));
         result
+    };
+    (result, code)
+}
+
+pub(super) struct CallOutcome {
+    pub result: Result<Value, OpError>,
+    pub failure: Option<&'static str>,
+}
+
+pub(super) fn call_unpublished(
+    identity: &Identity,
+    real: &str,
+    arguments: Map<String, Value>,
+) -> CallOutcome {
+    match super::mcp_http::call_tool(
+        &identity.url,
+        Some(&identity.token),
+        real,
+        arguments,
+        Duration::from_secs(120),
+    ) {
+        Ok(mut result) => {
+            redact(&mut result, &identity.token);
+            CallOutcome {
+                result: Ok(result),
+                failure: None,
+            }
+        }
+        Err(failure) => {
+            let record_failure = matches!(failure.status, Some(401 | 403));
+            let (error, code) = failure_unpublished(identity, failure);
+            CallOutcome {
+                result: Err(error),
+                failure: record_failure.then_some(code),
+            }
+        }
     }
 }
 
+#[cfg(test)]
 pub(super) fn prepare(
     home: &HomeLayout,
     group: &str,
@@ -287,7 +349,7 @@ pub(super) fn cached_tools(
     tools_for(&identity)
 }
 
-fn tools_for(identity: &Identity) -> Vec<Value> {
+pub(super) fn tools_for(identity: &Identity) -> Vec<Value> {
     let cache = cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -383,49 +445,6 @@ pub(super) fn known_capability(
                 && entry.tools.iter().any(|item| item["name"] == tool)
         })
         .map(|(scope, _)| scope.capability.clone())
-}
-
-pub(super) fn call(
-    home: &HomeLayout,
-    group: &str,
-    actor: &str,
-    record: &Value,
-    name: &str,
-    arguments: Value,
-) -> Result<Value, OpError> {
-    let identity = load_identity(home, group, actor, record)?;
-    let id = record["capability_id"].as_str().unwrap_or("");
-    let mut tools = tools_for(&identity);
-    if !tools
-        .iter()
-        .any(|tool| tool["name"] == name || tool["real_tool_name"] == name)
-    {
-        tools = discover(&identity, id)?;
-    }
-    let tool = tools
-        .iter()
-        .find(|tool| tool["name"] == name || tool["real_tool_name"] == name)
-        .ok_or_else(|| {
-            OpError::new(
-                "capability_tool_not_found",
-                "tool is not available for this member's credential",
-            )
-        })?;
-    let real = tool["real_tool_name"].as_str().unwrap_or("");
-    let arguments = arguments
-        .as_object()
-        .cloned()
-        .ok_or_else(|| OpError::new("invalid_args", "tool arguments must be an object"))?;
-    let mut result = super::mcp_http::call_tool(
-        &identity.url,
-        Some(&identity.token),
-        real,
-        arguments,
-        Duration::from_secs(120),
-    )
-    .map_err(|failure| failed(&identity, failure, false))?;
-    redact(&mut result, &identity.token);
-    Ok(result)
 }
 
 fn error(code: &str, env: Option<&str>) -> OpError {

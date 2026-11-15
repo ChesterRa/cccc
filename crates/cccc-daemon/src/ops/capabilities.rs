@@ -23,6 +23,7 @@ mod overview;
 mod package_install;
 mod projection;
 mod recipe;
+pub(crate) mod staged;
 mod target_install;
 mod uninstall;
 mod update;
@@ -226,7 +227,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "capability_overview" => Operation::new(Read, overview::run),
         "capability_search" => Operation::new(Read, search),
-        "capability_enable" => Operation::new(GlobalWrite, enable),
+        "capability_enable" => Operation::new(GlobalWrite, staged::run_sync),
         "capability_visibility" => Operation::new(GlobalWrite, visibility),
         "capability_block" => Operation::new(GlobalWrite, block),
         // MCP discovery re-enters during Actor startup. The catalog owns its
@@ -244,13 +245,24 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "capability_uninstall" => Operation::new(GlobalWrite, uninstall::run),
         "capability_install_target" => Operation::new(GlobalWrite, target_install::run),
         "capability_source_delete" => Operation::new(GlobalWrite, source_delete),
-        "capability_tool_call" => Operation::new(Write, use_capability),
+        "capability_tool_call" if staged::handles(request) => {
+            Operation::new(Write, staged::run_sync)
+        }
+        "capability_tool_call" => Operation::new(Write, read_capability),
         "capability_allowlist_get" => Operation::new(Read, |home, _request| allowlist::get(home)),
         "capability_allowlist_validate" => Operation::new(Read, allowlist::validate),
         "capability_allowlist_update" => Operation::new(GlobalWrite, allowlist::update),
         "capability_allowlist_reset" => Operation::new(GlobalWrite, allowlist::reset),
         _ => return None,
     })
+}
+
+fn read_capability(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let id = required_arg(request, "capability_id")?;
+    let capability = CapabilityStore::new(home.clone())
+        .require(&id)
+        .map_err(OpError::not_found)?;
+    object(json!({"capability": capability, "input": request.args.get("input"), "ready": true}))
 }
 
 fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -317,47 +329,13 @@ fn recommendation_order() -> Result<Vec<String>, OpError> {
         .collect())
 }
 
-fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+fn disable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let id = required_arg(request, "capability_id")?;
-    let enabled = bool_arg(request, "enabled", true);
     let access = authorize_scope_mutation(home, request, "session")?;
-    let store = CapabilityStore::new(home.clone());
-    let action_id = format!("cact_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
-    let blocked = if enabled {
-        target_install::preflight_enable(
-            &store,
-            &access.actor.group_id,
-            &access.actor.actor_id,
-            &access.scope,
+    CapabilityStore::new(home.clone())
+        .set_enabled_for(
             &id,
-        )?
-    } else {
-        None
-    };
-    let mut member_tools = None;
-    if enabled
-        && blocked.is_none()
-        && access.scope != "group"
-        && bool_arg(request, "prepare", true)
-        && request.args.get("by").and_then(Value::as_str) == Some(access.actor.by.as_str())
-        && !matches!(access.actor.by.as_str(), "user" | "system")
-        && access.actor.by == access.actor.actor_id
-        && let Some(record) = store.resolved_record(&id).map_err(OpError::io)?
-        && credentials::bearer(&credentials::installed_record(home, &record)?)
-    {
-        package_install::ensure_installed(home, &id, &record)?;
-        member_tools = Some(credentials::prepare(
-            home,
-            &access.actor.group_id,
-            &access.actor.by,
-            &credentials::installed_record(home, &record)?,
-        )?);
-    }
-    let mut result = if let Some(blocked) = blocked {
-        blocked
-    } else if enabled {
-        target_install::enable(
-            home,
+            false,
             &access.actor.group_id,
             &access.actor.actor_id,
             &access.scope,
@@ -366,28 +344,23 @@ fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .get("ttl_seconds")
                 .and_then(Value::as_i64)
                 .unwrap_or(3600),
-            &id,
-        )?
-    } else {
-        store
-            .set_enabled_for(
-                &id,
-                false,
-                &access.actor.group_id,
-                &access.actor.actor_id,
-                &access.scope,
-                request
-                    .args
-                    .get("ttl_seconds")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(3600),
-            )
-            .map_err(OpError::invalid)?;
-        object(json!({
-            "capability_id":id,"enabled":false,"state":"disabled",
-            "scope":access.scope,"refresh_required":true
-        }))?
-    };
+        )
+        .map_err(OpError::invalid)?;
+    let result = object(
+        json!({"capability_id":id,"enabled":false,"state":"disabled",
+        "scope":access.scope,"refresh_required":true}),
+    )?;
+    let action_id = format!("cact_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+    finish_enable(result, &id, &access, &action_id, None)
+}
+
+fn finish_enable(
+    mut result: serde_json::Map<String, Value>,
+    id: &str,
+    access: &ScopeMutation,
+    action_id: &str,
+    member_tools: Option<Vec<Value>>,
+) -> OpResult {
     if result.get("state").and_then(Value::as_str) == Some("ready") {
         result.insert("state".into(), json!("activation_pending"));
     }
@@ -896,16 +869,6 @@ fn source_delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "removed_profile_autoload":cleanup.removed_profile_autoload,
         "deleted":true
     }))
-}
-fn use_capability(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    if let Some(tool_name) = string_arg(request, "tool_name").filter(|value| !value.is_empty()) {
-        return external_runtime::call(home, request, &tool_name);
-    }
-    let id = required_arg(request, "capability_id")?;
-    let capability = CapabilityStore::new(home.clone())
-        .require(&id)
-        .map_err(OpError::not_found)?;
-    object(json!({"capability": capability, "input": request.args.get("input"), "ready": true}))
 }
 
 const CAPABILITY_ADMIN_TOOLS: &[&str] = &[

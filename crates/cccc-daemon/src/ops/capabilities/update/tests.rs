@@ -208,7 +208,7 @@ fn enabled_group_count_uses_all_live_binding_scopes_without_double_counting() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn global_update_waits_for_inflight_call_and_its_state_write() {
+async fn global_update_replaces_stdio_installation_without_old_call_writeback() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let fixture = Fixture::new("normal");
     let release = fixture._temp.path().join("release-call");
@@ -288,8 +288,10 @@ async fn global_update_waits_for_inflight_call_and_its_state_write() {
         locks,
         fixture.request(json!("user"), &fingerprint),
     ));
-    let early_result = tokio::time::timeout(std::time::Duration::from_secs(1), &mut updating).await;
-    let remained_pending = early_result.is_err();
+    let early_result = tokio::time::timeout(std::time::Duration::from_secs(5), &mut updating).await;
+    let updated_before_release = early_result.is_ok();
+    let call_pending_before_release = !running.is_finished();
+    let after_update = fixture.state();
     // Always release the fixture before asserting, so a failed assertion cannot
     // leave a blocking worker waiting for its full production call deadline.
     std::fs::write(&release, "continue").expect("release running call");
@@ -298,7 +300,14 @@ async fn global_update_waits_for_inflight_call_and_its_state_write() {
         Ok(result) => result.expect("early update task"),
         Err(_) => updating.await.expect("pending update task"),
     };
-    assert!(remained_pending, "update must wait for the running call");
+    assert!(
+        updated_before_release,
+        "update returns before the old call is released"
+    );
+    assert!(
+        call_pending_before_release,
+        "the old stdio call remains at the fixture barrier"
+    );
     assert!(call.ok, "{:?}", call.error);
     assert!(update.ok, "{:?}", update.error);
     let state = fixture.state();
@@ -311,11 +320,20 @@ async fn global_update_waits_for_inflight_call_and_its_state_write() {
         current
     );
     assert_eq!(
-        state["actor_instances"][&fixture.first]["user"]["mcp:test:update"]["last_call"]["ok"],
-        true
+        state, after_update,
+        "the old call must not publish over the replacement"
+    );
+    assert!(
+        state["actor_instances"][&fixture.first]["user"]["mcp:test:update"]
+            .get("last_call")
+            .is_none()
     );
     assert_eq!(
         state["actor_instances"][&fixture.first]["user"]["mcp:test:update"]["state"],
         "runnable"
+    );
+    assert!(
+        fixture._temp.path().join("server.py").exists(),
+        "the stdio command remains available"
     );
 }

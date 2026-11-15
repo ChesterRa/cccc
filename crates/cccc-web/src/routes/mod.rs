@@ -40,6 +40,7 @@ mod nomcp_send;
 mod presentation;
 mod presentation_browser;
 pub(crate) mod process_recovery;
+mod quick_reply_templates;
 mod realtime;
 mod remote_access;
 mod remote_access_projection;
@@ -107,6 +108,7 @@ pub fn router() -> Router<AppState> {
         .merge(im::routes())
         .merge(messaging::routes())
         .merge(message_pins::routes())
+        .merge(quick_reply_templates::routes())
         .merge(messaging_cross_group::routes())
         .merge(presentation::routes())
         .merge(presentation_browser::routes())

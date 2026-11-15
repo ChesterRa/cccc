@@ -620,6 +620,14 @@
     "unknown": "クイック返信が送信されたか確認できませんでした。先にメッセージを確認してください。再試行すると重複して送信される場合があります。",
     "retry": "再試行"
   },
+  "replyTemplates": {
+    "button": "テンプレートを挿入",
+    "filter": "名前で絞り込み",
+    "builtIn": "組み込み",
+    "mine": "マイテンプレート",
+    "none": "一致するテンプレートはありません",
+    "manage": "テンプレートを管理"
+  },
   "download": "{{name}} をダウンロード",
   "openImagePreview": "画像プレビューを開く: {{name}}",
   "imagePreviewDialog": "画像プレビュー",

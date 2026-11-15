@@ -1314,6 +1314,20 @@ questions answered in their own card have no quick replies; reply to them in the
 CCCC cannot confirm that a quick reply was sent, the notice says so and offers **Retry**; check
 the messages first, because a retry can send the reply twice.
 
+Your own reply templates follow the built-in replies in that menu, without an emoji, and are
+sent the same way, at once. Manage them in **Settings › This instance › Quick Replies**: add,
+edit, reorder or delete up to 20, each with a name and a text that is sent exactly as written,
+then **Save**. If the list was saved from another window or device in the meantime, your edits
+stay on screen and **Reload** replaces them with the saved list.
+
+To start from a reply and edit it first, use **Insert a template** next to **Attach file** in
+the composer. Pick a built-in reply or one of your templates, filtering by name if you like, and
+its text is inserted at the cursor, replacing any selected text. **Manage templates** at the
+bottom of the list opens the settings page.
+
+The daemon keeps one template list per signed-in user: browsers and phones signed in as the
+same user see the same list, and a browser on this computer that is not signed in has its own.
+
 ## Project Context
 
 Open **Project Context** from the clipboard button in the Group header. The

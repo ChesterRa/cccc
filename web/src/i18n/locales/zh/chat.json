@@ -620,6 +620,14 @@
     "unknown": "暂时无法确认快速回复是否已发出。请先查看消息；重试可能会重复发送。",
     "retry": "重试"
   },
+  "replyTemplates": {
+    "button": "插入模板",
+    "filter": "按名称筛选",
+    "builtIn": "内置",
+    "mine": "我的模板",
+    "none": "没有匹配的模板",
+    "manage": "管理模板"
+  },
   "download": "下载 {{name}}",
   "openImagePreview": "打开图片预览：{{name}}",
   "imagePreviewDialog": "图片预览",
