@@ -1,9 +1,10 @@
+import { useLocalSessionSources } from "./useLocalSessionSources";
+import { useLocalSourceControls } from "./useLocalSourceControls";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Actor, LocalSessionSource } from "../../types";
 import {
   createLocalConversation,
-  fetchLocalSessions,
   joinLocalSessions,
   resumeLocalSessionAccess,
 } from "../../services/api/localSessions";
@@ -26,10 +27,7 @@ export function useLocalSessionsConnection({
   const { t } = useTranslation("layout");
   const groups = useGroupStore((state) => state.groups);
   const [targetGroupId, setTargetGroupId] = useState(initialTargetGroupId);
-  const [sources, setSources] = useState<LocalSessionSource[]>([]);
   const [selected, setSelected] = useState<LocalSessionSource[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [membership, setMembership] = useState<{
@@ -82,36 +80,13 @@ export function useLocalSessionsConnection({
   }, [targetGroupId, loadMembers, reviewing]);
   useEffect(() => {
     alive.current = true;
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const load = async () => {
-      const response = await fetchLocalSessions();
-      if (cancelled) return;
-      setLoading(false);
-      if (response.ok) {
-        setError("");
-        setSources(response.result.sources);
-        setSelected((previous) =>
-          previous.map(
-            (source) =>
-              response.result.sources.find((latest) => latest.source_id === source.source_id) || {
-                ...source,
-                connected: false,
-              },
-          ),
-        );
-      } else setError(response.error.message);
-      timer = setTimeout(() => {
-        void load();
-      }, 3000);
-    };
-    void load();
     return () => {
-      cancelled = true;
       alive.current = false;
-      clearTimeout(timer);
     };
   }, []);
+  const directory = useLocalSessionSources(setSelected);
+  const management = useLocalSourceControls(directory, submitting);
+  const { sources, loading, error } = directory;
   const selectedIds = selected.map((source) => source.source_id);
   const unavailableCount = selected.filter((source) => !source.connected).length;
   const displayedSources = [
@@ -132,6 +107,7 @@ export function useLocalSessionsConnection({
   const canSubmit =
     reviewing &&
     !busy &&
+    !management.busy &&
     !loading &&
     !error &&
     !targetUnavailable &&
@@ -141,7 +117,7 @@ export function useLocalSessionsConnection({
     unavailableCount === 0 &&
     !selected.some((source) => members.has(source.source_id));
   const start = async () => {
-    if (!canSubmit || submitting.current) return;
+    if (!canSubmit || submitting.current || management.pending.current) return;
     submitting.current = true;
     setBusy(true);
     try {
@@ -174,7 +150,7 @@ export function useLocalSessionsConnection({
     }
   };
   const resume = async (actor: Actor, source: LocalSessionSource) => {
-    if (busy || submitting.current || !targetGroupId) return;
+    if (busy || submitting.current || management.pending.current || !targetGroupId) return;
     const groupId = targetGroupId;
     submitting.current = true;
     setBusy(true);
@@ -206,7 +182,9 @@ export function useLocalSessionsConnection({
     displayedSources,
     loading,
     error,
-    busy,
+    busy: busy || management.busy,
+    directory,
+    management,
     notice,
     membership,
     membersReady,

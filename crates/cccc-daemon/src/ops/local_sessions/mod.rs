@@ -14,8 +14,10 @@ use std::sync::atomic::AtomicBool;
 
 mod codex;
 mod conversations;
+mod diagnostics;
 mod node_delivery;
 mod resume;
+mod source_control;
 mod store;
 mod transport;
 
@@ -25,6 +27,8 @@ mod tests;
 pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "local_session_list" => Operation::new(Read, list),
+        "local_session_control" => Operation::new(GlobalWrite, source_control::control),
+        "local_session_recheck" => Operation::new(ResourceOwned, diagnostics::recheck),
         "session_node_incoming" => Operation::new(ResourceOwned, node_delivery::receive),
         "session_node_capabilities" => Operation::new(Read, |_, request| {
             local(request)?;
@@ -89,6 +93,7 @@ fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let mut result = object(
         json!({"sources":store::sources(home)?.into_iter().filter(|s| include_offline || s.connected).collect::<Vec<_>>()}),
     )?;
+    source_control::project(home, &mut result)?;
     if let Some(source_id) = string_arg(request, "source_id") {
         let groups = GroupStore::new(home.clone()).map_err(OpError::io)?;
         let mut memberships = Vec::new();

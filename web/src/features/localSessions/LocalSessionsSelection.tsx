@@ -1,3 +1,4 @@
+import { LocalSourceManagement } from "./LocalSourceManagement";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { LocalSessionsList } from "./LocalSessionsList";
@@ -40,6 +41,13 @@ export function LocalSessionsSelection({
         isDark={isDark}
         limit={MAX_SELECTED_SESSIONS}
         onResume={connection.resume}
+        directory={connection.directory}
+        management={connection.management}
+      />
+      <LocalSourceManagement
+        directory={connection.directory}
+        management={connection.management}
+        busy={connection.busy}
       />
       {!connection.loading && connection.anyUnavailable && (
         <Button variant="ghost" className="min-h-11 text-sm" onClick={onShowTroubleshooting}>

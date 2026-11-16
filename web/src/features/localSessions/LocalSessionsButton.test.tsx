@@ -1,3 +1,5 @@
+import { deferDirectoryRead } from "./LocalSourceControl.fixtures";
+import { verifyUnavailableSource } from "./LocalSessionsUnavailable.actions";
 // @vitest-environment happy-dom
 import { createInstance } from "i18next";
 import { act } from "react";
@@ -31,6 +33,7 @@ vi.mock("../../services/api/actors", async (original) => ({
   fetchActors: mocks.members,
 }));
 vi.mock("../../components/ActorAvatar", () => ({ ActorAvatar: () => <span /> }));
+import { verifyEmptyDeviceFlow } from "./LocalSessionsDevice.actions";
 import { sessionPickerActions } from "./LocalSessionsButton.actions";
 import { LocalSessionsButton } from "./LocalSessionsButton";
 import { LocalSessionsDialog } from "./LocalSessionsDialog";
@@ -193,30 +196,12 @@ it("announces discovery loading instead of claiming that the session directory i
 });
 
 it("shows an empty directory as still watching, with the supported apps and described entry rows", async () => {
-  vi.useFakeTimers();
   mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [] } });
-  await open();
-  const statuses = Array.from(document.querySelectorAll('[role="status"]'), (el) => el.textContent);
-  expect(statuses).toContain(enLayout.localSessions.listening);
-  const apps = document.querySelector(`ul[aria-label="${enLayout.localSessions.setupRuntime}"]`);
-  expect(Array.from(apps?.querySelectorAll("li") || [], (li) => li.textContent)).toEqual([
-    "Codex",
-    "Claude Code",
-    "Pi",
-    "OpenCode",
-  ]);
-  for (const [title, description] of [
-    [enLayout.localSessions.localSetup, enLayout.localSessions.localSetupDescription],
-    [enLayout.localSessions.addDevice, enLayout.localSessions.deviceSetupDescription],
-  ]) {
-    const entry = button(title);
-    const describedBy = entry.getAttribute("aria-describedby")!;
-    expect(document.getElementById(describedBy)?.textContent).toBe(description);
-  }
-  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
-  await act(async () => vi.advanceTimersByTimeAsync(3000));
-  expect(document.body.textContent).not.toContain(enLayout.localSessions.listening);
-  expect(row(source.title).textContent).toContain(source.cwd);
+  await verifyEmptyDeviceFlow({
+    open,
+    source,
+    showSources: () => mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } }),
+  });
 });
 
 it("explains an empty directory without creating a Group or enabling an empty submission", async () => {
@@ -468,28 +453,15 @@ it("refreshes the real current Group and roster without re-enabling a paused mem
 });
 
 it("shows registered but unready sources without allowing their admission", async () => {
-  mocks.fetch.mockResolvedValue({
-    ok: true,
-    result: { sources: [{ ...source, connected: false }] },
+  await verifyUnavailableSource({
+    open,
+    source,
+    publish: (directory) => mocks.fetch.mockResolvedValue({ ok: true, result: directory }),
+    delayNextRead: () => deferDirectoryRead(mocks.fetch),
   });
-  await open();
-  expect(row(source.title).textContent).toContain(enLayout.localSessions.unavailable);
-  expect(checkbox(source.title).disabled).toBe(true);
-  expect(document.body.textContent).not.toContain(enLayout.localSessions.empty);
-  expect(primary().disabled).toBe(true);
-  // The hint names no cause; it leads to the troubleshooting steps.
-  const [setupDetails, troubleshooting] = Array.from(document.querySelectorAll("details")).filter(
-    (details) => !details.parentElement?.closest("details"),
-  );
-  expect(setupDetails?.open).toBe(false);
-  const scroll = vi.fn();
-  troubleshooting!.scrollIntoView = scroll;
-  await click(button(enLayout.localSessions.showTroubleshooting));
-  expect(troubleshooting?.open).toBe(true);
-  expect(scroll).toHaveBeenCalledOnce();
-  await click(setupDetails!.querySelector("summary"));
-  expect(setupDetails?.open).toBe(true);
-  expect(scroll).toHaveBeenCalledOnce();
+  expect(mocks.resume).not.toHaveBeenCalled();
+  expect(mocks.join).not.toHaveBeenCalled();
+  expect(mocks.create).not.toHaveBeenCalled();
 });
 
 it("marks existing members and resumes only a paused source on an explicit user action", async () => {

@@ -12,7 +12,7 @@ use tokio::{runtime::Runtime, sync::Semaphore};
 static RUNTIME: OnceLock<io::Result<Runtime>> = OnceLock::new();
 static QUALIFICATION: Semaphore = Semaphore::const_new(1);
 
-fn runtime() -> io::Result<&'static Runtime> {
+pub(super) fn runtime() -> io::Result<&'static Runtime> {
     RUNTIME
         .get_or_init(|| {
             tokio::runtime::Builder::new_multi_thread()

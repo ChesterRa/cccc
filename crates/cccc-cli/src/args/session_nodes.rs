@@ -13,6 +13,9 @@ pub enum SessionNodeAction {
         /// Read one pairing ticket from stdin; omit to resume the saved pairing.
         #[arg(long)]
         ticket_stdin: bool,
+        /// Enable this native integration before pairing; does not filter exported sessions.
+        #[arg(long, value_parser = ["codex", "claude"], requires = "ticket_stdin")]
+        runtime: Option<String>,
         /// Name shown on the hub for this computer.
         #[arg(long, default_value = "Remote computer")]
         name: String,

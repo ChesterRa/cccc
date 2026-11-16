@@ -94,7 +94,7 @@ where
     Ok(())
 }
 
-async fn response(
+pub(crate) async fn response(
     home: &HomeLayout,
     request: DaemonRequest,
     shutdown: &watch::Sender<bool>,

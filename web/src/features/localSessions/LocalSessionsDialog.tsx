@@ -33,7 +33,8 @@ export function LocalSessionsDialog({
     initialTargetGroupId,
     reviewing: view === "group",
   });
-  const hasSources = connection.displayedSources.length > 0;
+  const hasSources =
+    connection.displayedSources.length > 0 || !!connection.directory.removed_sources?.length;
   const empty = !connection.loading && !connection.error && !hasSources;
   const panelWidth =
     view === "sessions" && !hasSources

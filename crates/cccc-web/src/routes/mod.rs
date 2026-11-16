@@ -26,6 +26,7 @@ mod headless;
 mod headless_store;
 mod im;
 mod im_authorization;
+mod local_session_controls;
 mod local_sessions;
 mod membership;
 mod message_pins;

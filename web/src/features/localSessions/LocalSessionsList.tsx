@@ -1,3 +1,5 @@
+import { LocalSourceDiagnostic } from "./LocalSourceDiagnostic";
+import { LocalSourceActions, type SourceDirectory, type SourceManager } from "./LocalSourceActions";
 import type { Dispatch, SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import type { Actor, LocalSessionSource } from "../../types";
@@ -16,6 +18,8 @@ export function LocalSessionsList({
   isDark,
   limit,
   onResume,
+  directory,
+  management,
 }: {
   sources: LocalSessionSource[];
   selected: LocalSessionSource[];
@@ -25,6 +29,8 @@ export function LocalSessionsList({
   busy: boolean;
   isDark: boolean;
   limit: number;
+  directory: SourceDirectory;
+  management: SourceManager;
   onResume: (actor: Actor, source: LocalSessionSource) => Promise<void>;
 }) {
   const { t } = useTranslation("layout");
@@ -84,9 +90,9 @@ export function LocalSessionsList({
               return (
                 <div
                   key={source.source_id}
-                  className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-colors sm:flex-nowrap ${checked ? "bg-[var(--glass-tab-bg-active)]" : "hover:bg-[var(--glass-tab-bg-hover)]"}`}
+                  className={`flex flex-wrap items-center gap-3 px-4 py-3 transition-colors ${checked ? "bg-[var(--glass-tab-bg-active)]" : "hover:bg-[var(--glass-tab-bg-hover)]"}`}
                 >
-                  <label className="flex min-w-0 flex-1 basis-full cursor-pointer items-center gap-3 sm:basis-auto">
+                  <label className="flex min-w-0 flex-1 basis-full cursor-pointer items-center gap-3">
                     <input
                       type="checkbox"
                       className="h-4 w-4 shrink-0 accent-[var(--color-text-primary)]"
@@ -130,6 +136,18 @@ export function LocalSessionsList({
                       ) : null}
                     </span>
                   </label>
+                  <div className="min-w-0 w-full space-y-2">
+                    <LocalSourceDiagnostic
+                      state={directory.source_states?.[source.source_id]}
+                      supported={!!directory.capabilities?.source_diagnostics}
+                    />
+                    <LocalSourceActions
+                      source={source}
+                      directory={directory}
+                      management={management}
+                      busy={busy}
+                    />
+                  </div>
                   {member?.enabled === false ? (
                     <Button
                       type="button"

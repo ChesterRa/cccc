@@ -15,7 +15,10 @@ export function useSessionNodes() {
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [copying, setCopying] = useState(false);
   const [ticket, setTicket] = useState<{ ticket: string; expires_at: string } | null>(null);
+  const [ticketExpired, setTicketExpired] = useState(false);
   const [copied, setCopied] = useState(false);
   const [revokeId, setRevokeId] = useState("");
   const alive = useRef(true);
@@ -46,7 +49,24 @@ export function useSessionNodes() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!ticket) return;
+    const remaining = Date.parse(ticket.expires_at) - Date.now();
+    setTicketExpired(!Number.isFinite(remaining) || remaining <= 0);
+    if (!Number.isFinite(remaining) || remaining <= 0) return;
+    const timer = setTimeout(
+      () => {
+        setTicketExpired(true);
+        setCopied(false);
+      },
+      Math.min(remaining + 1, 2147483647),
+    );
+    return () => clearTimeout(timer);
+  }, [ticket]);
+
   const create = async () => {
+    setCreating(true);
+    setCopied(false);
     setBusy(true);
     setError("");
     try {
@@ -59,7 +79,10 @@ export function useSessionNodes() {
     } catch (error) {
       if (alive.current) setError(String(error));
     } finally {
-      if (alive.current) setBusy(false);
+      if (alive.current) {
+        setBusy(false);
+        setCreating(false);
+      }
     }
   };
   const revoke = async () => {
@@ -83,10 +106,18 @@ export function useSessionNodes() {
     }
   };
   const copy = async () => {
-    if (!ticket) return;
+    if (
+      !ticket ||
+      Date.parse(ticket.expires_at) <= Date.now() ||
+      !Number.isFinite(Date.parse(ticket.expires_at))
+    )
+      return;
+    setError("");
+    setCopying(true);
     const success = await copyTextToClipboard(ticket.ticket);
     if (alive.current) {
-      setCopied(success);
+      setCopying(false);
+      setCopied(success && Date.parse(ticket.expires_at) > Date.now());
       if (!success) setError(t("common:copyFailed"));
     }
   };
@@ -95,7 +126,10 @@ export function useSessionNodes() {
     supported,
     error: error || loadError,
     busy,
+    creating,
+    copying,
     ticket,
+    ticketExpired,
     copied,
     revokeId,
     setRevokeId,

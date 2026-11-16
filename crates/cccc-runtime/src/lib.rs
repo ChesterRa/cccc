@@ -13,7 +13,7 @@ mod native_codex;
 pub mod process_recovery;
 pub use native_codex::{
     NativeCodexSessionInfo, NativeCodexSteerOutcome, native_codex_can_receive,
-    native_codex_session_info, native_codex_try_steer,
+    native_codex_receive_state, native_codex_session_info, native_codex_try_steer,
 };
 #[cfg(all(test, windows))]
 mod manager_windows_tests;

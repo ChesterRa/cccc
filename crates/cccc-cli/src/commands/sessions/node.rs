@@ -1,6 +1,7 @@
 use super::*;
 use crate::args::SessionNodeAction;
-use tokio::io::AsyncBufReadExt;
+#[path = "node_connect.rs"]
+mod connect;
 
 pub(super) async fn run(home: &HomeLayout, action: SessionNodeAction) -> Result<()> {
     match action {
@@ -15,20 +16,11 @@ pub(super) async fn run(home: &HomeLayout, action: SessionNodeAction) -> Result<
             cccc_web::session_node::stop(home).await;
             Ok(())
         }
-        SessionNodeAction::Connect { ticket_stdin, name } => {
-            ensure_daemon(home).await?;
-            let ticket = if ticket_stdin {
-                eprintln!("Paste the hub's session-node ticket, then press Enter:");
-                let mut line = String::new();
-                tokio::io::BufReader::new(tokio::io::stdin().take(16 * 1024 + 1))
-                    .read_line(&mut line)
-                    .await?;
-                Some(cccc_web::session_node::decode_ticket(&line)?)
-            } else {
-                None
-            };
-            cccc_web::session_node::connect(home, ticket, &name).await
-        }
+        SessionNodeAction::Connect {
+            ticket_stdin,
+            name,
+            runtime,
+        } => connect::run(home, ticket_stdin, &name, runtime.as_deref()).await,
         SessionNodeAction::Status => {
             let mut status = json!({"endpoint":cccc_core::session_nodes::endpoint(home)?,"devices":cccc_core::session_nodes::peers(home)?});
             if let Some(client) = cccc_core::session_nodes::saved_client(home)? {

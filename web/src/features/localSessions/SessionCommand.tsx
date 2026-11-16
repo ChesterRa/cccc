@@ -4,9 +4,19 @@ import { CheckIcon, CopyIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import { copyTextToClipboard } from "../../utils/copy";
 
-export function SessionCommand({ command }: { command: string }) {
+export function SessionCommand({
+  command,
+  copyLabel,
+  disabled = false,
+}: {
+  command: string;
+  copyLabel?: string;
+  disabled?: boolean;
+}) {
   const { t } = useTranslation("layout");
   const [result, setResult] = useState<"idle" | "copied" | "failed">("idle");
+  const label =
+    result === "copied" ? t("common:copied") : copyLabel || t("localSessions.copyCommand");
   return (
     <div className="space-y-1">
       <div className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-2">
@@ -16,8 +26,9 @@ export function SessionCommand({ command }: { command: string }) {
           variant="ghost"
           size="icon"
           className="h-[44px] w-[44px] shrink-0"
-          title={t(result === "copied" ? "common:copied" : "localSessions.copyCommand")}
-          aria-label={t(result === "copied" ? "common:copied" : "localSessions.copyCommand")}
+          title={label}
+          aria-label={label}
+          disabled={disabled}
           onClick={async () =>
             setResult((await copyTextToClipboard(command)) ? "copied" : "failed")
           }

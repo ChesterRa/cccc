@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
 
+pub mod source_control;
+
 /// Global native configuration can also be loaded by CCCC-owned Actors and
 /// assistants. It must not replace their existing identity or receive path.
 pub fn cccc_owned_environment() -> bool {
@@ -381,6 +383,12 @@ pub fn set_integration_disabled(
 
 pub fn read(home: &HomeLayout, source_id: &str) -> io::Result<NativeSession> {
     let session = read_record(home, source_id)?;
+    if source_control::blocked(home, source_id)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "CCCC access for this source was explicitly removed; restore it before reconnecting",
+        ));
+    }
     if session.retired.is_some() || integration_disabled(home, session.runtime)? {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -474,6 +482,12 @@ fn write_lifecycle(
 ) -> io::Result<NativeSession> {
     home.initialize().map_err(io::Error::other)?;
     fs::with_exclusive_lock(&home.root().join("state/local_sessions.lock"), || {
+        if source_control::blocked(home, &session.source_id)? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "CCCC source access was explicitly removed",
+            ));
+        }
         if integration_disabled(home, session.runtime)? {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -644,7 +658,13 @@ pub fn scan(home: &HomeLayout) -> io::Result<(Vec<NativeSession>, Vec<String>)> 
                 LocalSessionRuntime::Opencode => opencode_disabled,
             }
     });
-    Ok((sessions, errors))
+    let mut available = Vec::new();
+    for session in sessions {
+        if !source_control::blocked(home, &session.source_id)? {
+            available.push(session);
+        }
+    }
+    Ok((available, errors))
 }
 
 #[cfg(all(test, any(target_os = "linux", target_os = "macos", windows)))]
