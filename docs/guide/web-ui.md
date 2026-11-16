@@ -1306,27 +1306,39 @@ For concrete delegated work that needs an owner, done criterion, evidence, hando
 Choose **Reply** on a message to quote it and reply in the composer.
 
 **Quick reply**, in the **More** menu of a message from one of the Group's agents, sends a ready
-reply at once without the composer: **Agree, go ahead**, **Explain why**, **Try another way** or
-**Give me choices**, each led by an emoji under the caption **Quick reply · sends immediately**.
-It goes to that agent alone, quotes the message, and a notice confirms it.
-Chet's messages, messages from or sent to another Group or CCCC instance and
-questions answered in their own card have no quick replies; reply to them in the composer. When
-CCCC cannot confirm that a quick reply was sent, the notice says so and offers **Retry**; check
-the messages first, because a retry can send the reply twice.
+reply at once without the composer, under the caption **Quick reply · sends immediately**. It
+goes to that agent alone, quotes the message, and a notice confirms it. Chet's messages,
+messages from or sent to another Group or CCCC instance and questions answered in their own card
+have no quick replies; reply to them in the composer. When CCCC cannot confirm that a quick reply
+was sent, the notice says so and offers **Retry**; check the messages first, because a retry can
+send the reply twice.
 
-Your own reply templates follow the built-in replies in that menu, without an emoji, and are
-sent the same way, at once. Manage them in **Settings › This instance › Quick Replies**: add,
-edit, reorder or delete up to 20, each with a name and a text that is sent exactly as written,
-then **Save**. If the list was saved from another window or device in the meantime, your edits
-stay on screen and **Reload** replaces them with the saved list.
+The menu lists your quick replies in the order you saved them. A new list starts with four
+default replies, **Agree, go ahead**, **Explain why**, **Try another way** and **Give me
+choices**, each led by an emoji. Manage the list in **Settings › This instance › Quick Replies**:
+add, edit, reorder or delete up to 24 replies, the default ones included, each with a name and a
+text that is sent exactly as written, then **Save**. A default reply's name or text that you
+leave unchanged follows the interface language; one you change stays as written in every
+language, and the reply is shown without its emoji. **Restore default** puts a changed default
+reply back as it was, and a deleted one can be brought back from the same page: it returns at
+the end of the list, as its default, without changing the other replies. If the list was saved
+from another window or device in the meantime, your edits stay on screen and **Reload** replaces
+them with the saved list.
+
+Each time you open the menu or the template list, it reads your replies again and shows a change
+saved on another device once that read succeeds; if the read fails, it keeps what it showed.
+Before the first read succeeds, neither offers a reply; if that read fails, they say so, and
+opening them again tries again.
 
 To start from a reply and edit it first, use **Insert a template** next to **Attach file** in
-the composer. Pick a built-in reply or one of your templates, filtering by name if you like, and
-its text is inserted at the cursor, replacing any selected text. **Manage templates** at the
-bottom of the list opens the settings page.
+the composer. Pick one of your quick replies, filtering by name if you like, and its text is
+inserted at the cursor, replacing any selected text. The list opens above the input, near where
+you are typing, or across the input on a phone, and each row shows the name and the first
+non-empty line of the text. **Manage templates** at the bottom of the list opens the settings
+page.
 
-The daemon keeps one template list per signed-in user: browsers and phones signed in as the
-same user see the same list, and a browser on this computer that is not signed in has its own.
+The daemon keeps your quick replies for each signed-in user: browsers and phones signed in as the
+same user see the same replies, and a browser on this computer that is not signed in has its own.
 
 ## Project Context
 

@@ -623,10 +623,9 @@
   "replyTemplates": {
     "button": "Insert a template",
     "filter": "Filter by name",
-    "builtIn": "Built-in",
-    "mine": "My templates",
     "none": "No matching templates",
-    "manage": "Manage templates"
+    "manage": "Manage templates",
+    "unavailable": "Could not load quick replies"
   },
   "download": "Download {{name}}",
   "openImagePreview": "Open image preview: {{name}}",

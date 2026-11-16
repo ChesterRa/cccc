@@ -4,27 +4,33 @@ import { onAuthChange } from "../../services/api/base";
 import {
   fetchQuickReplyTemplates,
   saveQuickReplyTemplates,
-  type QuickReplyTemplate,
-  type QuickReplyTemplateDraft,
+  type QuickReplyDraftEntry,
   type QuickReplyTemplateList,
 } from "../../services/api/quickReplyTemplates";
+import { replyEntriesOf, type QuickReplyEntry } from "./effective";
 
-const DEFAULT_LIMIT = 20;
+const DEFAULT_LIMIT = 24;
 
 type TemplateState = {
-  templates: QuickReplyTemplate[];
+  /** The person's replies in display order. Until `loaded`, nobody knows which default replies
+   *  are changed or deleted, so no list offers one. */
+  replies: QuickReplyEntry[];
   revision: number;
   limit: number;
   loaded: boolean;
+  /** Why the first read failed, until a read succeeds. Once a list is shown, a failed reread
+   *  keeps it and leaves this empty. */
+  loadError: string | null;
   /** Changes whenever this browser's credentials change; the list then starts empty again. */
   epoch: number;
 };
 
 export const useQuickReplyTemplateStore = create<TemplateState>(() => ({
-  templates: [],
+  replies: [],
   revision: 0,
   limit: DEFAULT_LIMIT,
   loaded: false,
+  loadError: null,
   epoch: 0,
 }));
 
@@ -44,10 +50,11 @@ function forget() {
   loading = null;
   readOnce = false;
   useQuickReplyTemplateStore.setState((state) => ({
-    templates: [],
+    replies: [],
     revision: 0,
     limit: DEFAULT_LIMIT,
     loaded: false,
+    loadError: null,
     epoch: state.epoch + 1,
   }));
 }
@@ -58,10 +65,11 @@ const currentEpoch = () => useQuickReplyTemplateStore.getState().epoch;
 
 function show(list: QuickReplyTemplateList) {
   useQuickReplyTemplateStore.setState({
-    templates: Array.isArray(list.templates) ? list.templates : [],
+    replies: Array.isArray(list.replies) ? replyEntriesOf(list.replies) : [],
     revision: list.revision,
     limit: list.limit || DEFAULT_LIMIT,
     loaded: true,
+    loadError: null,
   });
 }
 
@@ -77,7 +85,15 @@ export function loadQuickReplyTemplates(): Promise<QuickReplyTemplatesResult> {
   const started = ++sequence;
   const request = fetchQuickReplyTemplates()
     .then((response): QuickReplyTemplatesResult => {
-      if (!response.ok) return failed(response.error);
+      if (!response.ok) {
+        const state = useQuickReplyTemplateStore.getState();
+        if (epoch === currentEpoch() && !state.loaded) {
+          useQuickReplyTemplateStore.setState({
+            loadError: response.error.message || response.error.code,
+          });
+        }
+        return failed(response.error);
+      }
       if (epoch === currentEpoch() && started > savedAt) show(response.result);
       return { ok: true };
     })
@@ -103,7 +119,7 @@ export function usePreloadQuickReplyTemplates(enabled: boolean): void {
  *  between answers quick_reply_templates_conflict and changes nothing. */
 export async function saveQuickReplyTemplateList(
   baseRevision: number,
-  drafts: QuickReplyTemplateDraft[],
+  drafts: QuickReplyDraftEntry[],
 ): Promise<QuickReplyTemplatesResult> {
   const epoch = currentEpoch();
   const response = await saveQuickReplyTemplates(baseRevision, drafts);

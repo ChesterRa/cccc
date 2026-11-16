@@ -5552,13 +5552,12 @@ page, so two continuously visible clients do not promise immediate updates.
 
 #### `quick_reply_templates_get`
 
-Return the reply templates of one person. A template has a short `name`, shown
-where it is chosen, and the `text` that is sent or inserted. This is a user
-operation: `by` may be omitted or `user`; an Actor, `system` or another value is
-rejected with `permission_denied`. The owner is `caller_id`, which the Web port
-sets to the signed-in access identity's `user_id` (`local` for the loopback
-administrator); a request without `caller_id` reads the `local` list. Templates
-are global to the instance, not per Group, and are never translated.
+Return one person's ordered quick replies. This is a user operation: `by` may
+be omitted or `user`; an Actor, `system` or another value is rejected with
+`permission_denied`. The owner is `caller_id`, which the Web port sets to the
+signed-in access identity's `user_id` (`local` for the loopback administrator);
+a request without `caller_id` reads the `local` list. Replies are global to the
+instance, not per Group.
 
 ```ts
 {
@@ -5570,53 +5569,90 @@ are global to the instance, not per Group, and are never translated.
 Result:
 ```ts
 {
-  templates: Array<{ id: string, name: string, text: string }> // display order
+  replies: Array<
+    { builtin: "proceed" | "why" | "rethink" | "choices", name?: string, text?: string }
+    | { id: string, name: string, text: string }
+  > // complete display order; defaults and personal replies may be interleaved
   revision: number // 0 before the first save
   updated_at: string // empty before the first save
-  limit: number // 20
+  limit: number // 24, including default replies
 }
 ```
 
+A default's `builtin` identifies its original content in the Web. An absent
+`name` or `text` uses that field's default in the interface language; a present
+field is the person's override, never translated. A personal reply's `name`
+and `text` are always returned as written. Names and texts from the default
+catalog are not stored or translated by the daemon.
+
+Before a person's first save, the list contains the four unmodified defaults in
+this order: `proceed`, `why`, `rethink`, `choices`. An explicitly saved empty list
+stays empty. Reads never create or rewrite the file. Earlier saved records
+without an explicit order retain their visible defaults first and personal
+replies in their original order, including any overrides and hidden defaults.
 An unreadable store returns `quick_reply_templates_invalid` instead of an empty
 list.
 
 #### `quick_reply_templates_set`
 
-Replace the caller's whole list, in display order. The same user restriction
-and owner rules as `quick_reply_templates_get` apply, and the result has the
-same shape.
+Replace the caller's complete visible list, in array order. The same user
+restriction and owner rules as `quick_reply_templates_get` apply, and the result
+has the same shape.
 
 ```ts
 {
   by?: "user"
   caller_id?: string
   if_revision: number // the revision last read
-  templates: Array<{ id?: string, name: string, text: string }>
+  replies: Array<
+    { builtin: "proceed" | "why" | "rethink" | "choices", name?: string, text?: string }
+    | { id?: string, name: string, text: string }
+  >
 }
 ```
 
 - `if_revision` is required. When the stored revision differs, the call fails
   with `quick_reply_templates_conflict` and `details.revision`, so a save from
   another browser is reported instead of overwritten.
-- Saving an identical list returns the current revision unchanged. Any other
-  save, including an empty list, advances the revision by one.
-- A name is trimmed and is 1–40 characters on one line. A text is stored and
-  returned exactly as written, leading and trailing line breaks and indentation
-  included; it is at most 10,000 characters, counted as stored, and not only
-  white space. A list holds at most 20 templates. An `id` is up to 64 ASCII
-  letters, digits, `_` or `-`, unique in the list; a missing `id` is generated.
-  A violation returns `invalid_args` and changes nothing.
+- `replies` is required and must be an array. `[]` removes every reply; a missing
+  value or `null` returns `invalid_args`, not an empty list. The request no longer
+  uses separate `templates` and `builtins` fields.
+- Each default kind may occur once. Personal IDs must be unique. There are at
+  most 24 visible replies in total; removing a default frees a place for another
+  reply. The array order is used in Settings, the message menu and the composer.
+- A default accepts only `builtin`, `name` and `text`; a personal reply accepts
+  only `id`, `name` and `text`. Unknown fields, mixed identities, unknown default
+  kinds, wrong types and explicit `null` fields return `invalid_args`.
+- A name is trimmed and is 1–40 Unicode code points on one line. A text is stored
+  and returned exactly as written, including line breaks and indentation; it is
+  at most 10,000 code points, counted as stored, and not only white space. These
+  rules apply to a default's present overrides as well as personal replies.
+  A personal `id` is 1–64 ASCII letters, digits, `_` or `-`; a missing `id` is
+  generated. Any violation refuses the entire save and changes nothing.
+- Leaving out a default removes it from the visible list while preserving its
+  earlier stored overrides privately. A present default replaces its overrides
+  with the optional `name` and `text` in that entry. Keeping only `{ builtin }`
+  restores that one entry to its defaults without moving it; appending such an
+  entry adds a removed default back at the end, without changing other replies.
+  A personal reply absent from the array is deleted.
+- Saving an identical list returns the current revision unchanged and does not
+  rewrite the file merely to add an explicit order. Any changed save, including
+  removing every reply, advances the revision by one.
 - An unreadable store returns `quick_reply_templates_invalid` and is not written
-  over.
+  over, including when the invalid record belongs to another identity.
 
 On the Web, `GET /api/v1/quick-reply-templates` reads the signed-in identity's
-list and `PUT` to the same path accepts `{ if_revision, templates }`. Every
+list and `PUT` to the same path accepts `{ if_revision, replies }`. Every
 authorized Web identity, administrator or not, reaches only its own list;
 Exhibit Web and Actor ports do not expose it. A message's quick reply menu sends
-a template's text at once, as it sends the built-in replies, without touching
-the composer's draft, attachments or reply target. The composer's template
-button inserts the text at the remembered caret, replacing a selection as typing
-would, and leaves the rest of the draft in place.
+one entry's text immediately without touching the composer's draft, attachments
+or reply target. The composer's template button inserts the text at the
+remembered caret, replacing a selection as typing would, and leaves the rest of
+the draft in place. Both use the same saved order, with neither a fixed default
+section nor separate quotas. Each reads the list again when opened and shows
+the result once that read succeeds; a failed refresh keeps the last valid list.
+Until a first read succeeds, neither offers defaults in place of unknown saved
+replies or removals.
 
 
 #### `send`

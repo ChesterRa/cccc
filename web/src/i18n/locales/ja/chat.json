@@ -623,10 +623,9 @@
   "replyTemplates": {
     "button": "テンプレートを挿入",
     "filter": "名前で絞り込み",
-    "builtIn": "組み込み",
-    "mine": "マイテンプレート",
     "none": "一致するテンプレートはありません",
-    "manage": "テンプレートを管理"
+    "manage": "テンプレートを管理",
+    "unavailable": "クイック返信を読み込めませんでした"
   },
   "download": "{{name}} をダウンロード",
   "openImagePreview": "画像プレビューを開く: {{name}}",

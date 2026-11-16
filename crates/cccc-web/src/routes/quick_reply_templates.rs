@@ -1,18 +1,11 @@
 use axum::{Extension, Json, Router, extract::State, routing::get};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::{
     AppState,
-    api::{self, ApiResult, object},
+    api::{self, ApiResult, body_object, object},
     auth::Principal,
 };
-
-#[derive(Deserialize)]
-struct TemplatesUpdate {
-    if_revision: Value,
-    templates: Value,
-}
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new().route("/api/v1/quick-reply-templates", get(read).put(save))
@@ -34,17 +27,15 @@ async fn read(
 async fn save(
     State(state): State<AppState>,
     Extension(principal): Extension<Principal>,
-    Json(input): Json<TemplatesUpdate>,
+    Json(body): Json<Value>,
 ) -> ApiResult {
-    api::call(
-        &state,
-        "quick_reply_templates_set",
-        object(json!({
-            "by":"user",
-            "caller_id":principal.user_id,
-            "if_revision":input.if_revision,
-            "templates":input.templates,
-        })),
-    )
-    .await
+    let mut body = body_object(body)?;
+    let mut args = object(json!({"by":"user","caller_id":principal.user_id}));
+    // Identity always comes from the Principal; the complete ordered list is passed as sent.
+    for key in ["if_revision", "replies"] {
+        if let Some(value) = body.remove(key) {
+            args.insert(key.into(), value);
+        }
+    }
+    api::call(&state, "quick_reply_templates_set", args).await
 }

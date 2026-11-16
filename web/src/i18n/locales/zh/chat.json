@@ -623,10 +623,9 @@
   "replyTemplates": {
     "button": "插入模板",
     "filter": "按名称筛选",
-    "builtIn": "内置",
-    "mine": "我的模板",
     "none": "没有匹配的模板",
-    "manage": "管理模板"
+    "manage": "管理模板",
+    "unavailable": "暂时读不到快速回复"
   },
   "download": "下载 {{name}}",
   "openImagePreview": "打开图片预览：{{name}}",

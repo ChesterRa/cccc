@@ -37,7 +37,11 @@ import {
 import { getComposerCanSend, hasConcreteReplyRecipients } from "./chatComposerActions";
 import { ComposerFilePreview } from "./ComposerFilePreview";
 import { ComposerMentionOverlay } from "./ComposerMentionOverlay";
-import { getMentionMenuLeft, getMentionTriggerX } from "./mentionMenuPosition";
+import {
+  getComposerMenuAnchorRect,
+  getMentionMenuLeft,
+  getMentionTriggerX,
+} from "./mentionMenuPosition";
 import { ChatMentionMenu } from "./ChatMentionMenu";
 import { useComposerMentionInput } from "./useComposerMentionInput";
 import {
@@ -374,6 +378,16 @@ export function ChatComposer({
     },
     [composerRef, isSmallScreen],
   );
+  const getTemplateAnchorRect = useCallback(() => {
+    const el = composerRef.current;
+    return el
+      ? getComposerMenuAnchorRect({
+          textarea: el,
+          wide: isSmallScreen,
+          menuWidth: MENTION_MENU_DESKTOP_WIDTH,
+        })
+      : null;
+  }, [composerRef, isSmallScreen]);
   const {
     clearActiveMention,
     rememberSelection,
@@ -1356,6 +1370,8 @@ export function ChatComposer({
                 <ComposerTemplatePicker
                   className={composerToolButtonClassName}
                   disabled={!selectedGroupId || busy === "send" || sendInFlight}
+                  getAnchorRect={getTemplateAnchorRect}
+                  wide={isSmallScreen}
                   onRememberSelection={() => {
                     if (composerRef.current) rememberSelection(composerRef.current);
                   }}

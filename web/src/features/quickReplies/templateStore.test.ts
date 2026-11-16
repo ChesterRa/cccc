@@ -17,25 +17,26 @@ vi.mock("../../services/api/quickReplyTemplates", () => ({
   saveQuickReplyTemplates: api.save,
 }));
 
+type Entry =
+  | { builtin: string; name?: string; text?: string }
+  | { id: string; name: string; text: string };
 type Answer = {
   ok: true;
-  result: {
-    templates: { id: string; name: string; text: string }[];
-    revision: number;
-    updated_at: string;
-    limit: number;
-  };
+  result: { replies: Entry[]; revision: number; updated_at: string; limit: number };
 };
 
-const answer = (name: string, revision: number): Answer => ({
+// One reply of the person's own, after any default replies given.
+const answer = (name: string, revision: number, defaults: Entry[] = []): Answer => ({
   ok: true,
   result: {
-    templates: [{ id: `id-${name}`, name, text: `${name} text` }],
+    replies: [...defaults, { id: `id-${name}`, name, text: `${name} text` }],
     revision,
     updated_at: "",
-    limit: 20,
+    limit: 24,
   },
 });
+const defaultsShown = () => state().replies.filter((reply) => "builtin" in reply);
+const state = () => useQuickReplyTemplateStore.getState();
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -48,7 +49,7 @@ function deferred<T>() {
 const shown = () => {
   const state = useQuickReplyTemplateStore.getState();
   return {
-    names: state.templates.map((template) => template.name),
+    names: state.replies.flatMap((reply) => ("builtin" in reply ? [] : [reply.name])),
     revision: state.revision,
     loaded: state.loaded,
   };
@@ -66,9 +67,13 @@ afterEach(() => {
 
 describe("quick reply template store", () => {
   it("starts empty for a new sign-in and never shows an answer meant for the previous one", async () => {
-    api.fetch.mockResolvedValueOnce(answer("A", 7));
+    api.fetch.mockResolvedValueOnce(answer("A", 7, [{ builtin: "proceed", name: "A go" }]));
     await loadQuickReplyTemplates();
     expect(shown()).toEqual({ names: ["A"], revision: 7, loaded: true });
+    expect(state().replies).toEqual([
+      { builtin: "proceed", name: "A go" },
+      { id: "id-A", name: "A", text: "A text" },
+    ]);
 
     const lateRead = deferred<Answer>();
     const lateSave = deferred<Answer>();
@@ -79,6 +84,7 @@ describe("quick reply template store", () => {
 
     setAuthToken("token-b");
     expect(shown()).toEqual({ names: [], revision: 0, loaded: false });
+    expect(state().replies).toEqual([]);
 
     const readB = deferred<Answer>();
     api.fetch.mockReturnValueOnce(readB.promise);
@@ -86,17 +92,50 @@ describe("quick reply template store", () => {
     expect(api.fetch).toHaveBeenCalledTimes(3);
 
     // The previous person's answers arrive late, at higher revisions, while B's read is out.
-    lateRead.resolve(answer("A", 8));
-    lateSave.resolve(answer("A2", 9));
+    lateRead.resolve(answer("A", 8, [{ builtin: "why" }]));
+    lateSave.resolve(answer("A2", 9, [{ builtin: "why" }]));
     await readA;
     await saveA;
     expect(shown()).toEqual({ names: [], revision: 0, loaded: false });
+    expect(state().replies).toEqual([]);
     expect(loadQuickReplyTemplates()).toBe(loadB);
     expect(api.fetch).toHaveBeenCalledTimes(3);
 
     readB.resolve(answer("B", 2));
     await loadB;
     expect(shown()).toEqual({ names: ["B"], revision: 2, loaded: true });
+  });
+
+  it("reports only a failed first read, and keeps what it shows when a later read fails", async () => {
+    const offline = { ok: false, error: { code: "NETWORK_ERROR", message: "offline" } };
+    api.fetch.mockResolvedValueOnce(offline);
+    expect(await loadQuickReplyTemplates()).toEqual({
+      ok: false,
+      code: "NETWORK_ERROR",
+      message: "offline",
+    });
+    expect(state()).toMatchObject({ loaded: false, loadError: "offline", replies: [] });
+    // A change of sign-in forgets the failure with the list.
+    setAuthToken("token-c");
+    expect(state().loadError).toBeNull();
+
+    api.fetch.mockResolvedValueOnce(offline);
+    await loadQuickReplyTemplates();
+    expect(state().loadError).toBe("offline");
+    api.fetch.mockResolvedValueOnce(answer("A", 3, [{ builtin: "why" }]));
+    await loadQuickReplyTemplates();
+    expect(state()).toMatchObject({ loaded: true, loadError: null, limit: 24 });
+    expect(defaultsShown()).toEqual([{ builtin: "why" }]);
+
+    // Once a list is shown, a failed reread keeps it rather than falling back to the defaults.
+    api.fetch.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "daemon_unavailable", message: "" },
+    });
+    expect((await loadQuickReplyTemplates()).ok).toBe(false);
+    expect(shown()).toEqual({ names: ["A"], revision: 3, loaded: true });
+    expect(state().loadError).toBeNull();
+    expect(defaultsShown()).toEqual([{ builtin: "why" }]);
   });
 
   it("drops a read that started before a save was shown, and shows any later read as it is", async () => {
@@ -121,8 +160,12 @@ describe("quick reply template store", () => {
   it("is read once by the page for all its rows, not on a read-only page, and again after a change of sign-in", async () => {
     api.fetch.mockResolvedValue(answer("A", 1));
     function Row() {
-      const templates = useQuickReplyTemplateStore((state) => state.templates);
-      return createElement("span", null, templates.map((template) => template.name).join(","));
+      const replies = useQuickReplyTemplateStore((state) => state.replies);
+      return createElement(
+        "span",
+        null,
+        replies.map((reply) => ("builtin" in reply ? reply.builtin : reply.name)).join(","),
+      );
     }
     function Page({ readOnly }: { readOnly: boolean }) {
       usePreloadQuickReplyTemplates(!readOnly);

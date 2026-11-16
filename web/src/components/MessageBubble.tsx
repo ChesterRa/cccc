@@ -27,8 +27,6 @@ import { getDelegationDisplayText, isDelegationSourceOutbound } from "./messageB
 import { MessageActions } from "./messageBubble/MessageActions";
 import { MessagePathContext, messagePathTarget } from "./messageBubble/messagePathContext";
 import {
-  QUICK_REPLY_EMOJI,
-  QUICK_REPLY_KINDS,
   sendQuickReply,
   type QuickReplySource,
   type QuickReplyTarget,
@@ -53,7 +51,11 @@ import { MessageRoutingMetadata } from "./messageBubble/MessageRoutingMetadata";
 import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
 import { PendingReplyStoreContext } from "../features/pendingReplies/store";
 import { useMessagePinned } from "../features/pins/pinStore";
-import { useQuickReplyTemplateStore } from "../features/quickReplies/templateStore";
+import {
+  loadQuickReplyTemplates,
+  useQuickReplyTemplateStore,
+} from "../features/quickReplies/templateStore";
+import { effectiveReplyTemplates } from "../features/quickReplies/effective";
 import { PinIcon } from "./Icons";
 import { useGroupStore, useUIStore } from "../stores";
 import { CHET_NAME, CHET_PRINCIPAL, chetGeneration, isChetMessage } from "../utils/chetIdentity";
@@ -553,9 +555,26 @@ export const MessageBubble = memo(
       };
     }, [actors, ev, groupGeneration, groupId, isStreaming, msgData, senderActor, srcGroupId]);
     const showNotice = useUIStore((state) => state.showNotice);
-    const replyTemplates = useQuickReplyTemplateStore((state) => state.templates);
+    const replyEntries = useQuickReplyTemplateStore((state) => state.replies);
+    const replyTemplatesLoaded = useQuickReplyTemplateStore((state) => state.loaded);
+    const replyTemplatesError = useQuickReplyTemplateStore((state) => state.loadError);
+    const onQuickReplyOpen = () => {
+      // Like the composer list, opening rereads saved changes; rendering a row never reads.
+      // A successful cache stays usable while the request is pending or if it fails.
+      if (quickReplyTarget) void loadQuickReplyTemplates();
+    };
     const quickReplies = useMemo(() => {
       if (!quickReplyTarget) return undefined;
+      if (!replyTemplatesLoaded) {
+        return [
+          {
+            key: "quick-unavailable",
+            label: replyTemplatesError ? t("replyTemplates.unavailable") : t("common:loading"),
+            disabled: true,
+            run: (): void => undefined,
+          },
+        ];
+      }
       // The text is fixed when the entry is clicked, so a retry sends what was first sent.
       const send = async (kind: QuickReplySource, label: string, text: string) => {
         const result = await sendQuickReply(quickReplyTarget, kind, text);
@@ -573,24 +592,21 @@ export const MessageBubble = memo(
           });
         }
       };
-      // The built-in replies come first, then the person's own templates in their order.
-      return [
-        ...QUICK_REPLY_KINDS.map((kind) => {
-          const label = t(`quickReply.${kind}`);
-          return {
-            key: `quick-${kind}`,
-            label,
-            emoji: QUICK_REPLY_EMOJI[kind],
-            run: () => void send(kind, label, t(`quickReply.${kind}Text`)),
-          };
-        }),
-        ...replyTemplates.map((template) => ({
-          key: `quick-custom-${template.id}`,
-          label: template.name,
-          run: () => void send(`custom:${template.id}`, template.name, template.text),
-        })),
-      ];
-    }, [quickReplyTarget, replyTemplates, senderDisplayName, showNotice, t]);
+      return effectiveReplyTemplates(t, replyEntries).map((template) => ({
+        key: `quick-${template.source}`,
+        label: template.name,
+        emoji: template.emoji,
+        run: () => void send(template.source, template.name, template.text),
+      }));
+    }, [
+      quickReplyTarget,
+      replyEntries,
+      replyTemplatesLoaded,
+      replyTemplatesError,
+      senderDisplayName,
+      showNotice,
+      t,
+    ]);
 
     const routingMetadata = (
       <MessageRoutingMetadata
@@ -708,6 +724,7 @@ export const MessageBubble = memo(
       eventId: typeof ev.id === "string" ? String(ev.id) : undefined,
       event: ev,
       quickReplies,
+      onQuickReplyOpen,
       pinned,
       onTogglePin: pinnableId && onTogglePin ? () => onTogglePin(pinnableId, !pinned) : undefined,
     };

@@ -7,6 +7,7 @@ import {
   loadQuickReplyTemplates,
   resetQuickReplyTemplatesForTest,
 } from "../../features/quickReplies/templateStore";
+import type { QuickReplyEntry } from "../../features/quickReplies/effective";
 import type { Actor, LedgerEvent } from "../../types";
 import { MessageBubble } from "../MessageBubble";
 import { MessageActions } from "./MessageActions";
@@ -34,9 +35,25 @@ vi.mock("../../services/api/quickReplyTemplates", async (importOriginal) => ({
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
-const templateList = (templates: { id: string; name: string; text: string }[], revision = 1) => ({
+const DEFAULTS: QuickReplyEntry[] = [
+  { builtin: "proceed" },
+  { builtin: "why" },
+  { builtin: "rethink" },
+  { builtin: "choices" },
+];
+// The person's list: the given default entries (all four, unchanged, unless given), then theirs.
+const templateList = (
+  templates: { id: string; name: string; text: string }[],
+  revision = 1,
+  defaults: QuickReplyEntry[] = DEFAULTS,
+) => ({
   ok: true,
-  result: { templates, revision, updated_at: "2026-11-15T00:00:00Z", limit: 20 },
+  result: {
+    replies: [...defaults, ...templates],
+    revision,
+    updated_at: "2026-11-15T00:00:00Z",
+    limit: 24,
+  },
 });
 
 const QUICK = ["quickReply.proceed", "quickReply.why", "quickReply.rethink", "quickReply.choices"];
@@ -255,7 +272,7 @@ describe("quick replies", () => {
     expect(showNotice).toHaveBeenLastCalledWith({ message: "quickReply.sent" });
   });
 
-  it("list the person's own templates after the built-in replies, without an emoji", async () => {
+  it("list the person's replies in their saved order, their own without an emoji", async () => {
     fetchQuickReplyTemplates.mockResolvedValue(
       templateList([
         { id: "t1", name: "Ship it", text: "Ship it now." },
@@ -275,6 +292,58 @@ describe("quick replies", () => {
     await act(async () => touch.click());
     const own = menuItems().find((item) => labelOf(item) === "Ship it")!;
     expect(own.querySelector("[data-action-emoji]")).toBeNull();
+    // It keeps the default replies' emoji column, so the names line up.
+    const proceed = menuItems().find((item) => labelOf(item) === QUICK[0])!;
+    expect(own.firstElementChild?.textContent).toBe("");
+    expect(own.firstElementChild?.getAttribute("aria-hidden")).toBe("true");
+    expect(own.firstElementChild?.className).toBe(proceed.firstElementChild?.className);
+    // The message's other actions have no emoji, so their group keeps its full width.
+    const others = document.querySelector(
+      '[role="dialog"] [role="group"][aria-label="messageActions"]',
+    )!;
+    for (const item of others.querySelectorAll("button")) {
+      expect(item.firstElementChild?.className).toContain("truncate");
+    }
+  });
+
+  it("leave no emoji column when none of the person's replies has one", async () => {
+    fetchQuickReplyTemplates.mockResolvedValue(
+      templateList([{ id: "t1", name: "Ship it", text: "Ship it now." }], 1, [
+        { builtin: "proceed", name: "Go" },
+      ]),
+    );
+    await act(async () => {
+      await loadQuickReplyTemplates();
+    });
+    await renderBubble(agentMessage);
+    const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+    await act(async () => touch.click());
+    for (const name of ["Go", "Ship it"]) {
+      const item = menuItems().find((entry) => labelOf(entry) === name)!;
+      expect(item.firstElementChild?.className).toContain("truncate");
+    }
+  });
+
+  it("follow the saved order when a reply of the person's own comes before a default one", async () => {
+    fetchQuickReplyTemplates.mockResolvedValue({
+      ok: true,
+      result: {
+        replies: [{ id: "t1", name: "Ship it", text: "Ship it now." }, { builtin: "why" }],
+        revision: 3,
+        updated_at: "2026-11-15T00:00:00Z",
+        limit: 24,
+      },
+    });
+    await act(async () => {
+      await loadQuickReplyTemplates();
+    });
+    await renderBubble(agentMessage);
+    const labels = await touchMenuLabels();
+    const start = labels.indexOf("Ship it");
+    expect(labels.slice(start, start + 2)).toEqual(["Ship it", "quickReply.why"]);
+    for (const name of ["quickReply.proceed", "quickReply.rethink", "quickReply.choices"]) {
+      expect(labels).not.toContain(name);
+    }
   });
 
   it("send a template's text as written and retry with that text after the template changes", async () => {
@@ -314,4 +383,82 @@ describe("quick replies", () => {
     expect(replyMessage.mock.calls[1][5]).toBe(replyMessage.mock.calls[0][5]);
     expect(showNotice).toHaveBeenLastCalledWith({ message: "quickReply.sent" });
   });
+});
+
+it("sends a changed default, removes its original emoji and omits a deleted default", async () => {
+  const body = "\n  Confirm the evidence first.\n";
+  fetchQuickReplyTemplates.mockResolvedValue(
+    templateList([], 1, [
+      { builtin: "proceed", name: "Check first", text: body },
+      { builtin: "rethink" },
+      { builtin: "choices" },
+    ]),
+  );
+  replyMessage.mockResolvedValue({ ok: true, result: { event: { id: "reply-customized" } } });
+  await renderBubble(agentMessage);
+  expect(fetchQuickReplyTemplates).not.toHaveBeenCalled();
+  const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+  await act(async () => touch.click());
+  expect(menuItems().map(labelOf)).not.toContain("quickReply.why");
+  const changed = menuItems().find((item) => labelOf(item) === "Check first")!;
+  expect(changed.querySelector("[data-action-emoji]")).toBeNull();
+  await act(async () => changed.click());
+  expect(replyMessage.mock.calls[0][1]).toBe(body);
+});
+
+it("disables first-read failures and recovers on the next deliberate menu opening", async () => {
+  fetchQuickReplyTemplates.mockResolvedValue({
+    ok: false,
+    error: { code: "read_failed", message: "read failed" },
+  });
+  await renderBubble(agentMessage);
+  const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+  await act(async () => touch.click());
+  const unavailable = menuItems().find((item) => labelOf(item) === "replyTemplates.unavailable")!;
+  expect(unavailable.disabled).toBe(true);
+  for (const name of QUICK) expect(menuItems().map(labelOf)).not.toContain(name);
+  await act(async () => unavailable.click());
+  expect(replyMessage).not.toHaveBeenCalled();
+  fetchQuickReplyTemplates.mockResolvedValue(
+    templateList([], 1, [{ builtin: "proceed", name: "Recovered" }]),
+  );
+  await act(async () => touch.click());
+  await act(async () => touch.click());
+  expect(fetchQuickReplyTemplates).toHaveBeenCalledTimes(2);
+  expect(menuItems().map(labelOf)).toContain("Recovered");
+});
+
+it("rereads an already loaded list when the menu opens and shows renamed or deleted replies", async () => {
+  fetchQuickReplyTemplates.mockResolvedValue(
+    templateList([], 1, [{ builtin: "proceed", name: "Old name" }, ...DEFAULTS.slice(1)]),
+  );
+  await act(async () => {
+    await loadQuickReplyTemplates();
+  });
+  await renderBubble(agentMessage);
+  expect(fetchQuickReplyTemplates).toHaveBeenCalledTimes(1);
+
+  // Another device saved while this page remained open. Opening either entry reads again.
+  fetchQuickReplyTemplates.mockResolvedValue(
+    templateList([], 2, [
+      { builtin: "proceed", name: "New name", text: "New body." },
+      { builtin: "rethink" },
+      { builtin: "choices" },
+    ]),
+  );
+  const touch = host.querySelector<HTMLButtonElement>(".message-actions-menu button")!;
+  await act(async () => touch.click());
+  expect(fetchQuickReplyTemplates).toHaveBeenCalledTimes(2);
+  expect(menuItems().map(labelOf)).toContain("New name");
+  expect(menuItems().map(labelOf)).not.toContain("Old name");
+  expect(menuItems().map(labelOf)).not.toContain("quickReply.why");
+  replyMessage.mockResolvedValue({ ok: true, result: { event: { id: "reply-updated" } } });
+  await act(async () =>
+    menuItems()
+      .find((item) => labelOf(item) === "New name")!
+      .click(),
+  );
+  expect(replyMessage.mock.calls[0][1]).toBe("New body.");
+  await act(async () => touch.click());
+  expect(fetchQuickReplyTemplates).toHaveBeenCalledTimes(3);
 });
