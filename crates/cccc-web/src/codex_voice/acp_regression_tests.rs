@@ -191,6 +191,36 @@ impl ChetHttpFixture {
         }
     }
 
+    fn configure_opencode(&self) -> PathBuf {
+        let executable = self._temp.path().join("opencode");
+        std::fs::write(
+            &executable,
+            include_str!(
+                "../../../cccc-daemon/src/ops/codex_voice_analyst/tests/opencode_v2_fixture.py"
+            ),
+        )
+        .expect("offline OpenCode fixture");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .expect("fixture executable");
+        let root = self._temp.path().join("opencode-events");
+        let settings = CodexVoiceAnalystSettings {
+            runtime: ActorRuntime::Opencode,
+            runtime_mode: RuntimeMode::Default,
+            command: vec![executable.to_string_lossy().into_owned()],
+            ..Default::default()
+        };
+        cccc_core::codex_voice_settings::save(&self.home, &settings).expect("OpenCode settings");
+        let mut env = cccc_core::codex_voice_settings::private_environment(&self.home)
+            .expect("fixture environment");
+        env.insert(
+            "OPENCODE_FIXTURE_DIR".into(),
+            root.to_string_lossy().into_owned(),
+        );
+        cccc_core::codex_voice_settings::replace_private_environment(&self.home, &env)
+            .expect("OpenCode fixture environment");
+        root
+    }
+
     async fn request(
         &self,
         method: &str,
@@ -222,6 +252,22 @@ impl ChetHttpFixture {
             status,
             serde_json::from_slice(&bytes).expect("JSON response"),
         )
+    }
+
+    async fn wait_queued(&self, id: uuid::Uuid) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if self.state.codex_voice.chet_status().await["queued"]
+                    .as_array()
+                    .is_some_and(|queued| queued.contains(&json!(id)))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Chet input admitted to queue");
     }
 
     async fn wait_for(&self, id: uuid::Uuid, kind: &str) -> Vec<Value> {
@@ -269,6 +315,271 @@ fn chet_daemon_request(op: &str, args: Value) -> cccc_contracts::DaemonRequest {
         op: op.into(),
         args: args.as_object().expect("object").clone(),
     }
+}
+
+async fn wait_opencode_fixture(ready: impl Fn() -> bool) {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !ready() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("OpenCode fixture transition");
+}
+
+fn opencode_fixture_requests(root: &Path) -> Vec<Value> {
+    std::fs::read_to_string(root.join("requests.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("fixture HTTP request"))
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opencode_chet_inputs_keep_the_bound_session_and_separate_results_while_busy() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::opencode_chet_inputs_keep_the_bound_session_and_separate_results_while_busy",
+    ) {
+        return;
+    }
+    use cccc_daemon::experimental_codex_voice::VoiceDelegationAdmission;
+    let fixture = ChetHttpFixture::new().await;
+    let root = fixture.configure_opencode();
+    let ids = [
+        uuid::Uuid::new_v4(),
+        uuid::Uuid::new_v4(),
+        uuid::Uuid::new_v4(),
+    ];
+    let texts = ["FIRST_DELAY_ADMISSION_HOLD_FIRST", "SECOND", "THIRD"];
+    let submit = |index: usize| {
+        fixture.request(
+            "POST",
+            "/api/v1/chet/inputs",
+            json!({"id":ids[index],"request":{"text":texts[index],"context":null}}),
+        )
+    };
+    assert_eq!(submit(0).await.0, axum::http::StatusCode::OK);
+    wait_opencode_fixture(|| root.join("admission-started").exists()).await;
+    assert_eq!(submit(1).await.0, axum::http::StatusCode::OK);
+    // The second input must enter the host queue before the first HTTP receipt.
+    fixture.wait_queued(ids[1]).await;
+    std::fs::write(root.join("release-admission"), "go").expect("release HTTP receipt");
+    fixture.wait_for(ids[0], "receipt").await;
+    let analyst = fixture
+        .state
+        .codex_voice
+        .state
+        .lock()
+        .await
+        .analyst
+        .clone()
+        .expect("OpenCode owner");
+    assert!(analyst.analyst.tui_ready());
+    assert!(!analyst.analyst.structured_only());
+    let mut lifecycle = analyst.analyst.subscribe_lifecycle();
+    let terminal = analyst
+        .attach_terminal(
+            cccc_runtime::TerminalAttachMode::Control,
+            false,
+            None,
+            false,
+            None,
+        )
+        .await
+        .expect("native terminal remains usable");
+    assert!(
+        terminal
+            .input()
+            .write(b"/new\n")
+            .expect("switch visible chat")
+    );
+    wait_opencode_fixture(|| {
+        std::fs::read_to_string(root.join("terminal-session"))
+            .is_ok_and(|session| session == "ses_visible_other")
+    })
+    .await;
+    assert!(terminal.input().write(b"TUI_ONLY\n").expect("native input"));
+    wait_opencode_fixture(|| root.join("terminal-inputs.jsonl").exists()).await;
+    assert_eq!(submit(2).await.0, axum::http::StatusCode::OK);
+    // HTTP registration returns before asynchronous admission; establish its order first.
+    fixture.wait_queued(ids[2]).await;
+    // Result notifications and Group input must not use the switched terminal either.
+    assert!(matches!(
+        analyst
+            .analyst
+            .begin_actor_result("result-notice", "NOTICE", false)
+            .await
+            .expect("queue result"),
+        VoiceDelegationAdmission::Queued { .. }
+    ));
+    assert!(matches!(
+        analyst
+            .analyst
+            .submit_group_input("group-input", "GROUP")
+            .await
+            .expect("queue Group input"),
+        VoiceDelegationAdmission::Queued { .. }
+    ));
+    assert_eq!(opencode_fixture_requests(&root).len(), 1);
+    std::fs::write(root.join("release-completion"), "go").expect("finish first turn");
+    for (id, text) in ids.into_iter().zip(texts) {
+        let records = fixture.wait_for(id, "result").await;
+        let result = records
+            .iter()
+            .find(|r| r["kind"] == "result")
+            .expect("own result");
+        assert_eq!(result["input_ids"], json!([id]));
+        assert_eq!(result["outcome"]["status"], "completed");
+        assert_eq!(result["outcome"]["text"], format!("Answer: {text}"));
+        assert_eq!(records.iter().filter(|r| r["kind"] == "result").count(), 1);
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let AnalystLifecycleEvent::Completed {
+                delegation_ids,
+                result,
+                ..
+            } = lifecycle.recv().await.expect("lifecycle")
+                && delegation_ids.iter().any(|id| id == "group-input")
+            {
+                assert_eq!(result, "Answer: GROUP");
+                break;
+            }
+        }
+    })
+    .await
+    .expect("Group queue resumed");
+    let requests = opencode_fixture_requests(&root);
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r["text"].as_str().expect("text"))
+            .collect::<Vec<_>>(),
+        [texts[0], texts[1], texts[2], "NOTICE", "GROUP"]
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|r| r["sessionID"] == "ses_chet_fixture" && r["delivery"] == "queue")
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r["id"].as_str().expect("HTTP request ID"))
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        5
+    );
+    let terminal_inputs =
+        std::fs::read_to_string(root.join("terminal-inputs.jsonl")).expect("native trace");
+    let terminal_inputs = terminal_inputs
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("terminal input trace record"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        terminal_inputs,
+        [json!({"sessionID":"ses_visible_other","text":"TUI_ONLY"})]
+    );
+    wait_opencode_fixture(|| {
+        analyst
+            .analyst
+            .try_in_flight()
+            .is_some_and(|(queued, working)| queued.is_empty() && working.is_empty())
+    })
+    .await;
+    drop(terminal);
+    fixture.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn opencode_chet_unconfirmed_admission_does_not_replay_or_start_later_inputs() {
+    if isolated_child(
+        "codex_voice::acp_regression_tests::opencode_chet_unconfirmed_admission_does_not_replay_or_start_later_inputs",
+    ) {
+        return;
+    }
+    let fixture = ChetHttpFixture::new().await;
+    let root = fixture.configure_opencode();
+    let first = uuid::Uuid::new_v4();
+    let next = uuid::Uuid::new_v4();
+    for (id, text) in [
+        (first, "DELAY_ADMISSION_DISCONNECT_ADMISSION"),
+        (next, "MUST_NOT_START"),
+    ] {
+        let (status, _) = fixture
+            .request(
+                "POST",
+                "/api/v1/chet/inputs",
+                json!({"id":id,"request":{"text":text,"context":null}}),
+            )
+            .await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        if id == first {
+            wait_opencode_fixture(|| root.join("admission-started").exists()).await;
+        }
+    }
+    fixture.wait_queued(next).await;
+    let analyst = fixture
+        .state
+        .codex_voice
+        .state
+        .lock()
+        .await
+        .analyst
+        .clone()
+        .expect("OpenCode owner");
+    std::fs::write(root.join("release-admission"), "go").expect("disconnect HTTP admission");
+    wait_opencode_fixture(|| {
+        analyst.info().warning == "analyst_disconnected"
+            && analyst
+                .analyst
+                .try_in_flight()
+                .is_some_and(|(queued, working)| queued.is_empty() && working.is_empty())
+    })
+    .await;
+    let (status, next_history) = fixture
+        .request("GET", &format!("/api/v1/chet/inputs/{next}"), json!(null))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let next_records = next_history["result"]["records"]
+        .as_array()
+        .expect("next input history");
+    assert!(next_records.iter().any(|r| r["kind"] == "input"));
+    // Invalidation may drain NEXT as not_started, or race with an already failed
+    // local admission that conservatively leaves it unconfirmed. Neither sends it.
+    assert!(
+        !next_records
+            .iter()
+            .any(|r| r["kind"] == "result" || r["kind"] == "receipt")
+    );
+    let (status, first_records) = fixture
+        .request("GET", &format!("/api/v1/chet/inputs/{first}"), json!(null))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(
+        !first_records["result"]["records"]
+            .as_array()
+            .expect("first input history records")
+            .iter()
+            .any(|r| r["kind"] == "result")
+    );
+    let requests = opencode_fixture_requests(&root);
+    assert_eq!(
+        requests.len(),
+        1,
+        "uncertain input is not retried and queued work is not started"
+    );
+    assert!(
+        requests[0]["text"]
+            .as_str()
+            .expect("unconfirmed HTTP request text")
+            .contains("DISCONNECT_ADMISSION")
+    );
+    assert!(
+        !root.join("terminal-inputs.jsonl").exists(),
+        "unconfirmed admission must not fall back to typing into the viewer"
+    );
+    fixture.stop().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

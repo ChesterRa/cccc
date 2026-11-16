@@ -54,9 +54,12 @@ impl AnalystLifecycle {
         if state.invalidated {
             bail!("Voice Analyst lifecycle is no longer trustworthy");
         }
-        if self.session.structured_only() {
-            // Pure ACP has no native busy-input surface. Every accepted input
-            // uses a visible FIFO, never an overlapping session/prompt request.
+        let bound_opencode_input = self.session.runtime() == cccc_contracts::ActorRuntime::Opencode
+            && origin != AnalystTurnOrigin::Voice;
+        if self.session.structured_only() || bound_opencode_input {
+            // Structured runtimes and OpenCode's Chet inputs keep separate turns.
+            // OpenCode's visible TUI may have switched sessions; use the bound
+            // HTTP session, as Actor delivery does. Voice retains native admission.
             return self.enqueue(delegation_id, text, origin, state);
         }
         if origin == AnalystTurnOrigin::Group {

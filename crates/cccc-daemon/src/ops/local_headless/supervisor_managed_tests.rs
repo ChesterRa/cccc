@@ -160,6 +160,10 @@ mod structured_admission {
 
     impl Fixture {
         fn new() -> Self {
+            Self::with_runtime(ActorRuntime::Kiro)
+        }
+
+        fn with_runtime(runtime: ActorRuntime) -> Self {
             let temp = tempfile::tempdir().expect("isolated admission fixture");
             let home = HomeLayout::from_path(temp.path().join("cccc")).expect("home");
             home.initialize().expect("initialize home");
@@ -173,17 +177,28 @@ mod structured_admission {
                 cccc_core::scope::detect(temp.path()).expect("fixture scope"),
             )
             .expect("attach scope");
-            let executable = temp.path().join("kiro-cli");
+            let opencode = runtime == ActorRuntime::Opencode;
+            let executable = temp
+                .path()
+                .join(if opencode { "opencode" } else { "kiro-cli" });
             std::fs::write(
                 &executable,
-                include_str!("../codex_voice_analyst/native_acp/v3_fixture.py"),
+                if opencode {
+                    include_str!("../codex_voice_analyst/tests/opencode_v2_fixture.py")
+                } else {
+                    include_str!("../codex_voice_analyst/native_acp/v3_fixture.py")
+                },
             )
             .expect("write ACP fixture");
             std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
                 .expect("fixture permissions");
             let mut actor = Actor::new("worker");
-            actor.runtime = ActorRuntime::Kiro;
-            actor.runtime_mode = RuntimeMode::Acp;
+            actor.runtime = runtime;
+            actor.runtime_mode = if opencode {
+                RuntimeMode::Default
+            } else {
+                RuntimeMode::Acp
+            };
             actor.command = vec![executable.to_string_lossy().into_owned()];
             actor.env = BTreeMap::from([
                 ("AAAA_OVERLAPPING_SECRET".into(), "synthetic".into()),
@@ -197,6 +212,13 @@ mod structured_admission {
                 ),
                 ("ACP_FIXTURE_CLI".into(), "/bin/true".into()),
                 ("CCCC_TEST_ADMISSION_SECRET".into(), SECRET.into()),
+                (
+                    "OPENCODE_FIXTURE_DIR".into(),
+                    temp.path()
+                        .join("opencode-events")
+                        .to_string_lossy()
+                        .into_owned(),
+                ),
             ]);
             group.actors.push(actor.clone());
             store.save(&group).expect("save actor");
@@ -257,6 +279,57 @@ mod structured_admission {
             actor_delivery::shutdown_actor(&self.group.group_id, "worker");
             let _ = local_headless::stop(&self.group.group_id, "worker");
         }
+    }
+
+    #[test]
+    fn opencode_actor_delivery_still_uses_its_owned_http_queue() {
+        if std::env::var_os("OPENCODE_ACTOR_FIXTURE_CHILD").is_none() {
+            let temp = tempfile::tempdir().expect("isolated Actor launcher");
+            let launcher = temp.path().join("cccc");
+            std::fs::write(&launcher, "#!/bin/sh\nexit 1\n").expect("offline MCP launcher");
+            std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700))
+                .expect("launcher executable");
+            let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+                .args(["--exact", "ops::local_headless::supervisor_managed_tests::structured_admission::opencode_actor_delivery_still_uses_its_owned_http_queue", "--nocapture"])
+                .env("OPENCODE_ACTOR_FIXTURE_CHILD", "1")
+                .env("CCCC_LAUNCHER_PATH", launcher)
+                .env("HOME", temp.path().join("home"))
+                .env("CCCC_HOME", temp.path().join("cccc-home"))
+                .env("CODEX_HOME", temp.path().join("codex"))
+                .output().expect("Actor fixture child");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success()
+                    && stdout
+                        .lines()
+                        .any(|line| line.starts_with("test result: ok. 1 passed;")),
+                "Actor fixture failed or did not run:\n{stdout}\n{stderr}"
+            );
+            return;
+        }
+        let fixture = Fixture::with_runtime(ActorRuntime::Opencode);
+        let event = fixture.send("OPENCODE_ACTOR_DELIVERY");
+        fixture.wait(|| fixture.outcome(&event).as_deref() == Some("accepted"));
+        let root = fixture.temp.path().join("opencode-events");
+        let requests = std::fs::read_to_string(root.join("requests.jsonl"))
+            .expect("HTTP admission trace")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("request"))
+            .collect::<Vec<_>>();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["sessionID"], "ses_chet_fixture");
+        assert_eq!(requests[0]["delivery"], "queue");
+        assert!(
+            requests[0]["text"]
+                .as_str()
+                .expect("Actor HTTP request text")
+                .contains("OPENCODE_ACTOR_DELIVERY")
+        );
+        assert!(
+            !root.join("terminal-inputs.jsonl").exists(),
+            "Actor input uses HTTP, not its viewer"
+        );
     }
 
     #[test]
