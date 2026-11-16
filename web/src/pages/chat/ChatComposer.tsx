@@ -913,6 +913,9 @@ export function ChatComposer({
     !showSlashMenu &&
     !voiceBlocksCompact &&
     !busy &&
+    // The compact row has no Send key, so a send in flight keeps its spinner and
+    // the stop-upload key in view.
+    !sendInFlight &&
     effectiveMessageMode === "send" &&
     (!destGroupId || destGroupId === selectedGroupId),
   );

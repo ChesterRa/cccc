@@ -28,11 +28,13 @@ function Harness({
   initialTokens = [],
   replyTarget = null,
   unavailableRecipients = [],
+  sendInFlight = false,
 }: {
   mode?: "send" | "request_reply" | "mail";
   initialTokens?: string[];
   replyTarget?: ReplyTarget;
   unavailableRecipients?: string[];
+  sendInFlight?: boolean;
 }) {
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -48,7 +50,7 @@ function Harness({
       setDestGroupId={noop}
       composerGroupSettled
       busy=""
-      sendInFlight={false}
+      sendInFlight={sendInFlight}
       replyTarget={replyTarget}
       onCancelReply={noop}
       quotedPresentationRef={null}
@@ -120,6 +122,27 @@ it("uses the Web principal for Chet and shows Send instead of the saved Mail pre
   } finally {
     await act(async () => root.unmount());
     useUIStore.setState({ isWebAdmin: null });
+    useGroupStore.setState({ refreshSettings: originalRefreshSettings });
+    host.remove();
+  }
+});
+
+it("keeps the full layout with its Send key while a send is in flight", async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  useComposerStore.setState({ composerText: "" });
+  const originalRefreshSettings = useGroupStore.getState().refreshSettings;
+  useGroupStore.setState({ refreshSettings: async () => {} });
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<Harness sendInFlight />));
+    const footer = host.querySelector("footer")!;
+    expect(footer.getAttribute("data-composer-compact")).toBeNull();
+    await act(async () => root.render(<Harness />));
+    expect(footer.getAttribute("data-composer-compact")).toBe("true");
+  } finally {
+    await act(async () => root.unmount());
     useGroupStore.setState({ refreshSettings: originalRefreshSettings });
     host.remove();
   }
