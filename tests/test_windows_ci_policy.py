@@ -6,6 +6,21 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_windows_checks_production_process_policy() -> None:
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader,
+    )
+    steps = workflow["jobs"]["windows-smoke"]["steps"]
+    setup = next(step for step in steps if step.get("uses", "").startswith("dtolnay/rust-toolchain"))
+    assert "clippy" in setup["with"]["components"]
+    command = next(step["run"] for step in steps if step.get("name") == "Check Windows process policy")
+    assert "cargo clippy --workspace --locked" in command
+    assert "--all-targets" not in command
+    assert "-D unfulfilled_lint_expectations" in command
+    assert "-D warnings" not in command
+    assert "-D clippy::disallowed_methods" not in command
+
+
 def test_windows_smoke_keeps_focused_native_checks() -> None:
     workflow = yaml.load(
         (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"),

@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 mod actions;
 mod argument_normalization;
 mod backlog_projection;

@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 pub mod access_tokens;
 pub mod active;
 pub mod actors;

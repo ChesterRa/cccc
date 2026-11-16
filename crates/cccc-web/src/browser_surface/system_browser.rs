@@ -144,7 +144,7 @@ impl SystemBrowserLaunch {
         let app =
             macos_app_bundle(&self.executable).context("system browser app bundle not found")?;
         let browser_args = self.browser_args(profile, extra_args);
-        let mut command = tokio::process::Command::new("/usr/bin/open");
+        let mut command = cccc_runtime::background_tokio_command("/usr/bin/open");
         command.args(macos_open_args(app));
         command.args(&browser_args);
         let output = command
@@ -535,14 +535,12 @@ fn x11vnc_args(display: &str, port: u16) -> Vec<String> {
 
 #[cfg(target_os = "linux")]
 async fn start_x11vnc(binary: &Path, display: &str) -> Result<ProjectedVncServer> {
-    use tokio::process::Command;
-
     let port = reserve_cdp_port()?;
     let mut stderr_log = tempfile::tempfile().context("create x11vnc diagnostic buffer")?;
     let stderr_target = stderr_log
         .try_clone()
         .context("clone x11vnc diagnostic buffer")?;
-    let mut child = Command::new(binary)
+    let mut child = cccc_runtime::background_tokio_command(binary)
         .args(x11vnc_args(display, port))
         .env("DISPLAY", display)
         .env("XDG_SESSION_TYPE", "x11")
@@ -617,13 +615,12 @@ async fn start_xvfb_candidate(
     height: u32,
 ) -> Result<Option<VirtualDisplay>> {
     use tokio::io::{AsyncBufReadExt, BufReader};
-    use tokio::process::Command;
 
     let mut stderr_log = tempfile::tempfile().context("create Xvfb diagnostic buffer")?;
     let stderr_target = stderr_log
         .try_clone()
         .context("clone Xvfb diagnostic buffer")?;
-    let mut child = Command::new(binary)
+    let mut child = cccc_runtime::background_tokio_command(binary)
         .args(xvfb_args(number, width, height))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::from(stderr_target))
@@ -691,7 +688,7 @@ async fn stop_process_child(child: &mut tokio::process::Child) {
     if let Some(pid) = child.id() {
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            tokio::process::Command::new("kill")
+            cccc_runtime::background_tokio_command("kill")
                 .args(["-TERM", &pid.to_string()])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())

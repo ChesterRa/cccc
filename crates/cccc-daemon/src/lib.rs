@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 pub mod antigravity_acp_setup;
 mod connect_transport;
 pub mod deepseek_setup;

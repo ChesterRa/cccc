@@ -156,6 +156,10 @@ async fn ping(home: &HomeLayout) -> bool {
 }
 
 #[cfg(unix)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "The daemon has its own detached startup policy"
+)]
 fn detached_command(executable: &Path) -> Command {
     use std::os::unix::process::CommandExt;
     let mut command = Command::new("nohup");
@@ -165,6 +169,10 @@ fn detached_command(executable: &Path) -> Command {
 }
 
 #[cfg(windows)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "The daemon uses explicit detached flags, not the background default"
+)]
 fn detached_command(executable: &Path) -> Command {
     use std::os::windows::process::CommandExt;
     let mut command = Command::new(executable);

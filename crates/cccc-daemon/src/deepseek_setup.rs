@@ -200,7 +200,8 @@ fn install_packages(dsh_home: &Path, env: &BTreeMap<String, String>) -> Result<(
         &cccc_runtime::canonical_deepseek_runtime_manifest(),
     )
     .map_err(|error| format!("failed to write DeepSeek runtime manifest: {error}"))?;
-    let mut command = Command::new(if cfg!(windows) { "npm.cmd" } else { "npm" });
+    let mut command =
+        cccc_runtime::background_command(if cfg!(windows) { "npm.cmd" } else { "npm" });
     configure_process_group(&mut command);
     command
         .args([
@@ -326,7 +327,7 @@ fn terminate_process_tree(child: &mut Child) {
     }
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        let _ = cccc_runtime::background_command("taskkill")
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .status();
     }

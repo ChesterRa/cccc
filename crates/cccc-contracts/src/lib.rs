@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 pub mod actor;
 pub mod backlog;
 pub mod chet;

@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 use cccc_contracts::{DaemonAddress, DaemonRequest, DaemonResponse};
 use cccc_core::HomeLayout;
 use std::path::PathBuf;

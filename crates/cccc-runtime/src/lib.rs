@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 mod cancellation;
 mod command;
 mod command_output;
@@ -76,8 +77,8 @@ pub use manager::{
 pub use output::HistoryPage;
 pub use path_form::compatible_path;
 pub use process_tree::{
-    CommandError, OwnedProcessTree, ProcessStartUnconfirmed, force_terminate_owned,
-    owned_process_recovery_pending,
+    CommandError, OwnedProcessTree, ProcessStartUnconfirmed, background_command,
+    background_tokio_command, force_terminate_owned, owned_process_recovery_pending,
 };
 #[cfg(unix)]
 pub use process_tree::{prepare_web_process_guard, protect_owned_process_groups};

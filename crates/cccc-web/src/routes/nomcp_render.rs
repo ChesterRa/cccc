@@ -1,6 +1,5 @@
 use serde_json::{Value, json};
 use std::path::Path;
-use std::process::Command;
 
 pub fn git_status(root: &Path) -> Value {
     let output = git(root, &["status", "--short"]);
@@ -36,7 +35,7 @@ pub fn html(title: &str, content: &str) -> String {
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
-    Command::new("git")
+    cccc_runtime::background_command("git")
         .args(args)
         .current_dir(root)
         .output()

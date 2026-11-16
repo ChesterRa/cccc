@@ -178,7 +178,7 @@ pub(super) fn process_command(
             "Claude managed-session command is empty",
         )
     })?;
-    let mut process = tokio::process::Command::new(program);
+    let mut process = cccc_runtime::background_tokio_command(program);
     process.args(arguments);
     Ok(process)
 }

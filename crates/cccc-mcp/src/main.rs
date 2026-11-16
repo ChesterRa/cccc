@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 use anyhow::Result;
 use cccc_core::HomeLayout;
 

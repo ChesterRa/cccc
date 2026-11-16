@@ -3,7 +3,9 @@ use reqwest::blocking::Client;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+#[cfg(all(test, unix))]
+use std::process::Command;
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -130,7 +132,7 @@ pub(super) fn process_is_alive(pid: u32) -> bool {
         return false;
     }
     #[cfg(not(target_os = "linux"))]
-    if Command::new("ps")
+    if cccc_runtime::background_command("ps")
         .args(["-p", &pid.to_string(), "-o", "stat="])
         .output()
         .is_ok_and(|output| {
@@ -154,7 +156,7 @@ pub(super) fn process_is_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 pub(super) fn process_is_alive(pid: u32) -> bool {
-    Command::new("tasklist")
+    cccc_runtime::background_command("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
         .output()
         .is_ok_and(|output| {
@@ -175,7 +177,7 @@ fn process_executable(pid: u32) -> Option<PathBuf> {
     if let Ok(path) = std::fs::read_link(format!("/proc/{pid}/exe")) {
         return std::fs::canonicalize(path).ok();
     }
-    Command::new("ps")
+    cccc_runtime::background_command("ps")
         .args(["-p", &pid.to_string(), "-o", "comm="])
         .output()
         .ok()
@@ -189,7 +191,7 @@ fn process_executable(pid: u32) -> Option<PathBuf> {
 
 #[cfg(windows)]
 fn process_executable(pid: u32) -> Option<PathBuf> {
-    Command::new("powershell.exe")
+    cccc_runtime::background_command("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -357,7 +359,7 @@ fn start_command(home: &HomeLayout, argv: &[String]) -> Result<Status, RuntimeEr
     let stderr = log
         .try_clone()
         .map_err(|error| RuntimeError::process(error.to_string()))?;
-    let mut command = Command::new(program);
+    let mut command = cccc_runtime::background_command(program);
     command
         .args(&argv[1..])
         .stdin(Stdio::null())
@@ -453,7 +455,7 @@ fn signal_stop(pid: u32, force: bool) -> Result<(), RuntimeError> {
 
 #[cfg(windows)]
 fn signal_stop(pid: u32, force: bool) -> Result<(), RuntimeError> {
-    let mut command = Command::new("taskkill");
+    let mut command = cccc_runtime::background_command("taskkill");
     command.args(["/PID", &pid.to_string(), "/T"]);
     if force {
         command.arg("/F");

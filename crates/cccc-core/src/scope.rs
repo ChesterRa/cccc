@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::process::Command;
 
 use crate::Scope;
@@ -63,7 +64,7 @@ pub fn normalize_remote(value: &str) -> String {
 }
 
 fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = cccc_runtime::background_command("git")
         .args(args)
         .current_dir(cwd)
         .output()

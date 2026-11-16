@@ -1,0 +1,4 @@
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "Use the shared background command constructor; preserve foreground and detached launches with an explicit exception" },
+  { path = "tokio::process::Command::new", reason = "Use the shared background Tokio command constructor" },
+]

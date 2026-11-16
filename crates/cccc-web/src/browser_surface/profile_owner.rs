@@ -228,7 +228,9 @@ fn parse_singleton_target(target: &str) -> Option<(&str, u32)> {
 
 #[cfg(unix)]
 async fn hostname() -> Result<String> {
-    let output = tokio::process::Command::new("hostname").output().await?;
+    let output = cccc_runtime::background_tokio_command("hostname")
+        .output()
+        .await?;
     if !output.status.success() {
         bail!("failed to resolve local hostname");
     }
@@ -243,7 +245,7 @@ struct ProcessSnapshot {
 
 #[cfg(unix)]
 async fn process_snapshot(pid: u32) -> Result<Option<ProcessSnapshot>> {
-    let process = tokio::process::Command::new("ps")
+    let process = cccc_runtime::background_tokio_command("ps")
         .args(["-p", &pid.to_string(), "-o", "stat=", "-o", "command="])
         .output()
         .await?;
@@ -263,7 +265,7 @@ async fn process_snapshot(pid: u32) -> Result<Option<ProcessSnapshot>> {
 
 #[cfg(unix)]
 async fn process_start(pid: u32) -> Result<String> {
-    let output = tokio::process::Command::new("ps")
+    let output = cccc_runtime::background_tokio_command("ps")
         .args(["-p", &pid.to_string(), "-o", "lstart="])
         .output()
         .await?;
@@ -306,7 +308,7 @@ async fn signal_if_same_process(pid: u32, expected_start: &str, signal: &str) ->
     if !is_same_process(pid, expected_start).await? {
         return Ok(false);
     }
-    let status = tokio::process::Command::new("kill")
+    let status = cccc_runtime::background_tokio_command("kill")
         .args([signal, &pid.to_string()])
         .status()
         .await?;

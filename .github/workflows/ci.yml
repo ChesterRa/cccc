@@ -136,8 +136,13 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Check Windows process policy
+        run: cargo clippy --workspace --locked -- -D unfulfilled_lint_expectations
 
       - name: Verify Windows PTY UTF-8 message delivery
         timeout-minutes: 10

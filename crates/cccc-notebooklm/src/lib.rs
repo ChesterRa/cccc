@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 mod artifacts;
 mod auth;
 mod chat;

@@ -196,7 +196,9 @@ fn setup_one(
                 &cwd,
             );
             let output = cccc_runtime::capture_command_blocking(
-                Command::new(program).args(&command[1..]).current_dir(&cwd),
+                cccc_runtime::background_command(program)
+                    .args(&command[1..])
+                    .current_dir(&cwd),
                 None,
                 std::time::Duration::from_secs(30),
                 32_768,
@@ -339,7 +341,7 @@ const CODEX_INSPECTION_ERROR: &str = "Could not safely identify Codex's cccc MCP
 fn codex_registry_command(home: &HomeLayout, cwd: &Path) -> Command {
     let program =
         cccc_core::runtime_mcp::resolve_program("codex", std::env::var_os("PATH").as_deref());
-    let mut command = Command::new(program);
+    let mut command = cccc_runtime::background_command(program);
     command
         .args(["mcp", "list", "--json"])
         .current_dir(cwd)
@@ -371,7 +373,7 @@ fn parse_codex_registry(
 fn run_command(command: &[String], cwd: &Path, home: &HomeLayout) -> Result<std::process::Output> {
     let inherited_path = std::env::var_os("PATH");
     let program = cccc_core::runtime_mcp::resolve_program(&command[0], inherited_path.as_deref());
-    Command::new(program)
+    cccc_runtime::background_command(program)
         .args(&command[1..])
         .current_dir(cwd)
         .env("CCCC_HOME", home.root())

@@ -7,11 +7,7 @@ use crate::ops::codex_voice_controller::RealtimeCallError;
 use anyhow::{Context, Result, ensure};
 use cccc_runtime::OwnedProcessTree;
 use serde_json::{Value, json};
-use std::{
-    path::Path,
-    process::{Command, Stdio},
-    time::Duration,
-};
+use std::{path::Path, process::Stdio, time::Duration};
 
 const AUTH_SCOPE: &str = "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828";
 const MAX_AUTH_BYTES: u64 = 1024 * 1024;
@@ -63,7 +59,7 @@ pub(crate) async fn grok_voice_bearer(executable: &Path, auth_path: &Path) -> Re
     let auth_path = tokio::fs::canonicalize(auth_path)
         .await
         .context(RealtimeCallError::GrokCredentials)?;
-    let mut command = Command::new(executable);
+    let mut command = cccc_runtime::background_command(executable);
     command
         .args(["agent", "--no-leader", "stdio"])
         .current_dir(root)

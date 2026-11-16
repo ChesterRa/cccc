@@ -69,7 +69,7 @@ impl AnalystSession {
         if runtime == ActorRuntime::Copilot {
             if purpose == SessionPurpose::VoiceSecretary {
                 let executable = cccc_runtime::resolve_command_executable(&launch_command, &env);
-                let mut catalog = tokio::process::Command::new(&executable[0]);
+                let mut catalog = cccc_runtime::background_tokio_command(&executable[0]);
                 catalog
                     .args(["--no-auto-update", "mcp", "list", "--json"])
                     .current_dir(&binding.root)

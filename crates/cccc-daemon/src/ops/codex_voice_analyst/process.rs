@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader};
 use std::net::IpAddr;
 use std::path::Path;
-use std::process::{ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{ChildStdin, ChildStdout, Stdio};
 use std::time::{Duration, Instant};
 use url::Url;
 
@@ -20,7 +20,7 @@ pub(super) fn spawn_app_server(
     let (program, args) = command
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty Codex command"))?;
-    let mut process = Command::new(program);
+    let mut process = cccc_runtime::background_command(program);
     process
         .args(args)
         .current_dir(cwd)
@@ -52,7 +52,7 @@ pub(super) fn spawn_background(
     let (program, args) = command
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty managed command"))?;
-    let mut process = Command::new(program);
+    let mut process = cccc_runtime::background_command(program);
     process
         .args(args)
         .current_dir(cwd)
@@ -107,7 +107,7 @@ fn spawn_piped_with_logging(
     let (program, args) = command
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty managed command"))?;
-    let mut process = Command::new(program);
+    let mut process = cccc_runtime::background_command(program);
     process
         .args(args)
         .current_dir(cwd)

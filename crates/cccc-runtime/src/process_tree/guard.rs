@@ -1420,7 +1420,7 @@ fn write_ledger_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn watchdog_command(watch_list: &Path) -> Command {
-    let mut command = Command::new("/bin/sh");
+    let mut command = crate::background_command("/bin/sh");
     command
         .args(["-c", WATCHDOG, "cccc-watchdog"])
         .arg(watch_list)

@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 mod api;
 mod auth;
 mod browser_surface;

@@ -135,7 +135,7 @@ pub(crate) fn daemon_pid(home: &HomeLayout) -> Option<u32> {
 
 #[cfg(unix)]
 fn command_line_of(pid: u32) -> Option<String> {
-    let output = std::process::Command::new("ps")
+    let output = cccc_runtime::background_command("ps")
         .args(["-o", "command=", "-p", &pid.to_string()])
         .output()
         .ok()?;
@@ -144,7 +144,7 @@ fn command_line_of(pid: u32) -> Option<String> {
 
 #[cfg(windows)]
 fn command_line_of(pid: u32) -> Option<String> {
-    let output = std::process::Command::new("powershell")
+    let output = cccc_runtime::background_command("powershell")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -233,6 +233,10 @@ fn terminate(_pid: u32) -> Result<bool> {
 }
 
 #[cfg(windows)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "The foreground stop command preserves terminal output"
+)]
 fn kill(pid: u32) -> Result<()> {
     let status = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])

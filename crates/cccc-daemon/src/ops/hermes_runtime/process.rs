@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use std::io;
 use std::path::Path;
+#[cfg(all(test, unix))]
 use std::process::Command;
 use std::time::Duration;
 
@@ -12,7 +13,7 @@ pub(super) fn run(
     env: &[(&str, String)],
     timeout: Duration,
 ) -> io::Result<Value> {
-    let mut command = Command::new(executable);
+    let mut command = cccc_runtime::background_command(executable);
     command.args(argv);
     if let Some(cwd) = cwd {
         command.current_dir(cwd);

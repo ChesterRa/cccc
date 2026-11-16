@@ -146,7 +146,7 @@ async fn exchange_guarded(
     // A bare name finds only `.exe` on Windows, while the availability check also accepts
     // shims such as `npx.cmd`. Resolve against the PATH the child gets, as actor launch does.
     let resolved = cccc_runtime::resolve_command_executable(command, &child_env);
-    let mut process = tokio::process::Command::new(&resolved[0]);
+    let mut process = cccc_runtime::background_tokio_command(&resolved[0]);
     process
         .args(&command[1..])
         .envs(&child_env)

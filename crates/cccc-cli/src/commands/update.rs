@@ -263,6 +263,10 @@ fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(not(windows))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "The foreground installer inherits the user's terminal"
+)]
 fn run_installer(install_dir: &Path, executable: &Path, version: Option<&str>) -> Result<()> {
     let mut command = Command::new("sh");
     command
@@ -284,6 +288,10 @@ fn run_installer(install_dir: &Path, executable: &Path, version: Option<&str>) -
 }
 
 #[cfg(windows)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "The updater preserves progress output in the user's terminal"
+)]
 fn run_installer(install_dir: &Path, executable: &Path, version: Option<&str>) -> Result<()> {
     let mut command = Command::new("powershell.exe");
     command

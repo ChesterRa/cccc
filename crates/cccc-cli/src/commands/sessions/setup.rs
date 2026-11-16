@@ -1,7 +1,6 @@
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use cccc_core::{fs, local_sessions::powershell_quote};
-use std::process::Command;
 
 #[path = "setup_opencode.rs"]
 mod opencode;
@@ -182,7 +181,7 @@ async fn invoke(program: &str, args: &[String]) -> Result<cccc_runtime::Captured
         cccc_runtime::resolve_executable_in_path(program, std::env::var("PATH").ok().as_deref())
             .context("Native CLI is unavailable")?;
     cccc_runtime::capture_command(
-        Command::new(program).args(args),
+        cccc_runtime::background_command(program).args(args),
         None,
         Duration::from_secs(30),
         32_768,

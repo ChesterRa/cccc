@@ -111,6 +111,8 @@ hound = "3.5"
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
+# Test fixtures may intentionally create processes; production roots deny bypasses.
+disallowed_methods = "allow"
 dbg_macro = "deny"
 todo = "deny"
 unwrap_used = "deny"

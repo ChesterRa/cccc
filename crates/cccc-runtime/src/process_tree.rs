@@ -13,6 +13,45 @@ use std::io;
 use std::process::{Child, Command};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+// These children communicate through redirected streams, not a console. Keep
+// this separate from explicit flags used for detached daemons and ConPTY.
+pub(crate) const BACKGROUND_CREATION_FLAGS: u32 = if cfg!(windows) { 0x0800_0000 } else { 0 };
+
+/// Build a background command that does not allocate a Windows console.
+/// Interactive commands belong in a terminal session instead.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "This constructor owns the background process default"
+)]
+pub fn background_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let command = Command::new(program);
+    #[cfg(windows)]
+    let command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = command;
+        command.creation_flags(BACKGROUND_CREATION_FLAGS);
+        command
+    };
+    command
+}
+
+/// Build a background Tokio command with the same Windows policy.
+/// Standard streams and process lifetime remain the caller's responsibility.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "This constructor owns the background process default"
+)]
+pub fn background_tokio_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    let command = tokio::process::Command::new(program);
+    #[cfg(windows)]
+    let command = {
+        let mut command = command;
+        command.creation_flags(BACKGROUND_CREATION_FLAGS);
+        command
+    };
+    command
+}
+
 /// Evidence from the actual process-creation boundary, not from an error kind.
 /// `Started` does not assert submission: child code may have run, so callers
 /// must not infer that retrying a side-effecting command is safe.
@@ -73,8 +112,11 @@ pub struct OwnedProcessTree {
 }
 
 impl OwnedProcessTree {
+    /// Start a background child. Callers redirect its standard streams; on
+    /// Windows it has no console. Use a terminal session for interactive work.
     pub fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
-        Self::spawn_registered(command, 0).map_err(CommandError::into_io_error)
+        Self::spawn_registered(command, BACKGROUND_CREATION_FLAGS)
+            .map_err(CommandError::into_io_error)
     }
 
     /// Supply Windows flags explicitly because std::Command has no flag getter.

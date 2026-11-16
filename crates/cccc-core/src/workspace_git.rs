@@ -6,7 +6,6 @@
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 const QUERY_BUDGET: Duration = Duration::from_secs(2);
@@ -167,7 +166,7 @@ fn git_stdout(
     // Git is optional decoration. Reuse finite-command ownership so a stuck
     // fsmonitor (including descendants holding pipes open) cannot trap browsing.
     let output = cccc_runtime::capture_command_blocking(
-        Command::new("git")
+        cccc_runtime::background_command("git")
             .args(args)
             .env("GIT_OPTIONAL_LOCKS", "0")
             .current_dir(cwd),

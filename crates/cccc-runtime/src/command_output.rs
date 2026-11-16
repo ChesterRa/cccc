@@ -67,7 +67,10 @@ pub async fn capture_command_with_start_evidence(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let (child, tree) = OwnedProcessTree::spawn_registered(command, 0)?;
+    let (child, tree) = OwnedProcessTree::spawn_registered(
+        command,
+        crate::process_tree::BACKGROUND_CREATION_FLAGS,
+    )?;
     let mut owned = OwnedChild { child, tree };
     let stdout = tokio::process::ChildStdout::from_std(
         owned

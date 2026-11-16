@@ -2,7 +2,7 @@ use super::{DeepSeekSupervisor, STDERR_TAIL_BYTES, SupervisorError};
 use crate::deepseek_acp::{self, NdjsonSession, ProtocolError};
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -22,7 +22,7 @@ impl DeepSeekSupervisor {
         if self.is_running() {
             return Ok(self.generation);
         }
-        let mut process = Command::new(&command[0]);
+        let mut process = crate::background_command(&command[0]);
         process
             .args(&command[1..])
             .current_dir(cwd)

@@ -12,7 +12,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeProbe {
@@ -124,7 +123,7 @@ pub fn deepseek_bootstrap_preflight(env: &BTreeMap<String, String>) -> Result<()
 }
 
 fn deepseek_node_preflight(env: &BTreeMap<String, String>) -> Result<(), String> {
-    let mut node_command = Command::new("node");
+    let mut node_command = crate::background_command("node");
     for (key, value) in env {
         if key != "CCCC_NODE_VERSION" {
             node_command.env(key, value);

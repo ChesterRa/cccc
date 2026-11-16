@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::io;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -180,7 +180,7 @@ struct NativeProxy {
 
 impl NativeProxy {
     async fn connect(program: &Path, codex_home: &Path, cwd: &Path) -> io::Result<Self> {
-        let mut command = Command::new(program);
+        let mut command = crate::background_command(program);
         command
             .args(["app-server", "proxy"])
             .env("CODEX_HOME", codex_home)
