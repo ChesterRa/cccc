@@ -1,7 +1,7 @@
 import { FloatingPortal } from "@floating-ui/react";
 import { ExternalLink } from "lucide-react";
 import { useId } from "react";
-import type { ReactNode } from "react";
+import type { ReactNode, Ref } from "react";
 import { useTranslation } from "react-i18next";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { useChatObscuringView } from "../../hooks/useChatObscuringView";
@@ -9,7 +9,7 @@ import { classNames } from "../../utils/classNames";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { ModalFocusGuard } from "../ModalFocusGuard";
 import { CloseIcon, DownloadIcon, LcdIcon } from "../Icons";
-import { buttonVariants } from "../ui/button-variants";
+import { dialogIconKey } from "../ui/toolbarKey";
 import "./mediaLightbox.css";
 
 /** The full-screen dialog an attachment preview opens into. */
@@ -22,6 +22,7 @@ export function MediaLightbox({
   downloadName,
   openHref,
   image = false,
+  actionsRef,
   children,
 }: {
   open: boolean;
@@ -34,6 +35,8 @@ export function MediaLightbox({
   /** Hands the file to the browser's own viewer, for what the page cannot show well. */
   openHref?: string;
   image?: boolean;
+  /** A document puts its source switch beside the download action. */
+  actionsRef?: Ref<HTMLSpanElement>;
   children: ReactNode;
 }) {
   const { t } = useTranslation("chat");
@@ -89,7 +92,7 @@ export function MediaLightbox({
                   href={openHref}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`}
+                  className={dialogIconKey}
                   title={t("workspaceOpenSeparate")}
                   aria-label={t("workspaceOpenSeparate")}
                   data-lcd-key
@@ -101,11 +104,12 @@ export function MediaLightbox({
                   />
                 </a>
               ) : null}
+              <span ref={actionsRef} className="contents" />
               {downloadHref ? (
                 <AuthenticatedDownloadLink
                   href={downloadHref}
                   download={downloadName}
-                  className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`}
+                  className={dialogIconKey}
                   title={t("download", { name: title })}
                   aria-label={t("download", { name: title })}
                   data-lcd-key
@@ -117,7 +121,7 @@ export function MediaLightbox({
               <button
                 type="button"
                 onClick={onClose}
-                className={`${buttonVariants({ variant: "ghost", size: "icon" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`}
+                className={dialogIconKey}
                 aria-label={t("common:close")}
                 data-lcd-key
               >

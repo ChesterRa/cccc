@@ -5,7 +5,7 @@ import { workspaceContentUrl } from "../../services/api/workspace";
 import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
 import { absoluteDocumentUrl, parseWorkspaceTable, workspaceLink } from "./workspacePreview";
 
-import { staticWorkspaceHtml } from "./workspaceHtml";
+import { preserveStaticHtmlAlignment, staticWorkspaceHtml } from "./workspaceHtml";
 import { scrollWorkspaceFragment } from "./workspaceFragment";
 import type { WorkspaceFileNavigation, WorkspaceOpenFileOptions } from "./useWorkspaceEditor";
 
@@ -102,10 +102,14 @@ export function WorkspaceDocumentPreview({
   useEffect(() => {
     if (kind !== "html" || !loadedHtml || loadedHtml.source !== html) return;
     const doc = loadedHtml.document;
+    const restoreAlignment = preserveStaticHtmlAlignment(doc);
     const click = (event: MouseEvent) => followLink(event, doc);
     doc.addEventListener("click", click);
     applyNavigation(doc);
-    return () => doc.removeEventListener("click", click);
+    return () => {
+      doc.removeEventListener("click", click);
+      restoreAlignment();
+    };
   }, [kind, loadedHtml, html, followLink, applyNavigation]);
 
   if (kind === "html")

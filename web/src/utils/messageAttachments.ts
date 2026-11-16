@@ -27,8 +27,7 @@ const AUDIO_ATTACHMENT_EXTENSIONS = new Set([
 
 const MARKDOWN_ATTACHMENT_EXTENSIONS = new Set([".md", ".markdown"]);
 
-// Files people read as they are. HTML and SVG stay out: shown as text they say little, and
-// neither may run in the page.
+// Files people read as they are. HTML uses a separate static preview; SVG stays an image.
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   ".txt",
   ".log",
@@ -75,7 +74,7 @@ const TEXT_ATTACHMENT_EXTENSIONS = new Set([
   ".cfg",
 ]);
 
-export type DocumentPreviewKind = "markdown" | "pdf" | "text";
+export type DocumentPreviewKind = "markdown" | "html" | "pdf" | "text";
 
 function attachmentPathOrName(attachment: MessageAttachment): string {
   return String(attachment.path || attachment.title || "")
@@ -158,6 +157,8 @@ export function attachmentDocumentKind(attachment: MessageAttachment): DocumentP
     .split(";")[0];
   if (mime === "application/pdf" || hasAttachmentExtension(attachment, new Set([".pdf"])))
     return "pdf";
+  if (mime === "text/html" || hasAttachmentExtension(attachment, new Set([".html", ".htm"])))
+    return "html";
   if (
     mime === "text/markdown" ||
     hasAttachmentExtension(attachment, MARKDOWN_ATTACHMENT_EXTENSIONS)

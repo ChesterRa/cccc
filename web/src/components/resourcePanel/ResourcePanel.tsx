@@ -14,6 +14,7 @@ import {
   ChevronDown,
   ChevronLeft,
   Columns2,
+  Download,
   ExternalLink,
   FileText,
   Image as ImageGlyph,
@@ -37,8 +38,9 @@ import { classNames } from "../../utils/classNames";
 import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
 import { readFrameProof } from "../../features/connect/protocol";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
-import { CloseIcon, DownloadIcon, LcdIcon } from "../Icons";
+import { CloseIcon, LcdIcon } from "../Icons";
 import { buttonVariants } from "../ui/button-variants";
+import { toolbarIconKey, toolbarTextKey } from "../ui/toolbarKey";
 import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover";
 import { WorkspaceEntryMenu } from "../workspace/WorkspaceEntryMenu";
 import { WorkspaceViewer } from "../workspace/WorkspaceViewer";
@@ -322,6 +324,9 @@ export function ResourcePanel({
   const splitSide = (key: string): SplitSide | null =>
     split?.left === key ? "left" : split?.right === key ? "right" : null;
   const [listOpen, setListOpen] = useState(false);
+  const [documentActions, setDocumentActions] = useState<HTMLSpanElement | null>(null);
+  const [leftDocumentActions, setLeftDocumentActions] = useState<HTMLSpanElement | null>(null);
+  const [rightDocumentActions, setRightDocumentActions] = useState<HTMLSpanElement | null>(null);
   const [menu, setMenu] = useState<{
     tab: ResourceTab;
     x: number;
@@ -333,7 +338,7 @@ export function ResourcePanel({
   const phone = layout === "phone";
   // Touch makes every button at least 44px tall; the sides' headers grow to match.
   const touch = useMediaQuery("(pointer: coarse)");
-  const splitHeader = touch ? SPLIT_HEADER.touch : SPLIT_HEADER.pointer;
+  const splitHeader = touch || phone ? SPLIT_HEADER.touch : SPLIT_HEADER.pointer;
   useFollowSlot(root, phone ? null : maximized ? container.current : slot, container);
 
   const active = tabs.find((tab) => tab.key === panel.activeKey) ?? null;
@@ -661,14 +666,14 @@ export function ResourcePanel({
 
   const toolbar =
     active?.kind === "attachment" ? (
-      <div className="flex h-9 pointer-coarse:h-12 shrink-0 items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 text-xs text-[var(--color-text-tertiary)]">
+      <div className="flex h-9 max-sm:h-12 pointer-coarse:h-12 shrink-0 items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 text-xs text-[var(--color-text-tertiary)]">
         <span className="min-w-0 flex-1 truncate" title={active.title}>
           {active.sender ? `${active.title} · ${active.sender}` : active.title}
         </span>
         {active.eventId ? (
           <button
             type="button"
-            className={`${buttonVariants({ variant: "ghost", size: "sm" })} h-7 px-2 text-xs`}
+            className={toolbarTextKey}
             onClick={() => onLocateMessage(active.eventId)}
             data-resource-locate
             data-lcd-key
@@ -683,23 +688,24 @@ export function ResourcePanel({
             href={attachmentLinks(active).previewHref}
             target="_blank"
             rel="noopener noreferrer"
-            className={`${buttonVariants({ variant: "ghost", size: "icon" })} h-7 w-7`}
+            className={toolbarIconKey}
             title={t("workspaceOpenSeparate")}
             aria-label={t("workspaceOpenSeparate")}
             data-lcd-key
           >
-            <LcdIcon icon={ExternalLink} glyph="external-link" className="h-4 w-4" />
+            <LcdIcon icon={ExternalLink} glyph="external-link" className="h-3.5 w-3.5" />
           </a>
         ) : null}
+        <span ref={setDocumentActions} className="contents" />
         <AuthenticatedDownloadLink
           href={attachmentLinks(active).downloadHref}
           download={attachmentLinks(active).downloadName}
-          className={`${buttonVariants({ variant: "ghost", size: "icon" })} h-7 w-7`}
+          className={toolbarIconKey}
           title={t("download", { name: active.title })}
           aria-label={t("download", { name: active.title })}
           data-lcd-key
         >
-          <DownloadIcon size={16} aria-hidden="true" />
+          <LcdIcon icon={Download} glyph="download" className="h-3.5 w-3.5" />
         </AuthenticatedDownloadLink>
       </div>
     ) : null;
@@ -1028,6 +1034,12 @@ export function ResourcePanel({
                   choices={tabs}
                   isDark={isDark}
                   style={splitBoxes(side, split.ratio, phone, splitHeader).header}
+                  actions={
+                    <span
+                      ref={side === "left" ? setLeftDocumentActions : setRightDocumentActions}
+                      className="flex shrink-0 items-center"
+                    />
+                  }
                   onFocus={() => focusSide(side)}
                   onPick={(choice) => {
                     setSplit(
@@ -1102,6 +1114,7 @@ export function ResourcePanel({
                     active={false}
                     visible={shown}
                     resourceKey={`${tab.key}:right`}
+                    actionsTarget={rightDocumentActions}
                   />
                 ) : tab.kind === "presentation" &&
                   (both
@@ -1243,6 +1256,15 @@ export function ResourcePanel({
                 active={shown && !split && tab.key === panel.activeKey}
                 visible={shown && front}
                 resourceKey={tab.key}
+                actionsTarget={
+                  !front
+                    ? null
+                    : split
+                      ? side === "left"
+                        ? leftDocumentActions
+                        : rightDocumentActions
+                      : documentActions
+                }
               />
             </div>
           );

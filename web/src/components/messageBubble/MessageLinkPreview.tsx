@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { readFrameProof } from "../../features/connect/protocol";
 import type { MessageLinkPreview as Preview } from "../../utils/messageLinkPreview";
 import { GraphicViewer } from "../viewer/GraphicViewer";
+import { dialogIconKey } from "../ui/toolbarKey";
 import { WorkspaceMediaPreview } from "../workspace/WorkspaceMediaPreview";
 import { DocumentPreview } from "./DocumentPreview";
 import { MediaLightbox } from "./MediaLightbox";
@@ -18,6 +20,7 @@ export function MessageLinkPreview({
   onClose: () => void;
 }) {
   const { t } = useTranslation("chat");
+  const [actionsTarget, setActionsTarget] = useState<HTMLSpanElement | null>(null);
   const { kind, href, label, downloadHref } = preview;
   // This site's files need the embedded cookie partition, which a new tab leaves.
   const openHref = downloadHref && readFrameProof(window.location) ? undefined : href;
@@ -32,6 +35,7 @@ export function MessageLinkPreview({
       downloadName={label}
       openHref={openHref}
       image={kind === "image"}
+      actionsRef={setActionsTarget}
     >
       {kind === "image" ? (
         <GraphicViewer src={href} alt={label} onBlankClick={onClose} />
@@ -50,6 +54,9 @@ export function MessageLinkPreview({
           title={label}
           isDark={isDark}
           failedText={failedText}
+          actionsTarget={actionsTarget}
+          toggleButtonClassName={dialogIconKey}
+          toggleIconClassName="h-[18px] w-[18px]"
         />
       )}
     </MediaLightbox>

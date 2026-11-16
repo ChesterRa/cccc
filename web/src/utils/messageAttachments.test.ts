@@ -33,6 +33,8 @@ it("opens documents in the page and leaves media and unknown files to their own 
   expect(attachmentDocumentKind(file("data.json", "application/json"))).toBe("text");
   expect(attachmentDocumentKind(file("voice.mp3"))).toBeNull();
   expect(attachmentDocumentKind(file("diagram.svg"))).toBeNull();
-  expect(attachmentDocumentKind(file("page.html", "text/html"))).toBeNull();
+  expect(attachmentDocumentKind(file("page.html", "text/html"))).toBe("html");
+  expect(attachmentDocumentKind(file("page.HTM", "application/octet-stream"))).toBe("html");
+  expect(attachmentDocumentKind(file("page", "text/html; charset=utf-8"))).toBe("html");
   expect(attachmentDocumentKind(file("archive.zip"))).toBeNull();
 });

@@ -1,12 +1,20 @@
-/** The most text a preview reads, as in the Files panel. */
+/** Default limit for Markdown and plain text previews. */
 export const DOCUMENT_PREVIEW_BYTES = 1024 * 1024;
+/** HTML slides often contain several MiB of embedded images. Text editing keeps its own limit. */
+export const HTML_PREVIEW_BYTES = 20 * 1024 * 1024;
 
 const BINARY_CHECK_BYTES = 8192;
 
 const PDF_SIGNATURE = [0x25, 0x50, 0x44, 0x46, 0x2d];
 
 export type DocumentText =
-  | { status: "ready"; text: string; truncated: boolean }
+  | {
+      status: "ready";
+      text: string;
+      truncated: boolean;
+      sourceText: string;
+      sourceTruncated: boolean;
+    }
   | { status: "binary" };
 
 /** Stops reading at the limit: Content-Length may be missing or wrong. */
@@ -56,13 +64,22 @@ export async function isPdfDocument(href: string, signal: AbortSignal) {
   );
 }
 
-export async function readDocumentText(href: string, signal: AbortSignal): Promise<DocumentText> {
-  const bytes = await readLimited(await request(href, signal), DOCUMENT_PREVIEW_BYTES);
+export async function readDocumentText(
+  href: string,
+  signal: AbortSignal,
+  limit = DOCUMENT_PREVIEW_BYTES,
+): Promise<DocumentText> {
+  const bytes = await readLimited(await request(href, signal), limit);
   if (bytes.subarray(0, BINARY_CHECK_BYTES).includes(0)) return { status: "binary" };
-  const truncated = bytes.length > DOCUMENT_PREVIEW_BYTES;
+  const truncated = bytes.length > limit;
   // A streaming decode leaves out a character the limit cut in half.
-  const text = new TextDecoder().decode(bytes.subarray(0, DOCUMENT_PREVIEW_BYTES), {
-    stream: truncated,
-  });
-  return { status: "ready", text, truncated };
+  // An oversized HTML file falls back to the usual text budget, not a multi-MiB text node.
+  const shownBytes = truncated ? Math.min(limit, DOCUMENT_PREVIEW_BYTES) : limit;
+  const text = new TextDecoder().decode(bytes.subarray(0, shownBytes), { stream: truncated });
+  const sourceTruncated = bytes.length > DOCUMENT_PREVIEW_BYTES;
+  const sourceText =
+    sourceTruncated && !truncated
+      ? new TextDecoder().decode(bytes.subarray(0, DOCUMENT_PREVIEW_BYTES), { stream: true })
+      : text;
+  return { status: "ready", text, truncated, sourceText, sourceTruncated };
 }

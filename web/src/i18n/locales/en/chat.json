@@ -645,6 +645,8 @@
   "documentPreviewDialog": "File preview",
   "documentPreviewFailed": "This file could not be loaded. You can still download it.",
   "documentPreviewTruncated": "Showing the first 1 MiB.",
+  "documentHtmlStatic": "Static preview · Scripts and forms are disabled, and external resources are not loaded. Inline styles and embedded images are supported.",
+  "documentHtmlTruncated": "HTML exceeds the 20 MiB preview limit. Showing the first 1 MiB as source only.",
   "linkPreviewFailed": "This link cannot be shown here. Open it in a new tab.",
   "showObligationStatusCounts": "Show reply status: {{replied}} of {{total}} replied",
   "showObligationStatusCancelled": "Show reply status: {{replied}} of {{total}} replied, {{cancelled}} cancelled",

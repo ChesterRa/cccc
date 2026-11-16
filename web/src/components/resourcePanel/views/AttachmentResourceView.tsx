@@ -19,6 +19,8 @@ type AttachmentResourceViewProps = {
   visible?: boolean;
   /** Stable across an optimistic upload being replaced by its stored URL. */
   resourceKey: string;
+  /** The host header for this visible copy, or null for an inactive tab. */
+  actionsTarget?: HTMLElement | null;
 };
 
 type SvgSource = { href: string; src: string; isSvg: boolean } | { href: string; error: true };
@@ -128,6 +130,7 @@ export function AttachmentResourceView(props: AttachmentResourceViewProps) {
       title={props.title}
       isDark={props.isDark}
       failedText={t("documentPreviewFailed")}
+      actionsTarget={props.actionsTarget}
     />
   );
 }

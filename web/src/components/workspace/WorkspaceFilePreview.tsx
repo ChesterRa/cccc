@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
 import type { WorkspaceFile } from "../../types";
@@ -9,6 +9,11 @@ import { WorkspaceDocumentPreview } from "./WorkspaceDocumentPreview";
 import { workspacePreviewKind } from "./workspacePreview";
 import { baseName } from "./workspaceTreeModel";
 import { formatBytes } from "./workspaceText";
+import {
+  HTML_PREVIEW_BYTES,
+  readDocumentText,
+  type DocumentText,
+} from "../messageBubble/documentText";
 import type { WorkspaceFileNavigation, WorkspaceOpenFileOptions } from "./useWorkspaceEditor";
 
 /**
@@ -50,6 +55,26 @@ export function WorkspaceFilePreview({
     () => (svgSource && dirty ? `data:image/svg+xml,${encodeURIComponent(content)}` : contentUrl),
     [svgSource, dirty, content, contentUrl],
   );
+
+  if (kind === "html" && file.truncated)
+    return (
+      <LargeHtmlPreview
+        key={contentUrl}
+        href={contentUrl}
+        showSource={showSource}
+        renderHtml={(text) => (
+          <WorkspaceDocumentPreview
+            kind="html"
+            groupId={groupId}
+            file={file}
+            content={text}
+            isDark={isDark}
+            onOpenFile={onOpenFile}
+            navigation={navigation}
+          />
+        )}
+      />
+    );
 
   if (kind !== "text" && !showSource) {
     if (kind === "image")
@@ -115,5 +140,63 @@ export function WorkspaceFilePreview({
     >
       {content}
     </pre>
+  );
+}
+
+/** A larger read is only for HTML preview/source; the editor's truncated file stays untouched. */
+function LargeHtmlPreview({
+  href,
+  showSource,
+  renderHtml,
+}: {
+  href: string;
+  showSource: boolean;
+  renderHtml: (text: string) => ReactNode;
+}) {
+  const { t } = useTranslation(["chat", "common"]);
+  const [result, setResult] = useState<DocumentText | "loading" | "failed">("loading");
+  useEffect(() => {
+    const controller = new AbortController();
+    readDocumentText(href, controller.signal, HTML_PREVIEW_BYTES).then(
+      (value) => {
+        if (!controller.signal.aborted) setResult(value);
+      },
+      () => {
+        if (!controller.signal.aborted) setResult("failed");
+      },
+    );
+    return () => controller.abort();
+  }, [href]);
+  if (result === "loading" || result === "failed" || result.status === "binary")
+    return (
+      <p
+        role={result === "failed" ? "alert" : "status"}
+        className="px-3 py-6 text-center text-xs text-[var(--color-text-tertiary)]"
+      >
+        {t(
+          result === "loading"
+            ? "common:loading"
+            : result === "failed"
+              ? "documentPreviewFailed"
+              : "workspaceBinary",
+        )}
+      </p>
+    );
+  if (!result.truncated && !showSource) return renderHtml(result.text);
+  return (
+    <div className="min-h-0 flex-1 overflow-auto">
+      {result.sourceTruncated && (
+        <p role="status" className="px-3 py-2 text-xs text-[var(--color-text-tertiary)]">
+          {t(result.truncated ? "documentHtmlTruncated" : "documentPreviewTruncated")}
+        </p>
+      )}
+      <pre
+        data-workspace-text
+        data-workspace-scroll
+        className="whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs leading-relaxed"
+      >
+        {result.sourceText}
+      </pre>
+    </div>
   );
 }

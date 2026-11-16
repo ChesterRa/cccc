@@ -68,6 +68,20 @@ it("keeps the right side focused when both sides show the same resource", () => 
   ).toEqual({ left: a.key, right: a.key, focus: "right", ratio: 0.6 });
 });
 
+it("restores a confirmed HTML attachment as a static document tab", () => {
+  const html = tab({
+    kind: "attachment",
+    messageKey: "message",
+    eventId: "event",
+    index: 0,
+    blobGroupId: "g",
+    blobPath: "state/blobs/html",
+    media: "html",
+    isSvg: false,
+  });
+  expect(read({ g: panel([html]) }).g.tabs).toEqual([html]);
+});
+
 it("writes an allowlist, including only confirmed attachment and quote identities", () => {
   const quote = tab({
     kind: "presentation",
