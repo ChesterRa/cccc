@@ -47,18 +47,18 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.56
+## What's new in 0.4.57
 
-- **A short capability list chosen for agents' work.** CCCC ships 10 skills and MCP servers that we tried on that work ourselves, in four work groups, each with the reason it is listed, when not to use it and how far we checked it. Exa is the one primary, for facts where an agent's own search finds no credible source; the others are alternatives.
-- **See who can use what.** The capability page shows, for each member of a Group, whether it can use an entry or what it needs first. An agent that uses a recommended entry also gets our notes on when not to use it. An agent can browse the recommended entries when a task needs one, with when each fits and any setup it needs; bootstrap also gives a short index of them.
-- **Member tokens for remote MCP servers.** A managed agent can use a server that needs a token, with the token from its own private settings or linked Profile.
-- **Recipe updates from CCCC Web.** An administrator can update an installed MCP server for all Groups after confirming.
-- **Steadier MCP servers.** Remote and local servers run on the official Rust MCP SDK. A local server's errors now include the end of its error output, with known credentials and declared environment values removed.
-- **Claude Code agents that CCCC starts** no longer load the CCCC plugin meant for sessions you start yourself.
+- **Slow capabilities no longer hold up other work.** While a capability is being enabled or an external tool call waits for a slow service, messages, inbox reads and health checks in the same Group and in other Groups return without waiting. A call that was already sent is never sent again automatically.
+- **Quick replies of your own.** Settings › Quick Replies keeps up to 24 replies in your order, the four default ones included; reword, reorder or delete any of them. A message's quick reply menu sends one at once; the template button next to the composer inserts one at the cursor so you can edit it before sending. The daemon keeps one list per signed-in user.
+- **ChatGPT Web members** keep their conversation when it moves into a Project, and a new chat with a provisional `local-chatgpt:` address waits for its real conversation ID. Contributed in #226 and #227.
+- **MCP command recipes** that declare `command` as a string or argv array, or a fallback command, now install as imported.
+- **Fewer console windows on Windows.** Background launches share a no-console-window default, including Codex helpers, managed Claude launchers, Reach and Git scope checks, with CI checks to catch bypasses. Interactive terminals and foreground maintenance keep their behavior. Windows validation is still pending; see the release notes (#228).
+- **Displays that match the facts.** An automation rule that owes a run shows it as pending, the capability page's Enabled count covers the whole search, and Web slash commands pass their arguments to capability tools.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages. Restart native sessions to give them the new tool descriptions: `cccc_capability_search` no longer returns a skill's text, which agents now read with `cccc_capability_use`.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Then restart the daemon and Web and reload open pages; a new Web with a daemon that still runs v0.4.56 shows Enabled as 0. An MCP command recipe that earlier versions read only partly may report a changed recipe until you update it. Agents that read a parent task through MCP now get its subtasks as summaries and read each subtask by its ID.
 
-Details: [0.4.56 release notes](https://chesterra.github.io/cccc/release/v0.4.56_release_notes).
+Details: [0.4.57 release notes](https://chesterra.github.io/cccc/release/v0.4.57_release_notes).
 
 ## Quick start
 

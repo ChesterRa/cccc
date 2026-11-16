@@ -6,14 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.57]
+
+### Added
+
+- Quick replies of your own, in one list. Settings › Quick Replies keeps up to 24 replies in
+  your order, the four default ones included, each with a name and a text sent exactly as
+  written; add, reword, reorder or delete any of them. A default reply's unchanged name or
+  text follows the interface language, a changed one stays as written, **Restore default**
+  puts it back, and a deleted default can be brought back at the end of the list. A
+  message's quick reply menu sends one at once; the composer's template button opens the
+  list above the input, near where you are typing, and inserts one at the cursor to edit
+  before sending. The daemon keeps one list per signed-in user, so other browsers and phones
+  signed in as that user see the same replies; a browser on this computer that is not
+  signed in has its own.
+- The operations guide lists what a daemon restart keeps and what it does not, with a
+  FAQ entry pointing to it.
+- `cccc_bootstrap` recovery includes the Group brief's last update time
+  (`coordination_brief.updated_at`), so an agent resuming work can see that a brief is
+  old. It is omitted when the brief has no recorded update time.
+
 ### Changed
 
 - Reading a parent task through MCP keeps the parent's full details and returns its
   subtasks as summary rows. Read a subtask by its own ID for its notes and checklist.
 
 ### Fixed
-
-- Preserve trailing mention highlights when undoing a text replacement or deletion in the chat composer.
 
 - Enabling a capability or calling an external tool no longer holds up other operations
   while it waits for the external service. Superseded preparation cannot reverse a later
@@ -33,24 +51,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - ChatGPT Web members treat `local-chatgpt:` conversation URLs as provisional, like
   `WEB:` ones, and a conversation moved into a Project keeps its binding and delivery
   receipts (#226, #227).
+- On Windows, background process constructors now share a no-console-window
+  default, covering the Codex app-server and delivery helper reported in #228,
+  managed Claude launchers, Reach helpers and process checks, Git scope detection,
+  and runtime preparation. Standard streams, timeouts and ownership are unchanged;
+  interactive terminals, foreground maintenance and detached daemon startup retain
+  their policies. Production Clippy and entry-point checks catch bypasses, with
+  explicit reasons for exceptions. The runtime library and its Windows tests
+  were checked for a Windows target on Linux; Windows-only daemon and CLI
+  branches will first be compiled in Windows CI. This release has not been run
+  locally on Windows; the reporter's Codex/Windows Terminal check remains needed.
+- Chet on OpenCode: a message or member result sent while Chet is busy waits for the
+  current turn and goes to Chet's own session as its own turn, instead of being typed
+  into Chet's terminal, where after `/new` it reached another session and held up later
+  Group messages to Chet (#229). Voice delegations during a call are unchanged.
 - The documentation home page's getting-started button links to the page's own address,
   so opening the link directly no longer returns 404.
 - Web slash commands for capability tools pass their arguments to the tool. They were sent
   under a field the daemon does not read, so the tool ran without them.
-
-### Added
-
-- Personal quick reply templates. Settings › Quick Replies keeps up to 20 replies of your
-  own, each with a name and a text sent exactly as written. A message's quick reply menu
-  lists them after the built-in replies and sends one at once; the composer's template
-  button inserts one at the cursor to edit before sending. The daemon keeps one list per
-  signed-in user, so other browsers and phones signed in as that user see the same list; a
-  browser on this computer that is not signed in has its own.
-- The operations guide lists what a daemon restart keeps and what it does not, with a
-  FAQ entry pointing to it.
-- `cccc_bootstrap` recovery includes the Group brief's last update time
-  (`coordination_brief.updated_at`), so an agent resuming work can see that a brief is
-  old. It is omitted when the brief has no recorded update time.
+- The chat composer keeps the highlight of a later @mention when Undo restores a
+  replaced or deleted selection. Who receives the message was not affected.
 
 ## [0.4.56]
 
