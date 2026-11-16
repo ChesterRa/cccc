@@ -6,6 +6,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.58]
+
+### Added
+
+- Markdown attachments, and Markdown links opened in the page, switch between the rendered
+  view and the unchanged source without downloading again, with the **View source** /
+  **Preview** control that workspace files already have. The control sits in the title bar
+  of the resource panel, of each side of a split view and of the preview dialog, so a
+  document gets no extra toolbar row.
+- HTML attachments, Group HTML files and HTML from `raw.githubusercontent.com` or
+  `gist.githubusercontent.com` open as a static document preview. Scripts do not run, form
+  controls are disabled and external resources are not loaded; inline styles and embedded
+  images are supported, and the page follows only web, mail and in-page links. An
+  attachment has no directory, so its relative images, stylesheets and sibling files are
+  not resolved. HTML up to 20 MiB previews in full, embedded images included, and
+  **Files** previews HTML over its 1 MiB editing limit the same way, read-only.
+  **View source** shows the first 1 MiB. Larger HTML shows only that source, with a
+  notice, instead of a broken page. Wide slides stacked in a centered column start at the
+  left and scroll sideways; pages keep their own size and are not scaled to fit. Panel tabs restored
+  after a reload keep the HTML kind.
+
+### Fixed
+
+- The keys in an attachment's title bar share one size with the **Files** toolbar, and the
+  download key no longer sticks out of the bar.
+- On a phone, the empty composer at rest keeps attach, the template button, the input and
+  voice on one row; the template button no longer drops to a second line. **Send** returns
+  with the full layout when the input is focused. A send in flight keeps the full layout,
+  so its progress and **Stop waiting for upload** stay visible if focus leaves the
+  composer during an upload.
+
 ## [0.4.57]
 
 ### Added
