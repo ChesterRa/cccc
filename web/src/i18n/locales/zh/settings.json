@@ -47,6 +47,7 @@
     "developer": "开发者",
     "webAccess": "Web 访问",
     "webModels": "Web 模型",
+    "update": "更新",
     "voice": "语音"
   },
   "notifications": {
@@ -1352,6 +1353,44 @@
     "working": "处理中…",
     "pickFileFirst": "请先选择文件进行预览",
     "reconnectGrok": "导入后请重新保存各 Grok 智能体的 Bot URL，并配置其 Webhook Routine 凭据。"
+  },
+  "update": {
+    "title": "更新",
+    "description": "查看这里运行的 CCCC 版本，并更新到最新发布版。",
+    "versionTitle": "版本",
+    "installed": "当前版本",
+    "latest": "最新版本",
+    "check": "检查更新",
+    "checking": "正在检查…",
+    "checkFailed": "检查失败：{{reason}}",
+    "upToDate": "已是最新版本。",
+    "installedNewer": "当前版本比最新发布版还新。",
+    "noPackage": "这个平台没有发布 CCCC 安装包。",
+    "nothingToUpdate": "没有可更新的内容。",
+    "releaseNotes": "更新说明",
+    "updateAndRestart": "更新并重启智能体",
+    "confirmText": "CCCC 会停止，安装 {{version}}，然后在原地址重新启动；正在运行的智能体会随之重启。CCCC 回来之前这个页面会断开连接，回来后在这里显示结果。",
+    "updateNow": "立即更新",
+    "preparing": "正在准备 {{version}}：下载并校验。在此期间 CCCC 照常运行。",
+    "updating": "正在更新到 {{version}}。CCCC 回来后在这里显示结果。",
+    "lost": "没有收到 CCCC 的回应。如果到 {{version}} 的更新已经开始，CCCC 回来后会在这里显示结果。",
+    "notBack": "CCCC 还没有回来。如果一直这样，请到它所在的机器上查看 CCCC 日志。",
+    "noResult": "CCCC 已经能连上，但没有记录到这次更新到 {{version}} 的结果。请看上面的当前版本；它所在机器上的 CCCC 日志会说明发生了什么。",
+    "rejected": "更新没有开始（{{reason}}）。CCCC 没有被更新，也没有停止任何智能体。",
+    "byHand": "用这条命令更新这个安装：",
+    "byPip": "这个 CCCC 是用 pip 安装的。先停止 CCCC，再在安装它的那个 Python 环境里运行：",
+    "unmanaged": "这个 CCCC 不是用 CCCC 安装脚本或 pip 安装的，请按原来的安装方式更新。",
+    "unavailable": "这个 CCCC 进程不能检查更新。请在它所在的机器上运行 `cccc update --check`。",
+    "lastTitle": "上次更新",
+    "last": {
+      "installed": "已从 {{from}} 更新到 {{to}}。",
+      "abandoned": "没有更新到 {{to}}（{{reason}}），已重新启动 {{from}}。",
+      "notStarted": "更新到 {{to}} 没有开始（{{reason}}）。CCCC 没有被更新，也没有停止任何智能体。",
+      "unconfirmed": "{{to}} 正在运行，但这次更新没能确认完成。恢复命令见 CCCC 日志。",
+      "undone": "更新到 {{to}} 已撤销。",
+      "kept": "更新到 {{to}} 已保留。",
+      "other": "更新到 {{to}}：{{result}}。"
+    }
   },
   "developer": {
     "title": "开发者模式（全局）",

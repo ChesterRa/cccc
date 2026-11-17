@@ -1221,7 +1221,24 @@ pub(crate) fn write_relay(
 pub(crate) struct Handoff {
     pub context: UpdateContext,
     pub prepared: Prepared,
+    /// What the relay record says, for the terminal's last line.
+    pub outcome: RelayOutcome,
     pub relay: Relay,
+}
+
+impl Handoff {
+    /// What starts next, as the terminal interface closes for it.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub(crate) fn announcement(&self) -> String {
+        match &self.outcome {
+            RelayOutcome::Applied => format!("Starting CCCC {}...", self.prepared.version),
+            RelayOutcome::Abandoned { stage, reason } => format!(
+                "CCCC was not updated to {} ({stage}: {reason}); starting CCCC {} again...",
+                self.prepared.version,
+                crate::PRODUCT_VERSION
+            ),
+        }
+    }
 }
 
 /// Replace this process with the installed program, which resumes from the
@@ -1341,35 +1358,42 @@ fn write_last(home: &HomeLayout, last: LastResult) {
 
 /// After the relay: the daemon is ready and the Web listens on the new
 /// program, so the previous files can go and ordinary starts may resume. This
-/// records the installation only; the agents are not observed here.
-pub(crate) async fn confirm(home: &HomeLayout, transaction: &Transaction, record: &RelayRecord) {
+/// records the installation only; the agents are not observed here. An error
+/// says what is left to do.
+pub(crate) async fn confirm(
+    home: &HomeLayout,
+    transaction: &Transaction,
+    record: &RelayRecord,
+) -> Result<(), String> {
     let context = UpdateContext::for_installation(home, record.install_dir.clone());
     let run = run_phase(&context, transaction, "confirm", None, PHASE_TIMEOUT).await;
     let confirmed = matches!(
         &run,
         Ok(run) if run.success && run.reported("CCCC_INSTALL_CONFIRMED", &record.to_version)
     );
-    if !confirmed {
+    let problem = if !confirmed {
         let reason = match run {
             Ok(run) => run.problem(),
             Err(error) => format!("{error:#}"),
         };
-        cccc_runtime::diagnostic(format_args!(
+        Some(format!(
             "CCCC {} is running, but the update could not be confirmed: {reason}; stop CCCC, then recover with `{}`",
             record.to_version,
             recovery_command(home)
-        ));
-        record_result(home, record, "unconfirmed");
-        return;
-    }
-    if let Err(error) = attended_update::disarm(home, &transaction.id) {
-        cccc_runtime::diagnostic(format_args!(
+        ))
+    } else if let Err(error) = attended_update::disarm(home, &transaction.id) {
+        Some(format!(
             "CCCC {} is running, but its update intent could not be withdrawn: {error}; stop CCCC, then finish it with `{}`",
             record.to_version,
             recovery_command(home)
-        ));
+        ))
+    } else {
+        None
+    };
+    if let Some(problem) = problem {
+        cccc_runtime::diagnostic(format_args!("{problem}"));
         record_result(home, record, "unconfirmed");
-        return;
+        return Err(problem);
     }
     record_result(home, record, "installed");
     transaction.remove();
@@ -1377,6 +1401,7 @@ pub(crate) async fn confirm(home: &HomeLayout, transaction: &Transaction, record
         "[cccc] Updated CCCC {} to {}",
         record.from_version, record.to_version
     ));
+    Ok(())
 }
 
 /// What `--resume` hands the host: the transaction to confirm once the daemon
@@ -1420,7 +1445,23 @@ pub(crate) async fn resume(home: HomeLayout, dir: PathBuf) -> Result<crate::web_
             ));
             record_result(&home, &record, "abandoned");
             transaction.remove();
-            crate::web_host::launch(home, launch.host, launch.port, web_mode, terminal).await
+            let result = crate::host_state::UpdateResult {
+                transaction: transaction.id.clone(),
+                failed: true,
+                message: format!(
+                    "CCCC {} started again: it was not updated to {} ({stage}: {reason}).",
+                    record.from_version, record.to_version
+                ),
+            };
+            crate::web_host::launch_after_abandoned(
+                home,
+                launch.host,
+                launch.port,
+                web_mode,
+                terminal,
+                result,
+            )
+            .await
         }
     }
 }

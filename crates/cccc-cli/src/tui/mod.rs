@@ -24,6 +24,8 @@ mod terminal;
 #[cfg(test)]
 mod test_support;
 mod text;
+mod update;
+mod update_view;
 mod view;
 
 use crate::host_state::{HostIntent, HostPhase, HostState};
@@ -41,6 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
+use update::{UpdateCommand, UpdateProgress};
 
 pub(crate) use terminal::restore as restore_terminal;
 
@@ -70,6 +73,7 @@ pub(crate) struct Session {
     setup: Option<JoinHandle<()>>,
     act: Option<JoinHandle<()>>,
     reply: Option<JoinHandle<()>>,
+    update: Option<JoinHandle<()>>,
 }
 
 /// Take over the terminal and show the interface. `host` carries this
@@ -80,6 +84,7 @@ pub(crate) async fn start(
     home: HomeLayout,
     host: watch::Receiver<HostState>,
     intents: mpsc::UnboundedSender<HostIntent>,
+    update: Option<crate::update_checker::UpdateEntry>,
 ) -> Result<Session> {
     let (sessions_tx, sessions) = watch::channel(SessionList::default());
     let (groups_tx, groups) = watch::channel(GroupList::default());
@@ -94,13 +99,20 @@ pub(crate) async fn start(
     let (action_tx, action) = watch::channel(ActionProgress::default());
     let (reply_commands, reply_commands_rx) = mpsc::unbounded_channel();
     let (reply_progress_tx, reply_progress) = watch::channel(pending::Progress::default());
+    let (update_commands, update_commands_rx) = mpsc::unbounded_channel();
+    let (update_progress_tx, update_progress) = watch::channel(UpdateProgress::default());
+    let offer = match &update {
+        None => app::UpdateOffer::Unavailable,
+        Some(entry) if entry.in_place() => app::UpdateOffer::InPlace,
+        Some(_) => app::UpdateOffer::CheckOnly,
+    };
     let (stop, stop_rx) = watch::channel(false);
     let finish = Arc::new(AtomicBool::new(false));
     let (entered_tx, entered) = oneshot::channel();
     let (done_tx, done) = oneshot::channel();
     let initial = host.borrow().clone();
     let ui = Ui {
-        app: App::new(Context::new(&home), initial),
+        app: App::new(Context::new(&home, offer), initial),
         host,
         intents,
         sessions,
@@ -116,6 +128,8 @@ pub(crate) async fn start(
         action,
         reply_commands,
         reply_progress,
+        update_commands,
+        update_progress,
         finish: Arc::clone(&finish),
     };
     std::thread::Builder::new()
@@ -172,6 +186,14 @@ pub(crate) async fn start(
         reply_commands_rx,
         reply_progress_tx,
     ));
+    let update = update.map(|entry| {
+        tokio::spawn(update::run(
+            entry,
+            update_commands_rx,
+            update_progress_tx,
+            stop_rx.clone(),
+        ))
+    });
     let setup = tokio::spawn(setup::run(home, setup_commands_rx, progress_tx, stop_rx));
     Ok(Session {
         finish,
@@ -181,6 +203,7 @@ pub(crate) async fn start(
         setup: Some(setup),
         act: Some(act),
         reply: Some(reply),
+        update,
     })
 }
 
@@ -192,10 +215,17 @@ impl Session {
     pub(crate) async fn stop_work(&mut self) {
         let _ = self.stop.send(true);
         // Reads have nothing to finish, and a group action only stops being
-        // waited for: a request already sent is the daemon's to complete.
-        for task in [self.refresh.take(), self.act.take(), self.reply.take()]
-            .into_iter()
-            .flatten()
+        // waited for: a request already sent is the daemon's to complete. An
+        // update still being prepared is given up; one handed over is the
+        // host's.
+        for task in [
+            self.refresh.take(),
+            self.act.take(),
+            self.reply.take(),
+            self.update.take(),
+        ]
+        .into_iter()
+        .flatten()
         {
             task.abort();
             let _ = task.await;
@@ -245,6 +275,7 @@ impl Drop for Session {
             self.setup.take(),
             self.act.take(),
             self.reply.take(),
+            self.update.take(),
         ]
         .into_iter()
         .flatten()
@@ -274,6 +305,8 @@ struct Ui {
     action: watch::Receiver<ActionProgress>,
     reply_commands: mpsc::UnboundedSender<pending::Command>,
     reply_progress: watch::Receiver<pending::Progress>,
+    update_commands: mpsc::UnboundedSender<UpdateCommand>,
+    update_progress: watch::Receiver<UpdateProgress>,
     finish: Arc<AtomicBool>,
 }
 
@@ -286,7 +319,8 @@ impl Ui {
         loop {
             match self.host.has_changed() {
                 Ok(true) => {
-                    self.app.host = self.host.borrow_and_update().clone();
+                    let host = self.host.borrow_and_update().clone();
+                    self.app.set_host(host);
                     dirty = true;
                 }
                 Ok(false) => {}
@@ -298,7 +332,10 @@ impl Ui {
                 self.app.host = self.host.borrow().clone();
                 break;
             }
-            if matches!(self.app.host.phase, HostPhase::Stopped { .. }) {
+            if matches!(
+                self.app.host.phase,
+                HostPhase::Stopped { .. } | HostPhase::Replaced { .. }
+            ) {
                 break;
             }
             let wanted = self.app.want();
@@ -381,6 +418,10 @@ impl Ui {
             self.app.set_action(progress);
             changed = true;
         }
+        if self.update_progress.has_changed().unwrap_or(false) {
+            self.app.update = self.update_progress.borrow_and_update().clone();
+            changed = true;
+        }
         changed
     }
 
@@ -426,6 +467,9 @@ impl Ui {
                 Some(Effect::Group(command)) => {
                     let _ = self.group_commands.send(command);
                 }
+                Some(Effect::Update(command)) => {
+                    let _ = self.update_commands.send(command);
+                }
                 Some(Effect::Reply(command)) => {
                     let command = *command;
                     if self.reply_commands.send(command.clone()).is_err() {
@@ -457,8 +501,14 @@ impl Ui {
 
     fn print_receipt(&self, restored: std::io::Result<()>) {
         let mut out = std::io::stdout().lock();
-        if let HostPhase::Stopped { report } = &self.app.host.phase {
-            let _ = writeln!(out, "{}", view::receipt(report));
+        match &self.app.host.phase {
+            HostPhase::Stopped { report } => {
+                let _ = writeln!(out, "{}", view::receipt(report));
+            }
+            HostPhase::Replaced { message } if !message.is_empty() => {
+                let _ = writeln!(out, "{message}");
+            }
+            _ => {}
         }
         if let Some(interrupted) = setup_view::interrupted_receipt(&self.app) {
             let _ = writeln!(out, "{interrupted}");

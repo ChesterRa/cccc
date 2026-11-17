@@ -12,6 +12,7 @@ mod host_state;
 mod process_recovery;
 mod shutdown;
 mod tui;
+mod update_checker;
 mod update_host;
 mod web_endpoint;
 mod web_host;

@@ -14,8 +14,9 @@ use super::sessions::SessionList;
 use super::setup::{InstallState, RUNTIMES, SetupCommand, SetupProgress, pickable};
 use super::tasks::{Request as TaskRequest, Selection as TaskSelection, Snapshot as TaskSnapshot};
 use super::text;
+use super::update::{UpdateCommand, UpdateProgress};
 use crate::commands::sessions::setup::SetupInspection;
-use crate::host_state::{HostIntent, HostPhase, HostState};
+use crate::host_state::{HostIntent, HostPhase, HostState, UpdateResult};
 use cccc_contracts::local_session::{LocalSessionRuntime, LocalSessionSource};
 use cccc_contracts::reply_question::{Answer, MAX_ANSWER_CHARS};
 use cccc_core::HomeLayout;
@@ -25,10 +26,11 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Completion candidates, in the order the command line lists them.
-pub(super) const COMMANDS: [(&str, &str); 5] = [
+pub(super) const COMMANDS: [(&str, &str); 6] = [
     ("/groups", "Open the selected group: tasks, start, stop"),
     ("/sessions", "Browse native sessions and their details"),
     ("/setup", "Connect Codex, Claude Code, Pi or OpenCode"),
+    ("/update", "Check for a newer CCCC and update to it"),
     ("/help", "Commands and keyboard shortcuts"),
     ("/quit", "Stop services started here and exit"),
 ];
@@ -43,16 +45,28 @@ pub(super) struct Context {
     pub(super) user_home: Option<PathBuf>,
     /// False when NO_COLOR asks for no color.
     pub(super) color: bool,
+    pub(super) update: UpdateOffer,
+}
+
+/// What `/update` can do in this process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum UpdateOffer {
+    Unavailable,
+    /// Checks, and names the command that updates this installation.
+    CheckOnly,
+    /// Checks, and carries a confirmed update out in this process.
+    InPlace,
 }
 
 impl Context {
-    pub(super) fn new(home: &HomeLayout) -> Self {
+    pub(super) fn new(home: &HomeLayout, update: UpdateOffer) -> Self {
         let user_home = std::env::home_dir();
         Self {
             version: crate::PRODUCT_VERSION,
             home: text::home_relative(&home.root().to_string_lossy(), user_home.as_deref()),
             user_home,
             color: std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty()),
+            update,
         }
     }
 }
@@ -66,6 +80,7 @@ pub(super) enum Screen {
     Sessions,
     Tasks,
     Pending,
+    Update,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,6 +131,15 @@ pub(super) struct Scroll {
 pub(super) struct ScrollRoom {
     pub(super) limit: u16,
     pub(super) page: u16,
+}
+
+/// One `/update` visit. The confirmation starts on Cancel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct UpdateFlow {
+    pub(super) generation: u64,
+    pub(super) choice: ConfirmChoice,
+    /// Confirmed and sent, so it cannot be confirmed twice.
+    pub(super) started: bool,
 }
 
 impl SetupFlow {
@@ -264,6 +288,7 @@ pub(super) enum Effect {
     Setup(SetupCommand),
     Group(GroupCommand),
     Reply(Box<ReplyCommand>),
+    Update(UpdateCommand),
     /// Repaint every cell, for when something else wrote over the screen.
     Repaint,
 }
@@ -288,6 +313,8 @@ pub(super) struct App {
     pub(super) help: Scroll,
     pub(super) setup: SetupProgress,
     pub(super) flow: Option<SetupFlow>,
+    pub(super) update: UpdateProgress,
+    pub(super) update_flow: Option<UpdateFlow>,
     pub(super) screen: Screen,
     pub(super) input: String,
     /// UTF-8 byte boundary in input; display uses terminal columns.
@@ -310,6 +337,7 @@ pub(super) struct App {
 
 impl App {
     pub(super) fn new(context: Context, host: HostState) -> Self {
+        let notice = host.update.as_ref().map(update_notice);
         Self {
             context,
             host,
@@ -328,12 +356,14 @@ impl App {
             help: Scroll::default(),
             setup: SetupProgress::default(),
             flow: None,
+            update: UpdateProgress::default(),
+            update_flow: None,
             screen: Screen::Main,
             input: String::new(),
             input_cursor: 0,
             completion: 0,
             completion_hidden: false,
-            notice: None,
+            notice,
             interrupts: 0,
             quit_requested: false,
             generation: 0,
@@ -341,6 +371,28 @@ impl App {
             serial: 0,
             nonce: 0,
         }
+    }
+
+    /// Takes the host's latest state. An update result the host has just
+    /// learned is shown once, as a notice.
+    pub(super) fn set_host(&mut self, host: HostState) {
+        if host.update != self.host.update
+            && let Some(result) = &host.update
+        {
+            self.notice = Some(update_notice(result));
+            // A handover the host could not carry out ends here: the screen
+            // that waited for it gives way to the main screen and the result.
+            if self
+                .update_progress()
+                .is_some_and(|progress| progress.handed_over)
+            {
+                self.update_flow = None;
+                if self.screen == Screen::Update {
+                    self.screen = Screen::Main;
+                }
+            }
+        }
+        self.host = host;
     }
 
     /// Whether this process is on its way out, whoever asked first.
@@ -358,6 +410,7 @@ impl App {
                 .as_ref()
                 .is_some_and(|flow| flow.step == SetupStep::Confirm),
             Screen::Pending => self.pending_view.detail.is_some(),
+            Screen::Update => self.update_confirmable().is_some(),
             _ => false,
         }
     }
@@ -741,6 +794,7 @@ impl App {
                 self.sessions_key(key.code, press);
                 None
             }
+            Screen::Update => self.update_key(key.code, press),
             Screen::Main => self.command_line_key(key, press),
         }
     }
@@ -947,6 +1001,7 @@ impl App {
                 None
             }
             "/setup" => Some(self.open_setup()),
+            "/update" => self.open_update(),
             "/groups" => {
                 self.open_groups();
                 None
@@ -1136,6 +1191,100 @@ impl App {
                 } else {
                     self.notice = Some(Notice::Info("Pick at least one app first.".into()));
                 }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// Opening `/update` is the user asking for a check, so it checks now.
+    fn open_update(&mut self) -> Option<Effect> {
+        if self.context.update == UpdateOffer::Unavailable {
+            self.notice = Some(Notice::Error(
+                "This CCCC cannot check for updates here; run `cccc update --check`.".into(),
+            ));
+            return None;
+        }
+        self.generation += 1;
+        self.update_flow = Some(UpdateFlow {
+            generation: self.generation,
+            choice: ConfirmChoice::Cancel,
+            started: false,
+        });
+        self.screen = Screen::Update;
+        Some(Effect::Update(UpdateCommand::Check {
+            generation: self.generation,
+        }))
+    }
+
+    /// This visit's progress; nothing until the worker has taken it up.
+    pub(super) fn update_progress(&self) -> Option<&UpdateProgress> {
+        let flow = self.update_flow.as_ref()?;
+        (self.update.generation == flow.generation).then_some(&self.update)
+    }
+
+    /// The version a confirmation would update to, when one is offered: a
+    /// newer release, a host that can replace itself, and nothing under way.
+    pub(super) fn update_confirmable(&self) -> Option<&str> {
+        if self.context.update != UpdateOffer::InPlace
+            || self.update_flow.as_ref().is_none_or(|flow| flow.started)
+        {
+            return None;
+        }
+        let progress = self.update_progress()?;
+        if progress.checking
+            || progress.preparing.is_some()
+            || progress.handed_over
+            || progress.rejected.is_some()
+            || progress.given_up
+        {
+            return None;
+        }
+        let check = progress.check.as_ref()?;
+        matches!(check.status.as_deref(), Some("newer" | "channel_switch"))
+            .then_some(check.latest.as_deref())
+            .flatten()
+    }
+
+    fn update_key(&mut self, code: KeyCode, press: bool) -> Option<Effect> {
+        let progress = self.update_progress();
+        if progress.is_some_and(|progress| progress.handed_over) {
+            return None;
+        }
+        // Confirmed but not yet answered, as when the worker has not taken the
+        // start up yet: nothing may replace this visit meanwhile.
+        let started = self.update_flow.as_ref().is_some_and(|flow| flow.started)
+            && !progress.is_some_and(|progress| progress.rejected.is_some() || progress.given_up);
+        if started || progress.is_some_and(|progress| progress.preparing.is_some()) {
+            // The only way out of a preparation is to give the update up.
+            return (is_back(code) && press).then_some(Effect::Update(UpdateCommand::Cancel));
+        }
+        if is_back(code) {
+            self.screen = Screen::Main;
+            self.update_flow = None;
+            // Ends a check still running; nothing else can be running here.
+            return Some(Effect::Update(UpdateCommand::Cancel));
+        }
+        let checking = progress.is_none_or(|progress| progress.checking);
+        if code == KeyCode::Char('r') && press && !checking {
+            return self.open_update();
+        }
+        let version = self.update_confirmable()?.to_owned();
+        let flow = self.update_flow.as_mut()?;
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => flow.choice = ConfirmChoice::Cancel,
+            KeyCode::Down | KeyCode::Char('j') => flow.choice = ConfirmChoice::Proceed,
+            KeyCode::Enter if press => {
+                if flow.choice == ConfirmChoice::Cancel {
+                    self.screen = Screen::Main;
+                    self.update_flow = None;
+                    return None;
+                }
+                flow.started = true;
+                return Some(Effect::Update(UpdateCommand::Start {
+                    generation: flow.generation,
+                    version,
+                }));
             }
             _ => {}
         }
@@ -1627,6 +1776,14 @@ fn selection_index(
         (KeyCode::PageDown, Some(index)) => (index + page).min(count - 1),
         _ => return None,
     })
+}
+
+fn update_notice(result: &UpdateResult) -> Notice {
+    if result.failed {
+        Notice::Error(result.message.clone())
+    } else {
+        Notice::Info(result.message.clone())
+    }
 }
 
 // `b` is the way back everywhere; Esc also works where the terminal delivers

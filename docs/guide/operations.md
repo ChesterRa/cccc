@@ -170,6 +170,18 @@ cccc update
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
 
+To update from CCCC itself, open **Settings > This instance > Update** in the Web, or
+type `/update` in the terminal interface that `cccc` starts. CCCC looks for a newer
+release only when asked. It shows the installed and latest versions with a link to the
+release notes, and says so when the check fails. On Linux, when the website installer
+installed CCCC and the `cccc` or `cccc web` that serves this Web also started its daemon,
+**Update and restart agents** asks once. CCCC then stops, installs the release and starts
+again at the same address. The Web loses its connection until CCCC is back, then shows the
+result. Running agents start again as after any daemon restart; see
+[What a daemon restart keeps](#what-a-daemon-restart-keeps). Otherwise the page shows the
+command for this installation, such as the pip command, or asks you to update CCCC the way
+it was installed.
+
 On Linux, a website-installer update can keep agents running; see
 [Keeping agents across a restart](#keeping-agents-across-a-restart).
 

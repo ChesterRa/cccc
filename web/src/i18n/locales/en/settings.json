@@ -50,6 +50,7 @@
     "developer": "Developer",
     "webAccess": "Web Access",
     "webModels": "Web Models",
+    "update": "Update",
     "voice": "Voice"
   },
   "notifications": {
@@ -1355,6 +1356,44 @@
     "working": "Working…",
     "pickFileFirst": "Pick a file to preview first",
     "reconnectGrok": "After import, save each Grok agent’s Bot URL and configure its Webhook Routine credentials again."
+  },
+  "update": {
+    "title": "Update",
+    "description": "See which CCCC version runs here and update it to the latest release.",
+    "versionTitle": "Version",
+    "installed": "Installed",
+    "latest": "Latest",
+    "check": "Check for updates",
+    "checking": "Checking…",
+    "checkFailed": "Check failed: {{reason}}",
+    "upToDate": "CCCC is up to date.",
+    "installedNewer": "This CCCC is newer than the latest release.",
+    "noPackage": "No CCCC package is published for this platform.",
+    "nothingToUpdate": "There is nothing to update.",
+    "releaseNotes": "Release notes",
+    "updateAndRestart": "Update and restart agents",
+    "confirmText": "CCCC stops, installs {{version}} and starts again at the same address. Running agents restart with it. This page loses its connection until CCCC is back, then shows the result here.",
+    "updateNow": "Update now",
+    "preparing": "Preparing {{version}}: downloading and checking it. CCCC keeps running meanwhile.",
+    "updating": "Updating to {{version}}. The result appears here when CCCC is back.",
+    "lost": "No answer came back from CCCC. If the update to {{version}} started, its result appears here when CCCC is back.",
+    "notBack": "CCCC has not come back yet. If this lasts, check the CCCC log on the machine it runs on.",
+    "noResult": "CCCC answers, but has recorded no result for the update to {{version}}. Check the installed version above; the CCCC log on the machine it runs on says what happened.",
+    "rejected": "The update did not start ({{reason}}). CCCC was not updated and no agent was stopped.",
+    "byHand": "Update this installation with:",
+    "byPip": "This CCCC was installed with pip. Stop CCCC, then run this in the Python environment that installed it:",
+    "unmanaged": "This CCCC was not installed by the CCCC installer or pip. Update it the way it was installed.",
+    "unavailable": "This CCCC process cannot check for updates. Run `cccc update --check` on the machine it runs on.",
+    "lastTitle": "Last update",
+    "last": {
+      "installed": "Updated {{from}} to {{to}}.",
+      "abandoned": "Not updated to {{to}} ({{reason}}). {{from}} started again.",
+      "notStarted": "The update to {{to}} did not start ({{reason}}). CCCC was not updated and no agent was stopped.",
+      "unconfirmed": "{{to}} is running, but the update could not be confirmed. The CCCC log names the recovery command.",
+      "undone": "The update to {{to}} was undone.",
+      "kept": "The update to {{to}} was kept.",
+      "other": "Update to {{to}}: {{result}}."
+    }
   },
   "developer": {
     "title": "Developer Mode (Global)",

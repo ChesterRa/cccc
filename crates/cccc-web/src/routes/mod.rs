@@ -56,7 +56,7 @@ mod terminal_ws;
 mod terminal_ws_bootstrap;
 mod terminal_ws_flow;
 mod terminal_ws_protocol;
-mod update;
+pub(crate) mod update;
 mod voice_secretary;
 mod voice_secretary_terminal;
 mod web_model_browser;

@@ -50,6 +50,7 @@
     "developer": "開発者",
     "webAccess": "Web アクセス",
     "webModels": "Web モデル",
+    "update": "アップデート",
     "voice": "音声"
   },
   "notifications": {
@@ -1355,6 +1356,44 @@
     "working": "処理中…",
     "pickFileFirst": "最初にプレビューするファイルを選択してください",
     "reconnectGrok": "インポート後、各 Grok エージェントの Bot URL と Webhook Routine の認証情報を再設定してください。"
+  },
+  "update": {
+    "title": "アップデート",
+    "description": "ここで動いている CCCC のバージョンを確認し、最新リリースに更新します。",
+    "versionTitle": "バージョン",
+    "installed": "現在のバージョン",
+    "latest": "最新バージョン",
+    "check": "アップデートを確認",
+    "checking": "確認中…",
+    "checkFailed": "確認できませんでした：{{reason}}",
+    "upToDate": "CCCC は最新です。",
+    "installedNewer": "この CCCC は最新リリースより新しいバージョンです。",
+    "noPackage": "このプラットフォーム向けの CCCC パッケージは公開されていません。",
+    "nothingToUpdate": "更新するものはありません。",
+    "releaseNotes": "リリースノート",
+    "updateAndRestart": "更新してエージェントを再起動",
+    "confirmText": "CCCC を停止して {{version}} をインストールし、同じアドレスで再起動します。実行中のエージェントも再起動されます。CCCC が戻るまでこのページの接続は切れ、戻ったらここに結果が表示されます。",
+    "updateNow": "今すぐ更新",
+    "preparing": "{{version}} を準備しています（ダウンロードと検証）。その間も CCCC は動き続けます。",
+    "updating": "{{version}} に更新しています。CCCC が戻るとここに結果が表示されます。",
+    "lost": "CCCC から応答がありませんでした。{{version}} へのアップデートが始まっていれば、CCCC が戻ったときにここに結果が表示されます。",
+    "notBack": "CCCC がまだ戻っていません。続く場合は、CCCC が動いているマシンでログを確認してください。",
+    "noResult": "CCCC には接続できますが、{{version}} へのアップデートの結果は記録されていません。上の現在のバージョンを確認してください。何が起きたかは、CCCC が動いているマシンのログに記録されています。",
+    "rejected": "アップデートは開始されませんでした（{{reason}}）。CCCC は更新されず、エージェントも停止していません。",
+    "byHand": "次のコマンドでこのインストールを更新してください：",
+    "byPip": "この CCCC は pip でインストールされています。CCCC を停止してから、インストールした Python 環境で次を実行してください：",
+    "unmanaged": "この CCCC は CCCC のインストーラーや pip でインストールされていません。インストールした方法で更新してください。",
+    "unavailable": "この CCCC プロセスはアップデートを確認できません。CCCC が動いているマシンで `cccc update --check` を実行してください。",
+    "lastTitle": "前回のアップデート",
+    "last": {
+      "installed": "{{from}} から {{to}} に更新しました。",
+      "abandoned": "{{to}} には更新されませんでした（{{reason}}）。{{from}} を再起動しました。",
+      "notStarted": "{{to}} へのアップデートは開始されませんでした（{{reason}}）。CCCC は更新されず、エージェントも停止していません。",
+      "unconfirmed": "{{to}} は動いていますが、アップデートの完了を確認できませんでした。復旧コマンドは CCCC のログにあります。",
+      "undone": "{{to}} へのアップデートは取り消されました。",
+      "kept": "{{to}} へのアップデートは保持されました。",
+      "other": "{{to}} へのアップデート：{{result}}。"
+    }
   },
   "developer": {
     "title": "開発者モード (グローバル)",

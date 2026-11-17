@@ -3,7 +3,7 @@
 //! finish it. The Web never replaces files itself.
 
 use axum::extract::State;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde_json::{Value, json};
 
@@ -11,10 +11,49 @@ use crate::AppState;
 use crate::api::{ApiError, ApiResult};
 use crate::codex_voice::CodexVoiceSessions;
 use crate::codex_voice::restart::VoiceGateError;
-use crate::update_hook::{UpdateHook, UpdateMode, UpdateRejection, UpdateRequest};
+use crate::update_hook::{UpdateCheckHook, UpdateHook, UpdateMode, UpdateRejection, UpdateRequest};
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/api/v1/update/start", post(start))
+    Router::new()
+        .route("/api/v1/update/status", get(status))
+        .route("/api/v1/update/check", post(check))
+        .route("/api/v1/update/start", post(start))
+}
+
+/// Local facts only. Reading them never uses the network, so a page can read
+/// them whenever it opens, including when it reconnects after an update.
+async fn status(State(state): State<AppState>) -> ApiResult {
+    let (checker, in_place) = update_checker(&state)?;
+    Ok(Json(json!({"ok":true,"result":{
+        "status":checker.status(),
+        "in_place":in_place
+    }})))
+}
+
+/// Asks release discovery once, because an administrator asked.
+async fn check(State(state): State<AppState>) -> ApiResult {
+    let (checker, in_place) = update_checker(&state)?;
+    let check = checker.check().await;
+    Ok(Json(json!({"ok":true,"result":{
+        "check":check,
+        "in_place":in_place
+    }})))
+}
+
+/// The host's check, and whether this process can carry out an update itself.
+fn update_checker(state: &AppState) -> Result<(UpdateCheckHook, bool), ApiError> {
+    let restart = state.restart.as_ref();
+    let checker = restart
+        .and_then(|restart| restart.update_checker())
+        .ok_or_else(|| {
+            ApiError::conflict(
+                "update_unavailable",
+                "this CCCC process cannot check for updates; run `cccc update --check`",
+                json!({}),
+            )
+        })?;
+    let in_place = restart.is_some_and(|restart| restart.update_hook().is_some());
+    Ok((checker, in_place))
 }
 
 async fn start(
@@ -32,45 +71,62 @@ async fn start(
         .and_then(Value::as_str)
         .and_then(UpdateMode::parse)
         .ok_or_else(|| ApiError::bad("mode must be keep or restart"))?;
-    let unavailable = || {
-        ApiError::conflict(
-            "update_unavailable",
-            "this CCCC process cannot update itself; update it with `cccc update`",
-            json!({}),
-        )
-    };
     let restart = state.restart.as_ref().ok_or_else(unavailable)?;
+    let transaction = hand_over(
+        restart,
+        &state.codex_voice,
+        UpdateRequest { version, mode },
+        || require_current_admin(&state, &principal),
+    )
+    .await?;
+    Ok(Json(json!({"ok":true,"result":{
+        "accepted":true,
+        "transaction":transaction,
+        "mode":mode.as_str()
+    }})))
+}
+
+fn unavailable() -> ApiError {
+    ApiError::conflict(
+        "update_unavailable",
+        "this CCCC process cannot update itself; update it with `cccc update`",
+        json!({}),
+    )
+}
+
+/// The one handoff of an attended update, for the Web's route and for the
+/// host's own interface: the host prepares the update while this Web keeps
+/// serving, then this Web closes so the host can finish it. `allowed` is
+/// asked again after the preparation and after Voice closes, because a
+/// preparation can take minutes. Every way out other than the handoff gives
+/// the update up, including the caller going away while the host prepares.
+pub(crate) async fn hand_over(
+    restart: &crate::RestartHandle,
+    voice: &std::sync::Arc<CodexVoiceSessions>,
+    request: UpdateRequest,
+    allowed: impl Fn() -> Result<(), ApiError>,
+) -> Result<String, ApiError> {
     let hook = restart.update_hook().ok_or_else(unavailable)?;
-    let preparation = hook
-        .begin(UpdateRequest { version, mode })
-        .map_err(rejected)?;
-    // From here on, every way out other than the handoff gives the update up,
-    // including the client going away while the host is still preparing.
+    let preparation = hook.begin(request).map_err(rejected)?;
     let reserved = Reserved(Some((&hook, &preparation.transaction)));
     preparation.ready.await.map_err(rejected)?;
-    require_current_admin(&state, &principal)?;
+    allowed()?;
     // The Web closes for the update, so Voice stops, as it does for a binding
     // change. It does so only now, so a rejected update leaves Voice running.
-    state
-        .codex_voice
+    voice
         .prepare_web_restart()
         .await
         .map_err(VoiceGateError::into_api_error)?;
-    let voice = ReopenVoice(Some(&state.codex_voice));
-    require_current_admin(&state, &principal)?;
+    let reopen = ReopenVoice(Some(voice.as_ref()));
+    allowed()?;
     restart.request_update().map_err(|error| {
         ApiError::unavailable(
             "update_handoff_failed",
             format!("failed to close the Web for the update: {error}"),
         )
     })?;
-    voice.keep_closed();
-    let transaction = reserved.hand_over();
-    Ok(Json(json!({"ok":true,"result":{
-        "accepted":true,
-        "transaction":transaction,
-        "mode":mode.as_str()
-    }})))
+    reopen.keep_closed();
+    Ok(reserved.hand_over())
 }
 
 fn rejected(rejection: UpdateRejection) -> ApiError {

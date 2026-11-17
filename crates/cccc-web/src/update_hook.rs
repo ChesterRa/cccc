@@ -67,3 +67,70 @@ pub trait UpdateHost: Send + Sync {
 /// Once a prepared update is handed over, this Web closes and returns
 /// [`crate::ServeOutcome::UpdateRequested`] so the host can finish it.
 pub type UpdateHook = Arc<dyn UpdateHost>;
+
+/// Local facts about this CCCC's updates. Reading them never uses the network.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UpdateStatus {
+    pub current: String,
+    /// `standalone`, `pip`, `unmanaged` or `unrecognized`.
+    pub installation: String,
+    /// The latest attended update's recorded result, if there is one.
+    pub last: Option<LastUpdate>,
+}
+
+/// An attended update's result as the host recorded it. It says nothing about
+/// whether agents came back: the host does not observe them.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LastUpdate {
+    /// The update this is the result of, as its start answered.
+    pub transaction: String,
+    pub from_version: Option<String>,
+    pub to_version: String,
+    pub mode: Option<String>,
+    /// `installed`, `abandoned`, `not_started`, `unconfirmed`, `undone` or `kept`.
+    pub result: String,
+    pub stage: Option<String>,
+    pub reason: Option<String>,
+    pub finished_at: String,
+}
+
+/// One release check, made when an administrator asks for it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct UpdateCheck {
+    pub current: String,
+    /// `stable` or `rc`.
+    pub channel: String,
+    /// `standalone`, `pip`, `unmanaged` or `unrecognized`.
+    pub installation: String,
+    /// Absent when the check failed; whether an update exists is then unknown.
+    pub latest: Option<String>,
+    /// `newer`, `channel_switch`, `current`, `installed_newer` or `no_package`;
+    /// absent when the check failed.
+    pub status: Option<String>,
+    /// Why the latest version is unknown.
+    pub failure: Option<String>,
+    pub release_notes_url: Option<String>,
+    /// The command that updates this installation by hand, when there is one.
+    pub command: Option<String>,
+}
+
+/// The host's update check, offered whenever a CCCC host serves this Web,
+/// including hosts that cannot replace themselves.
+pub trait UpdateChecker: Send + Sync {
+    fn status(&self) -> UpdateStatus;
+
+    /// Asks release discovery once. A failure is reported, never read as current.
+    fn check(&self) -> Pin<Box<dyn Future<Output = UpdateCheck> + Send>>;
+}
+
+pub type UpdateCheckHook = Arc<dyn UpdateChecker>;
+
+/// What the supervising host offers this Web for updates.
+#[derive(Clone, Default)]
+pub struct UpdateServices {
+    pub checker: Option<UpdateCheckHook>,
+    /// Only a host that can replace itself in place offers this.
+    pub host: Option<UpdateHook>,
+    /// Given each serve's in-process entry, when `host` is offered.
+    pub on_trigger: Option<crate::TriggerCallback>,
+}

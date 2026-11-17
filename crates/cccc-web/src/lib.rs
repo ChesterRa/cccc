@@ -43,7 +43,8 @@ use tower_http::trace::TraceLayer;
 
 pub use readonly::WebMode;
 pub use update_hook::{
-    UpdateHook, UpdateHost, UpdateMode, UpdatePreparation, UpdateRejection, UpdateRequest,
+    LastUpdate, UpdateCheck, UpdateCheckHook, UpdateChecker, UpdateHook, UpdateHost, UpdateMode,
+    UpdatePreparation, UpdateRejection, UpdateRequest, UpdateServices, UpdateStatus,
 };
 pub use web_banner::print as print_listening_banner;
 
@@ -155,15 +156,40 @@ pub(crate) struct AppState {
     push: Arc<web_push::Runtime>,
 }
 
+/// The host's own interface starts an attended update through this, with the
+/// same handoff as the Web's route. It belongs to one serve: once that Web has
+/// closed, starting an update through it gives the update up.
+#[derive(Clone)]
+pub struct UpdateTrigger {
+    restart: Arc<RestartHandle>,
+    voice: Arc<codex_voice::CodexVoiceSessions>,
+}
+
+impl UpdateTrigger {
+    /// Resolves once the host has prepared the update and this Web has closed
+    /// for it, with the transaction; or with why nothing was carried out.
+    pub async fn start(&self, request: UpdateRequest) -> Result<String, UpdateRejection> {
+        routes::update::hand_over(&self.restart, &self.voice, request, || Ok(()))
+            .await
+            .map_err(|error| UpdateRejection {
+                code: error.code().to_owned(),
+                message: error.message().to_owned(),
+            })
+    }
+}
+
+/// Receives the [`UpdateTrigger`] of each serve.
+pub type TriggerCallback = Arc<dyn Fn(UpdateTrigger) + Send + Sync>;
+
 pub(crate) struct RestartHandle {
     requested: AtomicBool,
     update_requested: AtomicBool,
-    update: Option<UpdateHook>,
+    update: UpdateServices,
     shutdown: broadcast::Sender<()>,
 }
 
 impl RestartHandle {
-    fn new(shutdown: broadcast::Sender<()>, update: Option<UpdateHook>) -> Self {
+    fn new(shutdown: broadcast::Sender<()>, update: UpdateServices) -> Self {
         Self {
             requested: AtomicBool::new(false),
             update_requested: AtomicBool::new(false),
@@ -181,9 +207,14 @@ impl RestartHandle {
         self.requested.load(Ordering::Acquire)
     }
 
-    /// The supervising host's update hook, when it offers one.
+    /// The supervising host's update hook, when it can replace itself.
     pub(crate) fn update_hook(&self) -> Option<UpdateHook> {
-        self.update.clone()
+        self.update.host.clone()
+    }
+
+    /// The supervising host's update check, when a CCCC host serves this Web.
+    pub(crate) fn update_checker(&self) -> Option<UpdateCheckHook> {
+        self.update.checker.clone()
     }
 
     /// Close this Web so the host can finish an update its hook accepted.
@@ -550,7 +581,7 @@ where
         restart_behavior,
         None,
         None,
-        None,
+        UpdateServices::default(),
     )
     .await?
     {
@@ -580,7 +611,7 @@ where
         RestartBehavior::ReturnToSupervisor,
         on_listening,
         None,
-        None,
+        UpdateServices::default(),
     )
     .await
 }
@@ -594,7 +625,7 @@ pub async fn serve_until_mode_supervised_with_voice_recovery<F>(
     shutdown: F,
     on_listening: Option<ListeningCallback>,
     process_recovery: VoiceProcessRecovery,
-    update: Option<UpdateHook>,
+    update: UpdateServices,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -623,7 +654,7 @@ async fn serve_until_mode_with_restart<F>(
     restart_behavior: RestartBehavior,
     on_listening: Option<ListeningCallback>,
     process_recovery: Option<VoiceProcessRecovery>,
-    update: Option<UpdateHook>,
+    update: UpdateServices,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -674,6 +705,17 @@ where
         &app_state.runtime_proof_key,
     ) {
         tracing::warn!(%error, "failed to record live Web binding");
+    }
+    // The host's own interface starts updates through the same handoff as the
+    // Web's route, and only while this Web serves.
+    if let Some(restart) = &restart
+        && let Some(on_trigger) = &restart.update.on_trigger
+        && restart.update_hook().is_some()
+    {
+        on_trigger(UpdateTrigger {
+            restart: Arc::clone(restart),
+            voice: Arc::clone(&app_state.codex_voice),
+        });
     }
     routes::spawn_web_model_supervisor(app_state.clone());
     routes::spawn_grok_webhooks(app_state.clone());

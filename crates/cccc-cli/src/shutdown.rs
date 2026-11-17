@@ -65,6 +65,15 @@ impl TerminalControl {
     }
 }
 
+impl TerminalControl {
+    /// An update is replacing this process: neither a signal nor a lost
+    /// terminal may force an exit or stop agents halfway through it.
+    pub(crate) fn stand_down(&mut self) {
+        self.signals.abort();
+        self.watchdog.abort();
+    }
+}
+
 impl Drop for TerminalControl {
     fn drop(&mut self) {
         self.signals.abort();
