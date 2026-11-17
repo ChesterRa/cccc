@@ -22,6 +22,7 @@ const DETACHED_CREATION_FLAGS: u32 = 0x0000_0200 | 0x0000_0008;
 pub struct DetachedDaemon {
     executable: PathBuf,
     run_args: Vec<OsString>,
+    update_resume: Option<PathBuf>,
 }
 
 impl DetachedDaemon {
@@ -33,7 +34,15 @@ impl DetachedDaemon {
         Self {
             executable: executable.into(),
             run_args: run_args.into_iter().map(Into::into).collect(),
+            update_resume: None,
         }
+    }
+
+    /// An explicit permit for the daemon started by an update's replacement
+    /// host. Ordinary callers must not adopt an in-progress update's daemon.
+    pub fn with_update_resume(mut self, transaction_dir: PathBuf) -> Self {
+        self.update_resume = Some(transaction_dir);
+        self
     }
 
     pub async fn start(&self, home: &HomeLayout) -> Result<StartOutcome> {
@@ -67,6 +76,11 @@ impl DetachedDaemon {
         supervised: bool,
     ) -> Result<Option<(Child, Option<cccc_runtime::OwnedProcessTree>)>> {
         home.initialize()?;
+        cccc_core::attended_update::check_start(
+            home,
+            self.update_resume.as_deref(),
+            &cccc_core::attended_update::BuildIdentity::current(),
+        )?;
         if ping(home).await {
             return Ok(None);
         }
@@ -143,6 +157,9 @@ impl DetachedDaemon {
     fn command(&self, home: &HomeLayout) -> Command {
         let mut command = detached_command(&self.executable);
         command.args(&self.run_args).env("CCCC_HOME", home.root());
+        if let Some(transaction) = &self.update_resume {
+            command.arg("--update-resume").arg(transaction);
+        }
         command
     }
 }

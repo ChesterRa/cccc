@@ -57,6 +57,60 @@ fn builds_cli_self_launch_command() {
     }));
 }
 
+#[test]
+fn an_update_handoff_is_an_explicit_daemon_argument() {
+    let home = HomeLayout::from_path("test-home").expect("home");
+    let transaction = home.root().join("update/transaction");
+    let launch =
+        DetachedDaemon::new("cccc", ["daemon", "run"]).with_update_resume(transaction.clone());
+    let command = launch.command(&home);
+    let args = command.get_args().collect::<Vec<_>>();
+    assert_eq!(args[args.len() - 2], OsStr::new("--update-resume"));
+    assert_eq!(args[args.len() - 1], transaction.as_os_str());
+    assert!(!command.get_envs().any(|(key, _)| key == "CCCC_UPDATE_TXN"));
+}
+
+#[tokio::test]
+async fn an_active_update_blocks_start_before_ping_spawn_and_process_tree_cleanup() {
+    use cccc_core::attended_update::{BuildIdentity, Intent, arm};
+    let temp = tempfile::tempdir().expect("fixture directory");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize home");
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    std::fs::create_dir_all(home.root().join("update").join(&id)).expect("transaction");
+    let intent = Intent::new(
+        &home,
+        &id,
+        BuildIdentity {
+            version: "0.4.59".into(),
+            source_id: "1".repeat(64),
+        },
+        temp.path().to_path_buf(),
+    )
+    .expect("intent");
+    arm(&home, &intent).expect("arm");
+    let error = DetachedDaemon::new("must-not-be-executed", ["daemon", "run"])
+        .start(&home)
+        .await
+        .expect_err("ordinary detached start blocked");
+    assert!(error.to_string().contains("update_in_progress"));
+    let paths = crate::DaemonPaths::new(home.clone());
+    assert!(
+        !paths.log.exists(),
+        "a rejected start must not even open its log"
+    );
+    let error = crate::server::claim_home(&paths).expect_err("direct server start blocked");
+    assert!(error.to_string().contains("update_in_progress"));
+    assert!(
+        !paths.lock.exists(),
+        "the first check precedes daemon locking"
+    );
+    assert_eq!(
+        cccc_core::attended_update::active(&home).expect("intent"),
+        Some(intent)
+    );
+}
+
 #[tokio::test]
 async fn reports_a_child_that_exits_before_becoming_ready() {
     let temp = tempfile::tempdir().expect("tempdir");

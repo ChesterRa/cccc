@@ -286,6 +286,7 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path.starts_with("/api/v1/connect/")
         || path.ends_with("/connect/catalog")
         || path.starts_with("/api/v1/remote_access")
+        || path.starts_with("/api/v1/update/")
         || path == "/api/v1/debug/tail_logs"
         || path == "/api/v1/debug/clear_logs"
         || path.starts_with("/api/v1/capabilities/allowlist")

@@ -160,7 +160,9 @@ fn command_line_of(pid: u32) -> Option<String> {
 ///
 /// On Unix the daemon is embedded in the Web host, so a bare `cccc` or
 /// `cccc web ...` owns the lock just as `cccc daemon run` does; root flags
-/// before the subcommand still name the Web host. Anything else -- an `mcp`
+/// before the subcommand still name the Web host, and so does
+/// `cccc update --resume`, the host an attended update relayed to in place.
+/// Anything else -- an `mcp`
 /// bridge, a one-shot subcommand, or a process that merely mentions cccc --
 /// must never be a takeover target, because the PID file may be stale.
 fn command_line_is_cccc_daemon_host(command: &str) -> bool {
@@ -191,13 +193,16 @@ fn command_line_is_cccc_daemon_host(command: &str) -> bool {
     else {
         return false;
     };
-    matches!(
-        cli.command,
-        None | Some(crate::args::CommandKind::Web(_))
-            | Some(crate::args::CommandKind::Daemon {
-                action: crate::args::DaemonAction::Run
-            })
-    )
+    match cli.command {
+        None
+        | Some(crate::args::CommandKind::Web(_))
+        | Some(crate::args::CommandKind::Daemon {
+            action: crate::args::DaemonAction::Run { .. },
+        }) => true,
+        // A host an attended update relayed to keeps this command line.
+        Some(crate::args::CommandKind::Update(args)) => args.resume.is_some(),
+        _ => false,
+    }
 }
 
 /// Send a cooperative stop. Returns whether one was sent at all: a platform

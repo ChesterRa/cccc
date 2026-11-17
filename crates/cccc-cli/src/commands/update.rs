@@ -243,7 +243,7 @@ fn installation_owner(executable: &Path) -> Result<InstallationOwner> {
     }
 }
 
-fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
+pub(crate) fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
     match installation_owner(executable)? {
         InstallationOwner::Standalone => {}
         InstallationOwner::Pip => bail!(

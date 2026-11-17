@@ -402,7 +402,7 @@ Notes:
   trees), compiled into the running process. It
   distinguishes same-version source changes, including uncommitted changes, without
   requiring Git at build/run time. It is diagnostic metadata, not a binary checksum
-  or compatibility gate. Web assets are identified separately by authenticated Web
+  or protocol compatibility gate. Web assets are identified separately by authenticated Web
   `ping` (`web.assets_id` and `web.entry_script`), using the same asset source as
   HTTP delivery. Release builds inspect their immutable embedded bundle; source-run
   debug builds inspect the current disk bundle, including frontend-only rebuilds.
@@ -426,6 +426,76 @@ Notes:
   and reattached during this daemon startup. It is not a current liveness poll.
   A missing field means that this startup result is unavailable, not that zero
   members were retained. Reads MUST NOT construct a session owner.
+- A supervised local update MAY reserve this home's next startup through a
+  private `update/active.json` intent. Ordinary starts, including adoption of an
+  already-running daemon, MUST then fail with `update_in_progress` and a recovery
+  instruction. An explicit replacement-host permit MUST match the recorded
+  transaction directory and the actual executable's target version and compiled
+  source identity. This exact-candidate check is not an assertion of protocol
+  compatibility or an independent artifact checksum.
+- The daemon MUST check that intent both before acquiring its exclusive home
+  lock and after acquisition, before process cleanup or session restoration.
+  During this supervised handoff, file replacement or restoration MUST hold the
+  actual `daemon/ccccd.lock`
+  descriptor throughout the operation. A failed ping or a lock acquired and
+  immediately released is insufficient. The persistent intent covers the gap
+  between releasing that descriptor for exec and the replacement daemon's lock
+  acquisition. An intent MUST NOT be silently removed merely because its host
+  died. It may be cleared after successful installation confirmation, confirmed
+  cleanup of an unapplied update, or successful rollback or recovery.
+  Recovery MUST also refuse to take over another still-live update host, using
+  native process identity rather than PID alone. Intent reads MUST NOT construct
+  a daemon or other runtime work. An unreadable or invalid intent MUST continue
+  to block startup with `update_in_progress`, identify `update/active.json` by
+  its full path and the validation failure, and explain that the installation
+  and interrupted transaction must be checked before manually removing that
+  intent. These are local lifecycle boundaries, not new daemon IPC operations.
+- The Unix installer supports an opt-in local handoff contract. Before executing
+  a target release's installer in phases, the host MUST read its text and require
+  the exact line `# CCCC_INSTALL_PHASE_API=1`. An older installer can ignore phase
+  variables and run a complete installation, so it MUST NOT be executed to probe
+  for this support. With `CCCC_INSTALL_PHASE` unset, the existing single-run
+  installation behavior is unchanged.
+- In phased mode, `CCCC_INSTALL_PHASE` is `prepare`, `apply`, `confirm`, or
+  `abort`; `CCCC_INSTALL_TXN` names the existing absolute transaction directory,
+  whose final component uses only `[A-Za-z0-9._-]` and does not start with a dot,
+  and `CCCC_INSTALL_DIR` names the installation. The install lock binds the
+  transaction's canonical directory, not just its final path component. It is
+  acquired before writing staged installation files and retained across phase
+  invocations until confirmation, successful abort, or confirmed apply rollback.
+  This is the same `.cccc-install.lock` used by single-run installations, which
+  are refused while that lock is held.
+  A missing or dead lock holder alone MUST NOT authorize another transaction.
+  `prepare` requires an explicit `CCCC_VERSION` and an existing standalone-owned
+  installation; it downloads, verifies, and stages without stopping the daemon.
+  The host stops the daemon and holds its actual home lock before `apply`, which
+  replaces the files and retains the previous program. `confirm` discards that
+  backup but retains the `applied` state in the transaction directory, so an
+  interruption before the host withdraws its intent cannot be mistaken for a
+  rollback. The host removes that directory after successful confirmation and
+  intent withdrawal. `abort` restores a backup when available or discards
+  unapplied staging.
+- Installer results are stdout lines and count only with the corresponding exit
+  status and transaction value: successful `prepare` reports
+  `CCCC_INSTALL_STAGED=<install-dir>/cccc.cccc-install.<transaction-id>`;
+  successful `apply` reports `CCCC_INSTALL_APPLIED=<version>`. After apply's
+  preconditions pass, a failure that leaves or restores the original files ends
+  the transaction, releases the lock, and reports
+  `CCCC_INSTALL_ROLLED_BACK=<transaction-id>` with a nonzero exit status. A
+  refused apply leaves the installation, transaction, and lock unchanged and
+  reports no result line; a failed restoration retains its lock and backup.
+  Neither counts as confirmed rollback; the host must finish it with `abort`.
+  Successful `confirm` reports `CCCC_INSTALL_CONFIRMED=<version>`; successful
+  `abort` reports `CCCC_INSTALL_ABORTED=<transaction-id>`. These successful
+  outcomes exit zero. An applied transaction whose previous program is gone
+  instead reports `CCCC_INSTALL_COMMITTED=<version>` and exits one from `abort`:
+  it requires confirmation, not a claim of successful rollback. Recovery MUST
+  verify that the installed program matches the recorded target build before
+  keeping it and completing confirmation. Missing, mismatched, or failed results
+  MUST NOT be treated as successful cleanup. An interrupted confirmation or an
+  unapplied transaction may be finished after lock release only when no files
+  belonging to that transaction remain in the installation. This phase interface
+  is consumed across releases and MUST retain these meanings under API version 1.
 
 #### `shutdown`
 

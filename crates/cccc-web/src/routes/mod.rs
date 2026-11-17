@@ -56,6 +56,7 @@ mod terminal_ws;
 mod terminal_ws_bootstrap;
 mod terminal_ws_flow;
 mod terminal_ws_protocol;
+mod update;
 mod voice_secretary;
 mod voice_secretary_terminal;
 mod web_model_browser;
@@ -127,6 +128,7 @@ pub fn router() -> Router<AppState> {
         .merge(membership::routes())
         .merge(connect::routes())
         .merge(remote_access::routes())
+        .merge(update::routes())
         .merge(settings::routes())
         .merge(capabilities::routes())
         .merge(chet::routes())

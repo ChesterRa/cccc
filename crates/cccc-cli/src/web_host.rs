@@ -87,20 +87,91 @@ const DAEMON_READINESS_POLL_TIMEOUT: Duration = Duration::from_secs(2);
 const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const WEB_INSTANCE_EXIT_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How a host launch ended: done, or replaced by the installed program to
+/// finish an attended update.
+pub(crate) enum LaunchExit {
+    Done,
+    Relay(Box<crate::update_host::Handoff>),
+}
+
+/// Carry out what the launch left to do once everything else has stopped.
+pub(crate) async fn finish_launch(exit: LaunchExit) -> Result<()> {
+    match exit {
+        LaunchExit::Done => Ok(()),
+        #[cfg(unix)]
+        LaunchExit::Relay(handoff) => {
+            let handoff = *handoff;
+            crate::update_host::relay(&handoff.context, handoff.prepared, handoff.relay).await
+        }
+        #[cfg(not(unix))]
+        LaunchExit::Relay(_) => bail!("this platform cannot hand an update over in place"),
+    }
+}
+
 pub(crate) async fn launch(
     home: HomeLayout,
     host_override: Option<String>,
     port_override: Option<u16>,
     web_mode: Option<cccc_web::WebMode>,
     terminal: bool,
-) -> Result<()> {
+) -> Result<LaunchExit> {
+    launch_with(home, host_override, port_override, web_mode, terminal, None).await
+}
+
+/// The program an attended update relayed to: start from the recorded launch
+/// and confirm the update once the daemon is ready and the Web listens.
+pub(crate) async fn launch_resumed(
+    home: HomeLayout,
+    host_override: Option<String>,
+    port_override: Option<u16>,
+    web_mode: Option<cccc_web::WebMode>,
+    terminal: bool,
+    resumed: crate::update_host::Resumed,
+) -> Result<LaunchExit> {
+    launch_with(
+        home,
+        host_override,
+        port_override,
+        web_mode,
+        terminal,
+        Some(resumed),
+    )
+    .await
+}
+
+async fn launch_with(
+    home: HomeLayout,
+    host_override: Option<String>,
+    port_override: Option<u16>,
+    web_mode: Option<cccc_web::WebMode>,
+    terminal: bool,
+    resumed: Option<crate::update_host::Resumed>,
+) -> Result<LaunchExit> {
     home.initialize()?;
+    // Before anything that could stop another host: while an update holds this
+    // home, only its own relay may start here.
+    cccc_core::attended_update::check_start(
+        &home,
+        resumed
+            .as_ref()
+            .map(|resumed| resumed.transaction.dir.as_path()),
+        &cccc_core::attended_update::BuildIdentity::current(),
+    )?;
     let mut binding = crate::web_launch::resolve(&home, host_override.as_deref(), port_override)?;
     let client = DaemonClient::new(home.clone());
     let instance = claim_web_instance(&home, &client).await?;
     instance.hold_until_process_exit();
     let daemon_slot = daemon_lifecycle::resolve_slot(&home, &client).await?;
     let daemon_missing = daemon_slot == DaemonSlot::Vacant;
+    // Only this update's relay may start the daemon, so another one running
+    // means the update cannot be finished here.
+    if resumed.is_some() && (!daemon_missing || cfg!(windows)) {
+        bail!(
+            "another CCCC daemon is running for CCCC_HOME={}; the update cannot be finished; recover with `{}`",
+            home.root().display(),
+            crate::update_host::recovery_command(&home)
+        );
+    }
     let mut terminal_control = if terminal {
         Some(crate::shutdown::TerminalControl::new(daemon_missing)?)
     } else {
@@ -119,7 +190,7 @@ pub(crate) async fn launch(
                 else { std::future::pending::<()>().await; }
             } => {
                 eprintln!("CCCC stopped during startup.");
-                return Ok(());
+                return Ok(LaunchExit::Done);
             }
         }
     } else {
@@ -139,8 +210,16 @@ pub(crate) async fn launch(
     #[cfg(not(windows))]
     if daemon_missing {
         let daemon_home = home.clone();
+        let update_resume = resumed
+            .as_ref()
+            .map(|resumed| resumed.transaction.dir.clone());
         embedded_daemon = Some(tokio::spawn(async move {
-            let result = cccc_daemon::run_with_diagnostics(daemon_home).await;
+            let result = match update_resume {
+                Some(transaction) => {
+                    cccc_daemon::run_with_diagnostics_resuming(daemon_home, &transaction).await
+                }
+                None => cccc_daemon::run_with_diagnostics(daemon_home).await,
+            };
             let _ = daemon_exit_tx.send(true);
             result
         }));
@@ -155,7 +234,7 @@ pub(crate) async fn launch(
             } => false,
         };
         if !ready {
-            let cause = finish_embedded_daemon(&home, &client, embedded_daemon.take()).await;
+            let cause = finish_embedded_daemon(&home, &client, embedded_daemon.take(), None).await;
             if terminal_control
                 .as_ref()
                 .is_some_and(|control| control.controller.is_requested())
@@ -164,7 +243,7 @@ pub(crate) async fn launch(
                     return Err(error);
                 }
                 eprintln!("CCCC stopped during startup.");
-                return Ok(());
+                return Ok(LaunchExit::Done);
             }
             return Err(match cause {
                 Some(cause) => cause.context("Rust daemon failed to become ready"),
@@ -216,6 +295,36 @@ pub(crate) async fn launch(
         (None, None)
     };
 
+    let mode = web_mode.unwrap_or_else(cccc_web::WebMode::from_env);
+    // An attended update replaces this process in place, so it is offered by a
+    // plain host that runs its own daemon from a standalone installation.
+    let coordinator = (cfg!(target_os = "linux")
+        && !terminal
+        && daemon_owned
+        && mode == cccc_web::WebMode::Normal)
+        .then(|| crate::update_host::UpdateContext::for_running_program(&home).ok())
+        .flatten()
+        .map(crate::update_host::Coordinator::new);
+    // Where the Web actually listens, for the program an update relays to.
+    let listening_port = std::sync::Arc::new(std::sync::atomic::AtomicU16::new(0));
+    // The relayed program confirms its update once the Web listens again.
+    let web_listening = resumed
+        .as_ref()
+        .map(|_| std::sync::Arc::new(tokio::sync::Notify::new()));
+    let confirm_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let confirm_task = resumed.map(|resumed| {
+        let listening = web_listening
+            .clone()
+            .expect("a resumed launch waits for its Web");
+        let started = std::sync::Arc::clone(&confirm_started);
+        let home = home.clone();
+        tokio::spawn(async move {
+            listening.notified().await;
+            started.store(true, std::sync::atomic::Ordering::Release);
+            crate::update_host::confirm(&home, &resumed.transaction, &resumed.record).await;
+        })
+    });
+
     // The plain host retains its existing signal behavior, except that its first
     // interrupt requests the same stop as the TUI's controller. The TUI's
     // controller also receives raw key events and keeps running through Web
@@ -234,7 +343,7 @@ pub(crate) async fn launch(
     let plain_watching = plain_stop
         .clone()
         .map(|controller| crate::shutdown::watch_for_interrupt(controller, owned_home));
-    let plain_watchdog = plain_watching.and_then(|watching| {
+    let mut plain_watchdog = plain_watching.and_then(|watching| {
         watching
             .inspect_err(|error| {
                 cccc_runtime::diagnostic(format_args!("could not listen for interrupts: {error}"))
@@ -242,113 +351,217 @@ pub(crate) async fn launch(
             .ok()
     });
 
-    let mode = web_mode.unwrap_or_else(cccc_web::WebMode::from_env);
-    let mut result = if let Some(error) = startup_error {
-        Err(error)
-    } else {
-        loop {
-            let monitored_home = home.clone();
-            let mut daemon_exited = daemon_exit_rx.clone();
-            let controller = terminal_control
-                .as_ref()
-                .map(|control| control.controller.clone())
-                .or_else(|| plain_stop.clone());
-            if controller
-                .as_ref()
-                .is_some_and(|controller| controller.is_requested())
-            {
-                break Ok(());
-            }
-            let state = interface.as_ref().map(|interface| interface.state.clone());
-            let shutdown = async move {
-                let daemon_lost = tokio::select! {
-                    () = daemon_lifecycle::wait_for_loss(&monitored_home) => true,
-                    _ = daemon_exited.wait_for(|exited| *exited) => true,
-                    () = async {
-                        if let Some(controller) = &controller { controller.requested().await; }
-                        else { std::future::pending::<()>().await; }
-                    } => false,
-                };
-                if daemon_lost {
-                    cccc_runtime::diagnostic(format_args!(
-                        "CCCC daemon stopped; Web server closed"
-                    ));
+    let loop_result: Result<Option<crate::update_host::Prepared>> =
+        if let Some(error) = startup_error {
+            Err(error)
+        } else {
+            loop {
+                let monitored_home = home.clone();
+                let mut daemon_exited = daemon_exit_rx.clone();
+                let controller = terminal_control
+                    .as_ref()
+                    .map(|control| control.controller.clone())
+                    .or_else(|| plain_stop.clone());
+                if controller
+                    .as_ref()
+                    .is_some_and(|controller| controller.is_requested())
+                {
+                    break Ok(None);
                 }
-                if let Some(controller) = controller {
-                    controller.request();
-                }
-                if let Some(state) = state {
-                    state.send_modify(|state| state.phase = HostPhase::Stopping);
-                }
-            };
-            let outcome = {
-                let serving = cccc_web::serve_until_mode_supervised_with_voice_recovery(
-                    home.clone(),
-                    &binding.host,
-                    binding.port,
-                    mode,
-                    shutdown,
-                    interface.as_ref().map(Interface::listening),
-                    voice_recovery.clone(),
-                );
-                tokio::pin!(serving);
-                if let Some(control) = &terminal_control {
-                    tokio::select! {
-                        biased;
-                        () = control.controller.requested() => {
-                            // The Web library also observes OS signals. Even when
-                            // its own signal wins that race, cancel installation
-                            // now, rather than after Web's connection drain.
-                            if let Some(interface) = interface.as_mut() {
-                                interface.stopping();
-                                interface.session.stop_work().await;
-                            }
-                            serving.await
-                        }
-                        outcome = &mut serving => outcome,
-                    }
-                } else {
-                    serving.await
-                }
-            };
-            match outcome {
-                Ok(cccc_web::ServeOutcome::Stopped(_)) => break Ok(()),
-                Ok(cccc_web::ServeOutcome::RestartRequested) => {
-                    if terminal_control
-                        .as_ref()
-                        .map(|control| &control.controller)
-                        .or(plain_stop.as_ref())
-                        .is_some_and(|controller| controller.is_requested())
-                    {
-                        break Ok(());
-                    }
-                    if let Some(interface) = &interface {
-                        interface
-                            .state
-                            .send_modify(|state| state.web = WebState::Restarting);
-                    }
-                    binding = match crate::web_launch::resolve(&home, None, None) {
-                        Ok(binding) => binding,
-                        Err(error) => break Err(error),
+                let state = interface.as_ref().map(|interface| interface.state.clone());
+                let shutdown = async move {
+                    let daemon_lost = tokio::select! {
+                        () = daemon_lifecycle::wait_for_loss(&monitored_home) => true,
+                        _ = daemon_exited.wait_for(|exited| *exited) => true,
+                        () = async {
+                            if let Some(controller) = &controller { controller.requested().await; }
+                            else { std::future::pending::<()>().await; }
+                        } => false,
                     };
-                    cccc_runtime::diagnostic(format_args!(
-                        "[cccc] Applying saved Web binding: http://{}:{}",
-                        binding.host, binding.port
-                    ));
-                }
-                Err(error) => {
-                    if let Some(interface) = &interface {
-                        interface.state.send_modify(|state| {
-                            state.web = WebState::Error {
-                                message: error.to_string(),
-                            }
-                        });
+                    if daemon_lost {
+                        cccc_runtime::diagnostic(format_args!(
+                            "CCCC daemon stopped; Web server closed"
+                        ));
                     }
-                    break Err(error);
+                    if let Some(controller) = controller {
+                        controller.request();
+                    }
+                    if let Some(state) = state {
+                        state.send_modify(|state| state.phase = HostPhase::Stopping);
+                    }
+                };
+                let on_listening: cccc_web::ListeningCallback = {
+                    let listening = interface.as_ref().map(Interface::listening);
+                    let signal = web_listening.clone();
+                    let port = std::sync::Arc::clone(&listening_port);
+                    let host = binding.host.clone();
+                    std::sync::Arc::new(move |address: std::net::SocketAddr| {
+                        port.store(address.port(), std::sync::atomic::Ordering::Release);
+                        match &listening {
+                            Some(listening) => listening(address),
+                            None => cccc_web::print_listening_banner(&host, address.port()),
+                        }
+                        if let Some(signal) = &signal {
+                            signal.notify_one();
+                        }
+                    })
+                };
+                let outcome = {
+                    let serving = cccc_web::serve_until_mode_supervised_with_voice_recovery(
+                        home.clone(),
+                        &binding.host,
+                        binding.port,
+                        mode,
+                        shutdown,
+                        Some(on_listening),
+                        voice_recovery.clone(),
+                        coordinator
+                            .as_ref()
+                            .map(crate::update_host::Coordinator::hook),
+                    );
+                    tokio::pin!(serving);
+                    if let Some(control) = &terminal_control {
+                        tokio::select! {
+                            biased;
+                            () = control.controller.requested() => {
+                                // The Web library also observes OS signals. Even when
+                                // its own signal wins that race, cancel installation
+                                // now, rather than after Web's connection drain.
+                                if let Some(interface) = interface.as_mut() {
+                                    interface.stopping();
+                                    interface.session.stop_work().await;
+                                }
+                                serving.await
+                            }
+                            outcome = &mut serving => outcome,
+                        }
+                    } else {
+                        serving.await
+                    }
+                };
+                let stop_requested = terminal_control
+                    .as_ref()
+                    .map(|control| &control.controller)
+                    .or(plain_stop.as_ref())
+                    .is_some_and(|controller| controller.is_requested());
+                // Whatever the Web reserved and did not hand over is undone.
+                if !matches!(outcome, Ok(cccc_web::ServeOutcome::UpdateRequested))
+                    && let Some(coordinator) = &coordinator
+                {
+                    coordinator.close().await;
+                }
+                match outcome {
+                    Ok(cccc_web::ServeOutcome::Stopped(_)) => break Ok(None),
+                    Ok(cccc_web::ServeOutcome::UpdateRequested) => {
+                        let Some(coordinator) = &coordinator else {
+                            break Ok(None);
+                        };
+                        let prepared = coordinator.take_prepared();
+                        match prepared {
+                            // A stop that raced the handoff wins: nothing is replaced.
+                            Some(prepared) if stop_requested => {
+                                coordinator.undo(prepared).await;
+                                break Ok(None);
+                            }
+                            Some(prepared) => {
+                                match crate::update_host::arm(coordinator.context(), &prepared) {
+                                    Ok(()) => {
+                                        // From here an interrupt must not force an exit or
+                                        // stop agents halfway through the replacement.
+                                        if let Some(watchdog) = plain_watchdog.take() {
+                                            watchdog.abort();
+                                        }
+                                        break Ok(Some(prepared));
+                                    }
+                                    // Nothing was stopped: report it and serve again.
+                                    Err(error) => {
+                                        let reason = format!("{error:#}");
+                                        cccc_runtime::diagnostic(format_args!(
+                                            "[cccc] The update to CCCC {} did not start: {reason}",
+                                            prepared.version
+                                        ));
+                                        crate::update_host::record_not_started(
+                                            coordinator.context(),
+                                            &prepared,
+                                            &reason,
+                                        );
+                                        coordinator.undo(prepared).await;
+                                        continue;
+                                    }
+                                }
+                            }
+                            None if stop_requested => break Ok(None),
+                            // Nothing prepared to finish: serve again.
+                            None => continue,
+                        }
+                    }
+                    Ok(cccc_web::ServeOutcome::RestartRequested) => {
+                        if stop_requested {
+                            break Ok(None);
+                        }
+                        if let Some(interface) = &interface {
+                            interface
+                                .state
+                                .send_modify(|state| state.web = WebState::Restarting);
+                        }
+                        binding = match crate::web_launch::resolve(&home, None, None) {
+                            Ok(binding) => binding,
+                            Err(error) => break Err(error),
+                        };
+                        cccc_runtime::diagnostic(format_args!(
+                            "[cccc] Applying saved Web binding: http://{}:{}",
+                            binding.host, binding.port
+                        ));
+                    }
+                    Err(error) => {
+                        if let Some(interface) = &interface {
+                            interface.state.send_modify(|state| {
+                                state.web = WebState::Error {
+                                    message: error.to_string(),
+                                }
+                            });
+                        }
+                        break Err(error);
+                    }
                 }
             }
-        }
+        };
+
+    let (mut result, handover) = match loop_result {
+        Ok(handover) => (Ok(()), handover),
+        Err(error) => (Err(error), None),
     };
+    if let Some(prepared) = handover {
+        #[cfg(target_os = "linux")]
+        if let Some(coordinator) = &coordinator {
+            // The relay reopens the Web where it listened, even when that came
+            // from a saved binding or an ephemeral port rather than the options.
+            let mut context = coordinator.context().clone();
+            let port = match listening_port.load(std::sync::atomic::Ordering::Acquire) {
+                0 => binding.port,
+                port => port,
+            };
+            context.launch = crate::update_host::LaunchSpec::new(
+                Some(binding.host.clone()),
+                Some(port),
+                Some(mode),
+                terminal,
+            );
+            return finish_handover(&home, &client, embedded_daemon.take(), context, prepared)
+                .await;
+        }
+        // Only a Linux plain host with its own daemon offers updates.
+        drop(prepared);
+        bail!("this CCCC process cannot finish an update");
+    }
+    // A relay that never confirmed must not be cut off mid-confirm by shutdown.
+    if let Some(task) = confirm_task {
+        if confirm_started.load(std::sync::atomic::Ordering::Acquire) {
+            let _ = task.await;
+        } else {
+            task.abort();
+        }
+    }
 
     let web_result = match &result {
         Ok(()) => StopResult::Stopped,
@@ -382,12 +595,13 @@ pub(crate) async fn launch(
     }
     #[cfg(not(windows))]
     if daemon_owned {
-        daemon_result = match finish_embedded_daemon(&home, &client, embedded_daemon.take()).await {
-            None => StopResult::Stopped,
-            Some(error) => StopResult::Failed {
-                message: error.to_string(),
-            },
-        };
+        daemon_result =
+            match finish_embedded_daemon(&home, &client, embedded_daemon.take(), None).await {
+                None => StopResult::Stopped,
+                Some(error) => StopResult::Failed {
+                    message: error.to_string(),
+                },
+            };
     }
     if daemon_owned && let Err(error) = verify_daemon_stopped(&home).await {
         daemon_result = StopResult::Failed {
@@ -448,7 +662,105 @@ pub(crate) async fn launch(
     // Dropping the TUI controller stops its signal and force-exit watchers only
     // after the final receipt and terminal restoration have completed.
     drop(terminal_control);
-    result
+    result.map(|()| LaunchExit::Done)
+}
+
+/// Finish a handed-over update after the Web closed: stop this host's daemon
+/// for the update, replace the files under the stopped daemon's lock, and
+/// relay to the installed program. A stop or replacement that does not go
+/// cleanly relays to the unchanged program instead, which starts as before.
+#[cfg(target_os = "linux")]
+async fn finish_handover(
+    home: &HomeLayout,
+    client: &DaemonClient,
+    daemon: Option<tokio::task::JoinHandle<Result<()>>>,
+    context: crate::update_host::UpdateContext,
+    prepared: crate::update_host::Prepared,
+) -> Result<LaunchExit> {
+    use crate::update_host::{self, ApplyOutcome, RelayOutcome};
+
+    // The daemon binds its stop receipt to this ID, so only this stop counts.
+    let request_id = uuid::Uuid::new_v4().to_string();
+    cccc_mcp::shutdown(home).await;
+    let stop_error = finish_embedded_daemon(home, client, daemon, Some(&request_id)).await;
+    let stopped = verify_daemon_stopped(home).await;
+    let receipt = cccc_daemon::session_owner::read_shutdown_report(
+        home,
+        std::process::id(),
+        Some(&request_id),
+    );
+    let stop_problem = match (stop_error, stopped, receipt) {
+        (Some(error), _, _) | (None, Err(error), _) => Some(format!("{error:#}")),
+        (None, Ok(()), Ok(Some(report))) if report.unconfirmed.is_empty() => None,
+        (None, Ok(()), Ok(Some(report))) => Some(format!(
+            "{} agent(s) could not be confirmed stopped; see `cccc daemon process-recovery`",
+            report.unconfirmed.len()
+        )),
+        (None, Ok(()), Ok(None)) => Some("the daemon left no stop receipt for this update".into()),
+        (None, Ok(()), Err(error)) => Some(format!("could not read the stop receipt: {error}")),
+    };
+    let abandon = |stage: &str, reason: String| RelayOutcome::Abandoned {
+        stage: stage.into(),
+        reason,
+    };
+    let (outcome, daemon_lock) = match stop_problem {
+        Some(reason) => (abandon("stop", reason), None),
+        None => match cccc_core::attended_update::claim_stopped(home, &prepared.transaction.id) {
+            Err(error) => (abandon("claim", error.to_string()), None),
+            Ok(lock) => match update_host::apply(&context, &prepared, &lock).await {
+                ApplyOutcome::Applied => (RelayOutcome::Applied, Some(lock)),
+                ApplyOutcome::Restored { reason } => (abandon("apply", reason), Some(lock)),
+                ApplyOutcome::Unknown { reason } => {
+                    bail!(
+                        "the update to CCCC {} stopped halfway ({reason}); recover with `{}`",
+                        prepared.version,
+                        update_host::recovery_command(home)
+                    );
+                }
+            },
+        },
+    };
+    if let RelayOutcome::Abandoned { stage, reason } = &outcome {
+        cccc_runtime::diagnostic(format_args!(
+            "[cccc] The update to CCCC {} was abandoned ({stage}): {reason}",
+            prepared.version
+        ));
+        // Not applied yet: give the install lock and staged files back. After a
+        // failed apply the installer already did.
+        if stage != "apply"
+            && let Err(error) = update_host::abort_unapplied(&context, &prepared).await
+        {
+            bail!(
+                "the update to CCCC {} could not be undone ({error:#}); recover with `{}`",
+                prepared.version,
+                update_host::recovery_command(home)
+            );
+        }
+        if let Err(error) = cccc_core::attended_update::disarm(home, &prepared.transaction.id) {
+            bail!(
+                "the update to CCCC {} left this home reserved ({error}); recover with `{}`",
+                prepared.version,
+                update_host::recovery_command(home)
+            );
+        }
+    }
+    if let Err(error) = update_host::write_relay(&context, &prepared, outcome) {
+        bail!(
+            "could not record the update to CCCC {} ({error:#}); recover with `{}`",
+            prepared.version,
+            update_host::recovery_command(home)
+        );
+    }
+    let relay = update_host::Relay {
+        program: context.executable.clone(),
+        transaction: prepared.transaction.clone(),
+        daemon_lock,
+    };
+    Ok(LaunchExit::Relay(Box::new(update_host::Handoff {
+        context,
+        prepared,
+        relay,
+    })))
 }
 
 async fn claim_web_instance(
@@ -490,11 +802,22 @@ async fn confirm_and_stop_existing(
 /// during startup ends here holding the only account of why the launch cannot
 /// continue, and the caller is the one that knows whether this is a shutdown or
 /// a failure.
+/// A request without an ID lets the daemon choose one; `null` is invalid.
+#[cfg(not(windows))]
+fn stop_request(request_id: Option<&str>) -> serde_json::Value {
+    let mut request = serde_json::json!({"expected_pid":std::process::id()});
+    if let Some(request_id) = request_id {
+        request["request_id"] = serde_json::Value::from(request_id);
+    }
+    request
+}
+
 #[cfg(not(windows))]
 async fn finish_embedded_daemon(
     home: &HomeLayout,
     client: &DaemonClient,
     daemon: Option<tokio::task::JoinHandle<Result<()>>>,
+    request_id: Option<&str>,
 ) -> Option<anyhow::Error> {
     use crate::commands::common::call;
 
@@ -514,11 +837,7 @@ async fn finish_embedded_daemon(
         // default deadline would spend a minute here before that wait starts.
         let _ = tokio::time::timeout(
             DAEMON_SHUTDOWN_REQUEST_TIMEOUT,
-            call(
-                client,
-                "shutdown",
-                serde_json::json!({"expected_pid":std::process::id()}),
-            ),
+            call(client, "shutdown", stop_request(request_id)),
         )
         .await;
     }

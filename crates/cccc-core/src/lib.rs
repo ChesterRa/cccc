@@ -5,6 +5,7 @@ pub mod actors;
 #[cfg(test)]
 mod actors_tests;
 pub mod assistant_state;
+pub mod attended_update;
 pub mod automation;
 mod automation_render;
 mod automation_schedule;

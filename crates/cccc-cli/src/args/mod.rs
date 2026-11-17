@@ -67,6 +67,15 @@ pub struct UpdateArgs {
     /// Show local installation details without requesting release metadata.
     #[arg(long, requires = "check")]
     pub offline: bool,
+    /// Internal: print this program's update constants as JSON and exit.
+    #[arg(long, hide = true, conflicts_with_all = ["check", "channel", "resume", "recover"])]
+    pub self_check: bool,
+    /// Internal: finish an attended update after the program was replaced.
+    #[arg(long, hide = true, value_name = "TRANSACTION", conflicts_with_all = ["check", "channel", "recover"])]
+    pub resume: Option<std::path::PathBuf>,
+    /// Undo an interrupted attended update and release this home's startup.
+    #[arg(long, hide = true, value_name = "TRANSACTION", conflicts_with_all = ["check", "channel"])]
+    pub recover: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -287,7 +296,11 @@ pub enum DaemonAction {
     /// Show whether the daemon is running.
     Status,
     /// Run only the daemon in the foreground (no Web server or terminal panel).
-    Run,
+    Run {
+        /// Internal: start as the relay of this home's prepared update.
+        #[arg(long, hide = true, value_name = "TRANSACTION")]
+        update_resume: Option<std::path::PathBuf>,
+    },
     /// Internal: hold managed agent sessions independently of the daemon's lifetime.
     #[command(hide = true)]
     SessionOwner {
@@ -469,6 +482,9 @@ mod tests {
                 check: true,
                 channel: None,
                 offline: false,
+                self_check: false,
+                resume: None,
+                recover: None,
             }))
         ));
     }

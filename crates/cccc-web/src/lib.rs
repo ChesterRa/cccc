@@ -17,6 +17,7 @@ mod request_origin;
 mod routes;
 mod security_headers;
 mod shutdown;
+mod update_hook;
 mod web_banner;
 mod web_listener;
 mod web_push;
@@ -41,6 +42,10 @@ use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use readonly::WebMode;
+pub use update_hook::{
+    UpdateHook, UpdateHost, UpdateMode, UpdatePreparation, UpdateRejection, UpdateRequest,
+};
+pub use web_banner::print as print_listening_banner;
 
 /// Return the system browser executable used by projected browser sessions.
 pub fn system_browser_path() -> Option<std::path::PathBuf> {
@@ -56,6 +61,8 @@ const VOICE_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 pub enum ServeOutcome {
     Stopped(SocketAddr),
     RestartRequested,
+    /// The host's update hook accepted an update; the host finishes it.
+    UpdateRequested,
 }
 
 pub type ListeningCallback = Arc<dyn Fn(SocketAddr) + Send + Sync>;
@@ -150,13 +157,17 @@ pub(crate) struct AppState {
 
 pub(crate) struct RestartHandle {
     requested: AtomicBool,
+    update_requested: AtomicBool,
+    update: Option<UpdateHook>,
     shutdown: broadcast::Sender<()>,
 }
 
 impl RestartHandle {
-    fn new(shutdown: broadcast::Sender<()>) -> Self {
+    fn new(shutdown: broadcast::Sender<()>, update: Option<UpdateHook>) -> Self {
         Self {
             requested: AtomicBool::new(false),
+            update_requested: AtomicBool::new(false),
+            update,
             shutdown,
         }
     }
@@ -168,6 +179,27 @@ impl RestartHandle {
 
     fn requested(&self) -> bool {
         self.requested.load(Ordering::Acquire)
+    }
+
+    /// The supervising host's update hook, when it offers one.
+    pub(crate) fn update_hook(&self) -> Option<UpdateHook> {
+        self.update.clone()
+    }
+
+    /// Close this Web so the host can finish an update its hook accepted.
+    pub(crate) fn request_update(&self) -> Result<(), broadcast::error::SendError<()>> {
+        self.update_requested.store(true, Ordering::Release);
+        if let Err(error) = self.shutdown.send(()) {
+            // Not handed over: the host must see an ordinary stop and undo
+            // the prepared update.
+            self.update_requested.store(false, Ordering::Release);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn update_requested(&self) -> bool {
+        self.update_requested.load(Ordering::Acquire)
     }
 }
 
@@ -518,11 +550,13 @@ where
         restart_behavior,
         None,
         None,
+        None,
     )
     .await?
     {
         ServeOutcome::Stopped(address) => Ok(address),
         ServeOutcome::RestartRequested => unreachable!("process restart exits before returning"),
+        ServeOutcome::UpdateRequested => unreachable!("only a supervising host offers updates"),
     }
 }
 
@@ -546,10 +580,12 @@ where
         RestartBehavior::ReturnToSupervisor,
         on_listening,
         None,
+        None,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_until_mode_supervised_with_voice_recovery<F>(
     home: HomeLayout,
     host: &str,
@@ -558,6 +594,7 @@ pub async fn serve_until_mode_supervised_with_voice_recovery<F>(
     shutdown: F,
     on_listening: Option<ListeningCallback>,
     process_recovery: VoiceProcessRecovery,
+    update: Option<UpdateHook>,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -571,6 +608,7 @@ where
         RestartBehavior::ReturnToSupervisor,
         on_listening,
         Some(process_recovery),
+        update,
     )
     .await
 }
@@ -585,6 +623,7 @@ async fn serve_until_mode_with_restart<F>(
     restart_behavior: RestartBehavior,
     on_listening: Option<ListeningCallback>,
     process_recovery: Option<VoiceProcessRecovery>,
+    update: Option<UpdateHook>,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -609,7 +648,7 @@ where
     tracing::info!(%address, "CCCC Rust Web listening");
     let (web_shutdown, _) = broadcast::channel(1);
     let restart = (!matches!(restart_behavior, RestartBehavior::Disabled))
-        .then(|| Arc::new(RestartHandle::new(web_shutdown.clone())));
+        .then(|| Arc::new(RestartHandle::new(web_shutdown.clone(), update)));
     let mut restart_rx = web_shutdown.subscribe();
     let (shutdown_started, mut shutdown_started_rx) = tokio::sync::oneshot::channel();
     let (app, im_workers, browser_surfaces, app_state, voice_shutdown) =
@@ -700,6 +739,13 @@ where
         tracing::warn!(%error, "failed to clear live Web binding");
     }
     server_result?;
+    if matches!(restart_behavior, RestartBehavior::ReturnToSupervisor)
+        && restart
+            .as_ref()
+            .is_some_and(|handle| handle.update_requested())
+    {
+        return Ok(ServeOutcome::UpdateRequested);
+    }
     if restart.as_ref().is_some_and(|handle| handle.requested()) {
         match restart_behavior {
             RestartBehavior::ExitProcess => std::process::exit(75),
