@@ -15,9 +15,13 @@ jobs:
   platform:
     runs-on: macos-15
     timeout-minutes: 15
-    env:
-      PROBE_DIR: ${{ runner.temp }}/cccc-macos-probe
     steps:
+      - name: Locate the private evidence directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'PROBE_DIR=%s/cccc-macos-probe\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+
       - name: Checkout the pushed source
         uses: actions/checkout@v7
         with:
