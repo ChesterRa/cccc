@@ -31,13 +31,39 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     purpose: SessionPurpose,
     mcp_server: Value,
 ) -> io::Result<PreparedClaude> {
+    prepare_with_host(
+        home,
+        configured,
+        environment,
+        cwd,
+        settings_owner,
+        purpose,
+        mcp_server,
+        &std::env::vars().collect(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::ops::codex_voice_analyst) fn prepare_with_host(
+    home: &HomeLayout,
+    configured: &[String],
+    environment: &BTreeMap<String, String>,
+    cwd: &Path,
+    settings_owner: &str,
+    purpose: SessionPurpose,
+    mcp_server: Value,
+    inherited: &BTreeMap<String, String>,
+) -> io::Result<PreparedClaude> {
     let default_command = ["claude".to_owned()];
     let configured = if configured.is_empty() {
         &default_command[..]
     } else {
         configured
     };
-    let executable = launch_command::resolve_runtime_executable(&configured[0], environment)?;
+    let mut command_environment = inherited.clone();
+    command_environment.extend(environment.clone());
+    let executable =
+        launch_command::resolve_runtime_executable(&configured[0], &command_environment)?;
     let filename = executable
         .file_name()
         .and_then(|value| value.to_str())
@@ -57,8 +83,8 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     // Task grants use its per-job private settings env, then expire with the job.
     merge_environment(&mut settings, environment)?;
     disable_native_integration(&mut settings)?;
-    network_environment::inherit(&mut settings, std::env::vars())?;
-    let mut launch_environment = launcher_environment(environment);
+    network_environment::inherit(&mut settings, inherited.clone())?;
+    let mut launch_environment = launcher_environment(environment, inherited);
     let config_dir = config_dir(&launch_environment)?;
     let settings_root = home.daemon_dir().join("claude-managed");
     std::fs::create_dir_all(&settings_root)?;
@@ -473,41 +499,80 @@ fn disable_native_integration(settings: &mut Map<String, Value>) -> io::Result<(
     Ok(())
 }
 
-fn launcher_environment(environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-    const PRELAUNCH_KEYS: &[&str] = &[
-        "PATH",
-        "HOME",
-        "USERPROFILE",
-        "CLAUDE_CONFIG_DIR",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "LANG",
-        "LC_ALL",
-        "LC_CTYPE",
-        "SHELL",
-        "USER",
-        "LOGNAME",
-        "XDG_CONFIG_HOME",
-        "XDG_CACHE_HOME",
-        "XDG_DATA_HOME",
-        "SystemRoot",
-        "ComSpec",
-        "PATHEXT",
-        "APPDATA",
-        "LOCALAPPDATA",
-        "PROGRAMDATA",
-    ];
+const PRELAUNCH_KEYS: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "CLAUDE_CONFIG_DIR",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "SHELL",
+    "USER",
+    "LOGNAME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "SystemRoot",
+    "ComSpec",
+    "PATHEXT",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+];
+
+pub(crate) fn capture_host_environment(
+    inherited: impl IntoIterator<Item = (String, String)>,
+) -> BTreeMap<String, String> {
+    inherited
+        .into_iter()
+        .filter(|(key, _)| {
+            PRELAUNCH_KEYS.contains(&key.as_str()) || network_environment::is_inherited_key(key)
+        })
+        .collect()
+}
+
+fn launcher_environment(
+    environment: &BTreeMap<String, String>,
+    inherited: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
     PRELAUNCH_KEYS
         .iter()
         .filter_map(|key| {
             environment
                 .get(*key)
                 .cloned()
-                .or_else(|| std::env::var_os(key).map(|value| value.to_string_lossy().into_owned()))
+                .or_else(|| inherited.get(*key).cloned())
                 .map(|value| ((*key).to_owned(), value))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod inherited_environment_tests {
+    use super::*;
+
+    #[test]
+    fn controller_host_snapshot_keeps_launcher_and_network_keys_without_other_host_secrets() {
+        let host = capture_host_environment([
+            ("HOME".into(), "/current/controller/home".into()),
+            ("PATH".into(), "/current/controller/bin".into()),
+            ("https_proxy".into(), "http://127.0.0.1:1234".into()),
+            ("UNRELATED_SECRET".into(), "not-forwarded".into()),
+        ]);
+        assert!(!host.contains_key("UNRELATED_SECRET"));
+        assert_eq!(host["https_proxy"], "http://127.0.0.1:1234");
+        let launcher = launcher_environment(
+            &BTreeMap::from([("HOME".into(), "/explicit/actor/home".into())]),
+            &host,
+        );
+        assert_eq!(launcher["HOME"], "/explicit/actor/home");
+        assert_eq!(launcher["PATH"], "/current/controller/bin");
+        assert!(!launcher.contains_key("https_proxy")); // Applied through existing network settings separately.
+    }
 }
 
 fn config_dir(environment: &BTreeMap<String, String>) -> io::Result<PathBuf> {

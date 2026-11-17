@@ -24,10 +24,14 @@ pub(crate) fn pending_group_ids() -> Vec<String> {
                 .map(|((group_id, _), _)| group_id.clone()),
         );
     }
+    groups.extend(crate::session_owner::recovery_groups());
     groups.into_iter().collect()
 }
 
 pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
+    if let Err(error) = crate::ops::runtime_delivery::settle_retained_claims(home, group_id) {
+        tracing::warn!(code = %error.code, "retained delivery result is not yet settled");
+    }
     let pending = take_group_completions(group_id);
     let mut deferred = VecDeque::new();
     for completion in pending {

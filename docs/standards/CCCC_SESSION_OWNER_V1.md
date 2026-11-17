@@ -1,0 +1,188 @@
+# CCCC private session ownership contract v1
+
+This contract separates managed member execution from the collaboration daemon.
+It is private to CCCC and versioned independently of product versions and the
+public daemon IPC. The process/socket seam is enabled only on Linux. macOS and
+Windows retain in-process runtime ownership and reject maintenance preservation
+as unsupported. Their construction and recovery require separate validation.
+
+## Ownership and authority
+
+The daemon remains the sole collaboration scheduler and ledger writer. A
+session owner holds the existing managed-session objects, PTYs and DeepSeek
+execution loops. It executes only explicit finite commands. It does not select
+Inbox work, render new tasks, append collaboration events or restore members
+from saved Group configuration on its own.
+
+An owner establishes an independent OS session before creating member
+resources. Its process guard has a separate ownership ledger; replacing or
+cleaning up the daemon must not reclaim the owner's process tree. A normal
+daemon shutdown explicitly stops retained owners. Loss of a control connection
+alone does not stop admitted execution. Maintenance exit releases control
+without waiting for active provider turns.
+
+The discovery directory is `${CCCC_HOME}/daemon/session-owners/<owner UUID>/`.
+It contains the owner lock, address, control socket and process-ownership
+evidence. The directory is user-only and the Unix socket has mode 0600. The
+address identifies the owner ID, random live instance, contract version, PID
+and socket. A client verifies all live handshake identities, not just a path
+or a product-version label. Ordinary reads never create a replacement owner.
+
+This has the same local trust boundary as daemon IPC: processes of the same
+OS user are trusted. The private channel must not become available to another
+local user or a network peer. It is not an additional authorization boundary
+against members running as that user. Environment snapshots and prepared inputs
+travel only on this private channel; they must not be logged or persisted in
+discovery metadata or execution-fact records.
+
+## Control streams and admission
+
+Requests are bounded newline-delimited JSON frames, at most 16 MiB including
+the delimiter. Read-only Hello, Snapshot, Query, Find and terminal observations
+do not acquire control. A separate terminal stream upgrades to the existing
+terminal byte protocol and remains fenced by the active control epoch.
+
+Each mutating connection acquires exactly one new epoch. Closing the previous
+epoch, retaining its highest admitted sequence and publishing the replacement
+epoch happen under the same admission mutex. A request decoded before takeover
+must recheck the epoch under that mutex before admission. Dropping an old
+connection cannot close the new epoch.
+
+The controller assigns a strictly increasing positive sequence while actually
+writing to that stream. An operation ID is `(owner instance, epoch, sequence)`.
+Admission records the ID before spawning the execution task. The task belongs
+to the owner, not the requesting socket; it must not block admission while a
+provider turn runs. Retransmitting an admitted or reclaimed sequence cannot
+execute it again.
+
+Start carries a fully prepared launch and member creation identity. Each
+launch receives the current controller's environment snapshot, rather than
+implicitly inheriting an earlier controller's environment. Claude retains its
+existing explicit environment allowlist. Stop, StopAll, Submit, generation-bound
+controls and bounded terminal actions reuse the existing runtime mechanisms.
+This channel does not dispatch arbitrary daemon operations.
+
+Hello reports whether Start remains open. StopAll permanently closes Start on
+that instance; an unrelated new member then uses a fresh default owner. An old
+member registration must still be confirmed stopped before it can move. The
+closed owner remains discoverable for its existing resources and results.
+
+## Execution facts and settlement
+
+Submit includes the member creation/generation identity, ordered source event
+IDs and a digest of the prepared input. The owner retains those references and
+the actual terminal execution result; it does not create a second Inbox or
+durable input journal. A daemon reconnects by member/source references and
+queries facts instead of reconstructing a lost sequence or resending input.
+
+Query returns one of:
+
+| Result | Meaning |
+| --- | --- |
+| Pending | The owner admitted execution and still holds it. |
+| Finished | The retained actual runtime outcome is available. Admission alone is not provider acceptance. |
+| NotAdmitted | In this same live instance, the epoch is closed and the queried sequence exceeds its sealed admission waterline. |
+| Unknown | There is no retained proof, including an absent ID below the waterline, expired detail or a changed live instance. |
+
+Empty Find results are also unknown, never proof of non-admission. A query or
+control failure must not authorize automatic replay. The daemon records the
+actual result through its existing delivery/delegation ledger protocol. Only a
+successful final ledger append permits acknowledging an execution fact. A new
+epoch may acknowledge an old epoch's completed operation; repeated
+acknowledgements succeed. Pending execution cannot be reclaimed this way.
+
+A definitive provider failure may enter the daemon's existing bounded retry
+policy. An attempted turn with an unknown result is settled Ambiguous before
+any automatic wake, even if its native generation has exited. Observing an
+in-flight claim does not register a second settlement worker. Each definite retry attempt records Failed, acknowledges that completed fact and
+claims again before another native submission. Unsubmitted attempts likewise
+need a fresh durable claim. Unknown outcomes cannot take this path. No separate
+retry journal or automatic replay policy belongs to the owner. Between attempts,
+the visible delivery state can briefly be Failed; the in-memory retry budget
+does not survive a daemon restart during that backoff.
+
+Ordinary operation retention is bounded to 4,096 slots and 32 MiB of admission
+reservations/results. Completed records release the input reservation in favor
+of their retained result/reference size. Closed-epoch metadata is bounded to
+32 epochs and one hour. Finished detail outside the current epoch expires after
+one hour; source-free lifecycle/control results expire after that interval even
+in the current epoch. Pending work is never evicted. Missing/expired evidence remains
+unknown. Capacity exhaustion explicitly rejects new work rather than erasing
+an earlier input outcome.
+
+Reclamation and stopping must remain possible at ordinary capacity. Ack and
+Retire advance control sequence authority without allocating an execution
+slot. Stop has a separate bounded pool, and StopAll has a reserved slot distinct
+from member Stop slots. A pending duplicate Stop is rejected before consuming
+another slot. Reclaimable completed Stop observations do not carry task-input
+replay authority.
+
+## Observations, exit and recovery
+
+Finite synchronous list projections may explicitly share one snapshot per
+owner instance within that request. Outside that scope, observations read the
+owner directly. Writes invalidate the current request's projection. Wait/follow
+loops and delivery decisions must not retain a scoped or time-based cache.
+
+A member getter failure is retained with its identity as a private per-member
+observation error. Other members can still be observed and reattached. Public
+lists retain that member with `effective_working_state: "unknown"`,
+`effective_working_reason: "runtime_owner_unavailable"` and a diagnostic
+`runtime_observation_error` string, omitting unverified running/PID and actual
+runtime observations. Other members remain independently observable. Group
+projections report `runtime_status.available: false` and omit unknown liveness.
+The same per-member signal is used in `actor.activity`; consumers clear old
+observations instead of preserving stale running state. Decisions for another
+member need not inherit a member-specific observation error.
+
+Owner unavailability is not evidence of member exit. Lists and successful
+configuration responses preserve unknown observations explicitly. Missing
+fields and an unavailable Group projection must not trigger automatic Start.
+
+The public maintenance request and final shutdown report are specified in
+[CCCC_DAEMON_IPC_V1.md](CCCC_DAEMON_IPC_V1.md). Reports distinguish confirmed
+stops, retained live members and unconfirmed ownership. A missing report is
+not an empty successful result. With no daemon running, explicit Stop may take
+the same exclusive home lock and contact discovered owners directly, without
+starting routing, scheduling or providers. A held or unverifiable lock/socket
+must not be treated as an empty registry. Process reclamation still requires
+the existing recorded identity and confirmation policy; owner death or a closed
+PTY alone does not prove every provider-created process has stopped.
+
+Startup and offline Stop hold the home lock and each dead owner's instance lock
+while reusing the process guard's existing recovery rules. A verified boot
+change clears old local work without signalling; same-boot process groups are
+reclaimed only with recorded identity evidence. Unconfirmed evidence prevents
+automatic restoration, and the address remains discoverable.
+
+Claude background jobs can outlive their launcher and are not proved absent by
+an empty process-group list. Before native launch, the owner therefore retains
+a generic launch-intent record in the existing ownership ledger. This contains
+no task, input, environment or credentials. A proved prelaunch refusal/no launch or the existing native Stop/rollback's
+authoritative job-removal confirmation clears it. Missing control endpoints,
+missing Session registration, or provider observation alone do not. Unknown
+launch failures retain the record and prevent reporting false stopped state;
+the unknown startup intent becomes reviewable while its owner remains alive. A failed new Actor launch
+carrying a unique name may reuse an authoritative native listing of that exact
+name: absence confirms that observation; a single valid matching job is rolled
+back with native Stop. An unreadable or incomplete listing remains unknown.
+This name rule does not apply to an existing job or a resume without that name.
+A supervisor that creates the job after this listing remains a limitation.
+
+After the daemon releases its home lock, the user can inspect
+`cccc daemon process-recovery --owner session --owner-id <UUID> list` and reuse
+the existing record/version-fenced `retry` or `accept --accept-risk` actions.
+A live owner independently acquires that same home lock. Listing does not
+acquire control; mutations use an epoch-fenced administrative operation without
+another execution slot. A lost response requires listing the evidence again,
+not replaying the mutation. Only an uncertain launch without an actual native
+Session, PTY or trust/confirmation terminal may have its registration released
+by risk acceptance. Healthy members sharing this owner remain untouched. The
+user first exits the daemon with `daemon stop --keep-agents` to keep those
+members running, reviews/accepts the one record, then starts CCCC to reattach.
+An accepted record is not a confirmed stop; startup causes must be corrected
+before another launch. For a dead owner, its instance lock and existing inactive
+ledger recovery remain mandatory. All records must be resolved before a stale
+address is retired. Ordinary Stop makes a best effort across every discovered
+owner even if another cannot be contacted; missing complete ownership still
+prevents reporting a successful complete stop.

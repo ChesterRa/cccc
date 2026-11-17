@@ -42,7 +42,10 @@ export function useGroupActions() {
         if (
           response.ok &&
           control === "activate" &&
-          !(response.result.group.runtime_status?.runtime_running ?? response.result.group.running)
+          // An unobservable runtime is not a stopped one: never start agents on a guess.
+          response.result.group.runtime_status?.available !== false &&
+          (response.result.group.runtime_status?.runtime_running ??
+            response.result.group.running) === false
         ) {
           response = await api.startGroup(gid);
         }

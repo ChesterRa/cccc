@@ -1,3 +1,4 @@
+use crate::session_owner::runtime as cccc_runtime;
 use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use cccc_runtime::{LaunchSpec, SessionStatus};
@@ -25,9 +26,10 @@ pub(super) use confirmation::{
 };
 pub(crate) use owner::{
     OwnerIdentity, OwnerState, RegisteredOwner, as_launched, delivery_owner, hold_browser_work,
-    hold_group_browser_work,
+    hold_group_browser_work, registered_owner,
 };
 pub use persistence::persist_lifecycle;
+pub(crate) use reconcile::reconcile_provider_exits;
 pub(crate) use reconcile::record_process_exit;
 pub use reconcile::{reap_exited, reconcile_exited};
 pub(crate) use workspace::LaunchWorkspace;
@@ -92,6 +94,12 @@ pub(super) fn apply_resolved(
         return Ok(result);
     }
     let actor_id = &actor.id;
+    #[cfg(unix)]
+    if crate::session_owner::enabled(home) {
+        // An unavailable owner is not an absent one. In particular, automatic
+        // restore must not launch a replacement on a failed read.
+        crate::session_owner::snapshot(&group.group_id, actor_id).map_err(OpError::io)?;
+    }
     if actor_id == "voice-secretary" || actor.internal_kind.as_deref() == Some("voice_secretary") {
         return Err(OpError::new(
             "global_secretary_owner",
@@ -180,6 +188,10 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
+    #[cfg(unix)]
+    if crate::session_owner::enabled(home) {
+        return crate::session_owner::launch_managed(home, group, &actor).map_err(launch_error);
+    }
     super::local_headless::start(home, group, &actor).map_err(launch_error)
 }
 
@@ -242,24 +254,30 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     // Read before the launch: a change made while the runtime starts is then
     // reported instead of being taken as what it loaded.
     let instructions = super::instruction_files::Snapshot::read(&cwd);
-    let status = cccc_runtime::start_actor_with_history(
-        LaunchSpec {
-            group_id: group.group_id.clone(),
-            actor_id: actor.id.clone(),
-            runner: RunnerKind::Pty,
-            command,
-            cwd,
-            env,
-            cols: 120,
-            rows: 40,
-        },
-        history,
-        cccc_runtime::ActorLaunch {
-            runtime: actor.runtime,
-            submit: actor.submit,
-        },
-    )
-    .map_err(runtime_error)?;
+    let spec = LaunchSpec {
+        group_id: group.group_id.clone(),
+        actor_id: actor.id.clone(),
+        runner: RunnerKind::Pty,
+        command,
+        cwd,
+        env,
+        cols: 120,
+        rows: 40,
+    };
+    let launch = cccc_runtime::ActorLaunch {
+        runtime: actor.runtime,
+        submit: actor.submit,
+    };
+    #[cfg(unix)]
+    let status = if crate::session_owner::enabled(home) {
+        crate::session_owner::launch_pty(home, group, &actor, spec, history, launch)
+            .map_err(OpError::io)?
+    } else {
+        cccc_runtime::start_actor_with_history(spec, history, launch).map_err(runtime_error)?
+    };
+    #[cfg(not(unix))]
+    let status =
+        cccc_runtime::start_actor_with_history(spec, history, launch).map_err(runtime_error)?;
     if let Some(snapshot) = instructions {
         super::instruction_files::record(
             home,
@@ -279,6 +297,12 @@ pub(super) fn pty_instruction_session(status: &SessionStatus) -> String {
 }
 
 pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {
+    #[cfg(unix)]
+    if let Some(stopped) =
+        crate::session_owner::stop_actor(&group.group_id, actor_id).map_err(OpError::io)?
+    {
+        return Ok(stopped);
+    }
     match cccc_runtime::stop(&group.group_id, actor_id) {
         Ok(status) => Ok(Some(status)),
         Err(cccc_runtime::RuntimeError::NotFound(_, _)) => Ok(None),
@@ -287,6 +311,12 @@ pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionSta
 }
 
 fn stop_registered(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {
+    #[cfg(unix)]
+    if let Some(stopped) =
+        crate::session_owner::stop_actor(&group.group_id, actor_id).map_err(OpError::io)?
+    {
+        return Ok(stopped);
+    }
     let result = (|| {
         super::local_headless::stop(&group.group_id, actor_id).map_err(OpError::io)?;
         super::deepseek_runtime::stop(&group.group_id, actor_id);
@@ -319,6 +349,16 @@ pub(super) fn stop_owner_confirmed(
         Some(actor_id),
     )
     .map_err(OpError::io)?;
+    #[cfg(unix)]
+    if let Some(snapshot) =
+        crate::session_owner::snapshot(&group.group_id, actor_id).map_err(OpError::io)?
+    {
+        let running = snapshot
+            .owner
+            .is_some_and(|owner| owner.state == OwnerState::Running);
+        crate::session_owner::stop_actor(&group.group_id, actor_id).map_err(OpError::io)?;
+        return Ok(running);
+    }
     let was_running = super::local_headless::running(&group.group_id, actor_id)
         || super::deepseek_runtime::running(&group.group_id, actor_id)
         || cccc_runtime::status(&group.group_id, actor_id).is_ok_and(|status| status.running);
@@ -329,6 +369,12 @@ pub(super) fn stop_owner_confirmed(
 }
 
 pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
+    #[cfg(unix)]
+    match crate::session_owner::snapshot(group_id, actor_id) {
+        Ok(Some(snapshot)) => return snapshot.terminal,
+        Err(_) => return None,
+        Ok(None) => {}
+    }
     cccc_runtime::status(group_id, actor_id).ok()
 }
 

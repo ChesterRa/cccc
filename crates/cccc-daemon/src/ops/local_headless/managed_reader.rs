@@ -61,12 +61,17 @@ pub(super) fn spawn(
 }
 
 pub(super) fn stop_after_provider_exit(session: &Session) {
-    record_provider_exit_if_first(
-        session.stop_after_process_exit(),
-        &session.home,
-        &session.group_id,
-        &session.actor_id,
-    );
+    let first = session.stop_after_process_exit();
+    if first
+        && crate::session_owner::retain_provider_exit(
+            &session.group_id,
+            &session.actor_id,
+            session.managed.generation(),
+        )
+    {
+        return;
+    }
+    record_provider_exit_if_first(first, &session.home, &session.group_id, &session.actor_id);
 }
 
 #[cfg(test)]

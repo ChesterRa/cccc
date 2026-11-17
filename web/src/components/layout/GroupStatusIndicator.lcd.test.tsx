@@ -45,6 +45,13 @@ it("names the shape after the Group state", async () => {
   }
 });
 
+it("marks a Group the daemon could not observe with a question mark and no run shape", async () => {
+  const symbol = await render({ key: "unknown" });
+  expect(symbol.dataset.lcdShape).toBeUndefined();
+  expect(symbol.textContent).toBe("?");
+  expect(symbol.getAttribute("aria-label")).toBe("statusUnknown");
+});
+
 it("shows the connection state instead of a run state it cannot vouch for", async () => {
   const connecting = await render(getGroupStatus(true, "active"), "connecting");
   expect(connecting.dataset.lcdShape).toBeUndefined();

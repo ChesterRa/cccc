@@ -43,13 +43,13 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "home_get" => Operation::new(Policy::Read, |home, _request| {
             object(json!({"home": home.root(), "environment": "CCCC_HOME"}))
         }),
-        "shutdown" => Operation::new(Policy::GlobalWrite, |_home, request| shutdown(request)),
+        "shutdown" | "shutdown_preserving_agents" => Operation::new(Policy::GlobalWrite, shutdown),
         _ => return ops::resolve_operation(request),
     })
 }
 
-fn ping(_home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
-    object(json!({
+fn ping(home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
+    let mut result = object(json!({
         "pid": std::process::id(),
         "version": env!("CARGO_PKG_VERSION"),
         "build": cccc_core::build_info::current(),
@@ -73,10 +73,14 @@ fn ping(_home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
         },
         "implementation": "rust",
         "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY,
-    }))
+    }))?;
+    if let Some(agents) = crate::session_owner::startup_retained(home) {
+        result.insert("retained_agents".into(), json!(agents));
+    }
+    Ok(result)
 }
 
-fn shutdown(request: &DaemonRequest) -> OpResult {
+fn shutdown(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if let Some(value) = request.args.get("expected_pid") {
         let expected_pid = value.as_u64().filter(|pid| *pid > 0).ok_or_else(|| {
             OpError::new("invalid_args", "expected_pid must be a positive integer")
@@ -91,7 +95,29 @@ fn shutdown(request: &DaemonRequest) -> OpResult {
             ));
         }
     }
-    object(json!({"shutting_down": true}))
+    let mode = if request.op == "shutdown_preserving_agents" {
+        if !crate::session_owner::enabled(home) {
+            return Err(OpError::new(
+                "unsupported_platform",
+                "this daemon cannot preserve independent agent sessions",
+            ));
+        }
+        crate::session_owner::ShutdownMode::PreserveAgents
+    } else {
+        crate::session_owner::ShutdownMode::Stop
+    };
+    let request_id = match request.args.get("request_id") {
+        Some(Value::String(value)) => {
+            uuid::Uuid::parse_str(value)
+                .map_err(|_| OpError::new("invalid_args", "request_id must be a UUID"))?;
+            value.clone()
+        }
+        None => uuid::Uuid::new_v4().to_string(),
+        _ => return Err(OpError::new("invalid_args", "request_id must be a UUID")),
+    };
+    let selected = crate::session_owner::select_shutdown(home, mode, request_id)
+        .map_err(|error| OpError::new("shutdown_in_progress", error.to_string()))?;
+    object(json!({"shutting_down": true,"request_id":selected.request_id,"mode":selected.mode}))
 }
 
 pub fn required_arg(request: &DaemonRequest, name: &str) -> Result<String, OpError> {

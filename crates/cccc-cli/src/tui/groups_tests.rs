@@ -34,7 +34,28 @@ fn group_states_read_the_way_the_web_shows_them() {
     assert_eq!(started_empty.state, "active");
     let stopped_with_running = summary(&row("g8", "stopped", "stopped", true, 1)).expect("summary");
     assert_eq!(stopped_with_running.status, GroupStatus::Stopped);
-    assert_eq!(stopped_with_running.running_actors, 1);
+    assert_eq!(stopped_with_running.running_actors, Some(1));
+}
+
+#[test]
+fn a_group_the_daemon_could_not_observe_is_unknown_unless_paused_or_stopped() {
+    let unobserved = |state: &str| {
+        json!({
+            "group_id": "g", "state": state, "desired_running": true,
+            "runtime_status": {"lifecycle_state": state, "available": false},
+        })
+    };
+    for (state, status) in [
+        ("active", GroupStatus::Unknown),
+        ("idle", GroupStatus::Unknown),
+        ("paused", GroupStatus::Paused),
+        ("stopped", GroupStatus::Stopped),
+    ] {
+        let group = summary(&unobserved(state)).expect("summary");
+        assert_eq!(group.status, status, "{state}");
+        assert_eq!(group.running_actors, None, "{state}");
+    }
+    assert_eq!(GroupStatus::Unknown.label(), "Unknown");
 }
 
 #[test]
@@ -44,7 +65,7 @@ fn rows_without_an_id_are_left_out_and_missing_fields_have_defaults() {
     assert_eq!(bare.name(), "g_bare");
     assert_eq!(bare.state, "active");
     assert_eq!(bare.status, GroupStatus::Offline);
-    assert_eq!(bare.running_actors, 0);
+    assert_eq!(bare.running_actors, Some(0));
 }
 
 #[test]
@@ -162,6 +183,27 @@ fn managed_confirmation_needs_action_before_running_is_shown() {
             "{value}"
         );
     }
+}
+
+#[test]
+fn a_member_the_daemon_could_not_observe_is_unknown() {
+    let unobserved = json!({
+        "id": "c1", "runtime": "claude", "role": "peer", "enabled": true,
+        "effective_working_state": "unknown",
+        "effective_working_reason": "runtime_owner_unavailable",
+        "runtime_observation_error": "session owner could not confirm this member",
+    });
+    assert_eq!(
+        member(&unobserved).expect("member").state,
+        MemberState::Unknown
+    );
+    // The daemon's ordinary unknown turn state is not this: the member still runs.
+    let busy = json!({
+        "id": "c2", "runtime": "claude", "enabled": true, "running": true,
+        "effective_working_state": "unknown",
+        "effective_working_reason": "headless_running_state_unknown",
+    });
+    assert_eq!(member(&busy).expect("member").state, MemberState::Running);
 }
 
 #[test]

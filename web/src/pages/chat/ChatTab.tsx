@@ -153,7 +153,7 @@ export interface ChatTabProps {
 
   // Core data (must be passed from App)
   selectedGroupId: string;
-  selectedGroupRunning: boolean;
+  selectedGroupRunning: boolean | null;
   selectedGroupActorsHydrating: boolean;
   selectedGroupActorStatusProvisional: boolean;
   groupLabelById: Record<string, string>;

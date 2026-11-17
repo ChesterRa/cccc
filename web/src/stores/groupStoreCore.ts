@@ -11,6 +11,8 @@ import {
   mergeReadStatus,
 } from "../utils/mergeLedgerEvents";
 import { replyObligationActor } from "../utils/crossInstanceMessages";
+import { unobservableGroupRuntime } from "../utils/groupStatus";
+import { isRuntimeUnobservable } from "../utils/terminalWorkingState";
 import type {
   Actor,
   ChatMessageData,
@@ -1090,7 +1092,12 @@ export function buildShellGroupDoc(
       group_id: gid,
       title: meta.title ?? cachedDoc.title,
       topic: meta.topic ?? cachedDoc.topic,
-      running: typeof meta.running === "boolean" ? meta.running : cachedDoc.running,
+      running:
+        meta.runtime_status?.available === false
+          ? undefined
+          : typeof meta.running === "boolean"
+            ? meta.running
+            : cachedDoc.running,
       state: meta.state ?? cachedDoc.state,
       runtime_status: meta.runtime_status || cachedDoc.runtime_status,
     };
@@ -1112,6 +1119,10 @@ export function deriveRuntimeStatusFromActors(
   fallback?: GroupRuntimeStatus | null,
 ): GroupRuntimeStatus {
   const actorList = Array.isArray(actors) ? actors : [];
+  // As the daemon reports it: with an agent it could not observe, running is not known.
+  if (actorList.some((actor) => actor && isRuntimeUnobservable(actor))) {
+    return unobservableGroupRuntime(fallback?.lifecycle_state);
+  }
   const runningActors = actorList.filter((actor) => !!actor?.running);
   return {
     lifecycle_state: String(fallback?.lifecycle_state || "active"),
@@ -1139,7 +1150,7 @@ export function patchGroupRuntimeStatus(
     changed = true;
     return {
       ...group,
-      running: !!runtimeStatus.runtime_running,
+      running: runtimeStatus.available === false ? undefined : !!runtimeStatus.runtime_running,
       state: String(runtimeStatus.lifecycle_state || group.state || "active") as GroupMeta["state"],
       runtime_status: runtimeStatus,
     };

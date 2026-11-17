@@ -94,16 +94,35 @@ impl AnalystSession {
             .as_ref()
             .map(|attempt| attempt.session_id.as_str())
             .or(requested_session_id.as_deref());
-        let result = match claude::prepare(
-            home,
-            &command,
-            &environment,
-            &binding.root,
-            &settings_key,
-            purpose,
-            mcp_server,
-        ) {
+        let inherited =
+            actor.and_then(|(group, actor)| crate::session_owner::launch_environment(group, actor));
+        let prepared = if let Some(inherited) = inherited {
+            claude::prepare_with_host(
+                home,
+                &command,
+                &environment,
+                &binding.root,
+                &settings_key,
+                purpose,
+                mcp_server,
+                &inherited,
+            )
+        } else {
+            claude::prepare(
+                home,
+                &command,
+                &environment,
+                &binding.root,
+                &settings_key,
+                purpose,
+                mcp_server,
+            )
+        };
+        let result = match prepared {
             Ok(prepared) => {
+                if let Some((group_id, actor_id)) = actor {
+                    crate::session_owner::protect_detached_work(group_id, actor_id)?;
+                }
                 // Transcript validation holds a large future. Keep it off the
                 // managed worker's stack, including unoptimized native builds.
                 Box::pin(claude::launch(
@@ -121,11 +140,17 @@ impl AnalystSession {
             Err(error) => Err(claude::LaunchFailure {
                 error,
                 resume_selected: resume_session_id.is_some(),
+                job_absence_confirmed: true,
             }),
         };
         let mut launched = match result {
             Ok(launched) => launched,
             Err(failure) => {
+                if failure.job_absence_confirmed
+                    && let Some((group_id, actor_id)) = actor
+                {
+                    crate::session_owner::confirm_detached_work_stopped(group_id, actor_id)?;
+                }
                 let error = failure.error;
                 if purpose == SessionPurpose::VoiceSecretary
                     && claude::cleanup_secretary_owner(home, &binding.root)

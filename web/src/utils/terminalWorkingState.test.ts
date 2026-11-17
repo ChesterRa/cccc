@@ -2,12 +2,44 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   filterTerminalWorkingBannerChunk,
+  getActorDisplayWorkingState,
   getTerminalSignalFromChunk,
   isTerminalPromptVisible,
   stripInactiveTerminalWorkingBanners,
 } from "./terminalWorkingState";
 
 describe("terminal working state", () => {
+  it("keeps an agent the daemon could not observe unobservable, whatever its terminal showed", () => {
+    const actor = {
+      enabled: true,
+      runner: "pty",
+      effective_working_state: "unknown",
+      effective_working_reason: "runtime_owner_unavailable",
+    };
+    const now = Date.now();
+    expect(getActorDisplayWorkingState(actor, { kind: "idle_prompt", updatedAt: now }, now)).toBe(
+      "unobservable",
+    );
+    expect(
+      getActorDisplayWorkingState(actor, { kind: "working_output", updatedAt: now }, now),
+    ).toBe("unobservable");
+    // The daemon's "unknown" turn state of a running agent stays as it was.
+    const running = {
+      running: true,
+      runner: "headless",
+      effective_working_state: "unknown",
+      effective_working_reason: "headless_running_state_unknown",
+    };
+    expect(getActorDisplayWorkingState(running, null, now)).toBe("unknown");
+    expect(
+      getActorDisplayWorkingState(
+        { running: true, runner: "pty", effective_working_state: "waiting" },
+        { kind: "working_output", updatedAt: now },
+        now,
+      ),
+    ).toBe("working");
+  });
+
   it("detects a prompt when a terminal status line follows it", () => {
     expect(
       isTerminalPromptVisible(

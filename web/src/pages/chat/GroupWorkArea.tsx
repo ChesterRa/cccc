@@ -14,6 +14,7 @@ import {
 } from "../../components/Icons";
 import { terminalPageLayout } from "./groupWorkLayout";
 import { useRetainedRuntimeActors, type RuntimeActorRenderer } from "./useRetainedRuntimeActors";
+import { isRuntimeUnobservable } from "../../utils/terminalWorkingState";
 export type { RuntimeActorView, RuntimeActorRenderer } from "./useRetainedRuntimeActors";
 const NOOP = () => {};
 
@@ -160,7 +161,8 @@ export function GroupWorkArea({
       !pageIds.has(actor.id) &&
       (actor.effective_working_state === "waiting" ||
         actor.effective_working_state === "stuck" ||
-        actor.effective_working_state === "error"),
+        actor.effective_working_state === "error" ||
+        isRuntimeUnobservable(actor)),
   );
   const controlClass =
     "inline-flex h-8 shrink-0 items-center justify-center rounded-md hover:bg-[var(--glass-tab-bg)] disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-text-secondary)]";

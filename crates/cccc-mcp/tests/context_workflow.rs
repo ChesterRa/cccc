@@ -791,3 +791,5 @@ async fn task_rows_filter_page_and_keep_the_task_version_through_the_daemon() {
     let _ = daemon_task.await;
     outcome.expect("task row assertions");
 }
+
+cccc_daemon::session_owner_test_entry!();

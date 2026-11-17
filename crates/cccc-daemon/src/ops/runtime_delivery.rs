@@ -105,6 +105,19 @@ pub fn append_state(
     }
     ledger::append(&store.ledger_path(group_id).map_err(OpError::io)?, &event)
         .map_err(OpError::io)?;
+    if !matches!(outcome, DeliveryOutcome::Claimed)
+        && let Err(error) = crate::session_owner::acknowledge_event(
+            home,
+            group_id,
+            actor_id,
+            actor_created_at,
+            source_event_id,
+        )
+    {
+        // The ledger is already committed. Keep the owner's result for later
+        // reconciliation; a lost acknowledgement must never replay the input.
+        tracing::debug!(kind = ?error.kind(), "session owner result acknowledgement is pending");
+    }
     Ok(event)
 }
 
@@ -219,6 +232,27 @@ fn claim_with(
         if !claimable {
             return Ok((false, states));
         }
+        // A terminal append may have succeeded while its owner's Ack exchange
+        // failed. Finish that reclamation under the claim lock, before this
+        // claim hides the terminal proof. This also fences explicit retries
+        // racing the worker's bounded retry backoff.
+        for (actor, _) in deliveries {
+            if !actor.external_session_id.is_empty()
+                || !states
+                    .get(&actor.id)
+                    .is_some_and(|state| matches!(state.as_str(), "failed" | "ambiguous"))
+            {
+                continue;
+            }
+            crate::session_owner::acknowledge_event(
+                home,
+                &group.group_id,
+                &actor.id,
+                &actor.created_at,
+                source_event_id,
+            )
+            .map_err(std::io::Error::other)?;
+        }
         for (actor, transport) in deliveries {
             append_state(
                 home,
@@ -248,6 +282,17 @@ pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usi
             let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
                 continue;
             };
+            let retained = crate::session_owner::delivery_fact(
+                home,
+                &group.group_id,
+                &actor.id,
+                &actor.created_at,
+                &source_event_id,
+                &transport,
+            )?;
+            if matches!(retained, crate::session_owner::RetainedDelivery::Pending) {
+                continue;
+            }
             append_state(
                 home,
                 &group.group_id,
@@ -255,9 +300,7 @@ pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usi
                 &actor.created_at,
                 &source_event_id,
                 &transport,
-                DeliveryOutcome::Ambiguous(
-                    "daemon restarted before the claimed handoff recorded an outcome",
-                ),
+                retained_outcome(&retained),
             )
             .map_err(|error| std::io::Error::other(error.message))?;
             settled += 1;
@@ -265,6 +308,77 @@ pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usi
         Ok(settled)
     })
     .map_err(OpError::io)
+}
+
+fn retained_outcome(fact: &crate::session_owner::RetainedDelivery) -> DeliveryOutcome<'_> {
+    use crate::session_owner::RetainedDelivery;
+    match fact {
+        RetainedDelivery::Accepted => DeliveryOutcome::Accepted,
+        RetainedDelivery::Unsubmitted => {
+            DeliveryOutcome::Unsubmitted("retained operation ended before native input")
+        }
+        RetainedDelivery::Failed(reason) => DeliveryOutcome::Failed(reason),
+        RetainedDelivery::Withdrawn => {
+            DeliveryOutcome::Withdrawn("retained early Mail notice was withheld")
+        }
+        RetainedDelivery::Pending | RetainedDelivery::Unknown => DeliveryOutcome::Ambiguous(
+            "daemon restarted before the claimed handoff recorded a verifiable outcome",
+        ),
+    }
+}
+
+/// Only references discovered at startup are observed here. This never picks
+/// new Inbox work or resubmits input; it completes the existing durable claims.
+pub(crate) fn settle_retained_claims(home: &HomeLayout, group_id: &str) -> Result<(), OpError> {
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let group = store.load(group_id).map_err(OpError::io)?;
+    for (actor_id, created, event_id, transport) in
+        crate::session_owner::recoveries(home, group_id).map_err(OpError::io)?
+    {
+        if !group
+            .actors
+            .iter()
+            .any(|actor| actor.id == actor_id && actor.created_at == created)
+        {
+            crate::session_owner::forget_recovery(home, group_id, &actor_id, &created, &event_id)
+                .map_err(OpError::io)?;
+            continue;
+        }
+        let state = latest_state(home, group_id, &actor_id, &event_id)?;
+        if state.is_none_or(|(state, _)| state != "claimed") {
+            crate::session_owner::acknowledge_event(home, group_id, &actor_id, &created, &event_id)
+                .map_err(OpError::io)?;
+            crate::session_owner::forget_recovery(home, group_id, &actor_id, &created, &event_id)
+                .map_err(OpError::io)?;
+            continue;
+        }
+        let fact = crate::session_owner::delivery_fact(
+            home, group_id, &actor_id, &created, &event_id, &transport,
+        )
+        .map_err(OpError::io)?;
+        if matches!(fact, crate::session_owner::RetainedDelivery::Pending) {
+            continue;
+        }
+        append_state(
+            home,
+            group_id,
+            &actor_id,
+            &created,
+            &event_id,
+            &transport,
+            retained_outcome(&fact),
+        )?;
+        crate::session_owner::forget_recovery(home, group_id, &actor_id, &created, &event_id)
+            .map_err(OpError::io)?;
+        if let Some(actor) = group
+            .actors
+            .iter()
+            .find(|actor| actor.id == actor_id && actor.created_at == created)
+        {
+            super::actor_delivery::dispatch_unread(home, &group, &actor.id);
+        }
+    }
+    Ok(())
 }
 
 /// The caller has retired the previous transport and verified no active turn.

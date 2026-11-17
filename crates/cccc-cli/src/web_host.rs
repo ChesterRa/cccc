@@ -6,7 +6,9 @@ use cccc_core::HomeLayout;
 use std::time::Duration;
 
 use crate::daemon_lifecycle::{self, DaemonSlot};
-use crate::host_state::{DaemonState, HostPhase, HostState, ShutdownReport, StopResult, WebState};
+use crate::host_state::{
+    AgentsResult, DaemonState, HostPhase, HostState, ShutdownReport, StopResult, WebState,
+};
 use crate::web_instance;
 use tokio::sync::{mpsc, watch};
 
@@ -100,7 +102,7 @@ pub(crate) async fn launch(
     let daemon_slot = daemon_lifecycle::resolve_slot(&home, &client).await?;
     let daemon_missing = daemon_slot == DaemonSlot::Vacant;
     let mut terminal_control = if terminal {
-        Some(crate::shutdown::TerminalControl::new()?)
+        Some(crate::shutdown::TerminalControl::new(daemon_missing)?)
     } else {
         None
     };
@@ -153,7 +155,7 @@ pub(crate) async fn launch(
             } => false,
         };
         if !ready {
-            let cause = finish_embedded_daemon(&client, embedded_daemon.take()).await;
+            let cause = finish_embedded_daemon(&home, &client, embedded_daemon.take()).await;
             if terminal_control
                 .as_ref()
                 .is_some_and(|control| control.controller.is_requested())
@@ -380,7 +382,7 @@ pub(crate) async fn launch(
     }
     #[cfg(not(windows))]
     if daemon_owned {
-        daemon_result = match finish_embedded_daemon(&client, embedded_daemon.take()).await {
+        daemon_result = match finish_embedded_daemon(&home, &client, embedded_daemon.take()).await {
             None => StopResult::Stopped,
             Some(error) => StopResult::Failed {
                 message: error.to_string(),
@@ -400,10 +402,38 @@ pub(crate) async fn launch(
             result = Err(anyhow::anyhow!(message.clone()));
         }
     }
+    // The receipt of the daemon this launch started, whoever asked it to exit: this
+    // launch's stop, or `cccc daemon stop [--keep-agents]` from another terminal. Only
+    // Linux has session owners, so only there does a receipt list the agents.
+    let agents = match owned_pid.filter(|_| cfg!(target_os = "linux")) {
+        None => AgentsResult::NotOwned,
+        Some(pid) => {
+            let receipt = match cccc_daemon::session_owner::read_shutdown_report(&home, pid, None) {
+                Ok(Some(report)) => daemon_lifecycle::Receipt::Confirmed(report),
+                _ => daemon_lifecycle::Receipt::Missing,
+            };
+            if interface.is_none() {
+                let intent = match &receipt {
+                    daemon_lifecycle::Receipt::Confirmed(report)
+                        if report.mode
+                            == cccc_daemon::session_owner::ShutdownMode::PreserveAgents =>
+                    {
+                        daemon_lifecycle::StopIntent::KeepAgents
+                    }
+                    _ => daemon_lifecycle::StopIntent::StopAgents,
+                };
+                if let Some(line) = daemon_lifecycle::receipt_line(&home, intent, &receipt) {
+                    cccc_runtime::diagnostic(format_args!("{line}"));
+                }
+            }
+            daemon_lifecycle::agents_result(&receipt)
+        }
+    };
     if let Some(interface) = interface {
         let report = ShutdownReport {
             web: web_result,
             daemon: daemon_result,
+            agents,
             log_path: home.daemon_dir().join("cccc-web.log"),
         };
         if let Err(error) = interface.finish(report).await {
@@ -462,12 +492,21 @@ async fn confirm_and_stop_existing(
 /// a failure.
 #[cfg(not(windows))]
 async fn finish_embedded_daemon(
+    home: &HomeLayout,
     client: &DaemonClient,
     daemon: Option<tokio::task::JoinHandle<Result<()>>>,
 ) -> Option<anyhow::Error> {
     use crate::commands::common::call;
 
     let mut daemon = daemon?;
+    // This host is stopping its own daemon, so the agents stop with it. Decide
+    // that here rather than through the request below: a request queued behind
+    // a long Group operation may still be waiting when the deadline cancels the
+    // daemon, and a cancelled daemon with nothing chosen keeps its agents.
+    #[cfg(unix)]
+    cccc_daemon::session_owner::begin_owned_stop(home);
+    #[cfg(not(unix))]
+    let _ = home;
     if !daemon.is_finished() {
         // Bounded separately from the daemon's own shutdown: accepting the
         // request is quick even when acting on it is not, and the wait for it

@@ -34,6 +34,10 @@ impl Publisher {
     }
 
     fn publish_group(&mut self, store: &GroupStore, group: &GroupDoc) {
+        crate::session_owner::read_scope(|| self.publish_group_snapshot(store, group));
+    }
+
+    fn publish_group_snapshot(&mut self, store: &GroupStore, group: &GroupDoc) {
         let mut payloads = Vec::new();
         let mut snapshot = BTreeMap::new();
         for actor in &group.actors {
@@ -95,7 +99,14 @@ pub(super) fn activity_payload(
     group: &GroupDoc,
     actor: &Actor,
 ) -> Option<Map<String, Value>> {
-    let running = super::actor_runtime_status::resolve(home, group, actor).running;
+    let status = super::actor_runtime_status::resolve(home, group, actor);
+    if !status.available {
+        let mut payload =
+            super::working_state::runtime_actor_fields(home, actor, &group.group_id, false);
+        payload.insert("id".into(), json!(actor.id));
+        return Some(payload);
+    }
+    let running = status.running;
     // Native callbacks and receiver leases can change outside Actor controls,
     // before a connected tick has ever been published. Include unavailable
     // native members too, so clients can replace a hydrated connected snapshot.

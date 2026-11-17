@@ -57,6 +57,16 @@ pub(in crate::ops) fn actor_response(
     actor: &Actor,
 ) -> serde_json::Value {
     let mut value = serde_json::json!(actor);
+    if actor.external_session_id.is_empty()
+        && crate::session_owner::require_available(home, Some(group_id), Some(&actor.id)).is_err()
+    {
+        if let Some(object) = value.as_object_mut() {
+            object.extend(super::super::working_state::runtime_actor_fields(
+                home, actor, group_id, false,
+            ));
+        }
+        return value;
+    }
     value["runtime_confirmation_required"] =
         serde_json::json!(confirmation_required(group_id, &actor.id));
     match confirmation_pause_applies(home, group_id, actor) {

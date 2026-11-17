@@ -10,6 +10,7 @@ use tokio::sync::broadcast;
 mod acp;
 mod antigravity;
 mod claude;
+pub(crate) use claude::capture_host_environment as claude_host_environment;
 mod control;
 mod grok;
 mod grok_voice_auth;
@@ -51,6 +52,9 @@ pub(crate) fn managed_runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
+            // Unoptimized Claude launch/resume paths exceed the default 2 MiB.
+            // Reserve bounded headroom for this runtime's worker/pool threads.
+            .thread_stack_size(4 * 1024 * 1024)
             .thread_name("cccc-managed-agent")
             .enable_all()
             .build()

@@ -64,7 +64,7 @@ fn main_group_paging_uses_the_number_of_rows_drawn() {
             title: format!("Group {index}"),
             status: GroupStatus::Running,
             state: "active".into(),
-            running_actors: 1,
+            running_actors: Some(1),
         })
         .collect();
     app.groups.record(Ok(groups), Instant::now());
@@ -490,7 +490,7 @@ mod groups {
             title: title.into(),
             status,
             state: state.into(),
-            running_actors: 0,
+            running_actors: Some(0),
         }
     }
 
@@ -672,7 +672,7 @@ mod groups {
     fn a_stopped_group_with_running_actors_can_still_be_stopped() {
         let mut app = app();
         let mut group = group("g_stopped", "stopped", GroupStatus::Stopped, "stopped");
-        group.running_actors = 1;
+        group.running_actors = Some(1);
         with_groups(&mut app, vec![group.clone()]);
         open(&mut app);
         assert_eq!(
@@ -690,7 +690,7 @@ mod groups {
             Some(GroupAction::Stop)
         );
         app.handle(press(KeyCode::Esc));
-        group.running_actors = 0;
+        group.running_actors = Some(0);
         with_groups(&mut app, vec![group]);
         assert_eq!(
             app.group_choices(),
@@ -699,6 +699,23 @@ mod groups {
         assert_eq!(app.groups_view.choice, GroupChoice::Tasks);
         assert_eq!(app.handle(press(KeyCode::Enter)), None);
         assert_eq!(app.screen, Screen::Tasks);
+    }
+
+    #[test]
+    fn a_group_whose_agents_cannot_be_observed_keeps_stop() {
+        let mut unknown = group("g_unknown", "unknown", GroupStatus::Unknown, "active");
+        unknown.running_actors = None;
+        let mut stopped = group("g_stopped", "stopped", GroupStatus::Stopped, "stopped");
+        stopped.running_actors = None;
+        for summary in [unknown, stopped] {
+            let mut app = app();
+            with_groups(&mut app, vec![summary]);
+            open(&mut app);
+            assert_eq!(
+                app.group_choices(),
+                [GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
+            );
+        }
     }
 
     #[test]
@@ -997,7 +1014,7 @@ fn pending_app() -> App {
             title: "Group one".into(),
             status: GroupStatus::Running,
             state: "active".into(),
-            running_actors: 1,
+            running_actors: Some(1),
         }]),
         Instant::now(),
     );

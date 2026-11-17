@@ -49,6 +49,11 @@ fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(),
                 .filter_map(|key| actor.env.get(key).cloned()),
         )
         .collect();
+    #[cfg(unix)]
+    if crate::session_owner::enabled(home) {
+        return crate::session_owner::launch_deepseek(home, group, &actor, &cwd, private_values)
+            .map_err(OpError::io);
+    }
     start_with_private_values(home, group, &actor, &cwd, private_values).map_err(OpError::io)
 }
 

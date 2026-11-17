@@ -76,6 +76,7 @@ impl DetachedDaemon {
             .create(true)
             .append(true)
             .open(&paths.log)?;
+        let log_start = log.metadata()?.len();
         let error_log = log.try_clone()?;
         let mut command = self.command(home);
         command
@@ -114,8 +115,11 @@ impl DetachedDaemon {
             }
             .context("poll Rust daemon process")?;
             if let Some(status) = status {
+                let recovery = session_recovery_hint(&paths.log, log_start)
+                    .map(|hint| format!("; {hint}"))
+                    .unwrap_or_default();
                 anyhow::bail!(
-                    "Rust daemon exited before becoming ready with {status}; see {}",
+                    "Rust daemon exited before becoming ready with {status}{recovery}; see {}",
                     paths.log.display()
                 );
             }
@@ -141,6 +145,34 @@ impl DetachedDaemon {
         command.args(&self.run_args).env("CCCC_HOME", home.root());
         command
     }
+}
+
+/// Surface only the fixed recovery command, never arbitrary provider error
+/// text from the shared log, which may contain private environment values.
+fn session_recovery_hint(log: &Path, start: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(log).ok()?;
+    let end = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(start.max(end.saturating_sub(64 * 1024))))
+        .ok()?;
+    let mut bytes = Vec::new();
+    file.take(64 * 1024).read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let prefix = "cccc daemon process-recovery --owner session --owner-id ";
+    for part in text.rsplit(prefix).take(text.matches(prefix).count()) {
+        let Some((id, suffix)) = part.split_once(' ') else {
+            continue;
+        };
+        let Ok(parsed) = uuid::Uuid::parse_str(id) else {
+            continue;
+        };
+        if id == parsed.simple().to_string() && suffix.starts_with("list") {
+            return Some(format!(
+                "session ownership needs review; run `{prefix}{id} list`"
+            ));
+        }
+    }
+    None
 }
 
 async fn ping(home: &HomeLayout) -> bool {

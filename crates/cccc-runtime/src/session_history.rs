@@ -21,7 +21,7 @@ struct SessionHistoryState {
 /// When a live terminal session's process last wrote output. This is an
 /// observation only: output neither proves nor disproves that the process is
 /// working.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OutputObservation {
     /// Wall-clock time of the last output, for display.
     pub last_output_at: SystemTime,

@@ -106,6 +106,10 @@ mod tests {
         let Err(error) = result else {
             panic!("an untrusted workspace must not launch");
         };
+        assert!(
+            error.job_absence_confirmed,
+            "the native prelaunch refusal created no job"
+        );
         let error = error.error;
         assert_eq!(untrusted_workspace(&error), Some(workspace.as_path()));
         let message = error.to_string();

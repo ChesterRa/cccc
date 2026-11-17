@@ -1,6 +1,7 @@
 //! Format terminal input once for managed viewers and generation-bound ordinary workers.
 use super::{TERMINAL_REPEAT_SUBMIT_DELAY, TERMINAL_SUBMIT_DELAY, terminal_submit_sequence};
 use crate::ops::local_headless;
+use crate::session_owner::runtime as cccc_runtime;
 use cccc_contracts::Actor;
 use cccc_runtime::{PtyHandoff, PtyHandoffReason, SessionStatus};
 use std::sync::atomic::AtomicBool;
@@ -29,7 +30,7 @@ pub(in crate::ops) fn submit_terminal_text(
 
 /// Ordinary delivery may write only to the PTY instance already classified by its
 /// worker, and learns whether a failed attempt left anything in that terminal.
-pub(in crate::ops) fn submit_terminal_text_for_session(
+pub(crate) fn submit_terminal_text_for_session(
     expected: &SessionStatus,
     actor: &Actor,
     text: &str,

@@ -240,3 +240,5 @@ async fn exhibit_mode_rejects_nonactivating_attach_without_creating_state() {
     assert_eq!(response["error"]["code"], "read_only");
     assert_eq!(store.load(&group.group_id).expect("unchanged"), before);
 }
+
+cccc_daemon::session_owner_test_entry!();

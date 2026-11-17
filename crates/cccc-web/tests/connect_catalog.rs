@@ -132,3 +132,5 @@ async fn composer_catalog_obeys_web_authority_and_references_remain_local() {
         .await;
     daemon.await.expect("daemon task").expect("daemon");
 }
+
+cccc_daemon::session_owner_test_entry!();

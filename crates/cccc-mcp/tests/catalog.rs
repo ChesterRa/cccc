@@ -113,3 +113,5 @@ async fn actor_catalog_keeps_core_routes_with_and_without_a_daemon() {
     assert_eq!(names(&before), names(&peer));
     assert!(!names(&peer).contains("cccc_actor"));
 }
+
+cccc_daemon::session_owner_test_entry!();

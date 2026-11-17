@@ -46,7 +46,8 @@ fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                     "runtime":actor.runtime,
                     "runner":actor.runner,
                     "enabled":actor.enabled,
-                    "running":status.running,
+                    "running":if status.available { Some(status.running) } else { None },
+                    "runtime_owner_available":status.available,
                     "pid":status.pid
                 })
             })

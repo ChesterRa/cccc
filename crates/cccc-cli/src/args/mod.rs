@@ -276,17 +276,33 @@ pub enum DirectAction {
 pub enum DaemonAction {
     /// Start the daemon in the background.
     Start,
-    /// Stop the daemon.
-    Stop,
+    /// Stop the daemon. Running agents stop too unless --keep-agents is given.
+    Stop {
+        /// Keep running agents for a maintenance restart: only the daemon exits, and the
+        /// next start reattaches the agents. A daemon that cannot keep them refuses, and
+        /// nothing is stopped.
+        #[arg(long)]
+        keep_agents: bool,
+    },
     /// Show whether the daemon is running.
     Status,
     /// Run only the daemon in the foreground (no Web server or terminal panel).
     Run,
+    /// Internal: hold managed agent sessions independently of the daemon's lifetime.
+    #[command(hide = true)]
+    SessionOwner {
+        #[arg(long)]
+        owner_id: String,
+    },
     /// Review or resolve specific unconfirmed process-cleanup records.
     ProcessRecovery {
         /// Which process owner produced the evidence.
         #[arg(long, global = true, value_enum, default_value = "daemon")]
         owner: RecoveryOwner,
+        /// With `--owner session`: the session owner to review, as named by the error that
+        /// stopped CCCC from starting.
+        #[arg(long, global = true)]
+        owner_id: Option<String>,
         #[command(subcommand)]
         action: RecoveryAction,
     },
@@ -296,6 +312,8 @@ pub enum DaemonAction {
 pub enum RecoveryOwner {
     Daemon,
     Web,
+    /// A session owner that ended without confirming that its agents stopped.
+    Session,
 }
 
 #[derive(Debug, Subcommand)]
@@ -654,5 +672,51 @@ mod tests {
         ] {
             assert!(parse(rejected).is_err(), "{rejected:?}");
         }
+    }
+
+    #[test]
+    fn process_recovery_names_a_session_owner_by_id() {
+        let cli = Cli::try_parse_from([
+            "cccc",
+            "daemon",
+            "process-recovery",
+            "--owner",
+            "session",
+            "--owner-id",
+            "597d730d8e974b2eb9d7b670f994d0a1",
+            "list",
+        ])
+        .expect("session owner review");
+        let Some(CommandKind::Daemon {
+            action:
+                DaemonAction::ProcessRecovery {
+                    owner,
+                    owner_id,
+                    action,
+                },
+        }) = cli.command
+        else {
+            panic!("expected process recovery");
+        };
+        assert!(matches!(owner, RecoveryOwner::Session));
+        assert_eq!(
+            owner_id.as_deref(),
+            Some("597d730d8e974b2eb9d7b670f994d0a1")
+        );
+        assert!(matches!(action, RecoveryAction::List));
+
+        // The existing owners keep their default and need no id.
+        let cli = Cli::try_parse_from(["cccc", "daemon", "process-recovery", "list"])
+            .expect("daemon owner review");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Daemon {
+                action: DaemonAction::ProcessRecovery {
+                    owner: RecoveryOwner::Daemon,
+                    owner_id: None,
+                    ..
+                },
+            })
+        ));
     }
 }

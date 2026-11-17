@@ -141,15 +141,17 @@ Use `cccc sessions join --group <group_id> --sources <ids...>` to add sources to
 Manage the CCCC daemon.
 
 ```bash
-cccc daemon status      # Check daemon status
-cccc daemon start       # Start daemon
-cccc daemon stop        # Stop daemon
+cccc daemon status              # Check daemon status
+cccc daemon start               # Start daemon
+cccc daemon stop                # Stop the daemon and every agent it manages
+cccc daemon stop --keep-agents  # Linux: stop only the daemon; agents keep running
 ```
 
 Notes:
 
 - `cccc daemon start` refuses to spawn a duplicate daemon if the pid-file process is still alive but IPC is not responding.
-- Check `cccc daemon status` and `cccc doctor` before restarting an unresponsive daemon. `cccc daemon stop` stops its managed processes across Groups; after it completes, `cccc daemon start` starts the daemon again.
+- Check `cccc daemon status` and `cccc doctor` before restarting an unresponsive daemon. `cccc daemon stop` stops its managed processes across Groups and reports which agents it stopped; after it completes, `cccc daemon start` starts the daemon again.
+- On Linux, `cccc daemon stop --keep-agents` stops only the daemon, for maintenance such as an update. The agents CCCC started keep running, and the next `cccc daemon start` reattaches them and names them. A daemon that cannot do this (an older version, or one on macOS or Windows) refuses the option and stops nothing. See [Keeping agents across a restart](../guide/operations.md#keeping-agents-across-a-restart).
 
 ## Membership and Reach Commands
 
@@ -566,7 +568,9 @@ Notes:
   and close foreground CCCC processes before asking pip to replace it.
 - A standalone update restarts the daemon when it was running, while the old
   combined Web process remains stopped; the next bare `cccc` starts the updated
-  Web process.
+  Web process. Restarting the daemon this way also stops its agents. On Linux,
+  to update while agents keep running, run `cccc daemon stop --keep-agents`,
+  then `cccc update`, then `cccc daemon start`.
 - On Windows, standalone self-update continues in a separate PowerShell process
   after the original executable exits so the binary can be replaced safely.
 

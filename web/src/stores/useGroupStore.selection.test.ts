@@ -40,6 +40,78 @@ describe("group selection", () => {
     expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(false);
   });
 
+  it("clears a running observation the daemon could no longer make, and restores it later", () => {
+    useGroupStore.setState({
+      actors: [
+        {
+          ...actors[0],
+          runtime_state_source: "managed_session",
+          runner_effective: "headless",
+          effective_runtime: "codex",
+          runtime_session_status: "bound",
+          runtime_confirmation_required: false,
+        },
+      ],
+    });
+    const store = useGroupStore.getState();
+    store.updateActorActivity(
+      [
+        {
+          id: "implementer",
+          effective_working_state: "unknown",
+          effective_working_reason: "runtime_owner_unavailable",
+          runtime_observation_error: "session owner could not confirm this member",
+        },
+      ],
+      "g_active",
+    );
+    let actor = useGroupStore.getState().actors[0];
+    // Everything the daemon leaves out of an agent it cannot observe goes, not only running.
+    for (const key of [
+      "running",
+      "runtime_state_source",
+      "runner_effective",
+      "effective_runtime",
+      "runtime_session_status",
+      "runtime_confirmation_required",
+    ]) {
+      expect(actor).not.toHaveProperty(key);
+    }
+    expect(actor.runtime_observation_error).toBe("session owner could not confirm this member");
+
+    store.updateActorActivity(
+      [{ id: "implementer", running: true, effective_working_state: "idle" }],
+      "g_active",
+    );
+    actor = useGroupStore.getState().actors[0];
+    expect(actor.running).toBe(true);
+    expect(actor.runtime_observation_error).toBeUndefined();
+  });
+
+  it("replaces the Group's running observation when the daemon reports it unobservable", () => {
+    const observed = {
+      lifecycle_state: "active",
+      runtime_running: true,
+      running_actor_count: 2,
+      has_running_foreman: true,
+    };
+    useGroupStore.setState({
+      groups: [{ group_id: "g_active", running: true, state: "active", runtime_status: observed }],
+      groupDoc: { group_id: "g_active", running: true, state: "active", runtime_status: observed },
+    });
+
+    useGroupStore
+      .getState()
+      .updateGroupRuntimeState("g_active", { lifecycle_state: "active", available: false });
+
+    const { groups, groupDoc } = useGroupStore.getState();
+    const unobservable = { lifecycle_state: "active", available: false };
+    expect(groups[0].runtime_status).toEqual(unobservable);
+    expect(groups[0].running).toBeUndefined();
+    expect(groupDoc?.runtime_status).toEqual(unobservable);
+    expect(groupDoc?.running).toBeUndefined();
+  });
+
   it("ignores actor activity delivered by the previous group after selection changes", () => {
     useGroupStore
       .getState()

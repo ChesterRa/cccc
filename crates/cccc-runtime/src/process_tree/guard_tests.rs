@@ -6,6 +6,69 @@ use std::time::Instant;
 const T: u64 = 1_000_000;
 
 #[test]
+fn detached_work_is_retained_until_native_stop_is_confirmed() {
+    const MODE: &str = "CCCC_TEST_GUARD_DETACHED_WORK_CHILD";
+    if std::env::var_os(MODE).is_none() {
+        let output = Command::new(std::env::current_exe().expect("resolve test executable"))
+            .args(["--exact", "process_tree::guard::tests::detached_work_is_retained_until_native_stop_is_confirmed", "--nocapture"])
+            .env(MODE, "1").output().expect("run isolated test child");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().expect("isolated test directory");
+    let ledger = temp.path().join("owned.json");
+    enable(&ledger).expect("enable ownership ledger");
+    let mut work = crate::protect_detached_work().expect("register detached work");
+    let records = read_ledger_records(&ledger).expect("read ownership ledger");
+    assert!(matches!(records.as_slice(), [Record::LaunchIntent(_)]));
+    assert!(crate::recover_inactive_owned_process_groups(&ledger).is_err());
+    work.mark_uncertain()
+        .expect("retain uncertain detached work");
+    work.mark_uncertain()
+        .expect("retain uncertain detached work");
+    let listed = list_active(&ledger).expect("list active recovery records");
+    assert_eq!(
+        listed.records.len(),
+        1,
+        "an uncertain live launch must be reviewable"
+    );
+    assert_eq!(
+        Some(listed.records[0].id.as_str()),
+        work.recovery_id().as_deref()
+    );
+    work.confirm_stopped()
+        .expect("confirm detached work stopped");
+    work.confirm_stopped()
+        .expect("confirm detached work stopped");
+    assert!(
+        list_active(&ledger)
+            .expect("list active recovery records")
+            .records
+            .is_empty()
+    );
+    assert!(
+        read_ledger_records(&ledger)
+            .expect("read ownership ledger")
+            .is_empty()
+    );
+    drop(crate::protect_detached_work().expect("register detached work"));
+    assert!(
+        recovery_pending(),
+        "observer disappearance must retain unknown work"
+    );
+    assert!(matches!(
+        read_ledger_records(&ledger)
+            .expect("read ownership ledger")
+            .as_slice(),
+        [Record::LaunchIntent(_)]
+    ));
+}
+
+#[test]
 fn diagnostic_paths_stay_relative_and_reject_unexpected_names() {
     let ledger = std::path::Path::new("/private/home/daemon/owned-process-groups.json");
     assert_eq!(diagnostic_path(ledger, None).as_deref(), Some("daemon"));

@@ -37,7 +37,7 @@ fn open() -> App {
             title: "Work".into(),
             status: GroupStatus::Offline,
             state: "active".into(),
-            running_actors: 0,
+            running_actors: Some(0),
         }]),
         Instant::now(),
     );

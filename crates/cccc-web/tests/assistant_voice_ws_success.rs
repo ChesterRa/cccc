@@ -342,3 +342,5 @@ async fn wait_for_web_port(home: &HomeLayout, web: &mut tokio::process::Child) -
     }
     panic!("web did not report its port");
 }
+
+cccc_daemon::session_owner_test_entry!();

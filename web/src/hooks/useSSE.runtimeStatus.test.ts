@@ -16,6 +16,32 @@ describe("SSE actor activity runtime projection", () => {
     expect(runtime.lifecycle_state).toBe("active");
     expect(runtime.runtime_running).toBe(true);
   });
+  it("drops an older running observation for an agent the daemon could not observe", () => {
+    const actors: Actor[] = [
+      { id: "t1", runtime: "custom", runner: "pty", running: true },
+      { id: "c1", runtime: "claude", runner: "headless", running: true },
+    ];
+    const unobserved = {
+      id: "c1",
+      effective_working_state: "unknown",
+      effective_working_reason: "runtime_owner_unavailable",
+      runtime_observation_error: "session owner could not confirm this member",
+    };
+
+    const runtime = computeGroupRuntimeFromActorActivityUpdates(actors, [unobserved], {
+      lifecycle_state: "active",
+    });
+
+    expect(runtime).toEqual({ lifecycle_state: "active", available: false });
+    const recovered = computeGroupRuntimeFromActorActivityUpdates(
+      [actors[0], { ...actors[1], ...unobserved, running: undefined }],
+      [{ id: "c1", running: true, effective_working_state: "idle" }],
+      { lifecycle_state: "active" },
+    );
+    expect(recovered.running_actor_count).toBe(2);
+    expect(recovered.available).toBeUndefined();
+  });
+
   it("does not derive stopped lifecycle from zero running actors", () => {
     const actors: Actor[] = [
       { id: "claude-1", role: "foreman", runtime: "codex", runner: "pty", running: true },

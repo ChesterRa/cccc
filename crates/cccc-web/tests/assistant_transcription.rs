@@ -436,3 +436,5 @@ async fn wait_for_daemon(home: &HomeLayout) {
     }
     panic!("daemon address was not created");
 }
+
+cccc_daemon::session_owner_test_entry!();

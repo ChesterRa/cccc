@@ -96,6 +96,7 @@
   "statusIdle": "待机",
   "statusOffline": "离线",
   "statusStopped": "已停止",
+  "statusUnknown": "状态未知",
   "switchToTheme": "切换到{{theme}}主题",
   "switchToLanguage": "切换到{{language}}",
   "currentLanguage": "当前语言：{{language}}",

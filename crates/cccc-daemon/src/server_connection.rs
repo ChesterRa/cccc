@@ -105,7 +105,10 @@ async fn response(
             crate::ops::capabilities::staged::run(home, &request, dispatch_locks).await,
         );
     }
-    let should_shutdown = request.op == "shutdown";
+    let should_shutdown = matches!(
+        request.op.as_str(),
+        "shutdown" | "shutdown_preserving_agents"
+    );
     let permit = dispatch_locks.acquire_for(home, &request).await;
     let home = home.clone();
     let request_for_dispatch = request.clone();

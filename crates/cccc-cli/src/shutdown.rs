@@ -36,10 +36,11 @@ pub(crate) struct TerminalControl {
 }
 
 impl TerminalControl {
-    pub(crate) fn new() -> std::io::Result<Self> {
+    /// `starts_daemon`: this launch starts the daemon, so its agents are this launch's to stop.
+    pub(crate) fn new(starts_daemon: bool) -> std::io::Result<Self> {
         let controller = Controller::new();
         let signals = watch_signals(controller.clone())?;
-        let watchdog = tokio::spawn(watch_terminal_shutdown(controller.clone()));
+        let watchdog = tokio::spawn(watch_terminal_shutdown(controller.clone(), starts_daemon));
         Ok(Self {
             controller,
             signals,
@@ -167,7 +168,7 @@ pub(crate) fn watch_signals(
     }))
 }
 
-pub(crate) async fn watch_terminal_shutdown(controller: Controller) {
+pub(crate) async fn watch_terminal_shutdown(controller: Controller, starts_daemon: bool) {
     controller.requested().await;
     let reason =
         force_exit_reason(controller.forced(), tokio::time::sleep(FORCE_EXIT_TIMEOUT)).await;
@@ -179,11 +180,11 @@ pub(crate) async fn watch_terminal_shutdown(controller: Controller) {
         cccc_daemon::request_managed_session_stop(),
     )
     .await;
-    restore_terminal_before_exit();
+    restore_terminal_before_exit(starts_daemon);
     force_exit();
 }
 
-fn restore_terminal_before_exit() {
+fn restore_terminal_before_exit(starts_daemon: bool) {
     let (done, completed) = std::sync::mpsc::sync_channel(1);
     let _ = std::thread::Builder::new()
         .name("cccc-terminal-restore".into())
@@ -192,6 +193,9 @@ fn restore_terminal_before_exit() {
             crate::console_encoding::restore_original();
             let _ = crate::tui::restore_terminal();
             eprintln!("CCCC is forcing exit; graceful service cleanup was not confirmed.");
+            if starts_daemon && cfg!(target_os = "linux") {
+                eprintln!("{FORCED_EXIT_AGENT_HINT}");
+            }
             let _ = done.send(());
         });
     let _ = completed.recv_timeout(Duration::from_millis(300));
@@ -234,7 +238,7 @@ pub(crate) fn watch_for_interrupt(
 async fn stop_on_interrupt(
     controller: Controller,
     mut interrupts: Interrupts,
-    _home: Option<HomeLayout>,
+    home: Option<HomeLayout>,
     #[cfg(windows)] _detached_daemon: crate::detached_daemon_owner::SharedOwnedDetachedDaemon,
 ) {
     if interrupts.recv().await.is_none() {
@@ -268,8 +272,18 @@ async fn stop_on_interrupt(
         cccc_daemon::request_managed_session_stop(),
     )
     .await;
+    // Only a launch that owns the daemon owns its agents; an external daemon keeps its own.
+    if home.is_some() && cfg!(target_os = "linux") {
+        eprintln!("{FORCED_EXIT_AGENT_HINT}");
+    }
     force_exit();
 }
+
+/// A forced exit does not wait for agents to be confirmed stopped, and agents held by a
+/// session owner outlive this process. Say so, with the command that stops them. Only
+/// Linux has session owners, so only there can agents outlive this process this way.
+const FORCED_EXIT_AGENT_HINT: &str =
+    "Some agents may still be running; run `cccc daemon stop` to stop them.";
 
 fn force_exit() -> ! {
     if let Err(error) = cccc_runtime::force_terminate_owned() {

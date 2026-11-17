@@ -82,7 +82,7 @@ import { useTaskReferenceIndex } from "./chat/useTaskReferenceIndex";
 import { useShallow } from "zustand/react/shallow";
 interface UseChatTabOptions {
   selectedGroupId: string;
-  selectedGroupRunning: boolean;
+  selectedGroupRunning: boolean | null;
   actors: Actor[];
   recipientActors: Actor[];
   showMentionMenu?: boolean;
@@ -473,7 +473,8 @@ export function useChatTab({
   // Setup checklist conditions
   const needsScope = !!selectedGroupId && !projectRoot;
   const needsActors = !!selectedGroupId && actors.length === 0;
-  const needsStart = !!selectedGroupId && actors.length > 0 && !selectedGroupRunning;
+  // Unknown is not stopped: do not ask to start a Group the daemon could not observe.
+  const needsStart = !!selectedGroupId && actors.length > 0 && selectedGroupRunning === false;
   const showSetupCard = needsScope || needsActors || needsStart;
   const dispatchSlashSkillMessage = useSlashSkillDispatch({
     selectedGroupId,

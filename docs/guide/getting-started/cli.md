@@ -195,9 +195,10 @@ cccc ledger search --by assistant  # Search events by sender
 ### Daemon Control
 
 ```bash
-cccc daemon status    # Check status
-cccc daemon start     # Start daemon
-cccc daemon stop      # Stop daemon and its managed processes across Groups
+cccc daemon status              # Check status
+cccc daemon start               # Start daemon
+cccc daemon stop                # Stop daemon and its managed processes across Groups
+cccc daemon stop --keep-agents  # Linux: stop only the daemon; agents keep running
 ```
 
 ## Start Web UI (Optional)

@@ -76,22 +76,21 @@ fn accepting_disclaimer_in_pty_resumes_and_delivers_only_after_confirmation() {
     let prompt_pid = cccc_runtime::status(&f.group.group_id, &f.actor.id)
         .expect("confirmation terminal status")
         .pid;
-    let job = f.delivery();
-    let event = job.event.clone();
-    assert_eq!(
-        process_batch(&mut vec![job], &mut String::new(), &AtomicBool::new(false)),
-        BatchOutcome::Retry
-    );
+    let event = f.delivery().event;
     assert!(!f.config.join("received").exists());
     assert!(!f.config.join("confirmation_inputs").exists());
     assert!(!f.config.join("settings.json").exists());
     assert_saved_receipt(&f, 0, "usable");
+    // Use the real worker so its claimed job remains queued across Retry;
+    // dropping a one-shot process_batch vector would abandon that claim.
     let queued = crate::ops::actor_delivery::dispatch(&f.home, &f.group, &event);
     assert_eq!(queued.queued, 1);
     f.wait(|| f.delivery_state(&event.id).as_deref() == Some("claimed"));
     assert!(waiting(&f));
     assert!(!f.config.join("received").exists());
     assert!(!f.config.join("confirmation_inputs").exists());
+    assert!(!f.config.join("settings.json").exists());
+    assert_saved_receipt(&f, 0, "usable");
 
     input(&f, b"yes\r");
     f.wait(|| {

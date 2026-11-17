@@ -22,6 +22,7 @@ mod server_lifecycle;
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 mod server_memory;
 mod server_terminal_attach;
+pub mod session_owner;
 
 pub use dispatch::dispatch as handle_request;
 pub use paths::DaemonPaths;

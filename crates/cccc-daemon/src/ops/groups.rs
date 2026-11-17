@@ -120,6 +120,10 @@ fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn list(home: &HomeLayout) -> OpResult {
+    crate::session_owner::read_scope(|| list_snapshot(home))
+}
+
+fn list_snapshot(home: &HomeLayout) -> OpResult {
     let store = store(home)?;
     let groups = store
         .list()
@@ -136,6 +140,10 @@ fn list(home: &HomeLayout) -> OpResult {
 }
 
 fn show(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    crate::session_owner::read_scope(|| show_snapshot(home, request))
+}
+
+fn show_snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     let scope = actor_runtime::caller_scope(&group, &by)?;

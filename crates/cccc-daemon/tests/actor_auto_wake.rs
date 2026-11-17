@@ -1008,7 +1008,12 @@ async fn wait_for_delivery_state(
                     && event.data["source_event_id"] == source_event_id
                     && event.data["actor_id"] == "peer1"
             });
-        if let Some(event) = latest.as_ref().filter(|event| event.data["state"] == state) {
+        // A confirmed non-write is an intermediate retryable failure. These
+        // callers wait for the worker's final failure, after its wake budget.
+        if let Some(event) = latest.as_ref().filter(|event| {
+            event.data["state"] == state
+                && !(state == "failed" && event.data.get("retryable") == Some(&Value::Bool(true)))
+        }) {
             return event.data["reason"].as_str().unwrap_or_default().to_owned();
         }
         assert!(
@@ -1059,3 +1064,5 @@ where
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+
+cccc_daemon::session_owner_test_entry!();

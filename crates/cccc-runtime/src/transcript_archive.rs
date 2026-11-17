@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 const COMPACT_SLACK_BYTES: u64 = 64 * 1024;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HistoryConfig {
     pub path: PathBuf,
     pub max_bytes: usize,

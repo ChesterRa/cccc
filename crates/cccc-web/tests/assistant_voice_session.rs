@@ -260,3 +260,5 @@ async fn shutdown_daemon(home: &HomeLayout) {
         .await
         .expect("shutdown daemon");
 }
+
+cccc_daemon::session_owner_test_entry!();

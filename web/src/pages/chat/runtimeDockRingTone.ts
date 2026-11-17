@@ -1,5 +1,6 @@
 import type { RuntimeDockItem } from "./runtimeDockItems";
 import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
+import { UNOBSERVABLE_WORKING_STATE } from "../../utils/terminalWorkingState";
 
 export type RuntimeRingTone = "stopped" | "idle" | "active" | "attention";
 
@@ -13,6 +14,8 @@ export function getRuntimeRingTone(
   const actorState = String(workingState || "")
     .trim()
     .toLowerCase();
+  // The daemon could not observe this agent: neither running nor stopped.
+  if (actorState === UNOBSERVABLE_WORKING_STATE) return "attention";
   // Managed runtimes expose the current daemon-owned state. Task history can
   // retain an older outcome after recovery and must not override this ring.
   if (hasManagedRuntimeOutput(item.actor)) {

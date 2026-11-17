@@ -585,3 +585,62 @@ fn wait_for(mut ready: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[test]
+fn unknown_deepseek_attempt_settles_before_any_auto_wake() {
+    let temp = tempfile::tempdir().expect("isolated test directory");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("resolve isolated home");
+    home.initialize().expect("initialize fixture state");
+    let store = GroupStore::new(home.clone()).expect("open isolated group store");
+    let mut group = store
+        .create("unknown native attempt", "")
+        .expect("create fixture group");
+    let mut actor = Actor::new("peer");
+    actor.runtime = ActorRuntime::Deepseek;
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save fixture group");
+    let event = Event::new("chat.message", &group.group_id);
+    cccc_core::ledger::append(
+        &store
+            .ledger_path(&group.group_id)
+            .expect("resolve group ledger"),
+        &event,
+    )
+    .expect("append fixture event");
+    crate::ops::runtime_delivery::claim(&home, &group, &actor, &event.id, "deepseek", false)
+        .expect("claim fixture delivery");
+    let mut attempted = HashSet::from([event.id.clone()]);
+    let mut jobs = vec![DeliveryJob {
+        home: home.clone(),
+        group: group.clone(),
+        actor: actor.clone(),
+        event: event.clone(),
+        transport: "deepseek",
+        claimed: true,
+    }];
+    let mut wakes = WakeBudget::default();
+    assert_eq!(
+        process_deepseek_batch(
+            &mut jobs,
+            &home,
+            &group,
+            &actor,
+            &AtomicBool::new(false),
+            &mut attempted,
+            &mut wakes
+        ),
+        BatchOutcome::Delivered
+    );
+    assert!(jobs.is_empty());
+    assert_eq!(
+        wakes.spent, 0,
+        "unknown work must be resolved before restarting the provider"
+    );
+    assert_eq!(
+        crate::ops::runtime_delivery::latest_state(&home, &group.group_id, &actor.id, &event.id)
+            .expect("read latest delivery state")
+            .expect("settled delivery state")
+            .0,
+        "ambiguous"
+    );
+}

@@ -3,6 +3,17 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn configure_actor_cli(env: &mut BTreeMap<String, String>) -> Option<PathBuf> {
+    if crate::session_owner::is_owner()
+        && let Some(executable) = env
+            .get("CCCC_CLI")
+            .map(PathBuf::from)
+            .filter(|path| valid_public_launcher(path))
+    {
+        // New launches use the current controller's explicit tool path even
+        // while this owner still runs an older compatible build.
+        configure_actor_cli_path(env, &executable);
+        return Some(executable);
+    }
     let executable = resolve_cccc_executable()?;
     configure_actor_cli_path(env, &executable);
     Some(executable)

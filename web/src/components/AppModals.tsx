@@ -564,9 +564,10 @@ export function AppModals({
   }, [groupPresentation, presentationViewer, presentationViewerCacheByGroup, selectedGroupId]);
 
   // Computed
-  const selectedGroupRunning = useGroupStore(
-    (s) => s.groups.find((g) => String(g.group_id || "") === s.selectedGroupId)?.running ?? false,
-  );
+  const selectedGroupRunning = useGroupStore((s) => {
+    const group = s.groups.find((g) => String(g.group_id || "") === s.selectedGroupId);
+    return group?.runtime_status?.available === false ? null : (group?.running ?? false);
+  });
   const hasForeman = actors.some((a) => a.role === "foreman");
 
   // Compute messageMeta for RecipientsModal (moved from App.tsx)

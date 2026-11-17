@@ -213,7 +213,17 @@ export type ActorWorkingStateInput = {
   runner_effective?: string;
   runtime_state_source?: string;
   effective_working_state?: string;
+  effective_working_reason?: string;
 };
+
+/** Display state of an agent the daemon could not observe at all, because the process that
+ * holds it was unavailable. Unlike the daemon's "unknown" turn state of a running agent, it
+ * says neither running nor stopped. */
+export const UNOBSERVABLE_WORKING_STATE = "unobservable";
+
+export function isRuntimeUnobservable(actor: { effective_working_reason?: string }): boolean {
+  return String(actor.effective_working_reason || "").trim() === "runtime_owner_unavailable";
+}
 
 export function getActorDisplayWorkingState(
   actor: ActorWorkingStateInput,
@@ -224,6 +234,8 @@ export function getActorDisplayWorkingState(
     String(actor.effective_working_state || "")
       .trim()
       .toLowerCase() || "idle";
+  // Terminal output seen here cannot settle what the daemon could not observe.
+  if (isRuntimeUnobservable(actor)) return UNOBSERVABLE_WORKING_STATE;
   const effectiveRunner = getEffectiveActorRunner(actor);
   const stateSource = String(actor.runtime_state_source || "")
     .trim()

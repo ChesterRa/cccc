@@ -7,6 +7,7 @@
   "waiting": "等待中",
   "stuck": "卡住了",
   "stopped": "已停止",
+  "statusUnknown": "状态未知",
   "custom": "自定义",
   "noAgentStateYet": "暂无智能体状态",
   "agentState": "智能体状态",

@@ -7,6 +7,7 @@
   "waiting": "待機中",
   "stuck": "停止気味",
   "stopped": "停止済み",
+  "statusUnknown": "状態不明",
   "custom": "カスタム",
   "noAgentStateYet": "エージェント状態はまだありません",
   "agentState": "エージェント状態",

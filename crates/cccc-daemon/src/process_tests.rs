@@ -5,6 +5,33 @@ use std::path::Path;
 use std::time::Duration;
 
 #[test]
+fn startup_recovery_hint_uses_only_this_start_and_never_echoes_log_secrets() {
+    let temp = tempfile::tempdir().expect("isolated test directory");
+    let log = temp.path().join("daemon.log");
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let old = format!(
+        "Error: run cccc daemon process-recovery --owner session --owner-id {id} list; private=DO_NOT_ECHO\n"
+    );
+    std::fs::write(&log, &old).expect("write fixture file");
+    assert!(super::session_recovery_hint(&log, old.len() as u64).is_none());
+    let hint = super::session_recovery_hint(&log, 0).expect("recovery command in log tail");
+    assert!(hint.contains(&format!("--owner-id {id} list")));
+    assert!(!hint.contains("DO_NOT_ECHO"));
+    std::fs::write(
+        &log,
+        format!("{old}cccc daemon process-recovery --owner session --owner-id incomplete"),
+    )
+    .expect("write fixture file");
+    assert!(
+        super::session_recovery_hint(&log, 0)
+            .expect("recovery command in log tail")
+            .contains(&id)
+    );
+    std::fs::write(&log, old.replace(&id, "invalid-owner")).expect("write fixture file");
+    assert!(super::session_recovery_hint(&log, 0).is_none());
+}
+
+#[test]
 fn builds_cli_self_launch_command() {
     let home = HomeLayout::from_path(Path::new("test-home").to_path_buf()).expect("home");
     let launch = DetachedDaemon::new("cccc", ["daemon", "run"]);

@@ -185,7 +185,9 @@ impl Watch {
                     self.cwd.clone(),
                     app,
                 )?;
-                super::super::actor_delivery::dispatch_group_unread(&self.home, &self.group);
+                if !crate::session_owner::is_owner() {
+                    super::super::actor_delivery::dispatch_group_unread(&self.home, &self.group);
+                }
                 Ok(())
             },
             |app| super::block_on_managed(app.stop(app.generation())),

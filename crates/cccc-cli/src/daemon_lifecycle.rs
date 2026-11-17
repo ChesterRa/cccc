@@ -233,6 +233,291 @@ pub(crate) async fn stop(
     Ok(response)
 }
 
+/// What `cccc daemon stop` was asked to do with running agents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopIntent {
+    StopAgents,
+    KeepAgents,
+}
+
+/// The daemon's final account of a stop request, read after it released the lock.
+#[derive(Debug)]
+pub(crate) enum Receipt {
+    /// The daemon predates exit receipts: nothing is known beyond today's reply.
+    NotSupported,
+    /// The daemon writes receipts, but none matches this request: nothing is confirmed.
+    Missing,
+    Confirmed(cccc_daemon::session_owner::ShutdownReport),
+    /// No daemon was running; agents an earlier daemon left running were stopped directly.
+    WithoutDaemon(cccc_daemon::session_owner::ShutdownReport),
+}
+
+/// No daemon holds the lock. Agents an earlier daemon kept running under their session
+/// owner are stopped directly, under the home lock, without starting a daemon. With none
+/// running, the answer is the one from before the split.
+async fn stop_without_daemon(
+    client: &DaemonClient,
+    home: &HomeLayout,
+) -> Result<(cccc_contracts::DaemonResponse, Receipt)> {
+    let report = cccc_daemon::session_owner::stop_without_daemon(home.clone()).await?;
+    if report.confirmed_stopped.is_empty()
+        && report.retained.is_empty()
+        && report.unconfirmed.is_empty()
+    {
+        // A ping has no side effect; its error is today's "not running" answer.
+        call(client, "ping", json!({})).await?;
+        bail!("a CCCC daemon started while this stop was running; run `cccc daemon stop` again");
+    }
+    let mut result = serde_json::Map::new();
+    result.insert("shutting_down".into(), false.into());
+    result.insert("daemon_running".into(), false.into());
+    Ok((
+        cccc_contracts::DaemonResponse::success(result),
+        Receipt::WithoutDaemon(report),
+    ))
+}
+
+/// Stop for the user command. The request ID ties the receipt to this request, so an
+/// earlier exit's receipt is never read as this one's. An old daemon ignores the ID on a
+/// plain stop; it answers `unknown_op` to the separate keep-agents operation, which is
+/// then refused here instead of falling back to a stop that would end every agent.
+pub(crate) async fn stop_for_user(
+    client: &DaemonClient,
+    home: &HomeLayout,
+    intent: StopIntent,
+) -> Result<(cccc_contracts::DaemonResponse, Receipt)> {
+    let pid = daemon_pid(client).await;
+    // Agents outlive their daemon only under a session owner, which runs on Linux only.
+    if cfg!(target_os = "linux")
+        && pid.is_none()
+        && intent == StopIntent::StopAgents
+        // A lock that cannot even be opened (a home never started) has no agents behind
+        // it; today's "not running" answer below stays the reply.
+        && matches!(daemon_takeover::probe_lock(home), Ok(LockState::Free))
+    {
+        return stop_without_daemon(client, home).await;
+    }
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let (op, args) = match intent {
+        StopIntent::StopAgents => ("shutdown", json!({"request_id": request_id})),
+        StopIntent::KeepAgents => (
+            "shutdown_preserving_agents",
+            match pid {
+                Some(pid) => json!({"request_id": request_id, "expected_pid": pid}),
+                None => json!({"request_id": request_id}),
+            },
+        ),
+    };
+    let response = call(client, op, args).await?;
+    if !response.ok {
+        if intent == StopIntent::KeepAgents {
+            match response.error.as_ref().map(|error| error.code.as_str()) {
+                Some("unknown_op") => bail!(
+                    "the running CCCC daemon cannot keep agents across a restart; nothing was stopped. \
+                     Update CCCC first, or stop the daemon and its agents with `cccc daemon stop`"
+                ),
+                Some("unsupported_platform") => bail!(
+                    "CCCC cannot keep agents across a restart on this platform; nothing was stopped. \
+                     Stop the daemon and its agents with `cccc daemon stop`"
+                ),
+                _ => {}
+            }
+        }
+        return Ok((response, Receipt::NotSupported));
+    }
+    // Only a daemon that writes receipts names the mode it accepted. Without session owners
+    // (off Linux) a receipt would list none of the agents the daemon stopped itself.
+    let writes_receipts = cfg!(target_os = "linux") && response.result.contains_key("mode");
+    daemon_takeover::wait_for_lock_release(home, DAEMON_SHUTDOWN_TIMEOUT).await?;
+    let receipt = match pid {
+        _ if !writes_receipts => Receipt::NotSupported,
+        None => Receipt::Missing,
+        Some(pid) => {
+            match cccc_daemon::session_owner::read_shutdown_report(home, pid, Some(&request_id)) {
+                Ok(Some(report)) => Receipt::Confirmed(report),
+                Ok(None) => Receipt::Missing,
+                Err(error) => {
+                    cccc_runtime::diagnostic(format_args!(
+                        "warning: cannot read the CCCC exit receipt: {error}"
+                    ));
+                    Receipt::Missing
+                }
+            }
+        }
+    };
+    Ok((response, receipt))
+}
+
+/// One line for the person who ran the stop, or `None` when there is nothing beyond
+/// today's reply to say. Only confirmed sets are counted; anything unconfirmed is named
+/// as possibly still running, never as stopped.
+pub(crate) fn receipt_line(
+    home: &HomeLayout,
+    intent: StopIntent,
+    receipt: &Receipt,
+) -> Option<String> {
+    use cccc_daemon::session_owner::ShutdownMode;
+    let (report, prefix) = match receipt {
+        Receipt::NotSupported => return None,
+        Receipt::Missing => {
+            return Some(match intent {
+                StopIntent::KeepAgents => "[cccc] CCCC stopped, but it could not confirm which agents kept running. \
+                     Start CCCC again to reattach any that are, or stop them with `cccc daemon stop`."
+                    .into(),
+                StopIntent::StopAgents => "[cccc] CCCC stopped, but it could not confirm that every agent stopped; \
+                     some may still be running. Run `cccc daemon stop` again to stop them."
+                    .into(),
+            });
+        }
+        Receipt::Confirmed(report) => (report, "[cccc] CCCC stopped"),
+        Receipt::WithoutDaemon(report) => (report, "[cccc] CCCC was not running"),
+    };
+    let mut parts = Vec::new();
+    if report.mode == ShutdownMode::PreserveAgents && !report.retained.is_empty() {
+        parts.push(format!(
+            "kept {} running ({}); start CCCC again to reattach them",
+            agent_count(report.retained.len()),
+            describe_agents(home, &report.retained)
+        ));
+    }
+    // A maintenance stop can still stop an agent it could not keep; say so in either mode.
+    if !report.confirmed_stopped.is_empty() {
+        parts.push(format!(
+            "stopped {} ({})",
+            agent_count(report.confirmed_stopped.len()),
+            describe_agents(home, &report.confirmed_stopped)
+        ));
+    }
+    // Zero confirmed is not zero running: say "none" only when nothing is uncertain either.
+    if report.mode == ShutdownMode::PreserveAgents
+        && report.retained.is_empty()
+        && report.confirmed_stopped.is_empty()
+        && report.unconfirmed.is_empty()
+    {
+        parts.push("no agents were running".into());
+    }
+    // A plain stop never retains on purpose; anything left is reported, not hidden.
+    let mut uncertain = report.unconfirmed.clone();
+    if report.mode == ShutdownMode::Stop {
+        uncertain.extend(report.retained.iter().cloned());
+    }
+    if !uncertain.is_empty() {
+        // Another stop cannot settle what a session owner could not confirm: that owner is
+        // kept for review, so name its command. Only a stop the daemon confirmed, with no
+        // owner named, is worth running again.
+        let owners = review_owners(&uncertain);
+        let next = if !owners.is_empty() {
+            format!("; to review, run {}", review_commands(&owners))
+        } else if report.mode == ShutdownMode::Stop && matches!(receipt, Receipt::Confirmed(_)) {
+            "; run `cccc daemon stop` again to retry".to_owned()
+        } else {
+            String::new()
+        };
+        parts.push(format!(
+            "could not confirm {} ({}), which may still be running{next}",
+            agent_count(uncertain.len()),
+            describe_agents(home, &uncertain)
+        ));
+    }
+    (!parts.is_empty()).then(|| format!("{prefix}: {}.", parts.join("; ")))
+}
+
+/// The session owners kept because they hold an agent they could not confirm stopped, as
+/// simple UUIDs. Only a value that parses as one goes into a command the person may run.
+pub(crate) fn review_owners(agents: &[cccc_daemon::session_owner::AgentIdentity]) -> Vec<String> {
+    agents
+        .iter()
+        .filter_map(|agent| agent.owner_id.as_deref())
+        .filter_map(|id| uuid::Uuid::try_parse(id).ok())
+        .map(|id| id.simple().to_string())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub(crate) fn review_commands(owners: &[String]) -> String {
+    owners
+        .iter()
+        .map(|owner| {
+            format!("`cccc daemon process-recovery --owner session --owner-id {owner} list`")
+        })
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+/// The receipt as counts for the terminal interface's exit summary. A plain stop never
+/// keeps agents on purpose, so anything it left is counted as uncertain, not kept.
+pub(crate) fn agents_result(receipt: &Receipt) -> crate::host_state::AgentsResult {
+    use crate::host_state::AgentsResult;
+    use cccc_daemon::session_owner::ShutdownMode;
+    match receipt {
+        Receipt::NotSupported | Receipt::Missing => AgentsResult::Unconfirmed,
+        Receipt::Confirmed(report) | Receipt::WithoutDaemon(report) => {
+            let plain = report.mode == ShutdownMode::Stop;
+            AgentsResult::Confirmed {
+                stopped: report.confirmed_stopped.len(),
+                kept: if plain { 0 } else { report.retained.len() },
+                uncertain: report.unconfirmed.len() + if plain { report.retained.len() } else { 0 },
+                review_owners: review_owners(&report.unconfirmed),
+            }
+        }
+    }
+}
+
+/// After a start: the agents the new daemon confirmed it reattached. A daemon that does
+/// not report the field says nothing, which is not the same as reattaching none.
+pub(crate) async fn reattached_line(client: &DaemonClient, home: &HomeLayout) -> Option<String> {
+    let response = call(client, "ping", json!({})).await.ok()?;
+    let agents: Vec<cccc_daemon::session_owner::AgentIdentity> =
+        serde_json::from_value(response.result.get("retained_agents")?.clone()).ok()?;
+    (!agents.is_empty()).then(|| {
+        format!(
+            "[cccc] Reattached {} that kept running ({}).",
+            agent_count(agents.len()),
+            describe_agents(home, &agents)
+        )
+    })
+}
+
+fn agent_count(count: usize) -> String {
+    if count == 1 {
+        "1 agent".into()
+    } else {
+        format!("{count} agents")
+    }
+}
+
+/// Agent IDs grouped by Group title, falling back to the Group ID when the title cannot be read.
+fn describe_agents(
+    home: &HomeLayout,
+    agents: &[cccc_daemon::session_owner::AgentIdentity],
+) -> String {
+    let store = cccc_core::GroupStore::new(home.clone()).ok();
+    let mut groups: Vec<(String, Vec<&str>)> = Vec::new();
+    for agent in agents {
+        match groups
+            .iter_mut()
+            .find(|(group, _)| *group == agent.group_id)
+        {
+            Some((_, actors)) => actors.push(&agent.actor_id),
+            None => groups.push((agent.group_id.clone(), vec![&agent.actor_id])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(group_id, actors)| {
+            let title = store
+                .as_ref()
+                .and_then(|store| store.load(&group_id).ok())
+                .map(|group| group.title)
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or(group_id);
+            format!("{} in {title}", actors.join(", "))
+        })
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// Stop a daemon that answered but cannot serve this build.
 async fn replace(client: &DaemonClient, home: &HomeLayout) -> Result<()> {
     cccc_runtime::diagnostic(format_args!(

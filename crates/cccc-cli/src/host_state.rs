@@ -24,10 +24,28 @@ pub(crate) enum StopResult {
     Failed { message: String },
 }
 
+/// What the daemon's exit receipt confirmed about its agents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AgentsResult {
+    /// The daemon is not this launch's, so neither are its agents.
+    NotOwned,
+    /// Counts from the receipt; `uncertain` agents may still be running. `review_owners`
+    /// are the session owners kept for review because they could not confirm one.
+    Confirmed {
+        stopped: usize,
+        kept: usize,
+        uncertain: usize,
+        review_owners: Vec<String>,
+    },
+    /// No receipt for this exit: nothing about the agents is confirmed.
+    Unconfirmed,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ShutdownReport {
     pub web: StopResult,
     pub daemon: StopResult,
+    pub agents: AgentsResult,
     pub log_path: PathBuf,
 }
 

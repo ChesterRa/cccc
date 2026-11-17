@@ -6,9 +6,12 @@ export type TextScale = 70 | 90 | 100 | 125;
 
 export type GroupRuntimeStatus = {
   lifecycle_state: "active" | "idle" | "paused" | "stopped" | string;
-  runtime_running: boolean;
-  running_actor_count: number;
-  has_running_foreman: boolean;
+  /** False when the daemon could not observe some managed member. The observation fields
+   * below are then omitted: whether anything runs is not known. */
+  available?: boolean;
+  runtime_running?: boolean;
+  running_actor_count?: number;
+  has_running_foreman?: boolean;
 };
 
 export type GroupMeta = {
@@ -355,6 +358,8 @@ export type Actor = {
   effective_working_reason?: string;
   effective_working_updated_at?: string | null;
   effective_active_task_id?: string | null;
+  /** Set when the daemon could not observe this agent ("unknown" working state, no `running`). */
+  runtime_observation_error?: string;
   command?: string[];
   env?: Record<string, string>;
   capability_autoload?: string[];

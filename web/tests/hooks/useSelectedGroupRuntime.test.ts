@@ -42,6 +42,38 @@ describe("useSelectedGroupRuntime", () => {
     });
   });
 
+  it("reports neither running nor stopped while the daemon cannot observe the Group", () => {
+    const result = computeSelectedGroupRuntime({
+      groups: [
+        {
+          group_id: "g1",
+          state: "active",
+          runtime_status: { lifecycle_state: "active", available: false },
+        },
+      ],
+      selectedGroupId: "g1",
+      groupDoc: {
+        group_id: "g1",
+        running: true,
+        state: "active",
+        runtime_status: {
+          lifecycle_state: "active",
+          runtime_running: true,
+          running_actor_count: 2,
+          has_running_foreman: true,
+        },
+      },
+      actors: [{ id: "a1", running: true }],
+    });
+
+    expect(result.selectedGroupRunning).toBeNull();
+    expect(result.selectedGroupRuntimeStatus).toEqual({
+      lifecycle_state: "active",
+      available: false,
+    });
+    expect(result.orderedSelectedGroupPatch?.running).toBeUndefined();
+  });
+
   it("produces a sidebar patch for the selected group", () => {
     const result = computeSelectedGroupRuntime({
       groups: [{ group_id: "g1", running: false, state: "paused" }],

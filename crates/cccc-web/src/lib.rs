@@ -785,3 +785,6 @@ mod static_asset_tests;
 #[cfg(test)]
 #[path = "lib_lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[cfg(test)]
+cccc_daemon::session_owner_test_entry!();

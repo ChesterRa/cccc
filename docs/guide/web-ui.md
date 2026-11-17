@@ -1688,7 +1688,9 @@ Some records need offline review. Stop CCCC safely, then run
 followed by `retry --id <id> --version <version>` or
 `accept --id <id> --version <version> --accept-risk`. While CCCC Web is
 running, these commands refuse to change Web's records. Do not delete files
-under `CCCC_HOME` by hand.
+under `CCCC_HOME` by hand. On Linux, an agent that CCCC could not confirm after its
+launch is reviewed with `--owner session`; see
+[When CCCC cannot confirm an agent](operations.md#when-cccc-cannot-confirm-an-agent).
 
 Use one `CCCC_HOME` on one host or container at a time. Before moving or
 copying it elsewhere, make sure the work started from it has ended. On that

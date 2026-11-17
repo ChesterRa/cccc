@@ -13,12 +13,51 @@ pub(crate) async fn handle<S>(
     mut stream: BufReader<S>,
     home: HomeLayout,
     request: DaemonRequest,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
 ) -> Result<()>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let mut attachment = match tokio::task::spawn_blocking(move || prepare(&home, &request)).await?
+    #[cfg(unix)]
+    if request.op == "term_attach"
+        && crate::session_owner::runtime::proxy_attachment(&mut stream, &request, shutdown.clone())
+            .await?
+    {
+        return Ok(());
+    }
+    handle_guarded(stream, home, request, shutdown, None).await
+}
+
+type AdmissionGuard = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
+pub(crate) async fn handle_guarded<S>(
+    mut stream: BufReader<S>,
+    home: HomeLayout,
+    request: DaemonRequest,
+    mut shutdown: watch::Receiver<bool>,
+    guard: Option<AdmissionGuard>,
+) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let prepare_guard = guard.clone();
+    let mut attachment = match tokio::task::spawn_blocking(move || {
+        if prepare_guard.as_ref().is_some_and(|guard| !guard()) {
+            return Err(DaemonResponse::failure(
+                "stale_epoch",
+                "terminal controller was replaced",
+            ));
+        }
+        let attachment = prepare(&home, &request)?;
+        if prepare_guard.as_ref().is_some_and(|guard| !guard()) {
+            return Err(DaemonResponse::failure(
+                "stale_epoch",
+                "terminal controller was replaced",
+            ));
+        }
+        Ok(attachment)
+    })
+    .await?
     {
         Ok(attachment) => attachment,
         Err(response) => {
@@ -33,7 +72,7 @@ where
     let (read, write) = tokio::io::split(stream);
     tokio::select! {
         result = pump_output(write, &mut attachment) => result,
-        result = pump_input(read, input, INPUT_WRITE_TIMEOUT) => result,
+        result = pump_input_guarded(read, input, INPUT_WRITE_TIMEOUT, guard) => result,
         changed = shutdown.changed() => {
             changed.ok();
             Ok(())
@@ -181,10 +220,23 @@ where
     Ok(())
 }
 
+#[cfg(test)]
 async fn pump_input<R>(
+    read: R,
+    input: TerminalInput,
+    write_timeout: std::time::Duration,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+{
+    pump_input_guarded(read, input, write_timeout, None).await
+}
+
+async fn pump_input_guarded<R>(
     mut read: R,
     input: TerminalInput,
     write_timeout: std::time::Duration,
+    guard: Option<AdmissionGuard>,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -197,12 +249,21 @@ where
         }
         let data = buffer[..count].to_vec();
         let writer = input.clone();
+        let guard = guard.clone();
         // A stalled write prevents reading EOF from a disconnected client.
         // End this attachment after a bounded input wait; dropping its writer
         // ownership also cancels the Linux PTY task. Do not replay partial input.
         tokio::time::timeout(
             write_timeout,
-            tokio::task::spawn_blocking(move || writer.write(&data)),
+            tokio::task::spawn_blocking(move || {
+                if guard.as_ref().is_some_and(|guard| !guard()) {
+                    return Err(cccc_runtime::RuntimeError::Io(std::io::Error::new(
+                        std::io::ErrorKind::PermissionDenied,
+                        "terminal controller was replaced",
+                    )));
+                }
+                writer.write(&data)
+            }),
         )
         .await
         .map_err(|_| anyhow!("terminal input stalled"))?

@@ -56,6 +56,7 @@ import { ActorQuickControls } from "./agentTerminal/ActorQuickControls";
 import { SessionReplacedMark } from "./agentTerminal/SessionReplacedMark";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
+import { UNOBSERVABLE_WORKING_STATE } from "../utils/terminalWorkingState";
 import { NATIVE_SESSION_AVAILABLE, nativeSessionStatusKey } from "../utils/nativeSessionStatus";
 import {
   getEffectiveActorRunner,
@@ -448,6 +449,7 @@ export function AgentTab({
               : "common:loading",
       );
     if (isWebModel) return t(actor.enabled ? "webAccessEnabled" : "webAccessPaused");
+    if (workingState === UNOBSERVABLE_WORKING_STATE) return t("statusUnknown");
     if (!isRunning) return t("stopped");
     if (workingState === "error") return t("common:error");
     if (workingState === "working" || workingState === "waiting" || workingState === "stuck")
@@ -464,7 +466,20 @@ export function AgentTab({
         : runtimeIndicator.tone === "error"
           ? undefined
           : "idle";
-  const lcdStatusText = runtimeIndicator.tone === "error" ? "×" : "";
+  const lcdStatusText =
+    runtimeIndicator.tone !== "error"
+      ? ""
+      : workingState === UNOBSERVABLE_WORKING_STATE
+        ? "?"
+        : "×";
+  // Why the status is what it is; the daemon's diagnostic names the next step when it
+  // could not observe the agent.
+  const runtimeStatusDetail = [
+    !isEventActor && actor.effective_working_reason,
+    !isEventActor && actor.runtime_observation_error,
+  ]
+    .filter(Boolean)
+    .join("\n");
   const handleNewSession = () => {
     if (!window.confirm(t("newSessionConfirm"))) return;
     onNewSession();
@@ -760,7 +775,7 @@ export function AgentTab({
   const compactStatusText =
     actor.runtime_confirmation_required || isNativeSession || isEventActor
       ? runtimeStatusText
-      : !isRunning
+      : !isRunning || workingState === UNOBSERVABLE_WORKING_STATE
         ? runtimeStatusText
         : !isHeadless && connectionStatus !== "connected"
           ? t(connectionStatus === "disconnected" ? "connectionLost" : "chat:workView.connecting")
@@ -815,9 +830,7 @@ export function AgentTab({
               data-lcd-shape={lcdStatusShape}
               role="img"
               aria-label={runtimeStatusText}
-              title={[runtimeStatusText, !isEventActor && actor.effective_working_reason]
-                .filter(Boolean)
-                .join("\n")}
+              title={[runtimeStatusText, runtimeStatusDetail].filter(Boolean).join("\n")}
             >
               {lcdStatusText}
             </span>
@@ -831,9 +844,7 @@ export function AgentTab({
             {compactStatusText ? (
               <span
                 className="max-w-[40%] shrink-0 truncate text-[var(--color-text-secondary)]"
-                title={[compactStatusText, !isEventActor && actor.effective_working_reason]
-                  .filter(Boolean)
-                  .join("\n")}
+                title={[compactStatusText, runtimeStatusDetail].filter(Boolean).join("\n")}
               >
                 {compactStatusText}
               </span>
@@ -913,7 +924,10 @@ export function AgentTab({
                 </div>
                 {/* Only the text is cut short: the mark beside it keeps the area a finger hits. */}
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-[var(--color-text-tertiary)]">
-                  <span className="min-w-0 truncate">
+                  <span
+                    className="min-w-0 truncate"
+                    title={(!isEventActor && actor.runtime_observation_error) || undefined}
+                  >
                     {rtInfo?.label || t("custom")} •{" "}
                     <span
                       className="lcd-group-symbol"

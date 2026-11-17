@@ -1,3 +1,4 @@
+use crate::session_owner::runtime as cccc_runtime;
 use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
@@ -22,6 +23,30 @@ pub fn runtime_actor_fields(
     group_id: &str,
     running: bool,
 ) -> Map<String, Value> {
+    crate::session_owner::read_scope(|| runtime_actor_snapshot(home, actor, group_id, running))
+}
+
+fn runtime_actor_snapshot(
+    home: &HomeLayout,
+    actor: &Actor,
+    group_id: &str,
+    running: bool,
+) -> Map<String, Value> {
+    if actor.external_session_id.is_empty()
+        && let Err(error) =
+            crate::session_owner::require_available(home, Some(group_id), Some(&actor.id))
+    {
+        return json!({
+            "effective_working_state":"unknown",
+            "effective_working_reason":"runtime_owner_unavailable",
+            "effective_working_updated_at":null,
+            "effective_active_task_id":null,
+            "runtime_observation_error":error.to_string()
+        })
+        .as_object()
+        .cloned()
+        .expect("working state projection");
+    }
     let actual = super::local_headless::structured_state(group_id, &actor.id);
     let retained_pty = cccc_runtime::status(group_id, &actor.id).is_ok_and(|status| status.running);
     let runner_effective = if !actor.external_session_id.is_empty() {

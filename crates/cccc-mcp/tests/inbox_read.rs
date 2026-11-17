@@ -1724,3 +1724,5 @@ async fn scope_pure_headless_owner_survives_saved_workspace_and_backend_changes(
         std::panic::resume_unwind(error.into_panic());
     }
 }
+
+cccc_daemon::session_owner_test_entry!();

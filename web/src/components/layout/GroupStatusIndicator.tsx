@@ -37,13 +37,15 @@ export function GroupStatusIndicator({
       </span>
     ) : interrupted ? (
       "\u00D7"
+    ) : status.key === "unknown" ? (
+      "?"
     ) : (
       ""
     );
   // The screen has no green, so each state has its own shape, drawn in
   // CSS from this key rather than taken from a font (fonts differ; some draw U+25B6
   // as emoji). Offline is a dash: nothing else uses it, and no one reads it as a checkbox.
-  const lcdShape = interrupted ? undefined : status.key;
+  const lcdShape = interrupted || status.key === "unknown" ? undefined : status.key;
 
   if (variant === "dot") {
     return (

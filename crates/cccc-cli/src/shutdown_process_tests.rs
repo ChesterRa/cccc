@@ -158,7 +158,7 @@ fn second_terminal_interrupt_restores_modes_before_process_exit() {
         runtime.block_on(async {
             let home = HomeLayout::resolve().expect("isolated home");
             home.initialize().expect("initialize");
-            let mut control = TerminalControl::new().expect("signals");
+            let mut control = TerminalControl::new(true).expect("signals");
             let (state, receiver) = tokio::sync::watch::channel(HostState {
                 daemon: DaemonState::StartedHere {
                     pid: std::process::id(),
@@ -260,6 +260,21 @@ fn second_terminal_interrupt_restores_modes_before_process_exit() {
             "force exit did not leave alternate screen"
         );
         drop(captured);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Agents held by a session owner outlive a forced exit; the last words say so.
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let captured = String::from_utf8_lossy(&output.lock().expect("output")).into_owned();
+        if captured
+            .contains("Some agents may still be running; run `cccc daemon stop` to stop them.")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "force exit did not name possibly running agents: {captured}"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 }

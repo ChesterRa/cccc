@@ -285,3 +285,5 @@ async fn message_pins_serialize_concurrent_clients() {
         .expect("daemon task")
         .expect("daemon result");
 }
+
+cccc_daemon::session_owner_test_entry!();

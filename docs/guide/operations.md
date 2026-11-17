@@ -87,8 +87,11 @@ cccc daemon start
 
 ### What a daemon restart keeps {#what-a-daemon-restart-keeps}
 
-A normal `cccc daemon stop` stops every agent process that CCCC started. Sessions you
-started yourself keep running.
+A normal `cccc daemon stop` stops the agent processes that CCCC started and says which
+ones it stopped, naming any agent it could not confirm as stopped. Sessions you started
+yourself keep running. On Linux,
+`cccc daemon stop --keep-agents` keeps the agents CCCC started running instead; see
+[Keeping agents across a restart](#keeping-agents-across-a-restart).
 
 | Part | After the daemon starts again |
 | --- | --- |
@@ -99,6 +102,45 @@ started yourself keep running.
 | Automation | Rules and their schedule clocks are kept. An enabled rule whose clock fell due while the daemon was down fires once, on the first scheduler tick that can carry it out: nothing runs while its Group is paused or stopped, and a notification with no enabled recipient waits. Resuming a paused Group resets the clocks, so runs missed while it was paused are skipped. |
 | [Voice secretary](voice-secretary.md) | Its shared conversation is not restored. |
 | [CCCC Connect](connect.md) | Pairing, queued messages and bounded retries continue. |
+
+### Keeping agents across a restart {#keeping-agents-across-a-restart}
+
+On Linux, `cccc daemon stop --keep-agents` stops only the daemon. The agents CCCC
+started keep running with their terminal and output, and a turn that was running
+continues. `cccc daemon start` reattaches them and names them. A message whose
+delivery was in progress is settled after the start and is not sent twice.
+
+- If the daemon crashes, its agents keep running in the same way and the next start
+  reattaches them.
+- For a planned stop, use `--keep-agents` to keep agents. A plain `cccc daemon stop`,
+  or closing the terminal that runs `cccc daemon run`, stops them as before.
+- To update without stopping agents, run `cccc daemon stop --keep-agents`, then
+  `cccc update`, then `cccc daemon start`. `cccc update` on its own restarts a running
+  daemon, which stops its agents.
+- After such an update, the kept agents stay with the process that has been holding
+  them, which still runs the previous version, and agents started later join that
+  process. A plain `cccc daemon stop` ends it; after the next `cccc daemon start`,
+  the agents run under the new version.
+- macOS and Windows cannot keep agents yet: the daemon refuses `--keep-agents` and
+  stops nothing.
+
+### When CCCC cannot confirm an agent {#when-cccc-cannot-confirm-an-agent}
+
+On Linux, an agent's launch can end without CCCC being able to confirm whether its work is still
+running, for example when Claude Code fails in a way CCCC does not recognise. The agent then
+shows as Unknown, its tooltip gives the review command, and `cccc daemon stop` names it with
+that command, `cccc daemon process-recovery --owner session --owner-id <owner-id> list`. The
+other agents and the lists keep working.
+
+1. Run `cccc daemon stop --keep-agents`, so the other agents keep running, then the `list`
+   command. It needs the daemon to be stopped.
+2. Check that the agent's work has ended, then run
+   `cccc daemon process-recovery --owner session --owner-id <owner-id> accept --id <id> --version <version> --accept-risk`,
+   with the `id` and `version` that `list` shows. This releases only that agent. It does not
+   stop anything.
+3. Fix what made the launch fail, then run `cccc daemon start`. It reattaches the agents that
+   kept running and, in a running Group, starts that agent again: if the cause is still there,
+   the agent is Unknown again.
 
 ## 5) Secure Remote Access
 
@@ -127,6 +169,9 @@ cccc update
 # Pip ownership
 python -m pip install -U "cccc-pair>=0.4.36"
 ```
+
+On Linux, a website-installer update can keep agents running; see
+[Keeping agents across a restart](#keeping-agents-across-a-restart).
 
 Do not remove the v0.4.36 lower bound. Before a pip upgrade, run
 `cccc daemon stop` and close any

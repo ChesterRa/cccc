@@ -139,3 +139,5 @@ async fn a_save_changes_only_the_signed_in_persons_replies_and_passes_the_comple
         .expect("daemon task")
         .expect("daemon result");
 }
+
+cccc_daemon::session_owner_test_entry!();

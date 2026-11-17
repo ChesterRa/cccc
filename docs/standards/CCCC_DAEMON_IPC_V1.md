@@ -373,6 +373,10 @@ Result:
   compatibility?: string;
   build?: { source_id: string };
   executable?: string | null;
+  retained_agents?: Array<{
+    group_id: string; actor_id: string; actor_created_at: string;
+    generation: string | null;
+  }>;
 }
 ```
 
@@ -418,12 +422,16 @@ Notes:
   exposes local paths only to administrators requesting `include_home`; ordinary
   authenticated ping and all health projections omit the executable path.
 - Ordinary business commands MUST NOT stop, signal, or replace a reachable daemon. Implementation replacement is restricted to explicit daemon lifecycle commands.
+- `retained_agents`, when present, records the live managed members verified
+  and reattached during this daemon startup. It is not a current liveness poll.
+  A missing field means that this startup result is unavailable, not that zero
+  members were retained. Reads MUST NOT construct a session owner.
 
 #### `shutdown`
 
 Args:
 ```ts
-{ expected_pid?: number }
+{ expected_pid?: number; request_id?: string } // request_id is a UUID
 ```
 
 When `expected_pid` is present, it MUST be a positive integer matching the
@@ -435,8 +443,56 @@ behavior.
 
 Result:
 ```ts
-{ message: string } // "shutting down"
+{ shutting_down: true; request_id: string; mode: "stop" }
 ```
+
+The response acknowledges the shutdown request, not completed member stops.
+Normal shutdown MUST attempt to stop all managed members, including members
+retained across a previous maintenance exit. If supplied, `request_id` MUST be
+echoed unchanged; otherwise the daemon generates a UUID. If Stop was
+preselected by a signal or the foreground host rather than an IPC request, the
+first valid `shutdown` request accepted for dispatch MUST bind its `request_id`
+to that Stop without changing its mode. An implicit Stop MUST NOT be replaced by
+`shutdown_preserving_agents`. Once an explicit request has selected the intent,
+subsequent shutdown requests MUST return `shutdown_in_progress` rather than
+replace it. Older implementations may omit `mode` and `request_id`;
+clients MUST NOT infer a receipt or a member count from those omissions.
+
+#### `shutdown_preserving_agents`
+
+Args: the same optional `expected_pid` and UUID `request_id` as `shutdown`.
+
+Result:
+```ts
+{ shutting_down: true; request_id: string; mode: "preserve_agents" }
+```
+
+This is an explicit maintenance exit, currently enabled only on Linux. macOS
+and Windows reject it as `unsupported_platform`. On supported platforms it stops the
+collaboration daemon while independent managed members continue running.
+It MUST NOT wait for their active provider turns to complete. Scheduling and
+new input routing stop with the daemon; the replacement daemon queries retained
+execution facts before settling existing ledger claims. Unknown input outcomes
+MUST NOT be replayed automatically.
+
+An implementation that cannot retain independent owners MUST reject this
+operation. A client receiving `unknown_op` or `unsupported_platform` MUST report
+that preservation is unsupported and MUST NOT fall back to `shutdown`.
+Adding an ignorable preservation flag to `shutdown` is not equivalent.
+
+On implementations with independent session owners, the final exit report is
+written atomically to `${CCCC_HOME}/daemon/shutdown-result.json` before the
+daemon releases its home lock. The report has `v: 1`, `daemon_pid`, `request_id`,
+`mode` and three disjoint arrays: `confirmed_stopped`, `retained`, `unconfirmed`.
+Each item has the same identity fields as a `retained_agents` item. An
+`unconfirmed` item may additionally contain `owner_id`, the session-owner UUID
+for explicit process-recovery review; absence means this reference is unknown.
+This reference does not prove the member stopped. Readers
+MUST match the expected daemon PID and, when known, request UUID. A new daemon
+MUST clear the old report under its home lock before publishing its PID.
+A missing, stale or unreadable report is unconfirmed, not a successful stop.
+Counts MUST come only from verified sets. Independent ownership and its private
+contract are described in [CCCC_SESSION_OWNER_V1.md](CCCC_SESSION_OWNER_V1.md).
 
 #### `owned_process_recovery_list` / `owned_process_recovery_retry` / `owned_process_recovery_accept`
 
@@ -2025,6 +2081,21 @@ Actor state. It uses the authoritative `by` after port identity binding
 immutable launch workspace; otherwise the Actor default or Group active
 configuration applies. An invalid pin, missing root or mismatched live Actor
 generation MUST yield an unavailable projection rather than another workspace.
+
+If an independent managed member cannot be verified, `actor_list` and
+`group_show` retain its configured identity, omit unverified `running`, `pid`
+and actual runtime observations, and include
+`effective_working_state: "unknown"`,
+`effective_working_reason: "runtime_owner_unavailable"` and
+`runtime_observation_error: string` with diagnostic/review instructions. Other
+members remain independently observable. `actor.activity` uses the same signal;
+consumers MUST discard old runtime observations for that member. This reason
+is distinct from ordinary headless working-state uncertainty.
+`groups` and `group_show` include `runtime_status.available: false` when Group
+liveness cannot be fully observed, omitting unverified runtime counts/flags.
+Configuration-write responses use the same unknown projection. Missing
+observations and `available: false` MUST NOT trigger an automatic Start.
+Configured intent remains separate from observed process liveness.
 For a Native Actor without a managed owner, this describes CCCC tools only,
 not the original application's physical working directory.
 
@@ -4143,7 +4214,7 @@ Args:
 
 Result:
 ```ts
-{ actors: Array<Record<string, unknown>> } // includes at least id/title/runtime/enabled + role/running/effective_scope
+{ actors: Array<Record<string, unknown>> } // includes id/title/runtime/enabled + role/effective_scope; running is omitted when unobservable
 ```
 
 When a running headless Actor has no authoritative local turn state,
@@ -4154,7 +4225,7 @@ Process liveness or a last message timestamp MUST NOT establish idle state or
 its duration. Existing managed-session and Dots execution observations keep
 precedence over this fallback.
 
-Each Actor row includes the observed Boolean `runtime_confirmation_required`.
+Each observable Actor row includes the Boolean `runtime_confirmation_required`.
 For a managed Claude Actor it is true while a recovery-owned confirmation PTY
 is running without a ready managed session. It is a live projection, not Actor
 configuration, consent, provider readiness or task-delivery acceptance. A false

@@ -81,6 +81,10 @@ pub use process_tree::{
     background_tokio_command, force_terminate_owned, owned_process_recovery_pending,
 };
 #[cfg(unix)]
+pub use process_tree::{
+    DetachedWork, protect_detached_work, recover_inactive_owned_process_groups,
+};
+#[cfg(unix)]
 pub use process_tree::{prepare_web_process_guard, protect_owned_process_groups};
 pub use session::{ActorLaunch, LaunchSpec, SessionStatus};
 pub use session_history::OutputObservation;

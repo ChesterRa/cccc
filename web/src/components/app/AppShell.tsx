@@ -58,7 +58,7 @@ type AppShellProps = {
   isDark: boolean;
   isSmallScreen: boolean;
   webReadOnly: boolean;
-  selectedGroupRunning: boolean;
+  selectedGroupRunning: boolean | null;
   selectedGroupRuntimeStatus: GroupRuntimeStatus | null;
   selectedGroupActorsHydrating: boolean;
   selectedGroupActorStatusProvisional: boolean;

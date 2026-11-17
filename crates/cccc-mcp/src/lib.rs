@@ -616,3 +616,6 @@ mod connect_tests;
 mod cross_group_file_tests;
 #[cfg(test)]
 mod file_send_tests;
+
+#[cfg(test)]
+cccc_daemon::session_owner_test_entry!();

@@ -42,6 +42,11 @@ async fn run_with_restore(
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.daemon_dir)?;
     let lock = claim_home(&paths)?;
+    let owner_home = paths.home.clone();
+    let retained =
+        tokio::task::spawn_blocking(move || crate::session_owner::initialize(&owner_home))
+            .await??;
+    crate::session_owner::prepare_shutdown(&paths.home, retained)?;
     if diagnostics {
         crate::diagnostic_log::install(&paths.daemon_dir);
     }
@@ -303,9 +308,11 @@ async fn shutdown_signal() -> Result<()> {
     {
         use tokio::signal::unix::{SignalKind, signal};
         let mut terminate = signal(SignalKind::terminate())?;
+        let mut hangup = signal(SignalKind::hangup())?;
         tokio::select! {
             result = tokio::signal::ctrl_c() => result?,
             _ = terminate.recv() => {},
+            _ = hangup.recv() => {},
         }
     }
     #[cfg(windows)]
@@ -334,6 +341,7 @@ fn use_tcp() -> bool {
 }
 
 fn begin_runtime_shutdown(home: &HomeLayout) {
+    crate::session_owner::begin_shutdown(home);
     let _ = crate::runtime_start_gate::prevent(home);
 }
 
@@ -342,6 +350,24 @@ mod tests {
     use super::*;
     use cccc_contracts::Actor;
     use cccc_core::{GroupStore, ledger};
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn hangup_selects_the_same_normal_shutdown_path_as_terminate() {
+        use tokio::signal::unix::{SignalKind, signal};
+        // Keep a test-local handler so the old implementation times out rather
+        // than terminating the entire test process on an unhandled HUP.
+        let _hangup = signal(SignalKind::hangup()).expect("install test HUP handler");
+        let waiting = tokio::spawn(shutdown_signal());
+        tokio::task::yield_now().await;
+        nix::sys::signal::kill(nix::unistd::Pid::this(), nix::sys::signal::Signal::SIGHUP)
+            .expect("send HUP to test process");
+        tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("HUP must request shutdown")
+            .expect("shutdown task completes")
+            .expect("HUP selects normal stop");
+    }
 
     #[tokio::test]
     async fn startup_reconciles_saved_reach_without_a_status_poll() {

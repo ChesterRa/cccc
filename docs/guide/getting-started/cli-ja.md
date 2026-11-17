@@ -195,9 +195,10 @@ cccc ledger search --by assistant # 送信者でイベントを検索
 ### daemon の操作
 
 ```bash
-cccc daemon status # 状態を確認
-cccc daemon start  # 起動
-cccc daemon stop   # daemon と、各グループの管理対象プロセスを停止
+cccc daemon status              # 状態を確認
+cccc daemon start               # 起動
+cccc daemon stop                # daemon と、各グループの管理対象プロセスを停止
+cccc daemon stop --keep-agents  # Linux：daemon だけを停止し、エージェントは動き続ける
 ```
 
 ## Web UI を起動（任意） {#web-ui-を起動-任意}

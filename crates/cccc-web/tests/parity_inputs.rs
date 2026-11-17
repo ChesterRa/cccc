@@ -578,3 +578,5 @@ async fn shutdown(_home: HomeLayout, daemon: tokio::task::JoinHandle<()>) {
     daemon.abort();
     let _ = daemon.await;
 }
+
+cccc_daemon::session_owner_test_entry!();

@@ -1,10 +1,13 @@
 import type { Actor, GroupRuntimeStatus } from "../../types";
+import { isRuntimeUnobservable } from "../../utils/terminalWorkingState";
+import { unobservableGroupRuntime } from "../../utils/groupStatus";
 import type { useGroupStore } from "../../stores";
 
 export type ActorActivityUpdate = {
   id: string;
   idle_seconds?: number | null;
-  running: boolean;
+  /** Omitted when the daemon could not observe the agent (reason runtime_owner_unavailable). */
+  running?: boolean;
   effective_working_state?: string;
   effective_working_reason?: string;
   effective_working_updated_at?: string | null;
@@ -12,6 +15,7 @@ export type ActorActivityUpdate = {
   runtime_session_status?: string | null;
   runtime_session_resume_eligible?: boolean | null;
   runtime_session_last_resume_error?: string | null;
+  runtime_observation_error?: string;
 };
 
 export function getRuntimeStatusFallbackForGroup(
@@ -69,10 +73,19 @@ export function computeGroupRuntimeFromActorActivityUpdates(
     actorById.set(actorId, {
       ...(actorById.get(actorId) || { id: actorId }),
       ...update,
+      // Each update states the observation, as the store applies it: when it has none
+      // (unobservable), an older running value, reason or diagnostic must not stand in.
+      running: update.running,
+      effective_working_reason: update.effective_working_reason,
+      runtime_observation_error: update.runtime_observation_error,
       id: actorId,
     });
   }
 
+  // As the daemon reports it: with an agent it could not observe, running is not known.
+  if (Array.from(actorById.values()).some(isRuntimeUnobservable)) {
+    return unobservableGroupRuntime(fallback?.lifecycle_state);
+  }
   const runningActors = Array.from(actorById.values()).filter((actor) => !!actor.running);
   return {
     lifecycle_state: deriveLifecycleState(runningActors, fallback),

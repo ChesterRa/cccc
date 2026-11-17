@@ -313,6 +313,16 @@ pub(super) fn begin_intent() -> io::Result<Option<PreparedIntent>> {
 /// Remove an intent only when the process API reports that it never started.
 /// On a persistence error put the intent back so a heartbeat cannot erase it.
 pub(super) fn cancel_unstarted_intent(id: uuid::Uuid) -> io::Result<()> {
+    clear_confirmed_intent(id)
+}
+
+/// The caller has the provider's authoritative confirmation that detached
+/// work no longer exists. A missing control endpoint is not such proof.
+pub(super) fn confirm_detached_work_stopped(id: uuid::Uuid) -> io::Result<()> {
+    clear_confirmed_intent(id)
+}
+
+fn clear_confirmed_intent(id: uuid::Uuid) -> io::Result<()> {
     let mut current = guard();
     let current = current
         .as_mut()
@@ -322,6 +332,18 @@ pub(super) fn cancel_unstarted_intent(id: uuid::Uuid) -> io::Result<()> {
         .iter()
         .position(|intent| intent.entry.id == id)
     else {
+        if let Some(index) = current
+            .retained
+            .iter()
+            .position(|record| matches!(record, Record::LaunchIntent(intent) if intent.id == id))
+        {
+            let removed = current.retained.remove(index);
+            if let Err(error) = persist(current) {
+                current.retained.insert(index, removed);
+                return Err(error);
+            }
+            return Ok(());
+        }
         return Err(io::Error::other("protected launch intent is missing"));
     };
     let removed = current.intents.remove(index);
@@ -339,6 +361,13 @@ pub(super) fn retain_uncertain_intent(id: uuid::Uuid) -> io::Result<()> {
     let current = current
         .as_mut()
         .ok_or_else(|| io::Error::other("protected launch guard is unavailable"))?;
+    if current
+        .retained
+        .iter()
+        .any(|record| matches!(record, Record::LaunchIntent(intent) if intent.id == id))
+    {
+        return Ok(());
+    }
     let Some(index) = current
         .intents
         .iter()

@@ -413,6 +413,62 @@ pub fn protect_owned_process_groups(ledger: &std::path::Path) -> io::Result<()> 
     Ok(())
 }
 
+/// A provider job that can outlive its launcher must remain explicit recovery
+/// evidence. No command, input, environment or provider credential is stored.
+#[cfg(unix)]
+pub struct DetachedWork {
+    intent: Option<guard::PreparedIntent>,
+}
+
+#[cfg(unix)]
+impl DetachedWork {
+    pub fn recovery_id(&self) -> Option<String> {
+        self.intent
+            .as_ref()
+            .map(|intent| intent.entry.id.to_string())
+    }
+
+    /// Expose an uncertain launch through the existing explicit-risk review.
+    pub fn mark_uncertain(&self) -> io::Result<()> {
+        if let Some(intent) = &self.intent {
+            guard::retain_uncertain_intent(intent.entry.id)?;
+        }
+        Ok(())
+    }
+
+    /// Clear only after the existing native Stop confirms job removal.
+    pub fn confirm_stopped(&mut self) -> io::Result<()> {
+        if let Some(intent) = &self.intent {
+            guard::confirm_detached_work_stopped(intent.entry.id)?;
+            self.intent.take();
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+pub fn protect_detached_work() -> io::Result<DetachedWork> {
+    // Keep the established registry -> guard lock order.
+    let _registry = registry();
+    let intent = guard::begin_intent()?
+        .ok_or_else(|| io::Error::other("detached work requires an active ownership guard"))?;
+    Ok(DetachedWork {
+        intent: Some(intent),
+    })
+}
+
+/// Reconcile another, inactive owner's ledger without changing this process's
+/// live guard. The caller must hold that owner's exclusive instance lock.
+#[cfg(unix)]
+pub fn recover_inactive_owned_process_groups(ledger: &std::path::Path) -> io::Result<()> {
+    if guard::active_for(ledger) {
+        return Err(io::Error::other(
+            "cannot reconcile a live owner as inactive",
+        ));
+    }
+    guard::recover_ledger(ledger)
+}
+
 /// Recover an old Web owner's separate ledger, optionally enabling protection
 /// for this process. The caller must hold that Web owner's instance lock.
 /// Never replace a different live guard (such as an embedded daemon's guard).

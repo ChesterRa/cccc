@@ -245,6 +245,45 @@ it.each(["headless", "pty"] as const)(
 );
 
 it.each(["headless", "pty"] as const)(
+  "shows a %s agent the daemon could not observe as unknown, with its diagnostic",
+  async (runner) => {
+    const diagnostic =
+      "session owner 2cabc7ed (PID 147) could not confirm this member; run `cccc daemon stop --keep-agents`, then review it";
+    const unknown = {
+      runner,
+      runner_effective: runner,
+      running: undefined,
+      effective_working_state: "unknown",
+      effective_working_reason: "runtime_owner_unavailable",
+      runtime_observation_error: diagnostic,
+    };
+    mocks.workingState = "unobservable";
+    await render(unknown);
+    const title = host.querySelector("button")?.title || "";
+    expect(title).toContain("Unknown");
+    expect(title).toContain(diagnostic);
+    expect(title).not.toContain("Running");
+    expect(title).not.toContain("Stopped");
+    expect(
+      getRuntimeRingTone(
+        { actor: { ...actor, ...unknown }, runner, liveWorkCard: null },
+        true,
+        "unobservable",
+      ),
+    ).toBe("attention");
+    expect(
+      getRuntimeRingTone(
+        { actor: { ...actor, ...unknown }, runner, liveWorkCard: null },
+        false,
+        "unobservable",
+      ),
+    ).toBe("attention");
+    // The daemon's "unknown" turn state of a running agent is not a call for attention.
+    expect(getRuntimeRingTone({ actor, runner, liveWorkCard: null }, true, "unknown")).toBe("idle");
+  },
+);
+
+it.each(["headless", "pty"] as const)(
   "shows the recovered %s owner state while retaining older task results",
   async (runner) => {
     const card: LiveWorkCard = {

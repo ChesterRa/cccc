@@ -171,12 +171,23 @@ async fn main() -> Result<()> {
 
 async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -> Result<()> {
     match action {
-        DaemonAction::ProcessRecovery { owner, action } => {
-            process_recovery::run(home, client, owner, action).await
-        }
+        DaemonAction::ProcessRecovery {
+            owner,
+            owner_id,
+            action,
+        } => process_recovery::run(home, client, owner, owner_id, action).await,
         DaemonAction::Run => cccc_daemon::run_with_diagnostics(home).await,
-        DaemonAction::Stop => {
-            let response = daemon_lifecycle::stop(client, &home).await?;
+        DaemonAction::SessionOwner { owner_id } => {
+            cccc_daemon::session_owner::run(home, &owner_id).await
+        }
+        DaemonAction::Stop { keep_agents } => {
+            let intent = if keep_agents {
+                daemon_lifecycle::StopIntent::KeepAgents
+            } else {
+                daemon_lifecycle::StopIntent::StopAgents
+            };
+            let (mut response, receipt) =
+                daemon_lifecycle::stop_for_user(client, &home, intent).await?;
             if response.ok {
                 // A combined `cccc` process owns both Web and daemon. Do not
                 // report process-wide shutdown while that executable is still
@@ -185,6 +196,24 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
                     web_instance::wait_until_free(&home, daemon_lifecycle::DAEMON_SHUTDOWN_TIMEOUT)
                         .await?,
                 );
+                if let Some(line) = daemon_lifecycle::receipt_line(&home, intent, &receipt) {
+                    cccc_runtime::diagnostic(format_args!("{line}"));
+                }
+                // Scripts read the same facts from stdout; an old daemon's reply is unchanged.
+                match &receipt {
+                    daemon_lifecycle::Receipt::NotSupported => {}
+                    daemon_lifecycle::Receipt::Missing => {
+                        response
+                            .result
+                            .insert("receipt".into(), serde_json::Value::Null);
+                    }
+                    daemon_lifecycle::Receipt::Confirmed(report)
+                    | daemon_lifecycle::Receipt::WithoutDaemon(report) => {
+                        response
+                            .result
+                            .insert("receipt".into(), serde_json::to_value(report)?);
+                    }
+                }
             }
             print(response)
         }
@@ -208,7 +237,12 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
                 .await?
             {
                 StartOutcome::AlreadyRunning => println!("CCCC daemon: already running"),
-                StartOutcome::Started(pid) => println!("CCCC daemon: started pid={pid}"),
+                StartOutcome::Started(pid) => {
+                    println!("CCCC daemon: started pid={pid}");
+                    if let Some(line) = daemon_lifecycle::reattached_line(client, &home).await {
+                        cccc_runtime::diagnostic(format_args!("{line}"));
+                    }
+                }
             }
             Ok(())
         }
@@ -282,3 +316,6 @@ mod tests {
         assert!(select_active_group(&home, "g_missing").is_err());
     }
 }
+
+#[cfg(test)]
+cccc_daemon::session_owner_test_entry!();

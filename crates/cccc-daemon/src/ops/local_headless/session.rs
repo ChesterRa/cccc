@@ -23,6 +23,7 @@ impl Session {
         block_on_managed(self.managed.stop(self.managed.generation()).instrument(
             tracing::info_span!("actor_runtime_stop", group_id = %self.group_id, actor_id = %self.actor_id),
         ))?;
+        crate::session_owner::confirm_detached_work_stopped(&self.group_id, &self.actor_id)?;
         if self.has_terminal.load(Ordering::Acquire) {
             match cccc_runtime::stop(&self.group_id, &self.actor_id) {
                 Ok(_) | Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {}

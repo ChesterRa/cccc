@@ -10,7 +10,7 @@ use crate::terminal_attach::{
 use crate::transcript_archive::HistoryConfig;
 use cccc_contracts::{ActorRuntime, ActorSubmit, RunnerKind, utc_now};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -28,7 +28,7 @@ pub(crate) fn native_pty_spawn_error(error: impl std::fmt::Display) -> CommandEr
     CommandError::Started(error)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchSpec {
     pub group_id: String,
     pub actor_id: String,
@@ -42,13 +42,13 @@ pub struct LaunchSpec {
 
 /// What the daemon launched an Actor's primary PTY as. Delivery to this process
 /// follows it, not the saved configuration, which applies from the next launch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActorLaunch {
     pub runtime: ActorRuntime,
     pub submit: ActorSubmit,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStatus {
     pub group_id: String,
     pub actor_id: String,
@@ -60,9 +60,9 @@ pub struct SessionStatus {
     pub cwd: PathBuf,
     /// Daemon-owned launch attribution, captured before child environment is
     /// consumed. Generic non-Actor sessions leave these fields empty.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub scope_key: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub actor_generation: String,
     pub started_at: String,
     pub exit_code: Option<u32>,

@@ -93,6 +93,42 @@ describe("Group run actions", () => {
     },
   );
 
+  it("does not start agents when a successful configuration response has no runtime observation", async () => {
+    vi.mocked(api.setGroupState).mockResolvedValue({
+      ok: true,
+      result: { group: { group_id: "g2", state: "active" } },
+    });
+    await act(async () => result.handleGroupControl("g2", "activate"));
+    expect(api.setGroupState).toHaveBeenCalledExactlyOnceWith("g2", "active");
+    expect(api.startGroup).not.toHaveBeenCalled();
+    expect(refreshActors).toHaveBeenCalledExactlyOnceWith("g2");
+    expect(showError).not.toHaveBeenCalled();
+  });
+
+  it("does not start agents when the daemon could not observe the Group's runtime", async () => {
+    vi.mocked(api.setGroupState).mockResolvedValue({
+      ok: true,
+      result: {
+        group: {
+          group_id: "g2",
+          state: "active",
+          running: false,
+          runtime_status: {
+            lifecycle_state: "active",
+            available: false,
+            runtime_running: false,
+            running_actor_count: 0,
+            has_running_foreman: false,
+          },
+        },
+      },
+    });
+    await act(async () => result.handleGroupControl("g2", "activate"));
+    expect(api.setGroupState).toHaveBeenCalledExactlyOnceWith("g2", "active");
+    expect(api.startGroup).not.toHaveBeenCalled();
+    expect(showError).not.toHaveBeenCalled();
+  });
+
   it("holds the target through navigation and prevents duplicate submissions from another control", async () => {
     let resolve!: (value: Awaited<ReturnType<typeof api.startGroup>>) => void;
     vi.mocked(api.startGroup).mockReturnValue(

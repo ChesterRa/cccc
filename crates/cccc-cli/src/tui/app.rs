@@ -553,12 +553,16 @@ impl App {
             return Vec::new();
         };
         let mut choices = match group.status {
-            GroupStatus::Stopped if group.running_actors > 0 => {
+            // A stopped Group whose agents may still run keeps Stop.
+            GroupStatus::Stopped if group.running_actors != Some(0) => {
                 vec![GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
             }
             GroupStatus::Stopped => vec![GroupChoice::Tasks, GroupChoice::Start],
             GroupStatus::Paused => vec![GroupChoice::Tasks, GroupChoice::Resume, GroupChoice::Stop],
-            GroupStatus::Offline | GroupStatus::Running | GroupStatus::Idle => {
+            GroupStatus::Offline
+            | GroupStatus::Running
+            | GroupStatus::Idle
+            | GroupStatus::Unknown => {
                 vec![GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
             }
         };

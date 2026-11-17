@@ -128,3 +128,5 @@ async fn negotiated_snapshot_opens_at_the_latest_screen_and_fences_live_output()
     daemon.await.expect("daemon task").expect("daemon");
     server.abort();
 }
+
+cccc_daemon::session_owner_test_entry!();

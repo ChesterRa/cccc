@@ -13,7 +13,8 @@ type UseSelectedGroupRuntimeArgs = {
 
 type SelectedGroupRuntime = {
   selectedGroupMeta: GroupMeta | null;
-  selectedGroupRunning: boolean;
+  /** Null when the daemon could not observe whether the Group runs. */
+  selectedGroupRunning: boolean | null;
   selectedGroupRuntimeStatus: GroupRuntimeStatus;
   orderedSelectedGroupPatch: Pick<GroupMeta, "running" | "state" | "runtime_status"> | null;
 };
@@ -34,7 +35,10 @@ export function computeSelectedGroupRuntime({
 
   return {
     selectedGroupMeta,
-    selectedGroupRunning: selectedGroupRuntimeStatus.runtime_running,
+    selectedGroupRunning:
+      selectedGroupRuntimeStatus.available === false
+        ? null
+        : Boolean(selectedGroupRuntimeStatus.runtime_running),
     selectedGroupRuntimeStatus,
     orderedSelectedGroupPatch: selectedGroupId ? orderedSelectedGroupPatch : null,
   };

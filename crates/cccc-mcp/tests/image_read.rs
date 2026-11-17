@@ -184,3 +184,5 @@ async fn native_media_preserves_scope_blobs_and_code_mode_output() {
     daemon.abort();
     let _ = daemon.await;
 }
+
+cccc_daemon::session_owner_test_entry!();
