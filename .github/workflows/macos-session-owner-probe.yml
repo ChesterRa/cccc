@@ -1,0 +1,109 @@
+name: macOS session owner platform probe
+
+on:
+  push:
+    branches: ['probe/macos-session-owner']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-session-owner-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  platform:
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      PROBE_DIR: ${{ runner.temp }}/cccc-macos-probe
+    steps:
+      - name: Checkout the pushed source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Record the actual platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          ulimit -c 0
+          mkdir "$PROBE_DIR"
+          sw_vers > "$PROBE_DIR/environment.txt"
+          uname -a >> "$PROBE_DIR/environment.txt"
+          xcrun --show-sdk-version >> "$PROBE_DIR/environment.txt"
+          xcrun clang --version >> "$PROBE_DIR/environment.txt"
+          id -u >> "$PROBE_DIR/environment.txt"
+          python3 -I --version >> "$PROBE_DIR/environment.txt"
+          git rev-parse HEAD >> "$PROBE_DIR/environment.txt"
+          cat "$PROBE_DIR/environment.txt"
+          test "$(uname -s)" = Darwin
+          test "$(uname -m)" = arm64
+          test "$(id -u)" -ne 0
+          shasum -a 256 scripts/tests/macos_session_owner_probe.c \
+            scripts/tests/macos_session_owner_probe.py > "$PROBE_DIR/inputs.txt"
+
+      - name: Build two signed native fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra \
+            -mmacosx-version-min=11.0 -O1 -DPROBE_BUILD=1 \
+            scripts/tests/macos_session_owner_probe.c -o "$PROBE_DIR/old-probe" \
+            2>&1 | tee "$PROBE_DIR/compile.log"
+          xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra \
+            -mmacosx-version-min=11.0 -O1 -DPROBE_BUILD=2 \
+            scripts/tests/macos_session_owner_probe.c -o "$PROBE_DIR/new-probe" \
+            2>&1 | tee -a "$PROBE_DIR/compile.log"
+          /usr/bin/codesign --verify --strict "$PROBE_DIR/old-probe" \
+            2>&1 | tee -a "$PROBE_DIR/compile.log"
+          /usr/bin/codesign --verify --strict "$PROBE_DIR/new-probe" \
+            2>&1 | tee -a "$PROBE_DIR/compile.log"
+          shasum -a 256 "$PROBE_DIR/old-probe" "$PROBE_DIR/new-probe" \
+            > "$PROBE_DIR/binaries.txt"
+
+      - name: Run isolated platform probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          ulimit -c 0
+          python3 -I scripts/tests/macos_session_owner_probe.py \
+            --old "$PROBE_DIR/old-probe" --new "$PROBE_DIR/new-probe" \
+            --output "$PROBE_DIR/result.json" | tee "$PROBE_DIR/probe.log"
+
+      - name: Publish small results as public check annotations
+        if: always()
+        shell: bash
+        run: |
+          python3 -I - "$PROBE_DIR" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          directory = Path(sys.argv[1])
+          for name in ("environment.txt", "compile.log", "result.json"):
+              path = directory / name
+              data = path.read_text(errors="replace") if path.exists() else "not produced"
+              message = json.dumps({"file": name, "content": data}, ensure_ascii=True)
+              if len(message) > 32000:
+                  message = json.dumps({"file": name, "truncated": True, "content": data[:16000]})
+              message = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::notice file=scripts/tests/macos_session_owner_probe.md,line=1,title=macos-probe-{name}::{message}")
+          PY
+
+      - name: Keep only the small evidence files
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-session-owner-platform-evidence
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ${{ env.PROBE_DIR }}/environment.txt
+            ${{ env.PROBE_DIR }}/inputs.txt
+            ${{ env.PROBE_DIR }}/binaries.txt
+            ${{ env.PROBE_DIR }}/compile.log
+            ${{ env.PROBE_DIR }}/result.json
+            ${{ env.PROBE_DIR }}/probe.log
