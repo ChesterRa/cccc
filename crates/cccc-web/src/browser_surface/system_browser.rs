@@ -25,7 +25,7 @@ const XVFB_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5
 const VNC_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[cfg(target_os = "macos")]
-use super::profile_owner::{browser_pid_from_singleton, terminate_browser_for_profile};
+use super::profile_owner::{browser_pid_from_singleton, process_identity, stop_opened_browser};
 
 #[cfg(target_os = "macos")]
 const CDP_START_TIMEOUT: Duration = Duration::from_secs(20);
@@ -42,7 +42,16 @@ pub(super) struct SystemBrowserLaunch {
     vnc: Option<ProjectedVncServer>,
     vnc_error: String,
     #[cfg(target_os = "macos")]
-    managed_profile: Option<PathBuf>,
+    opened: Option<OpenedBrowser>,
+}
+
+/// A browser macOS opened for a profile that no stop has yet confirmed ended.
+/// It is not this process's child, so only its native identity proves that.
+#[cfg(target_os = "macos")]
+pub(super) struct OpenedBrowser {
+    pub profile: PathBuf,
+    /// The browser process and its native identity, once CDP has reported it.
+    pub process: Option<(u32, String)>,
 }
 
 impl SystemBrowserLaunch {
@@ -73,8 +82,14 @@ impl SystemBrowserLaunch {
             vnc,
             vnc_error,
             #[cfg(target_os = "macos")]
-            managed_profile: None,
+            opened: None,
         })
+    }
+
+    /// The browser this launch opened that is not yet confirmed ended.
+    #[cfg(target_os = "macos")]
+    pub(super) fn opened(&self) -> Option<&OpenedBrowser> {
+        self.opened.as_ref()
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -157,19 +172,47 @@ impl SystemBrowserLaunch {
                 String::from_utf8_lossy(&output.stderr).trim()
             );
         }
-
-        match self.connect_background_macos(profile).await {
-            Ok(connected) => {
-                self.managed_profile = Some(profile.to_owned());
-                Ok(connected)
+        // From here a browser may run for this profile until a stop proves
+        // that the process it recorded has ended.
+        self.opened = Some(OpenedBrowser {
+            profile: profile.to_owned(),
+            process: None,
+        });
+        let connected = match self.connect_background_macos(profile).await {
+            Ok((browser, handler, pid)) => match process_identity(pid) {
+                Ok(Some(identity)) => Ok((browser, handler, pid, identity)),
+                Ok(None) => Err(anyhow::anyhow!(
+                    "system browser process {pid} ended right after it started"
+                )),
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        };
+        match connected {
+            Ok((browser, handler, pid, identity)) => {
+                if let Some(opened) = &mut self.opened {
+                    opened.process = Some((pid, identity));
+                }
+                Ok((browser, handler, pid))
             }
             Err(error) => {
-                if let Err(cleanup_error) = terminate_browser_for_profile(profile).await {
+                if let Err(cleanup_error) = self.stop_opened().await {
                     tracing::warn!(%cleanup_error, "failed to clean up background system browser launch");
                 }
                 Err(error)
             }
         }
+    }
+
+    /// Stops the browser this launch opened. It stays recorded until its
+    /// end is confirmed, so a later stop or the profile lease can finish.
+    #[cfg(target_os = "macos")]
+    async fn stop_opened(&mut self) -> Result<()> {
+        if let Some(opened) = &self.opened {
+            stop_opened_browser(&opened.profile, opened.process.as_ref()).await?;
+        }
+        self.opened = None;
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -252,6 +295,12 @@ impl SystemBrowserLaunch {
         })
     }
 
+    pub(super) fn display_name(&self) -> Option<String> {
+        self.display
+            .as_ref()
+            .map(|display| display.name().to_owned())
+    }
+
     pub(super) fn vnc_port(&self) -> Option<u16> {
         #[cfg(target_os = "linux")]
         {
@@ -261,19 +310,29 @@ impl SystemBrowserLaunch {
         None
     }
 
-    pub(super) async fn stop(&mut self) {
+    /// Stops what this launch started around the browser. Whatever failed to
+    /// stop stays recorded, so a later call stops it then.
+    pub(super) async fn stop(&mut self) -> Result<()> {
+        let mut failures = Vec::new();
         #[cfg(target_os = "macos")]
-        if let Some(profile) = self.managed_profile.take()
-            && let Err(error) = terminate_browser_for_profile(&profile).await
-        {
-            tracing::warn!(%error, "failed to stop managed system browser process");
+        if let Err(error) = self.stop_opened().await {
+            failures.push(format!("stop the system browser: {error:#}"));
         }
         #[cfg(target_os = "linux")]
-        if let Some(vnc) = &mut self.vnc {
-            vnc.stop().await;
+        if let Some(vnc) = &mut self.vnc
+            && let Err(error) = vnc.stop().await
+        {
+            failures.push(format!("stop the VNC viewer: {error:#}"));
         }
-        if let Some(display) = &mut self.display {
-            display.stop().await;
+        if let Some(display) = &mut self.display
+            && let Err(error) = display.stop().await
+        {
+            failures.push(format!("stop the virtual display: {error:#}"));
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            bail!("{}", failures.join("; "))
         }
     }
 }
@@ -468,9 +527,11 @@ impl VirtualDisplay {
         &self.name
     }
 
-    async fn stop(&mut self) {
+    async fn stop(&mut self) -> Result<()> {
         #[cfg(target_os = "linux")]
-        stop_process_child(&mut self.child).await;
+        return stop_process_child(&mut self.child).await;
+        #[cfg(not(target_os = "linux"))]
+        Ok(())
     }
 }
 
@@ -501,8 +562,8 @@ impl ProjectedVncServer {
         self.child.id().unwrap_or_default()
     }
 
-    async fn stop(&mut self) {
-        stop_process_child(&mut self.child).await;
+    async fn stop(&mut self) -> Result<()> {
+        stop_process_child(&mut self.child).await
     }
 }
 
@@ -569,7 +630,9 @@ async fn start_x11vnc(binary: &Path, display: &str) -> Result<ProjectedVncServer
             });
         }
         if std::time::Instant::now() >= deadline {
-            stop_process_child(&mut child).await;
+            if let Err(error) = stop_process_child(&mut child).await {
+                tracing::warn!(error = %format!("{error:#}"), "x11vnc did not stop after failing to start");
+            }
             let detail = read_process_stderr(&mut stderr_log);
             bail!("x11vnc endpoint did not become ready; {detail}");
         }
@@ -655,7 +718,9 @@ async fn start_xvfb_candidate(
         _ => None,
     };
     let status = child.try_wait()?;
-    stop_process_child(&mut child).await;
+    if let Err(error) = stop_process_child(&mut child).await {
+        tracing::warn!(error = %format!("{error:#}"), "Xvfb did not stop after failing to start");
+    }
     let detail = read_process_stderr(&mut stderr_log);
     if xvfb_display_in_use(number) || xvfb_display_conflict(&detail) {
         return Ok(None);
@@ -677,10 +742,11 @@ async fn start_xvfb_candidate(
     bail!("Xvfb display :{number} did not report a usable display{detail}")
 }
 
+/// Ok once the child has exited; an error leaves it to a later attempt.
 #[cfg(target_os = "linux")]
-async fn stop_process_child(child: &mut tokio::process::Child) {
-    if child.try_wait().ok().flatten().is_some() {
-        return;
+async fn stop_process_child(child: &mut tokio::process::Child) -> Result<()> {
+    if child.try_wait().context("check the process")?.is_some() {
+        return Ok(());
     }
     // x11vnc removes its SysV shared-memory segments in its signal handler.
     // SIGKILL skips that cleanup and can exhaust the host's segment limit after
@@ -700,11 +766,15 @@ async fn stop_process_child(child: &mut tokio::process::Child) {
             tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await,
             Ok(Ok(_))
         ) {
-            return;
+            return Ok(());
         }
     }
-    let _ = child.start_kill();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await;
+    child.start_kill().context("kill the process")?;
+    match tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(error).context("wait for the killed process"),
+        Err(_) => bail!("the process did not exit after it was killed"),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -824,8 +894,8 @@ mod tests {
                 .is_ok()
         );
         let pid = vnc.pid().to_string();
-        vnc.stop().await;
-        display.stop().await;
+        vnc.stop().await.expect("stop VNC");
+        display.stop().await.expect("stop display");
         let segments = std::fs::read_to_string("/proc/sysvipc/shm").expect("SysV memory table");
         assert!(
             segments
@@ -856,8 +926,8 @@ mod tests {
                 .expect("number");
             assert!(number >= XVFB_FIRST_DISPLAY);
         }
-        first.stop().await;
-        second.stop().await;
+        first.stop().await.expect("stop first display");
+        second.stop().await.expect("stop second display");
     }
 
     #[cfg(target_os = "linux")]
@@ -939,7 +1009,7 @@ mod tests {
             vnc: None,
             vnc_error: "unsupported_platform".to_owned(),
             #[cfg(target_os = "macos")]
-            managed_profile: None,
+            opened: None,
         };
         let profile = Path::new("/tmp/cccc-web-model-profile");
 
@@ -1019,7 +1089,7 @@ mod tests {
             #[cfg(target_os = "linux")]
             vnc: None,
             vnc_error: "unsupported_platform".to_owned(),
-            managed_profile: None,
+            opened: None,
         };
         let args = launch.browser_args(Path::new("/tmp/profile"), Vec::new());
 

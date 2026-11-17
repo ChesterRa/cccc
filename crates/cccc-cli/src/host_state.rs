@@ -53,7 +53,19 @@ pub(crate) struct ShutdownReport {
 pub(crate) enum HostPhase {
     Running,
     Stopping,
-    Stopped { report: ShutdownReport },
+    /// An attended update is replacing this process; `notice` says with what.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+    Updating {
+        notice: String,
+    },
+    Stopped {
+        report: ShutdownReport,
+    },
+    /// This process is about to be replaced; `message` says by what.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+    Replaced {
+        message: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,6 +73,17 @@ pub(crate) struct HostState {
     pub daemon: DaemonState,
     pub web: WebState,
     pub phase: HostPhase,
+    /// How the attended update that started this process ended, once known.
+    pub update: Option<UpdateResult>,
+}
+
+/// One attended update's result, as this process can tell it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UpdateResult {
+    /// The update this is the result of, so a repeated failure is still new.
+    pub transaction: String,
+    pub failed: bool,
+    pub message: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

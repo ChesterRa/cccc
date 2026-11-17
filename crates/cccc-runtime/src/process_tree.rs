@@ -1,4 +1,6 @@
 //! Process resources reachable independently of session/protocol shutdown locks.
+#[cfg(target_os = "macos")]
+mod darwin_identity;
 #[cfg(unix)]
 pub(crate) mod guard;
 #[cfg(unix)]
@@ -12,6 +14,36 @@ use std::collections::HashMap;
 use std::io;
 use std::process::{Child, Command};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+
+/// Handle the native watchdog before constructing Tokio, runtime state or
+/// command-line services. Ordinary invocations return None.
+pub fn run_process_watchdog_from_args() -> Option<io::Result<()>> {
+    #[cfg(target_os = "macos")]
+    return guard::run_native_watchdog_from_args();
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+#[doc(hidden)]
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub fn run_process_watchdog_test_child() {
+    guard::run_native_watchdog_test_child();
+}
+
+/// Register the native helper in libtest executables, whose main belongs to
+/// the test harness rather than the product entry point.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! process_watchdog_test_entry {
+    () => {
+        #[cfg(all(target_os = "macos", debug_assertions))]
+        #[test]
+        #[ignore = "internal process-watchdog subprocess entry"]
+        fn __cccc_process_watchdog_child() {
+            $crate::run_process_watchdog_test_child();
+        }
+    };
+}
 
 // These children communicate through redirected streams, not a console. Keep
 // this separate from explicit flags used for detached daemons and ConPTY.

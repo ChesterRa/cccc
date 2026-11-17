@@ -21,6 +21,14 @@ impl std::fmt::Display for ApiError {
 }
 
 impl ApiError {
+    pub(crate) fn code(&self) -> &str {
+        &self.code
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
     pub(crate) fn with_details(mut self, details: Value) -> Self {
         self.details = details;
         self

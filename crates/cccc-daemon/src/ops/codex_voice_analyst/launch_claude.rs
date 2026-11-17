@@ -56,6 +56,14 @@ impl AnalystSession {
             ("CCCC_GROUP_ID".into(), json!(group_id)),
             ("CCCC_ACTOR_ID".into(), json!(actor_id)),
         ]);
+        if let Some((group, actor)) = actor
+            && let Some(file) = crate::session_owner::mcp_binding_file(group, actor)
+        {
+            mcp_environment.insert(
+                cccc_core::owned_mcp::BINDING_FILE_ENV.into(),
+                json!(file.to_string_lossy()),
+            );
+        }
         if let Some(tool_profile) = tool_profile {
             mcp_environment.insert("CCCC_MCP_TOOL_PROFILE".into(), json!(tool_profile));
         }

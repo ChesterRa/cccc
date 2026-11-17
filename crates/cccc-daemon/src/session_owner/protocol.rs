@@ -91,6 +91,18 @@ pub(super) enum PreparedLaunch {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum Mutation {
+    BrowserEnsure {
+        spec: super::browser::BrowserLaunchSpec,
+    },
+    BrowserPagesSet {
+        resource_id: String,
+        instance: String,
+        sessions: Vec<super::browser::BrowserPage>,
+    },
+    BrowserClose {
+        resource_id: String,
+        instance: String,
+    },
     Start {
         actor: ActorRef,
         launch: Box<PreparedLaunch>,
@@ -156,6 +168,10 @@ impl Mutation {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub(super) enum Request {
+    BrowserResources,
+    McpRegister {
+        report: cccc_core::owned_mcp::Registration,
+    },
     Hello {
         contract: u32,
     },
@@ -196,12 +212,22 @@ pub(super) enum Request {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
 pub(super) enum Response {
+    BrowserResources {
+        resources: Vec<super::browser::BrowserResource>,
+    },
     Hello {
         contract: u32,
         instance: String,
         pid: u32,
         build: Value,
         accepting_starts: bool,
+        #[serde(default)]
+        mcp_registration: u32,
+    },
+    McpRegistered {
+        registration: u32,
+        instance: String,
+        launch_id: String,
     },
     Acquired {
         epoch: u64,
@@ -210,7 +236,8 @@ pub(super) enum Response {
         operation: OperationId,
     },
     Snapshot {
-        actors: Vec<ActorSnapshot>,
+        #[serde(flatten)]
+        snapshot: OwnerSnapshot,
     },
     Operation {
         state: OperationState,
@@ -287,8 +314,43 @@ pub(super) struct ExecutionFact {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
+pub(super) struct OwnerSnapshot {
+    pub actors: Vec<ActorSnapshot>,
+    pub browsers: Vec<BrowserSnapshot>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(super) struct BrowserSnapshot {
+    pub resource: super::browser::BrowserResource,
+    /// A complete page mapping was published in the current control epoch.
+    /// Native browser liveness alone does not establish Web reattachment.
+    pub reattached: bool,
+}
+
+impl BrowserSnapshot {
+    pub(super) fn identities(&self) -> impl Iterator<Item = super::receipt::AgentIdentity> + '_ {
+        self.resource.sessions.iter().filter_map(|page| {
+            page.actor
+                .as_ref()
+                .map(|actor| super::receipt::AgentIdentity {
+                    group_id: actor.group_id.clone(),
+                    actor_id: actor.actor_id.clone(),
+                    actor_created_at: actor.actor_created_at.clone(),
+                    generation: Some(format!(
+                        "browser:{}:{}",
+                        self.resource.resource_id, page.target_id
+                    )),
+                    owner_id: Some(self.resource.owner_id.clone()),
+                })
+        })
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct ActorSnapshot {
     pub actor: ActorRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<super::mcp::Snapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) observation_error: Option<Failure>,
     pub owner: Option<crate::ops::actor_runtime::RegisteredOwner>,

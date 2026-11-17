@@ -466,6 +466,10 @@ fi
 [[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
 [[ "$(checksum "$TMP_ROOT/home with space/.profile")" == "$login_profile_before" ]]
 [[ "$(checksum "$TMP_ROOT/home with space/.bashrc")" == "$interactive_profile_before" ]]
+if compgen -G "$TMP_ROOT/home with space/.local/bin/.cccc-backup.*" > /dev/null; then
+  echo "a rolled-back install left its backup directory" >&2
+  exit 1
+fi
 
 zsh_home="$TMP_ROOT/zsh-home"
 HOME="$zsh_home" \
@@ -677,5 +681,447 @@ if HOME="$TMP_ROOT/bad-home" \
   exit 1
 fi
 test ! -e "$TMP_ROOT/bad-home/.local/bin/cccc"
+
+# Phased updates: a running CCCC prepares one transaction, stops its own daemon,
+# applies it, and then confirms or aborts it. Paths carry spaces and UTF-8.
+phase_old_version=0.0.15-test
+phase_new_version=0.0.16-test
+phase_bad_version=0.0.17-test
+phase_daemon="$TMP_ROOT/phase-daemon-running"
+phase_root="$TMP_ROOT/phase home 更新"
+phase_cli() {
+  cat > "$1" <<EOF
+#!/usr/bin/env sh
+if [ "\${1:-}" = --version ]; then
+  printf 'cccc $2\\n'
+  exit 0
+fi
+if [ "\${1:-}" = daemon ] && [ "\${2:-}" = status ]; then
+  [ -e '$phase_daemon' ]
+  exit
+fi
+exit 1
+EOF
+  chmod 755 "$1"
+}
+phase_cli "$TMP_ROOT/phase-old-cccc" "$phase_old_version"
+phase_cli "$TMP_ROOT/phase-new-cccc" "$phase_new_version"
+make_release "$phase_new_version" valid "$phase_new_version" "" "$TMP_ROOT/phase-new-cccc"
+make_release "$phase_bad_version" valid 9.9.9
+
+phase_setup() {
+  phase_id="20261117T031511Z-$1"
+  phase_install="$phase_root/$1/bin"
+  phase_txn="$phase_root/$1/update/$phase_id"
+  phase_staged="$phase_install/cccc.cccc-install.$phase_id"
+  phase_backup="$phase_install/.cccc-backup.$phase_id"
+  rm -f "$phase_daemon"
+  mkdir -p "$phase_install" "$phase_txn"
+  cp "$TMP_ROOT/phase-old-cccc" "$phase_install/cccc"
+  printf 'standalone-v1\n' > "$phase_install/.cccc-standalone"
+  cp "$ROOT_DIR/scripts/install.sh" "$phase_txn/install.sh"
+  phase_old_hash=$(checksum "$phase_install/cccc")
+}
+
+run_phase() {
+  local phase=$1 txn=$2
+  shift 2
+  env HOME="$phase_root/home" \
+    CCCC_HOME="$phase_root/cccc home" \
+    CCCC_INSTALL_PHASE="$phase" \
+    CCCC_INSTALL_TXN="$txn" \
+    CCCC_INSTALL_DIR="$phase_install" \
+    CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+    CCCC_NO_MODIFY_PATH=1 \
+    "$@" sh "$txn/install.sh"
+}
+
+phase_listing() {
+  (cd "$phase_install" && LC_ALL=C ls -A)
+}
+
+phase_setup commit
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > "$TMP_ROOT/phase-prepare.out"
+grep -Fxq "CCCC_INSTALL_STAGED=$phase_staged" "$TMP_ROOT/phase-prepare.out"
+[[ "$("$phase_staged" --version)" == "cccc $phase_new_version" ]]
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_old_version" ]]
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+[[ "$(cat "$phase_txn/installer.state")" == "phase=prepared"$'\n'"version=$phase_new_version" ]]
+test ! -e "$phase_backup"
+run_phase apply "$phase_txn" > "$TMP_ROOT/phase-apply.out"
+grep -Fxq "CCCC_INSTALL_APPLIED=$phase_new_version" "$TMP_ROOT/phase-apply.out"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+[[ "$(checksum "$phase_backup/cccc")" == "$phase_old_hash" ]]
+grep -Fxq standalone-v1 "$phase_backup/.cccc-standalone"
+grep -Fxq standalone-v1 "$phase_install/.cccc-standalone"
+grep -Fxq phase=applied "$phase_txn/installer.state"
+test ! -e "$phase_staged"
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+run_phase confirm "$phase_txn" > "$TMP_ROOT/phase-confirm.out"
+grep -Fxq "CCCC_INSTALL_CONFIRMED=$phase_new_version" "$TMP_ROOT/phase-confirm.out"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+# The applied state stays until the caller removes the transaction: an abort
+# after a finished confirm reports the update as committed, never as undone,
+# and confirm can be repeated.
+grep -Fxq phase=applied "$phase_txn/installer.state"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-after-confirm.out" 2> "$TMP_ROOT/phase-after-confirm.err"; then
+  echo "phased abort after a finished confirm reported a restore" >&2
+  exit 1
+fi
+grep -Fxq "CCCC_INSTALL_COMMITTED=$phase_new_version" "$TMP_ROOT/phase-after-confirm.out"
+if grep -Fq CCCC_INSTALL_ABORTED "$TMP_ROOT/phase-after-confirm.out"; then
+  echo "phased abort after a finished confirm printed an aborted result" >&2
+  exit 1
+fi
+run_phase confirm "$phase_txn" > "$TMP_ROOT/phase-confirm.out"
+grep -Fxq "CCCC_INSTALL_CONFIRMED=$phase_new_version" "$TMP_ROOT/phase-confirm.out"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# Before anything moves, the old daemon may still run; abort only discards.
+phase_setup abort-prepared
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+: > "$phase_daemon"
+run_phase abort "$phase_txn" > "$TMP_ROOT/phase-abort.out"
+grep -Fxq "CCCC_INSTALL_ABORTED=$phase_id" "$TMP_ROOT/phase-abort.out"
+rm -f "$phase_daemon"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+test ! -e "$phase_txn/installer.state"
+
+# Neither apply nor a rollback swaps files under a running daemon.
+phase_setup rollback
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+: > "$phase_daemon"
+if run_phase apply "$phase_txn" > "$TMP_ROOT/phase-running.out" 2> "$TMP_ROOT/phase-running.err"; then
+  echo "phased apply replaced files while the daemon was running" >&2
+  exit 1
+fi
+grep -Fq 'daemon is still running' "$TMP_ROOT/phase-running.err"
+if grep -Fq CCCC_INSTALL_ROLLED_BACK "$TMP_ROOT/phase-running.out"; then
+  echo "a refused apply reported that it ended the transaction" >&2
+  exit 1
+fi
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+grep -Fxq phase=prepared "$phase_txn/installer.state"
+test -f "$phase_staged"
+rm -f "$phase_daemon"
+run_phase apply "$phase_txn" > /dev/null
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+: > "$phase_daemon"
+if run_phase abort "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-abort-running.err"; then
+  echo "phased abort rolled back files under a running daemon" >&2
+  exit 1
+fi
+grep -Fq 'stop it before rolling back' "$TMP_ROOT/phase-abort-running.err"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+rm -f "$phase_daemon"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+grep -Fxq standalone-v1 "$phase_install/.cccc-standalone"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+test ! -e "$phase_txn/installer.state"
+
+# An apply killed between its renames is refused again and undone by abort.
+phase_setup interrupted
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+mkdir "$phase_backup"
+mv "$phase_install/cccc" "$phase_backup/cccc"
+if run_phase apply "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-interrupted.err"; then
+  echo "phased apply ignored a half-applied transaction" >&2
+  exit 1
+fi
+grep -Fq 'interrupted while applying' "$TMP_ROOT/phase-interrupted.err"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# A failed apply restores the previous files and ends the transaction.
+phase_setup mismatch
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_bad_version" > /dev/null
+if run_phase apply "$phase_txn" > "$TMP_ROOT/phase-mismatch.out" 2> "$TMP_ROOT/phase-mismatch.err"; then
+  echo "phased apply accepted a mismatched binary version" >&2
+  exit 1
+fi
+grep -Fq 'installed version mismatch' "$TMP_ROOT/phase-mismatch.err"
+grep -Fxq "CCCC_INSTALL_ROLLED_BACK=$phase_id" "$TMP_ROOT/phase-mismatch.out"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+grep -Fxq standalone-v1 "$phase_install/.cccc-standalone"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+test ! -e "$phase_txn/installer.state"
+
+# When the restore itself fails, apply keeps the transaction so abort can
+# finish the restore; it does not report that the transaction ended.
+phase_setup restore-fails
+real_mv=$(command -v mv)
+mkdir -p "$TMP_ROOT/phase-mv-bin"
+cat > "$TMP_ROOT/phase-mv-bin/mv" <<EOF
+#!/usr/bin/env sh
+case "\$*" in
+  *'.cccc-backup.'*' '*'/cccc')
+    [ ! -e '$TMP_ROOT/phase-mv-fails' ] || exit 1
+    ;;
+esac
+exec '$real_mv' "\$@"
+EOF
+chmod 755 "$TMP_ROOT/phase-mv-bin/mv"
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_bad_version" > /dev/null
+: > "$TMP_ROOT/phase-mv-fails"
+if run_phase apply "$phase_txn" PATH="$TMP_ROOT/phase-mv-bin:$PATH" \
+  > "$TMP_ROOT/phase-restore.out" 2> "$TMP_ROOT/phase-restore.err"; then
+  echo "phased apply accepted a mismatched binary version" >&2
+  exit 1
+fi
+grep -Fq 'rollback failed to restore' "$TMP_ROOT/phase-restore.err"
+if grep -Fq CCCC_INSTALL_ROLLED_BACK "$TMP_ROOT/phase-restore.out"; then
+  echo "apply reported an ended transaction after a failed restore" >&2
+  exit 1
+fi
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+[[ "$(checksum "$phase_backup/cccc")" == "$phase_old_hash" ]]
+rm -f "$TMP_ROOT/phase-mv-fails"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+grep -Fxq standalone-v1 "$phase_install/.cccc-standalone"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# The install lock belongs to one transaction until it is confirmed or aborted.
+phase_setup lock
+other_txn="$phase_root/lock/update/20261117T031511Z-other"
+mkdir -p "$other_txn"
+cp "$ROOT_DIR/scripts/install.sh" "$other_txn/install.sh"
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+if run_phase apply "$other_txn" > /dev/null 2> "$TMP_ROOT/phase-other.err"; then
+  echo "phased apply ran without holding the install lock" >&2
+  exit 1
+fi
+grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-other.err"
+if run_phase confirm "$other_txn" > /dev/null 2> "$TMP_ROOT/phase-other.err"; then
+  echo "phased confirm finished a transaction that was never applied" >&2
+  exit 1
+fi
+grep -Fq 'has not been applied' "$TMP_ROOT/phase-other.err"
+# A transaction that holds nothing aborts without touching the holder's files.
+run_phase abort "$other_txn" > "$TMP_ROOT/phase-other.out"
+grep -Fxq 'CCCC_INSTALL_ABORTED=20261117T031511Z-other' "$TMP_ROOT/phase-other.out"
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+if run_phase prepare "$other_txn" CCCC_VERSION="$phase_new_version" > /dev/null 2> "$TMP_ROOT/phase-other.err"; then
+  echo "a second update was prepared while another held the install lock" >&2
+  exit 1
+fi
+grep -Fq 'another installation is using' "$TMP_ROOT/phase-other.err"
+if HOME="$phase_root/home" \
+  CCCC_VERSION="$phase_new_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$phase_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" > /dev/null 2> "$TMP_ROOT/phase-other.err"; then
+  echo "a one-go install ran while an update held the install lock" >&2
+  exit 1
+fi
+grep -Fq 'another installation is using' "$TMP_ROOT/phase-other.err"
+grep -Fq "held by CCCC update $(cd -P "$phase_txn" && pwd -P) for CCCC_HOME=$phase_root/cccc home" "$TMP_ROOT/phase-other.err"
+test -f "$phase_staged"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# The state file is read as two known keys, never as shell code.
+phase_setup tampered
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+printf 'source=/tmp/elsewhere\n' >> "$phase_txn/installer.state"
+if run_phase apply "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-tampered.err"; then
+  echo "phased apply accepted an unknown state key" >&2
+  exit 1
+fi
+grep -Fq 'invalid installer state' "$TMP_ROOT/phase-tampered.err"
+if run_phase abort "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-tampered.err"; then
+  echo "phased abort acted on an unreadable state" >&2
+  exit 1
+fi
+grep -Fq 'invalid installer state' "$TMP_ROOT/phase-tampered.err"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+test -f "$phase_staged"
+printf 'phase=prepared\nversion=%s\n' "$phase_new_version" > "$phase_txn/installer.state"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# A transaction with the same name under another CCCC_HOME is not the holder,
+# and a refused prepare leaves the holder's staged binary untouched.
+phase_setup same-name
+foreign_txn="$phase_root/same-name/other home/update/$phase_id"
+mkdir -p "$foreign_txn"
+cp "$ROOT_DIR/scripts/install.sh" "$foreign_txn/install.sh"
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+staged_hash=$(checksum "$phase_staged")
+printf 'phase=prepared\nversion=%s\n' "$phase_new_version" > "$foreign_txn/installer.state"
+for foreign_phase in apply abort; do
+  if run_phase "$foreign_phase" "$foreign_txn" > /dev/null 2> "$TMP_ROOT/phase-foreign.err"; then
+    echo "phased $foreign_phase accepted a same-name transaction from another home" >&2
+    exit 1
+  fi
+  grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-foreign.err"
+done
+printf 'phase=applied\nversion=%s\n' "$phase_new_version" > "$foreign_txn/installer.state"
+if run_phase confirm "$foreign_txn" > /dev/null 2> "$TMP_ROOT/phase-foreign.err"; then
+  echo "phased confirm accepted a same-name transaction from another home" >&2
+  exit 1
+fi
+grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-foreign.err"
+rm "$foreign_txn/installer.state"
+if run_phase prepare "$foreign_txn" CCCC_VERSION="$phase_new_version" > /dev/null 2> "$TMP_ROOT/phase-foreign.err"; then
+  echo "a same-name transaction was prepared while another held the install lock" >&2
+  exit 1
+fi
+grep -Fq 'another installation is using' "$TMP_ROOT/phase-foreign.err"
+[[ "$(checksum "$phase_staged")" == "$staged_hash" ]]
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# Once confirm has deleted the backup, abort cannot undo the update and says
+# so instead of reporting a restore; confirm then finishes.
+phase_setup confirm-interrupted
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+run_phase apply "$phase_txn" > /dev/null
+rm -rf "$phase_backup"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-committed.out" 2> "$TMP_ROOT/phase-committed.err"; then
+  echo "phased abort reported a restore without the previous binary" >&2
+  exit 1
+fi
+grep -Fq 'finish it with confirm' "$TMP_ROOT/phase-committed.err"
+grep -Fxq "CCCC_INSTALL_COMMITTED=$phase_new_version" "$TMP_ROOT/phase-committed.out"
+if grep -Fq CCCC_INSTALL_ABORTED "$TMP_ROOT/phase-committed.out"; then
+  echo "phased abort printed an aborted result without restoring" >&2
+  exit 1
+fi
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+test -d "$phase_install/.cccc-install.lock"
+run_phase confirm "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+grep -Fxq phase=applied "$phase_txn/installer.state"
+
+# A confirm interrupted after it released the lock leaves only an applied
+# state: abort still refuses, and confirm finishes it.
+phase_setup confirm-released
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+run_phase apply "$phase_txn" > /dev/null
+rm -rf "$phase_backup" "$phase_install/.cccc-install.lock"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-released.out" 2> "$TMP_ROOT/phase-released.err"; then
+  echo "phased abort reported a restore after the update was committed" >&2
+  exit 1
+fi
+grep -Fq 'finish it with confirm' "$TMP_ROOT/phase-released.err"
+grep -Fxq "CCCC_INSTALL_COMMITTED=$phase_new_version" "$TMP_ROOT/phase-released.out"
+grep -Fxq phase=applied "$phase_txn/installer.state"
+run_phase confirm "$phase_txn" > "$TMP_ROOT/phase-released.out"
+grep -Fxq "CCCC_INSTALL_CONFIRMED=$phase_new_version" "$TMP_ROOT/phase-released.out"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+grep -Fxq phase=applied "$phase_txn/installer.state"
+run_phase confirm "$phase_txn" > "$TMP_ROOT/phase-released.out"
+grep -Fxq "CCCC_INSTALL_CONFIRMED=$phase_new_version" "$TMP_ROOT/phase-released.out"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# A prepare that failed before it took the lock holds nothing, so abort ends
+# it and changes nothing.
+phase_setup prepare-failed
+if run_phase prepare "$phase_txn" CCCC_VERSION="$bad_version" > /dev/null 2> "$TMP_ROOT/phase-unlocked.err"; then
+  echo "phased prepare accepted a bad checksum" >&2
+  exit 1
+fi
+grep -Fq 'checksum mismatch' "$TMP_ROOT/phase-unlocked.err"
+run_phase abort "$phase_txn" > "$TMP_ROOT/phase-unlocked.out"
+grep -Fxq "CCCC_INSTALL_ABORTED=$phase_id" "$TMP_ROOT/phase-unlocked.out"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+run_phase abort "$phase_txn" > "$TMP_ROOT/phase-unlocked.out"
+grep -Fxq "CCCC_INSTALL_ABORTED=$phase_id" "$TMP_ROOT/phase-unlocked.out"
+
+# Files staged by a transaction whose lock is gone are never discarded: abort
+# refuses instead of guessing who owns them.
+phase_setup lock-lost
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+rm -rf "$phase_install/.cccc-install.lock"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-lost.out" 2> "$TMP_ROOT/phase-lost.err"; then
+  echo "phased abort discarded staged files without holding the install lock" >&2
+  exit 1
+fi
+grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-lost.err"
+if grep -Fq CCCC_INSTALL_ABORTED "$TMP_ROOT/phase-lost.out"; then
+  echo "phased abort reported an ended transaction while its files remain" >&2
+  exit 1
+fi
+test -f "$phase_staged"
+grep -Fxq phase=prepared "$phase_txn/installer.state"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+phase_setup lock-lost-applied
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+run_phase apply "$phase_txn" > /dev/null
+rm -rf "$phase_install/.cccc-install.lock"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-lost.out" 2> "$TMP_ROOT/phase-lost.err"; then
+  echo "phased abort ended a transaction whose backup remains without holding the lock" >&2
+  exit 1
+fi
+grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-lost.err"
+if grep -Fq CCCC_INSTALL_ "$TMP_ROOT/phase-lost.out"; then
+  echo "phased abort printed a result while the backup remains" >&2
+  exit 1
+fi
+[[ "$(checksum "$phase_backup/cccc")" == "$phase_old_hash" ]]
+
+# prepare needs an explicit version, an existing standalone installation and a
+# fresh transaction.
+phase_setup preconditions
+if run_phase prepare "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-pre.err"; then
+  echo "phased prepare ran without an explicit version" >&2
+  exit 1
+fi
+grep -Fq 'CCCC_VERSION is required' "$TMP_ROOT/phase-pre.err"
+rm "$phase_install/.cccc-standalone"
+if run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null 2> "$TMP_ROOT/phase-pre.err"; then
+  echo "phased prepare accepted an installation without the standalone marker" >&2
+  exit 1
+fi
+grep -Fq 'needs an existing standalone CCCC installation' "$TMP_ROOT/phase-pre.err"
+[[ "$(phase_listing)" == cccc ]]
+test ! -e "$phase_txn/installer.state"
+printf 'standalone-v1\n' > "$phase_install/.cccc-standalone"
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+if run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null 2> "$TMP_ROOT/phase-pre.err"; then
+  echo "phased prepare ran twice for one transaction" >&2
+  exit 1
+fi
+grep -Fq 'already prepared' "$TMP_ROOT/phase-pre.err"
+test -f "$phase_staged"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# Transaction directories must be absolute, real and plainly named.
+phase_setup invalid
+mkdir -p "$phase_root/invalid/update/.hidden" "$phase_root/invalid/update/has space"
+ln -s "$phase_txn" "$phase_root/invalid/update/linked"
+for bad_txn in "" relative/update/x "$phase_root/invalid/update/missing" \
+  "$phase_root/invalid/update/.hidden" "$phase_root/invalid/update/has space" \
+  "$phase_root/invalid/update/linked"; do
+  if env HOME="$phase_root/home" \
+    CCCC_INSTALL_PHASE=prepare \
+    CCCC_INSTALL_TXN="$bad_txn" \
+    CCCC_INSTALL_DIR="$phase_install" \
+    CCCC_VERSION="$phase_new_version" \
+    CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+    CCCC_NO_MODIFY_PATH=1 \
+    sh "$ROOT_DIR/scripts/install.sh" > /dev/null 2>&1; then
+    echo "phased prepare accepted transaction directory '$bad_txn'" >&2
+    exit 1
+  fi
+done
+if run_phase commit "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-invalid.err"; then
+  echo "installer accepted an unknown phase" >&2
+  exit 1
+fi
+grep -Fq 'unknown CCCC_INSTALL_PHASE: commit' "$TMP_ROOT/phase-invalid.err"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
 
 echo "OK: Unix installer"

@@ -69,6 +69,14 @@ pub(crate) fn select_shutdown(
     Ok(selected)
 }
 
+pub(crate) fn selected_shutdown(home: &HomeLayout) -> io::Result<Option<ShutdownRequest>> {
+    Ok(states()
+        .lock()
+        .map_err(|_| io::Error::other("shutdown state poisoned"))?
+        .get(home.root())
+        .and_then(|state| state.selected.clone()))
+}
+
 /// A normal signal/watch-channel exit is Stop unless an explicit maintenance
 /// request was already selected. A cancelled host without this step preserves
 /// remote resources instead of mistaking a failure for user stop intent.
@@ -111,7 +119,7 @@ pub(crate) fn maintenance_selected(home: &HomeLayout) -> bool {
     })
 }
 
-pub(crate) fn startup_retained(home: &HomeLayout) -> Option<Vec<AgentIdentity>> {
+pub fn startup_retained(home: &HomeLayout) -> Option<Vec<AgentIdentity>> {
     states()
         .lock()
         .ok()?

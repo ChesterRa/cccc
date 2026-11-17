@@ -2,6 +2,76 @@ use std::collections::BTreeSet;
 
 use serde_json::json;
 
+#[tokio::test]
+async fn unavailable_process_observation_does_not_break_stdio_initialization() {
+    const MARKER: &str = "CCCC_TEST_OPTIONAL_MCP_OBSERVATION";
+    if let Some(root) = std::env::var_os(MARKER) {
+        let home = cccc_core::HomeLayout::from_path(std::path::PathBuf::from(root)).expect("home");
+        crate::run_stdio_loop(&home, None, None)
+            .await
+            .expect("stdio stays usable");
+        return;
+    }
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let temp = tempfile::tempdir().expect("isolated MCP state");
+    let home = temp.path().join("home");
+    let provider = temp.path().join("provider");
+    std::fs::create_dir(&provider).expect("provider home");
+    let mut child = Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--exact",
+            "lib_tests::unavailable_process_observation_does_not_break_stdio_initialization",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("HOME", &provider)
+        .env("CODEX_HOME", provider.join("codex"))
+        .env("CLAUDE_CONFIG_DIR", provider.join("claude"))
+        .env("CCCC_HOME", &home)
+        .env(MARKER, &home)
+        .env(
+            "CCCC_MCP_BINDING_FILE",
+            temp.path().join("missing-binding.json"),
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("isolated stdio fixture");
+    let mut input = child.stdin.take().expect("fixture input");
+    for request in [
+        json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":"2025-11-25", "capabilities":{}, "clientInfo":{"name":"isolated-test","version":"1"}}}),
+        json!({"jsonrpc":"2.0", "id":2, "method":"tools/list"}),
+    ] {
+        writeln!(input, "{request}").expect("write request");
+    }
+    drop(input);
+    let output = child.wait_with_output().expect("fixture output");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stdout}\n{stderr}");
+    let responses: Vec<serde_json::Value> = stdout
+        .lines()
+        .filter_map(|line| {
+            line.find("{\"")
+                .and_then(|start| serde_json::from_str(&line[start..]).ok())
+        })
+        .collect();
+    assert_eq!(responses.len(), 2, "{stdout}\n{stderr}");
+    assert_eq!(responses[0]["id"], 1);
+    assert_eq!(responses[1]["id"], 2);
+    assert!(responses[0]["result"]["serverInfo"].is_object(), "{stdout}");
+    assert!(
+        !responses[1]["result"]["tools"]
+            .as_array()
+            .expect("usable tools")
+            .is_empty()
+    );
+    assert!(stderr.contains("tool-process observation unavailable"));
+    assert!(!home.join("daemon/ccccd.addr.json").exists());
+}
+
 /// An embedded daemon installs a process-wide ownership guard. Run each
 /// fixture in a child so its temporary home cannot poison unrelated tests.
 pub(crate) fn isolate_embedded_daemon_test(qualified_name: &str) -> bool {

@@ -1,6 +1,6 @@
 use super::protocol::{
     ActorSnapshot, CONTRACT, ExecutionFact, Failure, MAX_FRAME_BYTES, Mutation, OperationId,
-    OperationSource, OperationState, Request, Response,
+    OperationSource, OperationState, OwnerSnapshot, Request, Response,
 };
 use super::transport::{Address, Paths, SocketPath};
 use cccc_core::HomeLayout;
@@ -34,20 +34,28 @@ impl Client {
     }
 
     /// A read never acquires or replaces the mutating stream.
-    pub(super) fn accepting_starts(&self) -> io::Result<bool> {
+    pub(super) fn current_start_factory(&self) -> io::Result<bool> {
         match self.read(Request::Hello { contract: CONTRACT })? {
             Response::Hello {
-                accepting_starts, ..
-            } => Ok(accepting_starts),
+                accepting_starts,
+                build,
+                ..
+            } => Ok(accepting_starts
+                && same_execution_source(cccc_core::build_info::source_id(), &build)),
             Response::Failed { error } => Err(failure(error)),
             _ => Err(invalid_response()),
         }
     }
 
     pub(super) fn snapshots(&self) -> io::Result<Vec<ActorSnapshot>> {
+        Ok(self.owner_snapshot()?.actors)
+    }
+
+    pub(super) fn owner_snapshot(&self) -> io::Result<OwnerSnapshot> {
         match self.read(Request::Snapshot)? {
-            Response::Snapshot { mut actors } => {
-                for actor in &mut actors {
+            Response::Snapshot { mut snapshot } => {
+                self.check_browser_holders(&snapshot)?;
+                for actor in &mut snapshot.actors {
                     if let Some(error) = &mut actor.observation_error {
                         error.message = format!(
                             "session owner {} (PID {}) could not confirm member {}/{} ({}){}",
@@ -70,11 +78,93 @@ impl Client {
                         terminal.launch = actor.terminal_launch;
                     }
                 }
-                Ok(actors)
+                Ok(snapshot)
             }
             Response::Failed { error } => Err(failure(error)),
             _ => Err(invalid_response()),
         }
+    }
+
+    fn check_browser_holders(&self, snapshot: &OwnerSnapshot) -> io::Result<()> {
+        if snapshot.browsers.iter().any(|browser| {
+            browser.resource.owner_id != self.address.owner_id
+                || browser.resource.instance != self.address.instance
+                || browser.resource.resource_id.is_empty()
+        }) {
+            return Err(io::Error::other(
+                "browser observation holder identity changed",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn browsers(&self) -> io::Result<Vec<super::browser::BrowserResource>> {
+        match self.read(Request::BrowserResources)? {
+            Response::BrowserResources { resources } => Ok(resources),
+            Response::Failed { error } => Err(failure(error)),
+            _ => Err(invalid_response()),
+        }
+    }
+
+    /// One read-only, identity-checked exchange. The whole deadline includes
+    /// connect, so a full listener queue cannot block an update indefinitely.
+    pub(super) async fn observe(&self, deadline: Instant) -> io::Result<(u32, OwnerSnapshot)> {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "owner observation deadline elapsed",
+                )
+            })?;
+        let exchange =
+            async {
+                let socket = SocketPath::new(&self.address.socket)?;
+                let stream = tokio::net::UnixStream::connect(&socket.path).await?;
+                drop(socket);
+                let mut stream = tokio::io::BufReader::new(stream);
+                let registration =
+                    match observe_exchange(&mut stream, &Request::Hello { contract: CONTRACT })
+                        .await?
+                    {
+                        Response::Hello {
+                            contract,
+                            instance,
+                            pid,
+                            mcp_registration,
+                            ..
+                        } if contract == CONTRACT
+                            && instance == self.address.instance
+                            && pid == self.address.pid =>
+                        {
+                            mcp_registration
+                        }
+                        Response::Failed { error } => return Err(failure(error)),
+                        _ => {
+                            return Err(io::Error::other(
+                                "session owner identity or contract changed",
+                            ));
+                        }
+                    };
+                match observe_exchange(&mut stream, &Request::Snapshot).await? {
+                    Response::Snapshot { snapshot } => {
+                        self.check_browser_holders(&snapshot)?;
+                        Ok((registration, snapshot))
+                    }
+                    Response::Failed { error } => Err(failure(error)),
+                    _ => Err(invalid_response()),
+                }
+            };
+        tokio::time::timeout(remaining, exchange)
+            .await
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "session owner observation timed out",
+                )
+            })?
+            .map_err(|error| with_owner(&self.address, error))
     }
 
     pub(super) fn projected_snapshots(&self) -> io::Result<Vec<ActorSnapshot>> {
@@ -326,6 +416,123 @@ impl Client {
     }
 }
 
+/// Source identity chooses the code for a new launch, not protocol compatibility.
+fn same_execution_source(current: Option<&str>, owner: &serde_json::Value) -> bool {
+    current.is_some_and(|source| {
+        source.len() == 64
+            && source.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && owner.get("source_id").and_then(serde_json::Value::as_str) == Some(source)
+    })
+}
+
+#[cfg(test)]
+mod current_start_factory_tests {
+    use super::same_execution_source;
+    use serde_json::json;
+
+    #[test]
+    fn a_factory_requires_the_current_execution_source_not_the_version_label() {
+        let source = "a".repeat(64);
+        assert!(same_execution_source(
+            Some(&source),
+            &json!({"source_id":source})
+        ));
+        assert!(!same_execution_source(
+            Some(&source),
+            &json!({"source_id":"b".repeat(64),"version":"0.4.58"})
+        ));
+        assert!(!same_execution_source(
+            Some(&source),
+            &json!({"version":"0.4.58"})
+        ));
+        assert!(!same_execution_source(None, &json!({})));
+        assert!(!same_execution_source(Some(""), &json!({"source_id":""})));
+        assert!(!same_execution_source(
+            Some(&source),
+            &json!({"source_id":4})
+        ));
+    }
+}
+
+async fn observe_exchange(
+    stream: &mut tokio::io::BufReader<tokio::net::UnixStream>,
+    request: &Request,
+) -> io::Result<Response> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+    let mut frame = serde_json::to_vec(request).map_err(io::Error::other)?;
+    if frame.len() >= MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "owner request exceeds frame limit",
+        ));
+    }
+    frame.push(b'\n');
+    stream.get_mut().write_all(&frame).await?;
+    let mut response = Vec::new();
+    (&mut *stream)
+        .take(MAX_FRAME_BYTES as u64 + 1)
+        .read_until(b'\n', &mut response)
+        .await?;
+    if response.len() > MAX_FRAME_BYTES || response.last() != Some(&b'\n') {
+        return Err(invalid_response());
+    }
+    serde_json::from_slice(&response).map_err(io::Error::other)
+}
+
+#[cfg(test)]
+mod finite_observation_tests {
+    use super::*;
+    use tokio::io::AsyncBufReadExt;
+
+    #[tokio::test]
+    async fn an_observation_that_connects_but_gets_no_hello_reply_times_out() {
+        let temp = tempfile::tempdir().expect("private socket");
+        let socket = temp.path().join("owner.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).expect("listen");
+        let (seen, observed) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let mut stream = tokio::io::BufReader::new(stream);
+            let mut request = String::new();
+            stream.read_line(&mut request).await.expect("hello frame");
+            assert!(matches!(
+                serde_json::from_str::<Request>(&request).expect("request"),
+                Request::Hello { .. }
+            ));
+            seen.send(()).expect("observed hello");
+            request.clear();
+            assert_eq!(
+                stream
+                    .read_line(&mut request)
+                    .await
+                    .expect("peer closes on deadline"),
+                0
+            );
+        });
+        let client = Client {
+            address: Address {
+                owner_id: uuid::Uuid::new_v4().simple().to_string(),
+                instance: uuid::Uuid::new_v4().simple().to_string(),
+                contract: CONTRACT,
+                pid: std::process::id(),
+                socket,
+            },
+            control: Mutex::new(None),
+        };
+        let result = client.observe(Instant::now() + Duration::from_secs(1));
+        tokio::pin!(result);
+        tokio::select! {
+            observed = observed => observed.expect("fixture received the actual request"),
+            result = &mut result => panic!("request ended before the fixture saw hello: {:?}", result.err()),
+        }
+        assert_eq!(
+            result.await.err().expect("no reply").kind(),
+            io::ErrorKind::TimedOut
+        );
+        server.await.expect("fixture finishes");
+    }
+}
+
 impl Connection {
     fn connect(address: &Address) -> io::Result<Self> {
         let socket = (|| {
@@ -421,7 +628,10 @@ pub(super) fn start(home: &HomeLayout, owner_id: &str) -> io::Result<Client> {
     if !public_entry && !test_entry {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "the embedding host must provide a cccc session-owner entry",
+            format!(
+                "CCCC could not start its session-owner entry from {}; run this program from a file named cccc, or provide a session-owner entry when embedding CCCC",
+                executable.display()
+            ),
         ));
     }
     #[cfg(target_os = "linux")]
@@ -509,14 +719,30 @@ fn with_owner(address: &Address, error: io::Error) -> io::Error {
     if error.get_ref().is_some_and(|value| value.is::<Failure>()) {
         return error;
     }
+    let owner_exited = cccc_core::local_sessions::NativeHost::capture(address.pid)
+        .is_err_and(|error| error.kind() == io::ErrorKind::NotFound);
+    let recovery = format!(
+        "unconfirmed work may require `cccc daemon process-recovery --owner session --owner-id {} list`",
+        address.owner_id
+    );
+    let guidance = if owner_exited {
+        format!(
+            "the owner has exited; start CCCC again to inspect and reconcile its saved recovery state; {recovery}"
+        )
+    } else {
+        format!(
+            "inspect that owner; if it is still running, retry `cccc daemon stop` after it responds; if it has exited, start CCCC again to inspect its saved recovery state; {recovery}"
+        )
+    };
     io::Error::new(
         error.kind(),
         format!(
-            "session owner {} (PID {}, instance {}) could not be verified ({:?}); agents may still be running; inspect that process and retry `cccc daemon stop` after it responds",
+            "session owner {} (PID {}, instance {}) could not be verified ({:?}); agents may still be running; {}",
             address.owner_id,
             address.pid,
             address.instance,
-            error.kind()
+            error.kind(),
+            guidance,
         ),
     )
 }
@@ -544,6 +770,57 @@ mod control_tests {
             .get_mut()
             .write_all(b"\n")
             .expect("write test protocol frame");
+    }
+
+    #[test]
+    fn an_unreachable_owner_keeps_unknown_and_exited_guidance_separate() {
+        let mut address = Address {
+            owner_id: "fixture-owner".into(),
+            instance: "fixture-instance".into(),
+            contract: CONTRACT,
+            pid: std::process::id(),
+            socket: "/isolated/unused.sock".into(),
+        };
+        let error = with_owner(&address, io::Error::from(io::ErrorKind::BrokenPipe));
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+        assert!(error.to_string().contains("if it is still running"));
+        assert!(!error.to_string().contains("the owner has exited"));
+
+        // Hold the exited child unreaped, so its PID cannot be reused.
+        let mut ended = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("owned child");
+        let pid = rustix::process::Pid::from_raw(ended.id() as i32).expect("child PID");
+        rustix::process::waitid(
+            rustix::process::WaitId::Pid(pid),
+            rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOWAIT,
+        )
+        .expect("wait without reaping");
+        address.pid = ended.id();
+        let error = with_owner(&address, io::Error::from(io::ErrorKind::BrokenPipe));
+        ended.wait().expect("reap the fixture");
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+        assert!(error.to_string().contains("the owner has exited"));
+        assert!(error.to_string().contains("saved recovery state"));
+        assert!(!error.to_string().contains("after it responds"));
+
+        let error = with_owner(
+            &address,
+            failure(Failure {
+                code: "fixture_refusal".into(),
+                message: "typed refusal".into(),
+            }),
+        );
+        assert_eq!(
+            error
+                .get_ref()
+                .expect("failure")
+                .downcast_ref::<Failure>()
+                .expect("preserve the typed refusal")
+                .code,
+            "fixture_refusal"
+        );
     }
 
     #[test]
@@ -599,6 +876,7 @@ mod control_tests {
                     pid: server_address.pid,
                     build: serde_json::Value::Null,
                     accepting_starts: true,
+                    mcp_registration: cccc_core::owned_mcp::REGISTRATION_API,
                 },
             );
             assert!(matches!(request(&mut current), Request::Acquire { .. }));

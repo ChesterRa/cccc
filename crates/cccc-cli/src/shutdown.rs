@@ -65,6 +65,15 @@ impl TerminalControl {
     }
 }
 
+impl TerminalControl {
+    /// An update is replacing this process: neither a signal nor a lost
+    /// terminal may force an exit or stop agents halfway through it.
+    pub(crate) fn stand_down(&mut self) {
+        self.signals.abort();
+        self.watchdog.abort();
+    }
+}
+
 impl Drop for TerminalControl {
     fn drop(&mut self) {
         self.signals.abort();
@@ -193,7 +202,7 @@ fn restore_terminal_before_exit(starts_daemon: bool) {
             crate::console_encoding::restore_original();
             let _ = crate::tui::restore_terminal();
             eprintln!("CCCC is forcing exit; graceful service cleanup was not confirmed.");
-            if starts_daemon && cfg!(target_os = "linux") {
+            if starts_daemon && cccc_daemon::session_owner::platform_supported() {
                 eprintln!("{FORCED_EXIT_AGENT_HINT}");
             }
             let _ = done.send(());
@@ -273,8 +282,14 @@ async fn stop_on_interrupt(
     )
     .await;
     // Only a launch that owns the daemon owns its agents; an external daemon keeps its own.
-    if home.is_some() && cfg!(target_os = "linux") {
+    if home.is_some() && cccc_daemon::session_owner::platform_supported() {
         eprintln!("{FORCED_EXIT_AGENT_HINT}");
+    }
+    if let Some(hint) = home
+        .as_ref()
+        .and_then(crate::update_host::forced_exit_update_hint)
+    {
+        eprintln!("{hint}");
     }
     force_exit();
 }

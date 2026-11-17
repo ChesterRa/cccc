@@ -12,6 +12,10 @@ use crate::args::{ReleaseChannelArg, UpdateArgs};
 #[path = "update_check.rs"]
 mod check;
 
+#[cfg(test)]
+pub(crate) use check::Installation;
+pub(crate) use check::{CheckOutcome, Latest, Status, pip_command};
+
 const RELEASE_INDEX_URL: &str = "https://chesterra.github.io/cccc/releases.json";
 const RELEASE_INDEX_MAX_BYTES: usize = 16 * 1024;
 
@@ -62,6 +66,26 @@ pub async fn run(args: UpdateArgs) -> Result<()> {
     run_installer(&install_dir, &executable, Some(&version))
 }
 
+/// The running program's installation facts, read locally.
+pub(crate) fn running_installation() -> Result<check::Installation> {
+    let executable = std::env::current_exe().context("could not resolve the CCCC executable")?;
+    check::installation(&executable, None)
+}
+
+/// One check of the running program, the same one `cccc update --check` makes.
+pub(crate) async fn check_running_program() -> Result<CheckOutcome> {
+    let executable = std::env::current_exe().context("could not resolve the CCCC executable")?;
+    let channel = effective_channel(None);
+    check::check(
+        &executable,
+        crate::PRODUCT_VERSION,
+        None,
+        false,
+        latest_channel_version(channel),
+    )
+    .await
+}
+
 fn effective_channel(requested: Option<ReleaseChannelArg>) -> ReleaseChannelArg {
     requested.unwrap_or_else(|| {
         if crate::PRODUCT_VERSION.contains('-') {
@@ -72,7 +96,7 @@ fn effective_channel(requested: Option<ReleaseChannelArg>) -> ReleaseChannelArg 
     })
 }
 
-const fn channel_name(channel: ReleaseChannelArg) -> &'static str {
+pub(crate) const fn channel_name(channel: ReleaseChannelArg) -> &'static str {
     match channel {
         ReleaseChannelArg::Stable => "stable",
         ReleaseChannelArg::Rc => "rc",
@@ -220,7 +244,7 @@ fn should_install(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum InstallationOwner {
+pub(crate) enum InstallationOwner {
     Standalone,
     Pip,
     Unmanaged,
@@ -243,7 +267,7 @@ fn installation_owner(executable: &Path) -> Result<InstallationOwner> {
     }
 }
 
-fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
+pub(crate) fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
     match installation_owner(executable)? {
         InstallationOwner::Standalone => {}
         InstallationOwner::Pip => bail!(

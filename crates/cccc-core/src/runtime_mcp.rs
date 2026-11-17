@@ -146,7 +146,17 @@ pub fn add_command(runtime: ActorRuntime, executable: &Path) -> Option<Vec<Strin
             "droid", "mcp", "add", "--type", "stdio", "cccc", &cccc, "mcp",
         ]),
         ActorRuntime::Amp => common(&["amp", "mcp", "add", "cccc", &cccc, "mcp"]),
-        ActorRuntime::Auggie => common(&["auggie", "mcp", "add", "cccc", "--", &cccc, "mcp"]),
+        // Auggie takes the command and its arguments as options and rejects `--`.
+        ActorRuntime::Auggie => common(&[
+            "auggie",
+            "mcp",
+            "add",
+            "cccc",
+            "--command",
+            &cccc,
+            "--args",
+            "mcp",
+        ]),
         _ => return None,
     })
 }
@@ -171,6 +181,24 @@ pub fn remove_command(runtime: ActorRuntime) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auggie_registration_passes_the_command_as_options() {
+        let command = add_command(ActorRuntime::Auggie, Path::new("/opt/cccc")).expect("command");
+        assert_eq!(
+            command,
+            [
+                "auggie",
+                "mcp",
+                "add",
+                "cccc",
+                "--command",
+                "/opt/cccc",
+                "--args",
+                "mcp"
+            ]
+        );
+    }
 
     #[test]
     fn auto_managed_runtime_catalog_matches_supported_contract() {

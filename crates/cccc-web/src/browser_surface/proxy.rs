@@ -38,6 +38,25 @@ impl BrowserProxy {
         }))
     }
 
+    /// The settings a session owner launches with.
+    pub(super) fn to_owner(&self) -> cccc_daemon::session_owner::browser::BrowserProxy {
+        cccc_daemon::session_owner::browser::BrowserProxy {
+            server: self.server.clone(),
+            bypass_list: self.bypass_list.clone(),
+        }
+    }
+
+    /// Settings received over the owner's IPC, normalized again: they only
+    /// ever become the two proxy arguments, and never carry credentials.
+    pub(super) fn from_owner(
+        proxy: cccc_daemon::session_owner::browser::BrowserProxy,
+    ) -> Result<Self> {
+        Ok(Self {
+            server: normalize_proxy_server(&proxy.server)?,
+            bypass_list: proxy.bypass_list.as_deref().and_then(normalize_bypass_list),
+        })
+    }
+
     pub(super) fn chromium_args(&self) -> Vec<String> {
         let mut args = vec![format!("--proxy-server={}", self.server)];
         if let Some(bypass_list) = &self.bypass_list {
@@ -71,7 +90,8 @@ fn normalize_proxy_server(raw: &str) -> Result<String> {
     let port = url
         .port_or_known_default()
         .ok_or_else(|| anyhow::anyhow!("browser proxy port is required"))?;
-    let host = if host.contains(':') {
+    // `host_str` already brackets an IPv6 address.
+    let host = if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]")
     } else {
         host.to_owned()
@@ -149,5 +169,23 @@ mod tests {
             .expect_err("credentials must not leak into process arguments");
 
         assert!(error.to_string().contains("authenticated browser proxies"));
+    }
+
+    #[test]
+    fn settings_an_owner_receives_normalize_to_themselves() {
+        let proxy = from(&[
+            ("HTTPS_PROXY", "http://[::1]:7890"),
+            ("NO_PROXY", "localhost, .example.test"),
+        ])
+        .expect("proxy")
+        .expect("configured");
+        assert_eq!(proxy.server, "http://[::1]:7890");
+        assert_eq!(
+            BrowserProxy::from_owner(proxy.to_owner()).expect("same settings"),
+            proxy
+        );
+        let mut forged = proxy.to_owner();
+        forged.server = "http://user:secret@proxy.example:8080".into();
+        assert!(BrowserProxy::from_owner(forged).is_err());
     }
 }

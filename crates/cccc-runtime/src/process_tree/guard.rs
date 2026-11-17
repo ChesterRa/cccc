@@ -3,7 +3,7 @@
 //! SIGKILL, a crash or an abrupt host exit skip them, and Unix has no portable
 //! parent-death signal. Two layers cover that:
 //!
-//! - A watchdog shell in its own process group keeps the read end of a pipe that
+//! - A watchdog in its own process group keeps the read end of a pipe that
 //!   carries no data. The kernel closes the owner's write end when the owner dies
 //!   for any reason, so the watchdog reads EOF, then terminates the groups in the
 //!   owner's latest watch list on disk after checking freshness and process identity.
@@ -11,8 +11,8 @@
 //!   watchdog could not, such as after the watchdog itself was killed.
 
 use super::guard_record::{
-    CapturedIdentity, GroupEvidence, GroupRecord, IdentityStrength, LaunchIntent, Ledger, Origin,
-    Record, UnavailableReason,
+    CapturedIdentity, GroupEvidence, GroupRecord, IdentityStrength, LaunchIntent, Ledger,
+    LinuxOrigin, Origin, Record, UnavailableReason,
 };
 use crate::process_recovery::{
     RecoveryDiagnostic, RecoveryError, RecoveryRecord, RecoverySnapshot, RetryResult,
@@ -25,7 +25,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{Mutex, MutexGuard, OnceLock};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -76,8 +76,9 @@ impl<'de> Deserialize<'de> for LedgerEntry {
 }
 
 /// `ps` reports elapsed time in whole seconds, and spawning takes a moment.
+#[cfg(not(target_os = "macos"))]
 const TIME_TOLERANCE_SECS: u64 = 3;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const TERMINATE_GRACE: Duration = Duration::from_secs(2);
 /// A live owner refreshes its last confirmed ownership observation this often.
 const HEARTBEAT: Duration = Duration::from_secs(10);
@@ -90,7 +91,7 @@ const WATCH_LIST_MAX_AGE: Duration = Duration::from_secs(3 * HEARTBEAT.as_secs()
 /// Wait for the owner's death, then check the identities in its fresh watch list
 /// (`$1`, holding `written_at pgid:spawned_at...`) before each termination signal.
 /// Keep the ps identity predicate aligned with `classify` below.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 const WATCHDOG: &str = r#"trap '' INT HUP
 cat >/dev/null
 read -r written groups < "$1" || exit 0
@@ -208,6 +209,32 @@ struct Guard {
     retrying: std::collections::HashSet<uuid::Uuid>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "platform", rename_all = "snake_case", deny_unknown_fields)]
+enum NativeWatch {
+    Darwin { written_at: u64, ledger: Ledger },
+}
+
+impl NativeWatch {
+    fn records(self) -> io::Result<(u64, Vec<Record>)> {
+        let Self::Darwin { written_at, ledger } = self;
+        ledger.validate()?;
+        if written_at == 0
+            || ledger.records.iter().any(|record| {
+                !matches!(record, Record::ProcessGroup(group)
+                if group.observed_at == written_at
+                    && matches!(group.evidence, GroupEvidence::DarwinCaptured(_)))
+            })
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid Darwin watch evidence",
+            ));
+        }
+        Ok((written_at, ledger.records))
+    }
+}
+
 fn guard() -> MutexGuard<'static, Option<Guard>> {
     static GUARD: OnceLock<Mutex<Option<Guard>>> = OnceLock::new();
     GUARD
@@ -286,7 +313,12 @@ pub(super) fn begin_intent() -> io::Result<Option<PreparedIntent>> {
         }
         Err(_) => (None, false),
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    let (origin, may_capture_identity) = match super::darwin_identity::ProcessView::open() {
+        Ok(view) => (Some(view.origin()), true),
+        Err(_) => (None, false),
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let (origin, may_capture_identity) = (None, false);
     let entry = LaunchIntent {
         id: uuid::Uuid::new_v4(),
@@ -554,6 +586,10 @@ fn parse_watch_text(text: &str, source: &[u8]) -> io::Result<Vec<Record>> {
     if !text.ends_with('\n') {
         return Err(invalid());
     }
+    if text.trim_start().starts_with('{') {
+        let watch: NativeWatch = serde_json::from_str(text).map_err(|_| invalid())?;
+        return watch.records().map(|(_, records)| records);
+    }
     let mut fields = text.split_whitespace();
     let observed_at: u64 = fields
         .next()
@@ -615,11 +651,11 @@ fn parse_v2_watch_entry(field: &str, observed_at: u64) -> io::Result<Record> {
                 .ok_or_else(invalid)?,
         },
     };
-    let origin = Origin {
+    let origin = Origin::Linux(LinuxOrigin {
         boot_id: fields[3].to_owned(),
         pid_namespace,
         time_namespace,
-    };
+    });
     let record = Record::ProcessGroup(GroupRecord {
         id,
         source_id: None,
@@ -679,7 +715,13 @@ fn current_origin() -> Option<Origin> {
             .ok()
             .and_then(|view| view.origin().ok())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        super::darwin_identity::ProcessView::open()
+            .ok()
+            .map(|view| view.origin())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         None
     }
@@ -706,7 +748,10 @@ fn view_record(
         ),
     };
     let origin_label = match (origin, current) {
-        (Some(previous), Some(current)) if previous.boot_id != current.boot_id => "previous_boot",
+        (Some(previous), Some(current)) if !previous.same_platform(current) => "unknown",
+        (Some(previous), Some(current)) if previous.boot_id() != current.boot_id() => {
+            "previous_boot"
+        }
         (Some(previous), Some(current)) if previous != current => "other_namespace",
         (Some(_), Some(_)) => "same_origin",
         _ => "unknown",
@@ -1358,6 +1403,7 @@ fn write_watch_list(path: &Path, groups: &[OwnedGroup]) -> io::Result<()> {
     write_watch_list_at(path, groups, now())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn write_watch_list_at(path: &Path, groups: &[OwnedGroup], observed_at: u64) -> io::Result<()> {
     let mut line = observed_at.to_string();
     #[cfg(target_os = "linux")]
@@ -1370,8 +1416,10 @@ fn write_watch_list_at(path: &Path, groups: &[OwnedGroup], observed_at: u64) -> 
             && group.pgid > 1
             && group.spawned_at != 0
         {
-            let time_namespace = identity
-                .origin
+            let Some(origin) = identity.origin.linux() else {
+                continue;
+            };
+            let time_namespace = origin
                 .time_namespace
                 .map_or_else(|| "-".to_owned(), |inode| inode.to_string());
             let proof = match identity.strength {
@@ -1392,8 +1440,8 @@ fn write_watch_list_at(path: &Path, groups: &[OwnedGroup], observed_at: u64) -> 
                 group.pgid,
                 group.spawned_at,
                 identity.start_ticks,
-                identity.origin.boot_id,
-                identity.origin.pid_namespace,
+                origin.boot_id,
+                origin.pid_namespace,
                 time_namespace,
                 group.id,
                 proof
@@ -1407,6 +1455,40 @@ fn write_watch_list_at(path: &Path, groups: &[OwnedGroup], observed_at: u64) -> 
     }
     line.push('\n');
     write_atomically(path, line.as_bytes())
+}
+
+#[cfg(target_os = "macos")]
+fn write_watch_list_at(path: &Path, groups: &[OwnedGroup], observed_at: u64) -> io::Result<()> {
+    let records = groups
+        .iter()
+        .filter(|group| matches!(group.evidence, GroupEvidence::DarwinCaptured(_)))
+        .map(|group| {
+            Record::ProcessGroup(GroupRecord {
+                id: group.id,
+                source_id: None,
+                pgid: group.pgid,
+                spawned_at: group.spawned_at,
+                observed_at,
+                origin: group.origin.clone(),
+                evidence: group.evidence.clone(),
+            })
+        })
+        .collect();
+    if observed_at == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "watch publication time is unavailable",
+        ));
+    }
+    let ledger = Ledger::new(records);
+    ledger.validate()?;
+    let watch = NativeWatch::Darwin {
+        written_at: observed_at,
+        ledger,
+    };
+    let mut bytes = serde_json::to_vec(&watch).map_err(io::Error::other)?;
+    bytes.push(b'\n');
+    write_atomically(path, &bytes)
 }
 
 fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -1448,19 +1530,54 @@ fn write_ledger_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write_atomically(path, bytes)
 }
 
-fn watchdog_command(watch_list: &Path) -> Command {
+#[cfg(not(target_os = "macos"))]
+fn watchdog_command(watch_list: &Path) -> io::Result<Command> {
     let mut command = crate::background_command("/bin/sh");
     command
         .args(["-c", WATCHDOG, "cccc-watchdog"])
         .arg(watch_list)
         .arg(WATCH_LIST_MAX_AGE.as_secs().to_string())
         .arg(TIME_TOLERANCE_SECS.to_string());
-    command
+    Ok(command)
+}
+
+#[cfg(target_os = "macos")]
+fn watchdog_command(watch_list: &Path) -> io::Result<Command> {
+    let executable = std::env::current_exe()?;
+    if crate::running_image::ImageFile::running()?
+        != crate::running_image::ImageFile::at(&executable)?
+    {
+        return Err(io::Error::other(
+            "the running image no longer matches its watchdog launch path",
+        ));
+    }
+    let mut command = crate::background_command(&executable);
+    command.env_clear().env("PATH", "/usr/bin:/bin");
+    #[cfg(debug_assertions)]
+    if executable
+        .parent()
+        .and_then(|p| p.file_name())
+        .is_some_and(|name| name == "deps")
+        && executable
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.rsplit_once('-'))
+            .is_some_and(|(_, hash)| {
+                hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+    {
+        command
+            .args(["__cccc_process_watchdog_child", "--ignored", "--nocapture"])
+            .env("CCCC_TEST_PROCESS_WATCHDOG", watch_list);
+        return Ok(command);
+    }
+    command.arg("__cccc-process-watchdog").arg(watch_list);
+    Ok(command)
 }
 
 fn spawn_watchdog(watch_list: &Path) -> io::Result<ChildStdin> {
     use std::os::unix::process::CommandExt;
-    let mut watchdog = watchdog_command(watch_list)
+    let mut watchdog = watchdog_command(watch_list)?
         // Terminal signals to the owner's process group must not reach it.
         .process_group(0)
         .stdin(Stdio::piped())
@@ -1472,6 +1589,70 @@ fn spawn_watchdog(watch_list: &Path) -> io::Result<ChildStdin> {
         .stdin
         .take()
         .ok_or_else(|| io::Error::other("watchdog has no stdin"))
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn run_native_watchdog_from_args() -> Option<io::Result<()>> {
+    let mut args = std::env::args_os().skip(1);
+    if args.next().as_deref() != Some(std::ffi::OsStr::new("__cccc-process-watchdog")) {
+        return None;
+    }
+    Some(match (args.next(), args.next()) {
+        (Some(path), None) => run_native_watchdog(Path::new(&path)),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "watchdog requires one watch path",
+        )),
+    })
+}
+
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub(super) fn run_native_watchdog_test_child() {
+    let path = std::env::var_os("CCCC_TEST_PROCESS_WATCHDOG").expect("test watchdog path");
+    run_native_watchdog(Path::new(&path)).expect("native watchdog");
+}
+
+#[cfg(target_os = "macos")]
+fn run_native_watchdog(path: &Path) -> io::Result<()> {
+    use nix::sys::signal::{SigSet, Signal};
+    if !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "watchdog path must be absolute",
+        ));
+    }
+    // Match the shell watchdog's terminal-signal policy without installing
+    // handlers or constructing an application runtime.
+    let mut blocked = SigSet::empty();
+    blocked.add(Signal::SIGHUP);
+    blocked.add(Signal::SIGINT);
+    blocked.thread_block().map_err(io::Error::from)?;
+    io::copy(&mut io::stdin().lock(), &mut io::sink())?;
+    let bytes = match File::open(path).and_then(read_ledger_bytes) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if bytes.last() != Some(&b'\n') {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "incomplete native watch file",
+        ));
+    }
+    let watch: NativeWatch = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+    let (written_at, records) = watch.records()?;
+    if !now()
+        .checked_sub(written_at)
+        .is_some_and(|age| age <= WATCH_LIST_MAX_AGE.as_secs())
+    {
+        return Ok(());
+    }
+    // This helper is best-effort, like the Linux shell watchdog. The original
+    // durable ledger remains intact, including any unconfirmed record; its
+    // exit status is never a successful shutdown receipt. Normal recovery
+    // independently rechecks and persists the retained set.
+    let _ = reconcile_records(records);
+    Ok(())
 }
 
 /// Read either the original list or the versioned evidence envelope. A legacy
@@ -1645,15 +1826,23 @@ fn normalize_source_records(records: &mut Vec<Record>) -> io::Result<()> {
 /// Reconcile using the origin and identity actually recorded for each group.
 /// A legacy group may only be forgotten when absent in the confirmed local PID
 /// view; an incomplete launch never acquires a group identity by inference.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
     use rustix::process::Signal;
+    #[cfg(target_os = "linux")]
     let Ok(view) = super::linux_identity::ProcView::open() else {
         return records;
     };
+    #[cfg(target_os = "linux")]
     let Ok(current_origin) = view.origin() else {
         return records;
     };
+    #[cfg(target_os = "macos")]
+    let Ok(view) = super::darwin_identity::ProcessView::open() else {
+        return records;
+    };
+    #[cfg(target_os = "macos")]
+    let current_origin = view.origin();
     let mut retained = Vec::with_capacity(records.len());
     let mut term_sent = Vec::with_capacity(records.len());
     for record in records {
@@ -1661,7 +1850,10 @@ fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
             Record::LaunchIntent(intent) => intent.origin.as_ref(),
             Record::ProcessGroup(group) => group.origin.as_ref(),
         };
-        if record_origin.is_some_and(|previous| previous.boot_id != current_origin.boot_id) {
+        if record_origin.is_some_and(|previous| {
+            previous.same_platform(&current_origin)
+                && previous.boot_id() != current_origin.boot_id()
+        }) {
             // Under the accepted one-host/home premise a verified boot change
             // ends local work from that boot, without sending a signal.
             continue;
@@ -1671,7 +1863,7 @@ fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
             if group.evidence == GroupEvidence::Legacy && group_absent(group.pgid) {
                 continue;
             }
-            if matches!(group.evidence, GroupEvidence::Captured(_))
+            if captured_on_this_platform(&group.evidence)
                 && group.origin.as_ref() == Some(&current_origin)
             {
                 if leader_and_group_absent(group.pgid) {
@@ -1704,7 +1896,7 @@ fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
                 !group_absent(group.pgid)
             }
             Record::ProcessGroup(group)
-                if matches!(group.evidence, GroupEvidence::Captured(_))
+                if captured_on_this_platform(&group.evidence)
                     && group.origin.as_ref() == Some(&current_origin) =>
             {
                 !leader_and_group_absent(group.pgid)
@@ -1712,6 +1904,18 @@ fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
             _ => true,
         })
         .collect()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn captured_on_this_platform(evidence: &GroupEvidence) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        matches!(evidence, GroupEvidence::Captured(_))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        matches!(evidence, GroupEvidence::DarwinCaptured(_))
+    }
 }
 
 fn leader_and_group_absent(pgid: i32) -> bool {
@@ -1727,7 +1931,7 @@ fn leader_and_group_absent(pgid: i32) -> bool {
     })
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
     records.into_iter().filter(keep_without_identity).collect()
 }
@@ -1739,7 +1943,7 @@ fn reconcile_records(records: Vec<Record>) -> Vec<Record> {
 /// a Linux identity this platform cannot check, or a leader or group still
 /// present keeps the record for review; a reused number does the same, which is
 /// the conservative outcome.
-#[cfg(any(test, not(target_os = "linux")))]
+#[cfg(any(test, not(any(target_os = "linux", target_os = "macos"))))]
 fn keep_without_identity(record: &Record) -> bool {
     match record {
         Record::ProcessGroup(group) if group.evidence == GroupEvidence::Legacy => {
@@ -1763,7 +1967,7 @@ fn group_absent(pgid: i32) -> bool {
     })
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn wait_for_groups(records: &[Record], selected: &[bool], timeout: Duration) {
     let deadline = Instant::now() + timeout;
     while records.iter().zip(selected).any(|(record, selected)| {

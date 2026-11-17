@@ -95,6 +95,8 @@ fn every_cccc_daemon_host_command_line_is_a_takeover_target() {
         "cccc --web-port=8080 --web-host=127.0.0.1 web --exhibit",
         "cccc --host localhost daemon run --port 8080",
         "target/debug/cccc --host 0.0.0.0 web",
+        // An attended update relays the host in place under this command line.
+        "/home/dev/.local/bin/cccc update --resume /home/dev/.cccc/update/0123456789abcdef0123456789abcdef",
         // Windows publishes a quoted executable path.
         r#""C:\Program Files\CCCC\cccc.exe" daemon run"#,
         "CCCC.EXE daemon run",
@@ -115,6 +117,9 @@ fn nothing_else_is_a_takeover_target() {
         "cccc --host localhost im status",
         "cccc --web-port=8080 daemon stop",
         "cccc --port 8080 --help",
+        "cccc update",
+        "cccc update --check",
+        "cccc update --recover /home/dev/.cccc/update/0123456789abcdef0123456789abcdef",
         "cccc web --help",
         "cccc --unknown web",
         "cccc --port invalid web",

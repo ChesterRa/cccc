@@ -287,8 +287,8 @@ pub(crate) async fn stop_for_user(
     intent: StopIntent,
 ) -> Result<(cccc_contracts::DaemonResponse, Receipt)> {
     let pid = daemon_pid(client).await;
-    // Agents outlive their daemon only under a session owner, which runs on Linux only.
-    if cfg!(target_os = "linux")
+    // Agents outlive their daemon only under a session owner.
+    if cccc_daemon::session_owner::platform_supported()
         && pid.is_none()
         && intent == StopIntent::StopAgents
         // A lock that cannot even be opened (a home never started) has no agents behind
@@ -326,8 +326,9 @@ pub(crate) async fn stop_for_user(
         return Ok((response, Receipt::NotSupported));
     }
     // Only a daemon that writes receipts names the mode it accepted. Without session owners
-    // (off Linux) a receipt would list none of the agents the daemon stopped itself.
-    let writes_receipts = cfg!(target_os = "linux") && response.result.contains_key("mode");
+    // a receipt would list none of the agents the daemon stopped itself.
+    let writes_receipts =
+        cccc_daemon::session_owner::platform_supported() && response.result.contains_key("mode");
     daemon_takeover::wait_for_lock_release(home, DAEMON_SHUTDOWN_TIMEOUT).await?;
     let receipt = match pid {
         _ if !writes_receipts => Receipt::NotSupported,

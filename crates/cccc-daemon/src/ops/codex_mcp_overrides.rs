@@ -56,7 +56,7 @@ pub(super) fn append_global_user_mcp_overrides(
     command.splice(index..index, arguments);
 }
 
-fn insert_before_prompt_tail(
+pub(super) fn insert_before_prompt_tail(
     command: &mut Vec<String>,
     arguments: impl IntoIterator<Item = String>,
 ) {

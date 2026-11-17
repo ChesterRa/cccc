@@ -25,6 +25,7 @@ const globalTabIds = new Set<GlobalTabId>([
   "webAccess",
   "webModels",
   "voice",
+  "update",
   "developer",
 ]);
 

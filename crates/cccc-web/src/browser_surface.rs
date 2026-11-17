@@ -1,5 +1,6 @@
 mod chatgpt_dom;
 mod frame;
+pub(crate) mod held;
 mod input_events;
 mod interaction;
 mod navigation;
@@ -8,6 +9,7 @@ mod page_recovery;
 mod profile_owner;
 mod prompt_submission;
 mod proxy;
+mod resources;
 mod system_browser;
 
 #[cfg(test)]
@@ -23,6 +25,9 @@ pub(crate) use prompt_submission::{
 
 use anyhow::{Context, Result, bail};
 use cccc_contracts::utc_now;
+use cccc_daemon::session_owner::browser::{
+    BrowserActorIdentity, BrowserLaunchSpec, BrowserMode as HeldMode, BrowserPage,
+};
 use chromiumoxide::Page;
 use chromiumoxide::browser::Browser;
 use chromiumoxide::cdp::browser_protocol::target::{
@@ -34,6 +39,7 @@ use owner::BrowserOwner;
 mod pairing;
 use page_recovery::{candidate_page_url, close_internal_pages, is_internal_page};
 pub(crate) use pairing::{PairingPage, pairing_prompt};
+use resources::{HeldResource, OwnerResources};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -67,6 +73,8 @@ pub struct BrowserSurfaces {
     key_profiles: Mutex<HashMap<String, PathBuf>>,
     shutting_down: AtomicBool,
     closed_pages: Mutex<HashMap<String, Option<String>>>,
+    /// Set where the session owner keeps shared browsers for this Web.
+    resources: std::sync::OnceLock<OwnerResources>,
 }
 
 #[derive(Debug)]
@@ -98,6 +106,57 @@ pub(super) struct Session {
     strategy: String,
     metadata: Value,
     recover_closed_page: bool,
+    /// The member a window belongs to, as the session owner records it.
+    actor: Option<BrowserActorIdentity>,
+}
+
+/// A browser the session owner keeps, with the pages this Web's surfaces
+/// used in it, so that this Web takes them back instead of opening new ones.
+struct PreservedBrowser {
+    websocket_url: String,
+    shared: bool,
+    strategy: String,
+    metadata: Value,
+    viewer: Value,
+    sessions: Vec<BrowserPage>,
+}
+
+/// What a surface keeps across a Web restart besides its page. The session
+/// owner stores it as given and hands it to the next Web.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct KeptSurface {
+    url: String,
+    initial_url: Option<String>,
+    width: u32,
+    height: u32,
+    is_system_browser: bool,
+    shared_browser: bool,
+    viewer: Value,
+    metadata: Value,
+    started_at: String,
+    strategy: String,
+    recover_closed_page: bool,
+}
+
+fn kept_page(key: &str, session: &Session) -> BrowserPage {
+    BrowserPage {
+        key: key.to_owned(),
+        actor: session.actor.clone(),
+        target_id: session.page.target_id().inner().clone(),
+        state: json!(KeptSurface {
+            url: session.url.clone(),
+            initial_url: session.initial_url.clone(),
+            width: session.width,
+            height: session.height,
+            is_system_browser: session.is_system_browser,
+            shared_browser: session.shared_browser,
+            viewer: session.viewer.clone(),
+            metadata: session.metadata.clone(),
+            started_at: session.started_at.clone(),
+            strategy: session.strategy.clone(),
+            recover_closed_page: session.recover_closed_page,
+        }),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -118,6 +177,7 @@ struct OpenRequest<'a> {
     mode: BrowserMode,
     shared_browser: bool,
     actor_identity: Option<&'a str>,
+    actor: Option<&'a BrowserActorIdentity>,
 }
 
 pub(super) fn validate_browser_surface_url(value: &str) -> Result<()> {
@@ -245,6 +305,7 @@ impl BrowserSurfaces {
             mode: BrowserMode::Headless,
             shared_browser: false,
             actor_identity: None,
+            actor: None,
         })
         .await
     }
@@ -270,6 +331,7 @@ impl BrowserSurfaces {
             mode: BrowserMode::Headless,
             shared_browser: false,
             actor_identity: None,
+            actor: None,
         })
         .await
     }
@@ -296,6 +358,7 @@ impl BrowserSurfaces {
             mode: BrowserMode::Headless,
             shared_browser: false,
             actor_identity: None,
+            actor: None,
         })
         .await
     }
@@ -320,6 +383,7 @@ impl BrowserSurfaces {
             mode: BrowserMode::System { background: false },
             shared_browser: true,
             actor_identity: None,
+            actor: None,
         })
         .await?;
         // Explicitly opening login should reveal its window, while Actor
@@ -357,7 +421,17 @@ impl BrowserSurfaces {
         url: &str,
         dimensions: (u32, u32),
         generation: &str,
+        actor_created_at: &str,
     ) -> Result<Value> {
+        // A kept window counts as its member kept, so the session owner
+        // records which member, down to its creation, the window belongs to.
+        let actor = session_actor(key)
+            .filter(|_| !actor_created_at.is_empty())
+            .map(|(group_id, actor_id)| BrowserActorIdentity {
+                group_id: group_id.to_owned(),
+                actor_id: actor_id.to_owned(),
+                actor_created_at: actor_created_at.to_owned(),
+            });
         self.open_with(OpenRequest {
             key,
             profile,
@@ -370,6 +444,7 @@ impl BrowserSurfaces {
             mode: BrowserMode::System { background: false },
             shared_browser: true,
             actor_identity: Some(generation),
+            actor: actor.as_ref(),
         })
         .await
     }
@@ -396,6 +471,7 @@ impl BrowserSurfaces {
             mode: BrowserMode::Headless,
             shared_browser: false,
             actor_identity: None,
+            actor: None,
         })
         .await
     }
@@ -421,6 +497,7 @@ impl BrowserSurfaces {
             mode: BrowserMode::System { background: true },
             shared_browser: false,
             actor_identity: None,
+            actor: None,
         })
         .await
     }
@@ -438,6 +515,7 @@ impl BrowserSurfaces {
             mode,
             shared_browser,
             actor_identity,
+            actor,
         } = request;
         validate_browser_surface_url(url)?;
         if self.shutting_down.load(Ordering::Acquire) {
@@ -464,6 +542,7 @@ impl BrowserSurfaces {
                 mode,
                 shared_browser,
                 actor_identity,
+                actor,
             })
             .await;
         // Process/profile registration is serialized; a slow page navigation
@@ -526,9 +605,23 @@ impl BrowserSurfaces {
             mode,
             shared_browser,
             actor_identity,
+            actor,
         } = request;
         if self.shutting_down.load(Ordering::Acquire) {
             bail!("browser surfaces are shutting down");
+        }
+        // The session owner may keep this profile's shared browser from an
+        // earlier Web, or from this one after its connection ended, with that
+        // Web's pages: take them all back first, so a surface reuses its own
+        // page instead of opening another.
+        let held = self.resources.get().filter(|_| shared_browser);
+        let mut kept_no_page = false;
+        if let Some(resources) = held
+            && self.needs_connection_locked(profile).await
+        {
+            kept_no_page = self
+                .take_held_locked(resources, profile, held_spec(profile, width, height, mode)?)
+                .await?;
         }
         if reuse_existing {
             let existing = self.sessions.lock().await.get(key).map(|s| {
@@ -573,6 +666,8 @@ impl BrowserSurfaces {
                 );
             }
             if owner.read().await.handler.is_finished() {
+                // A browser this Web runs stops here; from a kept one this Web
+                // only lets go, and connects to it again below.
                 self.close_owner_locked(profile).await?;
                 None
             } else {
@@ -581,10 +676,22 @@ impl BrowserSurfaces {
         } else {
             None
         };
-        let new_owner = owner.is_none();
-        let owner = match owner {
-            Some(owner) => owner,
-            None => {
+        let (owner, new_owner) = match (owner, held) {
+            (Some(owner), _) => (owner, kept_no_page),
+            (None, Some(resources)) => {
+                let kept_no_page = self
+                    .take_held_locked(resources, profile, held_spec(profile, width, height, mode)?)
+                    .await?;
+                let owner = self
+                    .owners
+                    .lock()
+                    .await
+                    .get(profile)
+                    .cloned()
+                    .context("the kept browser was not taken back")?;
+                (owner, kept_no_page)
+            }
+            (None, None) => {
                 let owner = Arc::new(RwLock::new(
                     BrowserOwner::launch(
                         profile,
@@ -593,6 +700,7 @@ impl BrowserSurfaces {
                         mode,
                         shared_browser,
                         storage_state,
+                        proxy::BrowserProxy::from_env()?,
                     )
                     .await?,
                 ));
@@ -600,7 +708,7 @@ impl BrowserSurfaces {
                     .lock()
                     .await
                     .insert(profile.to_owned(), Arc::clone(&owner));
-                owner
+                (owner, true)
             }
         };
         let initialized = async {
@@ -664,7 +772,7 @@ impl BrowserSurfaces {
         let session = Session {
             owner: Arc::clone(&owner),
             page: page.clone(),
-            is_system_browser: resource.system_browser.is_some(),
+            is_system_browser: resource.is_system_browser(),
             shared_browser,
             viewer: if actor_identity.is_some() {
                 json!({"kind":"screencast","vnc":{"available":false,"error":"actor_page_only"}})
@@ -681,8 +789,25 @@ impl BrowserSurfaces {
             strategy: resource.strategy.clone(),
             metadata,
             recover_closed_page: !shared_browser && matches!(mode, BrowserMode::Headless),
+            actor: actor.cloned(),
         };
         drop(resource);
+        // A kept browser's owner records the page before any surface uses it.
+        if let Err(error) = self
+            .publish_pages_locked(&owner, Some((key, &session)))
+            .await
+        {
+            let closed = owner
+                .read()
+                .await
+                .browser
+                .execute(CloseTargetParams::new(page.target_id().clone()))
+                .await;
+            if let Err(close_error) = closed {
+                tracing::warn!(%close_error, "an unrecorded page stays open in the kept browser");
+            }
+            return Err(error.context("record the new page with the session owner"));
+        }
         // Register before navigation: failed or cancelled initialization still has
         // an owner, and cleanup must not affect other Actor windows.
         self.bind_profile(key, profile).await?;
@@ -711,6 +836,7 @@ impl BrowserSurfaces {
         };
         let owner = owner.read().await;
         let handler_finished = owner.handler.is_finished();
+        let kept = owner.held.is_some();
         let user_closed_page = !handler_finished
             && !recover_closed_page
             && owner
@@ -726,6 +852,12 @@ impl BrowserSurfaces {
                 });
         drop(owner);
         if handler_finished {
+            // A kept browser may still run with this page, and only the
+            // session owner can tell: a status read reports the lost
+            // connection and changes nothing. Opening again reconnects.
+            if kept {
+                return disconnected();
+            }
             let message = match self.close(key).await {
                 Ok(_) => "Browser surface process exited.".to_owned(),
                 Err(error) => format!("Browser surface process exited; cleanup failed: {error}"),
@@ -834,9 +966,7 @@ impl BrowserSurfaces {
         owner
             .read()
             .await
-            .system_browser
-            .as_ref()
-            .and_then(system_browser::SystemBrowserLaunch::vnc_port)
+            .vnc_port()
             .context("VNC viewer is not available for this browser surface")
     }
 
@@ -864,6 +994,200 @@ impl BrowserSurfaces {
         Ok(was_closed || retired_marker)
     }
 
+    /// Opens no surface from now on. Open ones keep working until they are
+    /// closed or detached, so work already under way can finish.
+    pub fn stop_opening(&self) {
+        self.shutting_down.store(true, Ordering::Release);
+    }
+
+    pub fn stopping(&self) -> bool {
+        self.shutting_down.load(Ordering::Acquire)
+    }
+
+    /// Caller holds the profile operation lock. Every kept page is found or
+    /// proven gone before any is registered, so a failure takes back nothing.
+    async fn adopt_locked(
+        &self,
+        profile: &Path,
+        preserved: PreservedBrowser,
+        held: HeldResource,
+    ) -> Result<usize> {
+        if self.shutting_down.load(Ordering::Acquire) {
+            bail!("browser surfaces are shutting down");
+        }
+        if self.owners.lock().await.contains_key(profile) {
+            bail!(
+                "browser profile is already managed by this Web: {}",
+                profile.display()
+            );
+        }
+        let mut owner = BrowserOwner::adopt(&preserved, held).await?;
+        let mut restored = Vec::new();
+        for kept in preserved.sessions {
+            // A surface open elsewhere under this key is the current one.
+            if self.sessions.lock().await.contains_key(&kept.key) {
+                continue;
+            }
+            let found = match serde_json::from_value::<KeptSurface>(kept.state) {
+                Ok(surface) => find_page(&owner.browser, &kept.target_id)
+                    .await
+                    .map(|page| page.map(|page| (surface, page))),
+                Err(_) => Err(anyhow::anyhow!("a kept page's surface could not be read")),
+            };
+            match found {
+                Ok(Some((surface, page))) => restored.push((kept.key, kept.actor, surface, page)),
+                Ok(None) => {}
+                Err(error) => {
+                    owner.detach().await;
+                    return Err(error);
+                }
+            }
+        }
+        let owner = Arc::new(RwLock::new(owner));
+        let now = utc_now();
+        let mut count = 0;
+        for (key, actor, surface, page) in restored {
+            // A key bound to another profile is opening or open there, so its
+            // page here is stale. Same lock order as bind_profile.
+            let mut key_profiles = self.key_profiles.lock().await;
+            if key_profiles.get(&key).is_some_and(|bound| bound != profile) {
+                continue;
+            }
+            let mut sessions = self.sessions.lock().await;
+            if sessions.contains_key(&key) {
+                continue;
+            }
+            key_profiles.insert(key.clone(), profile.to_owned());
+            sessions.insert(
+                key,
+                Session {
+                    owner: Arc::clone(&owner),
+                    page,
+                    is_system_browser: surface.is_system_browser,
+                    shared_browser: surface.shared_browser,
+                    viewer: surface.viewer,
+                    initial_url: surface.initial_url,
+                    url: surface.url,
+                    width: surface.width,
+                    height: surface.height,
+                    started_at: surface.started_at,
+                    updated_at: now.clone(),
+                    seq: 0,
+                    strategy: surface.strategy,
+                    metadata: surface.metadata,
+                    recover_closed_page: surface.recover_closed_page,
+                    actor,
+                },
+            );
+            count += 1;
+        }
+        self.owners.lock().await.insert(profile.to_owned(), owner);
+        Ok(count)
+    }
+
+    /// Whether this Web needs a connection to the browser the session owner
+    /// keeps for this profile: it has none yet, or its connection ended. An
+    /// ended connection does not show that the browser ended; the owner
+    /// tells, and starts another only then.
+    async fn needs_connection_locked(&self, profile: &Path) -> bool {
+        let owner = self.owners.lock().await.get(profile).cloned();
+        match owner {
+            None => true,
+            Some(owner) => {
+                let owner = owner.read().await;
+                owner.held.is_some() && owner.handler.is_finished()
+            }
+        }
+    }
+
+    /// Caller holds the profile operation lock, and this Web has no live
+    /// connection to the browser kept for this profile. Connects to the
+    /// browser the session owner keeps, which the owner starts when it keeps
+    /// none or the kept one ended, and takes back every page of this Web
+    /// recorded with it. An ended connection is let go only once the owner
+    /// answered, so a failed request leaves it as it was. Returns whether the
+    /// owner recorded no page, as for a new browser.
+    async fn take_held_locked(
+        &self,
+        resources: &OwnerResources,
+        profile: &Path,
+        spec: BrowserLaunchSpec,
+    ) -> Result<bool> {
+        let (resource, connection) = resources.ensure(&spec).await?;
+        let ended = self.owners.lock().await.get(profile).cloned();
+        if let Some(ended) = ended {
+            ended.write().await.detach().await;
+            self.forget_owner_locked(profile, &ended).await;
+        }
+        let kept_no_page = resource.sessions.is_empty();
+        let held = HeldResource {
+            vnc_port: connection.vnc_port,
+            resource_id: resource.resource_id,
+            instance: resource.instance,
+            spec: resource.spec,
+        };
+        let browser = PreservedBrowser {
+            websocket_url: connection.websocket_url,
+            shared: true,
+            strategy: connection.strategy,
+            metadata: connection.metadata,
+            viewer: connection.viewer,
+            sessions: resource.sessions,
+        };
+        self.adopt_locked(profile, browser, held).await?;
+        // Recording what was taken back tells the owner this Web drives those
+        // pages again, and drops pages that no longer exist.
+        if !kept_no_page {
+            let owner = self
+                .owners
+                .lock()
+                .await
+                .get(profile)
+                .cloned()
+                .context("the kept browser was not taken back")?;
+            if let Err(error) = self.publish_pages_locked(&owner, None).await {
+                tracing::warn!(error = %format!("{error:#}"), "the session owner did not record the pages taken back");
+            }
+        }
+        Ok(kept_no_page)
+    }
+
+    /// Caller holds the profile operation lock. Records with the session
+    /// owner which pages of its browser this Web's surfaces use, `opening`
+    /// among them. Browsers this Web runs itself record nothing.
+    async fn publish_pages_locked(
+        &self,
+        owner: &Arc<RwLock<BrowserOwner>>,
+        opening: Option<(&str, &Session)>,
+    ) -> Result<()> {
+        let Some(held) = owner.read().await.held.clone() else {
+            return Ok(());
+        };
+        let resources = self
+            .resources
+            .get()
+            .context("a kept browser has no session owner")?;
+        let mut pages = self
+            .sessions
+            .lock()
+            .await
+            .iter()
+            .filter(|(key, session)| {
+                Arc::ptr_eq(&session.owner, owner)
+                    && opening.is_none_or(|(opening, _)| opening != key.as_str())
+            })
+            .map(|(key, session)| kept_page(key, session))
+            .collect::<Vec<_>>();
+        pages.extend(opening.map(|(key, session)| kept_page(key, session)));
+        resources.set_pages(&held, pages).await
+    }
+
+    /// From now on the session owner keeps the browsers that surfaces share,
+    /// so that they outlive this Web. Set it before any surface opens.
+    pub(crate) fn hold_shared_browsers(&self, client: cccc_client::DaemonClient) {
+        let _ = self.resources.set(OwnerResources::new(client));
+    }
+
     pub async fn shutdown_all(&self) -> Result<usize> {
         self.shutting_down.store(true, Ordering::Release);
         let mut profiles = self
@@ -880,7 +1204,19 @@ impl BrowserSurfaces {
                 return Ok(0);
             };
             let _operation = operation.lock().await;
-            self.close_owner_locked(&profile).await
+            let owner = self.owners.lock().await.get(&profile).cloned();
+            let held = match &owner {
+                Some(owner) => owner.read().await.held.is_some(),
+                None => false,
+            };
+            match owner.filter(|_| held) {
+                // The session owner keeps it running for the next Web.
+                Some(owner) => {
+                    self.release_held_locked(&profile, &owner).await;
+                    Ok(0)
+                }
+                None => self.close_owner_locked(&profile).await,
+            }
         }))
         .await;
         let mut closed = 0;
@@ -903,56 +1239,97 @@ impl BrowserSurfaces {
     }
 
     /// Caller holds the profile operation lock, shared by all its page owners.
+    /// Stops a browser this Web runs. Only the session owner stops a browser
+    /// it keeps: this Web lets go of its connection, and the pages recorded
+    /// with the owner stay for the next connection.
     async fn close_owner_locked(&self, profile: &Path) -> Result<usize> {
         let owner = self.owners.lock().await.get(profile).cloned();
         let Some(owner) = owner else {
             return Ok(0);
         };
-        owner.write().await.stop().await?;
+        let mut resource = owner.write().await;
+        if resource.held.is_some() {
+            resource.detach().await;
+        } else {
+            resource.stop().await?;
+        }
+        drop(resource);
+        Ok(self.forget_owner_locked(profile, &owner).await)
+    }
+
+    /// Caller holds the profile operation lock. Leaves a kept browser and its
+    /// pages running for the next Web, with their latest addresses recorded,
+    /// and drops only this Web's connection.
+    async fn release_held_locked(&self, profile: &Path, owner: &Arc<RwLock<BrowserOwner>>) {
+        if let Err(error) = self.publish_pages_locked(owner, None).await {
+            tracing::warn!(error = %format!("{error:#}"), "the session owner keeps earlier page addresses");
+        }
+        owner.write().await.detach().await;
+        self.forget_owner_locked(profile, owner).await;
+    }
+
+    /// Caller holds the profile operation lock. Removes an owner and its
+    /// surfaces from this Web and returns how many surfaces it had.
+    async fn forget_owner_locked(
+        &self,
+        profile: &Path,
+        owner: &Arc<RwLock<BrowserOwner>>,
+    ) -> usize {
         let mut sessions = self.sessions.lock().await;
         let before = sessions.len();
-        sessions.retain(|_, session| !Arc::ptr_eq(&session.owner, &owner));
-        let closed = before - sessions.len();
+        sessions.retain(|_, session| !Arc::ptr_eq(&session.owner, owner));
+        let removed = before - sessions.len();
         drop(sessions);
         self.key_profiles
             .lock()
             .await
             .retain(|_, path| path != profile);
         self.owners.lock().await.remove(profile);
-        Ok(closed)
+        removed
     }
 
+    /// Caller holds the profile operation lock.
     async fn close_locked(&self, key: &str) -> Result<bool> {
-        let snapshot = self
-            .sessions
-            .lock()
-            .await
-            .get(key)
-            .map(|s| (Arc::clone(&s.owner), s.page.clone(), s.shared_browser));
-        let Some((owner, page, shared)) = snapshot else {
+        let Some((mut owner, mut page, shared)) = self.surface_page(key).await else {
             return Ok(false);
         };
+        let ended = owner.read().await.handler.is_finished();
+        let held = owner.read().await.held.clone();
+        if shared
+            && ended
+            && let Some(held) = held
+            && let Some(resources) = self.resources.get()
+        {
+            // Its connection ended, not necessarily its browser: connect
+            // again and close only this surface's page.
+            let profile = self.surface_profile(key).await?;
+            self.take_held_locked(resources, &profile, held.spec)
+                .await?;
+            let Some((connected, taken_back, _)) = self.surface_page(key).await else {
+                // Its page ended with the browser it was in.
+                return Ok(true);
+            };
+            owner = connected;
+            page = taken_back;
+        }
         if !shared || owner.read().await.handler.is_finished() {
-            let profile = self
-                .key_profiles
-                .lock()
-                .await
-                .get(key)
-                .cloned()
-                .context("browser profile registration missing")?;
+            let profile = self.surface_profile(key).await?;
             self.close_owner_locked(&profile).await?;
         } else {
             // Close the owned target through the browser: Page.close can reject
             // a still-existing window while its renderer changes during navigation.
-            let owner = owner.read().await;
-            if let Err(error) = owner
+            let resource = owner.read().await;
+            if let Err(error) = resource
                 .browser
                 .execute(CloseTargetParams::new(page.target_id().clone()))
                 .await
             {
                 // A user may already have closed this target. Completion is
                 // established by its absence in a live browser, not error text.
-                let targets = owner.browser.execute(GetTargetsParams::default()).await?;
+                let targets = resource
+                    .browser
+                    .execute(GetTargetsParams::default())
+                    .await?;
                 if targets
                     .result
                     .target_infos
@@ -962,19 +1339,45 @@ impl BrowserSurfaces {
                     return Err(error.into());
                 }
             }
+            drop(resource);
             self.sessions.lock().await.remove(key);
+            // The next Web takes back only pages that are still recorded.
+            if let Err(error) = self.publish_pages_locked(&owner, None).await {
+                tracing::warn!(error = %format!("{error:#}"), "the session owner still records a closed page");
+            }
         }
         Ok(true)
     }
 
+    async fn surface_page(&self, key: &str) -> Option<(Arc<RwLock<BrowserOwner>>, Page, bool)> {
+        self.sessions
+            .lock()
+            .await
+            .get(key)
+            .map(|s| (Arc::clone(&s.owner), s.page.clone(), s.shared_browser))
+    }
+
+    async fn surface_profile(&self, key: &str) -> Result<PathBuf> {
+        self.key_profiles
+            .lock()
+            .await
+            .get(key)
+            .cloned()
+            .context("browser profile registration missing")
+    }
+
     async fn register_profile(&self, key: &str, profile: &Path) -> Result<Arc<Mutex<()>>> {
         self.bind_profile(key, profile).await?;
+        Ok(self.profile_operation(profile).await)
+    }
+
+    async fn profile_operation(&self, profile: &Path) -> Arc<Mutex<()>> {
         let mut operations = self.profile_operations.lock().await;
-        Ok(Arc::clone(
+        Arc::clone(
             operations
                 .entry(profile.to_owned())
                 .or_insert_with(|| Arc::new(Mutex::new(()))),
-        ))
+        )
     }
 
     async fn bind_profile(&self, key: &str, profile: &Path) -> Result<()> {
@@ -1036,6 +1439,36 @@ impl BrowserSurfaces {
         keys.extend(self.sessions.lock().await.keys().cloned());
         keys.extend(self.closed_pages.lock().await.keys().cloned());
         keys
+    }
+}
+
+/// A new connection learns existing targets asynchronously; a target that
+/// is absent from the browser's own list is gone, not undiscovered.
+async fn find_page(browser: &Browser, target_id: &str) -> Result<Option<Page>> {
+    use chromiumoxide::cdp::browser_protocol::target::TargetId;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        match browser.get_page(TargetId::new(target_id)).await {
+            Ok(page) => return Ok(Some(page)),
+            Err(chromiumoxide::error::CdpError::NotFound) => {}
+            Err(error) => return Err(error).context("find preserved browser page"),
+        }
+        let targets = browser
+            .execute(GetTargetsParams::default())
+            .await
+            .context("list preserved browser targets")?;
+        if !targets
+            .result
+            .target_infos
+            .iter()
+            .any(|target| target.target_id.inner() == target_id)
+        {
+            return Ok(None);
+        }
+        if std::time::Instant::now() >= deadline {
+            bail!("preserved browser page {target_id} was not attached in time");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 }
 
@@ -1153,6 +1586,37 @@ fn failed(message: &str) -> Value {
         "error":{"code":"browser_surface_process_exited","message":message},
         "width":0,"height":0,"last_frame_seq":0,"controller_attached":false,
         "viewer":{"kind":"screencast","vnc":{"available":false,"error":"Browser process exited"}}
+    })
+}
+
+fn disconnected() -> Value {
+    let message = "The connection to the browser ended. Opening the surface again reconnects it.";
+    json!({
+        "active":false,"state":"failed","message":message,
+        "error":{"code":"browser_surface_disconnected","message":message},
+        "width":0,"height":0,"last_frame_seq":0,"controller_attached":false,
+        "viewer":{"kind":"screencast","vnc":{"available":false,"error":"Browser connection ended"}}
+    })
+}
+
+/// What a shared surface asks the session owner to keep for this profile.
+fn held_spec(
+    profile: &Path,
+    width: u32,
+    height: u32,
+    mode: BrowserMode,
+) -> Result<BrowserLaunchSpec> {
+    Ok(BrowserLaunchSpec {
+        profile: profile.to_owned(),
+        mode: match mode {
+            BrowserMode::Headless => HeldMode::Headless,
+            BrowserMode::System { background } => HeldMode::System { background },
+        },
+        width,
+        height,
+        proxy: proxy::BrowserProxy::from_env()?
+            .as_ref()
+            .map(proxy::BrowserProxy::to_owner),
     })
 }
 

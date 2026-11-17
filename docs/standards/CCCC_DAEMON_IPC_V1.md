@@ -375,7 +375,7 @@ Result:
   executable?: string | null;
   retained_agents?: Array<{
     group_id: string; actor_id: string; actor_created_at: string;
-    generation: string | null;
+    generation: string | null; owner_id?: string;
   }>;
 }
 ```
@@ -402,7 +402,7 @@ Notes:
   trees), compiled into the running process. It
   distinguishes same-version source changes, including uncommitted changes, without
   requiring Git at build/run time. It is diagnostic metadata, not a binary checksum
-  or compatibility gate. Web assets are identified separately by authenticated Web
+  or protocol compatibility gate. Web assets are identified separately by authenticated Web
   `ping` (`web.assets_id` and `web.entry_script`), using the same asset source as
   HTTP delivery. Release builds inspect their immutable embedded bundle; source-run
   debug builds inspect the current disk bundle, including frontend-only rebuilds.
@@ -426,6 +426,151 @@ Notes:
   and reattached during this daemon startup. It is not a current liveness poll.
   A missing field means that this startup result is unavailable, not that zero
   members were retained. Reads MUST NOT construct a session owner.
+- Independent owners may supply `CCCC_MCP_BINDING_FILE` only in a managed
+  member's controlled main MCP entry. Its stable absolute locator names a
+  private, atomically replaced file containing canonical UUIDs `owner_id`,
+  `instance`, and `launch_id`. The actual owner MUST publish it before provider
+  launch or exact resume. The locator MUST survive display-name changes and
+  MUST differ for a recreated Actor or a new Group resource generation. Stop
+  retains the locator; committed Actor removal deletes it, and Group copies
+  exclude it as runtime state. The binding associates the reserved launch but
+  grants no tool authority and MUST NOT enter persistent provider-session
+  fingerprints. A controller MUST NOT synthesize this evidence for an older
+  owner. Controlled Codex and Claude entries use the locator; voice jobs and
+  user-configured entries do not. Absence is unknown, not proof that no MCP exists.
+- A controlled stdio MCP may report its native process and compiled build to
+  its owner's private socket. Registration API 1 uses `op: "mcp_register"`
+  with `report` fields `registration: 1`, `instance`, `launch_id`, `version`,
+  `source_id`, and `mcp_contract`. Success is `result: "mcp_registered"` with
+  the same registration API, instance, and launch ID. Added fields are ignored.
+  These observations are diagnostic, grant no authority, and MUST NOT gate
+  initialization, tool availability or maintenance preservation. A bound MCP
+  makes one finite registration attempt; failure is reported only on stderr,
+  not as a failed initialization, and does not start a daemon or a retry loop.
+  It reads the bounded regular binding file once and MUST NOT reinterpret a
+  damaged file as valid evidence or relabel itself when that file changes.
+- The owner derives the native peer identity from the socket, never a JSON PID.
+  Registration does not acquire a control epoch or wait for provider Start.
+  Another sample MUST NOT overwrite a still-live native instance; inaccessible
+  metadata remains unknown. `source_controlled` describes the actual prepared
+  launch, not later Group settings. Missing registration, unknown provenance,
+  or an unobserved tool process does not make a runtime unsupported.
+- Automatic update preservation checks tool compatibility once per CCCC
+  build, independently of runtime names or tool-process enumeration. The
+  candidate's `mcp_daemon_contracts` MUST include the running daemon's complete
+  accepted set, `MCP_DAEMON_ACCEPTED_CONTRACTS`. This set describes implemented
+  operations, fields and semantics, separately from a new MCP producer's
+  `MCP_DAEMON_CONTRACT` and the Rust implementation-generation marker.
+  Additions do not remove prior obligations. Successive checked updates carry
+  every earlier accepted contract forward. Version or source labels alone
+  establish neither compatibility nor incompatibility. A declaration that
+  incorrectly claims unimplemented semantics is not detected by this set
+  comparison; cross-build contract tests must exercise the behavior too.
+- Actual owner protocols, current member creation identities and stable running
+  state are still required. Preflight also accounts for enabled members of
+  running, non-stopped registered Groups: absence from holder observations is
+  not an empty cohort. An observed launch takes precedence over saved next-launch
+  settings. Browser resources and remote connector state need their own actual
+  ownership/lifecycle evidence; not appearing in a native holder does not
+  authorize silently excluding them. Missing evidence or unreadable member
+  configuration keeps preservation unconfirmed, without a runtime allowlist.
+  External native memberships remain outside daemon-owned preservation; the
+  global Voice Secretary uses its separate lifecycle gate.
+- The explicit two-command maintenance path (`daemon stop --keep-agents`, then
+  starting another executable) has no selected candidate and does not compare
+  accepted tool-contract sets. Currently the only accepted tool contract is 1.
+  Introducing a second contract or removing 1 requires defining the manual
+  handoff/migration check in the same change; the automatic update check alone
+  must not be presented as covering arbitrary manual replacement or downgrade.
+- The stdio MCP bridge may wait up to 30 seconds for a missing daemon address or
+  a refused/missing endpoint, within its existing whole-request deadline. It
+  rereads the address before retrying and sends no application request until
+  connected. It does not wait on malformed addresses or permission errors,
+  auto-start a daemon, or retry an exchange once sending may have begun. An
+  exchanged request with no confirmed response remains `OutcomeUnknown`.
+  Ordinary lifecycle clients and stream upgrades retain their existing behavior.
+- A supervised local update MAY reserve this home's next startup through a
+  private `update/active.json` intent. Ordinary starts, including adoption of an
+  already-running daemon, MUST then fail with `update_in_progress` and a recovery
+  instruction. An explicit replacement-host permit MUST match the recorded
+  transaction directory and the actual executable's target version and compiled
+  source identity. This exact-candidate check is not an assertion of protocol
+  compatibility or an independent artifact checksum.
+- Update intent schema 2 distinguishes `source: {kind: "release", install_dir}`
+  from `source: {kind: "local", program, file_identity}`. A Local source reserves
+  an executable image and performs no installation or restoration. Its record
+  remains valid if the program path disappears; recovery MUST NOT interpret that
+  absence as a completed rollback. A Local replacement-host permit MUST also
+  match the running image's device, inode, size and modification time against
+  the checked file. On Linux this observation comes from `/proc/self/exe`, not
+  from the possibly replaced launch path. A compiled source identity does not
+  cover Web assets and MUST NOT substitute for this file observation. Candidate
+  self-checks declare readable intent and relay schemas independently; the host
+  MUST require both before requesting shutdown. Missing capability declarations
+  establish no compatibility, even when their self-check can still be parsed.
+- The daemon MUST check that intent both before acquiring its exclusive home
+  lock and after acquisition, before process cleanup or session restoration.
+  During this supervised handoff, file replacement or restoration MUST hold the
+  actual `daemon/ccccd.lock`
+  descriptor throughout the operation. A failed ping or a lock acquired and
+  immediately released is insufficient. The persistent intent covers the gap
+  between releasing that descriptor for exec and the replacement daemon's lock
+  acquisition. An intent MUST NOT be silently removed merely because its host
+  died. It may be cleared after successful installation confirmation, confirmed
+  cleanup of an unapplied update, or successful rollback or recovery.
+  Recovery MUST also refuse to take over another still-live update host, using
+  native process identity rather than PID alone. Intent reads MUST NOT construct
+  a daemon or other runtime work. An unreadable or invalid intent MUST continue
+  to block startup with `update_in_progress`, identify `update/active.json` by
+  its full path and the validation failure, and explain that the installation
+  and interrupted transaction must be checked before manually removing that
+  intent. These are local lifecycle boundaries, not new daemon IPC operations.
+- The Unix installer supports an opt-in local handoff contract. Before executing
+  a target release's installer in phases, the host MUST read its text and require
+  the exact line `# CCCC_INSTALL_PHASE_API=1`. An older installer can ignore phase
+  variables and run a complete installation, so it MUST NOT be executed to probe
+  for this support. With `CCCC_INSTALL_PHASE` unset, the existing single-run
+  installation behavior is unchanged.
+- In phased mode, `CCCC_INSTALL_PHASE` is `prepare`, `apply`, `confirm`, or
+  `abort`; `CCCC_INSTALL_TXN` names the existing absolute transaction directory,
+  whose final component uses only `[A-Za-z0-9._-]` and does not start with a dot,
+  and `CCCC_INSTALL_DIR` names the installation. The install lock binds the
+  transaction's canonical directory, not just its final path component. It is
+  acquired before writing staged installation files and retained across phase
+  invocations until confirmation, successful abort, or confirmed apply rollback.
+  This is the same `.cccc-install.lock` used by single-run installations, which
+  are refused while that lock is held.
+  A missing or dead lock holder alone MUST NOT authorize another transaction.
+  `prepare` requires an explicit `CCCC_VERSION` and an existing standalone-owned
+  installation; it downloads, verifies, and stages without stopping the daemon.
+  The host stops the daemon and holds its actual home lock before `apply`, which
+  replaces the files and retains the previous program. `confirm` discards that
+  backup but retains the `applied` state in the transaction directory, so an
+  interruption before the host withdraws its intent cannot be mistaken for a
+  rollback. The host removes that directory after successful confirmation and
+  intent withdrawal. `abort` restores a backup when available or discards
+  unapplied staging.
+- Installer results are stdout lines and count only with the corresponding exit
+  status and transaction value: successful `prepare` reports
+  `CCCC_INSTALL_STAGED=<install-dir>/cccc.cccc-install.<transaction-id>`;
+  successful `apply` reports `CCCC_INSTALL_APPLIED=<version>`. After apply's
+  preconditions pass, a failure that leaves or restores the original files ends
+  the transaction, releases the lock, and reports
+  `CCCC_INSTALL_ROLLED_BACK=<transaction-id>` with a nonzero exit status. A
+  refused apply leaves the installation, transaction, and lock unchanged and
+  reports no result line; a failed restoration retains its lock and backup.
+  Neither counts as confirmed rollback; the host must finish it with `abort`.
+  Successful `confirm` reports `CCCC_INSTALL_CONFIRMED=<version>`; successful
+  `abort` reports `CCCC_INSTALL_ABORTED=<transaction-id>`. These successful
+  outcomes exit zero. An applied transaction whose previous program is gone
+  instead reports `CCCC_INSTALL_COMMITTED=<version>` and exits one from `abort`:
+  it requires confirmation, not a claim of successful rollback. Recovery MUST
+  verify that the installed program matches the recorded target build before
+  keeping it and completing confirmation. Missing, mismatched, or failed results
+  MUST NOT be treated as successful cleanup. An interrupted confirmation or an
+  unapplied transaction may be finished after lock release only when no files
+  belonging to that transaction remain in the installation. This phase interface
+  is consumed across releases and MUST retain these meanings under API version 1.
 
 #### `shutdown`
 
@@ -461,6 +606,26 @@ clients MUST NOT infer a receipt or a member count from those omissions.
 #### `shutdown_preserving_agents`
 
 Args: the same optional `expected_pid` and UUID `request_id` as `shutdown`.
+For an attended update, an optional `update` object contains
+`{ transaction: string, candidate: { build: {version: string, source_id: string},
+capabilities: { local_restart: boolean, preserve_agents: boolean,
+intent_schemas: number[], owner_contracts: number[], mcp_registration_apis:
+number[], mcp_daemon_contracts: number[] } } }`.
+The transaction and candidate build MUST match this home's active update and
+its actual host.
+The daemon rechecks current holder and MCP observations while holding the
+normal global write ownership and the runtime start permit. A busy start
+MUST be refused rather than awaited while holding global write ownership.
+Successful selection closes that same start permit before releasing it.
+A definitive refusal before selection returns `keep_preflight_refused` with
+error details `{ request_id, shutdown_requested: false, decision: { allowed:
+false, refusals: [...] } }`. Refusals contain a stable code, optional Group,
+Actor, owner and display-name fields, and a readable message. Other errors,
+including `shutdown_in_progress`, are not proof that shutdown was never
+selected. Clients MUST retain the intent on an uncertain exchange and match
+the final receipt before deciding how to recover. Without `update`, this
+operation remains the explicit manual maintenance exit below; it establishes
+no compatibility with a prospective replacement program.
 
 Result:
 ```ts
@@ -484,15 +649,58 @@ On implementations with independent session owners, the final exit report is
 written atomically to `${CCCC_HOME}/daemon/shutdown-result.json` before the
 daemon releases its home lock. The report has `v: 1`, `daemon_pid`, `request_id`,
 `mode` and three disjoint arrays: `confirmed_stopped`, `retained`, `unconfirmed`.
-Each item has the same identity fields as a `retained_agents` item. An
-`unconfirmed` item may additionally contain `owner_id`, the session-owner UUID
-for explicit process-recovery review; absence means this reference is unknown.
-This reference does not prove the member stopped. Readers
+Each item has the same identity fields as a `retained_agents` item. The
+session-owner UUID `owner_id`, when known, is taken from the actual holder for
+all three arrays and for startup observations; older records may omit it.
+Absence means the holder reference is unknown. This reference does not prove
+the member stopped. Readers
 MUST match the expected daemon PID and, when known, request UUID. A new daemon
 MUST clear the old report under its home lock before publishing its PID.
 A missing, stale or unreadable report is unconfirmed, not a successful stop.
 Counts MUST come only from verified sets. Independent ownership and its private
 contract are described in [CCCC_SESSION_OWNER_V1.md](CCCC_SESSION_OWNER_V1.md).
+
+Browser members use the same member creation identity, with a generation that
+includes the retained resource and target IDs. A retained browser in the stop
+report or startup takeover is evidence of resource retention. Actual Web
+reattachment requires a successful complete page publication in the current
+holder control epoch. An old saved mapping alone remains unconfirmed. An
+unmapped login profile still participates in preservation and cleanup checks,
+without inventing a member for the result lists.
+
+#### Local browser resources
+
+Independent-holder implementations expose these private local operations. All
+require `by: "user"` and reject Group, native-session and Actor/cloud bindings.
+This is operation policy, not authentication; local IPC uses its OS boundary.
+The table omits the required `by` field for brevity.
+
+| Operation | Arguments | Result |
+| --- | --- | --- |
+| `browser_resources` | `{}` | `{ resources: BrowserResource[] }` |
+| `browser_resource_ensure` | `{ profile, mode, width, height, proxy }` | `{ resource: BrowserResource }` |
+| `browser_resource_pages_set` | `{ resource_id, instance, sessions }` | `{ resource: BrowserResource }` |
+| `browser_resource_close` | `{ resource_id, instance }` | `{ closed: true }` |
+
+`profile` is an absolute canonical directory. `mode` is `{ kind: "headless" }`
+or `{ kind: "system", background: boolean }`. `proxy` is null or normalized
+`{ server, bypass_list }`, without credentials, arbitrary arguments or environment.
+Each session mapping contains `key`, optional `actor` creation identity
+`{ group_id, actor_id, actor_created_at }`, `target_id` and opaque Web `state`.
+The holder preserves Web state without interpreting its delivery protocol.
+
+`BrowserResource` contains `resource_id`, `owner_id`, `instance`, those launch
+settings, `websocket_url`, optional `display`/`vnc_port`, `strategy`, `metadata`,
+`viewer` and `sessions`, plus `state` (`pending`, `ready`, `exited`, `unconfirmed`)
+and nullable `error`. Connection fields may be absent outside ready state;
+Ensure succeeds only with a ready resource. Existing browser dimensions are
+returned unchanged when a shared profile is reused. Endpoints and profile paths are private local data;
+they MUST NOT enter public health or MCP responses. See
+[session ownership](CCCC_SESSION_OWNER_V1.md#browser-resources) for reservation,
+capacity and cleanup rules. Unavailable observations are errors, never an
+empty list. Reads create no holder. Mutations use global lifecycle ordering;
+Ensure additionally requires the runtime-start permit. Unsupported platforms
+return `unsupported_platform` and MUST NOT silently create a Web-owned browser.
 
 #### `owned_process_recovery_list` / `owned_process_recovery_retry` / `owned_process_recovery_accept`
 

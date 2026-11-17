@@ -78,11 +78,15 @@ pub(super) fn context() -> Context {
         home: "~/.cccc".into(),
         user_home: Some("/home/me".into()),
         color: true,
+        update: super::app::UpdateOffer::InPlace,
+        local_restart: false,
+        release_keep: false,
     }
 }
 
 pub(super) fn running() -> HostState {
     HostState {
+        update: None,
         daemon: DaemonState::StartedHere { pid: 42 },
         web: WebState::Listening {
             url: "http://127.0.0.1:8848".into(),

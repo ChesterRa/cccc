@@ -5,12 +5,15 @@ mod command_output;
 mod command_session;
 mod diagnostic;
 pub use diagnostic::{DiagnosticLog, diagnostic, log_diagnostics_to};
+#[cfg(target_os = "macos")]
+pub mod darwin_process;
 pub mod deepseek_acp;
 pub mod deepseek_supervisor;
 mod executable;
 mod history_access;
 mod manager;
 mod native_codex;
+pub mod process_children;
 pub mod process_recovery;
 pub use native_codex::{
     NativeCodexSessionInfo, NativeCodexSteerOutcome, native_codex_can_receive,
@@ -26,6 +29,7 @@ mod pty_input;
 #[cfg(target_os = "linux")]
 mod pty_io;
 mod registry;
+pub mod running_image;
 mod session;
 mod session_history;
 #[cfg(test)]
@@ -76,10 +80,17 @@ pub use manager::{
 };
 pub use output::HistoryPage;
 pub use path_form::compatible_path;
+#[doc(hidden)]
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub use process_tree::run_process_watchdog_test_child;
 pub use process_tree::{
     CommandError, OwnedProcessTree, ProcessStartUnconfirmed, background_command,
     background_tokio_command, force_terminate_owned, owned_process_recovery_pending,
+    run_process_watchdog_from_args,
 };
+
+#[cfg(test)]
+crate::process_watchdog_test_entry!();
 #[cfg(unix)]
 pub use process_tree::{
     DetachedWork, protect_detached_work, recover_inactive_owned_process_groups,

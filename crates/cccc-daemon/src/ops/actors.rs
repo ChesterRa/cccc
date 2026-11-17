@@ -721,6 +721,14 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if let Err(error) = remove_persisted_headless_state(home, &group_id, &actor_id) {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit headless state cleanup failed");
     }
+    if let Err(error) = cccc_core::owned_mcp::remove_binding_file(
+        home,
+        &group,
+        &actor_id,
+        &group.actors[index].created_at,
+    ) {
+        tracing::warn!(%error, %group_id, %actor_id, "post-commit MCP binding cleanup failed");
+    }
     if let Err(error) = runtime_session::remove(home, &group_id, &actor_id) {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit runtime session cleanup failed");
     }

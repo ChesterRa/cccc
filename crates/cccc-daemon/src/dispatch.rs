@@ -44,6 +44,16 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
             object(json!({"home": home.root(), "environment": "CCCC_HOME"}))
         }),
         "shutdown" | "shutdown_preserving_agents" => Operation::new(Policy::GlobalWrite, shutdown),
+        "browser_resources" => Operation::new(
+            Policy::Read,
+            crate::session_owner::browser_operations::handle,
+        ),
+        "browser_resource_ensure" | "browser_resource_pages_set" | "browser_resource_close" => {
+            Operation::new(
+                Policy::GlobalWrite,
+                crate::session_owner::browser_operations::handle,
+            )
+        }
         _ => return ops::resolve_operation(request),
     })
 }
@@ -115,9 +125,132 @@ fn shutdown(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         None => uuid::Uuid::new_v4().to_string(),
         _ => return Err(OpError::new("invalid_args", "request_id must be a UUID")),
     };
+    if let Some(update) = request.args.get("update") {
+        if mode != crate::session_owner::ShutdownMode::PreserveAgents {
+            return Err(OpError::new(
+                "invalid_args",
+                "update preservation requires shutdown_preserving_agents",
+            ));
+        }
+        return shutdown_update(home, update, request_id);
+    }
     let selected = crate::session_owner::select_shutdown(home, mode, request_id)
         .map_err(|error| OpError::new("shutdown_in_progress", error.to_string()))?;
     object(json!({"shutting_down": true,"request_id":selected.request_id,"mode":selected.mode}))
+}
+
+fn shutdown_update(home: &HomeLayout, value: &Value, request_id: String) -> OpResult {
+    use cccc_core::update_capabilities::{
+        KeepDecision, KeepRefusal, PRESERVATION_REFUSED, UpdateCandidate,
+    };
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Update {
+        transaction: String,
+        candidate: UpdateCandidate,
+    }
+    let update: Update = serde_json::from_value(value.clone()).map_err(OpError::invalid)?;
+    if crate::session_owner::selected_shutdown(home)
+        .map_err(OpError::io)?
+        .is_some()
+    {
+        return Err(OpError::new(
+            "shutdown_in_progress",
+            "a daemon shutdown has already been selected",
+        ));
+    }
+    let intent = cccc_core::attended_update::active(home)
+        .map_err(OpError::io)?
+        .ok_or_else(|| OpError::new("update_resume_mismatch", "there is no active update"))?;
+    if intent.transaction_id != update.transaction
+        || intent.target != update.candidate.build
+        || cccc_core::local_sessions::NativeHost::capture(std::process::id())
+            .map_err(OpError::io)?
+            != intent.holder
+    {
+        return Err(OpError::new(
+            "update_resume_mismatch",
+            "this daemon is not the host of the active update",
+        ));
+    }
+    let refusal = |decision: KeepDecision| {
+        let mut error = OpError::new(
+            PRESERVATION_REFUSED,
+            "keeping the members running was refused before requesting shutdown",
+        );
+        error.details =
+            json!({"request_id":request_id,"shutdown_requested":false,"decision":decision})
+                .as_object()
+                .expect("refusal details")
+                .clone();
+        error
+    };
+    let reason = |code: &str, message: &str| KeepDecision {
+        allowed: false,
+        refusals: vec![KeepRefusal {
+            code: code.into(),
+            group_id: None,
+            actor_id: None,
+            owner_id: None,
+            display_name: None,
+            message: message.into(),
+        }],
+    };
+    let permit = crate::runtime_start_gate::try_permit(home)
+        .map_err(|message| OpError::new("shutdown_in_progress", message))?
+        .ok_or_else(|| {
+            refusal(reason(
+                "member_state_unconfirmed",
+                "A member is starting; wait for it to settle and try again.",
+            ))
+        })?;
+    let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
+        OpError::new(
+            "update_preflight_unavailable",
+            "the daemon observation runtime is unavailable",
+        )
+    })?;
+    let decision = runtime.block_on(crate::session_owner::preservation_check(
+        home,
+        &update.candidate.capabilities,
+    ));
+    if !decision.allowed {
+        return Err(refusal(decision));
+    }
+    if let cccc_core::attended_update::Source::Local {
+        program,
+        file_identity,
+    } = &intent.source
+        && cccc_core::update_image::FileIdentity::read(program)
+            .ok()
+            .as_ref()
+            != Some(file_identity)
+    {
+        return Err(refusal(reason(
+            "local_changed",
+            "The local program changed after it was checked; check again before restarting.",
+        )));
+    }
+    if cccc_core::attended_update::active(home)
+        .map_err(OpError::io)?
+        .as_ref()
+        != Some(&intent)
+    {
+        return Err(OpError::new(
+            "update_resume_mismatch",
+            "the update intent changed during its final check",
+        ));
+    }
+    // The dispatch caller still holds GlobalWrite. Keep this exact StartPermit
+    // through selection and turn it into the closed gate before releasing it.
+    let selected = crate::session_owner::select_shutdown(
+        home,
+        crate::session_owner::ShutdownMode::PreserveAgents,
+        request_id,
+    )
+    .map_err(|error| OpError::new("shutdown_in_progress", error.to_string()))?;
+    permit.prevent();
+    object(json!({"shutting_down":true,"request_id":selected.request_id,"mode":selected.mode}))
 }
 
 pub fn required_arg(request: &DaemonRequest, name: &str) -> Result<String, OpError> {
@@ -197,6 +330,141 @@ mod tests {
     use cccc_contracts::DaemonRequest;
     use cccc_core::HomeLayout;
     use serde_json::json;
+
+    #[cfg(target_os = "linux")]
+    fn update_fixture() -> (tempfile::TempDir, HomeLayout, String) {
+        let temp = tempfile::tempdir().expect("isolated update home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        crate::session_owner::initialize(&home).expect("empty owner controller");
+        crate::session_owner::prepare_shutdown(&home, Vec::new()).expect("shutdown state");
+        crate::runtime_start_gate::allow(&home).expect("allow starts");
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        std::fs::create_dir_all(home.root().join("update").join(&id)).expect("transaction");
+        let intent = cccc_core::attended_update::Intent::new(
+            &home,
+            &id,
+            cccc_core::attended_update::BuildIdentity {
+                version: "0.4.59".into(),
+                source_id: "1".repeat(64),
+            },
+            cccc_core::attended_update::Source::Release {
+                install_dir: temp.path().to_path_buf(),
+            },
+        )
+        .expect("intent");
+        cccc_core::attended_update::arm(&home, &intent).expect("arm");
+        (temp, home, id)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn update_request(id: &str, keep: bool) -> DaemonRequest {
+        DaemonRequest {
+            v: 1,
+            op: "shutdown_preserving_agents".into(),
+            args: json!({
+                "expected_pid":std::process::id(), "request_id":uuid::Uuid::new_v4().to_string(),
+                "update":{"transaction":id,"candidate":{
+                    "build":{"version":"0.4.59","source_id":"1".repeat(64)},
+                    "capabilities":{"preserve_agents":keep}
+                }}
+            })
+            .as_object()
+            .expect("request")
+            .clone(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_definitive_preflight_refusal_does_not_select_shutdown_or_close_the_start_gate() {
+        let (_temp, home, id) = update_fixture();
+        let request = update_request(&id, false);
+        let checking = home.clone();
+        let result = tokio::task::spawn_blocking(move || dispatch(&checking, &request))
+            .await
+            .expect("dispatch");
+        assert!(!result.ok);
+        let error = result.error.expect("refusal");
+        assert_eq!(
+            error.code,
+            cccc_core::update_capabilities::PRESERVATION_REFUSED
+        );
+        assert_eq!(error.details["shutdown_requested"], false);
+        assert!(
+            crate::session_owner::selected_shutdown(&home)
+                .expect("state")
+                .is_none()
+        );
+        assert!(crate::runtime_start_gate::permit(&home).is_ok());
+        assert!(
+            cccc_core::attended_update::active(&home)
+                .expect("intent")
+                .is_some()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_final_check_cannot_use_another_transaction_or_builds_declaration() {
+        for wrong_build in [false, true] {
+            let (_temp, home, id) = update_fixture();
+            let mut request = update_request(&id, true);
+            if wrong_build {
+                request.args["update"]["candidate"]["build"]["source_id"] = json!("2".repeat(64));
+            } else {
+                request.args["update"]["transaction"] =
+                    json!(uuid::Uuid::new_v4().simple().to_string());
+            }
+            let result = dispatch(&home, &request);
+            assert_eq!(
+                result.error.expect("mismatched update").code,
+                "update_resume_mismatch"
+            );
+            assert!(
+                crate::session_owner::selected_shutdown(&home)
+                    .expect("state")
+                    .is_none()
+            );
+            assert!(crate::runtime_start_gate::permit(&home).is_ok());
+            assert!(
+                cccc_core::attended_update::active(&home)
+                    .expect("intent")
+                    .is_some()
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_successful_update_check_selects_preservation_and_closes_the_same_start_gate() {
+        let (_temp, home, id) = update_fixture();
+        let request = update_request(&id, true);
+        let request_id = request.args["request_id"].as_str().expect("id").to_owned();
+        let checking = home.clone();
+        let result = tokio::task::spawn_blocking(move || dispatch(&checking, &request))
+            .await
+            .expect("dispatch");
+        assert!(result.ok, "{:?}", result.error);
+        assert_eq!(result.result["request_id"], request_id);
+        let selected = crate::session_owner::selected_shutdown(&home)
+            .expect("state")
+            .expect("selected");
+        assert_eq!(
+            selected.mode,
+            crate::session_owner::ShutdownMode::PreserveAgents
+        );
+        assert!(crate::runtime_start_gate::permit(&home).is_err());
+        let again = update_request(&id, false);
+        let checking = home.clone();
+        let result = tokio::task::spawn_blocking(move || dispatch(&checking, &again))
+            .await
+            .expect("dispatch");
+        assert_eq!(
+            result.error.expect("already stopping").code,
+            "shutdown_in_progress"
+        );
+    }
 
     #[test]
     fn documented_operations_resolve_or_explicitly_advertise_unavailability() {

@@ -160,6 +160,7 @@ fn second_terminal_interrupt_restores_modes_before_process_exit() {
             home.initialize().expect("initialize");
             let mut control = TerminalControl::new(true).expect("signals");
             let (state, receiver) = tokio::sync::watch::channel(HostState {
+                update: None,
                 daemon: DaemonState::StartedHere {
                     pid: std::process::id(),
                 },
@@ -168,7 +169,7 @@ fn second_terminal_interrupt_restores_modes_before_process_exit() {
             });
             let (intents, receiver_intents) = tokio::sync::mpsc::unbounded_channel();
             control.connect(receiver_intents);
-            let _interface = crate::tui::start(home.clone(), receiver, intents)
+            let _interface = crate::tui::start(home.clone(), receiver, intents, None)
                 .await
                 .expect("terminal interface");
             std::fs::write(home.root().join("force-ready"), "ready").expect("ready");

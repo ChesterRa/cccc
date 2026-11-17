@@ -19,6 +19,20 @@ pub(crate) fn configure_mcp_only(
         return false;
     };
     append_mcp_overrides(command, home.root(), &executable, group_id, actor_id);
+    if let Some(file) = crate::session_owner::mcp_binding_file(group_id, actor_id) {
+        overrides::insert_before_prompt_tail(
+            command,
+            [
+                "-c".into(),
+                format!(
+                    "mcp_servers.cccc.env.{}={}",
+                    cccc_core::owned_mcp::BINDING_FILE_ENV,
+                    serde_json::to_string(&file.to_string_lossy())
+                        .expect("binding file JSON string")
+                ),
+            ],
+        );
+    }
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::io;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(super) struct Origin {
+pub(super) struct LinuxOrigin {
     pub(super) boot_id: String,
     pub(super) pid_namespace: u64,
     /// `None` means a checked procfs lacked the time-namespace facility.
@@ -16,7 +16,7 @@ pub(super) struct Origin {
     pub(super) time_namespace: Option<u64>,
 }
 
-impl Origin {
+impl LinuxOrigin {
     pub(super) fn valid(&self) -> bool {
         uuid::Uuid::parse_str(&self.boot_id)
             .is_ok_and(|id| !id.is_nil() && id.to_string() == self.boot_id)
@@ -25,11 +25,111 @@ impl Origin {
     }
 }
 
+/// Linux keeps its existing flat encoding. An explicit platform marker is
+/// required for Darwin, so a missing or future marker cannot guess an origin.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) enum Origin {
+    Linux(LinuxOrigin),
+    Darwin { boot_id: String },
+}
+
+impl Origin {
+    pub(super) fn same_platform(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Linux(_), Self::Linux(_)) | (Self::Darwin { .. }, Self::Darwin { .. })
+        )
+    }
+
+    pub(super) fn boot_id(&self) -> &str {
+        match self {
+            Self::Linux(origin) => &origin.boot_id,
+            Self::Darwin { boot_id } => boot_id,
+        }
+    }
+
+    pub(super) fn valid(&self) -> bool {
+        match self {
+            Self::Linux(origin) => origin.valid(),
+            Self::Darwin { boot_id } => uuid::Uuid::parse_str(boot_id)
+                .is_ok_and(|id| !id.is_nil() && id.to_string() == *boot_id),
+        }
+    }
+
+    pub(super) fn linux(&self) -> Option<&LinuxOrigin> {
+        match self {
+            Self::Linux(origin) => Some(origin),
+            Self::Darwin { .. } => None,
+        }
+    }
+
+    #[cfg(all(test, target_os = "linux"))]
+    pub(super) fn linux_mut(&mut self) -> &mut LinuxOrigin {
+        match self {
+            Self::Linux(origin) => origin,
+            Self::Darwin { .. } => panic!("expected a Linux fixture origin"),
+        }
+    }
+}
+
+impl Serialize for Origin {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Linux(origin) => origin.serialize(serializer),
+            Self::Darwin { boot_id } => {
+                use serde::ser::SerializeStruct;
+                let mut value = serializer.serialize_struct("DarwinOrigin", 2)?;
+                value.serialize_field("platform", "darwin")?;
+                value.serialize_field("boot_id", boot_id)?;
+                value.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Origin {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value.get("platform") {
+            None => serde_json::from_value(value)
+                .map(Self::Linux)
+                .map_err(serde::de::Error::custom),
+            Some(serde_json::Value::String(platform)) if platform == "darwin" => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct DarwinOrigin {
+                    platform: String,
+                    boot_id: String,
+                }
+                let origin: DarwinOrigin =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                if origin.platform != "darwin" {
+                    return Err(serde::de::Error::custom("invalid Darwin origin"));
+                }
+                Ok(Self::Darwin {
+                    boot_id: origin.boot_id,
+                })
+            }
+            Some(_) => Err(serde::de::Error::custom("unknown process origin platform")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(super) struct CapturedIdentity {
     pub(super) origin: Origin,
     pub(super) start_ticks: u64,
     pub(super) strength: IdentityStrength,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DarwinIdentity {
+    pub(super) origin: Origin,
+    pub(super) pid: u32,
+    pub(super) uid: u32,
+    pub(super) started_seconds: u64,
+    pub(super) started_microseconds: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -53,6 +153,7 @@ pub(super) enum UnavailableReason {
 #[serde(tag = "kind", content = "identity", rename_all = "snake_case")]
 pub(super) enum GroupEvidence {
     Captured(CapturedIdentity),
+    DarwinCaptured(DarwinIdentity),
     Legacy,
     Unconfirmed,
 }
@@ -147,11 +248,20 @@ impl Record {
                     && match &group.evidence {
                         GroupEvidence::Captured(identity) => {
                             identity.origin.valid()
+                                && identity.origin.linux().is_some()
                                 && group.origin.as_ref() == Some(&identity.origin)
                                 && !matches!(
                                     identity.strength,
                                     IdentityStrength::Pidfs { inode: 0 }
                                 )
+                        }
+                        GroupEvidence::DarwinCaptured(identity) => {
+                            matches!(identity.origin, Origin::Darwin { .. })
+                                && identity.origin.valid()
+                                && group.origin.as_ref() == Some(&identity.origin)
+                                && i32::try_from(identity.pid).ok() == Some(group.pgid)
+                                && identity.started_seconds != 0
+                                && identity.started_microseconds < 1_000_000
                         }
                         GroupEvidence::Legacy => group.origin.is_none(),
                         GroupEvidence::Unconfirmed => true,
@@ -223,6 +333,84 @@ impl Ledger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_linux_guard_ledger_keeps_its_original_bytes() {
+        let original = br#"{"version":2,"records":[{"type":"process_group","evidence":{"id":"12345678-1234-4234-8234-123456789abc","pgid":42,"spawned_at":123,"observed_at":124,"origin":{"boot_id":"12345678-1234-4234-8234-123456789abc","pid_namespace":7,"time_namespace":null},"evidence":{"kind":"captured","identity":{"origin":{"boot_id":"12345678-1234-4234-8234-123456789abc","pid_namespace":7,"time_namespace":null},"start_ticks":17,"strength":{"kind":"pidfs","inode":19}}}}}]}"#;
+        let ledger = Ledger::from_bytes(original).expect("existing Linux ledger");
+        assert_eq!(ledger.to_disk_bytes().expect("same encoding"), original);
+    }
+
+    #[test]
+    fn process_origins_require_an_explicit_known_platform() {
+        let boot = "12345678-1234-4234-8234-123456789abc";
+        let darwin = Origin::Darwin {
+            boot_id: boot.into(),
+        };
+        let value = serde_json::to_value(&darwin).expect("Darwin origin");
+        assert_eq!(
+            value,
+            serde_json::json!({"platform":"darwin", "boot_id":boot})
+        );
+        assert_eq!(
+            serde_json::from_value::<Origin>(value).expect("explicit platform"),
+            darwin
+        );
+        for value in [
+            serde_json::json!({"boot_id":boot}),
+            serde_json::json!({"platform":"future", "boot_id":boot, "pid_namespace":7}),
+            serde_json::json!({"platform":null, "boot_id":boot, "pid_namespace":7}),
+            serde_json::json!({"platform":"darwin", "boot_id":boot, "pid_namespace":0}),
+        ] {
+            assert!(serde_json::from_value::<Origin>(value).is_err());
+        }
+    }
+
+    #[test]
+    fn darwin_group_evidence_cannot_borrow_a_linux_origin_or_another_group() {
+        let origin = Origin::Darwin {
+            boot_id: "12345678-1234-4234-8234-123456789abc".into(),
+        };
+        let mut group = GroupRecord {
+            id: uuid::Uuid::new_v4(),
+            source_id: None,
+            pgid: 42,
+            spawned_at: 123,
+            observed_at: 124,
+            origin: Some(origin.clone()),
+            evidence: GroupEvidence::DarwinCaptured(DarwinIdentity {
+                origin,
+                pid: 42,
+                uid: 501,
+                started_seconds: 123,
+                started_microseconds: 999_999,
+            }),
+        };
+        assert!(Record::ProcessGroup(group.clone()).valid());
+        let mut foreign = group.clone();
+        let linux = Origin::Linux(LinuxOrigin {
+            boot_id: "12345678-1234-4234-8234-123456789abc".into(),
+            pid_namespace: 7,
+            time_namespace: None,
+        });
+        foreign.origin = Some(linux.clone());
+        let GroupEvidence::DarwinCaptured(identity) = &mut foreign.evidence else {
+            unreachable!()
+        };
+        identity.origin = linux;
+        assert!(!Record::ProcessGroup(foreign).valid());
+        let GroupEvidence::DarwinCaptured(identity) = &mut group.evidence else {
+            unreachable!()
+        };
+        identity.started_microseconds = 1_000_000;
+        assert!(!Record::ProcessGroup(group.clone()).valid());
+        let GroupEvidence::DarwinCaptured(identity) = &mut group.evidence else {
+            unreachable!()
+        };
+        identity.started_microseconds = 0;
+        group.pgid = 43;
+        assert!(!Record::ProcessGroup(group).valid());
+    }
 
     #[test]
     fn versioned_intent_roundtrips_and_old_vector_reader_rejects_it() {

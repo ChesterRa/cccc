@@ -56,6 +56,7 @@ mod terminal_ws;
 mod terminal_ws_bootstrap;
 mod terminal_ws_flow;
 mod terminal_ws_protocol;
+pub(crate) mod update;
 mod voice_secretary;
 mod voice_secretary_terminal;
 mod web_model_browser;
@@ -127,6 +128,7 @@ pub fn router() -> Router<AppState> {
         .merge(membership::routes())
         .merge(connect::routes())
         .merge(remote_access::routes())
+        .merge(update::routes())
         .merge(settings::routes())
         .merge(capabilities::routes())
         .merge(chet::routes())
@@ -137,5 +139,6 @@ pub fn router() -> Router<AppState> {
 
 pub(crate) use assistants::spawn_voice_model_cleanup;
 pub(crate) use grok_webhook::spawn as spawn_grok_webhooks;
+pub(crate) use web_model_delivery::wait_for_browser_work;
 pub(crate) use web_model_dots::spawn as spawn_dots_events;
 pub(crate) use web_model_supervisor::spawn as spawn_web_model_supervisor;

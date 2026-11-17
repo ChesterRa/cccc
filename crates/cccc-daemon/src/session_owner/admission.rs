@@ -273,6 +273,19 @@ impl Admissions {
         }
     }
 
+    /// An open factory may retire automatically only after every fact settled.
+    /// Explicit StopAll keeps its existing whole-owner shutdown semantics.
+    pub(super) fn require_retirable(&mut self, accepting_starts: bool) -> Result<(), Failure> {
+        self.expire_closed();
+        if accepting_starts && !self.operations.is_empty() {
+            return Err(Failure::new(
+                "owner_facts_pending",
+                "owner still holds unsettled execution facts",
+            ));
+        }
+        Ok(())
+    }
+
     pub(super) fn query(&mut self, id: &OperationId) -> OperationState {
         if id.instance != self.instance {
             return OperationState::Unknown;
@@ -365,6 +378,45 @@ impl Admissions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_retirement_keeps_pending_and_unacknowledged_facts() {
+        let mut state = owner();
+        let epoch = state.acquire().expect("control");
+        let operation = state.admit(epoch, 1, None, 100).expect("admit");
+        assert_eq!(
+            state
+                .require_retirable(true)
+                .expect_err("pending fact")
+                .code,
+            "owner_facts_pending"
+        );
+        assert_eq!(state.query(&operation), OperationState::Pending);
+        state.finish(&operation, Ok(serde_json::Value::Null));
+        assert_eq!(
+            state
+                .require_retirable(true)
+                .expect_err("unacknowledged fact")
+                .code,
+            "owner_facts_pending"
+        );
+        assert!(matches!(
+            state.query(&operation),
+            OperationState::Finished { .. }
+        ));
+        // StopAll explicitly ends the owner; automatic retirement does not.
+        state
+            .require_retirable(false)
+            .expect("explicit StopAll permits retirement");
+        assert!(matches!(
+            state.query(&operation),
+            OperationState::Finished { .. }
+        ));
+        state.acknowledge(&operation).expect("settle");
+        state
+            .require_retirable(true)
+            .expect("nothing left to settle");
+    }
 
     fn owner() -> Admissions {
         Admissions::new("live-owner".into())

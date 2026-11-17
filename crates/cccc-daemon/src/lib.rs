@@ -27,7 +27,7 @@ pub mod session_owner;
 pub use dispatch::dispatch as handle_request;
 pub use paths::DaemonPaths;
 pub use process::{DetachedDaemon, StartOutcome};
-pub use server::{run, run_with_diagnostics};
+pub use server::{run, run_with_diagnostics, run_with_diagnostics_resuming};
 pub use server_lifecycle::stop_every_runtime;
 
 /// Best-effort provider stop requests for managed Actor sessions registered in

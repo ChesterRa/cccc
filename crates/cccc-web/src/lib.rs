@@ -17,6 +17,7 @@ mod request_origin;
 mod routes;
 mod security_headers;
 mod shutdown;
+mod update_hook;
 mod web_banner;
 mod web_listener;
 mod web_push;
@@ -41,6 +42,12 @@ use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 pub use readonly::WebMode;
+pub use update_hook::{
+    KeepPreview, KeepRefusal, LastUpdate, LocalBuild, UpdateAgent, UpdateAgents, UpdateCheck,
+    UpdateCheckHook, UpdateChecker, UpdateHook, UpdateHost, UpdateMode, UpdatePreparation,
+    UpdateRejection, UpdateRequest, UpdateServices, UpdateSource, UpdateStatus,
+};
+pub use web_banner::print as print_listening_banner;
 
 /// Return the system browser executable used by projected browser sessions.
 pub fn system_browser_path() -> Option<std::path::PathBuf> {
@@ -56,6 +63,8 @@ const VOICE_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 pub enum ServeOutcome {
     Stopped(SocketAddr),
     RestartRequested,
+    /// The host's update hook accepted an update; the host finishes it.
+    UpdateRequested,
 }
 
 pub type ListeningCallback = Arc<dyn Fn(SocketAddr) + Send + Sync>;
@@ -126,6 +135,12 @@ struct WebAssets;
 mod web_assets;
 pub use web_assets::{WebAssetsInfo, web_assets_info};
 
+/// The browser launch a session owner runs, so that a browser it holds starts
+/// exactly as one this Web would start itself.
+pub fn browser_launcher() -> Arc<dyn cccc_daemon::session_owner::browser::BrowserLauncher> {
+    Arc::new(browser_surface::held::Launcher)
+}
+
 #[derive(Clone)]
 pub(crate) struct AppState {
     connect_frames: Arc<connect_frames::ConnectFrames>,
@@ -148,15 +163,44 @@ pub(crate) struct AppState {
     push: Arc<web_push::Runtime>,
 }
 
+/// The host's own interface starts an attended update through this, with the
+/// same handoff as the Web's route. It belongs to one serve: once that Web has
+/// closed, starting an update through it gives the update up.
+#[derive(Clone)]
+pub struct UpdateTrigger {
+    restart: Arc<RestartHandle>,
+    voice: Arc<codex_voice::CodexVoiceSessions>,
+}
+
+impl UpdateTrigger {
+    /// Resolves once the host has prepared the update and this Web has closed
+    /// for it, with the transaction; or with why nothing was carried out.
+    pub async fn start(&self, request: UpdateRequest) -> Result<String, UpdateRejection> {
+        routes::update::hand_over(&self.restart, &self.voice, request, || Ok(()))
+            .await
+            .map_err(|error| UpdateRejection {
+                code: error.code().to_owned(),
+                message: error.message().to_owned(),
+            })
+    }
+}
+
+/// Receives the [`UpdateTrigger`] of each serve.
+pub type TriggerCallback = Arc<dyn Fn(UpdateTrigger) + Send + Sync>;
+
 pub(crate) struct RestartHandle {
     requested: AtomicBool,
+    update_requested: AtomicBool,
+    update: UpdateServices,
     shutdown: broadcast::Sender<()>,
 }
 
 impl RestartHandle {
-    fn new(shutdown: broadcast::Sender<()>) -> Self {
+    fn new(shutdown: broadcast::Sender<()>, update: UpdateServices) -> Self {
         Self {
             requested: AtomicBool::new(false),
+            update_requested: AtomicBool::new(false),
+            update,
             shutdown,
         }
     }
@@ -168,6 +212,32 @@ impl RestartHandle {
 
     fn requested(&self) -> bool {
         self.requested.load(Ordering::Acquire)
+    }
+
+    /// The supervising host's update hook, when it can replace itself.
+    pub(crate) fn update_hook(&self) -> Option<UpdateHook> {
+        self.update.host.clone()
+    }
+
+    /// The supervising host's update check, when a CCCC host serves this Web.
+    pub(crate) fn update_checker(&self) -> Option<UpdateCheckHook> {
+        self.update.checker.clone()
+    }
+
+    /// Close this Web so the host can finish an update its hook accepted.
+    pub(crate) fn request_update(&self) -> Result<(), broadcast::error::SendError<()>> {
+        self.update_requested.store(true, Ordering::Release);
+        if let Err(error) = self.shutdown.send(()) {
+            // Not handed over: the host must see an ordinary stop and undo
+            // the prepared update.
+            self.update_requested.store(false, Ordering::Release);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn update_requested(&self) -> bool {
+        self.update_requested.load(Ordering::Acquire)
     }
 }
 
@@ -518,11 +588,13 @@ where
         restart_behavior,
         None,
         None,
+        UpdateServices::default(),
     )
     .await?
     {
         ServeOutcome::Stopped(address) => Ok(address),
         ServeOutcome::RestartRequested => unreachable!("process restart exits before returning"),
+        ServeOutcome::UpdateRequested => unreachable!("only a supervising host offers updates"),
     }
 }
 
@@ -546,10 +618,12 @@ where
         RestartBehavior::ReturnToSupervisor,
         on_listening,
         None,
+        UpdateServices::default(),
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_until_mode_supervised_with_voice_recovery<F>(
     home: HomeLayout,
     host: &str,
@@ -558,6 +632,7 @@ pub async fn serve_until_mode_supervised_with_voice_recovery<F>(
     shutdown: F,
     on_listening: Option<ListeningCallback>,
     process_recovery: VoiceProcessRecovery,
+    update: UpdateServices,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -571,6 +646,7 @@ where
         RestartBehavior::ReturnToSupervisor,
         on_listening,
         Some(process_recovery),
+        update,
     )
     .await
 }
@@ -585,6 +661,7 @@ async fn serve_until_mode_with_restart<F>(
     restart_behavior: RestartBehavior,
     on_listening: Option<ListeningCallback>,
     process_recovery: Option<VoiceProcessRecovery>,
+    update: UpdateServices,
 ) -> Result<ServeOutcome>
 where
     F: Future<Output = ()> + Send + 'static,
@@ -609,7 +686,7 @@ where
     tracing::info!(%address, "CCCC Rust Web listening");
     let (web_shutdown, _) = broadcast::channel(1);
     let restart = (!matches!(restart_behavior, RestartBehavior::Disabled))
-        .then(|| Arc::new(RestartHandle::new(web_shutdown.clone())));
+        .then(|| Arc::new(RestartHandle::new(web_shutdown.clone(), update)));
     let mut restart_rx = web_shutdown.subscribe();
     let (shutdown_started, mut shutdown_started_rx) = tokio::sync::oneshot::channel();
     let (app, im_workers, browser_surfaces, app_state, voice_shutdown) =
@@ -625,6 +702,11 @@ where
             runtime_id,
             process_recovery,
         );
+    // Where session owners run, they keep the shared browsers of Web model
+    // members, so those members keep running across Web restarts too.
+    if cccc_daemon::session_owner::platform_supported() && !web_mode.is_read_only() {
+        browser_surfaces.hold_shared_browsers(app_state.client.clone());
+    }
     if let Err(error) = web_runtime_state::write(
         &app_state.home,
         host,
@@ -635,6 +717,17 @@ where
         &app_state.runtime_proof_key,
     ) {
         tracing::warn!(%error, "failed to record live Web binding");
+    }
+    // The host's own interface starts updates through the same handoff as the
+    // Web's route, and only while this Web serves.
+    if let Some(restart) = &restart
+        && let Some(on_trigger) = &restart.update.on_trigger
+        && restart.update_hook().is_some()
+    {
+        on_trigger(UpdateTrigger {
+            restart: Arc::clone(restart),
+            voice: Arc::clone(&app_state.codex_voice),
+        });
     }
     routes::spawn_web_model_supervisor(app_state.clone());
     routes::spawn_grok_webhooks(app_state.clone());
@@ -700,6 +793,13 @@ where
         tracing::warn!(%error, "failed to clear live Web binding");
     }
     server_result?;
+    if matches!(restart_behavior, RestartBehavior::ReturnToSupervisor)
+        && restart
+            .as_ref()
+            .is_some_and(|handle| handle.update_requested())
+    {
+        return Ok(ServeOutcome::UpdateRequested);
+    }
     if restart.as_ref().is_some_and(|handle| handle.requested()) {
         match restart_behavior {
             RestartBehavior::ExitProcess => std::process::exit(75),
@@ -787,4 +887,4 @@ mod static_asset_tests;
 mod lifecycle_tests;
 
 #[cfg(test)]
-cccc_daemon::session_owner_test_entry!();
+cccc_daemon::session_owner_test_entry!(crate::browser_launcher());

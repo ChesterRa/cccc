@@ -173,6 +173,27 @@ fn spawn_worker(state: AppState, group_id: String, actor_id: String) {
     });
 }
 
+/// Waits until no delivery or browser control in this process holds an
+/// Actor's browser work, or `timeout` passes. Returns whether all had ended.
+pub(crate) async fn wait_for_browser_work(timeout: std::time::Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let idle = IN_FLIGHT.get().is_none_or(|sessions| {
+            sessions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .is_empty()
+        });
+        if idle {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 pub(super) async fn deliver_pending(
     state: &AppState,
     group_id: &str,
@@ -474,6 +495,10 @@ async fn deliver_once(
             record_connector(state, group_id, actor_id, "failed", "", &message)?;
             return Ok(DeliveryOutcome::Stopped);
         }
+    }
+    // A stopping Web claims nothing more; what it holds finishes first.
+    if state.browser_surfaces.stopping() {
+        return Ok(DeliveryOutcome::Idle);
     }
     let mut wait_args = browser_wait_args(group_id, actor_id);
     if target["last_delivery_status"] == "deferred" {

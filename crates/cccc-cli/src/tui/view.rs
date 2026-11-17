@@ -98,6 +98,7 @@ pub(super) fn render(frame: &mut Frame, app: &App, now: Instant) {
         Screen::Sessions => super::sessions_view::render(frame, app, theme, now),
         Screen::Tasks => super::tasks_view::render(frame, app, theme, now),
         Screen::Pending => super::pending_view::render(frame, app, theme),
+        Screen::Update => super::update_view::render(frame, app, theme),
     }
 }
 
@@ -634,6 +635,9 @@ fn bottom(frame: &mut Frame, app: &App, theme: Theme) {
 
 pub(super) fn notice_line(app: &App, theme: Theme, width: usize) -> Option<Line<'static>> {
     let room = width.saturating_sub(2);
+    if let HostPhase::Updating { notice } = &app.host.phase {
+        return Some(Line::raw(format!(" {}", text::fit(notice, room))));
+    }
     if app.stopping() {
         let force = if app.interrupts > 0 { "again" } else { "twice" };
         return Some(Line::raw(format!(
@@ -906,7 +910,7 @@ pub(super) fn shows_age(app: &App) -> bool {
             Screen::Tasks => tasks,
             Screen::Pending => false,
             Screen::Sessions => sessions,
-            Screen::Help | Screen::Setup => false,
+            Screen::Help | Screen::Setup | Screen::Update => false,
         }
 }
 

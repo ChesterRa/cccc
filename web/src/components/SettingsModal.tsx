@@ -71,6 +71,9 @@ const WebModelConnectorsTab = lazy(() =>
 const DeveloperTab = lazy(() =>
   import("./modals/settings/DeveloperTab").then((module) => ({ default: module.DeveloperTab })),
 );
+const UpdateTab = lazy(() =>
+  import("./modals/settings/UpdateTab").then((module) => ({ default: module.UpdateTab })),
+);
 const QuickRepliesTab = lazy(() =>
   import("./modals/settings/QuickRepliesTab").then((module) => ({
     default: module.QuickRepliesTab,
@@ -469,6 +472,7 @@ export function SettingsModal({
               id: "webModels" as const,
               label: t("tabs.webModels", { defaultValue: "ChatGPT Web Model" }),
             },
+            { id: "update" as const, label: t("tabs.update") },
             { id: "developer" as const, label: t("tabs.developer") },
           ]
         : []),
@@ -890,6 +894,10 @@ export function SettingsModal({
                     currentGroupId={groupId}
                     onOpenWebAccess={() => setGlobalTab("webAccess")}
                   />
+                )}
+
+                {activeTab === "update" && (
+                  <UpdateTab isActive={scope === "global" && activeTab === "update"} />
                 )}
 
                 {activeTab === "developer" && (
