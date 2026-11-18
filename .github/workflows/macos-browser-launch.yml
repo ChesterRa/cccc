@@ -1,0 +1,45 @@
+name: Compare macOS background browser launch methods
+on:
+  push:
+    branches: [probe/macos-browser-launch]
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: macos-15
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.19.0"
+      - name: Compare isolated headless Chrome launches
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          python3 -BI scripts/tests/macos_launch/probe.py | tee "$RUNNER_TEMP/launch.json"
+      - name: Verify the direct Chrome control and report the two launchers
+        shell: bash
+        run: |
+          python3 - "$RUNNER_TEMP/launch.json" <<'PY'
+          import json, os, sys
+          with open(sys.argv[1]) as source:
+              cases = json.load(source)["cases"]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              for name in ("open", "appkit", "direct"):
+                  line = f"{name}: {cases[name]['status']}"
+                  print(line)
+                  print(f"- {line}", file=summary)
+          if cases["direct"]["status"] != "ready":
+              sys.exit("Direct Chrome control did not establish the private CDP connection")
+          if all(cases[name]["status"] != "ready" for name in ("open", "appkit")):
+              sys.exit("Direct Chrome succeeded. Neither native launcher established the private CDP connection.")
+          PY
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: macos-browser-launch-comparison
+          path: ${{ runner.temp }}/launch.json
+          if-no-files-found: warn
