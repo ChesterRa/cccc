@@ -20,11 +20,23 @@ environment() {
     df -Pk "$RUNNER_TEMP"
 }
 
+selected_mode() {
+    python3 -I - "$evidence/navigation/selection.json" <<'PYMODE'
+import json, sys
+with open(sys.argv[1]) as source:
+    result = json.load(source)
+mode = result["selected"]
+assert mode in ("standard", "mock", "runner-home") and result["ready"][mode] is True
+print(mode)
+PYMODE
+}
+
+chrome_mode=$(selected_mode)
+
 prepare() {
     [[ $(uname -s) == Darwin && $(uname -m) == arm64 ]]
     [[ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ]]
-    mkdir "$work"
-    mkdir "$evidence" "$work/previous" "$work/current" "$work/bin"
+    mkdir "$work/previous" "$work/current" "$work/bin"
     environment | tee "$evidence/environment.txt"
     printf '%s\n' "$GITHUB_SHA" > "$evidence/fixture-commit.txt"
     for role in previous current; do
@@ -33,7 +45,13 @@ prepare() {
         printf '%s\n' "$ref" > "$evidence/$role-commit.txt"
     done
     (cd "$work/previous" && git apply --check "$patches/previous-direct.patch" && git apply "$patches/previous-direct.patch")
-    shasum -a 256 "$patches/previous-direct.patch" > "$evidence/patches.sha256"
+    if [[ $chrome_mode == mock ]]; then
+        (cd "$work/previous" && git apply --check "$patches/previous-test-keychain.patch" && git apply "$patches/previous-test-keychain.patch")
+    fi
+    if [[ $chrome_mode == runner-home ]]; then
+        (cd "$work/previous" && git apply --check "$patches/previous-runner-home.patch" && git apply "$patches/previous-runner-home.patch")
+    fi
+    shasum -a 256 "$patches/previous-direct.patch" "$patches/previous-test-keychain.patch" "$patches/previous-runner-home.patch" > "$evidence/patches.sha256"
     xcrun --sdk macosx clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror \
         "$work/current/scripts/tests/macos_maintenance/inspect_process.c" -o "$work/inspect-process"
     for role in previous current; do
@@ -64,7 +82,12 @@ PY
 build() {
     role=$1
     case "$role" in
-        previous) expected=d86c7b6159cbeee50763ed8ed07fe2228f95ac5a695e4bf92613ec3b231c8276 ;;
+        previous)
+            case "$chrome_mode" in
+                mock) expected=12930903a772c0c7882ba0244113ba4593d7567cb24235fe9542196676bdb2fe ;;
+                runner-home) expected=5929d3cddab561eb5a46f40416c13d17940ac5e89dd066df1a46f8cd289fd822 ;;
+                standard) expected=e4fa535f1447de4d08685eaa293bd6809d5339b6d2ae7f9e60f50280996135ff ;;
+            esac ;;
         current) expected=05669bd542e265a9adf1e706c1776d6fcafa58348599ecf01df61065a319131c ;;
         *) exit 2 ;;
     esac
@@ -92,6 +115,7 @@ run_case() {
     py=$(command -v python3)
     /usr/bin/env -i PATH=/usr/bin:/bin LANG=C HOME="$private/home" TMPDIR="$private/tmp" \
         CCCC_HOME="$private/cccc" CODEX_HOME="$private/codex" CLAUDE_CONFIG_DIR="$private/claude" \
+        CCCC_TEST_CHROME_MODE="$chrome_mode" \
         CCCC_TEST_NODE="$(command -v node)" CCCC_TEST_PREVIOUS_DIST="$work/previous/web/dist" \
         CCCC_TEST_SDK_INSPECTOR="$work/inspect-process" "$py" -BI \
         scripts/tests/macos_maintenance/busy.py "$work/bin/previous" "$work/bin/current" "$out" "$kind" \
@@ -99,22 +123,9 @@ run_case() {
     test -s "$out/$kind/result.json"
 }
 
-kilo_case() {
-    local old mode
-    case "$1" in
-        cold) old=current; mode=only ;;
-        upgrade) old=previous; mode=0 ;;
-        *) exit 2 ;;
-    esac
-    CCCC_TEST_KILO_EARLY="$mode" bash "$work/current/scripts/tests/macos_maintenance/coverage/real_cli/run.sh" \
-        kilo "$work/bin/$old" "$work/bin/current" "$evidence/kilo-$1" "$work/inspect-process"
-    test -s "$evidence/kilo-$1/kilo/result.json"
-}
-
 case "${1:-}" in
     prepare) prepare ;;
     build) build "${2:?previous or current}" ;;
     case) run_case "${2:?daemon, local or release}" ;;
-    kilo) kilo_case "${2:?cold or upgrade}" ;;
-    *) echo 'Expected prepare, build ROLE, case ENTRY, or kilo CASE' >&2; exit 2 ;;
+    *) echo 'Expected prepare, build ROLE, or case ENTRY' >&2; exit 2 ;;
 esac

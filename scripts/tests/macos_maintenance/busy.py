@@ -115,6 +115,10 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
                     json.dumps({"finished": list(finished)}).encode(),
                     "application/json",
                 )
+            elif self.path == "/ci-navigation-check":
+                self.respond(b"<title>private navigation check</title><script>fetch('/ci-navigation-loaded')</script>", "text/html")
+            elif self.path == "/ci-navigation-loaded":
+                self.respond(b"ok", "text/plain")
             elif self.path == "/":
                 self.respond(page, "text/html; charset=utf-8")
             else:
@@ -276,6 +280,8 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
                 text=True,
             )
             assert "--headless=new" in argv.split() and "--user-data-dir=" in argv
+            assert ("--use-mock-keychain" in argv.split()) == (os.environ["CCCC_TEST_CHROME_MODE"] == "mock")
+
         else:
             raise RuntimeError(
                 "the fixture needs a native process identity on this platform"
@@ -301,6 +307,10 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
                 assert owned and owned[0] == original["pid"] == resource["metadata"]["pid"]
                 cdp_port = int(resource["metadata"]["cdp_port"])
                 assert f"--remote-debugging-port={cdp_port}" in owned[1].split()
+                spec = importlib.util.spec_from_file_location("private_browser_sample", here.parent / "macos_launch/browser_sample.py")
+                sample = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(sample)
+                assert sample.owns_listener(owned[0], cdp_port), "private Chrome no longer owns the CDP port"
                 devtools = f"http://127.0.0.1:{cdp_port}/json/list"
                 with urllib.request.urlopen(devtools, timeout=3) as response:
                     targets = json.load(response)
@@ -308,12 +318,18 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
                     ({"url": t.get("url"), "type": t.get("type"), "title": t.get("title")}
                      for t in targets if t["id"] == original["target"]), None
                 )
+                if sys.platform == "darwin":
+                    evidence["samples"] = sample.sample_processes(owned[0], Path(original["profile"]), case)
                 if evidence["target"] and os.environ.get("CCCC_TEST_NODE"):
                     document = subprocess.check_output(
                         [os.environ["CCCC_TEST_NODE"], here.parent / "macos_launch/page-state.mjs",
-                         str(cdp_port), original["target"]], text=True, timeout=3,
+                         str(cdp_port), original["target"], url + "ci-navigation-check"], text=True, timeout=12,
                     )
-                    evidence["document"] = json.loads(document)
+                    evidence["post_verdict_probe"] = json.loads(document)
+                    deadline = time.monotonic() + 2
+                    while ["GET", "/ci-navigation-loaded"] not in http_trace and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    evidence["post_verdict_http"] = list(http_trace[len(evidence["http_requests"]):])
             except Exception as error:
                 evidence["target_read_error"] = str(error)
             try:
@@ -325,6 +341,7 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
                 evidence["delivery_read_error"] = str(error)
             (case / "failed-first-prompt.json").write_text(json.dumps(evidence, indent=2) + "\n")
             raise
+        (case / "first-submitted.json").write_text(json.dumps(ev("submit", one)) + "\n")
         trace("first turn started")
         if kind == "daemon":
             cli("daemon", "stop", "--keep-agents")
@@ -444,6 +461,16 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
         logs.close()
         (case / "http-trace.json").write_text(json.dumps(http_trace, indent=2) + "\n")
         (case / "events.json").write_text(json.dumps(events, indent=2) + "\n")
+        diagnostics = [(home / "daemon/cccc-web.log", "web-diagnostics.log"),
+                       (home / "daemon/ccccd.log", "daemon-diagnostics.log")]
+        diagnostics.extend((log, "chrome-stderr.log") for log in home.glob("state/web_model_browser/_shared/*/fixture-chrome.log"))
+        for source, filename in diagnostics:
+            try:
+                with source.open("rb") as reader:
+                    reader.seek(max(0, os.fstat(reader.fileno()).st_size - 65536))
+                    (case / filename).write_bytes(reader.read())
+            except FileNotFoundError:
+                pass
         for lock in home.rglob("SingletonLock"):
             control.stop_profile(control.profile_owner(lock.parent.resolve()))
 

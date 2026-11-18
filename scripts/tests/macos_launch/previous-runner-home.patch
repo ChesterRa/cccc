@@ -1,0 +1,15 @@
+--- a/crates/cccc-web/src/browser_surface/system_browser.rs
++++ b/crates/cccc-web/src/browser_surface/system_browser.rs
+@@ -164,10 +164,10 @@
+             "-I",
+             "-c",
+             concat!(
+-                "import pathlib, subprocess, sys\n",
++                "import os, pathlib, pwd, subprocess, sys\n",
+                 "profile = next(pathlib.Path(arg.split('=', 1)[1]) for arg in sys.argv[1:] if arg.startswith('--user-data-dir='))\n",
+                 "with (profile.parent / 'fixture-chrome.log').open('ab') as log:\n",
+-                "    subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)"
++                "    subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True, env=dict(os.environ, HOME=pwd.getpwuid(os.getuid()).pw_dir))"
+             ),
+         ]);
+         command.arg(&self.executable);

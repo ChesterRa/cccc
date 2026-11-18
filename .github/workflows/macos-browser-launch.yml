@@ -1,4 +1,4 @@
-name: macOS busy browser and Kilo maintenance
+name: macOS busy browser navigation and maintenance
 on:
   push:
     branches: [probe/macos-browser-launch]
@@ -17,6 +17,9 @@ jobs:
         with:
           node-version: "24.19.0"
           package-manager-cache: false
+      - name: Check background document navigation with and without Chromium's test keychain
+        timeout-minutes: 7
+        run: python3 -BI scripts/tests/macos_launch/navigation.py "$RUNNER_TEMP/cccc-busy-direct/evidence/navigation"
       - uses: dtolnay/rust-toolchain@1.88.0
       - name: Prepare pinned sources, macOS SDK inspector and Web assets
         timeout-minutes: 8
@@ -28,26 +31,25 @@ jobs:
         name: Build the pinned candidate and verify separate source identities
         timeout-minutes: 20
         run: bash scripts/tests/macos_launch/direct.sh build current
-      - name: Replace the daemon during a browser response
+      - id: daemon_case
+        name: Replace the daemon during a browser response
         if: ${{ !cancelled() && steps.built.outcome == 'success' }}
         timeout-minutes: 8
-        run: bash scripts/tests/macos_launch/direct.sh case daemon
+        run: |
+          rc=0
+          bash scripts/tests/macos_launch/direct.sh case daemon || rc=$?
+          if test -s "$RUNNER_TEMP/cccc-busy-direct/evidence/results/daemon/first-submitted.json"; then
+            echo "busy=yes" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$rc"
       - name: Restart the local build during a browser response
-        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.built.outcome == 'success' && steps.daemon_case.outputs.busy == 'yes' }}
         timeout-minutes: 8
         run: bash scripts/tests/macos_launch/direct.sh case local
       - name: Install the release during a browser response
-        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.built.outcome == 'success' && steps.daemon_case.outputs.busy == 'yes' }}
         timeout-minutes: 8
         run: bash scripts/tests/macos_launch/direct.sh case release
-      - name: Deliver the first message to a cold candidate Kilo terminal
-        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
-        timeout-minutes: 8
-        run: bash scripts/tests/macos_launch/direct.sh kilo cold
-      - name: Keep an active Kilo member across two builds
-        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
-        timeout-minutes: 8
-        run: bash scripts/tests/macos_launch/direct.sh kilo upgrade
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

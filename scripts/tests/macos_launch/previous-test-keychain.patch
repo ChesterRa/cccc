@@ -1,0 +1,10 @@
+--- a/crates/cccc-web/src/browser_surface/system_browser.rs
++++ b/crates/cccc-web/src/browser_surface/system_browser.rs
+@@ -171,6 +171,7 @@
+             ),
+         ]);
+         command.arg(&self.executable);
++        command.arg("--use-mock-keychain");
+         command.args(&browser_args);
+         let output = command
+             .output()
