@@ -1,65 +1,98 @@
 #!/usr/bin/python3
-"""Offline Hermes add contract: REMAINDER arguments and discovery-first confirmations."""
-import argparse
+"""Offline Hermes CLI contract: profile selection, `config path`, `config get`, `config unset`."""
 import json
 import os
 from pathlib import Path
 import sys
 
-if sys.argv[1:] == ["--version"]:
+root = Path(os.environ["CCCC_HERMES_REGISTRATION_FIXTURE_ROOT"])
+argv = sys.argv[1:]
+with (root / "hermes-calls.jsonl").open("a") as log:
+    log.write(json.dumps(argv) + "\n")
+if argv == ["--version"]:
     print("Owned Hermes fixture")
     sys.exit(0)
 
-parser = argparse.ArgumentParser()
-parser.add_argument("command", choices=["mcp"])
-parser.add_argument("action", choices=["add"])
-parser.add_argument("name")
-parser.add_argument("--command", dest="mcp_command")
-parser.add_argument("--args", nargs=argparse.REMAINDER, default=[])
-parser.add_argument("--env", nargs="*", default=[])
-args = parser.parse_args()
+home = Path(os.environ["HERMES_HOME"])
+# A HERMES_HOME that names a profile directory is used as it is.
+in_profile = home.parent.name == "profiles"
+base = home.parent.parent if in_profile else home
+profile = None
+explicit = argv[:1] == ["--profile"]
+if explicit:
+    profile, argv = argv[1], argv[2:]
+    directory = base if profile == "default" else base / "profiles" / profile
+elif in_profile:
+    directory = home
+else:
+    # Without --profile every command rereads the sticky profile.
+    sticky = base / "active_profile"
+    if sticky.exists() and sticky.read_text().strip() not in ("", "default"):
+        profile = sticky.read_text().strip()
+    directory = base / "profiles" / profile if profile else base
+if not directory.is_dir():
+    if explicit:
+        print(f"Error: Profile '{profile}' does not exist.", file=sys.stderr)
+    else:
+        print(f"Error: Saved profile '{profile}' no longer exists.", file=sys.stderr)
+    sys.exit(1)
+config_path = directory / "config.yaml"
+managed = base / "managed.json"
 
-profile = Path(os.environ["HERMES_HOME"])
-config_path = profile / "config.yaml"
-config = json.loads(config_path.read_text())
 
-
-def confirm(question, default=False):
+def load(path):
+    """The user's file; a broken one leaves Hermes on its last good copy."""
     try:
-        value = input(question).strip().lower()
-    except EOFError:
-        return default
-    return value in ("y", "yes") if value else default
+        return json.loads(path.read_text()) if path.exists() else {}
+    except ValueError:
+        good = path.parent / "last-good.json"
+        return json.loads(good.read_text()) if good.exists() else {}
 
 
-def save(entry):
-    config.setdefault("mcp_servers", {})[args.name] = entry
-    config_path.write_text(json.dumps(config))
+def managed_section(section):
+    return (json.loads(managed.read_text()).get(section) or {}) if managed.exists() else {}
 
 
-if args.name in config.get("mcp_servers", {}):
-    if not confirm("Server already exists. Overwrite? [y/N]: "):
+if argv == ["config", "path"]:
+    if explicit and (root / "pinned-path-differs").exists():
+        print(root / "elsewhere" / "config.yaml")
         sys.exit(0)
-
-entry = {"command": args.mcp_command}
-if args.args:
-    entry["args"] = args.args
-if args.env:
-    entry["env"] = dict(value.split("=", 1) for value in args.env)
-
-failed = args.args != ["mcp"] or (Path(os.environ["CCCC_HERMES_REGISTRATION_FIXTURE_ROOT"]) / "probe-fails").exists()
-if failed:
-    print("Failed to connect: owned fixture rejection")
-    if confirm("Save config anyway (you can test later)? [y/N]: "):
-        entry["enabled"] = False
-        save(entry)
+    print(config_path)
+    switch = root / "switch-sticky-after-path"
+    if not explicit and switch.exists():
+        (base / "active_profile").write_text(switch.read_text())
+        switch.unlink()
     sys.exit(0)
 
-try:
-    choice = input("Enable all 1 tools? [Y/n/select]: ").strip().lower()
-except EOFError:
+if argv[:2] == ["config", "get"] and argv[3:] == ["--json"]:
+    section, _, name = argv[2].partition(".")
+    servers = dict(load(config_path).get(section) or {})
+    servers.update(managed_section(section))
+    if name not in servers:
+        print(f"Config key not set: {argv[2]}", file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps(servers[name]))
     sys.exit(0)
-if choice in ("n", "no"):
+
+if argv[:2] == ["config", "unset"] and len(argv) == 3:
+    section, _, name = argv[2].partition(".")
+    if name in managed_section(section):
+        print(f"Cannot unset '{argv[2]}': it is managed by your administrator.", file=sys.stderr)
+        sys.exit(1)
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    servers = config.get(section) or {}
+    if name not in servers:
+        print(f"Config key not set: {argv[2]}", file=sys.stderr)
+        sys.exit(1)
+    if not (root / "remove-ignored").exists():
+        del servers[name]
+        if servers:
+            config[section] = servers
+        else:
+            config.pop(section, None)
+        config_path.write_text(json.dumps(config))
+    print(f"Unset {argv[2]} from {config_path}")
     sys.exit(0)
-entry["enabled"] = True
-save(entry)
+
+print("unsupported fixture command: " + " ".join(argv), file=sys.stderr)
+sys.exit(2)

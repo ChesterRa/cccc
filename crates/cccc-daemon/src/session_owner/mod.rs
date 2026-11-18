@@ -14,6 +14,8 @@ mod browser_backend;
 pub(crate) mod browser_operations;
 #[cfg(unix)]
 mod client;
+#[cfg(all(test, unix))]
+mod confirmation_tests;
 #[cfg(unix)]
 mod controller;
 mod facade;
@@ -233,7 +235,10 @@ pub(crate) fn mcp_binding_file(group: &str, actor: &str) -> Option<std::path::Pa
 
 /// Stop retained member owners without starting the collaboration daemon or any
 /// provider. The same home lock excludes a concurrent controller startup.
-pub async fn stop_without_daemon(home: cccc_core::HomeLayout) -> anyhow::Result<ShutdownReport> {
+/// None means no live holder was found. A holder can have only a browser.
+pub async fn stop_without_daemon(
+    home: cccc_core::HomeLayout,
+) -> anyhow::Result<Option<ShutdownReport>> {
     #[cfg(unix)]
     if platform_supported() {
         return tokio::task::spawn_blocking(move || controller::stop_offline(&home)).await?;

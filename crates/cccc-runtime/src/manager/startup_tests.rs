@@ -123,10 +123,80 @@ fn an_explicit_release_cannot_release_a_replacement_terminal() {
             .expect("idempotent release")
     );
     assert!(matches!(submit(&new, "one"), PtyHandoff::Accepted));
-    wait_until(|| temp.path().join("received").exists());
+    wait_until(|| std::fs::read(temp.path().join("received")).is_ok_and(|data| !data.is_empty()));
     assert_eq!(
         std::fs::read_to_string(temp.path().join("received")).expect("received"),
         "one"
     );
     stop(&new.group_id, &new.actor_id).expect("stop new");
+}
+
+#[test]
+fn new_kilo_viewer_keeps_input_unwritten_until_its_native_editor_is_drawn() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let script = r#"
+        stty -echo
+        wait_for_file() { while [ ! -f "$1" ]; do sleep 0.01; done; }
+        printf '\033[?2004h'
+        wait_for_file paint
+        printf '  ┃\r\n  ┃\r\n  ┃\r\n  ┃  Ask · Model\r\n  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\033[2;6H'
+        wait_for_file disable
+        printf '\033[?2004l'
+        wait_for_file enable
+        printf '\033[?2004h'
+        IFS= read -r input
+        printf '%s' "$input" > received
+        sleep 30
+    "#;
+    let mut viewer = spec(&temp, "g_new_kilo", "member", script);
+    viewer.runner = cccc_contracts::RunnerKind::Pty;
+    let actor = start(viewer).expect("viewer");
+    let attempt = |text: &[u8]| {
+        submit_sequence_for_new_kilo_viewer(
+            &actor,
+            text,
+            &[b"\n"],
+            Duration::ZERO,
+            Duration::ZERO,
+            &AtomicBool::new(false),
+        )
+    };
+    wait_until(|| {
+        crate::bracketed_paste_enabled(&actor.group_id, &actor.actor_id).expect("paste mode")
+    });
+    let wait = |target: &SessionStatus, timeout| {
+        wait_for_new_kilo_composer(target, timeout, &AtomicBool::new(false))
+            .expect("viewer readiness")
+    };
+    assert!(!wait(&actor, Duration::ZERO));
+    assert!(matches!(
+        attempt(b"too soon"),
+        PtyHandoff::NotWritten(PtyHandoffReason::KiloComposerPending)
+    ));
+    std::fs::write(temp.path().join("paint"), b"").expect("paint");
+    assert!(wait(&actor, Duration::from_secs(3)));
+    let mut previous = actor.clone();
+    previous.started_at.push_str("-old");
+    assert!(!wait(&previous, Duration::ZERO));
+    std::fs::write(temp.path().join("disable"), b"").expect("disable native paste");
+    wait_until(|| {
+        !crate::bracketed_paste_enabled(&actor.group_id, &actor.actor_id).expect("paste mode")
+    });
+    assert!(matches!(
+        attempt(b"paste was disabled"),
+        PtyHandoff::NotWritten(PtyHandoffReason::KiloComposerPending)
+    ));
+    std::fs::write(temp.path().join("enable"), b"").expect("enable native paste");
+    wait_until(|| match attempt(b"first") {
+        PtyHandoff::Accepted => true,
+        PtyHandoff::NotWritten(PtyHandoffReason::KiloComposerPending) => false,
+        other => panic!("unexpected handoff: {other:?}"),
+    });
+    wait_until(|| std::fs::read(temp.path().join("received")).is_ok_and(|data| !data.is_empty()));
+    assert_eq!(
+        std::fs::read(temp.path().join("received")).expect("input"),
+        b"first"
+    );
+    stop(&actor.group_id, &actor.actor_id).expect("stop viewer");
 }

@@ -17,7 +17,7 @@ async fn unresponsive_macos_launcher_is_reaped_and_reports_an_unconfirmed_browse
         vnc_error: String::new(),
         opened: None,
     };
-    let mut command = std::process::Command::new("/bin/sh");
+    let mut command = cccc_runtime::background_command("/bin/sh");
     command
         .current_dir(profile.path())
         .args(["-c", "echo $$ > launcher.pid && exec /bin/sleep 120"]);
@@ -93,29 +93,42 @@ async fn system_browser_answers_cdp_and_stops_its_original_process() -> Result<(
 #[tokio::test]
 async fn failed_cdp_connection_stops_the_browser_opened_for_its_profile() -> Result<()> {
     let _guard = chrome_test_guard().await;
-    let profile = tempfile::tempdir()?;
+    let temp = tempfile::tempdir()?;
+    let profile = temp.path().canonicalize()?;
     let mut launch = SystemBrowserLaunch::prepare(800, 600, true).await?;
-    // Keep the address CCCC probes under this test's control. Chrome starts on
-    // its own free port, while this HTTP server never advertises a CDP socket.
+    // Start a real browser before inducing the connection failure. This
+    // exercises cleanup even on a host where LaunchServices cannot open apps.
+    launch.cdp_port = 0;
+    let args = launch.browser_args(
+        &profile,
+        vec![
+            "--headless=new".into(),
+            "--disable-background-networking".into(),
+        ],
+    );
+    let mut chrome = cccc_runtime::background_tokio_command(&launch.executable)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()?;
+    let pid = chrome.id().context("missing fixture browser PID")?;
+    assert_eq!(
+        wait_for_browser_pid(&profile, Instant::now() + CDP_START_TIMEOUT).await?,
+        pid
+    );
+    let birth = process_identity(pid)?.context("Chrome ended before the CDP failure")?;
     let (url, server) = local_page("No debugger here").await;
     launch.cdp_port = reqwest::Url::parse(&url)?.port().context("fixture port")?;
-    let args = vec![
-        "--headless=new".into(),
-        "--disable-background-networking".into(),
-        "--remote-debugging-port=0".into(),
-    ];
-    let (result, observed) = tokio::join!(launch.launch(profile.path(), args), async {
-        let pid = wait_for_browser_pid(profile.path(), Instant::now() + CDP_START_TIMEOUT).await?;
-        let birth = process_identity(pid)?.context("Chrome ended before the CDP failure")?;
-        anyhow::Ok((pid, birth))
-    });
+    // The launcher has completed, but CCCC has not yet recorded the PID.
+    // Its normal failure path must identify and stop Chrome from the profile.
+    let mut completed_launcher = cccc_runtime::background_command("/usr/bin/true");
+    let (result, exit) = tokio::join!(
+        launch.launch_with_macos_open(&profile, &mut completed_launcher, CDP_START_TIMEOUT),
+        tokio::time::timeout(CDP_START_TIMEOUT + Duration::from_secs(10), chrome.wait()),
+    );
     server.abort();
-
-    let (pid, birth) = observed?;
-    let still_running = process_identity(pid)?.as_ref() == Some(&birth);
-    if still_running {
-        stop_opened_browser(profile.path(), Some(&(pid, birth))).await?;
-    }
     let error = result
         .err()
         .context("expected the CDP connection to fail")?;
@@ -125,10 +138,8 @@ async fn failed_cdp_connection_stops_the_browser_opened_for_its_profile() -> Res
             .contains("CDP endpoint did not become ready"),
         "{error:#}"
     );
-    assert!(
-        !still_running,
-        "the failed launch left its Chrome process running"
-    );
+    exit.context("the failed connection left its Chrome process running")??;
+    assert_ne!(process_identity(pid)?.as_ref(), Some(&birth));
     assert!(
         launch.opened().is_none(),
         "the confirmed stop must clear the launch record"

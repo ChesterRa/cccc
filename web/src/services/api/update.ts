@@ -76,6 +76,7 @@ export type LocalBuild =
       token: string;
       keep: KeepPreview;
     }
+  | { state: "incompatible"; version: string }
   /** It changed, but what it is could not be read: whether it is newer is unknown. */
   | { state: "unreadable"; reason: string };
 

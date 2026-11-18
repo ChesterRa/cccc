@@ -6,6 +6,7 @@ mod events;
 mod events_migration;
 #[cfg(test)]
 mod events_migration_tests;
+mod hermes_setup;
 mod managed_reader;
 mod notice_gate;
 mod output;
@@ -28,7 +29,9 @@ pub(crate) use supervisor::submit_prepared;
 pub(crate) use supervisor::{
     cancel_turn, respond_interaction, respond_permission, structured_state,
 };
-pub(crate) use supervisor::{registered_generation, registered_running, registered_workspace};
+pub(crate) use supervisor::{
+    pauses_after_confirmation, registered_generation, registered_running, registered_workspace,
+};
 
 use cccc_core::HomeLayout;
 use serde::Serialize;
@@ -100,8 +103,13 @@ pub(crate) fn confirmation_paused(group_id: &str, actor_id: &str) -> std::io::Re
     confirmation_pause::is_paused(&(group_id.to_owned(), actor_id.to_owned()))
 }
 
+/// Read where the pause lives: a session owner keeps its members' pauses, and
+/// a start must be refused there before it retires the owner's registration.
 pub(super) fn ensure_confirmation_allowed(group_id: &str, actor_id: &str) -> std::io::Result<()> {
-    confirmation_pause::ensure_allowed(&(group_id.to_owned(), actor_id.to_owned()))
+    if confirmation_paused(group_id, actor_id)? {
+        return Err(confirmation_pause::paused_error());
+    }
+    Ok(())
 }
 
 pub(super) fn is_confirmation_paused_error(error: &std::io::Error) -> bool {
@@ -124,6 +132,15 @@ pub(crate) fn retry_confirmation(group_id: &str, actor_id: &str) -> std::io::Res
     workspace_trust_recovery::cancel(&key)?;
     cccc_runtime::reset_exited_startup_input(group_id, actor_id)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
+    confirmation_pause::retry(&key)
+}
+
+/// A session owner retiring a member's registration: nothing outside the owner
+/// could observe or clear its confirmation state afterwards. Cancelling first
+/// keeps a late exit of the retired setup or prompt from pausing again.
+pub(crate) fn forget_confirmation(group_id: &str, actor_id: &str) -> std::io::Result<()> {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    workspace_trust_recovery::cancel(&key)?;
     confirmation_pause::retry(&key)
 }
 
@@ -185,6 +202,8 @@ struct ViewerLaunch {
     env: std::collections::BTreeMap<String, String>,
     cwd: std::path::PathBuf,
     submit: cccc_contracts::ActorSubmit,
+    /// The last Kilo viewer whose first input the bound session recorded.
+    confirmed_input: Option<(u32, String)>,
 }
 
 struct Session {

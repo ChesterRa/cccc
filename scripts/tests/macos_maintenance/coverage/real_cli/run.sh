@@ -13,7 +13,7 @@ npm_exe=$(command -v npm)
 node_dir=$(dirname "$(command -v node)")
 if [ "$(uname -s)" = Darwin ]; then test -x "$inspect"; fi
 mkdir -p "$out"
-fixture_root=$(mktemp -d /tmp/cccc-isolated.XXXXXXXX)
+fixture_root=$(cd "$(mktemp -d /tmp/cccc-isolated.XXXXXXXX)" && pwd -P)
 cleanup() {
     if [ "$?" -eq 0 ] || [ "${CCCC_TEST_KEEP_FAILED_PROFILE:-0}" != 1 ]; then
         rm -rf -- "$fixture_root"

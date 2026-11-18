@@ -96,6 +96,17 @@ pub(crate) struct SelfCheckBuild {
     pub source_id: String,
 }
 
+impl SelfCheck {
+    pub(crate) fn accepts_local_restart(&self) -> bool {
+        self.capabilities.local_restart
+            && self
+                .capabilities
+                .intent_schemas
+                .contains(&attended_update::INTENT_SCHEMA)
+            && self.relay_schemas.contains(&RELAY_SCHEMA)
+    }
+}
+
 pub(crate) fn print_self_check() -> Result<()> {
     let check = SelfCheck {
         schema: SELF_CHECK_SCHEMA,
@@ -1265,13 +1276,7 @@ async fn prepare_local(
     {
         return Err(changed());
     }
-    let capabilities = &check.capabilities;
-    if !capabilities.local_restart
-        || !capabilities
-            .intent_schemas
-            .contains(&attended_update::INTENT_SCHEMA)
-        || !check.relay_schemas.contains(&RELAY_SCHEMA)
-    {
+    if !check.accepts_local_restart() {
         return Err((
             None,
             rejection(

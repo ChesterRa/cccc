@@ -188,3 +188,38 @@ fn oversized_terminal_still_answers_all_server_owned_queries() {
         ]
     );
 }
+
+#[test]
+fn kilo_checks_the_focused_empty_chat_editor_independently_of_terminal_width() {
+    for (cols, rows) in [(64, 20), (120, 36), (168, 44)] {
+        let mut mirror = TerminalStateMirror::new(cols, rows);
+        mirror.process(b"\x1b[?2004h");
+        assert!(!mirror.kilo_composer_ready());
+
+        // The native editor at column 5 with a sidebar beyond its right edge.
+        mirror.process("  ┃\r\n  ┃\r\n  ┃\r\n  ┃  Code  · Selected model\r\n  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\x1b[2;42HSidebar\x1b[2;6H".as_bytes());
+        assert!(mirror.kilo_composer_ready());
+        // A modal retains the same underlying footer but moves the cursor.
+        mirror.process(b"\x1b[12;35H");
+        assert!(!mirror.kilo_composer_ready());
+        mirror.process(b"\x1b[2;6Hdraft\x1b[2;6H");
+        assert!(!mirror.kilo_composer_ready());
+        mirror.process(b"\x1b[2;6H     \x1b[2;6H");
+        assert!(mirror.kilo_composer_ready());
+        // An empty native shell editor uses the same border and cursor.
+        mirror.process("\x1b[2;6H  \x1b[4;4H\x1b[K  Shell\x1b[2;6H".as_bytes());
+        assert!(!mirror.kilo_composer_ready());
+    }
+}
+
+#[test]
+fn kilo_accepts_wrapped_model_labels_only_with_the_complete_input_border() {
+    let mut mirror = TerminalStateMirror::new(40, 20);
+    mirror.process("  ┃\r\n  ┃\r\n  ┃\r\n  ┃  Code ·Mock CCCC openai-\r\n  ┃                  compatible\x1b[2;6H".as_bytes());
+    assert!(!mirror.kilo_composer_ready());
+    mirror.process("\x1b[6;3H╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\x1b[2;6H".as_bytes());
+    assert!(mirror.kilo_composer_ready());
+    // An unrelated row ends the editor before an otherwise matching border.
+    mirror.process(b"\x1b[5;3HX\x1b[2;6H");
+    assert!(!mirror.kilo_composer_ready());
+}

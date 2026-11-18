@@ -1,8 +1,8 @@
-use super::{AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD};
+use super::{AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD, kilo_input::KiloUserMessages};
 use serde_json::{Value, json};
 use std::io;
 use std::process::{ChildStdin, ChildStdout};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock, Weak};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -41,6 +41,9 @@ enum AcpCommand {
     Cancel {
         session_id: String,
         delegation_id: Option<String>,
+        /// Stop's cancel: refuse every later prompt before cancelling, so a
+        /// submission already on its way cannot start after it.
+        close_admission: bool,
         response: oneshot::Sender<io::Result<Option<String>>>,
     },
     Respond {
@@ -83,7 +86,40 @@ enum AcpCommand {
     ExternalDisconnected {
         reason: String,
     },
+    /// Where one turn stands, without changing anything.
+    TurnEnd {
+        turn_id: String,
+        response: oneshot::Sender<TurnEnd>,
+    },
     Close,
+}
+
+/// Where one prompt this client wrote stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum TurnEnd {
+    /// The loop still holds it.
+    Open,
+    /// Its prompt answered with an explicit stopReason: the provider ended it.
+    Stopped,
+    /// It ended without one, by an error or a lost link, so its outcome is
+    /// unknown (Hermes reports a lost turn as `unknown_execution`).
+    Unknown,
+}
+
+/// What a bounded cancel observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CancelOutcome {
+    /// No prompt of this client was open. A turn typed in the provider's own
+    /// terminal is not one: the provider cancels only this client's prompts.
+    NoTurn,
+    /// The cancelled prompt answered with an explicit stopReason.
+    Settled,
+    /// The cancel was written, but the prompt was still open at the deadline
+    /// or ended without a stopReason, so its outcome is unknown.
+    Requested,
+    /// The cancel was not confirmed written: the loop had ended, failed the
+    /// write or did not answer in time.
+    Unconfirmed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,11 +230,13 @@ impl AcpLifecycleControl {
 
 pub(super) struct AcpClient {
     commands: mpsc::Sender<AcpCommand>,
+    pub(super) kilo_input: OnceLock<Weak<KiloUserMessages>>,
     pub(super) events: broadcast::Sender<AnalystEvent>,
     task: Mutex<Option<JoinHandle<()>>>,
     auxiliary_tasks: Mutex<Vec<JoinHandle<()>>>,
     permissions: std::sync::Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
-    prompt_receipt: Mutex<Option<super::super::runtime_session::native_acp::PromptReceipt>>,
+    prompt_receipt: protocol_loop::SharedPromptReceipt,
+    open_prompt: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AcpClient {
@@ -235,6 +273,8 @@ impl AcpClient {
         let (frames, frame_receiver) = mpsc::channel(FRAME_CAPACITY);
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
         let permissions = std::sync::Arc::new(Mutex::new(std::collections::BTreeMap::new()));
+        let prompt_receipt = std::sync::Arc::new(Mutex::new(None));
+        let open_prompt = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         framing::spawn_reader(stdout, frames)?;
         let task = tokio::spawn(protocol_loop::run(
             std::sync::Arc::new(Mutex::new(stdin)),
@@ -246,16 +286,28 @@ impl AcpClient {
             permission_policy,
             prompt_completion,
             std::sync::Arc::clone(&permissions),
+            std::sync::Arc::clone(&prompt_receipt),
             private_values,
+            std::sync::Arc::clone(&open_prompt),
         ));
         Ok(Self {
             commands,
+            kilo_input: OnceLock::new(),
             events,
             task: Mutex::new(Some(task)),
             auxiliary_tasks: Mutex::new(Vec::new()),
-            prompt_receipt: Mutex::new(None),
+            prompt_receipt,
             permissions,
+            open_prompt,
         })
+    }
+
+    /// Whether a prompt this client wrote was open in its loop when read, from
+    /// the completed write until it ends, whether or not the provider has
+    /// reported it started. A cancel sent afterwards acts on the turn current
+    /// when the loop handles it.
+    pub(super) fn has_open_prompt(&self) -> bool {
+        self.open_prompt.load(std::sync::atomic::Ordering::Acquire)
     }
 
     pub(super) fn set_prompt_receipt(
@@ -336,14 +388,6 @@ impl AcpClient {
         delegation_id: &str,
         text: &str,
     ) -> io::Result<String> {
-        if let Some(receipt) = self
-            .prompt_receipt
-            .lock()
-            .map_err(|_| io::Error::other("ACP prompt receipt lock failed"))?
-            .as_ref()
-        {
-            receipt.mark_attempted()?;
-        }
         let (sender, receiver) = oneshot::channel();
         self.commands
             .send(AcpCommand::Prompt(PromptRequest {
@@ -390,16 +434,78 @@ impl AcpClient {
         self.cancel_input(session_id, None).await.map(|_| ())
     }
 
+    /// Cancels the prompt this client wrote, from the moment it was written,
+    /// whether or not the provider has reported it started. Answers whether
+    /// a prompt was there to cancel.
+    pub(super) async fn cancel_current(&self, session_id: &str) -> io::Result<bool> {
+        self.cancel_input(session_id, None)
+            .await
+            .map(|turn| turn.is_some())
+    }
+
+    /// Cancels the written prompt and waits for the provider to end it, all
+    /// within `bound`: a loop blocked writing to a provider that stopped
+    /// reading answers nothing, so every step shares the one deadline.
+    /// Used by stop only: it also closes this loop to later prompts.
+    pub(super) async fn cancel_and_settle(
+        &self,
+        session_id: &str,
+        bound: Duration,
+    ) -> CancelOutcome {
+        let deadline = tokio::time::Instant::now() + bound;
+        let cancel = self.send_cancel(session_id, None, true);
+        let turn = match tokio::time::timeout_at(deadline, cancel).await {
+            Ok(Ok(None)) => return CancelOutcome::NoTurn,
+            Ok(Ok(Some(turn))) => turn,
+            Ok(Err(_)) | Err(_) => return CancelOutcome::Unconfirmed,
+        };
+        loop {
+            match tokio::time::timeout_at(deadline, self.turn_end(&turn)).await {
+                Ok(Ok(TurnEnd::Stopped)) => return CancelOutcome::Settled,
+                Ok(Ok(TurnEnd::Open)) => {}
+                Ok(Ok(TurnEnd::Unknown) | Err(_)) | Err(_) => return CancelOutcome::Requested,
+            }
+            if tokio::time::timeout_at(deadline, tokio::time::sleep(Duration::from_millis(50)))
+                .await
+                .is_err()
+            {
+                return CancelOutcome::Requested;
+            }
+        }
+    }
+
+    async fn turn_end(&self, turn_id: &str) -> io::Result<TurnEnd> {
+        let (sender, receiver) = oneshot::channel();
+        self.commands
+            .send(AcpCommand::TurnEnd {
+                turn_id: turn_id.to_owned(),
+                response: sender,
+            })
+            .await
+            .map_err(|_| closed_error())?;
+        receiver.await.map_err(|_| closed_error())
+    }
+
     pub(super) async fn cancel_input(
         &self,
         session_id: &str,
         delegation_id: Option<&str>,
+    ) -> io::Result<Option<String>> {
+        self.send_cancel(session_id, delegation_id, false).await
+    }
+
+    async fn send_cancel(
+        &self,
+        session_id: &str,
+        delegation_id: Option<&str>,
+        close_admission: bool,
     ) -> io::Result<Option<String>> {
         let (sender, receiver) = oneshot::channel();
         self.commands
             .send(AcpCommand::Cancel {
                 session_id: session_id.to_owned(),
                 delegation_id: delegation_id.map(str::to_owned),
+                close_admission,
                 response: sender,
             })
             .await
@@ -421,20 +527,27 @@ impl AcpClient {
             .map_err(|_| closed_error())
     }
 
-    pub(super) async fn close(&self) {
+    /// Closes the protocol loop. Answers `false` when the loop did not end in
+    /// time and was aborted: whatever the provider was doing then is unknown.
+    pub(super) async fn close(&self) -> bool {
         if let Ok(mut tasks) = self.auxiliary_tasks.lock() {
             for task in tasks.drain(..) {
                 task.abort();
             }
         }
-        let _ = self.commands.send(AcpCommand::Close).await;
+        // A loop blocked writing to the provider never reads this command, so
+        // the deadline covers delivering it as well as the loop ending.
+        let deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
+        let _ = tokio::time::timeout_at(deadline, self.commands.send(AcpCommand::Close)).await;
         let task = self.task.lock().ok().and_then(|mut task| task.take());
         if let Some(mut task) = task
-            && tokio::time::timeout(STOP_TIMEOUT, &mut task).await.is_err()
+            && tokio::time::timeout_at(deadline, &mut task).await.is_err()
         {
             task.abort();
             let _ = task.await;
+            return false;
         }
+        true
     }
 }
 

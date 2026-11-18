@@ -29,6 +29,23 @@ pub(in crate::ops) fn confirmation_required(group_id: &str, actor_id: &str) -> b
         && super::status(group_id, actor_id).is_some_and(|status| status.running)
 }
 
+/// Hermes's own first setup is open in the member's terminal and not yet connected.
+/// A plain Start, a save of only Enabled and a Group start leave it open, so the
+/// user's input is kept; Restart and other saved changes still replace it.
+pub(in crate::ops) fn hermes_setup_open(
+    home: &HomeLayout,
+    group_id: &str,
+    actor: &Actor,
+) -> Result<bool, OpError> {
+    if !actor.external_session_id.is_empty()
+        || local_headless::running(group_id, &actor.id)
+        || !local_headless::confirmation_pending_active(group_id, &actor.id).map_err(OpError::io)?
+    {
+        return Ok(false);
+    }
+    Ok(actor_profile_runtime::resolve(home, actor)?.runtime == ActorRuntime::Hermes)
+}
+
 /// Match the automatic-delivery pause against the Actor's current effective runtime.
 pub(in crate::ops) fn confirmation_pause_applies(
     home: &HomeLayout,
@@ -51,7 +68,8 @@ pub(in crate::ops) fn confirmation_pause_applies(
         return Ok(false);
     }
     let effective = actor_profile_runtime::resolve(home, actor)?;
-    Ok(effective.runtime == ActorRuntime::Claude && local_headless::supports(&effective))
+    Ok(local_headless::pauses_after_confirmation(effective.runtime)
+        && local_headless::supports(&effective))
 }
 
 pub(in crate::ops) fn actor_response(
@@ -106,12 +124,12 @@ pub(in crate::ops) fn restore_runtime(
     Ok(status)
 }
 
-/// A vanished confirmation PTY is not evidence that the previous Claude owner was restored.
+/// A vanished confirmation or setup PTY is not evidence that the previous owner was restored.
 pub(in crate::ops) fn require_restored_managed_actor(
     group_id: &str,
     actor: &Actor,
 ) -> Result<(), OpError> {
-    if actor.runtime == ActorRuntime::Claude
+    if local_headless::pauses_after_confirmation(actor.runtime)
         && local_headless::uses_managed_session(actor)
         && !local_headless::running(group_id, &actor.id)
     {
@@ -121,7 +139,7 @@ pub(in crate::ops) fn require_restored_managed_actor(
             if pending {
                 "Previous agent runtime is waiting for confirmation in its terminal"
             } else {
-                "Previous managed Claude runtime did not attach after restart"
+                "Previous managed agent runtime did not attach after restart"
             },
         );
         error.details.insert(

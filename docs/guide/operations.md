@@ -105,9 +105,15 @@ yourself keep running. On Linux,
 
 ### Keeping agents across a restart {#keeping-agents-across-a-restart}
 
+If you are upgrading from 0.4.58, let active turns finish first. Its updater
+stops the agents it manages before replacing CCCC. When you start CCCC with
+the same home, your Groups, member settings, tasks, Group message history and
+unread Mail are still there. Later updates can keep eligible agents running.
+
 On Linux, `cccc daemon stop --keep-agents` stops only the daemon. The agents CCCC
 started keep running with their terminal and output, and a turn that was running
-continues. `cccc daemon start` reattaches them and names them. A message whose
+continues. `cccc daemon start` lists the members it found. Web reconnects to
+their retained browser pages when it starts. A message whose
 delivery was in progress is settled after the start and is not sent twice.
 
 - If the daemon crashes, its agents keep running in the same way and the next start

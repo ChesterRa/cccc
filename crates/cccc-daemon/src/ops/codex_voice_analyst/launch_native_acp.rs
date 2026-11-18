@@ -12,6 +12,7 @@ impl AnalystSession {
         resume: Option<String>,
         purpose: SessionPurpose,
         actor: Option<(&str, &str)>,
+        viewer: bool,
     ) -> io::Result<Self> {
         let options = native_acp::options(runtime, &command)?;
         let private_values = env
@@ -21,9 +22,6 @@ impl AnalystSession {
             .collect();
         if runtime == ActorRuntime::Auggie {
             env.insert("AUGMENT_DISABLE_AUTO_UPDATE".into(), "1".into());
-        }
-        if runtime == ActorRuntime::Hermes {
-            env.insert("HERMES_ACP_SKIP_CONFIGURED_MCP".into(), "1".into());
         }
         let identity_command = if command.is_empty() {
             cccc_runtime::default_command(runtime)
@@ -144,6 +142,10 @@ impl AnalystSession {
             Err(error) => {
                 protocol.close().await;
                 process.stop()?;
+                let error = native_acp::setup_required(error, &launch_command, &env);
+                if native_acp::hermes_setup(&error).is_some() {
+                    return Err(error);
+                }
                 return Err(io::Error::new(
                     error.kind(),
                     format!(
@@ -180,6 +182,7 @@ impl AnalystSession {
             };
             protocol.set_prompt_receipt(receipt);
         }
+        let native_tui_command = viewer.then(|| native_acp::hermes_viewer(&options, &id));
         Ok(Self {
             #[cfg(test)]
             binding,
@@ -192,7 +195,7 @@ impl AnalystSession {
             protocol: ManagedProtocol::Acp(protocol),
             process: Some(Arc::new(process)),
             auxiliary_processes: Vec::new(),
-            native_tui_command: None,
+            native_tui_command,
             cleanup_paths: Vec::new(),
             thread_resumed: resumed,
             delegations: tokio::sync::Mutex::new(HashMap::new()),

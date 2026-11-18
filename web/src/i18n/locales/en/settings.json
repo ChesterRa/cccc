@@ -1364,6 +1364,7 @@
     "installed": "Installed",
     "latest": "Latest",
     "localBuild": "Local build",
+    "localIncompatible": "CCCC {{version}} cannot complete a restart from the running version.",
     "builtAt": "built {{time}}",
     "localUnreadable": "Changed, but could not be read: {{reason}}",
     "restartToBuild": "Restart into this build",

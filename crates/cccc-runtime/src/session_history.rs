@@ -299,6 +299,16 @@ impl SessionHistory {
             .map(|state| state.output.bracketed_paste_enabled())
     }
 
+    pub(crate) fn kilo_composer_ready(&self) -> Result<bool, RuntimeError> {
+        match self.state.try_lock() {
+            Ok(state) => {
+                Ok(state.output.bracketed_paste_enabled() && state.terminal.kilo_composer_ready())
+            }
+            Err(TryLockError::WouldBlock) => Ok(false),
+            Err(TryLockError::Poisoned(_)) => Err(RuntimeError::Poisoned),
+        }
+    }
+
     pub(crate) fn startup_input_ready(
         &self,
         runtime: cccc_contracts::ActorRuntime,

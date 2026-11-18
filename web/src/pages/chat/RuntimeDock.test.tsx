@@ -120,6 +120,11 @@ it("shows confirmation from refreshed Actors and keeps the existing terminal ent
   expect(mocks.open).toHaveBeenCalledExactlyOnceWith("alpha");
   await render({ runtime_confirmation_required: false });
   expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
+  // Hermes runs its first setup where Claude asks for a confirmation.
+  await render({ runtime: "hermes", runtime_confirmation_required: true });
+  expect(host.textContent).toContain("actors:runtimeSetupPending");
+  expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
 });
 
 it("names a native session by whether it can receive, never as stopped", async () => {
@@ -157,6 +162,11 @@ it("names a closed confirmation only when the daemon reports the pause", async (
   await render({ runtime: "kiro", running: false, runtime_confirmation_paused: true });
   expect(host.textContent).toContain("actors:runtimeStartupInputPaused");
   expect(host.textContent).not.toContain("actors:runtimeConfirmationPaused");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
+  // Hermes paused because its first setup ended before CCCC connected.
+  await render({ runtime: "hermes", running: false, runtime_confirmation_paused: true });
+  expect(host.textContent).toContain("actors:runtimeSetupPaused");
+  expect(host.textContent).not.toContain("actors:runtimeStartupInputPaused");
   expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
 });
 

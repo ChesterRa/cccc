@@ -13,7 +13,8 @@ use std::time::Duration;
 
 mod submission;
 pub use submission::{
-    PtyHandoff, PtyHandoffReason, submit_sequence_for_session_interruptible,
+    PtyHandoff, PtyHandoffReason, submit_sequence_for_new_kilo_viewer,
+    submit_sequence_for_session_interruptible,
     submit_sequence_for_session_with_evidence_interruptible, submit_sequence_interruptible,
 };
 
@@ -224,6 +225,44 @@ pub fn write(group_id: &str, actor_id: &str, data: &[u8]) -> Result<(), RuntimeE
     write_locked(&session, data, None, None).map(|_| ())
 }
 
+/// Writes `data` to the terminal `expected` describes, giving up `timeout`
+/// after starting to wait for its input gate: neither a paste holding the
+/// gate nor a program that stopped reading can hold the caller longer. A
+/// write still blocked then (macOS writes block) ends in the background once
+/// the terminal stops; stopping it never waits on input. `Ok(false)`: not
+/// confirmed written in time, or that terminal is gone or replaced.
+pub fn write_to_session_within(
+    expected: &SessionStatus,
+    data: &[u8],
+    timeout: Duration,
+) -> Result<bool, RuntimeError> {
+    let deadline = std::time::Instant::now() + timeout;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let expected = expected.clone();
+    let data = data.to_vec();
+    std::thread::Builder::new()
+        .name("cccc-bounded-input".into())
+        .spawn(move || {
+            let expired = || std::time::Instant::now() >= deadline;
+            let written = (|| {
+                let session = lookup(&expected.group_id, &expected.actor_id)?;
+                let gate = session
+                    .lock()
+                    .map_err(|_| RuntimeError::Poisoned)?
+                    .input_gate();
+                let Some(_guard) = crate::cancellation::lock_interruptibly(&gate, &expired)? else {
+                    return Ok(false);
+                };
+                write_locked(&session, &data, Some(&expired), Some(&expected))
+            })();
+            let _ = sender.send(written);
+        })?;
+    match receiver.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now())) {
+        Ok(Err(RuntimeError::NotFound(..))) | Err(_) => Ok(false),
+        Ok(written) => written,
+    }
+}
+
 pub fn submit(
     group_id: &str,
     actor_id: &str,
@@ -263,15 +302,53 @@ pub fn wait_for_input_ready(
     timeout: Duration,
     cancelled: &AtomicBool,
 ) -> Result<bool, RuntimeError> {
+    wait_for_terminal_input(group_id, actor_id, None, timeout, cancelled)
+}
+
+/// Let the viewer paint without holding its PTY input lane. Submission checks
+/// the same frame again under the lane before writing any business input.
+pub fn wait_for_new_kilo_composer(
+    expected: &SessionStatus,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Result<bool, RuntimeError> {
+    wait_for_terminal_input(
+        &expected.group_id,
+        &expected.actor_id,
+        Some(expected),
+        timeout,
+        cancelled,
+    )
+}
+
+fn wait_for_terminal_input(
+    group_id: &str,
+    actor_id: &str,
+    new_kilo_viewer: Option<&SessionStatus>,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Result<bool, RuntimeError> {
     let deadline = std::time::Instant::now() + timeout;
     loop {
         if cancelled.load(Ordering::Acquire) {
             return Ok(false);
         }
-        if !status(group_id, actor_id)?.running {
+        let status = status(group_id, actor_id)?;
+        if !status.running
+            || new_kilo_viewer.is_some_and(|expected| {
+                expected.pid != status.pid || expected.started_at != status.started_at
+            })
+        {
             return Ok(false);
         }
-        if crate::bracketed_paste_enabled(group_id, actor_id)? {
+        let ready = if new_kilo_viewer.is_some() {
+            with_session(group_id, actor_id, |session| {
+                session.history_handle().kilo_composer_ready()
+            })?
+        } else {
+            crate::bracketed_paste_enabled(group_id, actor_id)?
+        };
+        if ready {
             return Ok(true);
         }
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -287,7 +364,7 @@ pub fn wait_for_input_ready(
 fn write_locked(
     session: &SharedSession,
     data: &[u8],
-    cancelled: Option<&AtomicBool>,
+    cancelled: Option<&dyn Fn() -> bool>,
     expected: Option<&SessionStatus>,
 ) -> Result<bool, RuntimeError> {
     let writer = {
@@ -303,9 +380,7 @@ fn write_locked(
     // The input gate preserves ordering; blocking IO must not hold the Session
     // lock required by status, stop and process cleanup. Pin this generation.
     match cancelled {
-        Some(cancelled) => crate::pty_input::write_input_interruptibly(&writer, data, &|| {
-            cancelled.load(Ordering::Acquire)
-        }),
+        Some(cancelled) => crate::pty_input::write_input_interruptibly(&writer, data, cancelled),
         None => crate::pty_input::write_input(&writer, data).map(|()| true),
     }
 }

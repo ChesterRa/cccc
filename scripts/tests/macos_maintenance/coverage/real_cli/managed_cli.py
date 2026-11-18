@@ -1,5 +1,6 @@
 """Exercise a released CLI through its managed CCCC path with a private model and retained MCP."""
 
+from contextlib import closing
 import importlib.util
 import json
 import platform
@@ -7,6 +8,8 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import sqlite3
+import time
 import subprocess
 import sys
 
@@ -205,6 +208,92 @@ def replies(word, eid):
     ]
 
 
+def kilo_delivery_evidence(eid):
+    events = ledger()
+    requests = u.read_calls(model_log)
+    report = {
+        "source_event": eid,
+        "delivery_states": [
+            e["data"].get("state")
+            for e in events
+            if e["kind"] == "runtime.delivery" and e["data"].get("source_event_id") == eid
+        ],
+        "provider_requests": len(requests),
+        "requests_containing_event_id": sum(eid in (r.get("last_user_tail") or "") for r in requests),
+        "tool_calls_targeting_event": sum(
+            eid in str((r.get("decision") or {}).get("arguments", "")) for r in requests
+        ),
+        "member_replies_to_event": sum(
+            e["kind"] == "chat.message" and e["by"] == "m1" and e["data"].get("reply_to") == eid
+            for e in events
+        ),
+    }
+    try:
+        visible = u.daemon_request(home, "terminal_tail", by="user", group_id=gid, actor_id="m1", lines=48)["text"]
+        report["screen_nonempty"] = bool(visible.strip())
+        report["screen_contains_event_id"] = eid in visible
+        report["screen_mentions_mock_model"] = "Mock CCCC" in visible
+        report["screen_has_commands_hint"] = "ctrl+p commands" in visible
+    except (OSError, ValueError, KeyError):
+        report["screen_available"] = False
+    return report
+
+
+def wait_for_reply(word, eid, label):
+    try:
+        u.wait_for(lambda: replies(word, eid), label, 40)
+    except TimeoutError:
+        if runtime == "kilo":
+            print("Kilo delivery evidence:", json.dumps(kilo_delivery_evidence(eid)), flush=True)
+        raise
+
+
+def verify_kilo_turns(inputs, submitted_ms=None, cold_screen_empty=None):
+    binding = home / "groups" / gid / "state" / "runtime_sessions" / "m1.json"
+    sid = json.loads(binding.read_text())["provider_session_id"]
+    assert isinstance(sid, str) and sid.startswith("ses_")
+    # This private database belongs to the member. Count actual user parts in any
+    # session, then verify the one match belongs to the session recorded by CCCC.
+    uri = (root / "kilo.db").resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(uri, uri=True)) as db:
+        parts = db.execute(
+            "SELECT m.session_id, p.session_id, json_extract(p.data, '$.text') "
+            "FROM message m JOIN part p ON p.message_id = m.id "
+            "WHERE json_extract(m.data, '$.role') = 'user' AND json_extract(p.data, '$.type') = 'text'"
+        ).fetchall()
+    turns = []
+    rows = ledger()
+    for word, event in inputs:
+        matches = [(m, p) for m, p, text in parts if text and event in text]
+        deliveries = [row["data"] for row in rows if row["kind"] == "runtime.delivery"
+                      and row["data"].get("source_event_id") == event]
+        states = [record["state"] for record in deliveries]
+        # A zero-byte attempt may be safely released and reclaimed; each such release is explicit.
+        claimed, accepted = False, False
+        for record in deliveries:
+            if record["state"] == "claimed" and not claimed and not accepted:
+                claimed = True
+            elif record["state"] == "failed" and claimed and record.get("retryable") is True:
+                claimed = False
+            elif record["state"] == "accepted" and claimed and not accepted:
+                claimed, accepted = False, True
+            else:
+                raise AssertionError((word, deliveries))
+        member_replies = [row["data"].get("text", "").strip() for row in rows
+                          if row["kind"] == "chat.message" and row["by"] == "m1"
+                          and row["data"].get("reply_to") == event]
+        turns.append({"word": word, "event": event, "native_matches": matches,
+                      "states": states, "accepted": accepted, "replies": member_replies})
+    (out / "native-turns.json").write_text(json.dumps(
+        {"session": sid, "early_send_completed_ms_after_start": submitted_ms,
+         "initial_screen_empty": cold_screen_empty, "turns": turns}, indent=2
+    ) + "\n")
+    assert all(turn["native_matches"] == [(sid, sid)] and turn["accepted"]
+               and turn["replies"] == [turn["word"]] for turn in turns), turns
+    if submitted_ms is not None:
+        assert cold_screen_empty, "delivery passed; the cold startup window was not observed"
+
+
 try:
     initial = u.wait_for(lambda: u.daemon_ping(home), "old daemon")
     gid = cli("attach", str(work))["group_id"]
@@ -371,7 +460,19 @@ try:
             f"KILO_DB={root}/kilo.db",
         ]
     cli("actor", "add", "m1", "--group", gid, "--runtime", runtime, *profile_args)
+    kilo_mode = os.environ.get("CCCC_TEST_KILO_EARLY", "0")
+    check_kilo_first = runtime == "kilo" and kilo_mode in ("1", "only")
+    if kilo_mode == "only":
+        assert runtime == "kilo" and old == new, "cold-only exercises one specified candidate"
     cli("actor", "start", "m1", "--group", gid)
+    if check_kilo_first:
+        # Send before reading the terminal or enumerating the new viewer's processes.
+        started = time.monotonic()
+        early = start("EARLY")
+        submitted_ms = round((time.monotonic() - started) * 1000, 1)
+        first_screen = u.daemon_request(home, "terminal_tail", by="user", group_id=gid, actor_id="m1", lines=48)["text"]
+        (out / "screen-immediately-after-send.txt").write_text(first_screen)
+        cold_screen_empty = not first_screen.strip()
 
     def ready_set():
         try:
@@ -401,8 +502,7 @@ try:
             (out / "current-terminal.txt").write_text(visible)
             return "ctrl+p commands" in visible and "Mock CCCC" in visible
 
-        if os.environ.get("CCCC_TEST_KILO_EARLY") == "1":
-            early = start("EARLY")
+        if check_kilo_first:
             u.wait_for(composer, "Kilo local model and composer are visible", 70)
 
             def accepted():
@@ -419,17 +519,28 @@ try:
                     {
                         "event": early,
                         "model_requests": len(u.read_calls(model_log)),
-                        "initial_screen_empty": not (out / "before-terminal.txt")
-                        .read_text()
-                        .strip(),
+                        "initial_screen_empty": cold_screen_empty,
                         "early_reply": len(replies("EARLY", early)),
                     }
                 )
             )
         else:
             u.wait_for(composer, "Kilo local model and composer are visible", 70)
+    if check_kilo_first and kilo_mode == "only":
+        wait_for_reply("EARLY", early, "candidate's original startup reply")
+        receipt = cli("daemon", "stop")["receipt"]
+        assert [r["actor_id"] for r in receipt["confirmed_stopped"]] == ["m1"]
+        assert daemon.wait(timeout=40) == 0
+        u.wait_for(lambda: all(u.process_gone(pid[0]) for pid in before.values()), "candidate cleanup")
+        verify_kilo_turns([("EARLY", early)], submitted_ms, cold_screen_empty)
+        (out / "result.json").write_text(json.dumps({
+            "case": "candidate_cold", "runtime": runtime, "version": v, "build": initial["build"],
+            "model": "loopback mock", "first_delivery_verified": True, "clean_stop": True,
+        }, indent=2) + "\n")
+        print("Kilo accepted the original candidate startup message and replied once.")
+        sys.exit(0)
     e1 = start("ALPHA")
-    u.wait_for(lambda: replies("ALPHA", e1), "reply before Keep", 40)
+    wait_for_reply("ALPHA", e1, "reply before Keep")
     stopped = cli("daemon", "stop", "--keep-agents")["receipt"]
     assert daemon.wait(timeout=40) == 0
     assert process_set() == before and not stopped["unconfirmed"]
@@ -455,7 +566,7 @@ try:
         for r in resumed["retained_agents"]
     ] == expected
     e2 = start("BRAVO")
-    u.wait_for(lambda: replies("BRAVO", e2), "reply after Keep", 40)
+    wait_for_reply("BRAVO", e2, "reply after Keep")
     assert (
         process_set() == before
         and len(replies("ALPHA", e1)) == len(replies("BRAVO", e2)) == 1
@@ -479,10 +590,12 @@ try:
         "after active work finishes",
     ):
         assert fact in notice, fact
-    if runtime == "kilo" and os.environ.get("CCCC_TEST_KILO_EARLY") == "1":
+    if check_kilo_first:
         ev = json.loads((out / "early-diagnostic.json").read_text())
         ev["early_final_replies"] = len(replies("EARLY", ev["event"]))
         ev["decisions"] = [r.get("decision") for r in u.read_calls(model_log)]
+        ev["delivery_evidence"] = kilo_delivery_evidence(ev["event"])
+        print("Kilo first delivery evidence:", json.dumps(ev["delivery_evidence"]), flush=True)
         (out / "early-diagnostic.json").write_text(json.dumps(ev, indent=2))
     final = cli("daemon", "stop")["receipt"]
     assert [r["actor_id"] for r in final["confirmed_stopped"]] == ["m1"]
@@ -503,6 +616,13 @@ try:
         model="loopback mock",
         notice_verified=True,
     )
+    if runtime == "kilo":
+        inputs = [("ALPHA", e1), ("BRAVO", e2)]
+        if check_kilo_first:
+            inputs.insert(0, ("EARLY", early))
+        verify_kilo_turns(inputs, submitted_ms if check_kilo_first else None,
+                          cold_screen_empty if check_kilo_first else None)
+        result["first_delivery_verified"] = check_kilo_first
     (out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(f"real {runtime} {v} kept its process and MCP, both replies matched")
 finally:

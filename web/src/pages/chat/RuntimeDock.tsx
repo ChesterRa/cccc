@@ -22,6 +22,7 @@ import type { Actor, HeadlessStreamEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
 import { nativeSessionStatusKey } from "../../utils/nativeSessionStatus";
+import { runtimeConfirmationKeys } from "../../utils/runtimeConfirmationKeys";
 import { UNOBSERVABLE_WORKING_STATE } from "../../utils/terminalWorkingState";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { RuntimeDockTicker } from "./RuntimeDockTicker";
@@ -265,16 +266,13 @@ function RuntimeDockActorButtonView({
   const nativeStatusKey = item.actor.external_session_id
     ? nativeSessionStatusKey(item.actor, groupState)
     : null;
+  const confirmationKeys = runtimeConfirmationKeys(item.actor.runtime);
   const statusLabel = item.actor.runtime_confirmation_required
-    ? t("actors:runtimeConfirmationPending")
+    ? t(`actors:${confirmationKeys.pending}`)
     : startupWaiting
       ? t("actors:runtimeStartupInputPending")
       : item.actor.runtime_confirmation_paused === true
-        ? t(
-            item.actor.runtime === "claude"
-              ? "actors:runtimeConfirmationPaused"
-              : "actors:runtimeStartupInputPaused",
-          )
+        ? t(`actors:${confirmationKeys.paused}`)
         : nativeStatusKey
           ? t(nativeStatusKey.includes(":") ? nativeStatusKey : `actors:${nativeStatusKey}`)
           : item.liveWorkCard && !useRuntimeStatus

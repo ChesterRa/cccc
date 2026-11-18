@@ -22,6 +22,8 @@ pub enum PtyHandoffReason {
         "waiting for the terminal's startup input; handle its native prompts or explicitly release this session"
     )]
     StartupInputPending,
+    #[error("waiting for the new Kilo terminal to draw its empty chat input")]
+    KiloComposerPending,
     #[error("terminal submission was cancelled")]
     Cancelled,
     #[error("terminal session changed before submission finished")]
@@ -94,7 +96,27 @@ pub fn submit_sequence_for_session_with_evidence_interruptible(
 ) -> PtyHandoff {
     submit_sequence(
         (&expected.group_id, &expected.actor_id),
-        Some(expected),
+        Some((expected, false)),
+        payload,
+        submits,
+        initial_delay,
+        repeat_delay,
+        cancelled,
+    )
+}
+
+/// A new Kilo viewer can enable bracketed paste before the native input exists.
+pub fn submit_sequence_for_new_kilo_viewer(
+    expected: &SessionStatus,
+    payload: &[u8],
+    submits: &[&[u8]],
+    initial_delay: Duration,
+    repeat_delay: Duration,
+    cancelled: &AtomicBool,
+) -> PtyHandoff {
+    submit_sequence(
+        (&expected.group_id, &expected.actor_id),
+        Some((expected, true)),
         payload,
         submits,
         initial_delay,
@@ -105,7 +127,7 @@ pub fn submit_sequence_for_session_with_evidence_interruptible(
 
 fn submit_sequence(
     target: (&str, &str),
-    expected: Option<&SessionStatus>,
+    expected: Option<(&SessionStatus, bool)>,
     payload: &[u8],
     submits: &[&[u8]],
     initial_delay: Duration,
@@ -131,7 +153,7 @@ fn submit_sequence(
     if cancelled.load(Ordering::Acquire) {
         return PtyHandoff::NotWritten(PtyHandoffReason::Cancelled);
     }
-    if let Some(expected) = expected {
+    if let Some((expected, needs_kilo_composer)) = expected {
         let mut current = match session.lock() {
             Ok(current) => current,
             Err(_) => {
@@ -148,6 +170,13 @@ fn submit_sequence(
                 actual.actor_id,
             )));
         }
+        if needs_kilo_composer {
+            match current.history_handle().kilo_composer_ready() {
+                Ok(true) => {}
+                Ok(false) => return PtyHandoff::NotWritten(PtyHandoffReason::KiloComposerPending),
+                Err(error) => return PtyHandoff::NotWritten(PtyHandoffReason::Runtime(error)),
+            }
+        }
         match current.startup_input_ready() {
             Ok(true) => {}
             Ok(false) => return PtyHandoff::NotWritten(PtyHandoffReason::StartupInputPending),
@@ -160,7 +189,14 @@ fn submit_sequence(
         initial_delay,
         repeat_delay,
         cancelled,
-        |data| write_tracked(&session, data, cancelled, expected),
+        |data| {
+            write_tracked(
+                &session,
+                data,
+                cancelled,
+                expected.map(|(status, _)| status),
+            )
+        },
     )
 }
 

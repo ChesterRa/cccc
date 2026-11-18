@@ -1364,6 +1364,7 @@
     "installed": "現在のバージョン",
     "latest": "最新バージョン",
     "localBuild": "ローカルの新しいビルド",
+    "localIncompatible": "実行中のバージョンから CCCC {{version}} への再起動には対応していません。",
     "builtAt": "{{time}} にビルド",
     "localUnreadable": "変更されていますが、読み取れません：{{reason}}",
     "restartToBuild": "このビルドで再起動",

@@ -95,9 +95,9 @@ def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
 def test_native_empty_session_smoke_is_enabled_without_provider_secrets() -> None:
     steps = _workflow()["jobs"]["rust-linux"]["steps"]
     install = next(step for step in steps if step.get("name") == "Install verified native CLI versions")
-    assert "@openai/codex@0.153.2" in install["run"]
-    assert "@anthropic-ai/claude-code@2.1.261" in install["run"]
-    assert "@kilocode/cli@7.5.14" in install["run"]
+    assert "@openai/codex@0.170.0" in install["run"]
+    assert "@anthropic-ai/claude-code@2.1.327" in install["run"]
+    assert "@kilocode/cli@7.8.27" in install["run"]
     smoke = next(step for step in steps if step.get("name") == "Verify native sessions without external model access")
     assert smoke["timeout-minutes"] == "5"
     assert smoke["env"]["CCCC_CODEX_EMPTY_LIVE"] == "1"

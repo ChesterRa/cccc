@@ -287,7 +287,7 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
                 StartOutcome::AlreadyRunning => println!("CCCC daemon: already running"),
                 StartOutcome::Started(pid) => {
                     println!("CCCC daemon: started pid={pid}");
-                    if let Some(line) = daemon_lifecycle::reattached_line(client, &home).await {
+                    if let Some(line) = daemon_lifecycle::retained_line(client, &home).await {
                         cccc_runtime::diagnostic(format_args!("{line}"));
                     }
                 }
@@ -322,18 +322,8 @@ async fn runtime(client: &DaemonClient, action: RuntimeAction) -> Result<()> {
         RuntimeAction::Hermes { action } => {
             let (op, args) = match action {
                 HermesAction::Status => ("runtime_hermes_status", json!({})),
-                HermesAction::Prepare { cwd, yes, force } => (
-                    "runtime_hermes_prepare",
-                    json!({"cwd":cwd,"yes":yes,"force":force}),
-                ),
-                HermesAction::McpTest {
-                    cwd,
-                    group_id,
-                    actor_id,
-                } => (
-                    "runtime_hermes_mcp_test",
-                    json!({"cwd":cwd,"group_id":group_id,"actor_id":actor_id}),
-                ),
+                HermesAction::Prepare { cwd } => ("runtime_hermes_prepare", json!({"cwd":cwd})),
+                HermesAction::McpTest => ("runtime_hermes_mcp_test", json!({})),
             };
             print(call(client, op, args).await?)?;
         }

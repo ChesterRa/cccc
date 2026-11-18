@@ -4,6 +4,7 @@ import { useStartupInputWaiting, startupInputGeneration } from "../../hooks/useS
 import * as api from "../../services/api";
 import { useGroupStore, useUIStore } from "../../stores";
 import type { Actor } from "../../types";
+import { runtimeConfirmationKeys } from "../../utils/runtimeConfirmationKeys";
 import { Button } from "../ui/button";
 
 const NOTICE_CLASS =
@@ -36,7 +37,7 @@ export function ActorRuntimeConfirmationNotice({
         data-status-tone="warning"
         className={NOTICE_CLASS}
       >
-        {t("runtimeConfirmationHint")}
+        {t(runtimeConfirmationKeys(actor.runtime).hint)}
       </p>
     );
   }
@@ -83,11 +84,7 @@ export function ActorRuntimeConfirmationNotice({
         data-status-tone="warning"
         className={NOTICE_CLASS}
       >
-        {t(
-          actor.runtime === "claude"
-            ? "runtimeConfirmationPausedHint"
-            : "runtimeStartupInputPausedHint",
-        )}
+        {t(runtimeConfirmationKeys(actor.runtime).pausedHint)}
       </p>
     );
   }

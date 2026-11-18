@@ -188,21 +188,33 @@ async fn a_rebuilt_launch_program_is_read_and_an_unchanged_one_is_not_run() {
     assert_eq!(local_build(home.clone(), Some(launch.clone())).await, None);
     assert!(!ran.exists(), "an unchanged program is not run");
 
-    // A build writes another program at the same path.
+    // A self-check can identify a build that cannot take over this restart.
     program(
         &path,
         r#"echo '{"schema":1,"version":"0.4.59","build":{"source_id":"fixture-source"},"daemon_compatibility":"fixture","relay_schemas":[1]}'"#,
     );
+    assert_eq!(
+        local_build(home.clone(), Some(launch.clone())).await,
+        Some(LocalBuild::Incompatible {
+            version: "0.4.59".into()
+        })
+    );
+    // This replacement accepts the restart but cannot retain agents.
+    let capabilities = cccc_core::update_capabilities::UpdateCapabilities {
+        local_restart: true,
+        intent_schemas: vec![cccc_core::attended_update::INTENT_SCHEMA],
+        ..Default::default()
+    };
+    let fixture = serde_json::json!({
+        "schema":1, "version":"0.4.59", "build":{"source_id":"fixture-source"},
+        "daemon_compatibility":"fixture", "relay_schemas":[crate::update_host::RELAY_SCHEMA],
+        "capabilities":capabilities
+    });
+    program(&path, &format!("echo '{fixture}'"));
     let rebuilt = FileIdentity::read(&path).expect("rebuilt identity");
     let token = rebuilt.token().expect("rebuilt token");
     assert_ne!(token, launch.identity.token().expect("launch token"));
-    // Whether agents could keep running is the daemon's own answer for what
-    // that build declares; this one declares nothing.
-    let keep = cccc_daemon::session_owner::preservation_check(
-        &home,
-        &cccc_core::update_capabilities::UpdateCapabilities::default(),
-    )
-    .await;
+    let keep = cccc_daemon::session_owner::preservation_check(&home, &capabilities).await;
     assert!(!keep.allowed);
     assert_eq!(
         local_build(home.clone(), Some(launch.clone())).await,

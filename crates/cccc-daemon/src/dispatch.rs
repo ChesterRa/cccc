@@ -366,7 +366,10 @@ mod tests {
                 "expected_pid":std::process::id(), "request_id":uuid::Uuid::new_v4().to_string(),
                 "update":{"transaction":id,"candidate":{
                     "build":{"version":"0.4.59","source_id":"1".repeat(64)},
-                    "capabilities":{"preserve_agents":keep}
+                    "capabilities":{
+                        "preserve_agents":keep,
+                        "mcp_daemon_contracts":cccc_contracts::MCP_DAEMON_ACCEPTED_CONTRACTS
+                    }
                 }}
             })
             .as_object()

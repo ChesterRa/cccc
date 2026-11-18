@@ -1,5 +1,13 @@
 <!doctype html><meta charset="utf-8"><main><form><textarea id="prompt-textarea" style="width:500px;height:120px"></textarea><button type="submit">Send</button></form><button id="stop" type="button" aria-label="Stop generating" hidden>Stop</button></main>
 <script>
+function reportFixtureState(state) {
+  navigator.sendBeacon("/fixture-script", JSON.stringify(state));
+}
+window.addEventListener("error", event => reportFixtureState({error: event.message}));
+reportFixtureState({loaded: true, secureContext: isSecureContext,
+                    uuid: typeof globalThis.crypto?.randomUUID});
+</script>
+<script>
 const doc = crypto.randomUUID();
 const main = document.querySelector("main");
 const stopButton = document.querySelector("#stop");

@@ -1,5 +1,5 @@
 use super::super::*;
-use super::live_support::{wait_for_turn_status, wait_for_turn_text};
+use super::live_support::{ProbeDaemon, wait_for_turn_status, wait_for_turn_text};
 use futures_util::{FutureExt, StreamExt};
 use serde_json::json;
 use std::sync::atomic::AtomicBool;
@@ -44,10 +44,8 @@ async fn shared_actor_and_analyst(runtime: ActorRuntime, prefix: &str) {
             let temp = tempfile::tempdir().expect("isolated provider home");
             let home = HomeLayout::from_path(temp.path().join("cccc")).expect("CCCC home");
             home.initialize().expect("initialize CCCC home");
-            let group = cccc_core::GroupStore::new(home.clone())
-                .expect("group store")
-                .create("Kilo probe", "")
-                .expect("create group");
+            let store = cccc_core::GroupStore::new(home.clone()).expect("group store");
+            let mut group = store.create("Kilo probe", "").expect("create group");
             let root = temp.path().join("project");
             std::fs::create_dir_all(&root).expect("project directory");
             let mut environment = BTreeMap::from([
@@ -86,6 +84,16 @@ async fn shared_actor_and_analyst(runtime: ActorRuntime, prefix: &str) {
             if runtime == ActorRuntime::Kilo {
                 command.push("--pure".into());
             }
+            // The provider requests the member's tool list while opening the session.
+            // The probe itself launches the member, so disable automatic startup.
+            let _daemon = matches!(purpose, SessionPurpose::Actor).then(|| {
+                let mut actor = cccc_contracts::Actor::new("kilo-test");
+                actor.runtime = runtime;
+                actor.enabled = false;
+                cccc_core::actors::add(&mut group, actor).expect("add probe member");
+                store.save(&group).expect("save probe member");
+                ProbeDaemon::start(&home, &root, &environment)
+            });
             let mut previous = None;
             for cycle in 0..3 {
                 eprintln!("{runtime:?} {purpose:?} cycle {cycle}");

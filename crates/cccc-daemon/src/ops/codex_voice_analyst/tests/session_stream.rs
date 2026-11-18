@@ -32,6 +32,83 @@ fn status(busy: bool) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kilo_input_receipt_requires_its_stored_user_text_before_an_assistant_turn() {
+    use tokio::sync::oneshot::error::TryRecvError;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let executable = fake_acp_without_user_echo(temp.path(), true);
+    let (protocol, process) =
+        launch_fake_acp(temp.path(), &executable, PromptCompletion::SessionEvents).await;
+    let control = protocol.lifecycle_control();
+    let mut stream = SessionStream::attach(&protocol).expect("attach event stream");
+    let mut session = fake_analyst_session(protocol, process, temp.path());
+    session.runtime = ActorRuntime::Kilo;
+    let text = "Group context\n\nMail for this actor";
+    drop(
+        session
+            .expect_kilo_user_message(text)
+            .expect("arm first attempt"),
+    );
+    let mut receipt = session
+        .expect_kilo_user_message("Group context\r\n\rMail for this actor")
+        .expect("rearm after timeout");
+    assert_eq!(
+        session
+            .expect_kilo_user_message("different")
+            .expect_err("still waiting")
+            .kind(),
+        io::ErrorKind::WouldBlock,
+    );
+    let [header, body] = user("expected", text);
+    for mut event in [header.clone(), body.clone()] {
+        if event["type"] == "message.updated" {
+            event["properties"]["info"]["sessionID"] = json!("another-session");
+        } else {
+            event["properties"]["part"]["sessionID"] = json!("another-session");
+        }
+        observe(&mut stream, &control, event).await;
+    }
+    observe(&mut stream, &control, body.clone()).await; // No matching user header yet.
+    for flag in ["ignored", "synthetic"] {
+        let [header, mut body] = user(flag, text);
+        body["properties"]["part"][flag] = json!(true);
+        observe(&mut stream, &control, header).await;
+        observe(&mut stream, &control, body).await;
+    }
+    for event in user("near-match", "Mail for this actor") {
+        observe(&mut stream, &control, event).await;
+    }
+    observe(&mut stream, &control, assistant("assistant", "near-match")).await;
+    observe(&mut stream, &control, part("assistant", text)).await;
+    assert_eq!(receipt.try_recv(), Err(TryRecvError::Empty));
+
+    observe(&mut stream, &control, header).await;
+    observe(&mut stream, &control, body).await;
+    assert_eq!(
+        receipt.try_recv(),
+        Ok(()),
+        "no assistant or idle event needed"
+    );
+
+    let disconnected = session
+        .expect_kilo_user_message("unobserved")
+        .expect("arm again");
+    drop(stream);
+    assert!(disconnected.await.is_err());
+    assert_eq!(
+        session
+            .expect_kilo_user_message("later")
+            .expect_err("disconnected")
+            .kind(),
+        io::ErrorKind::NotConnected
+    );
+    session
+        .stop(session.generation())
+        .await
+        .expect("stop fake ACP");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn transient_progress_is_not_answer_text() {
     let temp = tempfile::tempdir().expect("tempdir");
     let executable = fake_acp_without_user_echo(temp.path(), true);

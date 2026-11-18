@@ -1,6 +1,7 @@
 //! Opt-in paid probe. The caller supplies isolated native login copies and a
 //! fresh two-prompt allowance per Runtime. Ordinary test runs never launch it.
 use super::super::*;
+use super::live_support::ProbeDaemon;
 use futures_util::FutureExt;
 use serde_json::json;
 use std::{path::Path, time::Duration};
@@ -15,21 +16,6 @@ fn spend(root: &Path, runtime: &str) {
         cccc_core::fs::write_json(&path, &quota)
     })
     .expect("record authorized spend before sending");
-}
-
-struct ProbeDaemon {
-    launcher: PathBuf,
-    environment: BTreeMap<String, String>,
-    home: PathBuf,
-}
-impl Drop for ProbeDaemon {
-    fn drop(&mut self) {
-        let _ = std::process::Command::new(&self.launcher)
-            .args(["daemon", "stop"])
-            .envs(&self.environment)
-            .env("CCCC_HOME", &self.home)
-            .output();
-    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -76,20 +62,7 @@ async fn live_native_acp_actor_and_voice() {
         cccc_core::actors::add(&mut group, cccc_contracts::Actor::new(id)).expect("actor");
     }
     store.save(&group).expect("save");
-    let launcher = crate::ops::codex_mcp::resolve_cccc_executable().expect("CCCC launcher");
-    let daemon = std::process::Command::new(&launcher)
-        .args(["daemon", "start"])
-        .envs(&environment)
-        .env("CCCC_HOME", home.root())
-        .current_dir(&workdir)
-        .output()
-        .expect("start isolated daemon");
-    assert!(daemon.status.success(), "isolated daemon startup failed");
-    let _daemon = ProbeDaemon {
-        launcher,
-        environment: environment.clone(),
-        home: home.root().to_owned(),
-    };
+    let _daemon = ProbeDaemon::start(&home, &workdir, &environment);
 
     let mut command = cccc_runtime::default_command(runtime);
     command[0] = settings["executable"]

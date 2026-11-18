@@ -2,7 +2,6 @@ use super::{Endpoint, list};
 use crate::ops::codex_voice_analyst::{AnalystSession, LaunchConfig};
 use cccc_contracts::ActorRuntime;
 use cccc_core::HomeLayout;
-use serde_json::json;
 use std::time::Duration;
 
 /// Exercise the real CLI and its real background job, without an API request.
@@ -17,18 +16,8 @@ async fn live_claude_empty_session_resumes_without_a_prompt_after_control_gap() 
     home.initialize().expect("initialize home");
     let root = temp.path().join("project");
     std::fs::create_dir(&root).expect("project");
-    let config_dir = temp.path().join("claude");
-    std::fs::create_dir(&config_dir).expect("isolated CLI config");
-    cccc_core::fs::write_json(
-        &config_dir.join(".claude.json"),
-        &json!({"bypassPermissionsModeAccepted":true,"hasCompletedOnboarding":true}),
-    )
-    .expect("isolated CLI onboarding");
-    cccc_core::fs::write_json(
-        &config_dir.join("settings.json"),
-        &json!({"skipDangerousModePermissionPrompt":true}),
-    )
-    .expect("isolated CLI settings");
+    let config_dir =
+        crate::ops::codex_voice_analyst::tests::configure_isolated_claude_project(&temp);
     let mut config = LaunchConfig::new(&root);
     config.runtime = ActorRuntime::Claude;
     config.environment.extend([

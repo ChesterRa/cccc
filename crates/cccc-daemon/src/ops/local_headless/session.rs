@@ -5,6 +5,13 @@ use std::io;
 use std::sync::atomic::Ordering;
 use tracing::Instrument;
 
+/// Hermes forwarded a terminal Ctrl+C even when the terminal stopped 7 ms
+/// later; this fixed pause leaves margin without reading the screen.
+const HERMES_TERMINAL_INTERRUPT_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+/// A terminal that stopped reading, or input already holding it, gets no
+/// longer than this to take the Ctrl+C; stop then closes it anyway.
+const HERMES_TERMINAL_INTERRUPT_WRITE: std::time::Duration = std::time::Duration::from_millis(500);
+
 impl Session {
     pub(super) fn running(&self) -> bool {
         if self.stopped.load(Ordering::Acquire) {
@@ -25,10 +32,49 @@ impl Session {
         {
             self.stop_grok_viewer()?;
         }
-        block_on_managed(self.managed.stop(self.managed.generation()).instrument(
-            tracing::info_span!("actor_runtime_stop", group_id = %self.group_id, actor_id = %self.actor_id),
-        ))?;
+        let acp_interrupt = block_on_managed(
+            self.managed
+                .stop_and_report(self.managed.generation())
+                .instrument(tracing::info_span!(
+                    "actor_runtime_stop",
+                    group_id = %self.group_id,
+                    actor_id = %self.actor_id
+                )),
+        )?;
         crate::session_owner::confirm_detached_work_stopped(&self.group_id, &self.actor_id)?;
+        // Each entry reports its own evidence: the prompt CCCC wrote through
+        // ACP, and Hermes's terminal, where the user may have typed a turn.
+        let mut interrupt = serde_json::Map::new();
+        if let Some(acp) = acp_interrupt.as_str() {
+            interrupt.insert("acp".into(), acp.into());
+        }
+        if self.managed.runtime() == ActorRuntime::Hermes
+            && self.has_terminal.load(Ordering::Acquire)
+        {
+            // A turn typed in Hermes's terminal belongs to the terminal, not to
+            // this ACP client. Ctrl+C asks Hermes to interrupt it; Hermes
+            // forwards it even when the terminal closes milliseconds later.
+            // CCCC sees no end of that turn, so it records only the request.
+            // Only the viewer registered now is asked, and only for a bounded
+            // time, so a stuck terminal cannot hold up the stop.
+            let written =
+                cccc_runtime::status(&self.group_id, &self.actor_id).is_ok_and(|viewer| {
+                    viewer.running
+                        && cccc_runtime::write_to_session_within(
+                            &viewer,
+                            b"\x03",
+                            HERMES_TERMINAL_INTERRUPT_WRITE,
+                        )
+                        .unwrap_or(false)
+                });
+            let terminal = if written {
+                std::thread::sleep(HERMES_TERMINAL_INTERRUPT_GRACE);
+                "requested"
+            } else {
+                "unconfirmed"
+            };
+            interrupt.insert("terminal".into(), terminal.into());
+        }
         if self.has_terminal.load(Ordering::Acquire) {
             match cccc_runtime::stop(&self.group_id, &self.actor_id) {
                 Ok(_) | Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {}
@@ -37,7 +83,11 @@ impl Session {
         }
         self.stopped.store(true, Ordering::Release);
         self.set_status("stopped", None);
-        output::emit(self, "headless.session.stopped", serde_json::Map::new());
+        let mut detail = serde_json::Map::new();
+        if !interrupt.is_empty() {
+            detail.insert("interrupt".into(), serde_json::Value::Object(interrupt));
+        }
+        output::emit(self, "headless.session.stopped", detail);
         Ok(true)
     }
 
@@ -153,7 +203,7 @@ impl Session {
     }
 
     pub(super) fn reattach_viewer(&self) -> io::Result<()> {
-        if self.managed.structured_only() {
+        if !self.managed.tui_ready() {
             return Ok(());
         }
         let _guard = self.stop_lock.lock().map_err(|_| super::poisoned())?;

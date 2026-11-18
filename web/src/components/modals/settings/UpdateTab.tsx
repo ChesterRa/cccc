@@ -577,7 +577,9 @@ function LocalBuildRow({ local, language }: { local: LocalBuild; language: strin
         </span>
       ) : (
         <span className="text-[13px] break-words text-amber-700 dark:text-amber-300">
-          {t("update.localUnreadable", { reason: local.reason })}
+          {local.state === "incompatible"
+            ? t("update.localIncompatible", { version: local.version })
+            : t("update.localUnreadable", { reason: local.reason })}
         </span>
       )}
     </SettingsRow>

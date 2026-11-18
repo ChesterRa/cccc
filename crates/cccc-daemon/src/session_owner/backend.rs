@@ -820,12 +820,13 @@ impl Backend {
         self.forget_member(actor)
     }
 
+    /// The registration is removed last: until then Start refuses this member,
+    /// so nothing below can touch a newer generation's state.
     fn forget_member(&self, actor: &ActorRef) -> Result<(), Failure> {
+        // Only this owner could still show or clear a paused confirmation.
+        local_headless::forget_confirmation(&actor.group_id, &actor.actor_id)
+            .map_err(io_failure)?;
         self.mcp.lock().map_err(|_| poisoned())?.forget(actor);
-        self.actors
-            .lock()
-            .map_err(|_| poisoned())?
-            .remove(&key(actor));
         self.cancelled
             .lock()
             .map_err(|_| poisoned())?
@@ -839,6 +840,10 @@ impl Backend {
             .map_err(|_| poisoned())?
             .remove(&key(actor));
         self.provider_exits
+            .lock()
+            .map_err(|_| poisoned())?
+            .remove(&key(actor));
+        self.actors
             .lock()
             .map_err(|_| poisoned())?
             .remove(&key(actor));

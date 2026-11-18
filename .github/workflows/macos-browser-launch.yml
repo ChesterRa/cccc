@@ -1,4 +1,4 @@
-name: macOS busy browser maintenance
+name: macOS busy browser and Kilo maintenance
 on:
   push:
     branches: [probe/macos-browser-launch]
@@ -7,7 +7,7 @@ permissions:
 jobs:
   maintenance:
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@v7
         with:
@@ -19,7 +19,7 @@ jobs:
           package-manager-cache: false
       - uses: dtolnay/rust-toolchain@1.88.0
       - name: Prepare pinned sources, macOS SDK inspector and Web assets
-        timeout-minutes: 6
+        timeout-minutes: 8
         run: bash scripts/tests/macos_launch/direct.sh prepare
       - name: Build the previous program with its isolated headless launcher
         timeout-minutes: 20
@@ -40,6 +40,14 @@ jobs:
         if: ${{ !cancelled() && steps.built.outcome == 'success' }}
         timeout-minutes: 8
         run: bash scripts/tests/macos_launch/direct.sh case release
+      - name: Deliver the first message to a cold candidate Kilo terminal
+        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
+        timeout-minutes: 8
+        run: bash scripts/tests/macos_launch/direct.sh kilo cold
+      - name: Keep an active Kilo member across two builds
+        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
+        timeout-minutes: 8
+        run: bash scripts/tests/macos_launch/direct.sh kilo upgrade
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

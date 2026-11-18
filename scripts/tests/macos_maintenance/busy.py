@@ -1,9 +1,11 @@
 """An in-flight local Web Model turn across the real maintenance entry points."""
 
+import hashlib
 import http.server
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -11,12 +13,18 @@ import sys
 import threading
 import traceback
 import time
+import urllib.request
 
 here = Path(__file__).resolve().parent
 src = here / "update_keep.py"
 spec = importlib.util.spec_from_file_location("update_fixture", src)
 u = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(u)
+context_spec = importlib.util.spec_from_file_location(
+    "browser_control", here / "coverage/wave/browser_context.py"
+)
+control = importlib.util.module_from_spec(context_spec)
+context_spec.loader.exec_module(control)
 
 actor = "browser-test"
 one, two = "W2-ROUND-1", "W2-ROUND-2"
@@ -84,6 +92,7 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
         print(kind, text, flush=True)
 
     events = []
+    http_trace = []
     finished = set()
     page = here.joinpath("chat.html").read_bytes()
 
@@ -99,6 +108,8 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
             self.wfile.write(body)
 
         def do_GET(self):
+            if self.path != "/state":
+                http_trace.append(["GET", self.path])
             if self.path == "/state":
                 self.respond(
                     json.dumps({"finished": list(finished)}).encode(),
@@ -110,6 +121,11 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
                 self.send_error(404)
 
         def do_POST(self):
+            if self.path == "/fixture-script":
+                payload = self.rfile.read(int(self.headers["Content-Length"]))
+                http_trace.append(["script", json.loads(payload)])
+                self.respond(b"{}", "application/json")
+                return
             if self.path != "/event":
                 self.send_error(404)
                 return
@@ -122,13 +138,31 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
     thread.start()
     url = f"http://127.0.0.1:{model.server_port}/"
 
+    def served_assets(dist):
+        index = (dist / "index.html").read_bytes()
+        entry = re.search(rb'<script type="module"[^>]* src="/ui/(assets/[^"]+\.js)"', index)
+        assert entry, "built Web index has no module entry"
+        script = entry[1].decode()
+        hashes = {}
+        for route, asset in [("", "index.html"), (script, script)]:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/ui/{route}", timeout=3) as response:
+                actual = hashlib.sha256(response.read()).hexdigest()
+            assert actual == u.digest(dist / asset), f"served {asset} differs from its build"
+            hashes[asset] = actual
+        return hashes
+
     def browser():
         rows = u.daemon_request(home, "browser_resources", by="user")["resources"]
         for r in rows:
             for p in r.get("sessions", []):
                 if (p.get("actor") or {}).get("actor_id") == actor:
                     pid = r["metadata"]["pid"]
+                    profile = Path(r["profile"]).resolve(strict=True)
+                    assert profile.is_relative_to(home.resolve()), profile
+                    locked = control.profile_owner(profile)
+                    assert locked and locked[0] == pid, (profile, pid)
                     return {
+                        "profile": str(profile),
                         "instance": r["instance"],
                         "owner": r["owner_id"],
                         "target": p["target_id"],
@@ -229,6 +263,8 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
         host = start_host()
         source = expect(lambda: u.daemon_ping(home), "first Web")
         assert source["build"]["source_id"] == before["source_id"]
+        source_dist = Path(os.environ.get("CCCC_TEST_PREVIOUS_DIST", Path.cwd() / "web/dist"))
+        source_assets = expect(lambda: served_assets(source_dist), "previous program serves its built Web assets")
         original = expect(browser, "open first held window")
         if sys.platform == "linux":
             assert b"--headless=new" in Path(
@@ -248,8 +284,47 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
         def send(text):
             return cli("send", "--group", gid, "--to", actor, text)
 
-        send(one)
-        expect(lambda: ev("submit", one), "first prompt on page")
+        # Each record here must be available even when the first submission never happens.
+        (case / "before-send.json").write_text(json.dumps({
+            "browser": original, "fixture_url": url, "web_assets": source_assets,
+            "source": source["build"], "headless_argv_verified": True,
+        }, indent=2) + "\n")
+        receipt = send(one)
+        try:
+            expect(lambda: ev("submit", one), "first prompt on page")
+        except TimeoutError:
+            evidence = {"http_requests": list(http_trace), "page_events": list(events)}
+            try:
+                rows = u.daemon_request(home, "browser_resources", by="user")["resources"]
+                resource = next(r for r in rows if r["instance"] == original["instance"])
+                owned = control.profile_owner(Path(original["profile"]))
+                assert owned and owned[0] == original["pid"] == resource["metadata"]["pid"]
+                cdp_port = int(resource["metadata"]["cdp_port"])
+                assert f"--remote-debugging-port={cdp_port}" in owned[1].split()
+                devtools = f"http://127.0.0.1:{cdp_port}/json/list"
+                with urllib.request.urlopen(devtools, timeout=3) as response:
+                    targets = json.load(response)
+                evidence["target"] = next(
+                    ({"url": t.get("url"), "type": t.get("type"), "title": t.get("title")}
+                     for t in targets if t["id"] == original["target"]), None
+                )
+                if evidence["target"] and os.environ.get("CCCC_TEST_NODE"):
+                    document = subprocess.check_output(
+                        [os.environ["CCCC_TEST_NODE"], here.parent / "macos_launch/page-state.mjs",
+                         str(cdp_port), original["target"]], text=True, timeout=3,
+                    )
+                    evidence["document"] = json.loads(document)
+            except Exception as error:
+                evidence["target_read_error"] = str(error)
+            try:
+                source_event = receipt["event"]["id"]
+                rows = u.read_calls(home / "groups" / gid / "ledger.jsonl")
+                evidence["delivery"] = [r["data"] for r in rows if r["kind"] == "runtime.delivery"
+                                        and r["data"].get("source_event_id") == source_event]
+            except Exception as error:
+                evidence["delivery_read_error"] = str(error)
+            (case / "failed-first-prompt.json").write_text(json.dumps(evidence, indent=2) + "\n")
+            raise
         trace("first turn started")
         if kind == "daemon":
             cli("daemon", "stop", "--keep-agents")
@@ -305,6 +380,7 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
                 target["build"]["source_id"] == after["source_id"]
                 and target["pid"] == source["pid"]
             )
+        target_assets = expect(lambda: served_assets(Path.cwd() / "web/dist"), "replacement serves its built Web assets")
         current = expect(browser, "same browser after restart")
         assert current == original, (current, original)
         send(two)
@@ -347,6 +423,8 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
             events=events,
             agents=receipt["agents"] if receipt else target.get("retained_agents"),
             clean_stop=True,
+            launcher="fixture_direct_headless",
+            web_assets_sha256={"previous": source_assets, "current": target_assets},
         )
         (case / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         trace("passed")
@@ -364,7 +442,10 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
         model.shutdown()
         model.server_close()
         logs.close()
+        (case / "http-trace.json").write_text(json.dumps(http_trace, indent=2) + "\n")
         (case / "events.json").write_text(json.dumps(events, indent=2) + "\n")
+        for lock in home.rglob("SingletonLock"):
+            control.stop_profile(control.profile_owner(lock.parent.resolve()))
 
 
 def run_requested(_kind, *args):

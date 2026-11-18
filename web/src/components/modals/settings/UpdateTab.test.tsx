@@ -366,6 +366,19 @@ it("shows a rebuilt local program beside any release answer, and an unreadable o
 
   vi.mocked(api.checkForUpdate).mockResolvedValue({
     ok: true,
+    result: {
+      check: { ...newer, local: { state: "incompatible", version: "0.4.57" } },
+      in_place: true,
+      local_restart: true,
+    },
+  });
+  await click("update.check");
+  expect(text()).toContain('update.localIncompatible {"version":"0.4.57"}');
+  expect(text()).not.toContain("update.builtAt");
+  expect(button("update.restartToBuild")).toBeUndefined();
+
+  vi.mocked(api.checkForUpdate).mockResolvedValue({
+    ok: true,
     result: { check: newer, in_place: true, local_restart: false },
   });
   await click("update.check");

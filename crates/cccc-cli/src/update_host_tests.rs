@@ -121,13 +121,7 @@ fn self_check_reports_this_programs_constants() {
         this_build().local_restart,
         cfg!(any(target_os = "linux", target_os = "macos"))
     );
-    assert_eq!(
-        this_build().preserve_agents,
-        cfg!(any(
-            target_os = "linux",
-            all(target_os = "macos", target_arch = "aarch64")
-        ))
-    );
+    assert_eq!(this_build().preserve_agents, cfg!(target_os = "linux"));
     assert_eq!(
         this_build().intent_schemas,
         vec![attended_update::INTENT_SCHEMA]
@@ -374,10 +368,7 @@ fn keeping_agents_through_a_release_is_offered_only_where_this_build_takes_them_
     // this build can take agents over; the release is checked once staged.
     assert_eq!(
         cccc_web::UpdateHost::release_keep(&installed),
-        cfg!(any(
-            target_os = "linux",
-            all(target_os = "macos", target_arch = "aarch64")
-        ))
+        cfg!(target_os = "linux")
     );
     let unmanaged = Coordinator::new(
         UpdateContext {
@@ -387,10 +378,7 @@ fn keeping_agents_through_a_release_is_offered_only_where_this_build_takes_them_
         None,
     );
     assert!(!cccc_web::UpdateHost::release_keep(&unmanaged));
-    if !cfg!(any(
-        target_os = "linux",
-        all(target_os = "macos", target_arch = "aarch64")
-    )) {
+    if !cfg!(target_os = "linux") {
         let rejected = cccc_web::UpdateHost::begin(
             &installed,
             UpdateRequest {

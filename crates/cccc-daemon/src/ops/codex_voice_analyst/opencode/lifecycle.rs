@@ -170,10 +170,10 @@ pub(super) async fn attach(
     }
     let control = protocol.lifecycle_control();
     let session_id = session_id.to_owned();
+    let mut stream = super::stream::SessionStream::attach(protocol)?;
     let task = tokio::spawn(async move {
         let mut response = response;
         let mut buffer = SseLineBuffer::new(SSE_BUFFER_LIMIT);
-        let mut stream = super::stream::SessionStream::default();
         let outcome: io::Result<()> =
             async {
                 while let Some(chunk) = response.chunk().await.map_err(|error| {
@@ -192,6 +192,7 @@ pub(super) async fn attach(
                 ))
             }
             .await;
+        drop(stream);
         if let Err(error) = outcome {
             control.disconnected(error.to_string()).await;
         }
@@ -226,12 +227,10 @@ pub(super) fn observed_user_text(
         }
         Some("message.part.updated") => {
             let part = payload.pointer("/properties/part")?;
+            let user = current_user_message.as_ref()?;
             if part.get("sessionID").and_then(Value::as_str) != Some(session_id)
                 || part.get("type").and_then(Value::as_str) != Some("text")
-                || part.get("messageID").and_then(Value::as_str)
-                    != current_user_message
-                        .as_ref()
-                        .map(|message| message.id.as_str())
+                || part.get("messageID").and_then(Value::as_str) != Some(user.id.as_str())
             {
                 return None;
             }

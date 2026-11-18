@@ -164,7 +164,7 @@ fn observed_agents(owners: Vec<OwnerRead>, remote: Vec<AgentIdentity>) -> AgentO
     result
 }
 
-fn positively_exited(actor: &ActorSnapshot) -> bool {
+pub(super) fn positively_exited(actor: &ActorSnapshot) -> bool {
     actor.observation_error.is_none()
         && (actor.provider_exited
             || actor

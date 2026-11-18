@@ -2,6 +2,8 @@
 //! only this Session; it is not a provider admission receipt or native consent.
 use cccc_contracts::ActorRuntime;
 
+/// Hermes is not listed: its terminal views the member's ACP session, and
+/// CCCC delivers through ACP without typing into it.
 pub fn required(runtime: ActorRuntime) -> bool {
     matches!(
         runtime,
@@ -14,7 +16,6 @@ pub fn required(runtime: ActorRuntime) -> bool {
             | ActorRuntime::Copilot
             | ActorRuntime::Cline
             | ActorRuntime::Kimi
-            | ActorRuntime::Hermes
     )
 }
 
@@ -93,17 +94,6 @@ pub(crate) fn ready(runtime: ActorRuntime, rows: &[String]) -> bool {
                         .is_empty()
                     && frame[2].starts_with('╰')
             }) && !has("Trust this folder?")
-        }
-        ActorRuntime::Hermes => {
-            // One of seven English hints is picked per launch, one of them
-            // "Ask me anything…".
-            lines
-                .iter()
-                .any(|line| line.starts_with("❯ Try \"") || line.starts_with("❯ Ask me anything"))
-                && has("─ ready │")
-                && !has("Asking once more")
-                && !has("Share with Nous")
-                && !has("No thanks")
         }
         _ => false,
     }
@@ -297,18 +287,8 @@ mod tests {
     }
 
     #[test]
-    fn hermes_metrics_consent_is_distinct_from_its_chat_input() {
-        assert!(required(ActorRuntime::Hermes));
-        let ready = "─ ready │ another model │ voice off\n❯ Try \"explain this codebase\"";
-        assert!(screen(ActorRuntime::Hermes, ready));
-        assert!(screen(
-            ActorRuntime::Hermes,
-            "─ ready │ another model │ voice off\n❯ Ask me anything…"
-        ));
-        assert!(!screen(
-            ActorRuntime::Hermes,
-            &format!("Asking once more\nShare with Nous\nNo thanks\n{ready}")
-        ));
+    fn hermes_terminal_is_a_viewer_that_holds_no_input() {
+        assert!(!required(ActorRuntime::Hermes));
     }
 
     #[test]

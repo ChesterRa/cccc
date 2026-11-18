@@ -1,7 +1,47 @@
 use super::super::AnalystEvent;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::broadcast;
+
+pub(super) struct ProbeDaemon {
+    launcher: PathBuf,
+    environment: BTreeMap<String, String>,
+    home: PathBuf,
+}
+
+impl ProbeDaemon {
+    pub(super) fn start(
+        home: &cccc_core::HomeLayout,
+        workdir: &Path,
+        environment: &BTreeMap<String, String>,
+    ) -> Self {
+        let launcher = crate::ops::codex_mcp::resolve_cccc_executable().expect("CCCC launcher");
+        let daemon = std::process::Command::new(&launcher)
+            .args(["daemon", "start"])
+            .envs(environment)
+            .env("CCCC_HOME", home.root())
+            .current_dir(workdir)
+            .output()
+            .expect("start isolated daemon");
+        assert!(daemon.status.success(), "isolated daemon startup failed");
+        Self {
+            launcher,
+            environment: environment.clone(),
+            home: home.root().to_owned(),
+        }
+    }
+}
+
+impl Drop for ProbeDaemon {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new(&self.launcher)
+            .args(["daemon", "stop"])
+            .envs(&self.environment)
+            .env("CCCC_HOME", &self.home)
+            .output();
+    }
+}
 
 pub(super) async fn wait_for_turn_text(
     events: &mut broadcast::Receiver<AnalystEvent>,

@@ -70,6 +70,13 @@ pub fn supports(actor: &Actor) -> bool {
     uses_managed_session(actor)
 }
 
+/// Runtimes whose start can wait on the user in the member's terminal: a
+/// Claude confirmation, or Hermes's first setup. When that ends before the
+/// member connects, automatic starts pause until the user starts it again.
+pub(crate) fn pauses_after_confirmation(runtime: ActorRuntime) -> bool {
+    matches!(runtime, ActorRuntime::Claude | ActorRuntime::Hermes)
+}
+
 pub(super) fn uses_managed_session(actor: &Actor) -> bool {
     actor.external_session_id.is_empty()
         && (matches!(
@@ -80,6 +87,7 @@ pub(super) fn uses_managed_session(actor: &Actor) -> bool {
                 | ActorRuntime::Opencode
                 | ActorRuntime::Kilo
                 | ActorRuntime::Pi
+                | ActorRuntime::Hermes
         ) || actor.runtime.is_headless_acp(actor.runtime_mode))
 }
 
@@ -94,6 +102,9 @@ fn start_managed_agent(
         Ok(app) => attach_managed(home, group, actor, key, cwd, app),
         Err(refusal) if super::workspace_trust::refused(actor, &refusal) => {
             super::workspace_trust::prompt(home, group, actor, key, cwd, refusal)
+        }
+        Err(refusal) if super::hermes_setup::needed(actor, &refusal) => {
+            super::hermes_setup::open(home, group, actor, key, cwd, refusal)
         }
         Err(error) => Err(error),
     }
@@ -175,6 +186,7 @@ pub(super) fn attach_managed(
             env: app.tui_environment(),
             cwd: cwd.clone(),
             submit: actor.submit,
+            confirmed_input: None,
         })),
         status: Mutex::new(HeadlessStatus {
             status: "idle".into(),
@@ -260,10 +272,10 @@ fn start_session(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Resu
     if lookup(&key).is_some_and(|item| item.running()) {
         return Ok(());
     }
-    if actor.runtime == ActorRuntime::Claude {
+    if pauses_after_confirmation(actor.runtime) {
         super::confirmation_pause::ensure_allowed(&key)?;
     } else {
-        // A prior Claude confirmation does not govern another provider's next launch.
+        // A prior confirmation does not govern another provider's next launch.
         super::confirmation_pause::retry(&key)?;
     }
     stop_locked(&key)?;
@@ -823,23 +835,27 @@ fn submit_prepared_admitted(
     }
     if item.has_terminal() {
         let launched = item.launched(actor);
+        let mut outcome = BatchSubmission::Deferred;
         let accepted = submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
-            started.store(true, Ordering::Release);
-            super::super::actor_delivery::submit_terminal_text(
-                &group.group_id,
-                &launched,
-                prepared,
-                cancelled,
-            )
+            if launched.runtime == ActorRuntime::Kilo {
+                outcome = submit_kilo_input(item, &launched, prepared, cancelled, started);
+            } else {
+                started.store(true, Ordering::Release);
+                if super::super::actor_delivery::submit_terminal_text(
+                    &group.group_id,
+                    &launched,
+                    prepared,
+                    cancelled,
+                ) {
+                    outcome = BatchSubmission::Accepted;
+                }
+            }
+            outcome == BatchSubmission::Accepted
         });
         if accepted && let Some(notice) = instruction_notice.take() {
             notice.delivered();
         }
-        return if accepted {
-            BatchSubmission::Accepted
-        } else {
-            BatchSubmission::Deferred
-        };
+        return outcome;
     }
     BatchSubmission::Deferred
 }
@@ -856,11 +872,81 @@ fn submit_with_startup_prompt(
         || delivery.to_owned(),
         |prompt| format!("{prompt}\n\n{delivery}"),
     );
+    // With no receipt the startup instructions accompany the next attempt.
     let accepted = submit(&prepared);
     if accepted {
         *startup_prompt = None;
     }
     accepted
+}
+
+/// Kilo enables terminal paste before its composer can receive a message.
+/// The bound session's user-message event can confirm a write independently
+/// of when the provider starts work.
+fn submit_kilo_input(
+    item: &Session,
+    actor: &Actor,
+    text: &str,
+    cancelled: &AtomicBool,
+    started: &AtomicBool,
+) -> BatchSubmission {
+    let Ok(viewer) = crate::session_owner::runtime::status(&item.group_id, &actor.id) else {
+        return BatchSubmission::Deferred;
+    };
+    let Some(pid) = viewer.pid.filter(|_| viewer.running) else {
+        return BatchSubmission::Deferred;
+    };
+    let generation = (pid, viewer.started_at.clone());
+    let confirmed = item.viewer.lock().is_ok_and(|launch| {
+        launch.as_ref().and_then(|v| v.confirmed_input.as_ref()) == Some(&generation)
+    });
+    let receipt = if confirmed {
+        None
+    } else {
+        if !cccc_runtime::wait_for_new_kilo_composer(
+            &viewer,
+            std::time::Duration::from_secs(15),
+            cancelled,
+        )
+        .unwrap_or(false)
+        {
+            return BatchSubmission::Deferred;
+        }
+        let Ok(receipt) = item.managed.expect_kilo_user_message(text) else {
+            return BatchSubmission::Deferred;
+        };
+        Some(receipt)
+    };
+    started.store(true, Ordering::Release);
+    let write = super::super::actor_delivery::submit_viewer_text(
+        &viewer,
+        receipt.is_some(),
+        actor,
+        text,
+        cancelled,
+    );
+    if matches!(write, cccc_runtime::PtyHandoff::NotWritten(_)) {
+        started.store(false, Ordering::Release);
+        return BatchSubmission::Deferred;
+    }
+    let Some(receipt) = receipt else {
+        return match write {
+            cccc_runtime::PtyHandoff::Accepted => BatchSubmission::Accepted,
+            _ => BatchSubmission::Unconfirmed,
+        };
+    };
+    let received = super::block_on_managed(async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), receipt).await
+    });
+    if !matches!(received, Ok(Ok(()))) {
+        return BatchSubmission::Unconfirmed;
+    }
+    if let Ok(mut launch) = item.viewer.lock()
+        && let Some(viewer) = launch.as_mut()
+    {
+        viewer.confirmed_input = Some(generation);
+    }
+    BatchSubmission::Accepted
 }
 
 #[cfg(test)]
@@ -892,8 +978,12 @@ pub(crate) fn structured_state(group: &str, actor: &str) -> Option<serde_json::V
         Ok(None) => {}
     }
     let item = lookup(&(group.to_owned(), actor.to_owned()))?;
+    // Working says whether the cancel control had a target when read: a started
+    // turn, or an ACP prompt CCCC wrote that the provider has not reported started.
+    let working = item.active_turn.lock().is_ok_and(|turn| turn.is_some())
+        || item.managed.has_cancellable_prompt();
     Some(
-        serde_json::json!({"generation":item.managed.generation(),"runtime":item.managed.runtime(),"runtime_mode":item.managed.runtime_mode(),"runner":if item.managed.structured_only(){"headless"}else{"pty"},"permissions":item.managed.permissions(),"running":item.running(),"working":item.active_turn.lock().is_ok_and(|turn|turn.is_some())}),
+        serde_json::json!({"generation":item.managed.generation(),"runtime":item.managed.runtime(),"runtime_mode":item.managed.runtime_mode(),"runner":if item.managed.tui_ready(){"pty"}else{"headless"},"permissions":item.managed.permissions(),"running":item.running(),"working":working}),
     )
 }
 
@@ -970,7 +1060,11 @@ pub(crate) fn cancel_turn(group: &str, actor: &str, generation: &str) -> io::Res
         .map_err(|_| poisoned())?
         .as_ref()
         .map(|turn| turn.turn_id.clone());
-    let Some(turn) = turn else { return Ok(false) };
+    let Some(turn) = turn else {
+        // An ACP prompt can be cancelled from the moment it is written,
+        // before the provider reports the turn started.
+        return super::block_on_managed(item.managed.cancel_written_prompt(generation));
+    };
     super::block_on_managed(item.managed.interrupt(generation, &turn))?;
     Ok(true)
 }

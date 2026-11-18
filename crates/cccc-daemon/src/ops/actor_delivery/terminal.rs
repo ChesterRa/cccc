@@ -36,13 +36,28 @@ pub(crate) fn submit_terminal_text_for_session(
     text: &str,
     cancelled: &AtomicBool,
 ) -> PtyHandoff {
+    submit_viewer_text(expected, false, actor, text, cancelled)
+}
+
+pub(crate) fn submit_viewer_text(
+    expected: &SessionStatus,
+    needs_kilo_composer: bool,
+    actor: &Actor,
+    text: &str,
+    cancelled: &AtomicBool,
+) -> PtyHandoff {
     if actor.id != expected.actor_id {
         return PtyHandoff::NotWritten(PtyHandoffReason::SessionChanged);
     }
     let Some(input) = terminal_input(&expected.group_id, actor, text, cancelled) else {
         return PtyHandoff::NotWritten(PtyHandoffReason::Cancelled);
     };
-    cccc_runtime::submit_sequence_for_session_with_evidence_interruptible(
+    let submit = if needs_kilo_composer {
+        cccc_runtime::submit_sequence_for_new_kilo_viewer
+    } else {
+        cccc_runtime::submit_sequence_for_session_with_evidence_interruptible
+    };
+    submit(
         expected,
         input.payload.as_bytes(),
         input.submits,
@@ -80,11 +95,15 @@ fn terminal_input(
     {
         return None;
     }
-    let bracketed = raw.contains(['\r', '\n'])
-        && cccc_runtime::bracketed_paste_enabled(group_id, &actor.id).unwrap_or(false);
+    let multiline = raw.contains(['\r', '\n']);
+    let bracketed =
+        multiline && cccc_runtime::bracketed_paste_enabled(group_id, &actor.id).unwrap_or(false);
+    if multiline && !bracketed && actor.runtime == cccc_contracts::ActorRuntime::Kilo {
+        return None;
+    }
     let payload = if bracketed {
         format!("\u{1b}[200~{raw}\u{1b}[201~")
-    } else if raw.contains(['\r', '\n']) {
+    } else if multiline {
         raw.lines().collect::<Vec<_>>().join(" ")
     } else {
         raw.to_owned()

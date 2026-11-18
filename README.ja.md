@@ -197,8 +197,8 @@ Chet は CCCC インスタンス全体で 1 つのアシスタントで、どの
 
 | CCCC での動かし方 | ランタイム（`--runtime` の ID） |
 |---|---|
-| ネイティブ端末 + CCCC が管理するセッション | Claude Code（`claude`）、Codex CLI（`codex`）、Grok Build（`grok`）、OpenCode V2 2.1.4 以降（`opencode`）、Kilo Code（`kilo`） |
-| ネイティブ端末または公式 ACP | GitHub Copilot（`copilot`）、Cursor（`cursor`）、Devin（`devin`）、Kiro（`kiro`）、Antigravity（`antigravity`）、Droid（`droid`）、Auggie（`auggie`）、Hermes（`hermes`）、Kimi Code（`kimi`） |
+| ネイティブ端末 + CCCC が管理するセッション | Claude Code（`claude`）、Codex CLI（`codex`）、Grok Build（`grok`）、OpenCode V2 2.1.4 以降（`opencode`）、Kilo Code（`kilo`）、Hermes（`hermes`、ACP のみも可） |
+| ネイティブ端末または公式 ACP | GitHub Copilot（`copilot`）、Cursor（`cursor`）、Devin（`devin`）、Kiro（`kiro`）、Antigravity（`antigravity`）、Droid（`droid`）、Auggie（`auggie`）、Kimi Code（`kimi`） |
 | ネイティブ端末 | Cline（`cline`）、Amp（`amp`） |
 | 構造化された接続（端末なし） | Pi 1.1.0 以降（`pi`）、DeepSeek Harness（`deepseek`、開発者プレビュー） |
 | Web モデル | ChatGPT Web（`web_model`）、ChatGPT Dots（`chatgpt_dots`）、Grok Bot Web Model（`grok_web_model`） |

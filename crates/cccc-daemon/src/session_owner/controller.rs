@@ -859,13 +859,14 @@ fn finish_clients(
                             snapshot.actor.actor_id.clone(),
                             snapshot.actor.actor_created_at.clone(),
                         ));
+                        if super::preservation::positively_exited(&snapshot) {
+                            continue;
+                        }
                         if running(&snapshot) {
                             report
                                 .retained
                                 .push(identity(&snapshot.actor, &client.address.owner_id));
-                        } else if snapshot.owner.as_ref().is_none_or(|owner| {
-                            owner.state != crate::ops::actor_runtime::OwnerState::Exited
-                        }) {
+                        } else {
                             report
                                 .unconfirmed
                                 .push(identity(&snapshot.actor, &client.address.owner_id));
@@ -931,6 +932,16 @@ fn finish_clients(
                         }
                         Err(error) => match before {
                             Ok(before) => {
+                                // An empty result cannot describe a failed stop of a login-only browser.
+                                if (before.actors.is_empty() && before.browsers.is_empty())
+                                    || before.browsers.iter().any(|browser| {
+                                        browser.resource.state
+                                            != super::browser::BrowserResourceState::Exited
+                                            && browser.identities().next().is_none()
+                                    })
+                                {
+                                    return Err(error);
+                                }
                                 report
                                     .unconfirmed
                                     .extend(before.actors.iter().map(|snapshot| {
@@ -961,7 +972,7 @@ fn finish_clients(
     Ok(report)
 }
 
-pub(super) fn stop_offline(home: &HomeLayout) -> anyhow::Result<ShutdownReport> {
+pub(super) fn stop_offline(home: &HomeLayout) -> anyhow::Result<Option<ShutdownReport>> {
     let _lock = cccc_core::fs::try_exclusive_lock(&home.daemon_dir().join("ccccd.lock"))?
         .ok_or_else(|| {
             io::Error::new(
@@ -970,6 +981,10 @@ pub(super) fn stop_offline(home: &HomeLayout) -> anyhow::Result<ShutdownReport> 
             )
         })?;
     let (clients, discovery_error) = discover_all(home)?;
+    // A holder can own a login window with no member in the shutdown report.
+    if clients.is_empty() && discovery_error.is_none() {
+        return Ok(None);
+    }
     let stopped = finish_clients(
         clients.into_values().collect(),
         ShutdownMode::Stop,
@@ -981,7 +996,7 @@ pub(super) fn stop_offline(home: &HomeLayout) -> anyhow::Result<ShutdownReport> 
     }
     let report = stopped?;
     super::receipt::write_shutdown_report(home, &report)?;
-    Ok(report)
+    Ok(Some(report))
 }
 
 fn discover(home: &HomeLayout) -> io::Result<BTreeMap<String, Arc<Client>>> {

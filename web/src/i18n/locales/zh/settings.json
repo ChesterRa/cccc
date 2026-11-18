@@ -1361,6 +1361,7 @@
     "installed": "当前版本",
     "latest": "最新版本",
     "localBuild": "本地新构建",
+    "localIncompatible": "当前运行的版本无法通过重启切换到 CCCC {{version}}。",
     "builtAt": "构建于 {{time}}",
     "localUnreadable": "已改变，但无法读取：{{reason}}",
     "restartToBuild": "重启到新构建",
@@ -1427,7 +1428,7 @@
     "agents": {
       "notObserved": "没有确认智能体是否接回。",
       "observing": "正在确认智能体…",
-      "reattached": "已接回：{{names}}",
+      "reattached": "已保留：{{names}}",
       "restarted": "已重新启动：{{names}}",
       "notBack": "没有在运行：{{names}}",
       "unconfirmed": "无法确认：{{names}}",

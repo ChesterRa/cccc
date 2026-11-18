@@ -3,7 +3,7 @@
 set -euo pipefail
 umask 077
 previous=24b81439e17583d29335af2cdc32326b470f32f9
-current=7ecc515843f6202db1c8d056fd379c751f7f3251
+current=${GITHUB_SHA:?}
 patches=$(cd "$(dirname "$0")" && pwd -P)
 work="${RUNNER_TEMP:?}/cccc-busy-direct"
 evidence="$work/evidence"
@@ -14,6 +14,7 @@ environment() {
     uname -m
     xcrun --sdk macosx --show-sdk-version
     rustc -Vv
+    /usr/bin/defaults read "/Applications/Google Chrome.app/Contents/Info" CFBundleShortVersionString
     node --version
     python3 --version
     df -Pk "$RUNNER_TEMP"
@@ -26,25 +27,23 @@ prepare() {
     mkdir "$evidence" "$work/previous" "$work/current" "$work/bin"
     environment | tee "$evidence/environment.txt"
     printf '%s\n' "$GITHUB_SHA" > "$evidence/fixture-commit.txt"
-    git -C "$checkout" diff --exit-code "$previous" "$current" -- web crates/cccc-web/build.rs
     for role in previous current; do
         if [[ $role == previous ]]; then ref=$previous; else ref=$current; fi
         git -C "$checkout" archive "$ref" | tar -x -C "$work/$role"
         printf '%s\n' "$ref" > "$evidence/$role-commit.txt"
     done
     (cd "$work/previous" && git apply --check "$patches/previous-direct.patch" && git apply "$patches/previous-direct.patch")
-    (cd "$work/current" && git apply --check "$patches/busy-evidence.patch" && git apply "$patches/busy-evidence.patch")
-    shasum -a 256 "$patches/"*.patch > "$evidence/patches.sha256"
+    shasum -a 256 "$patches/previous-direct.patch" > "$evidence/patches.sha256"
     xcrun --sdk macosx clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror \
         "$work/current/scripts/tests/macos_maintenance/inspect_process.c" -o "$work/inspect-process"
-    (
-        cd "$work/previous"
-        npm ci --prefix web
-        npm -C web run build
-        test -s web/dist/index.html
-        cp -R web/dist "$work/current/web/dist"
-    )
-    cmp "$work/previous/web/dist/index.html" "$work/current/web/dist/index.html"
+    for role in previous current; do
+        (
+            cd "$work/$role/web"
+            npm ci
+            npm run build
+            test -s dist/index.html
+        )
+    done
 }
 
 verify_program() {
@@ -66,7 +65,7 @@ build() {
     role=$1
     case "$role" in
         previous) expected=d86c7b6159cbeee50763ed8ed07fe2228f95ac5a695e4bf92613ec3b231c8276 ;;
-        current) expected=18d513fb320883b9d4e441b43337b901259dcfb936049069015b62d4cf357127 ;;
+        current) expected=05669bd542e265a9adf1e706c1776d6fcafa58348599ecf01df61065a319131c ;;
         *) exit 2 ;;
     esac
     cd "$work/$role"
@@ -93,15 +92,29 @@ run_case() {
     py=$(command -v python3)
     /usr/bin/env -i PATH=/usr/bin:/bin LANG=C HOME="$private/home" TMPDIR="$private/tmp" \
         CCCC_HOME="$private/cccc" CODEX_HOME="$private/codex" CLAUDE_CONFIG_DIR="$private/claude" \
+        CCCC_TEST_NODE="$(command -v node)" CCCC_TEST_PREVIOUS_DIST="$work/previous/web/dist" \
         CCCC_TEST_SDK_INSPECTOR="$work/inspect-process" "$py" -BI \
         scripts/tests/macos_maintenance/busy.py "$work/bin/previous" "$work/bin/current" "$out" "$kind" \
         2>&1 | tee "$evidence/$kind-driver.log"
     test -s "$out/$kind/result.json"
 }
 
+kilo_case() {
+    local old mode
+    case "$1" in
+        cold) old=current; mode=only ;;
+        upgrade) old=previous; mode=0 ;;
+        *) exit 2 ;;
+    esac
+    CCCC_TEST_KILO_EARLY="$mode" bash "$work/current/scripts/tests/macos_maintenance/coverage/real_cli/run.sh" \
+        kilo "$work/bin/$old" "$work/bin/current" "$evidence/kilo-$1" "$work/inspect-process"
+    test -s "$evidence/kilo-$1/kilo/result.json"
+}
+
 case "${1:-}" in
     prepare) prepare ;;
     build) build "${2:?previous or current}" ;;
     case) run_case "${2:?daemon, local or release}" ;;
-    *) echo 'Expected prepare, build ROLE, or case ENTRY' >&2; exit 2 ;;
+    kilo) kilo_case "${2:?cold or upgrade}" ;;
+    *) echo 'Expected prepare, build ROLE, case ENTRY, or kilo CASE' >&2; exit 2 ;;
 esac

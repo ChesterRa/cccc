@@ -306,6 +306,38 @@ it("names a non-Claude terminal that closed before its startup input", async () 
   expect(host.textContent).not.toContain("runtimeConfirmationPaused");
 });
 
+it("names Hermes's first setup in its terminal and after it ended unfinished", async () => {
+  const hermes: Actor = {
+    id: "hermes",
+    title: "Hermes",
+    runtime: "hermes",
+    runner_effective: "pty",
+    enabled: true,
+    running: true,
+    runtime_state_source: "terminal",
+    runtime_confirmation_required: true,
+  };
+  await render(true, hermes, "g_setup", true, false);
+  const pending = host.querySelector('[data-runtime-confirmation="pending"]')!;
+  expect(pending.textContent).toBe("runtimeSetupHint");
+  expect(host.textContent).toContain("runtimeSetupPending");
+  expect(host.textContent).not.toContain("runtimeConfirmationPending");
+  await render(
+    false,
+    {
+      ...hermes,
+      running: false,
+      runtime_confirmation_required: false,
+      runtime_confirmation_paused: true,
+    },
+    "g_setup",
+  );
+  const paused = host.querySelector('[data-runtime-confirmation="paused"]')!;
+  expect(paused.textContent).toBe("runtimeSetupPausedHint");
+  expect(host.textContent).toContain("runtimeSetupPaused");
+  expect(host.textContent).not.toContain("runtimeStartupInputPaused");
+});
+
 it("keeps distinct LCD status shapes and their accessible Actor labels", async () => {
   const managed: Actor = {
     id: "managed",

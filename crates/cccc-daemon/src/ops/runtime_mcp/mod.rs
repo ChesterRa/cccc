@@ -40,6 +40,7 @@ pub(super) fn prepare(
             | ActorRuntime::Opencode
             | ActorRuntime::Kilo
             | ActorRuntime::Pi
+            | ActorRuntime::Hermes
     ) {
         return Ok(());
     }
@@ -64,17 +65,9 @@ pub(super) fn prepare(
         | ActorRuntime::Grok
         | ActorRuntime::Kilo
         | ActorRuntime::Pi
-        | ActorRuntime::Opencode => {
+        | ActorRuntime::Opencode
+        | ActorRuntime::Hermes => {
             unreachable!("managed runtime returned early")
-        }
-        ActorRuntime::Hermes => {
-            let _guard = setup_lock().lock().map_err(|_| {
-                OpError::new(
-                    "runtime_mcp_lock_failed",
-                    "runtime MCP setup lock is poisoned",
-                )
-            })?;
-            super::hermes_runtime::ensure_for_actor(home, cwd, env)
         }
         _ => {
             let _guard = setup_lock().lock().map_err(|_| {

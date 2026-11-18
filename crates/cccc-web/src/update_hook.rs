@@ -198,6 +198,8 @@ pub enum LocalBuild {
         token: String,
         keep: KeepPreview,
     },
+    /// The program identified itself and cannot complete the current host's restart.
+    Incompatible { version: String },
     /// The file changed, but what it is could not be read, so whether it is a
     /// newer build is unknown.
     Unreadable { reason: String },

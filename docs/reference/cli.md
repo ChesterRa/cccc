@@ -502,7 +502,7 @@ cccc setup --runtime kimi          # Configure native Kimi Code MCP
 cccc setup --runtime kimi --runtime-mode acp  # Report session-owned MCP
 cccc setup --runtime auggie --runtime-mode acp # Report session-owned MCP
 cccc setup --runtime kiro --runtime-mode acp   # Official V3; session-owned MCP
-cccc setup --runtime hermes --runtime-mode acp # Official ACP; session-owned MCP
+cccc setup --runtime hermes        # Report session-owned MCP (both modes)
 cccc setup --runtime droid --runtime-mode acp  # Official ACP; session-owned MCP
 cccc setup --runtime pi            # Report CCCC-owned RPC session MCP
 cccc setup --runtime kilo          # Report CCCC-owned per-session MCP for Kilo Code CLI

@@ -163,6 +163,9 @@ async fn local_build(home: HomeLayout, launch: Option<LaunchProgram>) -> Option<
         });
     }
     Some(match check {
+        Ok(check) if !check.accepts_local_restart() => LocalBuild::Incompatible {
+            version: check.version,
+        },
         Ok(check) => {
             let mut keep =
                 cccc_daemon::session_owner::preservation_check(&home, &check.capabilities).await;

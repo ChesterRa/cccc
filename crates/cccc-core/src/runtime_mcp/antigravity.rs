@@ -117,6 +117,11 @@ fn read_entry(path: &Path) -> io::Result<Option<Value>> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
+    // Antigravity's first run leaves an empty file, which it reads as having no
+    // servers; `agy mcp add` then fills it in.
+    if bytes.iter().all(u8::is_ascii_whitespace) {
+        return Ok(None);
+    }
     let invalid = || {
         io::Error::new(
             io::ErrorKind::InvalidData,

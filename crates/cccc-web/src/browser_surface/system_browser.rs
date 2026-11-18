@@ -278,9 +278,6 @@ impl SystemBrowserLaunch {
             window_position(self.background).to_owned(),
             "--force-device-scale-factor=1".to_owned(),
         ];
-        // Only the disposable macOS probe branch adds these browser launch arguments.
-        args.push("--headless=new".to_owned());
-        args.push("--disable-background-networking".to_owned());
         args.extend(extra_args);
         args
     }

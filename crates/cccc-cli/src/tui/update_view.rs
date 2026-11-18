@@ -330,6 +330,19 @@ fn local_lines(lines: &mut Vec<Line<'static>>, local: &LocalBuild, theme: Theme,
                 theme,
             ));
         }
+        LocalBuild::Incompatible { version } => {
+            lines.push(labelled(
+                "Local build",
+                Span::styled(
+                    format!(
+                        "{} cannot complete a restart from this version",
+                        text::one_line(version)
+                    ),
+                    theme.error(),
+                ),
+                theme,
+            ));
+        }
         LocalBuild::Unreadable { reason } => {
             lines.push(labelled(
                 "Local build",

@@ -589,7 +589,7 @@ cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
 cccc setup --runtime grok
-cccc setup --runtime hermes
+cccc setup --runtime hermes       # Report session-owned MCP
 cccc setup --runtime kimi
 cccc setup --runtime opencode
 cccc setup --runtime cursor

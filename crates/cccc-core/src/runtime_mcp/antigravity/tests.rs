@@ -100,6 +100,26 @@ fn malformed_configuration_is_preserved_before_invoking_native_cli() {
 }
 
 #[test]
+fn empty_configuration_from_the_native_first_run_is_set_up_natively() {
+    for bytes in ["", "\n"] {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join(".gemini/config/mcp_config.json");
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        std::fs::write(&path, bytes).expect("empty config");
+        let configured = ensure(
+            &temp.path().join("project"),
+            &environment(temp.path()),
+            || {
+                write(&path, &json!({"mcpServers":{"cccc":ready()}}));
+                Ok(())
+            },
+        )
+        .expect("native setup fills the empty file");
+        assert_eq!(configured, path);
+    }
+}
+
+#[test]
 fn setup_failure_or_unverified_success_cannot_report_ready() {
     let temp = tempfile::tempdir().expect("tempdir");
     let env = environment(temp.path());

@@ -317,6 +317,13 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         && final_preview.enabled
         && !final_preview.external_session_id.is_empty();
     let was_running = actor_process_running(&group, &original_actor);
+    // Saving only Enabled leaves Hermes's open setup, and the user's input, alone.
+    let setup_open = patch.len() == 1
+        && patch.get("enabled").and_then(Value::as_bool) == Some(true)
+        && profile_id.is_empty()
+        && profile_action.is_empty()
+        && !was_running
+        && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
     let actor = store(home)?
         .mutate(&group_id, |doc| {
             let patched = actors::update(doc, &actor_id, &patch)?;
@@ -389,6 +396,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if enabled_patched
         && actor.enabled
         && !was_running
+        && !setup_open
         && actor_runtime::user_confirmation_retry(request)
     {
         super::local_headless::retry_confirmation(&group_id, &actor_id).map_err(OpError::io)?;
@@ -439,7 +447,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 error,
             ));
         }
-        if !was_running {
+        if !was_running && !setup_open {
             effect = ActorUpdateEffect::Started;
         }
     }
@@ -982,8 +990,11 @@ pub(super) fn lifecycle_leading(
         && original_actor.external_session_id.is_empty()
         && super::local_headless::orphaned_confirmation(&group_id, &actor_id)
             .map_err(OpError::io)?;
+    // Start leaves Hermes's open setup, and what the user has typed into it, alone.
+    let setup_open = kind == "actor.start"
+        && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
     let runtime_was_running =
-        actor_process_running(&group, &original_actor) && !orphaned_confirmation;
+        (actor_process_running(&group, &original_actor) && !orphaned_confirmation) || setup_open;
     let retry_runtime = if original_actor.external_session_id.is_empty()
         && matches!(kind, "actor.start" | "actor.restart")
     {

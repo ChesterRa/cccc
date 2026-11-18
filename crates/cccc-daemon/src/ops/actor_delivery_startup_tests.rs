@@ -257,10 +257,6 @@ fn kiro_native_delivery_survives_saved_acp_mode() {
     exercise_pending_acp_mode(ActorRuntime::Kiro);
 }
 #[test]
-fn hermes_native_delivery_survives_saved_acp_mode() {
-    exercise_pending_acp_mode(ActorRuntime::Hermes);
-}
-#[test]
 fn droid_native_delivery_survives_saved_acp_mode() {
     exercise_pending_acp_mode(ActorRuntime::Droid);
 }

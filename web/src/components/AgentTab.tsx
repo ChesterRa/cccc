@@ -59,6 +59,7 @@ import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { UNOBSERVABLE_WORKING_STATE } from "../utils/terminalWorkingState";
 import { NATIVE_SESSION_AVAILABLE, nativeSessionStatusKey } from "../utils/nativeSessionStatus";
+import { runtimeConfirmationKeys } from "../utils/runtimeConfirmationKeys";
 import {
   getEffectiveActorRunner,
   hasManagedRuntimeControls,
@@ -433,12 +434,11 @@ export function AgentTab({
         : workingState,
   });
   const runtimeStatusText = (() => {
-    if (actor.runtime_confirmation_required) return t("runtimeConfirmationPending");
+    if (actor.runtime_confirmation_required)
+      return t(runtimeConfirmationKeys(actor.runtime).pending);
     if (startupWaiting) return t("runtimeStartupInputPending");
     if (actor.runtime_confirmation_paused === true)
-      return t(
-        actor.runtime === "claude" ? "runtimeConfirmationPaused" : "runtimeStartupInputPaused",
-      );
+      return t(runtimeConfirmationKeys(actor.runtime).paused);
     if (isNativeSession) return t(nativeStatusKey);
     if (isEventActor)
       return t(

@@ -259,15 +259,11 @@ async fn stop_without_daemon(
     client: &DaemonClient,
     home: &HomeLayout,
 ) -> Result<(cccc_contracts::DaemonResponse, Receipt)> {
-    let report = cccc_daemon::session_owner::stop_without_daemon(home.clone()).await?;
-    if report.confirmed_stopped.is_empty()
-        && report.retained.is_empty()
-        && report.unconfirmed.is_empty()
-    {
+    let Some(report) = cccc_daemon::session_owner::stop_without_daemon(home.clone()).await? else {
         // A ping has no side effect; its error is today's "not running" answer.
         call(client, "ping", json!({})).await?;
         bail!("a CCCC daemon started while this stop was running; run `cccc daemon stop` again");
-    }
+    };
     let mut result = serde_json::Map::new();
     result.insert("shutting_down".into(), false.into());
     result.insert("daemon_running".into(), false.into());
@@ -420,6 +416,9 @@ pub(crate) fn receipt_line(
             describe_agents(home, &uncertain)
         ));
     }
+    if parts.is_empty() && matches!(receipt, Receipt::WithoutDaemon(_)) {
+        return Some(format!("{prefix}. Finished stopping retained resources."));
+    }
     (!parts.is_empty()).then(|| format!("{prefix}: {}.", parts.join("; ")))
 }
 
@@ -465,15 +464,14 @@ pub(crate) fn agents_result(receipt: &Receipt) -> crate::host_state::AgentsResul
     }
 }
 
-/// After a start: the agents the new daemon confirmed it reattached. A daemon that does
-/// not report the field says nothing, which is not the same as reattaching none.
-pub(crate) async fn reattached_line(client: &DaemonClient, home: &HomeLayout) -> Option<String> {
+/// Startup discovers retained resources. A browser page can still be waiting for Web.
+pub(crate) async fn retained_line(client: &DaemonClient, home: &HomeLayout) -> Option<String> {
     let response = call(client, "ping", json!({})).await.ok()?;
     let agents: Vec<cccc_daemon::session_owner::AgentIdentity> =
         serde_json::from_value(response.result.get("retained_agents")?.clone()).ok()?;
     (!agents.is_empty()).then(|| {
         format!(
-            "[cccc] Reattached {} that kept running ({}).",
+            "[cccc] Found {} that kept running ({}).",
             agent_count(agents.len()),
             describe_agents(home, &agents)
         )

@@ -120,6 +120,8 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
                 }
                 actor_delivery::dispatch_unread(home, &group, &actor.id);
             }
+            // Held for the user's own start, as a Group start holds it.
+            Err(error) if error.code == actor_runtime::RUNTIME_CONFIRMATION_PAUSED => {}
             Err(error) => {
                 tracing::warn!(
                     group_id = %group.group_id,

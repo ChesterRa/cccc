@@ -917,8 +917,7 @@ fn settle_managed_batch(
             );
         }
         crate::ops::local_headless::BatchSubmission::Unconfirmed => {
-            let reason =
-                "ACP prompt receipt was not confirmed; inspect the Actor before an explicit retry";
+            let reason = "Managed input receipt was not confirmed; inspect the Actor before an explicit retry";
             for job in jobs {
                 if let Err(error) = crate::ops::runtime_delivery::append_state(
                     home,
@@ -931,7 +930,7 @@ fn settle_managed_batch(
                 ) {
                     // The original durable claim remains unretryable and is
                     // reconciled as ambiguous on daemon restart.
-                    tracing::error!(message=%error.message, event_id=%job.event.id, "failed to persist unconfirmed ACP delivery");
+                    tracing::error!(message=%error.message, event_id=%job.event.id, "failed to persist unconfirmed managed delivery");
                 }
                 super::actor_delivery::release_in_flight(job);
                 tell_sender(job, true);

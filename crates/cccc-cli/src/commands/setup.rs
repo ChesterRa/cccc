@@ -28,6 +28,17 @@ const SUPPORTED: &[&str] = &[
     "custom",
 ];
 
+/// Hermes members get CCCC's server in their own sessions. A `cccc` server
+/// saved in the Hermes profile would give every session there one identity,
+/// so CCCC no longer asks for one and refuses to start past it.
+fn hermes_setup() -> serde_json::Value {
+    json!({
+        "runtime":"hermes","mode":"managed_session","status":"ready","managed":true,
+        "mcp":"injected_per_session",
+        "note":"CCCC gives each Hermes member its own CCCC server in its session. Set up Hermes itself (login, model) with `hermes model`; do not add a cccc server to the Hermes profile."
+    })
+}
+
 pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
     let executable = public_executable()?;
     let runtime = args.runtime.as_deref().map(str::trim).unwrap_or("");
@@ -115,7 +126,11 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
             SUPPORTED.join(", ")
         );
     }
-    if matches!(runtime, "custom" | "hermes") {
+    if runtime == "hermes" {
+        println!("{}", serde_json::to_string_pretty(&hermes_setup())?);
+        return Ok(());
+    }
+    if runtime == "custom" {
         println!("{}", serde_json::to_string_pretty(&config)?);
         return Ok(());
     }
@@ -200,7 +215,10 @@ fn setup_one(
     if runtime == "deepseek" {
         return setup_deepseek(home, executable);
     }
-    if matches!(runtime, "custom" | "hermes") {
+    if runtime == "hermes" {
+        return Ok(hermes_setup());
+    }
+    if runtime == "custom" {
         return Ok(json!({
             "runtime":runtime,"mode":"manual","status":"requires_action","config":config
         }));
