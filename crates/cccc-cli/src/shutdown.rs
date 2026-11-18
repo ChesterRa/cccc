@@ -295,8 +295,7 @@ async fn stop_on_interrupt(
 }
 
 /// A forced exit does not wait for agents to be confirmed stopped, and agents held by a
-/// session owner outlive this process. Say so, with the command that stops them. Only
-/// Linux has session owners, so only there can agents outlive this process this way.
+/// session owner can outlive this process. Give the stop command when this host uses an owner.
 const FORCED_EXIT_AGENT_HINT: &str =
     "Some agents may still be running; run `cccc daemon stop` to stop them.";
 

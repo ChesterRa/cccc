@@ -247,8 +247,7 @@ async fn a_rebuilt_launch_program_is_read_and_an_unchanged_one_is_not_run() {
     assert_eq!(local_build(home, None).await, None);
 }
 
-// Only Linux reads the running image; elsewhere a host does not look.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test]
 async fn the_running_program_is_its_own_launch_program_until_it_is_replaced() {
     // This test's own program, read from its image and from its path, is the

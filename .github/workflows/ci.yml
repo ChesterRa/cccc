@@ -225,6 +225,12 @@ jobs:
       - name: Verify TUI rendering and input
         run: >-
           cargo test --package cccc --bin cccc --locked tui::
+      - name: Verify macOS update capabilities and running image
+        run: >-
+          cargo test --package cccc --bin cccc --locked --
+          self_check_reports_this_programs_constants
+          keeping_agents_through_a_release_is_offered_only_where_this_build_takes_them_over
+          the_running_program_is_its_own_launch_program_until_it_is_replaced
       - name: Verify Group copy path checks on macOS
         run: >-
           cargo test --package cccc-pair-core --lib --locked group_copy

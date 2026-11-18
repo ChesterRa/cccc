@@ -642,9 +642,9 @@ Result:
 { shutting_down: true; request_id: string; mode: "preserve_agents" }
 ```
 
-This is an explicit maintenance exit, currently enabled only on Linux. macOS
-and Windows reject it as `unsupported_platform`. On supported platforms it stops the
-collaboration daemon while independent managed members continue running.
+Linux and native arm64 macOS builds support this explicit maintenance exit.
+Intel macOS builds and Windows reject it as `unsupported_platform`. On supported
+platforms it stops the collaboration daemon while independent managed members continue running.
 It MUST NOT wait for their active provider turns to complete. Scheduling and
 new input routing stop with the daemon; the replacement daemon queries retained
 execution facts before settling existing ledger claims. Unknown input outcomes

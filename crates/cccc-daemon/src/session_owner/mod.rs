@@ -52,7 +52,10 @@ pub use shutdown::startup_retained;
 /// The independent holder and its native recovery must be enabled together.
 /// Executable relay support alone does not establish holder preservation.
 pub const fn platform_supported() -> bool {
-    cfg!(target_os = "linux")
+    cfg!(any(
+        target_os = "linux",
+        all(target_os = "macos", target_arch = "aarch64")
+    ))
 }
 
 /// Read current holder and saved remote-work facts without starting or

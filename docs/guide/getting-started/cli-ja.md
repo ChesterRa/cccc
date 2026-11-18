@@ -198,7 +198,7 @@ cccc ledger search --by assistant # 送信者でイベントを検索
 cccc daemon status              # 状態を確認
 cccc daemon start               # 起動
 cccc daemon stop                # daemon と、各グループの管理対象プロセスを停止
-cccc daemon stop --keep-agents  # Linux：daemon だけを停止し、エージェントは動き続ける
+cccc daemon stop --keep-agents  # Linux・macOS ネイティブ arm64 版：daemon だけを停止し、エージェントを維持
 ```
 
 ## Web UI を起動（任意） {#web-ui-を起動-任意}

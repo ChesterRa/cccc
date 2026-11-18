@@ -198,7 +198,7 @@ cccc ledger search --by assistant  # Search events by sender
 cccc daemon status              # Check status
 cccc daemon start               # Start daemon
 cccc daemon stop                # Stop daemon and its managed processes across Groups
-cccc daemon stop --keep-agents  # Linux: stop only the daemon; agents keep running
+cccc daemon stop --keep-agents  # Linux and native arm64 macOS: stop only the daemon and keep agents running
 ```
 
 ## Start Web UI (Optional)

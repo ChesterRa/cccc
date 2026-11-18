@@ -89,8 +89,8 @@ cccc daemon start
 
 A normal `cccc daemon stop` stops the agent processes that CCCC started and says which
 ones it stopped, naming any agent it could not confirm as stopped. Sessions you started
-yourself keep running. On Linux,
-`cccc daemon stop --keep-agents` keeps the agents CCCC started running instead; see
+yourself keep running. On Linux and Apple Silicon Macs running the native arm64 build,
+`cccc daemon stop --keep-agents` also keeps managed agents running. See
 [Keeping agents across a restart](#keeping-agents-across-a-restart).
 
 | Part | After the daemon starts again |
@@ -110,7 +110,8 @@ stops the agents it manages before replacing CCCC. When you start CCCC with
 the same home, your Groups, member settings, tasks, Group message history and
 unread Mail are still there. Later updates can keep eligible agents running.
 
-On Linux, `cccc daemon stop --keep-agents` stops only the daemon. The agents CCCC
+On Linux and Apple Silicon Macs running the native arm64 build,
+`cccc daemon stop --keep-agents` stops only the daemon. The agents CCCC
 started keep running with their terminal and output, and a turn that was running
 continues. `cccc daemon start` lists the members it found. Web reconnects to
 their retained browser pages when it starts. A message whose
@@ -124,25 +125,24 @@ delivery was in progress is settled after the start and is not sent twice.
   `cccc update`, then `cccc daemon start`. `cccc update` on its own restarts a running
   daemon, which stops its agents.
 - After such an update, the kept agents stay with the process that has been holding
-  them, which still runs the previous version, and agents started later join that
-  process. A plain `cccc daemon stop` ends it; after the next `cccc daemon start`,
-  the agents run under the new version.
+  them. New agents start under the new build. A plain `cccc daemon stop` stops
+  agents held by either build.
 - ChatGPT Dots and Grok Bot Web Model agents run in the provider's cloud. Keeping agents
   keeps their saved connection and any unfinished turn; the update result lists one with
   unfinished work as unconfirmed, because CCCC cannot see whether the cloud run went on.
   While CCCC restarts, its address does not answer, so a CCCC tool call from that run can
   fail or end it. Check the turn's result before sending its input again. If a saved remote
   connection or its unfinished work cannot be confirmed, CCCC does not keep agents.
-- macOS and Windows cannot keep agents yet: the daemon refuses `--keep-agents` and
-  stops nothing.
+- On Windows and with an Intel macOS build, the daemon rejects `--keep-agents`
+  before stopping any agents.
 
 ### Starting after an interrupted local restart
 
 If a restart into a local build leaves CCCC down, start a working CCCC executable
 with the same `CCCC_HOME`. Once CCCC verifies that the previous update host has
 exited and takes the daemon lock, it reports the interrupted restart as abandoned
-and starts the executable you chose. On Linux, the daemon can reconnect to agents
-that stayed running during the interrupted restart.
+and starts the executable you chose. On platforms that support keeping agents, the
+daemon can reconnect to agents that stayed running during the interrupted restart.
 
 If another CCCC process holds the daemon lock, wait and retry. Run
 `cccc daemon status` if the lock stays busy. For an interrupted release
@@ -150,8 +150,9 @@ installation, use the `cccc update --recover` command that CCCC prints.
 
 ### When CCCC cannot confirm an agent {#when-cccc-cannot-confirm-an-agent}
 
-On Linux, an agent's launch can end without CCCC being able to confirm whether its work is still
-running, for example when Claude Code fails in a way CCCC does not recognise. The agent then
+On platforms that support keeping agents, an agent's launch can end before CCCC
+can confirm whether its work is still running, for example when Claude Code fails
+in a way CCCC does not recognise. The agent then
 shows as Unknown, its tooltip gives the review command, and `cccc daemon stop` names it with
 that command, `cccc daemon process-recovery --owner session --owner-id <owner-id> list`. The
 other agents and the lists keep working.
@@ -197,8 +198,9 @@ python -m pip install -U "cccc-pair>=0.4.36"
 To update from CCCC itself, open **Settings > This instance > Update** in the Web, or
 type `/update` in the terminal interface that `cccc` starts. CCCC looks for a newer
 release only when asked. It shows the installed and latest versions with a link to the
-release notes, and says so when the check fails. On Linux, when the website installer
-installed CCCC and the `cccc` or `cccc web` that serves this Web also started its daemon,
+release notes, and says so when the check fails. On Linux and Apple Silicon Macs,
+when the website installer installed CCCC and the `cccc` or `cccc web` that
+serves this Web also started its daemon,
 **Update and restart agents** asks once. CCCC then stops, installs the release and starts
 again at the same address. The Web loses its connection until CCCC is back, then shows the
 result. Running agents start again as after any daemon restart; see
@@ -206,7 +208,7 @@ result. Running agents start again as after any daemon restart; see
 command for this installation, such as the pip command, or asks you to update CCCC the way
 it was installed.
 
-On Linux, a website-installer update can keep agents running; see
+On Linux and native arm64 macOS, a website-installer update can keep agents running. See
 [Keeping agents across a restart](#keeping-agents-across-a-restart).
 
 Do not remove the v0.4.36 lower bound. Before a pip upgrade, run

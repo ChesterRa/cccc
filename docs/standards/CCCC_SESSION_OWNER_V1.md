@@ -2,9 +2,9 @@
 
 This contract separates managed member execution from the collaboration daemon.
 It is private to CCCC and versioned independently of product versions and the
-public daemon IPC. The process/socket seam is enabled only on Linux. macOS and
-Windows retain in-process runtime ownership and reject maintenance preservation
-as unsupported. Their construction and recovery require separate validation.
+public daemon IPC. Linux and Apple Silicon Macs running the native arm64 build
+use an independent session owner. Intel macOS builds and Windows use in-process
+runtime ownership and reject maintenance preservation as unsupported.
 
 ## Ownership and authority
 
