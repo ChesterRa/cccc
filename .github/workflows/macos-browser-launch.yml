@@ -1,45 +1,49 @@
-name: Compare macOS background browser launch methods
+name: macOS busy browser maintenance
 on:
   push:
     branches: [probe/macos-browser-launch]
 permissions:
   contents: read
-
 jobs:
-  compare:
+  maintenance:
     runs-on: macos-15
-    timeout-minutes: 8
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: "24.19.0"
-      - name: Compare isolated headless Chrome launches
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = arm64
-          python3 -BI scripts/tests/macos_launch/probe.py | tee "$RUNNER_TEMP/launch.json"
-      - name: Verify the direct Chrome control and report the two launchers
-        shell: bash
-        run: |
-          python3 - "$RUNNER_TEMP/launch.json" <<'PY'
-          import json, os, sys
-          with open(sys.argv[1]) as source:
-              cases = json.load(source)["cases"]
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-              for name in ("open", "appkit", "direct"):
-                  line = f"{name}: {cases[name]['status']}"
-                  print(line)
-                  print(f"- {line}", file=summary)
-          if cases["direct"]["status"] != "ready":
-              sys.exit("Direct Chrome control did not establish the private CDP connection")
-          if all(cases[name]["status"] != "ready" for name in ("open", "appkit")):
-              sys.exit("Direct Chrome succeeded. Neither native launcher established the private CDP connection.")
-          PY
+          package-manager-cache: false
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Prepare pinned sources, macOS SDK inspector and Web assets
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_launch/direct.sh prepare
+      - name: Build the previous program with its isolated headless launcher
+        timeout-minutes: 20
+        run: bash scripts/tests/macos_launch/direct.sh build previous
+      - id: built
+        name: Build the pinned candidate and verify separate source identities
+        timeout-minutes: 20
+        run: bash scripts/tests/macos_launch/direct.sh build current
+      - name: Replace the daemon during a browser response
+        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
+        timeout-minutes: 8
+        run: bash scripts/tests/macos_launch/direct.sh case daemon
+      - name: Restart the local build during a browser response
+        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
+        timeout-minutes: 8
+        run: bash scripts/tests/macos_launch/direct.sh case local
+      - name: Install the release during a browser response
+        if: ${{ !cancelled() && steps.built.outcome == 'success' }}
+        timeout-minutes: 8
+        run: bash scripts/tests/macos_launch/direct.sh case release
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: macos-browser-launch-comparison
-          path: ${{ runner.temp }}/launch.json
+          name: macos-direct-busy-browser-evidence
           if-no-files-found: warn
+          retention-days: 5
+          path: ${{ runner.temp }}/cccc-busy-direct/evidence

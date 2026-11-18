@@ -1,0 +1,27 @@
+--- a/crates/cccc-web/src/browser_surface/system_browser.rs
++++ b/crates/cccc-web/src/browser_surface/system_browser.rs
+@@ -156,11 +156,20 @@
+         profile: &Path,
+         extra_args: Vec<String>,
+     ) -> Result<(Browser, Handler, u32)> {
+-        let app =
+-            macos_app_bundle(&self.executable).context("system browser app bundle not found")?;
+         let browser_args = self.browser_args(profile, extra_args);
+-        let mut command = cccc_runtime::background_tokio_command("/usr/bin/open");
+-        command.args(macos_open_args(app));
++        // Only the disposable fixture substitutes this detached launch. The owner
++        // still discovers and stops the real browser through its profile and PID.
++        let mut command = cccc_runtime::background_tokio_command("/usr/bin/python3");
++        command.args([
++            "-I",
++            "-c",
++            concat!(
++                "import subprocess, sys\n",
++                "subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, ",
++                "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)"
++            ),
++        ]);
++        command.arg(&self.executable);
+         command.args(&browser_args);
+         let output = command
+             .output()
