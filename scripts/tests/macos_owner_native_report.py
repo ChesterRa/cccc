@@ -20,6 +20,7 @@ REQUIRED = (
     "host_identity_and_native_parent_follow_process_lifetime",
     "mcp_registration_uses_the_native_peer_while_start_and_control_are_pending",
     "long_owner_paths_support_control_and_terminal_connections",
+    "an_unreachable_owner_keeps_unknown_and_exited_guidance_separate",
     "an_unstopped_opened_browser_is_recorded_for_the_next_acquire",
     "an_opened_browser_is_stopped_only_by_its_identity",
 )
@@ -82,6 +83,13 @@ def main() -> int:
               "scope": "native Rust process boundaries only; Mac preservation remains disabled"}
     (args.directory / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     emit("result.json", json.dumps(result, indent=2))
+    for name in ("check", "clippy"):
+        path = args.directory / f"{name}.log"
+        if phases[name] != "0" and path.exists():
+            lines = path.read_text(errors="replace").splitlines()
+            diagnostics = [line for line in lines if line.startswith(("error", "warning"))
+                           or line.lstrip().startswith("-->")]
+            emit(f"{name}-diagnostics", "\n".join(diagnostics)[:14000])
     for name, status in phases.items():
         path = args.directory / f"{name}.log"
         if status != "0" and path.exists():

@@ -2,6 +2,7 @@
 # Native macOS validation only. No provider CLI or user service is started.
 set -euo pipefail
 umask 077
+export CARGO_TERM_COLOR=never
 ulimit -c 0
 PROBE_DIR="${1:?evidence directory required}"
 test "$(uname -s)" = Darwin
@@ -64,10 +65,10 @@ rm "$PROBE_DIR/sdk-layout"
 phase web_dependencies npm ci --prefix web
 phase web_bundle npm -C web run build
 printf '1\n' > "$PROBE_DIR/explicit_web_builds.txt"
-phase check cargo check --workspace --all-targets --locked
-phase clippy cargo clippy --workspace --all-targets --locked -- -D warnings || true
+phase check cargo check --workspace --all-targets --locked --keep-going || true
+phase clippy cargo clippy --workspace --all-targets --locked --keep-going -- -D warnings || true
 
-filter='(package(cccc-pair-runtime) & (test(/process_tree::guard::/) | test(/process_tree::darwin_identity::/) | test(/darwin_process::/) | test(/running_image::/) | test(/process_children::/))) | (package(cccc-pair-core) & (test(/local_sessions::/) | test(/update_image::/) | test(/unix_socket_path::/))) | (package(cccc-pair-daemon) & test(/session_owner::transport::/)) | (package(cccc-pair-web) & test(/browser_surface::profile_owner::/))'
+filter='(package(cccc-pair-runtime) & (test(/process_tree::guard::/) | test(/process_tree::darwin_identity::/) | test(/darwin_process::/) | test(/running_image::/) | test(/process_children::/))) | (package(cccc-pair-core) & (test(/local_sessions::/) | test(/update_image::/) | test(/unix_socket_path::/))) | (package(cccc-pair-daemon) & (test(/session_owner::transport::/) | test(/an_unreachable_owner_keeps_unknown_and_exited_guidance_separate/))) | (package(cccc-pair-web) & test(/browser_surface::profile_owner::/))'
 printf '%s\n' "$filter" > "$PROBE_DIR/filter.txt"
 phase native_tests env -i \
   PATH="$PATH" HOME="$PROBE_DIR/test/home" TMPDIR="$PROBE_DIR/test/tmp/" \
