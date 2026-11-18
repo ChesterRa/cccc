@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/google/chrome/chrome --headless=new --disable-background-networking "$@"

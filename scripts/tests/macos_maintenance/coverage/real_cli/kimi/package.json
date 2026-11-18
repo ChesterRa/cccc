@@ -1,0 +1,7 @@
+{
+  "name": "cccc-kimi-verification",
+  "private": true,
+  "dependencies": {
+    "@moonshot-ai/kimi-code": "2.6.3"
+  }
+}

@@ -1,56 +1,222 @@
 name: macOS session owner and maintenance probe
-
 on:
   push:
     branches: ['probe/macos-session-owner']
-
 permissions:
   contents: read
-
 concurrency:
   group: macos-session-owner-probe-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  maintenance:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        program: [previous, current]
     runs-on: macos-15
-    timeout-minutes: 120
+    timeout-minutes: 95
+    env:
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+      CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          fetch-depth: 2
-
+          ref: ${{ matrix.program == 'previous' && '24b81439e17583d29335af2cdc32326b470f32f9' || github.sha }}
       - uses: actions/setup-node@v7
         with:
           node-version: '24.19.0'
-
       - uses: dtolnay/rust-toolchain@1.88.0
-        with:
-          components: clippy
-
-      - name: Test retained sessions across two Apple Silicon builds
+      - name: Build Web assets
+        timeout-minutes: 10
+        run: |
+          npm ci --prefix web
+          npm -C web run build
+      - name: Build the program
+        timeout-minutes: 46
         shell: bash
-        run: bash scripts/tests/macos_maintenance/check_candidate.sh "$RUNNER_TEMP/cccc-maintenance"
-
-      - name: Publish maintenance outcomes
-        if: always()
+        run: |
+          set -euo pipefail
+          cargo build --workspace --locked 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Identify the executable and prepare it for the other runner
         shell: bash
-        run: python3 -I scripts/tests/macos_maintenance/report.py "$RUNNER_TEMP/cccc-maintenance"
-
-      - name: Keep isolated maintenance evidence
-        if: always()
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          out="$RUNNER_TEMP/cccc-native-${{ matrix.program }}"
+          mkdir -p "$out"
+          git rev-parse HEAD > "$out/commit.txt"
+          target/debug/cccc update --self-check > "$out/program.json"
+          tar -C target/debug -czf "$out/program.tar.gz" cccc
+          (cd target/debug && shasum -a 256 cccc) > "$out/program.sha256"
+          git diff --exit-code HEAD
+      - id: program
         uses: actions/upload-artifact@v7
         with:
-          name: macos-retained-session-evidence
+          name: native-${{ matrix.program }}-program
+          path: ${{ runner.temp }}/cccc-native-${{ matrix.program }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+      - id: tests
+        name: Compile native Web test executables
+        if: matrix.program == 'current'
+        timeout-minutes: 25
+        run: cargo test --workspace --lib --locked --no-run --message-format=json-render-diagnostics > "$RUNNER_TEMP/native-build.jsonl"
+      - id: connect
+        name: Native Chrome successful launch and stop
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
+        timeout-minutes: 3
+        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/native.py connect
+      - id: cleanup
+        name: Native Chrome cleanup after a failed connection
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
+        timeout-minutes: 3
+        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/native.py cleanup
+      - name: Trace native launcher waits after connect failure
+        if: ${{ !cancelled() && steps.connect.outcome == 'failure' }}
+        timeout-minutes: 3
+        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/native.py connect --trace-open
+      - name: Trace native launcher waits after cleanup failure
+        if: ${{ !cancelled() && steps.cleanup.outcome == 'failure' }}
+        timeout-minutes: 3
+        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/native.py cleanup --trace-open
+      - name: Keep native Chrome test diagnostics
+        if: ${{ always() && matrix.program == 'current' && steps.tests.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-native-browser-diagnostics
           retention-days: 3
           if-no-files-found: error
           path: |
-            ${{ runner.temp }}/cccc-maintenance/*.txt
-            ${{ runner.temp }}/cccc-maintenance/*.rc
-            ${{ runner.temp }}/cccc-maintenance/*.log
-            ${{ runner.temp }}/cccc-maintenance/*.json
-            ${{ runner.temp }}/cccc-maintenance/busy/*/result.json
-            ${{ runner.temp }}/cccc-maintenance/busy/*/events.json
-            ${{ runner.temp }}/cccc-maintenance/local/result.json
-            ${{ runner.temp }}/cccc-maintenance/release/result.json
+            ${{ runner.temp }}/cccc-native-tests/*.log
+            ${{ runner.temp }}/cccc-native-tests/*.sample
+            ${{ runner.temp }}/cccc-native-tests/*.processes.json
+      - name: Keep build failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-${{ matrix.program }}-failure
+          path: ${{ runner.temp }}/build.log
+          retention-days: 3
+          if-no-files-found: warn
+
+  maintenance:
+    needs: build
+    if: ${{ !cancelled() }}
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.19.0'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: native-*-program
+          path: ${{ runner.temp }}/cccc-programs
+      - id: verify
+        name: Verify both source identities, executable hashes and native process inspector
+        shell: bash
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/cccc-programs"
+          EVIDENCE="$RUNNER_TEMP/cccc-evidence"
+          mkdir -p "$EVIDENCE"
+          for role in previous current; do
+            folder="$d/native-$role-program"
+            (cd "$folder" && tar -xzf program.tar.gz && shasum -a 256 -c program.sha256)
+            "$folder/cccc" update --self-check > "$EVIDENCE/$role.json"
+            cmp "$folder/program.json" "$EVIDENCE/$role.json"
+            cp "$folder/commit.txt" "$EVIDENCE/$role-commit.txt"
+            cp "$folder/program.sha256" "$EVIDENCE/$role-sha256.txt"
+          done
+          test "$(cat "$EVIDENCE/current-commit.txt")" = "$GITHUB_SHA"
+          test "$(cat "$EVIDENCE/previous-commit.txt")" = 24b81439e17583d29335af2cdc32326b470f32f9
+          python3 -I - "$EVIDENCE" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          a, b = [json.loads((root / (k + '.json')).read_text()) for k in ('previous','current')]
+          assert all(v['capabilities']['preserve_agents'] is True for v in (a,b))
+          assert a['build']['source_id'] and b['build']['source_id'] and a['build']['source_id'] != b['build']['source_id']
+          PY
+          xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror \
+              scripts/tests/macos_maintenance/inspect_process.c -o "$RUNNER_TEMP/inspect-process"
+      - name: Cold replacement of the daemon with a live terminal and MCP
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh pty
+      - name: Cold replacement with an in-flight browser turn
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 8
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh browser
+      - name: Keep a terminal and MCP on the same installation
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh same-build
+      - name: Web local restart with an active terminal and MCP
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh local
+      - name: Web release update with an active terminal and MCP
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh release
+      - name: Web local restart during a browser response
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh browser-local
+      - name: Web release update during a browser response
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh browser-release
+      - name: Recover an interrupted local restart from three public entries
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 8
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh recovery
+      - name: Retain two active protocol turns and run a real DeepSeek CLI
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 9
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh managed
+      - name: Pi RPC with a localhost model
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh pi
+      - name: OpenCode V2 with a localhost model and its native viewer
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh opencode
+      - name: Kilo with a localhost model and its native viewer
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh kilo
+      - name: Copilot ACP with a localhost model
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh copilot
+      - name: Kimi ACP with a localhost model
+        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
+        timeout-minutes: 6
+        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh kimi
+      - name: Keep verified fixture outcomes and local diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-runtime-maintenance-evidence
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/cccc-evidence/*-commit.txt
+            ${{ runner.temp }}/cccc-evidence/*-sha256.txt
+            ${{ runner.temp }}/cccc-evidence/*.json
+            ${{ runner.temp }}/cccc-evidence/**/result.json
+            ${{ runner.temp }}/cccc-evidence/**/events.json
+            ${{ runner.temp }}/cccc-evidence/**/*.rc
+            ${{ runner.temp }}/cccc-evidence/**/driver.log
+            ${{ runner.temp }}/cccc-evidence/**/npm.log
+            ${{ runner.temp }}/cccc-evidence/**/structured.log
+            ${{ runner.temp }}/cccc-evidence/**/real_deepseek.log

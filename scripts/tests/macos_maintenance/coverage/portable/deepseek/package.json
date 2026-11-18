@@ -1,0 +1,11 @@
+{
+  "ccccManaged": true,
+  "dependencies": {
+    "@deepseek-ai/dsh-acp": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6"
+  },
+  "name": "cccc-deepseek-runtime",
+  "private": true
+}

@@ -240,9 +240,18 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
             cli("daemon", "stop", "--keep-agents")
             assert host.wait(timeout=45) == 0
             assert u.process_identity(original["pid"]) == original["identity"]
+            candidate = install / "cccc.next"
+            shutil.copy2(new, candidate)
+            candidate.replace(program)
+            assert u.digest(program) == u.digest(new)
             host = start_host()
             target = expect(lambda: u.daemon_ping(home), "replacement Web")
-            assert source["pid"] != target["pid"] and target["build"] == source["build"]
+            assert (
+                source["pid"] != target["pid"]
+                and target["build"]["source_id"]
+                == after["source_id"]
+                != source["build"]["source_id"]
+            )
             receipt = None
         else:
             if kind == "local":
@@ -345,7 +354,7 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
 
 def run_requested(_kind, *args):
     failed = []
-    for kind in ("daemon", "local", "release"):
+    for kind in requested:
         try:
             exercise(kind, *args)
         except Exception:
@@ -356,9 +365,16 @@ def run_requested(_kind, *args):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        raise SystemExit("usage: busy.py OLD_BINARY NEW_BINARY OUTPUT")
+    if len(sys.argv) not in (4, 5):
+        raise SystemExit(
+            "usage: busy.py OLD_BINARY NEW_BINARY OUTPUT [daemon|local|release]"
+        )
     # Build the mock release once, then use a separate home for each maintenance action.
+    requested = (
+        (sys.argv.pop(),) if len(sys.argv) == 5 else ("daemon", "local", "release")
+    )
+    if any(kind not in ("daemon", "local", "release") for kind in requested):
+        raise SystemExit("unknown browser maintenance mode")
     sys.argv.append("local")
     u.run_case = run_requested
     u.main()

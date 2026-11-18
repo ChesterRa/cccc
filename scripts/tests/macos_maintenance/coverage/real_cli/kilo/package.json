@@ -1,0 +1,7 @@
+{
+  "name": "cccc-kilo-verification",
+  "private": true,
+  "dependencies": {
+    "@kilocode/cli": "7.8.27"
+  }
+}

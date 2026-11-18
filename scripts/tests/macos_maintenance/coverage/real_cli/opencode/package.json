@@ -1,0 +1,7 @@
+{
+  "name": "cccc-opencode-verification",
+  "private": true,
+  "dependencies": {
+    "@opencode/cli": "2.3.2"
+  }
+}
