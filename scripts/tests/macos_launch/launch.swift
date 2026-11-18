@@ -10,7 +10,6 @@ configuration.allowsRunningApplicationSubstitution = false
 configuration.promptsUserIfNeeded = false
 configuration.addsToRecentItems = false
 configuration.arguments = Array(arguments.dropFirst())
-configuration.environment = ProcessInfo.processInfo.environment
 
 NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: bundle),
                                    configuration: configuration) { app, error in
