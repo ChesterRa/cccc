@@ -377,11 +377,16 @@ export type Actor = {
   runtime_session_last_resume_error?: string | null;
   runtime_session_replaced_at?: string | null;
   runtime_session_replaced_reasons?: string[] | null;
-  /** The original PTY is waiting for the user before managed runtime admission. */
+  /** The member's terminal is waiting for the user before managed runtime admission: Claude's
+   *  confirmation or Hermes's first setup. */
   runtime_confirmation_required?: boolean;
-  /** That confirmation ended before admission: automatic retries are paused in the current
-   *  daemon process, and an explicit retry can clear it. Absent when the daemon cannot observe it. */
+  /** That confirmation or setup ended before admission, or an ordinary terminal closed before
+   *  its startup input: automatic retries are paused in the current daemon process, and an
+   *  explicit retry can clear it. Absent when the daemon cannot observe it. */
   runtime_confirmation_paused?: boolean;
+  /** An ordinary terminal's first automatic input waits for its chat input region; present
+   *  only while it waits. `generation` names that terminal process for an explicit release. */
+  runtime_startup_input?: { generation: string } | null;
   submit?: "enter" | "newline" | "none";
   profile_id?: string;
   profile_scope?: "global" | "user";

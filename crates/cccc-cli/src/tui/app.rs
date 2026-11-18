@@ -20,6 +20,7 @@ use crate::host_state::{HostIntent, HostPhase, HostState, UpdateResult};
 use cccc_contracts::local_session::{LocalSessionRuntime, LocalSessionSource};
 use cccc_contracts::reply_question::{Answer, MAX_ANSWER_CHARS};
 use cccc_core::HomeLayout;
+use cccc_web::{LocalBuild, UpdateMode, UpdateRequest, UpdateSource};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
@@ -46,6 +47,11 @@ pub(super) struct Context {
     /// False when NO_COLOR asks for no color.
     pub(super) color: bool,
     pub(super) update: UpdateOffer,
+    /// This process restarts into a rebuilt program at the path it was
+    /// started from, whatever installed it.
+    pub(super) local_restart: bool,
+    /// This process offers to keep agents running through a release update.
+    pub(super) release_keep: bool,
 }
 
 /// What `/update` can do in this process.
@@ -59,7 +65,12 @@ pub(super) enum UpdateOffer {
 }
 
 impl Context {
-    pub(super) fn new(home: &HomeLayout, update: UpdateOffer) -> Self {
+    pub(super) fn new(
+        home: &HomeLayout,
+        update: UpdateOffer,
+        local_restart: bool,
+        release_keep: bool,
+    ) -> Self {
         let user_home = std::env::home_dir();
         Self {
             version: crate::PRODUCT_VERSION,
@@ -67,6 +78,8 @@ impl Context {
             user_home,
             color: std::env::var_os("NO_COLOR").is_none_or(|value| value.is_empty()),
             update,
+            local_restart,
+            release_keep,
         }
     }
 }
@@ -133,11 +146,27 @@ pub(super) struct ScrollRoom {
     pub(super) page: u16,
 }
 
+/// What a confirmed `/update` does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum UpdateChoice {
+    #[default]
+    Cancel,
+    /// Restarts into the rebuilt program; running agents keep running.
+    KeepAgents,
+    /// Restarts into the rebuilt program; running agents restart with it.
+    RestartAgents,
+    /// Installs the newer release once it is checked; running agents keep
+    /// running.
+    ReleaseKeep,
+    /// Installs the newer release; running agents restart with it.
+    Release,
+}
+
 /// One `/update` visit. The confirmation starts on Cancel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UpdateFlow {
     pub(super) generation: u64,
-    pub(super) choice: ConfirmChoice,
+    pub(super) choice: UpdateChoice,
     /// Confirmed and sent, so it cannot be confirmed twice.
     pub(super) started: bool,
 }
@@ -410,7 +439,7 @@ impl App {
                 .as_ref()
                 .is_some_and(|flow| flow.step == SetupStep::Confirm),
             Screen::Pending => self.pending_view.detail.is_some(),
-            Screen::Update => self.update_confirmable().is_some(),
+            Screen::Update => !self.update_options().is_empty(),
             _ => false,
         }
     }
@@ -1208,7 +1237,7 @@ impl App {
         self.generation += 1;
         self.update_flow = Some(UpdateFlow {
             generation: self.generation,
-            choice: ConfirmChoice::Cancel,
+            choice: UpdateChoice::Cancel,
             started: false,
         });
         self.screen = Screen::Update;
@@ -1223,27 +1252,98 @@ impl App {
         (self.update.generation == flow.generation).then_some(&self.update)
     }
 
-    /// The version a confirmation would update to, when one is offered: a
-    /// newer release, a host that can replace itself, and nothing under way.
-    pub(super) fn update_confirmable(&self) -> Option<&str> {
-        if self.context.update != UpdateOffer::InPlace
-            || self.update_flow.as_ref().is_none_or(|flow| flow.started)
-        {
-            return None;
+    /// What this visit's confirmation offers, in order, each with whether it
+    /// can be chosen; empty while nothing can be confirmed. Cancel leads. A
+    /// rebuilt program is offered by a host that restarts into one, a newer
+    /// release by a host that replaces itself, once the check has finished and
+    /// nothing is under way.
+    pub(super) fn update_options(&self) -> Vec<(UpdateChoice, bool)> {
+        let mut options = Vec::new();
+        if self.update_flow.as_ref().is_none_or(|flow| flow.started) {
+            return options;
         }
-        let progress = self.update_progress()?;
+        let Some(progress) = self.update_progress() else {
+            return options;
+        };
         if progress.checking
             || progress.preparing.is_some()
             || progress.handed_over
             || progress.rejected.is_some()
             || progress.given_up
         {
-            return None;
+            return options;
         }
-        let check = progress.check.as_ref()?;
-        matches!(check.status.as_deref(), Some("newer" | "channel_switch"))
-            .then_some(check.latest.as_deref())
-            .flatten()
+        let Some(check) = progress.check.as_ref() else {
+            return options;
+        };
+        if let Some(LocalBuild::Rebuilt { keep, .. }) = self.offered_local(check) {
+            options.push((UpdateChoice::KeepAgents, keep.allowed));
+            options.push((UpdateChoice::RestartAgents, true));
+        }
+        if self.offered_release(check).is_some() {
+            if self.context.release_keep {
+                options.push((UpdateChoice::ReleaseKeep, true));
+            }
+            options.push((UpdateChoice::Release, true));
+        }
+        if !options.is_empty() {
+            options.insert(0, (UpdateChoice::Cancel, true));
+        }
+        options
+    }
+
+    /// The rebuilt program a restart would run, when this host offers one.
+    pub(super) fn offered_local<'a>(
+        &self,
+        check: &'a cccc_web::UpdateCheck,
+    ) -> Option<&'a LocalBuild> {
+        check.local.as_ref().filter(|local| {
+            self.context.local_restart && matches!(local, LocalBuild::Rebuilt { .. })
+        })
+    }
+
+    /// The newer release an update would install, when this host offers one.
+    fn offered_release<'a>(&self, check: &'a cccc_web::UpdateCheck) -> Option<&'a str> {
+        (self.context.update == UpdateOffer::InPlace
+            && matches!(check.status.as_deref(), Some("newer" | "channel_switch")))
+        .then_some(check.latest.as_deref())
+        .flatten()
+    }
+
+    /// What confirming `choice` asks the host for, and the version it names.
+    fn update_request(&self, choice: UpdateChoice) -> Option<(UpdateRequest, String)> {
+        let check = self.update_progress()?.check.as_ref()?;
+        let mode = match choice {
+            UpdateChoice::Cancel => return None,
+            UpdateChoice::Release | UpdateChoice::ReleaseKeep => {
+                let version = self.offered_release(check)?.to_owned();
+                let source = UpdateSource::Release {
+                    version: version.clone(),
+                };
+                let mode = if choice == UpdateChoice::ReleaseKeep {
+                    UpdateMode::Keep
+                } else {
+                    UpdateMode::Restart
+                };
+                return Some((UpdateRequest { source, mode }, version));
+            }
+            UpdateChoice::KeepAgents => UpdateMode::Keep,
+            UpdateChoice::RestartAgents => UpdateMode::Restart,
+        };
+        let Some(LocalBuild::Rebuilt {
+            version,
+            source_id,
+            token,
+            ..
+        }) = self.offered_local(check)
+        else {
+            return None;
+        };
+        let source = UpdateSource::Local {
+            token: token.clone(),
+            source_id: source_id.clone(),
+        };
+        Some((UpdateRequest { source, mode }, version.clone()))
     }
 
     fn update_key(&mut self, code: KeyCode, press: bool) -> Option<Effect> {
@@ -1269,20 +1369,30 @@ impl App {
         if code == KeyCode::Char('r') && press && !checking {
             return self.open_update();
         }
-        let version = self.update_confirmable()?.to_owned();
-        let flow = self.update_flow.as_mut()?;
+        let options = self.update_options();
+        if options.is_empty() {
+            return None;
+        }
+        let choice = self.update_flow.as_ref()?.choice;
         match code {
-            KeyCode::Up | KeyCode::Char('k') => flow.choice = ConfirmChoice::Cancel,
-            KeyCode::Down | KeyCode::Char('j') => flow.choice = ConfirmChoice::Proceed,
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.update_flow.as_mut()?.choice = next_choice(&options, choice, false);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.update_flow.as_mut()?.choice = next_choice(&options, choice, true);
+            }
             KeyCode::Enter if press => {
-                if flow.choice == ConfirmChoice::Cancel {
+                if choice == UpdateChoice::Cancel {
                     self.screen = Screen::Main;
                     self.update_flow = None;
                     return None;
                 }
+                let (request, version) = self.update_request(choice)?;
+                let flow = self.update_flow.as_mut()?;
                 flow.started = true;
                 return Some(Effect::Update(UpdateCommand::Start {
                     generation: flow.generation,
+                    request,
                     version,
                 }));
             }
@@ -1776,6 +1886,25 @@ fn selection_index(
         (KeyCode::PageDown, Some(index)) => (index + page).min(count - 1),
         _ => return None,
     })
+}
+
+/// The nearest option above or below `current` that can be chosen; `current`
+/// itself at either end.
+fn next_choice(
+    options: &[(UpdateChoice, bool)],
+    current: UpdateChoice,
+    down: bool,
+) -> UpdateChoice {
+    let index = options
+        .iter()
+        .position(|(option, _)| *option == current)
+        .unwrap_or(0);
+    let next = if down {
+        options[index + 1..].iter().find(|(_, enabled)| *enabled)
+    } else {
+        options[..index].iter().rev().find(|(_, enabled)| *enabled)
+    };
+    next.map_or(current, |(option, _)| *option)
 }
 
 fn update_notice(result: &UpdateResult) -> Notice {

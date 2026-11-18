@@ -85,7 +85,9 @@ async fn an_active_update_blocks_start_before_ping_spawn_and_process_tree_cleanu
             version: "0.4.59".into(),
             source_id: "1".repeat(64),
         },
-        temp.path().to_path_buf(),
+        cccc_core::attended_update::Source::Release {
+            install_dir: temp.path().to_path_buf(),
+        },
     )
     .expect("intent");
     arm(&home, &intent).expect("arm");

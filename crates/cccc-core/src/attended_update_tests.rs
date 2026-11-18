@@ -22,7 +22,9 @@ impl Fixture {
                 version: "0.4.59".into(),
                 source_id: "1".repeat(64),
             },
-            install,
+            Source::Release {
+                install_dir: install,
+            },
         )
         .expect("intent");
         Self {
@@ -46,6 +48,70 @@ fn a_normal_start_with_no_intent_creates_no_update_state() {
     assert!(!home.root().exists());
     assert!(check_start(&home, Some(temp.path()), &BuildIdentity::current()).is_err());
     assert!(!home.root().exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn local_permits_bind_the_running_file_and_allow_same_or_lower_versions() {
+    for version in [env!("CARGO_PKG_VERSION"), "0.0.1"] {
+        let mut f = Fixture::new();
+        f.intent = Intent::new(
+            &f.home,
+            &f.intent.transaction_id,
+            BuildIdentity {
+                version: version.into(),
+                source_id: "2".repeat(64),
+            },
+            Source::Local {
+                program: std::env::current_exe().expect("test program"),
+                file_identity: FileIdentity::running().expect("actual image"),
+            },
+        )
+        .expect("local intent");
+        f.arm();
+        assert!(check_start(&f.home, None, &f.intent.target).is_err());
+        check_start(&f.home, Some(&f.intent.transaction_dir), &f.intent.target)
+            .expect("the actual selected file is permitted");
+        let mut changed = f.intent.clone();
+        if let Source::Local { file_identity, .. } = &mut changed.source {
+            file_identity.inode = file_identity.inode.wrapping_add(1);
+        }
+        crate::fs::write_json(&active_path(&f.home), &changed).expect("another checked image");
+        let error = check_start(&f.home, Some(&changed.transaction_dir), &changed.target)
+            .expect_err("the same version/source cannot replace file evidence");
+        assert!(error.to_string().contains("running executable"));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_missing_local_program_still_has_an_explicit_recovery_path() {
+    let mut f = Fixture::new();
+    let program = f._temp.path().join("local cccc");
+    fs::write(&program, b"candidate file").expect("candidate");
+    f.intent = Intent::new(
+        &f.home,
+        &f.intent.transaction_id,
+        f.intent.target.clone(),
+        Source::Local {
+            file_identity: FileIdentity::read(&program).expect("file identity"),
+            program: program.clone(),
+        },
+    )
+    .expect("local intent");
+    f.arm();
+    fs::remove_file(&program).expect("a rebuild removed the program");
+    assert_eq!(
+        active(&f.home).expect("valid record despite missing program"),
+        Some(f.intent.clone())
+    );
+    assert!(check_start(&f.home, Some(&f.intent.transaction_dir), &f.intent.target).is_err());
+    let held =
+        claim_stopped(&f.home, &f.intent.transaction_id).expect("explicit recovery claims home");
+    disarm(&f.home, &f.intent.transaction_id).expect("no local file transaction to restore");
+    drop(held);
+    assert!(!program.exists());
+    assert_eq!(active(&f.home).expect("recovery lifted the fence"), None);
 }
 
 #[test]
@@ -156,7 +222,7 @@ fn concurrent_updates_cannot_overwrite_the_first_intent() {
         &f.home,
         &id,
         f.intent.target.clone(),
-        f.intent.install_dir.clone(),
+        f.intent.source.clone(),
     )
     .expect("second intent");
     let home = f.home.clone();
@@ -176,8 +242,11 @@ fn concurrent_updates_cannot_overwrite_the_first_intent() {
 fn damaged_or_oversized_records_do_not_lift_the_startup_fence() {
     let f = Fixture::new();
     f.arm();
+    let mut previous_schema = serde_json::to_value(&f.intent).expect("valid intent");
+    previous_schema["schema"] = serde_json::json!(1);
     for content in [
         b"{\"schema\":1}".to_vec(),
+        serde_json::to_vec(&previous_schema).expect("previous schema"),
         vec![b' '; MAX_RECORD_BYTES as usize + 1],
     ] {
         fs::write(active_path(&f.home), &content).expect("damaged record");
@@ -217,7 +286,7 @@ fn missing_update_directories_keep_the_fence_and_name_the_manual_recovery_path()
         fs::remove_dir(if missing_transaction {
             &f.intent.transaction_dir
         } else {
-            &f.intent.install_dir
+            f.intent.source.release_dir().expect("release source")
         })
         .expect("simulate removed directory");
 
@@ -256,7 +325,7 @@ fn invalid_transaction_ids_and_targets_are_rejected_before_publication() {
                 &f.home,
                 id,
                 f.intent.target.clone(),
-                f.intent.install_dir.clone()
+                f.intent.source.clone()
             )
             .is_err()
         );
@@ -285,13 +354,20 @@ fn recovery_commands_quote_paths_and_select_the_existing_old_executable() {
     let parts = shell_words::split(&f.intent.recovery_command()).expect("parse command");
     assert_eq!(
         parts[0],
-        f.intent.install_dir.join("cccc").to_string_lossy()
+        f.intent
+            .source
+            .release_dir()
+            .expect("release source")
+            .join("cccc")
+            .to_string_lossy()
     );
     assert_eq!(&parts[1..3], &["update", "--recover"]);
     assert_eq!(parts[3], f.intent.transaction_dir.to_string_lossy());
     let backup = f
         .intent
-        .install_dir
+        .source
+        .release_dir()
+        .expect("release source")
         .join(format!(".cccc-backup.{}", f.intent.transaction_id));
     fs::create_dir(&backup).expect("installer backup");
     fs::write(backup.join("cccc"), b"old executable fixture").expect("old executable");

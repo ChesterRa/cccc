@@ -20,7 +20,7 @@ chrono.workspace = true
 fs2.workspace = true
 futures-util.workspace = true
 mime_guess.workspace = true
-nix = { workspace = true, features = ["hostname", "signal", "process", "feature"] }
+nix = { workspace = true, features = ["hostname", "signal", "process", "feature", "user"] }
 percent-encoding.workspace = true
 regex.workspace = true
 same-file.workspace = true
@@ -56,8 +56,8 @@ cccc-linux-memory = { path = "../cccc-linux-memory" }
 [dev-dependencies]
 axum.workspace = true
 
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-rustix = { version = "1.1.4", features = ["event", "process"] }
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+rustix = { version = "1.1.4", features = ["process"] }
 
 [lints]
 workspace = true

@@ -275,7 +275,7 @@ jobs:
         with:
           node-version: "24.19.0"
       - name: Install verified native CLI versions
-        run: npm install --global @openai/codex@0.153.2 @anthropic-ai/claude-code@2.1.261 @kilocode/cli@7.5.14
+        run: npm install --global @openai/codex@0.170.0 @anthropic-ai/claude-code@2.1.327 @kilocode/cli@7.8.27
       - name: Verify native sessions without external model access
         timeout-minutes: 5
         env:

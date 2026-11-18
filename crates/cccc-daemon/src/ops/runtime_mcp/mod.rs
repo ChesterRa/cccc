@@ -40,6 +40,7 @@ pub(super) fn prepare(
             | ActorRuntime::Opencode
             | ActorRuntime::Kilo
             | ActorRuntime::Pi
+            | ActorRuntime::Hermes
     ) {
         return Ok(());
     }
@@ -64,17 +65,9 @@ pub(super) fn prepare(
         | ActorRuntime::Grok
         | ActorRuntime::Kilo
         | ActorRuntime::Pi
-        | ActorRuntime::Opencode => {
+        | ActorRuntime::Opencode
+        | ActorRuntime::Hermes => {
             unreachable!("managed runtime returned early")
-        }
-        ActorRuntime::Hermes => {
-            let _guard = setup_lock().lock().map_err(|_| {
-                OpError::new(
-                    "runtime_mcp_lock_failed",
-                    "runtime MCP setup lock is poisoned",
-                )
-            })?;
-            super::hermes_runtime::ensure_for_actor(home, cwd, env)
         }
         _ => {
             let _guard = setup_lock().lock().map_err(|_| {
@@ -126,13 +119,20 @@ fn ensure_persistent(
             .map(|_| ())
             .map_err(|error| OpError::new("runtime_mcp_setup_failed", error.to_string()));
     }
+    if runtime == ActorRuntime::Cursor {
+        return cccc_core::runtime_mcp::ensure_cursor(cwd, env, executable)
+            .map(|_| ())
+            .map_err(|error| OpError::new("runtime_mcp_setup_failed", error.to_string()));
+    }
     let expected = cccc_core::runtime_mcp::expected_command(executable);
     let report = inspect(runtime, cwd, env, &expected)?;
     if report.state == State::Ready {
         return Ok(());
     }
-    if matches!(runtime, ActorRuntime::Copilot | ActorRuntime::Kiro)
-        && report.state == State::Stale
+    if matches!(
+        runtime,
+        ActorRuntime::Copilot | ActorRuntime::Kiro | ActorRuntime::Auggie
+    ) && report.state == State::Stale
         && !report.source.is_empty()
         && !report.source.contains("user")
     {
@@ -385,6 +385,120 @@ path.write_text(json.dumps({'mcpServers':{'cccc':{'command':'cccc','args':['mcp'
         assert_eq!(
             config["mcpServers"]["cccc"]["env"]["CCCC_HOME"],
             home.display().to_string()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn auggie_actor_setup_replaces_an_old_user_entry_and_refuses_a_stale_project_entry() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cwd = temp.path().join("project");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        let user_home = temp.path().join("user");
+        let bin = temp.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        // Auggie 1.2.1 behaviour for the two commands CCCC runs: `add-json`
+        // refuses an existing name without --replace, `remove` deletes it.
+        std::fs::write(
+            bin.join("auggie"),
+            r#"#!/usr/bin/env python3
+import json, os, pathlib, sys
+home = pathlib.Path(os.environ["HOME"])
+with open(home / "calls.log", "a") as log:
+    log.write(json.dumps(sys.argv[1:]) + "\n")
+path = home / ".augment/settings.json"
+document = json.loads(path.read_text()) if path.exists() else {}
+servers = document.setdefault("mcpServers", {})
+if sys.argv[1:3] == ["mcp", "remove"]:
+    servers.pop(sys.argv[3], None)
+elif sys.argv[1:3] == ["mcp", "add-json"]:
+    if sys.argv[3] in servers and "-r" not in sys.argv:
+        sys.exit("Error: Server '%s' already exists; use --replace to overwrite" % sys.argv[3])
+    servers[sys.argv[3]] = json.loads(sys.argv[4])
+else:
+    sys.exit("unexpected command")
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(document))
+"#,
+        )
+        .expect("CLI fixture");
+        std::fs::set_permissions(bin.join("auggie"), std::fs::Permissions::from_mode(0o700))
+            .expect("executable");
+        let search_path = std::env::join_paths(std::iter::once(bin.clone()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").expect("test PATH")),
+        ))
+        .expect("fixture PATH");
+        let env = BTreeMap::from([
+            ("HOME".into(), user_home.display().to_string()),
+            ("PATH".into(), search_path.to_string_lossy().into_owned()),
+        ]);
+        let settings = user_home.join(".augment/settings.json");
+        std::fs::create_dir_all(settings.parent().expect("parent")).expect("directory");
+        let old = serde_json::json!({"type":"stdio","command":"/opt/cccc","args":["mcp"]});
+        let other = serde_json::json!({"type":"stdio","command":"/opt/other"});
+        cccc_core::fs::write_json(
+            &settings,
+            &serde_json::json!({"mcpServers":{"cccc":old,"other":other}}),
+        )
+        .expect("old entry");
+
+        ensure_persistent(ActorRuntime::Auggie, &cwd, &env, Path::new("/opt/cccc"))
+            .expect("old entry replaced");
+        let document: serde_json::Value = cccc_core::fs::read_json(&settings).expect("settings");
+        assert_eq!(
+            document["mcpServers"]["cccc"],
+            cccc_core::runtime_mcp::auggie_entry(Path::new("/opt/cccc"))
+        );
+        assert_eq!(document["mcpServers"]["other"], other);
+        let calls = std::fs::read_to_string(user_home.join("calls.log")).expect("calls");
+        assert_eq!(calls.lines().count(), 2, "{calls}");
+        assert!(calls.starts_with(r#"["mcp", "remove", "cccc"]"#), "{calls}");
+
+        ensure_persistent(ActorRuntime::Auggie, &cwd, &env, Path::new("/opt/cccc"))
+            .expect("ready entry needs no command");
+        let project = cwd.join(".augment/settings.json");
+        std::fs::create_dir_all(project.parent().expect("parent")).expect("directory");
+        let project_document = serde_json::json!({"mcpServers":{"cccc":old}});
+        cccc_core::fs::write_json(&project, &project_document).expect("project entry");
+        let error = ensure_persistent(ActorRuntime::Auggie, &cwd, &env, Path::new("/opt/cccc"))
+            .expect_err("a stale project entry would replace the user entry");
+        assert_eq!(error.code, "runtime_mcp_scope_conflict");
+        let project_after: serde_json::Value =
+            cccc_core::fs::read_json(&project).expect("project file");
+        assert_eq!(project_after, project_document);
+        let calls = std::fs::read_to_string(user_home.join("calls.log")).expect("calls");
+        assert_eq!(calls.lines().count(), 2, "{calls}");
+    }
+
+    #[test]
+    fn cursor_actor_setup_writes_the_user_entry_before_launch_without_a_cli() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cwd = temp.path().join("project");
+        let user_home = temp.path().join("user");
+        let env = BTreeMap::from([
+            ("HOME".into(), user_home.display().to_string()),
+            ("USERPROFILE".into(), user_home.display().to_string()),
+            (
+                "CCCC_HOME".into(),
+                temp.path().join("cccc-home").display().to_string(),
+            ),
+            ("PATH".into(), String::new()),
+        ]);
+        ensure_persistent(ActorRuntime::Cursor, &cwd, &env, Path::new("/opt/cccc"))
+            .expect("setup without a cursor-agent command");
+        let config: serde_json::Value =
+            cccc_core::fs::read_json(&user_home.join(".cursor/mcp.json")).expect("config");
+        assert_eq!(
+            config["mcpServers"]["cccc"],
+            serde_json::json!({
+                "command":"/opt/cccc","args":["mcp"],
+                "env":{
+                    "CCCC_HOME":"${env:CCCC_HOME}",
+                    "CCCC_GROUP_ID":"${env:CCCC_GROUP_ID}",
+                    "CCCC_ACTOR_ID":"${env:CCCC_ACTOR_ID}"
+                }
+            })
         );
     }
 

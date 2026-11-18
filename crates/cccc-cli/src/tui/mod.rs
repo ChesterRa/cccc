@@ -106,13 +106,22 @@ pub(crate) async fn start(
         Some(entry) if entry.in_place() => app::UpdateOffer::InPlace,
         Some(_) => app::UpdateOffer::CheckOnly,
     };
+    let local_restart = update
+        .as_ref()
+        .is_some_and(crate::update_checker::UpdateEntry::local_restart);
+    let release_keep = update
+        .as_ref()
+        .is_some_and(crate::update_checker::UpdateEntry::release_keep);
     let (stop, stop_rx) = watch::channel(false);
     let finish = Arc::new(AtomicBool::new(false));
     let (entered_tx, entered) = oneshot::channel();
     let (done_tx, done) = oneshot::channel();
     let initial = host.borrow().clone();
     let ui = Ui {
-        app: App::new(Context::new(&home, offer), initial),
+        app: App::new(
+            Context::new(&home, offer, local_restart, release_keep),
+            initial,
+        ),
         host,
         intents,
         sessions,

@@ -1,9 +1,10 @@
-//! The work behind `/update`: one release check each time the user asks,
-//! then, once confirmed, the host's attended update. It runs as a Tokio task
-//! fed by the interface thread, and stops when the host stops it.
+//! The work behind `/update`: one check each time the user asks, then, once
+//! confirmed, the host's attended update to a release or restart into a
+//! rebuilt program. It runs as a Tokio task fed by the interface thread, and
+//! stops when the host stops it.
 
 use crate::update_checker::UpdateEntry;
-use cccc_web::UpdateCheck;
+use cccc_web::{UpdateCheck, UpdateRequest, UpdateSource};
 use tokio::sync::{mpsc, watch};
 
 /// Each `/update` visit has its own generation, so a result left over from an
@@ -15,6 +16,8 @@ pub(super) enum UpdateCommand {
     },
     Start {
         generation: u64,
+        request: UpdateRequest,
+        /// The version it starts, as the screen shows it.
         version: String,
     },
     /// Ends a running check, or gives up an update still being prepared.
@@ -28,6 +31,8 @@ pub(super) struct UpdateProgress {
     pub(super) check: Option<UpdateCheck>,
     /// The version being prepared, until the host takes it over or it ends.
     pub(super) preparing: Option<String>,
+    /// The confirmed start restarts into a rebuilt program, not a release.
+    pub(super) local: bool,
     /// Why the confirmed update did not start. Nothing was stopped.
     pub(super) rejected: Option<String>,
     /// The confirmed update was given up while it was being prepared.
@@ -82,18 +87,21 @@ pub(super) async fn run(
             }
             UpdateCommand::Start {
                 generation,
+                request,
                 version,
             } => {
                 if progress.borrow().generation != generation {
                     continue;
                 }
+                let local = matches!(request.source, UpdateSource::Local { .. });
                 progress.send_modify(|progress| {
                     progress.preparing = Some(version.clone());
+                    progress.local = local;
                     progress.rejected = None;
                     progress.given_up = false;
                 });
                 tokio::select! {
-                    result = entry.start(version) => progress.send_modify(|progress| {
+                    result = entry.start(request) => progress.send_modify(|progress| {
                         progress.preparing = None;
                         match result {
                             Ok(_) => progress.handed_over = true,

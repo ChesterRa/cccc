@@ -74,6 +74,7 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
         ],
         env: BTreeMap::from([("PATH".into(), std::env::var("PATH").unwrap_or_default())]),
         cwd: config.clone(),
+        confirmed_input: None,
         submit: cccc_contracts::ActorSubmit::Enter,
     };
     let viewer_spec = || cccc_runtime::LaunchSpec {

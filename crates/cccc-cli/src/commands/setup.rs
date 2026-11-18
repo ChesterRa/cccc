@@ -28,6 +28,17 @@ const SUPPORTED: &[&str] = &[
     "custom",
 ];
 
+/// Hermes members get CCCC's server in their own sessions. A `cccc` server
+/// saved in the Hermes profile would give every session there one identity,
+/// so CCCC no longer asks for one and refuses to start past it.
+fn hermes_setup() -> serde_json::Value {
+    json!({
+        "runtime":"hermes","mode":"managed_session","status":"ready","managed":true,
+        "mcp":"injected_per_session",
+        "note":"CCCC gives each Hermes member its own CCCC server in its session. Set up Hermes itself (login, model) with `hermes model`; do not add a cccc server to the Hermes profile."
+    })
+}
+
 pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
     let executable = public_executable()?;
     let runtime = args.runtime.as_deref().map(str::trim).unwrap_or("");
@@ -71,6 +82,20 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
     if runtime.is_empty() {
         let mut results = Vec::new();
         for runtime in SUPPORTED {
+            // Batch setup configures installed CLIs only; without this check
+            // these runtimes would write files or report a bare OS error.
+            if let Some(program) = batch_required_cli(runtime)
+                && cccc_core::runtime_mcp::find_program(
+                    program,
+                    std::env::var_os("PATH").as_deref(),
+                )
+                .is_none()
+            {
+                results.push(json!({
+                    "runtime":runtime,"status":"unavailable","error":format!("{program} CLI not found")
+                }));
+                continue;
+            }
             match setup_one(home, &args, runtime, &executable, &config) {
                 Ok(value) => results.push(value),
                 Err(error) => results.push(json!({
@@ -101,7 +126,11 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
             SUPPORTED.join(", ")
         );
     }
-    if matches!(runtime, "custom" | "hermes") {
+    if runtime == "hermes" {
+        println!("{}", serde_json::to_string_pretty(&hermes_setup())?);
+        return Ok(());
+    }
+    if runtime == "custom" {
         println!("{}", serde_json::to_string_pretty(&config)?);
         return Ok(());
     }
@@ -163,6 +192,19 @@ fn select_public_executable(current: PathBuf, launcher: Option<PathBuf>) -> Path
         .unwrap_or(current)
 }
 
+/// The CLI batch setup looks for before preparing a runtime whose setup would
+/// otherwise write a file (Cursor and Kimi Code have no `mcp add`; Antigravity
+/// locks its configuration first) or fail with a bare OS error (Grok).
+fn batch_required_cli(runtime: &str) -> Option<&'static str> {
+    match runtime {
+        "antigravity" => Some("agy"),
+        "cursor" => Some("cursor-agent"),
+        "grok" => Some("grok"),
+        "kimi" => Some("kimi"),
+        _ => None,
+    }
+}
+
 fn setup_one(
     home: &HomeLayout,
     args: &SetupArgs,
@@ -173,16 +215,23 @@ fn setup_one(
     if runtime == "deepseek" {
         return setup_deepseek(home, executable);
     }
-    if matches!(runtime, "custom" | "hermes") {
+    if runtime == "hermes" {
+        return Ok(hermes_setup());
+    }
+    if runtime == "custom" {
         return Ok(json!({
             "runtime":runtime,"mode":"manual","status":"requires_action","config":config
         }));
     }
     if runtime == "cursor" {
+        let path = cccc_core::runtime_mcp::ensure_cursor(
+            &absolute(&args.path)?,
+            &std::collections::BTreeMap::new(),
+            executable,
+        )?;
         return Ok(json!({
-            "runtime":runtime,"mode":"prompt_assisted","status":"requires_action",
-            "project_path":absolute(&args.path)?,"config":config,
-            "instruction":"Add or replace the stdio MCP server named cccc with this configuration, then verify it is enabled."
+            "runtime":runtime,"mode":"auto","status":"ready","path":path,
+            "note":outside_session_note("A Cursor session")
         }));
     }
     if runtime == "antigravity" {
@@ -305,9 +354,20 @@ fn setup_one(
             failure_detail(&output)
         );
     }
-    Ok(json!({
+    let mut result = json!({
         "runtime":runtime,"mode":"auto","status":"added","command":command,"config":config
-    }))
+    });
+    if runtime == "auggie" {
+        result["note"] = json!(outside_session_note("An Auggie session"));
+    }
+    Ok(result)
+}
+
+/// For runtimes whose user entry maps the context variables instead of fixing them.
+fn outside_session_note(session: &str) -> String {
+    format!(
+        "{session} started outside CCCC takes CCCC_HOME, CCCC_GROUP_ID and CCCC_ACTOR_ID from the shell that starts it; without CCCC_HOME it uses the default CCCC home."
+    )
 }
 
 pub(super) fn codex_mcp_entry(home: &HomeLayout, cwd: &Path) -> Result<Option<serde_json::Value>> {

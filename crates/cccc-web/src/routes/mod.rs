@@ -44,6 +44,8 @@ mod quick_reply_templates;
 mod realtime;
 mod remote_access;
 mod remote_access_projection;
+#[cfg(test)]
+mod remote_maintenance_test_daemon;
 mod settings;
 mod streams;
 mod system;
@@ -139,5 +141,6 @@ pub fn router() -> Router<AppState> {
 
 pub(crate) use assistants::spawn_voice_model_cleanup;
 pub(crate) use grok_webhook::spawn as spawn_grok_webhooks;
+pub(crate) use web_model_delivery::wait_for_browser_work;
 pub(crate) use web_model_dots::spawn as spawn_dots_events;
 pub(crate) use web_model_supervisor::spawn as spawn_web_model_supervisor;

@@ -128,7 +128,7 @@ impl VersionNotice {
         }
         let short = |source: &str| source.chars().take(12).collect::<String>();
         let text = format!(
-            "CCCC source notice: this cccc MCP server ({SERVER_VERSION}, source {}) and the daemon address file (version {SERVER_VERSION}, source {}) declare different source inputs. Check which build should run and ask the user to reconnect the MCP server or restart CCCC as appropriate: {}. See https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration",
+            "CCCC source notice: this cccc MCP server ({SERVER_VERSION}, source {}) and the daemon address file (version {SERVER_VERSION}, source {}) declare different source inputs. This alone does not establish incompatibility. Continue current work. Tool definitions remain those of this MCP build. If updated tools are needed, the user can reload the integration after active work finishes: {}. See https://chesterra.github.io/cccc/guide/local-sessions#upgrade-an-existing-integration",
             short(own_source),
             short(declared_source),
             restart_step(runtime)
@@ -191,13 +191,13 @@ fn notice_text(server: &str, daemon: &str, runtime: Option<&str>) -> String {
     let step = restart_step(runtime);
     match compare_versions(server, daemon) {
         Some(Ordering::Less) => format!(
-            "{facts} Its tools may be out of date until it restarts. Ask the user to restart it: {step}."
+            "{facts} Tool definitions remain those of this older MCP build. A version difference alone does not establish incompatibility. Continue current work. If updated tools are needed, the user can reload the integration after active work finishes: {step}."
         ),
         Some(Ordering::Greater) => format!(
-            "{facts} Its tools may not match the daemon until CCCC restarts on {server}. Ask the user to restart CCCC through its normal service controls."
+            "{facts} Tool definitions come from this newer MCP build. A version difference alone does not establish incompatibility. Continue current work. If a needed tool is unavailable, the user can choose which CCCC build to run and reload the integration after active work finishes."
         ),
         _ => format!(
-            "{facts} Its tools may not match the daemon until both run the same version. Ask the user to restart whichever is older: CCCC through its normal service controls, or this MCP server ({step})."
+            "{facts} Tool definitions remain those of this MCP build. Different version labels alone do not establish incompatibility. Continue current work. If updated tools are needed, the user can choose the intended CCCC build and reload the integration after active work finishes: {step}."
         ),
     }
 }
@@ -205,6 +205,9 @@ fn notice_text(server: &str, daemon: &str, runtime: Option<&str>) -> String {
 /// Mirrors "Upgrade an existing integration" in docs/guide/local-sessions.md.
 fn restart_step(runtime: Option<&str>) -> &'static str {
     match runtime {
+        Some("cccc_owned") => {
+            "in CCCC, restart this agent when convenient after its current work finishes"
+        }
         Some("claude") => "in Claude Code, let active work finish, quit, and run claude --resume",
         Some("codex") => {
             "in Codex, let active work finish, then choose /daemon > Restart background server > Restart"
@@ -291,18 +294,18 @@ mod tests {
     }
 
     #[test]
-    fn a_newer_server_asks_for_a_cccc_restart_and_a_new_declared_version_notices_again() {
+    fn a_newer_server_reports_its_tools_without_requiring_a_restart() {
         let mut notice = VersionNotice::default();
         let mut older_daemon = result();
         notice.annotate_with("0.4.48", "0.4.47", Some("codex"), &mut older_daemon);
         let text = older_daemon["result"]["structuredContent"][NOTICE_KEY]
             .as_str()
             .expect("notice");
-        assert!(text.contains("until CCCC restarts on 0.4.48"), "{text}");
         assert!(
-            text.contains("restart CCCC through its normal service controls"),
+            text.contains("Tool definitions come from this newer MCP build"),
             "{text}"
         );
+        assert!(text.contains("Continue current work"), "{text}");
         assert!(!text.contains("/daemon"), "{text}");
 
         let mut newer_daemon = result();
@@ -389,11 +392,24 @@ mod tests {
         let text = unordered["result"]["structuredContent"][NOTICE_KEY]
             .as_str()
             .expect("notice after an unattachable response");
-        assert!(text.contains("restart whichever is older"), "{text}");
         assert!(
-            text.ends_with("(use this application's MCP settings or restart the application)."),
+            text.contains("Different version labels alone do not establish incompatibility"),
             "{text}"
         );
+        assert!(
+            text.ends_with("use this application's MCP settings or restart the application."),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_retained_managed_mcp_leaves_any_reload_to_the_user_in_cccc() {
+        let text = notice_text("0.4.57", "0.4.58", Some("cccc_owned"));
+        assert!(text.contains("Continue current work"), "{text}");
+        assert!(text.contains("the user can reload"), "{text}");
+        assert!(text.contains("in CCCC, restart this agent"), "{text}");
+        assert!(!text.contains("restart the application"), "{text}");
+        assert!(!text.contains("claude --resume"), "{text}");
     }
 
     #[tokio::test]
@@ -455,7 +471,9 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("address file") && text.contains("ask the user"),
+            text.contains("address file")
+                && text.contains("Continue current work")
+                && text.contains("the user can reload"),
             "{text}"
         );
         assert_eq!(first["result"]["content"][1]["text"], text);

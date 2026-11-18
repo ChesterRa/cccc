@@ -3,11 +3,12 @@ use super::backend::Backend;
 use super::protocol::{CONTRACT, Failure, MAX_FRAME_BYTES, Mutation, Request, Response};
 use anyhow::{Context, Result};
 use cccc_core::HomeLayout;
+pub(super) use cccc_core::unix_socket_path::SocketPath;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
@@ -56,42 +57,6 @@ impl Paths {
     }
 }
 
-/// Keep the directory descriptor alive until bind/connect has resolved its
-/// short Linux alias. The socket itself stays in the private owner directory.
-pub(super) struct SocketPath {
-    pub path: PathBuf,
-    #[cfg(target_os = "linux")]
-    _directory: File,
-}
-
-impl SocketPath {
-    pub(super) fn new(socket: &Path) -> io::Result<Self> {
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::fd::AsRawFd;
-            let parent = socket.parent().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "socket has no parent directory",
-                )
-            })?;
-            let name = socket.file_name().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "socket has no file name")
-            })?;
-            let directory = File::open(parent)?;
-            let path = PathBuf::from(format!("/proc/self/fd/{}", directory.as_raw_fd())).join(name);
-            Ok(Self {
-                path,
-                _directory: directory,
-            })
-        }
-        #[cfg(not(target_os = "linux"))]
-        Ok(Self {
-            path: socket.to_path_buf(),
-        })
-    }
-}
-
 struct Service {
     home: HomeLayout,
     address: Address,
@@ -101,7 +66,11 @@ struct Service {
     epoch_changed: tokio::sync::watch::Sender<u64>,
 }
 
-pub(super) async fn run(home: HomeLayout, owner_id: &str) -> Result<()> {
+pub(super) async fn run(
+    home: HomeLayout,
+    owner_id: &str,
+    launcher: Option<Arc<dyn super::browser::BrowserLauncher>>,
+) -> Result<()> {
     let paths = Paths::new(&home, owner_id)?;
     paths.initialize()?;
     let lock = cccc_core::fs::try_exclusive_lock(&paths.lock)?
@@ -141,7 +110,13 @@ pub(super) async fn run(home: HomeLayout, owner_id: &str) -> Result<()> {
         pid: std::process::id(),
         socket: owner_guard.paths.socket.clone(),
     };
-    let backend = Arc::new(Backend::default());
+    let mut backend = Backend::with_owner(
+        home.clone(),
+        address.owner_id.clone(),
+        address.instance.clone(),
+    );
+    backend.set_browser_launcher(launcher);
+    let backend = Arc::new(backend);
     super::install_backend(backend.clone())?;
     let service = Arc::new(Service {
         home,
@@ -236,16 +211,32 @@ fn same_user(stream: &UnixStream) -> io::Result<bool> {
         use std::os::unix::fs::MetadataExt;
         Ok(stream.peer_cred()?.uid() == uid.uid())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     {
-        // Filesystem mode remains the local boundary on Unix platforms whose
-        // tokio UCred representation differs. Linux is the validated platform.
+        Ok(stream.peer_cred()?.uid() == nix::unistd::geteuid().as_raw())
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
         let _ = stream;
-        Ok(true)
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "session owner peer credentials are unavailable on this platform",
+        ))
     }
 }
 
 async fn connection(stream: UnixStream, service: Arc<Service>) -> io::Result<()> {
+    // Capture before the first frame can wait. A PID supplied in JSON is never
+    // an identity, and a peer that exits while sending must not name a reused PID.
+    let peer = stream
+        .peer_cred()
+        .and_then(|credentials| {
+            credentials
+                .pid()
+                .and_then(|pid| u32::try_from(pid).ok())
+                .ok_or_else(|| io::Error::other("native MCP peer PID is unavailable"))
+        })
+        .and_then(cccc_core::local_sessions::NativeHost::capture);
     let mut reader = BufReader::new(stream);
     let mut lease = StreamLease {
         service: service.clone(),
@@ -333,6 +324,28 @@ async fn connection(stream: UnixStream, service: Arc<Service>) -> io::Result<()>
             return result.map_err(io::Error::other);
         }
         let response = match request {
+            Request::BrowserResources => match service.backend.browsers.list() {
+                Ok(resources) => Response::BrowserResources { resources },
+                Err(error) => Response::Failed { error },
+            },
+            Request::McpRegister { report } => match &peer {
+                Ok(native) if native.alive() => {
+                    let instance = report.instance.clone();
+                    let launch_id = report.launch_id.clone();
+                    match service.backend.register_mcp(native.clone(), report) {
+                        Ok(()) => Response::McpRegistered {
+                            registration: cccc_core::owned_mcp::REGISTRATION_API,
+                            instance,
+                            launch_id,
+                        },
+                        Err(error) => Response::Failed { error },
+                    }
+                }
+                _ => failed(
+                    "mcp_peer_unconfirmed",
+                    "native MCP peer identity is unavailable or changed; restart the member",
+                ),
+            },
             Request::Hello { contract } => {
                 if contract != CONTRACT {
                     failed(
@@ -346,6 +359,7 @@ async fn connection(stream: UnixStream, service: Arc<Service>) -> io::Result<()>
                         pid: service.address.pid,
                         build: cccc_core::build_info::current(),
                         accepting_starts: service.backend.accepting_starts(),
+                        mcp_registration: cccc_core::owned_mcp::REGISTRATION_API,
                     }
                 }
             }
@@ -358,7 +372,13 @@ async fn connection(stream: UnixStream, service: Arc<Service>) -> io::Result<()>
                         "a control stream acquires exactly one epoch",
                     )
                 } else {
-                    let acquired = service.admissions.lock().map_err(lock_error)?.acquire();
+                    let acquired = {
+                        let mut admissions = service.admissions.lock().map_err(lock_error)?;
+                        admissions.acquire().and_then(|epoch| {
+                            service.backend.control_acquired(epoch)?;
+                            Ok(epoch)
+                        })
+                    };
                     match acquired {
                         Ok(epoch) => {
                             lease.epoch = Some(epoch);
@@ -420,14 +440,17 @@ async fn connection(stream: UnixStream, service: Arc<Service>) -> io::Result<()>
                         .require_current(epoch)
                         .and_then(|()| service.backend.validate(&mutation))
                         .and_then(|()| match &*mutation {
-                            Mutation::Acknowledge { .. } | Mutation::Retire => {
+                            Mutation::Acknowledge { .. } => {
                                 admissions.administrative(epoch, sequence)
                             }
+                            Mutation::Retire => admissions
+                                .require_retirable(service.backend.accepting_starts())
+                                .and_then(|()| admissions.administrative(epoch, sequence)),
                             Mutation::StopAll => {
                                 admissions.admit_stop(epoch, sequence, frame.len(), true)
                             }
                             Mutation::Recovery { .. } => admissions.administrative(epoch, sequence),
-                            Mutation::Stop { .. } => {
+                            Mutation::Stop { .. } | Mutation::BrowserClose { .. } => {
                                 admissions.admit_stop(epoch, sequence, frame.len(), false)
                             }
                             _ => admissions.admit(
@@ -477,7 +500,7 @@ async fn connection(stream: UnixStream, service: Arc<Service>) -> io::Result<()>
                                 let task_operation = operation.clone();
                                 tokio::task::spawn_blocking(move || {
                                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        service.backend.execute(&service.home, *mutation)
+                                        service.backend.execute_in_epoch(&service.home, *mutation, task_operation.epoch)
                                     })).unwrap_or_else(|_| Err(Failure::new("owner_execution_failed", "execution task failed; its input outcome is not confirmed")));
                                     if let Ok(mut admissions) = service.admissions.lock() {
                                         admissions.finish(&task_operation, result);
@@ -491,8 +514,8 @@ async fn connection(stream: UnixStream, service: Arc<Service>) -> io::Result<()>
             }
             Request::Snapshot => {
                 let backend = service.backend.clone();
-                match tokio::task::spawn_blocking(move || backend.snapshots()).await {
-                    Ok(Ok(actors)) => Response::Snapshot { actors },
+                match tokio::task::spawn_blocking(move || backend.owner_snapshot()).await {
+                    Ok(Ok(snapshot)) => Response::Snapshot { snapshot },
                     Ok(Err(error)) => Response::Failed { error },
                     Err(_) => failed("owner_error", "member observation failed"),
                 }
@@ -613,7 +636,141 @@ fn lock_error<T>(_: std::sync::PoisonError<T>) -> io::Error {
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn mcp_registration_uses_the_native_peer_while_start_and_control_are_pending() {
+        use super::super::protocol::{ActorRef, PreparedLaunch};
+        use cccc_core::owned_mcp::{REGISTRATION_API, Registration};
+        use std::collections::BTreeMap;
+        use std::time::Duration;
+
+        let temp = tempfile::tempdir().expect("isolated owner home");
+        let home = HomeLayout::from_path(temp.path().join("long-home-".repeat(9))).expect("home");
+        home.initialize().expect("initialize home");
+        let paths =
+            Paths::new(&home, &uuid::Uuid::new_v4().simple().to_string()).expect("owner paths");
+        paths.initialize().expect("initialize owner directory");
+        let address = Address {
+            owner_id: paths.owner_id,
+            instance: uuid::Uuid::new_v4().simple().to_string(),
+            contract: CONTRACT,
+            pid: std::process::id(),
+            socket: paths.socket,
+        };
+        let listener = {
+            let socket = SocketPath::new(&address.socket).expect("short socket alias");
+            UnixListener::bind(&socket.path).expect("bind owner endpoint")
+        };
+        let backend = Arc::new(Backend::with_owner(
+            home.clone(),
+            address.owner_id.clone(),
+            address.instance.clone(),
+        ));
+        let actor = cccc_contracts::Actor::new("peer");
+        let group: cccc_core::GroupDoc = serde_json::from_value(serde_json::json!({"v":1,"group_id":"g_mcp_wire","title":"wire fixture","created_at":"created","updated_at":"created"})).expect("group fixture");
+        let identity = ActorRef {
+            group_id: group.group_id.clone(),
+            actor_id: actor.id.clone(),
+            actor_created_at: actor.created_at.clone(),
+            generation: None,
+        };
+        let start = Mutation::Start {
+            actor: identity.clone(),
+            launch: Box::new(PreparedLaunch::Managed {
+                group,
+                actor,
+                host_environment: BTreeMap::new(),
+            }),
+        };
+        backend.validate(&start).expect("validate launch");
+        backend
+            .reserve(&start)
+            .expect("reserve launch without executing provider");
+        let binding = backend
+            .mcp_binding(&identity.group_id, &identity.actor_id)
+            .expect("actual owner's nonce");
+        assert_eq!(
+            backend
+                .validate(&start)
+                .expect_err("pending Start cannot replace the binding")
+                .code,
+            "actor_owned"
+        );
+        assert_eq!(
+            backend.mcp_binding(&identity.group_id, &identity.actor_id),
+            Some(binding.clone())
+        );
+        let service = Arc::new(Service {
+            home: home.clone(),
+            admissions: Mutex::new(Admissions::new(address.instance.clone())),
+            address,
+            backend: backend.clone(),
+            stopped: Notify::new(),
+            epoch_changed: tokio::sync::watch::channel(0).0,
+        });
+
+        // A control/Start path can hold admission while waiting for provider
+        // initialize. Registration must finish without waiting on that mutex.
+        let locked_service = service.clone();
+        let (locked, locked_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            let _guard = locked_service
+                .admissions
+                .lock()
+                .expect("hold control admission");
+            locked.send(()).expect("publish held lock");
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        });
+        locked_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("admission is held");
+        let connection_service = service.clone();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept MCP peer");
+            assert!(same_user(&stream).expect("kernel peer user"));
+            connection(stream, connection_service).await
+        });
+        let report = Registration {
+            registration: REGISTRATION_API,
+            instance: binding.instance.clone(),
+            launch_id: binding.launch_id.clone(),
+            version: "0.4.58".into(),
+            source_id: "a".repeat(64),
+            mcp_contract: cccc_contracts::MCP_DAEMON_CONTRACT,
+        };
+        let registered = tokio::time::timeout(
+            Duration::from_secs(2),
+            cccc_client::owned_mcp::register(&home, &binding, &report),
+        )
+        .await;
+        let _ = release.send(());
+        holder.join().expect("release control admission");
+        registered
+            .expect("registration must not wait for control/Start")
+            .expect("registration succeeds without a daemon");
+        server
+            .await
+            .expect("registration connection task")
+            .expect("registration connection");
+        assert!(!home.daemon_dir().join("ccccd.sock").exists());
+        let snapshot = backend
+            .snapshots()
+            .expect("retained owner observations")
+            .pop()
+            .expect("pending member snapshot")
+            .mcp
+            .expect("MCP snapshot");
+        assert!(snapshot.initialized);
+        assert_eq!(snapshot.processes.len(), 1);
+        assert_eq!(
+            snapshot.processes[0].native,
+            cccc_core::local_sessions::NativeHost::capture(std::process::id())
+                .expect("actual socket peer identity")
+        );
+        assert_eq!(snapshot.processes[0].report, report);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
     async fn long_owner_paths_support_control_and_terminal_connections() {
         use std::io::Write;

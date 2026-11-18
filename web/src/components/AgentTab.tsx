@@ -1,6 +1,7 @@
 import { NativeSessionPanel } from "../features/localSessions/NativeSessionPanel";
 import { RuntimeSwitchPendingNotice } from "../features/runtimeSwitch/RuntimeSwitchPendingNotice";
 import { ActorRuntimeConfirmationNotice } from "./agentTerminal/ActorRuntimeConfirmationNotice";
+import { useStartupInputWaiting } from "../hooks/useStartupInputWaiting";
 import { isWebModelRuntime } from "../types";
 import { useTerminalTitlePaging } from "./agentTerminal/useTerminalTitlePaging";
 import {
@@ -58,6 +59,7 @@ import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { UNOBSERVABLE_WORKING_STATE } from "../utils/terminalWorkingState";
 import { NATIVE_SESSION_AVAILABLE, nativeSessionStatusKey } from "../utils/nativeSessionStatus";
+import { runtimeConfirmationKeys } from "../utils/runtimeConfirmationKeys";
 import {
   getEffectiveActorRunner,
   hasManagedRuntimeControls,
@@ -174,6 +176,7 @@ export function AgentTab({
     actor,
     actorStatusProvisional,
   });
+  const startupWaiting = useStartupInputWaiting(groupId, actor);
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const isWebModel = isWebModelRuntime(actor.runtime);
@@ -431,8 +434,11 @@ export function AgentTab({
         : workingState,
   });
   const runtimeStatusText = (() => {
-    if (actor.runtime_confirmation_required) return t("runtimeConfirmationPending");
-    if (actor.runtime_confirmation_paused === true) return t("runtimeConfirmationPaused");
+    if (actor.runtime_confirmation_required)
+      return t(runtimeConfirmationKeys(actor.runtime).pending);
+    if (startupWaiting) return t("runtimeStartupInputPending");
+    if (actor.runtime_confirmation_paused === true)
+      return t(runtimeConfirmationKeys(actor.runtime).paused);
     if (isNativeSession) return t(nativeStatusKey);
     if (isEventActor)
       return t(
@@ -773,7 +779,7 @@ export function AgentTab({
   const titlePaging = useTerminalTitlePaging(isVisible && compact ? onPage : undefined);
 
   const compactStatusText =
-    actor.runtime_confirmation_required || isNativeSession || isEventActor
+    actor.runtime_confirmation_required || startupWaiting || isNativeSession || isEventActor
       ? runtimeStatusText
       : !isRunning || workingState === UNOBSERVABLE_WORKING_STATE
         ? runtimeStatusText
@@ -1036,7 +1042,7 @@ export function AgentTab({
         </div>
       </div>
 
-      <ActorRuntimeConfirmationNotice actor={actor} readOnly={readOnly} />
+      <ActorRuntimeConfirmationNotice actor={actor} groupId={groupId} readOnly={readOnly} />
       <RuntimeSwitchPendingNotice actor={actor} groupId={groupId} />
 
       {/* Terminal or Status Area */}

@@ -32,8 +32,17 @@ use std::io::IsTerminal;
 
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn main() -> Result<()> {
+    // The process watchdog blocks terminal signals on its own thread, so it
+    // runs before the async runtime starts any other thread.
+    if let Some(result) = cccc_runtime::run_process_watchdog_from_args() {
+        return Ok(result?);
+    }
+    run()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run() -> Result<()> {
     cccc_core::build_info::initialize(env!("CCCC_SOURCE_ID"));
     #[cfg(windows)]
     let _console_encoding = console_encoding::use_utf8();
@@ -198,10 +207,18 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
             Some(transaction) => {
                 cccc_daemon::run_with_diagnostics_resuming(home, &transaction).await
             }
-            None => cccc_daemon::run_with_diagnostics(home).await,
+            None => {
+                let _ = update_host::recover_local_before_start(&home)?;
+                cccc_daemon::run_with_diagnostics(home).await
+            }
         },
         DaemonAction::SessionOwner { owner_id } => {
-            cccc_daemon::session_owner::run(home, &owner_id).await
+            cccc_daemon::session_owner::run_with_browser_launcher(
+                home,
+                &owner_id,
+                cccc_web::browser_launcher(),
+            )
+            .await
         }
         DaemonAction::Stop { keep_agents } => {
             let intent = if keep_agents {
@@ -249,6 +266,7 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
             }
         }
         DaemonAction::Start => {
+            let _ = update_host::recover_local_before_start(&home)?;
             // Before anything that could stop, replace or adopt a daemon: while
             // an update holds this home, only its own relay may start one.
             cccc_core::attended_update::check_start(
@@ -269,7 +287,7 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
                 StartOutcome::AlreadyRunning => println!("CCCC daemon: already running"),
                 StartOutcome::Started(pid) => {
                     println!("CCCC daemon: started pid={pid}");
-                    if let Some(line) = daemon_lifecycle::reattached_line(client, &home).await {
+                    if let Some(line) = daemon_lifecycle::retained_line(client, &home).await {
                         cccc_runtime::diagnostic(format_args!("{line}"));
                     }
                 }
@@ -304,18 +322,8 @@ async fn runtime(client: &DaemonClient, action: RuntimeAction) -> Result<()> {
         RuntimeAction::Hermes { action } => {
             let (op, args) = match action {
                 HermesAction::Status => ("runtime_hermes_status", json!({})),
-                HermesAction::Prepare { cwd, yes, force } => (
-                    "runtime_hermes_prepare",
-                    json!({"cwd":cwd,"yes":yes,"force":force}),
-                ),
-                HermesAction::McpTest {
-                    cwd,
-                    group_id,
-                    actor_id,
-                } => (
-                    "runtime_hermes_mcp_test",
-                    json!({"cwd":cwd,"group_id":group_id,"actor_id":actor_id}),
-                ),
+                HermesAction::Prepare { cwd } => ("runtime_hermes_prepare", json!({"cwd":cwd})),
+                HermesAction::McpTest => ("runtime_hermes_mcp_test", json!({})),
             };
             print(call(client, op, args).await?)?;
         }

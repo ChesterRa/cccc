@@ -79,6 +79,8 @@ pub(super) fn context() -> Context {
         user_home: Some("/home/me".into()),
         color: true,
         update: super::app::UpdateOffer::InPlace,
+        local_restart: false,
+        release_keep: false,
     }
 }
 

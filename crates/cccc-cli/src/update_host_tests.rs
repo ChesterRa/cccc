@@ -96,6 +96,7 @@ fn self_check_reports_this_programs_constants() {
         },
         daemon_compatibility: cccc_contracts::RUST_DAEMON_COMPATIBILITY.into(),
         relay_schemas: vec![RELAY_SCHEMA],
+        capabilities: UpdateCapabilities::default(),
     };
     let value = serde_json::to_value(&check).expect("serialize check");
     assert_eq!(value["schema"], 1);
@@ -105,6 +106,26 @@ fn self_check_reports_this_programs_constants() {
     newer["owner_contract"] = serde_json::json!(2);
     let parsed: SelfCheck = serde_json::from_value(newer).expect("newer check");
     assert_eq!(parsed.version, crate::PRODUCT_VERSION);
+    let mut earlier = value;
+    earlier
+        .as_object_mut()
+        .expect("check object")
+        .remove("capabilities");
+    let parsed: SelfCheck = serde_json::from_value(earlier).expect("earlier check");
+    assert_eq!(parsed.capabilities, UpdateCapabilities::default());
+    assert!(!parsed.capabilities.local_restart);
+    assert!(!parsed.capabilities.preserve_agents);
+
+    // This build claims only what its platform lets it finish.
+    assert_eq!(
+        this_build().local_restart,
+        cfg!(any(target_os = "linux", target_os = "macos"))
+    );
+    assert_eq!(this_build().preserve_agents, cfg!(target_os = "linux"));
+    assert_eq!(
+        this_build().intent_schemas,
+        vec![attended_update::INTENT_SCHEMA]
+    );
 }
 
 fn home() -> (tempfile::TempDir, HomeLayout) {
@@ -114,19 +135,27 @@ fn home() -> (tempfile::TempDir, HomeLayout) {
     (temp, home)
 }
 
-fn record(id: &str) -> RelayRecord {
+fn release(path: &Path) -> Source {
+    Source::Release {
+        install_dir: path.to_path_buf(),
+    }
+}
+
+fn record(id: &str, source: Source) -> RelayRecord {
     RelayRecord {
         schema: RELAY_SCHEMA,
         transaction: id.into(),
         from_version: "0.4.58".into(),
         to_version: "0.4.59".into(),
+        source_id: "1".repeat(64),
         mode: "restart".into(),
-        install_dir: PathBuf::from("/opt/cccc"),
+        source,
         launch: LaunchSpec::default(),
         outcome: RelayOutcome::Abandoned {
             stage: "stop".into(),
             reason: "two agents could not be confirmed stopped".into(),
         },
+        stopped: None,
     }
 }
 
@@ -134,23 +163,108 @@ fn record(id: &str) -> RelayRecord {
 fn relay_records_round_trip_and_refuse_another_shape() {
     let (_temp, home) = home();
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
-    cccc_core::fs::write_secret_json(&transaction.relay_path(), &record(&id)).expect("record");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
+    cccc_core::fs::write_secret_json(
+        &transaction.relay_path(),
+        &record(&id, release(home.root())),
+    )
+    .expect("record");
     let read = transaction.read_relay().expect("read record");
-    assert_eq!(read.outcome, record(&id).outcome);
+    assert_eq!(read.outcome, record(&id, release(home.root())).outcome);
 
-    let mut extra = serde_json::to_value(record(&id)).expect("serialize record");
+    let mut extra =
+        serde_json::to_value(record(&id, release(home.root()))).expect("serialize record");
     extra["unexpected"] = serde_json::json!(true);
     cccc_core::fs::write_secret_json(&transaction.relay_path(), &extra).expect("extra record");
     assert!(transaction.read_relay().is_err());
 
-    let mut newer = record(&id);
+    let mut newer = record(&id, release(home.root()));
     newer.schema = RELAY_SCHEMA + 1;
     cccc_core::fs::write_secret_json(&transaction.relay_path(), &newer).expect("newer record");
     assert!(transaction.read_relay().is_err());
 
-    let other = record(&uuid::Uuid::new_v4().simple().to_string());
+    let other = record(
+        &uuid::Uuid::new_v4().simple().to_string(),
+        release(home.root()),
+    );
     cccc_core::fs::write_secret_json(&transaction.relay_path(), &other).expect("other record");
+    assert!(transaction.read_relay().is_err());
+
+    let mut old = record(&id, release(home.root()));
+    old.schema = 1;
+    cccc_core::fs::write_secret_json(&transaction.relay_path(), &old).expect("old schema");
+    assert!(transaction.read_relay().is_err());
+
+    let mut mismatched = record(&id, release(home.root()));
+    mismatched.source = release(&home.root().join("another installation"));
+    cccc_core::fs::write_secret_json(&transaction.relay_path(), &mismatched)
+        .expect("another source");
+    assert!(transaction.read_relay().is_err());
+
+    let mut local_outcome = record(&id, release(home.root()));
+    local_outcome.outcome = RelayOutcome::LocalReady;
+    cccc_core::fs::write_secret_json(&transaction.relay_path(), &local_outcome)
+        .expect("local outcome with release");
+    assert!(transaction.read_relay().is_err());
+
+    // The stop receipt travels only with a relay that goes ahead, and only
+    // for the stop its mode asked for.
+    let mut applied = record(&id, release(home.root()));
+    applied.outcome = RelayOutcome::Applied;
+    applied.stopped = Some(receipt(ShutdownMode::Stop, Vec::new(), Vec::new()));
+    cccc_core::fs::write_secret_json(&transaction.relay_path(), &applied).expect("receipt");
+    assert_eq!(
+        transaction.read_relay().expect("receipt read").stopped,
+        applied.stopped
+    );
+    for (mode, outcome, stop) in [
+        ("keep", RelayOutcome::Applied, ShutdownMode::Stop),
+        (
+            "restart",
+            RelayOutcome::Applied,
+            ShutdownMode::PreserveAgents,
+        ),
+        (
+            "restart",
+            record(&id, release(home.root())).outcome,
+            ShutdownMode::Stop,
+        ),
+    ] {
+        let mut wrong = record(&id, release(home.root()));
+        wrong.mode = mode.into();
+        wrong.outcome = outcome;
+        wrong.stopped = Some(receipt(stop, Vec::new(), Vec::new()));
+        cccc_core::fs::write_secret_json(&transaction.relay_path(), &wrong).expect("receipt");
+        assert!(transaction.read_relay().is_err(), "{mode} {stop:?}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn local_transactions_record_no_installation_and_only_accept_a_local_relay() {
+    let (_temp, home) = home();
+    let program = home.root().join("rebuilt cccc");
+    std::fs::write(&program, b"local candidate").expect("file");
+    let source = Source::Local {
+        file_identity: cccc_core::update_image::FileIdentity::read(&program)
+            .expect("file identity"),
+        program,
+    };
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let transaction = Transaction::create(&home, &id, source.clone()).expect("local transaction");
+    assert_eq!(transaction.record().expect("source record").source, source);
+    let mut relay = record(&id, source);
+    relay.outcome = RelayOutcome::LocalReady;
+    cccc_core::fs::write_secret_json(&transaction.relay_path(), &relay).expect("local relay");
+    assert_eq!(
+        transaction
+            .read_relay()
+            .expect("matching local relay")
+            .outcome,
+        RelayOutcome::LocalReady
+    );
+    relay.outcome = RelayOutcome::Applied;
+    cccc_core::fs::write_secret_json(&transaction.relay_path(), &relay).expect("release outcome");
     assert!(transaction.read_relay().is_err());
 }
 
@@ -158,7 +272,7 @@ fn relay_records_round_trip_and_refuse_another_shape() {
 fn transactions_open_only_under_their_own_home() {
     let (temp, home) = home();
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let created = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let created = Transaction::create(&home, &id, release(home.root())).expect("transaction");
     let opened = Transaction::open(&home, &created.dir).expect("open own transaction");
     assert_eq!(opened.id, id);
 
@@ -177,7 +291,7 @@ fn transaction_directories_are_private() {
     use std::os::unix::fs::PermissionsExt;
     let (_temp, home) = home();
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
     for path in [home.root().join("update"), transaction.dir.clone()] {
         let mode = std::fs::metadata(&path)
             .expect("metadata")
@@ -189,27 +303,251 @@ fn transaction_directories_are_private() {
 }
 
 fn coordinator(home: &HomeLayout) -> Coordinator {
-    Coordinator::new(UpdateContext {
-        home: home.clone(),
-        install_dir: home.root().join("bin"),
-        executable: home.root().join("bin/cccc"),
-        launch: LaunchSpec::default(),
-    })
+    Coordinator::new(
+        UpdateContext {
+            home: home.clone(),
+            install_dir: Some(home.root().join("bin")),
+            executable: home.root().join("bin/cccc"),
+            launch: LaunchSpec::default(),
+        },
+        None,
+    )
 }
 
 #[test]
-fn keeping_agents_is_refused_until_its_evidence_exists() {
+fn each_source_is_refused_before_reserving_anything_by_a_host_that_cannot_use_it() {
     let (_temp, home) = home();
+    // Installed by the CCCC installer, without the program it was started from.
+    let coordinator = coordinator(&home);
+    assert!(cccc_web::UpdateHost::release_in_place(&coordinator));
+    assert!(!cccc_web::UpdateHost::local_restart(&coordinator));
+    for mode in [UpdateMode::Keep, UpdateMode::Restart] {
+        let rejected = cccc_web::UpdateHost::begin(
+            &coordinator,
+            UpdateRequest {
+                source: UpdateSource::Local {
+                    token: "file identity comparison token".into(),
+                    source_id: "a".repeat(64),
+                },
+                mode,
+            },
+        )
+        .err()
+        .expect("no program to restart into");
+        assert_eq!(rejected.code, "local_not_supported");
+        assert!(matches!(&*coordinator.inner.lock(), Slot::Idle));
+        assert!(!home.root().join("update").exists());
+    }
+
+    // Put in place by another installer or a build: no release is installed.
+    let mut context = coordinator.context().clone();
+    context.install_dir = None;
+    let coordinator = Coordinator::new(context, None);
+    assert!(!cccc_web::UpdateHost::release_in_place(&coordinator));
     let rejected = cccc_web::UpdateHost::begin(
-        &coordinator(&home),
+        &coordinator,
         UpdateRequest {
-            version: "0.4.59".into(),
-            mode: UpdateMode::Keep,
+            source: UpdateSource::Release {
+                version: "0.4.59".into(),
+            },
+            mode: UpdateMode::Restart,
         },
     )
     .err()
-    .expect("keep is refused");
-    assert_eq!(rejected.code, "keep_preflight_incomplete");
+    .expect("no installation to replace");
+    assert_eq!(rejected.code, "update_unavailable");
+    assert!(matches!(&*coordinator.inner.lock(), Slot::Idle));
+    assert!(!home.root().join("update").exists());
+}
+
+#[test]
+fn keeping_agents_through_a_release_is_offered_only_where_this_build_takes_them_over() {
+    let (_temp, home) = home();
+    let installed = coordinator(&home);
+    // Only a host that replaces its installation offers it, and only where
+    // this build can take agents over; the release is checked once staged.
+    assert_eq!(
+        cccc_web::UpdateHost::release_keep(&installed),
+        cfg!(target_os = "linux")
+    );
+    let unmanaged = Coordinator::new(
+        UpdateContext {
+            install_dir: None,
+            ..installed.context().clone()
+        },
+        None,
+    );
+    assert!(!cccc_web::UpdateHost::release_keep(&unmanaged));
+    if !cfg!(target_os = "linux") {
+        let rejected = cccc_web::UpdateHost::begin(
+            &installed,
+            UpdateRequest {
+                source: UpdateSource::Release {
+                    version: "0.4.59".into(),
+                },
+                mode: UpdateMode::Keep,
+            },
+        )
+        .err()
+        .expect("keep is refused");
+        assert_eq!(rejected.code, "keep_not_supported");
+        assert!(!home.root().join("update").exists());
+    }
+}
+
+fn agent(actor: &str, generation: Option<&str>, owner: Option<&str>) -> AgentIdentity {
+    AgentIdentity {
+        group_id: "g_fixture".into(),
+        actor_id: actor.into(),
+        actor_created_at: "2026-11-17T00:00:00Z".into(),
+        generation: generation.map(Into::into),
+        owner_id: owner.map(Into::into),
+    }
+}
+
+fn receipt(
+    mode: ShutdownMode,
+    expected: Vec<AgentIdentity>,
+    unconfirmed: Vec<AgentIdentity>,
+) -> ShutdownReport {
+    let keep = mode == ShutdownMode::PreserveAgents;
+    ShutdownReport {
+        v: 1,
+        daemon_pid: 1,
+        request_id: "fixture".into(),
+        mode,
+        confirmed_stopped: if keep { Vec::new() } else { expected.clone() },
+        retained: if keep { expected } else { Vec::new() },
+        unconfirmed,
+    }
+}
+
+fn observed(running: Vec<AgentIdentity>, unavailable: &[&str]) -> AgentObservations {
+    AgentObservations {
+        running,
+        unconfirmed: Vec::new(),
+        unavailable_owners: unavailable.iter().map(|owner| (*owner).into()).collect(),
+    }
+}
+
+fn actors(list: &[AgentIdentity]) -> Vec<&str> {
+    list.iter().map(|agent| agent.actor_id.as_str()).collect()
+}
+
+#[test]
+fn kept_agents_are_reattached_only_with_the_same_launch_and_holder() {
+    let kept = receipt(
+        ShutdownMode::PreserveAgents,
+        vec![
+            agent("same", Some("g1"), Some("o1")),
+            agent("relaunched", Some("g2"), Some("o1")),
+            agent("moved", Some("g3"), Some("o1")),
+            agent("unknown", None, Some("o1")),
+            agent("gone", Some("g4"), Some("o1")),
+        ],
+        vec![agent("unsure", Some("g5"), Some("o1"))],
+    );
+    let now = observed(
+        vec![
+            agent("same", Some("g1"), Some("o1")),
+            agent("relaunched", Some("g9"), Some("o2")),
+            agent("moved", Some("g3"), Some("o2")),
+            agent("unknown", None, Some("o1")),
+        ],
+        &[],
+    );
+    let found = reconcile(&kept, Some(&now), &Reconciled::default());
+    assert_eq!(actors(&found.reattached), ["same"]);
+    assert_eq!(actors(&found.restarted), ["relaunched"]);
+    // An agent started again is recorded with the launch now running.
+    assert_eq!(found.restarted[0].generation.as_deref(), Some("g9"));
+    assert_eq!(found.restarted[0].owner_id.as_deref(), Some("o2"));
+    assert_eq!(actors(&found.not_back), ["gone"]);
+    // Another holder or an unknown launch proves nothing; neither does what
+    // the stop itself could not confirm.
+    assert_eq!(actors(&found.unconfirmed), ["moved", "unknown", "unsure"]);
+    assert!(!found.settled);
+
+    // A later look whose holder does not answer keeps what was proven.
+    let later = reconcile(&kept, Some(&observed(Vec::new(), &["o1"])), &found);
+    assert_eq!(later.reattached, found.reattached);
+    assert_eq!(later.restarted, found.restarted);
+    assert!(later.not_back.is_empty());
+    assert_eq!(
+        actors(&later.unconfirmed),
+        ["moved", "unknown", "gone", "unsure"]
+    );
+
+    // An agent no holder answered for may still run.
+    let empty = Reconciled::default();
+    let found = reconcile(&kept, Some(&observed(Vec::new(), &["o1"])), &empty);
+    assert!(found.not_back.is_empty());
+    assert_eq!(found.unconfirmed.len(), 6);
+    // Nothing observed at all: nothing is known.
+    let found = reconcile(&kept, None, &empty);
+    assert!(found.reattached.is_empty() && found.not_back.is_empty());
+    assert_eq!(found.unconfirmed.len(), 6);
+}
+
+#[test]
+fn stopped_agents_count_as_restarted_only_with_a_new_launch() {
+    let stopped = receipt(
+        ShutdownMode::Stop,
+        vec![
+            agent("new", Some("g1"), None),
+            agent("same", Some("g2"), None),
+            agent("gone", Some("g3"), None),
+        ],
+        Vec::new(),
+    );
+    let now = observed(
+        vec![
+            agent("new", Some("g7"), Some("o2")),
+            agent("same", Some("g2"), Some("o2")),
+        ],
+        &[],
+    );
+    let found = reconcile(&stopped, Some(&now), &Reconciled::default());
+    assert!(found.reattached.is_empty());
+    assert_eq!(actors(&found.restarted), ["new"]);
+    // The daemon starts agents again in the background, one by one: one not
+    // seen yet may still start, so its absence proves nothing.
+    assert_eq!(actors(&found.unconfirmed), ["same", "gone"]);
+    assert!(found.not_back.is_empty());
+    assert!(!found.settled);
+
+    let all_back = observed(
+        vec![
+            agent("new", Some("g7"), Some("o2")),
+            agent("same", Some("g8"), Some("o2")),
+            agent("gone", Some("g9"), Some("o2")),
+        ],
+        &[],
+    );
+    assert!(reconcile(&stopped, Some(&all_back), &Reconciled::default()).settled);
+}
+
+#[test]
+fn the_terminal_names_agents_by_title_or_id() {
+    let named = |actor: &str, title: Option<&str>| cccc_web::UpdateAgent {
+        group_id: "g_fixture".into(),
+        actor_id: actor.into(),
+        actor_created_at: "2026-11-17T00:00:00Z".into(),
+        generation: Some("g1".into()),
+        owner_id: Some("o1".into()),
+        title: title.map(Into::into),
+    };
+    let agents = UpdateAgents {
+        state: "unconfirmed".into(),
+        reattached: vec![named("peer-1", Some("Reviewer")), named("peer-2", None)],
+        unconfirmed: vec![named("peer-3", None)],
+        ..UpdateAgents::default()
+    };
+    assert_eq!(
+        agents_line(&agents),
+        "Could not be confirmed: peer-3. Kept running: Reviewer, peer-2."
+    );
+    assert_eq!(agents_line(&agents_not_observed()), "");
 }
 
 #[test]
@@ -223,7 +561,9 @@ fn one_update_at_a_time_and_only_its_owner_abandons_it() {
     let rejected = cccc_web::UpdateHost::begin(
         &coordinator,
         UpdateRequest {
-            version: "0.4.59".into(),
+            source: UpdateSource::Release {
+                version: "0.4.59".into(),
+            },
             mode: UpdateMode::Restart,
         },
     )
@@ -252,13 +592,15 @@ fn one_update_at_a_time_and_only_its_owner_abandons_it() {
 fn prepared(home: &HomeLayout) -> Prepared {
     let id = uuid::Uuid::new_v4().simple().to_string();
     Prepared {
-        transaction: Transaction::create(home, &id, home.root()).expect("transaction"),
+        transaction: Transaction::create(home, &id, release(home.root())).expect("transaction"),
         version: "0.4.59".into(),
         mode: UpdateMode::Restart,
         target: BuildIdentity {
             version: "0.4.59".into(),
             source_id: "a".repeat(64),
         },
+        capabilities: UpdateCapabilities::default(),
+        source: release(home.root()),
     }
 }
 
@@ -268,7 +610,7 @@ async fn an_update_given_up_after_its_handover_frees_the_host() {
     let coordinator = coordinator(&home);
     let prepared = prepared(&home);
     let dir = prepared.transaction.dir.clone();
-    *coordinator.inner.lock() = Slot::Prepared(prepared);
+    *coordinator.inner.lock() = Slot::Prepared(Box::new(prepared));
     // The Web handed it over, then the handover failed before anything stopped.
     let prepared = coordinator.take_prepared().expect("handed over");
     coordinator.undo(prepared).await;
@@ -285,11 +627,15 @@ async fn an_update_given_up_after_its_handover_frees_the_host() {
 async fn closing_the_host_stops_a_running_installer_before_undoing_it() {
     let (temp, home) = home();
     let coordinator = coordinator(&home);
-    let install_dir = coordinator.context().install_dir.clone();
+    let install_dir = coordinator
+        .context()
+        .install_dir
+        .clone()
+        .expect("installation");
     std::fs::create_dir_all(&install_dir).expect("install dir");
     let lock = install_dir.join(".cccc-install.lock");
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
     let started = temp.path().join("started");
     let late = temp.path().join("late");
     let staged = temp.path().join("staged");
@@ -388,7 +734,7 @@ async fn abandoning_a_preparation_stops_it_and_lets_the_next_one_in() {
     let (_temp, home) = home();
     let coordinator = coordinator(&home);
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
     *coordinator.inner.lock() = Slot::Busy {
         id: id.clone(),
         abandoned: false,
@@ -414,7 +760,7 @@ async fn abandoning_a_preparation_stops_it_and_lets_the_next_one_in() {
 fn installer_results_count_only_with_their_status_and_value() {
     let (_temp, home) = home();
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
     let aborted = run(&format!("CCCC_INSTALL_ABORTED={id}\n"), "");
     assert!(aborted.aborted(&transaction));
     let other = run("CCCC_INSTALL_ABORTED=someone-else\n", "");
@@ -463,7 +809,7 @@ async fn an_installer_phase_leaves_nothing_running() {
     let (temp, home) = home();
     let context = coordinator(&home).context().clone();
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
     let started = temp.path().join("started");
     let late = temp.path().join("late");
     let quote = |path: &Path| shell_words::quote(&path.to_string_lossy()).into_owned();
@@ -523,7 +869,7 @@ async fn an_unconfirmed_cleanup_keeps_its_transaction() {
     let (_temp, home) = home();
     let context = coordinator(&home).context().clone();
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
 
     write_script(
         &transaction,
@@ -547,7 +893,7 @@ async fn an_unconfirmed_cleanup_keeps_its_transaction() {
 
     // Without an installer, nothing ran, so there is nothing to undo.
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
     undo(&context, &transaction).await.expect("nothing ran");
     assert!(!transaction.dir.exists());
 }
@@ -557,12 +903,14 @@ fn an_unfinished_cleanup_holds_off_the_next_update() {
     let (_temp, home) = home();
     let coordinator = coordinator(&home);
     let id = uuid::Uuid::new_v4().simple().to_string();
-    let transaction = Transaction::create(&home, &id, home.root()).expect("transaction");
+    let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
     std::fs::write(home.root().join("update/last.json"), "{}").expect("last result");
     let rejected = cccc_web::UpdateHost::begin(
         &coordinator,
         UpdateRequest {
-            version: "0.4.59".into(),
+            source: UpdateSource::Release {
+                version: "0.4.59".into(),
+            },
             mode: UpdateMode::Restart,
         },
     )
@@ -580,6 +928,338 @@ fn an_unfinished_cleanup_holds_off_the_next_update() {
         rejected.message
     );
     assert!(matches!(&*coordinator.inner.lock(), Slot::Idle));
+}
+
+/// A host started from a program that a build, or another installer, put in
+/// place, and restarts into once that program is rebuilt.
+#[cfg(target_os = "linux")]
+mod local {
+    use super::*;
+    use cccc_core::update_image::FileIdentity;
+
+    struct Host {
+        _temp: tempfile::TempDir,
+        home: HomeLayout,
+        context: UpdateContext,
+        launch: LaunchProgram,
+    }
+
+    fn source_id(letter: char) -> String {
+        std::iter::repeat_n(letter, 64).collect()
+    }
+
+    /// Put a new file at `path`, as a build does.
+    fn write_program(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let next = path.with_extension("next");
+        std::fs::write(&next, body).expect("program");
+        std::fs::set_permissions(&next, std::fs::Permissions::from_mode(0o755))
+            .expect("program mode");
+        std::fs::rename(&next, path).expect("replace program");
+    }
+
+    /// A build that answers its self-check as `version`/`source`, and says
+    /// whether it can finish a restart into it.
+    fn build(path: &Path, version: &str, source: &str, local_restart: bool) {
+        let check = serde_json::json!({
+            "schema": 1,
+            "version": version,
+            "build": {"source_id": source},
+            "daemon_compatibility": "x",
+            "relay_schemas": [RELAY_SCHEMA],
+            "capabilities": {
+                "local_restart": local_restart,
+                "intent_schemas": [attended_update::INTENT_SCHEMA],
+            },
+        });
+        write_program(
+            path,
+            &format!(
+                "#!/bin/sh\n[ \"$1 $2\" = 'update --self-check' ] || exit 1\necho '{check}'\n"
+            ),
+        );
+    }
+
+    fn host() -> Host {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        std::fs::create_dir_all(home.daemon_dir()).expect("daemon dir");
+        let program = temp.path().join("target/release/cccc");
+        std::fs::create_dir_all(program.parent().expect("build dir")).expect("build dir");
+        build(&program, "0.4.58", &source_id('a'), true);
+        let launch = LaunchProgram {
+            identity: FileIdentity::read(&program).expect("launch identity"),
+            path: program.clone(),
+        };
+        let context = UpdateContext {
+            home: home.clone(),
+            install_dir: None,
+            executable: program,
+            launch: LaunchSpec::default(),
+        };
+        Host {
+            _temp: temp,
+            home,
+            context,
+            launch,
+        }
+    }
+
+    impl Host {
+        /// What a check offers for the program now at the launch path.
+        fn token(&self) -> String {
+            FileIdentity::read(&self.launch.path)
+                .expect("identity")
+                .token()
+                .expect("token")
+        }
+
+        async fn prepare(&self, token: &str, source: &str) -> Result<Prepared, UpdateRejection> {
+            self.prepare_as(token, source, UpdateMode::Restart).await
+        }
+
+        async fn prepare_as(
+            &self,
+            token: &str,
+            source: &str,
+            mode: UpdateMode,
+        ) -> Result<Prepared, UpdateRejection> {
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            prepare_local(&self.context, &self.launch, &id, token, source, mode)
+                .await
+                .map_err(|(transaction, rejection)| {
+                    assert!(transaction.is_none(), "a refused restart leaves nothing");
+                    rejection
+                })
+        }
+
+        fn armed(&self) -> Option<attended_update::Intent> {
+            attended_update::active(&self.home).expect("intent readable")
+        }
+
+        fn last(&self) -> serde_json::Value {
+            cccc_core::fs::read_json(&self.home.root().join("update/last.json")).expect("last")
+        }
+
+        /// A restart into the rebuilt program whose relay reached it.
+        async fn relayed(&self) -> (Prepared, RelayRecord) {
+            build(&self.launch.path, "0.4.58", &source_id('b'), true);
+            let prepared = self
+                .prepare(&self.token(), &source_id('b'))
+                .await
+                .expect("prepared");
+            arm(&self.context, &prepared).expect("armed");
+            write_relay(&self.context, &prepared, RelayOutcome::LocalReady, None).expect("relay");
+            let record = prepared.transaction.read_relay().expect("relay record");
+            (prepared, record)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rebuilt_program_is_restarted_into_only_while_it_is_the_file_its_check_offered() {
+        let host = host();
+        let unchanged = host
+            .prepare(&host.token(), &source_id('a'))
+            .await
+            .expect_err("nothing was rebuilt");
+        assert_eq!(unchanged.code, "local_changed");
+
+        // The same version and source, another file: a Web-only rebuild looks
+        // like this.
+        build(&host.launch.path, "0.4.58", &source_id('a'), true);
+        let token = host.token();
+        for (offered, source) in [
+            ("another file", source_id('a')),
+            (token.as_str(), source_id('c')),
+        ] {
+            let changed = host
+                .prepare(offered, &source)
+                .await
+                .expect_err("not what the check offered");
+            assert_eq!(changed.code, "local_changed");
+        }
+        assert!(!host.home.root().join("update").exists());
+
+        let prepared = host
+            .prepare(&token, &source_id('a'))
+            .await
+            .expect("prepared");
+        assert_eq!(prepared.version, "0.4.58");
+        assert_eq!(prepared.program(), host.launch.path);
+        assert_eq!(
+            prepared.transaction.record().expect("record").source,
+            prepared.source
+        );
+        let Source::Local { file_identity, .. } = &prepared.source else {
+            panic!("a local source");
+        };
+        assert_eq!(file_identity.token().expect("token"), token);
+        // The capabilities a final stop is checked against come from this check.
+        assert!(prepared.capabilities.local_restart);
+        assert_eq!(
+            prepared.capabilities.intent_schemas,
+            vec![attended_update::INTENT_SCHEMA]
+        );
+        arm(&host.context, &prepared).expect("armed while it is that file");
+        assert_eq!(host.armed().expect("intent").source, prepared.source);
+        attended_update::disarm(&host.home, &prepared.transaction.id).expect("disarm");
+
+        // Rebuilt again after its check: the restart does not start.
+        build(&host.launch.path, "0.4.58", &source_id('d'), true);
+        let error = arm(&host.context, &prepared).expect_err("changed after its check");
+        assert!(format!("{error:#}").contains("changed after it was checked"));
+        assert!(host.armed().is_none());
+    }
+
+    #[tokio::test]
+    async fn agents_keep_running_only_when_the_daemon_allows_it() {
+        let host = host();
+        // This build cannot take agents over, and no daemon serves this home.
+        build(&host.launch.path, "0.4.58", &source_id('b'), true);
+        let refused = host
+            .prepare_as(&host.token(), &source_id('b'), UpdateMode::Keep)
+            .await
+            .expect_err("cannot keep agents");
+        assert_eq!(refused.code, "keep_refused");
+        assert!(
+            refused.message.starts_with("agents cannot keep running: "),
+            "{}",
+            refused.message
+        );
+        assert!(!host.home.root().join("update").exists());
+    }
+
+    #[tokio::test]
+    async fn a_rebuilt_program_that_cannot_finish_the_restart_is_refused() {
+        let host = host();
+        // An older build that does not know how to finish this restart.
+        build(&host.launch.path, "0.4.57", &source_id('b'), false);
+        let refused = host
+            .prepare(&host.token(), &source_id('b'))
+            .await
+            .expect_err("cannot finish it");
+        assert_eq!(refused.code, "local_candidate_rejected");
+
+        // A program that does not answer its self-check.
+        write_program(&host.launch.path, "#!/bin/sh\nexit 1\n");
+        let refused = host
+            .prepare(&host.token(), &source_id('b'))
+            .await
+            .expect_err("no self-check");
+        assert_eq!(refused.code, "local_candidate_rejected");
+        assert!(!host.home.root().join("update").exists());
+    }
+
+    #[tokio::test]
+    async fn a_restart_into_a_rebuilt_program_is_confirmed_without_an_installer() {
+        let host = host();
+        let (prepared, record) = host.relayed().await;
+        confirm(&host.home, &prepared.transaction, &record)
+            .await
+            .expect("confirmed");
+        assert!(host.armed().is_none());
+        assert!(!prepared.transaction.dir.exists());
+        let last = host.last();
+        assert_eq!(last["result"], "restarted");
+        assert_eq!(last["source"], "local");
+        assert_eq!(last["token"], host.token().as_str());
+        assert_eq!(last["to_version"], "0.4.58");
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_restart_is_given_up_without_touching_the_program() {
+        let host = host();
+        let (prepared, _record) = host.relayed().await;
+        let program = std::fs::read(&host.launch.path).expect("program");
+        recover(&host.home, &prepared.transaction.dir)
+            .await
+            .expect("recovered");
+        assert!(host.armed().is_none());
+        assert!(!prepared.transaction.dir.exists());
+        assert_eq!(
+            std::fs::read(&host.launch.path).expect("program kept"),
+            program
+        );
+        let last = host.last();
+        assert_eq!(last["result"], "abandoned");
+        assert_eq!(last["stage"], "recover");
+        assert_eq!(last["source"], "local");
+    }
+
+    #[tokio::test]
+    async fn ordinary_start_recovers_only_a_local_restart_with_a_dead_host_and_an_idle_daemon() {
+        let host = host();
+        let (prepared, _) = host.relayed().await;
+        let active_path = host.home.root().join("update/active.json");
+        let mut intent = host.armed().expect("armed Local restart");
+        assert!(
+            recover_local_before_start(&host.home)
+                .expect("live holder is left to the startup gate")
+                .is_none()
+        );
+        assert_eq!(host.armed(), Some(intent.clone()));
+
+        let mut previous = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("fixture previous host");
+        intent.holder = NativeHost::capture(previous.id()).expect("previous host identity");
+        previous.kill().expect("end previous host");
+        previous.wait().expect("confirm previous host exited");
+
+        let mut release_intent = intent.clone();
+        release_intent.source = release(host.launch.path.parent().expect("installation path"));
+        cccc_core::fs::write_secret_json(&active_path, &release_intent).expect("Release intent");
+        assert!(
+            recover_local_before_start(&host.home)
+                .expect("Release remains for explicit recovery")
+                .is_none()
+        );
+        assert_eq!(host.armed(), Some(release_intent));
+
+        cccc_core::fs::write_secret_json(&active_path, &intent).expect("interrupted Local intent");
+        let lock = cccc_core::fs::try_exclusive_lock(&host.home.daemon_dir().join("ccccd.lock"))
+            .expect("daemon lock")
+            .expect("take fixture lock");
+        let blocked = recover_local_before_start(&host.home).expect_err("daemon still owns home");
+        assert!(format!("{blocked:#}").contains("daemon_running"));
+        assert_eq!(host.armed(), Some(intent));
+        drop(lock);
+
+        let old_executable = std::fs::read(&host.launch.path).expect("before recovery");
+        let update = recover_local_before_start(&host.home)
+            .expect("recover interrupted Local restart")
+            .expect("report the recovered transaction");
+        assert!(update.failed);
+        assert_eq!(update.transaction, prepared.transaction.id);
+        assert!(host.armed().is_none());
+        assert_eq!(host.last()["result"], "abandoned");
+        assert!(!prepared.transaction.dir.exists());
+        assert_eq!(
+            std::fs::read(&host.launch.path).expect("after recovery"),
+            old_executable
+        );
+        assert!(
+            recover_local_before_start(&host.home)
+                .expect("normal repeat start")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_restart_that_never_reserved_the_home_is_cleaned_up() {
+        let host = host();
+        build(&host.launch.path, "0.4.58", &source_id('b'), true);
+        let prepared = host
+            .prepare(&host.token(), &source_id('b'))
+            .await
+            .expect("prepared");
+        recover(&host.home, &prepared.transaction.dir)
+            .await
+            .expect("cleaned up");
+        assert!(!prepared.transaction.dir.exists());
+        assert!(!host.home.root().join("update/last.json").exists());
+    }
 }
 
 /// An installation and a transaction driven by the real installer's phases.
@@ -630,7 +1310,8 @@ mod recovery {
         std::fs::write(install_dir.join(".cccc-standalone"), "standalone-v1\n").expect("marker");
         install_program(&install_dir, TARGET, &source_id('a'));
         let id = uuid::Uuid::new_v4().simple().to_string();
-        let transaction = Transaction::create(&home, &id, &install_dir).expect("transaction");
+        let transaction =
+            Transaction::create(&home, &id, release(&install_dir)).expect("transaction");
         std::fs::copy(installer(), transaction.script()).expect("cached installer");
         Fixture {
             _temp: temp,
@@ -649,7 +1330,7 @@ mod recovery {
                     version: TARGET.into(),
                     source_id: source.into(),
                 },
-                self.install_dir.clone(),
+                release(&self.install_dir),
             )
             .expect("intent");
             attended_update::arm(&self.home, &intent).expect("arm");
@@ -691,6 +1372,29 @@ mod recovery {
         }
     }
 
+    #[test]
+    fn a_forced_exit_names_the_command_that_finishes_an_interrupted_update() {
+        let fixture = fixture();
+        assert_eq!(forced_exit_update_hint(&fixture.home), None);
+        fixture.arm(&source_id('a'));
+        let intent = attended_update::active(&fixture.home)
+            .expect("intent readable")
+            .expect("armed");
+        let hint = forced_exit_update_hint(&fixture.home).expect("an update holds the home");
+        assert!(hint.contains(&intent.recovery_command()), "{hint}");
+        // An unreadable record keeps its reason rather than being taken for none.
+        std::fs::write(
+            fixture.home.root().join("update/active.json"),
+            b"not an intent",
+        )
+        .expect("damage the record");
+        let hint = forced_exit_update_hint(&fixture.home).expect("the read fails");
+        assert!(
+            hint.starts_with("could not read this CCCC home's update state:"),
+            "{hint}"
+        );
+    }
+
     #[tokio::test]
     async fn a_committed_update_keeps_the_version_the_user_confirmed() {
         let fixture = fixture();
@@ -706,7 +1410,7 @@ mod recovery {
         let last = fixture.last();
         assert_eq!(last["result"], "kept");
         assert_eq!(last["to_version"], TARGET);
-        assert_eq!(last["agents"], "not_observed");
+        assert_eq!(last["agents"]["state"], "not_observed");
     }
 
     #[tokio::test]

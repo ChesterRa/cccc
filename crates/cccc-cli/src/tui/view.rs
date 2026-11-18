@@ -635,16 +635,8 @@ fn bottom(frame: &mut Frame, app: &App, theme: Theme) {
 
 pub(super) fn notice_line(app: &App, theme: Theme, width: usize) -> Option<Line<'static>> {
     let room = width.saturating_sub(2);
-    if let HostPhase::Updating { version } = &app.host.phase {
-        return Some(Line::raw(format!(
-            " {}",
-            text::fit(
-                &format!(
-                    "Updating CCCC to {version}: its agents restart, then CCCC starts again here."
-                ),
-                room
-            )
-        )));
+    if let HostPhase::Updating { notice } = &app.host.phase {
+        return Some(Line::raw(format!(" {}", text::fit(notice, room))));
     }
     if app.stopping() {
         let force = if app.interrupts > 0 { "again" } else { "twice" };

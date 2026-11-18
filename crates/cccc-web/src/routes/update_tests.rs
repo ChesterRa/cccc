@@ -12,6 +12,9 @@ use tokio::sync::{broadcast, oneshot};
 struct PausedHost {
     ready: Mutex<Option<oneshot::Receiver<Result<(), UpdateRejection>>>>,
     abandoned: Mutex<Vec<String>>,
+    /// Another installer put this host's program in place: it can restart
+    /// into a rebuilt program, but cannot install a release.
+    local_only: bool,
 }
 
 impl UpdateHost for PausedHost {
@@ -26,6 +29,18 @@ impl UpdateHost for PausedHost {
             transaction: "txn".into(),
             ready: Box::pin(async move { ready.await.expect("the test finishes the preparation") }),
         })
+    }
+
+    fn release_in_place(&self) -> bool {
+        !self.local_only
+    }
+
+    fn local_restart(&self) -> bool {
+        self.local_only
+    }
+
+    fn release_keep(&self) -> bool {
+        !self.local_only
     }
 
     fn abandon(&self, transaction: &str) {
@@ -101,6 +116,7 @@ async fn update_while(revoke: bool) -> (ApiResult, Arc<PausedHost>, Arc<crate::R
     let host = Arc::new(PausedHost {
         ready: Mutex::new(Some(ready)),
         abandoned: Mutex::new(Vec::new()),
+        local_only: false,
     });
     let (state, restart, _closed) = state(home, Arc::clone(&host));
     let request = tokio::spawn(start(
@@ -179,6 +195,23 @@ impl crate::UpdateChecker for FixedChecker {
                 failure: None,
                 release_notes_url: None,
                 command: Some("cccc update --channel stable".into()),
+                local: Some(crate::LocalBuild::rebuilt(
+                    "0.4.58".into(),
+                    "a".repeat(64),
+                    std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_794_908_400),
+                    "fixture-token".into(),
+                    crate::KeepPreview {
+                        allowed: false,
+                        refusals: vec![crate::KeepRefusal {
+                            code: "keep_not_supported".into(),
+                            group_id: None,
+                            actor_id: None,
+                            owner_id: None,
+                            display_name: None,
+                            message: "fixture sentence".into(),
+                        }],
+                    },
+                )),
             }
         })
     }
@@ -203,6 +236,7 @@ async fn status_and_check_come_from_the_host_and_say_whether_it_can_update_itsel
     let host = Arc::new(PausedHost {
         ready: Mutex::new(Some(ready)),
         abandoned: Mutex::new(Vec::new()),
+        local_only: false,
     });
 
     // A host that can replace itself.
@@ -222,8 +256,58 @@ async fn status_and_check_come_from_the_host_and_say_whether_it_can_update_itsel
     let check = result(super::check(State(state)).await);
     assert_eq!(check["check"]["latest"], "0.4.59");
     assert_eq!(check["check"]["status"], "newer");
+    // A rebuilt program at the host's launch path, as the page reads it.
+    assert_eq!(
+        check["check"]["local"],
+        serde_json::json!({
+            "state": "rebuilt",
+            "version": "0.4.58",
+            "source_id": "a".repeat(64),
+            "built_at": "2026-11-17T09:40:00Z",
+            "token": "fixture-token",
+            "keep": {
+                "allowed": false,
+                "refusals": [{
+                    "code": "keep_not_supported",
+                    "group_id": null,
+                    "actor_id": null,
+                    "owner_id": null,
+                    "display_name": null,
+                    "message": "fixture sentence",
+                }],
+            },
+        })
+    );
     assert_eq!(check["in_place"], true);
+    // A host restarts into a rebuilt program only once it says it can.
+    assert_eq!(check["local_restart"], false);
+    assert_eq!(check["release_keep"], true);
     assert_eq!(checker.checks.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    // A host another installer put in place restarts into a rebuilt program,
+    // but names the command for a release.
+    let (_finish, ready) = oneshot::channel();
+    let local_host = Arc::new(PausedHost {
+        ready: Mutex::new(Some(ready)),
+        abandoned: Mutex::new(Vec::new()),
+        local_only: true,
+    });
+    let (state, _restart, _closed) = state_with(
+        home.clone(),
+        crate::UpdateServices {
+            checker: Some(checker.clone()),
+            host: Some(local_host),
+            on_trigger: None,
+        },
+    );
+    assert_eq!(
+        result(super::status(State(state.clone())).await)["in_place"],
+        false
+    );
+    let check = result(super::check(State(state)).await);
+    assert_eq!(check["in_place"], false);
+    assert_eq!(check["local_restart"], true);
+    assert_eq!(check["release_keep"], false);
 
     // A host that can only check: it shows the command instead.
     let (state, _restart, _closed) = state_with(
@@ -234,7 +318,10 @@ async fn status_and_check_come_from_the_host_and_say_whether_it_can_update_itsel
             on_trigger: None,
         },
     );
-    assert_eq!(result(super::check(State(state)).await)["in_place"], false);
+    let check = result(super::check(State(state)).await);
+    assert_eq!(check["in_place"], false);
+    assert_eq!(check["local_restart"], false);
+    assert_eq!(check["release_keep"], false);
 
     // Without a CCCC host behind this Web there is nothing to ask.
     let (state, _restart, _closed) = state_with(home, crate::UpdateServices::default());
@@ -249,7 +336,9 @@ async fn the_hosts_own_entry_hands_over_like_the_route_and_gives_up_when_dropped
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let request = || UpdateRequest {
-        version: "0.4.59".into(),
+        source: UpdateSource::Release {
+            version: "0.4.59".into(),
+        },
         mode: UpdateMode::Restart,
     };
 
@@ -258,6 +347,7 @@ async fn the_hosts_own_entry_hands_over_like_the_route_and_gives_up_when_dropped
     let host = Arc::new(PausedHost {
         ready: Mutex::new(Some(ready)),
         abandoned: Mutex::new(Vec::new()),
+        local_only: false,
     });
     let (app, restart, _closed) = state(home.clone(), Arc::clone(&host));
     let trigger = crate::UpdateTrigger {
@@ -285,6 +375,7 @@ async fn the_hosts_own_entry_hands_over_like_the_route_and_gives_up_when_dropped
     let host = Arc::new(PausedHost {
         ready: Mutex::new(Some(ready)),
         abandoned: Mutex::new(Vec::new()),
+        local_only: false,
     });
     let (app, restart, _closed) = state(home, Arc::clone(&host));
     let trigger = crate::UpdateTrigger {
@@ -299,4 +390,48 @@ async fn the_hosts_own_entry_hands_over_like_the_route_and_gives_up_when_dropped
             .update_requested
             .load(std::sync::atomic::Ordering::Acquire)
     );
+}
+
+#[test]
+fn a_start_names_a_release_by_version_or_a_rebuilt_program_by_its_check() {
+    let release = update_source(&json!({"version": "0.4.59", "mode": "restart"})).expect("release");
+    assert_eq!(
+        release,
+        UpdateSource::Release {
+            version: "0.4.59".into()
+        }
+    );
+    let local = update_source(&json!({
+        "source": "local",
+        "token": "fixture-token",
+        "source_id": "a".repeat(64),
+        "mode": "keep",
+        // A path in the request is never used.
+        "program": "/elsewhere/cccc",
+    }))
+    .expect("local");
+    assert_eq!(
+        local,
+        UpdateSource::Local {
+            token: "fixture-token".into(),
+            source_id: "a".repeat(64),
+        }
+    );
+    for bad in [
+        json!({"mode": "restart"}),
+        json!({"source": "local", "source_id": "a"}),
+        json!({"source": "local", "token": "t", "source_id": ""}),
+        json!({"source": "elsewhere", "version": "0.4.59"}),
+        // A source that is not a name is not read as no source.
+        json!({"source": 42, "version": "0.4.59"}),
+        json!({"source": {}, "version": "0.4.59"}),
+        json!({"source": null, "version": "0.4.59"}),
+    ] {
+        let error = update_source(&bad).expect_err("rejected");
+        assert_eq!(
+            error.into_response().status(),
+            StatusCode::BAD_REQUEST,
+            "{bad}"
+        );
+    }
 }

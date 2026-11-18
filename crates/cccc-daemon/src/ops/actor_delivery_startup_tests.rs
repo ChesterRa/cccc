@@ -257,10 +257,6 @@ fn kiro_native_delivery_survives_saved_acp_mode() {
     exercise_pending_acp_mode(ActorRuntime::Kiro);
 }
 #[test]
-fn hermes_native_delivery_survives_saved_acp_mode() {
-    exercise_pending_acp_mode(ActorRuntime::Hermes);
-}
-#[test]
 fn droid_native_delivery_survives_saved_acp_mode() {
     exercise_pending_acp_mode(ActorRuntime::Droid);
 }
@@ -578,11 +574,169 @@ while True:
     }
 }
 
-fn wait_for(mut ready: impl FnMut() -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+#[track_caller]
+fn wait_for(ready: impl FnMut() -> bool) {
+    wait_for_timeout(Duration::from_secs(3), ready);
+}
+
+#[track_caller]
+fn wait_for_timeout(timeout: Duration, mut ready: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + timeout;
     while !ready() {
         assert!(std::time::Instant::now() < deadline, "fixture timed out");
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_closed_startup_terminal_holds_claimed_mail_until_explicit_start() {
+    use cccc_core::ledger;
+    use serde_json::{Value, json};
+
+    let temp = tempfile::tempdir().expect("fixture");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("startup retry", "").expect("group");
+    let mut group = cccc_core::group_scope::attach(
+        &store,
+        &group.group_id,
+        cccc_core::scope::detect(temp.path()).expect("fixture scope"),
+    )
+    .expect("attach scope");
+    let mut actor = Actor::new("worker");
+    actor.runtime = ActorRuntime::Cursor;
+    actor.command = vec![
+        "/bin/sh".into(),
+        "-c".into(),
+        "stty raw -echo; exec cat > received".into(),
+    ];
+    group.state = GroupState::Active;
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save group");
+    let old = cccc_runtime::start_actor_with_history(
+        cccc_runtime::LaunchSpec {
+            group_id: group.group_id.clone(),
+            actor_id: actor.id.clone(),
+            runner: RunnerKind::Pty,
+            command: vec!["/bin/sh".into(), "-c".into(),
+                "stty raw -echo; printf '\\033[?2004hWorkspace Trust Required\\r\\n'; touch prompt; dd bs=1 count=1 of=choice 2>/dev/null".into()],
+            cwd: temp.path().into(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        },
+        cccc_runtime::HistoryConfig {
+            path: temp.path().join("terminal.pty"),
+            max_bytes: 65536,
+            hot_bytes: 8192,
+            persist: false,
+        },
+        cccc_runtime::ActorLaunch { runtime: ActorRuntime::Cursor, submit: actor.submit },
+    ).expect("start terminal with startup prompt");
+    let call = |op: &str, extra: Value| {
+        let mut args = extra.as_object().expect("arguments").clone();
+        args.extend([
+            ("by".into(), json!("user")),
+            ("group_id".into(), json!(group.group_id)),
+            ("actor_id".into(), json!(actor.id)),
+        ]);
+        crate::handle_request(
+            &home,
+            &DaemonRequest {
+                v: 1,
+                op: op.into(),
+                args,
+            },
+        )
+    };
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for(|| temp.path().join("prompt").exists());
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        mail.data = json!({"to":[actor.id], "message_mode":"mail", "text":"STARTUP_MAIL_ONCE"})
+            .as_object()
+            .expect("mail")
+            .clone();
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+        ledger::append(&ledger_path, &mail).expect("append mail");
+        let claim = call(
+            "message_deliver",
+            json!({"source_event_id":mail.id,"actor_ids":[actor.id]}),
+        );
+        assert!(claim.ok, "{:?}", claim.error);
+        assert_eq!(claim.result["delivery_state"], "claimed");
+        assert!(
+            std::fs::read(temp.path().join("choice"))
+                .unwrap_or_default()
+                .is_empty(),
+            "the startup prompt has not received a byte"
+        );
+        cccc_runtime::write(&group.group_id, &actor.id, b"q").expect("user rejects prompt");
+        wait_for(|| {
+            cccc_runtime::status(&group.group_id, &actor.id).is_ok_and(|status| !status.running)
+        });
+        assert_eq!(
+            std::fs::read(temp.path().join("choice")).expect("choice"),
+            b"q"
+        );
+
+        let exited = actor_runtime::reap_exited().expect("reap");
+        assert!(
+            exited
+                .iter()
+                .any(|status| status.group_id == group.group_id
+                    && status.started_at == old.started_at)
+        );
+        assert!(
+            !actor_runtime::reap_exited()
+                .expect("reap again")
+                .iter()
+                .any(|status| status.group_id == group.group_id)
+        );
+        let saved = call("actor_update", json!({"patch":{"runtime":"custom"}}));
+        assert!(saved.ok, "{:?}", saved.error);
+        let saved_group = store.load(&group.group_id).expect("saved settings");
+        assert_eq!(saved_group.actors[0].runtime, ActorRuntime::Custom);
+        // The actual startup exit is observable before exit reconciliation.
+        // Saving next-launch settings is not an explicit lifecycle retry.
+        let automated = actor_runtime::apply(&home, &saved_group, &actor.id, "actor.start");
+        assert_eq!(
+            automated
+                .expect_err("automatic start must wait for user")
+                .code,
+            "runtime_confirmation_paused"
+        );
+        assert!(!temp.path().join("received").exists());
+
+        let retried = call("actor_start", json!({}));
+        assert!(retried.ok, "{:?}", retried.error);
+        let new = cccc_runtime::status(&group.group_id, &actor.id).expect("replacement");
+        assert_ne!(new.started_at, old.started_at);
+        // Custom submissions pace both the preamble and the business input.
+        wait_for_timeout(Duration::from_secs(10), || {
+            crate::ops::runtime_delivery::latest_state(&home, &group.group_id, &actor.id, &mail.id)
+                .expect("latest delivery state")
+                .is_some_and(|state| state.0 == "accepted")
+        });
+        wait_for(|| {
+            std::fs::read_to_string(temp.path().join("received"))
+                .is_ok_and(|text| text.contains("STARTUP_MAIL_ONCE"))
+        });
+        let stopped = call("actor_stop", json!({}));
+        assert!(stopped.ok, "{:?}", stopped.error);
+        let received = std::fs::read_to_string(temp.path().join("received")).expect("received");
+        assert_eq!(received.matches("STARTUP_MAIL_ONCE").count(), 1);
+        let stale = call("actor_terminal_ready", json!({"generation":new.started_at}));
+        assert!(!stale.ok);
+        assert_eq!(
+            stale.error.expect("stale release").code,
+            "runtime_session_changed"
+        );
+    }));
+    crate::ops::actor_delivery::shutdown_actor(&group.group_id, &actor.id);
+    let _ = cccc_runtime::stop(&group.group_id, &actor.id);
+    if let Err(error) = result {
+        std::panic::resume_unwind(error);
     }
 }
 

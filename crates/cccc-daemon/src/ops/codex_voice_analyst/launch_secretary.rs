@@ -128,6 +128,7 @@ impl AnalystSession {
                         None,
                         SessionPurpose::VoiceSecretary,
                         None,
+                        false,
                     )
                     .await
                 }

@@ -62,10 +62,115 @@ existing explicit environment allowlist. Stop, StopAll, Submit, generation-bound
 controls and bounded terminal actions reuse the existing runtime mechanisms.
 This channel does not dispatch arbitrary daemon operations.
 
+For runtimes with a startup input gate, the primary PTY's Session retains the
+gate across daemon controllers. Native startup confirmation, onboarding and
+promotion screens MUST NOT receive automatic preambles, payload bytes or submit
+keys. A verified chat input region or an explicit user release for the exact
+PTY generation may pass the gate; reconnecting a controller or preserving the
+owner MUST NOT reset it. A generation-bound release writes no native input.
+Generic viewer/confirmation terminals and ACP sessions do not use this gate.
+
+While a new PTY is still waiting, the controller may return a zero-input result
+before admission only after excluding any existing source execution. A final
+writer check remains necessary. An admitted operation that explicitly proves
+zero submission may be reclaimed only after every source event's Unsubmitted
+state is durably recorded. This permits the same pending work to retry; unknown
+or partially written execution MUST retain its original non-replay semantics.
+
 Hello reports whether Start remains open. StopAll permanently closes Start on
 that instance; an unrelated new member then uses a fresh default owner. An old
 member registration must still be confirmed stopped before it can move. The
 closed owner remains discoverable for its existing resources and results.
+
+New Start reuses the default owner only when its Hello reports both open Start
+admission and the same known compiled source identity as the controller. The
+source fingerprint covers execution code and resources, separately from Web
+assets; it selects the implementation for a new launch, not protocol compatibility.
+A changed or unknown source selects a new default owner after verifying no old
+member registration would be replaced. A failed owner observation is an error,
+not permission to assume its members absent. Existing members keep their actual
+holder and execution code until explicitly stopped.
+
+Once a replacement factory is ready, non-default owners may retire when their
+last member and execution fact have been released. For an owner still accepting
+Start, Retire MUST check both an empty member backend and no unsettled operations
+under the same admission fence; pending or unacknowledged facts prevent retirement.
+Acknowledgement, confirmed member Stop, controller startup and factory replacement
+may retry this cleanup without a periodic sweeper. Only a positive Retired result
+permits removing that client; failure does not undo a successful new Start. The
+default empty factory remains available. After an explicit StopAll has permanently
+closed Start, the existing whole-owner termination rule remains: an empty member
+backend permits Retire even if execution facts remain. This does not turn an
+unsettled delivery outcome into confirmed acceptance or authorize replay.
+
+## Browser resources
+
+The same holder may own a browser, its exclusive profile lease and any display
+children. The executable supplies the existing browser launcher directly to the
+holder entry. The daemon and Web do not hold the process or acquire a second
+control epoch. No arbitrary command arguments or environment enter this API.
+
+BrowserEnsure carries an absolute canonical profile, mode, dimensions and
+normalized credential-free proxy settings. The controller checks every actual
+holder before choosing its current launch factory: a source change must not
+create a second browser for a retained profile. Existing profile/mode/proxy
+must match; shared browsers retain the first launch's dimensions. A conflicting launch setting,
+unavailable holder or pending resource is an explicit error. Launch reservation
+precedes execution under the admission fence. A lost reply is queried or
+observed; it does not authorize duplicate creation.
+
+BrowserPagesSet replaces the complete mapping for one resource ID and holder
+instance. Each entry contains a session key, optional member creation identity,
+target ID and opaque Web state. The holder preserves that state but does not
+interpret URLs, DOM, model turns or delivery settlement. Creating or replacing
+a page publishes the mapping immediately, including outside an update relay.
+Session metadata is bounded to 128 KiB per browser, launch and connection data
+each to 16 KiB, and the holder admits at most 64 browser profiles, keeping a
+complete resource list below the IPC frame bound.
+
+The private owner Snapshot includes both process-member observations and
+browser-resource observations. A browser member's generation includes its
+resource ID and target ID, with the actual holder ID and member creation
+identity. Browser liveness and a saved mapping establish retained resources;
+they do not establish that the new Web can drive those pages. The holder records
+the admitted operation's epoch on a successful BrowserPagesSet. Only a mapping
+published in the current control epoch establishes Web reattachment. Takeover
+retains old mappings for adoption but invalidates that prior connection fact.
+An older publication cannot overwrite a mapping from a newer epoch. Web never
+supplies or chooses the epoch. A retained login profile may remain unconfirmed
+until it is opened and adopted; absence of that connection is not browser exit.
+
+BrowserClose requires the resource ID and instance, uses the reserved stop
+capacity and retains the handle when cleanup is unconfirmed. StopAll also closes
+browser admission and stops browser/display resources. Both forms of Retire
+require the browser registry to be empty, even when no member is registered.
+A launcher error means nothing started or cleanup was confirmed; a process
+whose initialization and cleanup failed is returned with its handle and error,
+so an explicit StopAll can still retry cleanup. Presence of a Rust handle alone
+is not process liveness: usable observations require the actual native identity.
+
+BrowserResources is read-only, neither starts a factory nor acquires control.
+It returns resource/holder/instance identity, normalized launch settings, CDP
+connection data and the page mapping. Failed observation is not an empty set.
+Each listed resource reports `pending`, `ready`, `exited` or `unconfirmed`;
+only ready entries carry usable connection data. A failed or exited profile
+does not hide the observations of unrelated profiles. Ensure may clean up an
+actually exited resource on its original holder before launching a replacement;
+it MUST NOT infer exit from an unreadable native identity. Native process
+evidence stays in the holder. CDP endpoints and profile paths
+belong only in private local IPC, never public health or MCP responses.
+
+The complete preservation preflight includes all browser resources, including
+profiles without member mappings. A pending or unconfirmed resource rejects
+preservation, rather than disappearing as an empty set. Actual exited resources
+are known absence. Browser member mappings cover only the matching member
+creation identity in the configured cohort. StopAll waits for admitted browser
+work to settle and reports the mapped members whose resource cleanup succeeded
+or remained unconfirmed. Even an unmapped profile's failed cleanup prevents a
+successful overall stop. Startup retention records resource takeover; later
+observations require the current-epoch publication to report actual Web
+reattachment. Positive target removal after complete adoption is absence;
+an unavailable holder or resource remains unconfirmed.
 
 ## Execution facts and settlement
 
@@ -148,6 +253,21 @@ starting routing, scheduling or providers. A held or unverifiable lock/socket
 must not be treated as an empty registry. Process reclamation still requires
 the existing recorded identity and confirmation policy; owner death or a closed
 PTY alone does not prove every provider-created process has stopped.
+
+Cloud-backed Dots and Grok Webhook routes are daemon-owned persistent resources,
+not OS resources in this owner protocol. Maintenance checks their current Actor
+identity, route revision/epoch and unfinished work from existing atomic stores.
+No owner is invented for them. During preservation, active work is included in
+the final report's `unconfirmed` set with no owner or process generation; startup
+`retained_agents` remains an actual holder observation. An idle remote route has
+no activity to add to either list. Unreadable or conflicting route facts refuse
+preservation, and queries do not repair or initialize the connector document.
+Post-restart queries still return independent local holder observations when
+remote facts cannot be read; remote work in the stop receipt stays unconfirmed.
+Failure/expiry and explicit turn resolution retain their existing provider
+semantics; neither a saved route nor a failed callback proves cloud termination.
+HTTP calls during host downtime can still fail. These limits and the recovery
+rules are part of the public maintenance contract referenced above.
 
 Startup and offline Stop hold the home lock and each dead owner's instance lock
 while reusing the process guard's existing recovery rules. A verified boot

@@ -81,20 +81,17 @@ pub(crate) async fn run(
 
 /// The session owner is gone, so review runs here under its lock, never
 /// through a daemon: none may start while its evidence is unresolved.
-#[cfg(target_os = "linux")]
 fn session_owner(home: &HomeLayout, owner_id: &str, action: RecoveryAction) -> Result<Value> {
     use cccc_daemon::session_owner::RecoveryAction as Owner;
+    if !cccc_daemon::session_owner::platform_supported() {
+        bail!("session owners do not run on this platform, so it has none to review");
+    }
     let action = match action {
         RecoveryAction::List => Owner::List,
         RecoveryAction::Retry { id, version } => Owner::Retry { id, version },
         RecoveryAction::Accept { id, version, .. } => Owner::Accept { id, version },
     };
     cccc_daemon::session_owner::recover(home, owner_id, action)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn session_owner(_home: &HomeLayout, _owner_id: &str, _action: RecoveryAction) -> Result<Value> {
-    bail!("session owners run only on Linux, so this platform has none to review")
 }
 
 fn web_running_message(binding: Option<(String, u16)>) -> String {

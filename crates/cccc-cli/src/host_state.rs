@@ -53,16 +53,16 @@ pub(crate) struct ShutdownReport {
 pub(crate) enum HostPhase {
     Running,
     Stopping,
-    /// An attended update is replacing this process with `version`.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    /// An attended update is replacing this process; `notice` says with what.
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     Updating {
-        version: String,
+        notice: String,
     },
     Stopped {
         report: ShutdownReport,
     },
     /// This process is about to be replaced; `message` says by what.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     Replaced {
         message: String,
     },

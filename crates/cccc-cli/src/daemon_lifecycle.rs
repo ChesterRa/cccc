@@ -259,15 +259,11 @@ async fn stop_without_daemon(
     client: &DaemonClient,
     home: &HomeLayout,
 ) -> Result<(cccc_contracts::DaemonResponse, Receipt)> {
-    let report = cccc_daemon::session_owner::stop_without_daemon(home.clone()).await?;
-    if report.confirmed_stopped.is_empty()
-        && report.retained.is_empty()
-        && report.unconfirmed.is_empty()
-    {
+    let Some(report) = cccc_daemon::session_owner::stop_without_daemon(home.clone()).await? else {
         // A ping has no side effect; its error is today's "not running" answer.
         call(client, "ping", json!({})).await?;
         bail!("a CCCC daemon started while this stop was running; run `cccc daemon stop` again");
-    }
+    };
     let mut result = serde_json::Map::new();
     result.insert("shutting_down".into(), false.into());
     result.insert("daemon_running".into(), false.into());
@@ -287,8 +283,8 @@ pub(crate) async fn stop_for_user(
     intent: StopIntent,
 ) -> Result<(cccc_contracts::DaemonResponse, Receipt)> {
     let pid = daemon_pid(client).await;
-    // Agents outlive their daemon only under a session owner, which runs on Linux only.
-    if cfg!(target_os = "linux")
+    // Agents outlive their daemon only under a session owner.
+    if cccc_daemon::session_owner::platform_supported()
         && pid.is_none()
         && intent == StopIntent::StopAgents
         // A lock that cannot even be opened (a home never started) has no agents behind
@@ -326,8 +322,9 @@ pub(crate) async fn stop_for_user(
         return Ok((response, Receipt::NotSupported));
     }
     // Only a daemon that writes receipts names the mode it accepted. Without session owners
-    // (off Linux) a receipt would list none of the agents the daemon stopped itself.
-    let writes_receipts = cfg!(target_os = "linux") && response.result.contains_key("mode");
+    // a receipt would list none of the agents the daemon stopped itself.
+    let writes_receipts =
+        cccc_daemon::session_owner::platform_supported() && response.result.contains_key("mode");
     daemon_takeover::wait_for_lock_release(home, DAEMON_SHUTDOWN_TIMEOUT).await?;
     let receipt = match pid {
         _ if !writes_receipts => Receipt::NotSupported,
@@ -419,6 +416,9 @@ pub(crate) fn receipt_line(
             describe_agents(home, &uncertain)
         ));
     }
+    if parts.is_empty() && matches!(receipt, Receipt::WithoutDaemon(_)) {
+        return Some(format!("{prefix}. Finished stopping retained resources."));
+    }
     (!parts.is_empty()).then(|| format!("{prefix}: {}.", parts.join("; ")))
 }
 
@@ -464,15 +464,14 @@ pub(crate) fn agents_result(receipt: &Receipt) -> crate::host_state::AgentsResul
     }
 }
 
-/// After a start: the agents the new daemon confirmed it reattached. A daemon that does
-/// not report the field says nothing, which is not the same as reattaching none.
-pub(crate) async fn reattached_line(client: &DaemonClient, home: &HomeLayout) -> Option<String> {
+/// Startup discovers retained resources. A browser page can still be waiting for Web.
+pub(crate) async fn retained_line(client: &DaemonClient, home: &HomeLayout) -> Option<String> {
     let response = call(client, "ping", json!({})).await.ok()?;
     let agents: Vec<cccc_daemon::session_owner::AgentIdentity> =
         serde_json::from_value(response.result.get("retained_agents")?.clone()).ok()?;
     (!agents.is_empty()).then(|| {
         format!(
-            "[cccc] Reattached {} that kept running ({}).",
+            "[cccc] Found {} that kept running ({}).",
             agent_count(agents.len()),
             describe_agents(home, &agents)
         )

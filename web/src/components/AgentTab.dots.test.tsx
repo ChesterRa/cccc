@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   load: vi.fn(),
   recovery: vi.fn(),
   update: vi.fn(),
+  release: vi.fn(),
+  refresh: vi.fn(),
+  error: vi.fn(),
   access: true,
   settingsOpen: false,
   groupDoc: null as GroupDoc | null,
@@ -30,9 +33,9 @@ vi.mock("@xterm/xterm", () => ({
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class {} }));
 vi.mock("../stores", () => ({
   useGroupStore: (select: (state: unknown) => unknown) =>
-    select({ chatByGroup: {}, groupDoc: mocks.groupDoc }),
+    select({ chatByGroup: {}, groupDoc: mocks.groupDoc, refreshActors: mocks.refresh }),
   useUIStore: (select: (state: unknown) => unknown) =>
-    select({ actorBusy: {}, canAccessGlobalSettings: mocks.access }),
+    select({ actorBusy: {}, canAccessGlobalSettings: mocks.access, showError: mocks.error }),
   useObservabilityStore: (select: (state: unknown) => unknown) =>
     select({ loaded: true, terminalScrollbackLines: 1000 }),
   useTerminalSignalsStore: (select: (state: unknown) => unknown) => select({}),
@@ -73,8 +76,10 @@ vi.mock("../services/api", () => ({
   fetchGrokActorState: (...args: unknown[]) => mocks.load(...args),
   fetchDotsActorState: (...args: unknown[]) => mocks.load(...args),
   updateDotsActorConnection: (...args: unknown[]) => mocks.update(...args),
+  releaseActorStartupInput: (...args: unknown[]) => mocks.release(...args),
 }));
 import { AgentTab } from "./AgentTab";
+import { STARTUP_INPUT_WAIT_SHOWN_AFTER_MS } from "../hooks/useStartupInputWaiting";
 
 let host: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
@@ -216,6 +221,121 @@ it("says why a stopped Claude waits only when the daemon reports the paused conf
     expect(host.querySelector("[data-runtime-confirmation]")).toBeNull();
     expect(host.textContent).not.toContain("runtimeConfirmationPaused");
   }
+});
+
+it("shows a terminal's startup wait only after the delay and releases that terminal", async () => {
+  const generation = "2026-11-18T00:00:00.000001Z";
+  const waiting: Actor = {
+    id: "kiro",
+    title: "Kiro",
+    runtime: "kiro",
+    runner_effective: "pty",
+    running: true,
+    runtime_state_source: "terminal",
+    runtime_startup_input: { generation },
+  };
+  mocks.release.mockResolvedValue({ ok: true, result: { released: true } });
+  // The transport is mocked, as in the confirmation test: a hidden tab builds no terminal.
+  await render(true, waiting, "g_startup", false, false);
+  // An ordinary start reaches its input within seconds, so nothing is shown yet.
+  expect(host.querySelector("[data-runtime-confirmation]")).toBeNull();
+  expect(host.textContent).not.toContain("runtimeStartupInputPending");
+  await act(async () => {
+    vi.advanceTimersByTime(STARTUP_INPUT_WAIT_SHOWN_AFTER_MS);
+  });
+  const notice = host.querySelector('[data-runtime-confirmation="startup"]')!;
+  expect(notice.getAttribute("role")).toBe("status");
+  expect(notice.textContent).toContain("runtimeStartupInputHint");
+  expect(host.textContent).toContain("runtimeStartupInputPending");
+  const button = notice.querySelector("button")!;
+  expect(button.textContent).toBe("runtimeStartupInputRelease");
+  expect(button.title).toBe("runtimeStartupInputReleaseTitle");
+  await act(async () => button.click());
+  expect(mocks.release).toHaveBeenCalledTimes(1);
+  expect(mocks.release).toHaveBeenCalledWith("g_startup", "kiro", generation);
+  expect(mocks.refresh).toHaveBeenCalledWith("g_startup");
+  expect(mocks.error).not.toHaveBeenCalled();
+  expect(mocks.launch).not.toHaveBeenCalled();
+  // A read-only viewer sees the state but gets no control.
+  await render(true, waiting, "g_startup", true, false);
+  expect(host.querySelector("[data-runtime-confirmation]")).toBeNull();
+  expect(host.textContent).toContain("runtimeStartupInputPending");
+  // The terminal reached its input: the state and the notice go.
+  await render(true, { ...waiting, runtime_startup_input: null }, "g_startup", false, false);
+  expect(host.querySelector("[data-runtime-confirmation]")).toBeNull();
+  expect(host.textContent).not.toContain("runtimeStartupInputPending");
+});
+
+it("reports a replaced terminal instead of releasing input into it", async () => {
+  const waiting: Actor = {
+    id: "cursor",
+    runtime: "cursor",
+    runner_effective: "pty",
+    running: true,
+    runtime_state_source: "terminal",
+    runtime_startup_input: { generation: "2026-11-18T00:00:01.000001Z" },
+  };
+  mocks.release.mockResolvedValue({
+    ok: false,
+    error: { code: "runtime_session_changed", message: "the terminal session changed" },
+  });
+  await render(true, waiting, "g_startup", false, false);
+  await act(async () => {
+    vi.advanceTimersByTime(STARTUP_INPUT_WAIT_SHOWN_AFTER_MS);
+  });
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[data-runtime-confirmation="startup"] button')!.click(),
+  );
+  expect(mocks.error).toHaveBeenCalledWith("runtime_session_changed: the terminal session changed");
+  expect(mocks.refresh).toHaveBeenCalledWith("g_startup");
+});
+
+it("names a non-Claude terminal that closed before its startup input", async () => {
+  const stopped: Actor = {
+    id: "devin",
+    runtime: "devin",
+    runner_effective: "pty",
+    enabled: true,
+    running: false,
+    runtime_confirmation_paused: true,
+  };
+  await render(false, stopped, "g_startup");
+  const notice = host.querySelector('[data-runtime-confirmation="paused"]')!;
+  expect(notice.textContent).toBe("runtimeStartupInputPausedHint");
+  expect(host.textContent).toContain("runtimeStartupInputPaused");
+  expect(host.textContent).not.toContain("runtimeConfirmationPaused");
+});
+
+it("names Hermes's first setup in its terminal and after it ended unfinished", async () => {
+  const hermes: Actor = {
+    id: "hermes",
+    title: "Hermes",
+    runtime: "hermes",
+    runner_effective: "pty",
+    enabled: true,
+    running: true,
+    runtime_state_source: "terminal",
+    runtime_confirmation_required: true,
+  };
+  await render(true, hermes, "g_setup", true, false);
+  const pending = host.querySelector('[data-runtime-confirmation="pending"]')!;
+  expect(pending.textContent).toBe("runtimeSetupHint");
+  expect(host.textContent).toContain("runtimeSetupPending");
+  expect(host.textContent).not.toContain("runtimeConfirmationPending");
+  await render(
+    false,
+    {
+      ...hermes,
+      running: false,
+      runtime_confirmation_required: false,
+      runtime_confirmation_paused: true,
+    },
+    "g_setup",
+  );
+  const paused = host.querySelector('[data-runtime-confirmation="paused"]')!;
+  expect(paused.textContent).toBe("runtimeSetupPausedHint");
+  expect(host.textContent).toContain("runtimeSetupPaused");
+  expect(host.textContent).not.toContain("runtimeStartupInputPaused");
 });
 
 it("keeps distinct LCD status shapes and their accessible Actor labels", async () => {

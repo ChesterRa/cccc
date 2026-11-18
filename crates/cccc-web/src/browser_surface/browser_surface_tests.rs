@@ -11,6 +11,7 @@ macro_rules! require_chrome {
     };
 }
 
+#[cfg(target_os = "linux")]
 async fn wait_for_fixture_document(page: &Page) {
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -881,3 +882,6 @@ mod page_enumeration;
 
 #[cfg(target_os = "linux")]
 mod shared_owner;
+
+#[cfg(target_os = "linux")]
+mod held_owner;

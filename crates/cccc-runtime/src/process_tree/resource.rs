@@ -74,7 +74,15 @@ impl Resource {
         {
             self.evidence = super::guard_record::GroupEvidence::Captured(captured);
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        if intent.may_capture_identity
+            && let Ok(view) = super::darwin_identity::ProcessView::open()
+            && let Ok(captured) = view.capture_child(self.pid.as_raw_pid())
+            && self.origin.as_ref() == Some(&captured.origin)
+        {
+            self.evidence = super::guard_record::GroupEvidence::DarwinCaptured(captured);
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let _ = intent.may_capture_identity;
     }
 

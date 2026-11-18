@@ -24,10 +24,36 @@ pub struct HomeLayout {
     root: PathBuf,
 }
 
+/// A CCCC context variable (CCCC_HOME, CCCC_GROUP_ID or CCCC_ACTOR_ID) as this
+/// process received it. Two exact values are reserved as the variable's own
+/// unresolved placeholder and count as unset, for an MCP server started outside
+/// a CCCC member, where the variable is not defined: Cursor passes
+/// `${env:NAME}` verbatim, and Auggie expands the `${NAME:-$NAME}` that CCCC
+/// registers to `$NAME`. Any other value, even one containing either text, is
+/// kept. Callers keep their own rules for empty values.
+pub fn context_var_os(name: &str) -> Option<std::ffi::OsString> {
+    without_own_placeholder(name, std::env::var_os(name))
+}
+
+fn without_own_placeholder(
+    name: &str,
+    value: Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
+    value.filter(|value| {
+        *value != std::ffi::OsString::from(format!("${{env:{name}}}"))
+            && *value != std::ffi::OsString::from(format!("${name}"))
+    })
+}
+
+/// [`context_var_os`] for a value that must be Unicode text.
+pub fn context_var(name: &str) -> Option<String> {
+    context_var_os(name)?.into_string().ok()
+}
+
 impl HomeLayout {
     pub fn resolve() -> Result<Self, HomeError> {
         let base = BaseDirs::new().ok_or(HomeError::MissingUserHome)?;
-        let configured = std::env::var_os("CCCC_HOME")
+        let configured = context_var_os("CCCC_HOME")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| base.home_dir().join(".cccc"));
@@ -149,6 +175,46 @@ mod tests {
         home.initialize().expect("initialize");
         assert!(root.join(MARKER).is_file());
         home.initialize().expect("reopen marked home");
+    }
+
+    #[test]
+    fn only_a_context_variables_own_unresolved_placeholder_counts_as_unset() {
+        use std::ffi::OsString;
+        let value = |text: &str| Some(OsString::from(text));
+        for placeholder in ["${env:CCCC_HOME}", "$CCCC_HOME"] {
+            assert_eq!(
+                without_own_placeholder("CCCC_HOME", value(placeholder)),
+                None
+            );
+        }
+        assert_eq!(without_own_placeholder("CCCC_HOME", None), None);
+        for kept in [
+            "/srv/cccc",
+            "",
+            "${env:CCCC_GROUP_ID}",
+            "${env:CCCC_HOME}/x",
+            "$CCCC_GROUP_ID",
+            "./$CCCC_HOME",
+            "/tmp/$CCCC_HOME",
+            "$CCCC_HOME ",
+            "${CCCC_HOME:-$CCCC_HOME}",
+        ] {
+            assert_eq!(
+                without_own_placeholder("CCCC_HOME", value(kept)),
+                value(kept)
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            for bytes in [&b"/srv/\xffhome"[..], &b"$CCCC_HOME\xff"[..]] {
+                let path = OsString::from_vec(bytes.to_vec());
+                assert_eq!(
+                    without_own_placeholder("CCCC_HOME", Some(path.clone())),
+                    Some(path)
+                );
+            }
+        }
     }
 
     #[test]

@@ -1,16 +1,43 @@
 import { apiJson } from "./base";
 
-/** An attended update's result, as the host recorded it. Agents are not observed. */
+/** An agent an update stopped or kept: who it is, the launch the host saw, and its title. */
+export interface UpdateAgent {
+  group_id: string;
+  actor_id: string;
+  actor_created_at?: string;
+  generation?: string | null;
+  owner_id?: string | null;
+  title: string | null;
+}
+
+/** The agents an update stopped or kept, as the host found them once CCCC was back. */
+export interface UpdateAgents {
+  /** observing (still being looked for), observed, unconfirmed or not_observed. */
+  state: string;
+  reattached: UpdateAgent[];
+  restarted: UpdateAgent[];
+  not_back: UpdateAgent[];
+  unconfirmed: UpdateAgent[];
+}
+
+/** An attended update's result, as the host recorded it. */
 export interface LastUpdate {
   transaction: string;
   from_version: string | null;
   to_version: string;
   mode: string | null;
-  /** installed, abandoned, not_started, unconfirmed, undone or kept. */
+  /** installed, restarted, abandoned, not_started, unconfirmed, undone or kept. */
   result: string;
   stage: string | null;
   reason: string | null;
   finished_at: string;
+  /** release or local. */
+  source?: string | null;
+  /** For a restart into a rebuilt program, the file it restarted into, as its check named it. */
+  token?: string | null;
+  /** The build it moved to, as its self-check named it. */
+  source_id?: string | null;
+  agents?: UpdateAgents;
 }
 
 export interface UpdateStatus {
@@ -19,6 +46,39 @@ export interface UpdateStatus {
   installation: string;
   last: LastUpdate | null;
 }
+
+/** Why agents cannot keep running through a restart, for one member or for all of them. */
+export interface KeepRefusal {
+  code: string;
+  /** Which member or session holder, when the refusal is about one. */
+  group_id: string | null;
+  actor_id: string | null;
+  owner_id: string | null;
+  display_name: string | null;
+  /** CCCC's own sentence, shown only for a code this page does not know. */
+  message: string;
+}
+
+/** Whether agents can keep running through a restart into a rebuilt program, as checked now. */
+export interface KeepPreview {
+  allowed: boolean;
+  refusals: KeepRefusal[];
+}
+
+/** What is now at the path the host was started from, when it has changed since. */
+export type LocalBuild =
+  | {
+      state: "rebuilt";
+      version: string;
+      source_id: string;
+      built_at: string;
+      /** Names that file for a restart into it; not a credential. */
+      token: string;
+      keep: KeepPreview;
+    }
+  | { state: "incompatible"; version: string }
+  /** It changed, but what it is could not be read: whether it is newer is unknown. */
+  | { state: "unreadable"; reason: string };
 
 export interface UpdateCheck {
   current: string;
@@ -32,6 +92,8 @@ export interface UpdateCheck {
   release_notes_url: string | null;
   /** The command that updates this installation by hand, when there is one. */
   command: string | null;
+  /** Only a host that can restart into a rebuilt program looks. */
+  local: LocalBuild | null;
 }
 
 /** Local facts only; never asks release discovery. */
@@ -43,16 +105,31 @@ export async function fetchUpdateStatus() {
 
 /** One release check, because the administrator asked for it. */
 export async function checkForUpdate() {
-  return apiJson<{ check: UpdateCheck; in_place: boolean }>("/api/v1/update/check", {
-    method: "POST",
-    signal: AbortSignal.timeout(60000),
-  });
+  return apiJson<{
+    check: UpdateCheck;
+    in_place: boolean;
+    local_restart: boolean;
+    /** Whether keeping agents running is offered for a release; it is checked once downloaded. */
+    release_keep?: boolean;
+  }>("/api/v1/update/check", { method: "POST", signal: AbortSignal.timeout(60000) });
 }
 
-/** Answers once the release is prepared and the Web is closing for the update. */
-export async function startUpdate(version: string) {
+/** A published release, or the rebuilt program at the path the host was started from. */
+export type UpdateTarget =
+  | { source: "release"; version: string }
+  | { source: "local"; version: string; token: string; source_id: string };
+
+/** Whether running agents keep running or restart with CCCC. */
+export type UpdateMode = "keep" | "restart";
+
+/** Answers once the target is ready and the Web is closing for it. */
+export async function startUpdate(target: UpdateTarget, mode: UpdateMode) {
+  const body =
+    target.source === "release"
+      ? { version: target.version, mode }
+      : { source: "local", token: target.token, source_id: target.source_id, mode };
   return apiJson<{ accepted: boolean; transaction: string; mode: string }>("/api/v1/update/start", {
     method: "POST",
-    body: JSON.stringify({ version, mode: "restart" }),
+    body: JSON.stringify(body),
   });
 }

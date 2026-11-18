@@ -3,12 +3,13 @@
 
 use crate::HomeLayout;
 use crate::local_sessions::NativeHost;
+use crate::update_image::FileIdentity;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-const SCHEMA: u32 = 1;
+pub const INTENT_SCHEMA: u32 = 2;
 const MAX_RECORD_BYTES: u64 = 16 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -28,7 +29,7 @@ impl BuildIdentity {
         }
     }
 
-    fn validate(&self) -> io::Result<()> {
+    pub fn validate(&self) -> io::Result<()> {
         if self.version.is_empty()
             || self.version.len() > 128
             || !self
@@ -44,6 +45,53 @@ impl BuildIdentity {
     }
 }
 
+/// The file work this transaction can own. A Local switch replaces no file;
+/// its recorded path remains meaningful even if a failed rebuild removes it.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Source {
+    Release {
+        install_dir: PathBuf,
+    },
+    Local {
+        program: PathBuf,
+        file_identity: FileIdentity,
+    },
+}
+
+impl Source {
+    /// Validate the record's structure without observing a candidate. Recovery
+    /// must still be possible when the local executable no longer exists.
+    pub fn validate(&self) -> io::Result<()> {
+        let path = match self {
+            Self::Release { install_dir } => install_dir,
+            Self::Local { program, .. } => {
+                if program.file_name().is_none() {
+                    return Err(invalid("a local update needs an executable path"));
+                }
+                program
+            }
+        };
+        if !path.is_absolute()
+            || path
+                .components()
+                .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+        {
+            return Err(invalid(
+                "update source paths must be absolute and normalized",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn release_dir(&self) -> Option<&Path> {
+        match self {
+            Self::Release { install_dir } => Some(install_dir),
+            Self::Local { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Intent {
@@ -51,7 +99,7 @@ pub struct Intent {
     pub transaction_id: String,
     pub transaction_dir: PathBuf,
     pub target: BuildIdentity,
-    pub install_dir: PathBuf,
+    pub source: Source,
     pub holder: NativeHost,
 }
 
@@ -62,14 +110,20 @@ impl Intent {
         home: &HomeLayout,
         transaction_id: &str,
         target: BuildIdentity,
-        install_dir: PathBuf,
+        source: Source,
     ) -> io::Result<Self> {
+        let source = match source {
+            Source::Release { install_dir } => Source::Release {
+                install_dir: fs::canonicalize(install_dir)?,
+            },
+            local => local,
+        };
         let intent = Self {
-            schema: SCHEMA,
+            schema: INTENT_SCHEMA,
             transaction_id: transaction_id.into(),
             transaction_dir: transaction_dir(home, transaction_id)?,
             target,
-            install_dir: fs::canonicalize(install_dir)?,
+            source,
             holder: NativeHost::capture(std::process::id())?,
         };
         intent.validate(home)?;
@@ -80,14 +134,18 @@ impl Intent {
     /// apply, prefer the installer's retained old executable for recovery.
     pub fn recovery_command(&self) -> String {
         let executable = if cfg!(windows) { "cccc.exe" } else { "cccc" };
-        let backup = self
-            .install_dir
-            .join(format!(".cccc-backup.{}", self.transaction_id))
-            .join(executable);
-        let program = if backup.is_file() {
-            backup
-        } else {
-            self.install_dir.join(executable)
+        let program = match &self.source {
+            Source::Release { install_dir } => {
+                let backup = install_dir
+                    .join(format!(".cccc-backup.{}", self.transaction_id))
+                    .join(executable);
+                if backup.is_file() {
+                    backup
+                } else {
+                    install_dir.join(executable)
+                }
+            }
+            Source::Local { program, .. } => program.clone(),
         };
         #[cfg(windows)]
         let quote = |path: &Path| crate::local_sessions::powershell_quote(&path.to_string_lossy());
@@ -106,16 +164,19 @@ impl Intent {
     }
 
     fn validate(&self, home: &HomeLayout) -> io::Result<()> {
-        if self.schema != SCHEMA
+        if self.schema != INTENT_SCHEMA
             || self.transaction_dir != transaction_dir(home, &self.transaction_id)?
-            || !self.install_dir.is_absolute()
-            || !self.install_dir.is_dir()
-            || fs::canonicalize(&self.install_dir)? != self.install_dir
             || self.holder.pid == 0
             || self.holder.started.is_empty()
             || self.holder.boot.is_empty()
         {
             return Err(invalid("invalid update intent"));
+        }
+        self.source.validate()?;
+        if let Source::Release { install_dir } = &self.source
+            && (!install_dir.is_dir() || fs::canonicalize(install_dir)? != *install_dir)
+        {
+            return Err(invalid("invalid update installation directory"));
         }
         self.target.validate()
     }
@@ -158,7 +219,15 @@ pub fn active(home: &HomeLayout) -> io::Result<Option<Intent>> {
         intent.validate(home)?;
         Ok(Some(intent))
     };
-    read().map_err(|error| unreadable_intent(&path, error))
+    match read() {
+        Ok(intent) => Ok(intent),
+        // Another invocation can remove the intent and transaction after
+        // the first metadata read. Only confirmed absence lifts the fence.
+        Err(error) => match fs::symlink_metadata(&path) {
+            Err(missing) if missing.kind() == io::ErrorKind::NotFound => Ok(None),
+            _ => Err(unreadable_intent(&path, error)),
+        },
+    }
 }
 
 fn unreadable_intent(path: &Path, error: io::Error) -> io::Error {
@@ -172,8 +241,8 @@ fn unreadable_intent(path: &Path, error: io::Error) -> io::Error {
     )
 }
 
-/// Publish before requesting shutdown. Never evict a dead host's transaction:
-/// it may still own the only old executable or an interrupted replacement.
+/// Publish before requesting shutdown. Reads and publication never evict a
+/// dead host's transaction; startup recovery is an explicit lifecycle step.
 pub fn arm(home: &HomeLayout, intent: &Intent) -> io::Result<()> {
     intent.validate(home)?;
     if NativeHost::capture(std::process::id())? != intent.holder {
@@ -246,6 +315,13 @@ pub fn check_start(
     if fs::canonicalize(resume)? != intent.transaction_dir || *actual != intent.target {
         return Err(invalid(
             "update_resume_mismatch: transaction or executable build does not match the prepared update",
+        ));
+    }
+    if let Source::Local { file_identity, .. } = &intent.source
+        && FileIdentity::running()? != *file_identity
+    {
+        return Err(invalid(
+            "update_resume_mismatch: the running executable is not the local file that was checked",
         ));
     }
     Ok(())

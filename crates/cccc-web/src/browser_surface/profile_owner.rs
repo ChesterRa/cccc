@@ -9,7 +9,9 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const OWNER_FILE: &str = ".cccc-browser-owner.lock";
-const OWNER_VERSION: u32 = 1;
+/// Version 2 records the browser's native process identity (boot and start)
+/// instead of the start time `ps` printed.
+const OWNER_VERSION: u32 = 2;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct OwnerMetadata {
@@ -56,8 +58,19 @@ impl ProfileLease {
         self.record_pid(browser_pid).await
     }
 
+    /// Records the browser this profile's next acquire may verify and stop.
+    /// An identity that cannot be read is an error, never an empty record.
     pub(super) async fn record_pid(&mut self, browser_pid: u32) -> Result<()> {
-        let process_start = process_start(browser_pid).await.unwrap_or_default();
+        #[cfg(unix)]
+        let process_start = process_identity(browser_pid)?.with_context(|| {
+            format!("browser process {browser_pid} ended before it was recorded")
+        })?;
+        #[cfg(not(unix))]
+        let process_start = String::new();
+        self.write(browser_pid, process_start)
+    }
+
+    fn write(&mut self, browser_pid: u32, process_start: String) -> Result<()> {
         let owner = OwnerMetadata {
             version: OWNER_VERSION,
             browser_pid,
@@ -65,6 +78,28 @@ impl ProfileLease {
             profile: self.profile.to_string_lossy().into_owned(),
         };
         write_owner(&mut self.file, &owner)
+    }
+
+    /// After a launch failed, records the browser macOS opened for this
+    /// profile while it still runs, so the next acquire verifies and stops it.
+    /// Only a confirmed end records nothing; a browser that cannot be located
+    /// or identified is an error.
+    #[cfg(any(target_os = "macos", all(test, unix)))]
+    pub(super) async fn record_unstopped_browser(
+        &mut self,
+        process: Option<&(u32, String)>,
+    ) -> Result<()> {
+        let found = match process {
+            Some((pid, identity)) => Some((*pid, identity.clone())),
+            None => locate_opened_browser(&self.profile).await?,
+        };
+        let Some((pid, identity)) = found else {
+            return Ok(());
+        };
+        match process_identity(pid)? {
+            Some(current) if current == identity => self.write(pid, identity),
+            _ => Ok(()),
+        }
     }
 
     pub(super) fn clear_owner(&mut self) -> Result<()> {
@@ -75,7 +110,7 @@ impl ProfileLease {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", all(test, unix)))]
 pub(super) fn browser_pid_from_singleton(profile: &Path) -> Result<u32> {
     let target = std::fs::read_link(profile.join("SingletonLock"))?;
     let target = target.to_string_lossy();
@@ -84,22 +119,41 @@ pub(super) fn browser_pid_from_singleton(profile: &Path) -> Result<u32> {
         .with_context(|| format!("browser profile contains a malformed SingletonLock: {target}"))
 }
 
-#[cfg(target_os = "macos")]
-pub(super) async fn terminate_browser_for_profile(profile: &Path) -> Result<bool> {
-    let Ok(pid) = browser_pid_from_singleton(profile) else {
-        return Ok(false);
-    };
+/// The browser process the profile's SingletonLock names and its identity,
+/// or `None` once that process has ended. A missing lock or a process that
+/// does not use this profile leaves the opened browser unknown.
+#[cfg(any(target_os = "macos", all(test, unix)))]
+async fn locate_opened_browser(profile: &Path) -> Result<Option<(u32, String)>> {
+    let pid = browser_pid_from_singleton(profile)
+        .context("the browser opened for this profile cannot be located")?;
     let Some(snapshot) = process_snapshot(pid).await? else {
-        return Ok(false);
+        return Ok(None);
     };
     if !snapshot
         .command
         .contains(profile.to_string_lossy().as_ref())
     {
-        bail!("refusing to terminate Chromium process {pid}: profile does not match");
+        bail!("process {pid} named by the profile lock does not use this profile");
     }
-    terminate_process(pid, &snapshot.start).await?;
-    Ok(true)
+    Ok(Some((pid, snapshot.start)))
+}
+
+/// Stops the browser macOS opened for `profile` and returns once its native
+/// identity confirms it ended. Without a recorded process, the profile's
+/// SingletonLock names it.
+#[cfg(any(target_os = "macos", all(test, unix)))]
+pub(super) async fn stop_opened_browser(
+    profile: &Path,
+    process: Option<&(u32, String)>,
+) -> Result<()> {
+    let found = match process {
+        Some((pid, identity)) => Some((*pid, identity.clone())),
+        None => locate_opened_browser(profile).await?,
+    };
+    if let Some((pid, identity)) = found {
+        terminate_process(pid, &identity).await?;
+    }
+    Ok(())
 }
 
 impl Drop for ProfileLease {
@@ -243,41 +297,44 @@ struct ProcessSnapshot {
     start: String,
 }
 
+/// The process's native identity, its boot and start, or `None` once it has
+/// exited. Anything else that stops the read leaves the process unknown.
+#[cfg(unix)]
+pub(super) fn process_identity(pid: u32) -> Result<Option<String>> {
+    // Kernels issue PIDs below 2^31, so a larger one names no process.
+    if i32::try_from(pid).is_err() {
+        return Ok(None);
+    }
+    match cccc_core::local_sessions::NativeHost::capture(pid) {
+        Ok(host) => Ok(Some(format!("{}:{}", host.boot, host.started))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("read the identity of process {pid}")),
+    }
+}
+
+/// `None` only when the process has exited; `ps` supplies just its command
+/// line, and a failed `ps` leaves a running process unknown, not gone.
 #[cfg(unix)]
 async fn process_snapshot(pid: u32) -> Result<Option<ProcessSnapshot>> {
+    let Some(start) = process_identity(pid)? else {
+        return Ok(None);
+    };
     let process = cccc_runtime::background_tokio_command("ps")
-        .args(["-p", &pid.to_string(), "-o", "stat=", "-o", "command="])
+        .args(["-p", &pid.to_string(), "-o", "command="])
         .output()
-        .await?;
+        .await
+        .with_context(|| format!("read the command line of process {pid}"))?;
+    // The command line counts only if it belongs to the identity read first.
+    match process_identity(pid)? {
+        None => return Ok(None),
+        Some(now) if now != start => bail!("process {pid} changed while it was read"),
+        Some(_) => {}
+    }
     if !process.status.success() || process.stdout.is_empty() {
-        return Ok(None);
+        bail!("could not read the command line of process {pid}");
     }
-    let output = String::from_utf8_lossy(&process.stdout);
-    let mut fields = output.trim().splitn(2, char::is_whitespace);
-    let state = fields.next().unwrap_or_default();
-    if state.starts_with('Z') {
-        return Ok(None);
-    }
-    let command = fields.next().unwrap_or_default().trim().to_owned();
-    let start = process_start(pid).await.unwrap_or_default();
+    let command = String::from_utf8_lossy(&process.stdout).trim().to_owned();
     Ok(Some(ProcessSnapshot { command, start }))
-}
-
-#[cfg(unix)]
-async fn process_start(pid: u32) -> Result<String> {
-    let output = cccc_runtime::background_tokio_command("ps")
-        .args(["-p", &pid.to_string(), "-o", "lstart="])
-        .output()
-        .await?;
-    if !output.status.success() {
-        bail!("process {pid} is not running");
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-#[cfg(not(unix))]
-async fn process_start(_pid: u32) -> Result<String> {
-    Ok(String::new())
 }
 
 #[cfg(unix)]
@@ -500,9 +557,11 @@ mod tests {
         assert_verified_owner_recovered(&profile, "previous-local-host").await;
     }
 
-    async fn assert_verified_owner_recovered(profile: &Path, owner_host: &str) {
-        std::fs::create_dir_all(profile).expect("profile");
-        let script = profile.join("orphan-browser.sh");
+    /// Starts a stand-in browser whose command line names `profile` (an
+    /// absolute, canonical path) and returns it with its pid and identity
+    /// once `ps` shows that command for the identity.
+    async fn stand_in_browser(profile: &Path) -> (tokio::process::Child, u32, String) {
+        let script = profile.join("stand-in-browser.sh");
         std::fs::write(
             &script,
             "#!/bin/sh\ntrap 'kill \"$child\" 2>/dev/null; exit 0' TERM\nsleep 30 &\nchild=$!\nwait \"$child\"\n",
@@ -510,32 +569,37 @@ mod tests {
         .expect("script");
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
             .expect("script permissions");
-        let canonical_profile = std::fs::canonicalize(profile).expect("canonical profile");
-        let mut child = tokio::process::Command::new(canonical_profile.join("orphan-browser.sh"))
+        let child = tokio::process::Command::new(&script)
             .spawn()
-            .expect("orphan process");
-        let pid = child.id().expect("orphan pid");
-        let snapshot = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            .expect("stand-in browser");
+        let pid = child.id().expect("stand-in pid");
+        let start = tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if let Some(snapshot) = process_snapshot(pid).await.expect("process snapshot") {
-                    if snapshot
+                if let Some(snapshot) = process_snapshot(pid).await.expect("process snapshot")
+                    && snapshot
                         .command
-                        .contains(canonical_profile.to_string_lossy().as_ref())
-                    {
-                        break snapshot;
-                    }
+                        .contains(profile.to_string_lossy().as_ref())
+                {
+                    break snapshot.start;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("orphan command timeout");
+        .expect("stand-in command timeout");
+        (child, pid, start)
+    }
+
+    async fn assert_verified_owner_recovered(profile: &Path, owner_host: &str) {
+        std::fs::create_dir_all(profile).expect("profile");
+        let canonical_profile = std::fs::canonicalize(profile).expect("canonical profile");
+        let (mut child, pid, start) = stand_in_browser(&canonical_profile).await;
         symlink(format!("{owner_host}-{pid}"), profile.join("SingletonLock"))
             .expect("singleton lock");
         let owner = OwnerMetadata {
             version: OWNER_VERSION,
             browser_pid: pid,
-            process_start: snapshot.start,
+            process_start: start,
             profile: canonical_profile.to_string_lossy().into_owned(),
         };
         let mut owner_file = OpenOptions::new()
@@ -556,6 +620,99 @@ mod tests {
             .expect("owner exit timeout")
             .expect("owner exit");
         assert!(std::fs::symlink_metadata(profile.join("SingletonLock")).is_err());
+    }
+
+    /// A browser macOS opened before a launch failed is recorded from the
+    /// profile lock, and the next acquire verifies and stops it.
+    #[tokio::test]
+    async fn an_unstopped_opened_browser_is_recorded_for_the_next_acquire() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile = std::fs::canonicalize(temp.path())
+            .expect("canonical temp")
+            .join("profile");
+        std::fs::create_dir_all(&profile).expect("profile");
+        let mut lease = ProfileLease::acquire(&profile).await.expect("fresh lease");
+        let (mut child, pid, start) = stand_in_browser(&profile).await;
+        let host = hostname().await.expect("hostname");
+        symlink(format!("{host}-{pid}"), profile.join("SingletonLock")).expect("singleton lock");
+
+        lease
+            .record_unstopped_browser(None)
+            .await
+            .expect("record the located browser");
+        let recorded = read_owner(&mut lease.file).expect("recorded owner");
+        assert_eq!(recorded.browser_pid, pid);
+        assert_eq!(recorded.process_start, start);
+        assert_eq!(recorded.profile, profile.to_string_lossy());
+        drop(lease);
+
+        let _next = ProfileLease::acquire(&profile)
+            .await
+            .expect("the next acquire stops the recorded browser");
+        tokio::time::timeout(std::time::Duration::from_secs(2), child.wait())
+            .await
+            .expect("stand-in exit timeout")
+            .expect("stand-in exit");
+        assert!(std::fs::symlink_metadata(profile.join("SingletonLock")).is_err());
+    }
+
+    /// Without a recorded process the profile lock names the opened browser.
+    /// A missing lock, or a lock naming a process that does not use the
+    /// profile, is an error and signals nothing; the recorded identity stops
+    /// the browser, and stopping one that already ended needs nothing.
+    #[tokio::test]
+    async fn an_opened_browser_is_stopped_only_by_its_identity() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile = std::fs::canonicalize(temp.path())
+            .expect("canonical temp")
+            .join("profile");
+        std::fs::create_dir_all(&profile).expect("profile");
+        let (mut child, pid, start) = stand_in_browser(&profile).await;
+        let lock = profile.join("SingletonLock");
+        let host = hostname().await.expect("hostname");
+
+        let missing = stop_opened_browser(&profile, None)
+            .await
+            .expect_err("a missing lock leaves the browser unknown");
+        assert!(
+            missing.to_string().contains("cannot be located"),
+            "{missing:#}"
+        );
+
+        let mut foreign = tokio::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("foreign process");
+        let foreign_pid = foreign.id().expect("foreign pid");
+        symlink(format!("{host}-{foreign_pid}"), &lock).expect("foreign lock");
+        let error = stop_opened_browser(&profile, None)
+            .await
+            .expect_err("a process outside the profile is not stopped");
+        assert!(
+            error.to_string().contains("does not use this profile"),
+            "{error:#}"
+        );
+        assert!(foreign.try_wait().expect("foreign state").is_none());
+        foreign.kill().await.expect("stop the foreign process");
+        assert!(child.try_wait().expect("stand-in state").is_none());
+
+        std::fs::remove_file(&lock).expect("remove the foreign lock");
+        symlink(format!("{host}-{pid}"), &lock).expect("singleton lock");
+        let opened = (pid, start);
+        assert_eq!(
+            locate_opened_browser(&profile).await.expect("locate"),
+            Some(opened.clone())
+        );
+        stop_opened_browser(&profile, Some(&opened))
+            .await
+            .expect("stop by identity");
+        tokio::time::timeout(std::time::Duration::from_secs(2), child.wait())
+            .await
+            .expect("stand-in exit timeout")
+            .expect("stand-in exit");
+        stop_opened_browser(&profile, Some(&opened))
+            .await
+            .expect("an ended browser needs nothing");
     }
 
     #[tokio::test]

@@ -196,8 +196,8 @@ Chet 是整个 CCCC 实例共用的一个助手，不在任何工作组的成员
 
 | CCCC 的运行方式 | 运行时（`--runtime` id） |
 |---|---|
-| 原生终端 + CCCC 管理的会话 | Claude Code（`claude`）、Codex CLI（`codex`）、Grok Build（`grok`）、OpenCode V2 2.1.4+（`opencode`）、Kilo Code（`kilo`） |
-| 原生终端或官方 ACP | GitHub Copilot（`copilot`）、Cursor（`cursor`）、Devin（`devin`）、Kiro（`kiro`）、Antigravity（`antigravity`）、Droid（`droid`）、Auggie（`auggie`）、Hermes（`hermes`）、Kimi Code（`kimi`） |
+| 原生终端 + CCCC 管理的会话 | Claude Code（`claude`）、Codex CLI（`codex`）、Grok Build（`grok`）、OpenCode V2 2.1.4+（`opencode`）、Kilo Code（`kilo`）、Hermes（`hermes`，也可只用 ACP） |
+| 原生终端或官方 ACP | GitHub Copilot（`copilot`）、Cursor（`cursor`）、Devin（`devin`）、Kiro（`kiro`）、Antigravity（`antigravity`）、Droid（`droid`）、Auggie（`auggie`）、Kimi Code（`kimi`） |
 | 原生终端 | Cline（`cline`）、Amp（`amp`） |
 | 结构化协议，无终端 | Pi 1.1.0+（`pi`）、DeepSeek Harness（`deepseek`，开发者预览） |
 | Web 模型 | ChatGPT Web（`web_model`）、ChatGPT Dots（`chatgpt_dots`）、Grok Bot Web Model（`grok_web_model`） |

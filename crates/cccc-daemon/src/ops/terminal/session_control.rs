@@ -1,6 +1,39 @@
 use super::*;
 use crate::session_owner::runtime as cccc_runtime;
 
+pub(super) fn ready(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if request.args.get("by").and_then(Value::as_str) != Some("user") {
+        return Err(OpError::new(
+            "permission_denied",
+            "terminal startup input can only be released explicitly by the user",
+        ));
+    }
+    let (group, actor) = ids(request)?;
+    let generation = required_arg(request, "generation")?;
+    if let Err(error) = load_pty_target(home, &group, &actor) {
+        return Err(if error.code == "not_pty_actor" {
+            stale_startup_input()
+        } else {
+            error
+        });
+    }
+    match cccc_runtime::release_startup_input(&group, &actor, &generation) {
+        Ok(true) => object(json!({"released":true})),
+        Ok(false)
+        | Err(
+            cccc_runtime::RuntimeError::NotFound(..) | cccc_runtime::RuntimeError::NotRunning(..),
+        ) => Err(stale_startup_input()),
+        Err(error) => Err(runtime_error(error)),
+    }
+}
+
+fn stale_startup_input() -> OpError {
+    OpError::new(
+        "runtime_session_changed",
+        "the terminal session changed; inspect its current startup prompts before allowing input",
+    )
+}
+
 pub(super) fn status(request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
     let status = cccc_runtime::status(&group_id, &actor_id).map_err(runtime_error)?;

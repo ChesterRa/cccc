@@ -268,6 +268,50 @@ async fn materialize(session: &AnalystSession) {
     );
 }
 
+/// Stop's cancel closes prompt admission in the same serial command: a
+/// submission that reaches the loop after it is refused and never written,
+/// even when stop found no turn to cancel.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v3_stop_cancel_refuses_a_prompt_that_arrives_after_it() {
+    let (temp, home, config) = fixture(ActorRuntime::Hermes);
+    let session = AnalystSession::launch_actor(&home, config.clone())
+        .await
+        .expect("new");
+    let crate::ops::codex_voice_analyst::ManagedProtocol::Acp(protocol) = &session.protocol else {
+        panic!("Hermes uses ACP");
+    };
+    assert_eq!(
+        protocol
+            .cancel_and_settle(session.thread_id(), Duration::from_secs(2))
+            .await,
+        super::super::acp::CancelOutcome::NoTurn
+    );
+    let late = session
+        .start_turn(session.generation(), "late", "LATE_PROMPT")
+        .await
+        .expect_err("a prompt after stop's cancel is refused");
+    assert_eq!(late.kind(), io::ErrorKind::Interrupted);
+    let receipt = super::super::super::runtime_session::native_acp::receipt_path(
+        &home,
+        &config.group_id,
+        &config.actor_id,
+        ActorRuntime::Hermes,
+    )
+    .expect("receipt path");
+    assert_eq!(
+        cccc_core::fs::read_json::<Value>(&receipt).expect("receipt")["attempted"],
+        false,
+        "a refused prompt leaves the empty session unattempted"
+    );
+    session.stop(session.generation()).await.expect("stop");
+    assert!(
+        !frames(temp.path())
+            .iter()
+            .any(|request| request.to_string().contains("LATE_PROMPT")),
+        "the refused prompt never reached the provider"
+    );
+}
+
 #[test]
 fn v3_native_command_intent_preserves_permissions_and_owns_transport() {
     let kiro = options(ActorRuntime::Kiro, &[]).expect("default Kiro");
@@ -285,6 +329,35 @@ fn v3_native_command_intent_preserves_permissions_and_owns_transport() {
     let hermes = options(ActorRuntime::Hermes, &[]).expect("default Hermes");
     assert_eq!(hermes.command, ["hermes", "acp"]);
     assert!(hermes.unrestricted);
+    assert_eq!(
+        hermes_viewer(&hermes, "session-1"),
+        ["hermes", "--tui", "--yolo", "--resume", "session-1"]
+    );
+    // Both clients must open the session in its own Hermes profile.
+    for command in [
+        ["hermes", "-p", "work", "--tui"].as_slice(),
+        ["hermes", "--profile", "work"].as_slice(),
+        ["hermes", "--profile=work"].as_slice(),
+    ] {
+        let command = command
+            .iter()
+            .map(|arg| (*arg).to_owned())
+            .collect::<Vec<_>>();
+        let profiled = options(ActorRuntime::Hermes, &command).expect("Hermes profile");
+        assert_eq!(profiled.command, ["hermes", "--profile", "work", "acp"]);
+        assert!(!profiled.unrestricted);
+        assert_eq!(
+            hermes_viewer(&profiled, "session-1"),
+            [
+                "hermes",
+                "--profile",
+                "work",
+                "--tui",
+                "--resume",
+                "session-1"
+            ]
+        );
+    }
     let droid = options(ActorRuntime::Droid, &[]).expect("default Droid");
     assert_eq!(droid.command, ["droid", "exec", "--output-format", "acp"]);
     assert_eq!(droid.mode.as_deref(), Some("auto-high"));
@@ -436,15 +509,6 @@ async fn v3_models_effort_modes_and_mcp_are_reapplied_to_owned_sessions() {
                         && entry["value"] == config.group_id)
             );
         }
-        if runtime == ActorRuntime::Hermes {
-            let bindings: Vec<Value> =
-                std::fs::read_to_string(temp.path().join("v3_bindings.jsonl"))
-                    .expect("bindings")
-                    .lines()
-                    .map(|l| serde_json::from_str(l).expect("binding"))
-                    .collect();
-            assert!(bindings.iter().all(|r| r["skip_configured_mcp"] == "1"));
-        }
         config.command[2] = "unavailable".into();
         config.actor_id = "explicit-unavailable-model".into();
         let error = AnalystSession::launch_actor(&home, config)
@@ -520,6 +584,67 @@ async fn v3_hermes_recovery_requires_exact_existing_workspace_session() {
     }
 }
 
+/// Earlier CCCC versions launched Hermes ACP with
+/// `HERMES_ACP_SKIP_CONFIGURED_MCP=1`, so a conversation they saved carries it
+/// in its launch fingerprint. The next start begins one new conversation and
+/// notes why; the start after that resumes the new conversation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn v3_hermes_conversation_saved_with_the_old_launch_flag_is_replaced_once() {
+    use super::super::super::runtime_session::native_acp as receipts;
+    const SAVED: &str = "v3-saved-by-an-earlier-cccc";
+    let (temp, home, config) = fixture(ActorRuntime::Hermes);
+    let receipt = receipts::receipt_path(
+        &home,
+        &config.group_id,
+        &config.actor_id,
+        ActorRuntime::Hermes,
+    )
+    .expect("receipt path");
+    let mut earlier = config.environment.clone();
+    earlier.insert("HERMES_ACP_SKIP_CONFIGURED_MCP".into(), "1".into());
+    let (identity, parts) = receipts::launch(&config.workdir, &config.command, &earlier);
+    std::fs::create_dir_all(receipt.parent().expect("receipt directory"))
+        .expect("receipt directory");
+    receipts::record(&receipt, &identity, &parts, SAVED, true).expect("earlier receipt");
+
+    let first = AnalystSession::launch_actor(&home, config.clone())
+        .await
+        .expect("new conversation");
+    materialize(&first).await;
+    first.stop(first.generation()).await.expect("stop");
+    let replaced: Value = cccc_core::fs::read_json(&receipt).expect("receipt");
+    let current = replaced["provider_session_id"]
+        .as_str()
+        .expect("new conversation ID")
+        .to_owned();
+    assert_ne!(current, SAVED);
+    assert_eq!(replaced["replaced"]["reasons"], json!(["launch_identity"]));
+    assert_eq!(replaced["replaced"]["previous"]["provider_id"], SAVED);
+
+    let second = AnalystSession::launch_actor(&home, config)
+        .await
+        .expect("resumed conversation");
+    second.stop(second.generation()).await.expect("stop");
+    let records = frames(temp.path());
+    let calls = |method: &str| {
+        records
+            .iter()
+            .filter(|r| r["method"] == method)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(calls("session/new").len(), 1);
+    assert_eq!(
+        calls("session/load")
+            .iter()
+            .map(|r| &r["params"]["sessionId"])
+            .collect::<Vec<_>>(),
+        [&json!(current)]
+    );
+    let resumed: Value = cccc_core::fs::read_json(&receipt).expect("receipt");
+    assert_eq!(resumed["provider_session_id"], current.as_str());
+    assert_eq!(resumed["replaced"], replaced["replaced"]);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn v3_unsupported_protocol_fails_before_creating_a_session() {
     for runtime in RUNTIMES {
@@ -593,52 +718,22 @@ async fn v3_interactive_permissions_remain_pending_and_cancel_is_not_completion(
                 .is_err(),
             "late approval has no authority after cancellation"
         );
-        if runtime == ActorRuntime::Hermes {
-            tokio::time::timeout(Duration::from_secs(4), async {
-                loop {
-                    let event = events.recv().await.expect("event");
-                    if event.message["method"] == super::super::MANAGED_AGENT_DISCONNECTED_METHOD {
-                        break;
-                    }
-                }
-            })
-            .await
-            .expect("Hermes cancellation retires the protocol");
-            assert!(
-                session
-                    .start_turn(session.generation(), "next-task", "independent task")
-                    .await
-                    .is_err(),
-                "Hermes must not append a new task to the cancelled prompt"
-            );
-            assert_eq!(
-                std::fs::read(&receipt_path).expect("retained receipt"),
-                receipt
-            );
-            let id = session.thread_id().to_owned();
-            session
-                .stop(session.generation())
-                .await
-                .expect("stop retired process");
-            let loaded = AnalystSession::launch_actor(&home, config)
-                .await
-                .expect("same-session reload");
-            assert_eq!(loaded.thread_id(), id);
-            assert!(loaded.thread_resumed);
-            materialize(&loaded).await;
-            loaded.stop(loaded.generation()).await.expect("stop");
-            assert_eq!(
-                frames(temp.path())
-                    .iter()
-                    .filter(|r| r["method"] == "session/new")
-                    .count(),
-                1,
-                "cancellation does not create a replacement conversation"
-            );
-            continue;
-        }
+        assert_eq!(
+            std::fs::read(&receipt_path).expect("retained receipt"),
+            receipt
+        );
+        // The same process takes the next prompt: a cancel retires neither the
+        // process nor the conversation (Hermes included).
         materialize(&session).await;
         session.stop(session.generation()).await.expect("stop");
+        assert_eq!(
+            frames(temp.path())
+                .iter()
+                .filter(|r| r["method"] == "session/new")
+                .count(),
+            1,
+            "cancellation does not create a replacement conversation"
+        );
     }
 }
 
@@ -700,4 +795,99 @@ async fn v3_hermes_session_discovery_has_one_total_deadline() {
             .iter()
             .any(|r| r["method"] == "session/load" || r["method"] == "session/new")
     );
+}
+
+/// The open prompt the control state reports goes with the loop: a loop
+/// aborted while blocked on a write the provider never reads leaves none,
+/// although the client itself is still alive.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_aborted_protocol_loop_reports_no_open_prompt() {
+    let (temp, _home, config) = fixture(ActorRuntime::Hermes);
+    // The provider answers session/new, then stops reading.
+    std::fs::write(temp.path().join("v3_stall_stdin"), "").expect("stall marker");
+    let mut child = std::process::Command::new("python3")
+        .arg(&config.command[0])
+        .current_dir(temp.path())
+        .env_clear()
+        .envs(&config.environment)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("fixture process");
+    let protocol = std::sync::Arc::new(
+        AcpClient::new(
+            child.stdin.take().expect("stdin"),
+            child.stdout.take().expect("stdout"),
+            "fixture-generation".into(),
+            "hermes",
+            super::super::acp::PermissionPolicy::Interactive,
+            super::super::acp::PromptCompletion::ResponseWithActivityReceipt,
+        )
+        .expect("protocol"),
+    );
+    protocol
+        .request(
+            "initialize",
+            json!({"protocolVersion":1}),
+            Duration::from_secs(4),
+        )
+        .await
+        .expect("initialize");
+    let session = protocol
+        .request(
+            "session/new",
+            json!({"cwd":temp.path(),"mcpServers":[]}),
+            Duration::from_secs(4),
+        )
+        .await
+        .expect("session");
+    let session_id = session["sessionId"]
+        .as_str()
+        .expect("session id")
+        .to_owned();
+    // The prompt's write completes into the pipe; nobody answers it.
+    let prompt = {
+        let protocol = std::sync::Arc::clone(&protocol);
+        let session_id = session_id.clone();
+        tokio::spawn(async move {
+            protocol
+                .start_prompt(&session_id, "open-prompt", "OPEN PROMPT")
+                .await
+        })
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !protocol.has_open_prompt() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the written prompt is open"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // A request larger than the pipe blocks the loop on its write.
+    let blocked = {
+        let protocol = std::sync::Arc::clone(&protocol);
+        tokio::spawn(async move {
+            protocol
+                .request(
+                    "fixture/pad",
+                    json!({"pad":"x".repeat(1 << 20)}),
+                    Duration::from_secs(30),
+                )
+                .await
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let open_while_blocked = protocol.has_open_prompt();
+    let closed = protocol.close().await;
+    let open_after_close = protocol.has_open_prompt();
+    // Reap before asserting: a failure would otherwise leave the blocked write
+    // waiting on a provider that never reads, and the test would hang.
+    let _ = child.kill();
+    child.wait().expect("reap");
+    prompt.abort();
+    blocked.abort();
+    assert!(open_while_blocked, "still open while the loop is blocked");
+    assert!(!closed, "the blocked loop is aborted");
+    assert!(!open_after_close, "an ended loop holds no open prompt");
 }

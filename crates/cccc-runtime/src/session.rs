@@ -75,6 +75,10 @@ pub struct SessionStatus {
     /// terminals have none. Only the daemon reads it.
     #[serde(skip)]
     pub launch: Option<ActorLaunch>,
+    /// Automatic input has not yet observed this primary PTY's chat input.
+    /// The owning Session retains this fact across daemon reconnections.
+    #[serde(default)]
+    pub startup_input_pending: bool,
 }
 
 pub struct Session {
@@ -87,6 +91,7 @@ pub struct Session {
     attachments: AttachmentRegistry,
     history: SessionHistory,
     reader: Option<OutputReader>,
+    exit_collected: bool,
 }
 
 impl Session {
@@ -197,6 +202,7 @@ impl Session {
                 exit_code: None,
                 exit_detail: None,
                 launch: None,
+                startup_input_pending: false,
             },
             master: Some(pair.master),
             child,
@@ -206,11 +212,41 @@ impl Session {
             attachments: AttachmentRegistry::default(),
             history,
             reader: Some(reader),
+            exit_collected: false,
         })
     }
 
     pub(crate) fn attribute_launch(&mut self, launch: ActorLaunch) {
         self.status.launch = Some(launch);
+        self.status.startup_input_pending =
+            self.status.runner == RunnerKind::Pty && crate::startup_input::required(launch.runtime);
+    }
+
+    pub(crate) fn startup_input_ready(&mut self) -> Result<bool, RuntimeError> {
+        if !self.status.startup_input_pending {
+            return Ok(true);
+        }
+        let Some(launch) = self.status.launch else {
+            return Ok(false);
+        };
+        if self.history.startup_input_ready(launch.runtime)? {
+            self.status.startup_input_pending = false;
+        }
+        Ok(!self.status.startup_input_pending)
+    }
+
+    pub(crate) fn release_startup_input(&mut self, generation: &str) -> bool {
+        if self.status().running
+            && self.status.started_at == generation
+            && self
+                .status
+                .launch
+                .is_some_and(|launch| crate::startup_input::required(launch.runtime))
+        {
+            self.status.startup_input_pending = false;
+            return true;
+        }
+        false
     }
 
     pub fn status(&mut self) -> SessionStatus {
@@ -222,7 +258,19 @@ impl Session {
             self.status.exit_detail = Some(exit.to_string());
             let _ = self.process_tree.terminate();
         }
-        self.status.clone()
+        let mut observed = self.status.clone();
+        if observed.running
+            && observed.startup_input_pending
+            && let Some(launch) = observed.launch
+        {
+            // A status read observes readiness without granting a later write.
+            // Submission checks the current input region again under its gate.
+            observed.startup_input_pending = !self
+                .history
+                .startup_input_ready(launch.runtime)
+                .unwrap_or(false);
+        }
+        observed
     }
 
     pub fn stop(&mut self) -> Result<SessionStatus, RuntimeError> {
@@ -368,6 +416,19 @@ impl Session {
             }
         }
         self.history.flush()
+    }
+
+    pub(crate) fn prepare_reap(&mut self) -> Result<Option<SessionStatus>, RuntimeError> {
+        let status = self.status();
+        if status.running || self.exit_collected {
+            return Ok(None);
+        }
+        self.finish_output()?;
+        Ok(Some(status))
+    }
+
+    pub(crate) fn report_retained_exit(&mut self) -> bool {
+        !std::mem::replace(&mut self.exit_collected, true)
     }
 }
 

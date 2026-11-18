@@ -197,8 +197,8 @@ Each agent can use a different runtime:
 
 | How CCCC runs it | Runtimes (`--runtime` id) |
 |---|---|
-| Native terminal plus a CCCC-managed session | Claude Code (`claude`), Codex CLI (`codex`), Grok Build (`grok`), OpenCode V2 2.1.4+ (`opencode`), Kilo Code (`kilo`) |
-| Native terminal or official ACP | GitHub Copilot (`copilot`), Cursor (`cursor`), Devin (`devin`), Kiro (`kiro`), Antigravity (`antigravity`), Droid (`droid`), Auggie (`auggie`), Hermes (`hermes`), Kimi Code (`kimi`) |
+| Native terminal plus a CCCC-managed session | Claude Code (`claude`), Codex CLI (`codex`), Grok Build (`grok`), OpenCode V2 2.1.4+ (`opencode`), Kilo Code (`kilo`), Hermes (`hermes`, or ACP only) |
+| Native terminal or official ACP | GitHub Copilot (`copilot`), Cursor (`cursor`), Devin (`devin`), Kiro (`kiro`), Antigravity (`antigravity`), Droid (`droid`), Auggie (`auggie`), Kimi Code (`kimi`) |
 | Native terminal | Cline (`cline`), Amp (`amp`) |
 | Structured, no terminal | Pi 1.1.0+ (`pi`), DeepSeek Harness (`deepseek`, developer preview) |
 | Web models | ChatGPT Web (`web_model`), ChatGPT Dots (`chatgpt_dots`), Grok Bot Web Model (`grok_web_model`) |

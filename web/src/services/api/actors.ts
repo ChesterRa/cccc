@@ -313,6 +313,24 @@ export async function startActor(groupId: string, actorId: string) {
   }
 }
 
+/** Lets CCCC send its waiting input into the terminal process named by `generation`. It answers
+ *  no prompt in that terminal; a replaced terminal fails with runtime_session_changed. */
+export async function releaseActorStartupInput(
+  groupId: string,
+  actorId: string,
+  generation: string,
+) {
+  invalidateGroupActorsReads(groupId);
+  try {
+    return await apiJson<{ released: boolean }>(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/terminal_ready`,
+      { method: "POST", body: JSON.stringify({ generation }) },
+    );
+  } finally {
+    invalidateGroupActorsReads(groupId);
+  }
+}
+
 export async function stopActor(groupId: string, actorId: string) {
   invalidateGroupActorsReads(groupId);
   try {

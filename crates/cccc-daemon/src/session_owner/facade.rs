@@ -12,7 +12,7 @@ pub(crate) fn read_scope<T>(read: impl FnOnce() -> T) -> T {
 
 pub(crate) fn enabled(home: &HomeLayout) -> bool {
     #[cfg(unix)]
-    if cfg!(target_os = "linux") {
+    if super::platform_supported() {
         return super::controller::enabled(home);
     }
     {
@@ -36,7 +36,7 @@ pub(crate) fn require_available(
 
 pub(crate) fn initialize(home: &HomeLayout) -> io::Result<Vec<super::AgentIdentity>> {
     #[cfg(unix)]
-    if cfg!(target_os = "linux") {
+    if super::platform_supported() {
         return super::controller::initialize(home);
     }
     {

@@ -120,6 +120,11 @@ it("shows confirmation from refreshed Actors and keeps the existing terminal ent
   expect(mocks.open).toHaveBeenCalledExactlyOnceWith("alpha");
   await render({ runtime_confirmation_required: false });
   expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
+  // Hermes runs its first setup where Claude asks for a confirmation.
+  await render({ runtime: "hermes", runtime_confirmation_required: true });
+  expect(host.textContent).toContain("actors:runtimeSetupPending");
+  expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
 });
 
 it("names a native session by whether it can receive, never as stopped", async () => {
@@ -145,14 +150,24 @@ it("names a native session by whether it can receive, never as stopped", async (
 });
 
 it("names a closed confirmation only when the daemon reports the pause", async () => {
-  await render({ running: false, runtime_confirmation_paused: true });
+  await render({ runtime: "claude", running: false, runtime_confirmation_paused: true });
   expect(host.textContent).toContain("actors:runtimeConfirmationPaused");
   expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
   for (const paused of [false, undefined]) {
-    await render({ running: false, runtime_confirmation_paused: paused });
+    await render({ runtime: "claude", running: false, runtime_confirmation_paused: paused });
     expect(host.textContent).not.toContain("actors:runtimeConfirmationPaused");
     expect(host.querySelector('button[data-tone="attention"]')).toBeNull();
   }
+  // Another terminal runtime paused because it closed before its startup input.
+  await render({ runtime: "kiro", running: false, runtime_confirmation_paused: true });
+  expect(host.textContent).toContain("actors:runtimeStartupInputPaused");
+  expect(host.textContent).not.toContain("actors:runtimeConfirmationPaused");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
+  // Hermes paused because its first setup ended before CCCC connected.
+  await render({ runtime: "hermes", running: false, runtime_confirmation_paused: true });
+  expect(host.textContent).toContain("actors:runtimeSetupPaused");
+  expect(host.textContent).not.toContain("actors:runtimeStartupInputPaused");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
 });
 
 it("moves the ring only while work is in progress", async () => {
@@ -280,6 +295,10 @@ it.each(["headless", "pty"] as const)(
     ).toBe("attention");
     // The daemon's "unknown" turn state of a running agent is not a call for attention.
     expect(getRuntimeRingTone({ actor, runner, liveWorkCard: null }, true, "unknown")).toBe("idle");
+    // A terminal still waiting for its startup input past the shown delay needs the user.
+    expect(getRuntimeRingTone({ actor, runner, liveWorkCard: null }, true, "idle", true)).toBe(
+      "attention",
+    );
   },
 );
 

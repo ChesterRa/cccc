@@ -5,7 +5,8 @@
 //! a missing or inaccessible witness is not an empty process list.
 
 use super::guard_record::{
-    CapturedIdentity, GroupEvidence, GroupRecord, IdentityStrength, Origin, UnavailableReason,
+    CapturedIdentity, GroupEvidence, GroupRecord, IdentityStrength, LinuxOrigin, Origin,
+    UnavailableReason,
 };
 use rustix::event::{PollFd, PollFlags, Timespec, poll};
 use rustix::fs::{AtFlags, Dir, Mode, OFlags, fstat, fstatfs, openat, statat};
@@ -61,11 +62,11 @@ impl ProcView {
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
         };
-        Ok(Origin {
+        Ok(Origin::Linux(LinuxOrigin {
             boot_id,
             pid_namespace,
             time_namespace,
-        })
+        }))
     }
 
     pub(super) fn process(&self, pid: i32) -> io::Result<ProcessStat> {
@@ -652,7 +653,7 @@ mod tests {
     fn local_proc_and_owned_child_can_be_read_through_one_mount() {
         let proc = ProcView::open().expect("validated local procfs");
         let origin = proc.origin().expect("local origin");
-        assert!(!origin.boot_id.is_empty());
+        assert!(!origin.boot_id().is_empty());
         let own = proc.process(std::process::id() as i32).expect("own stat");
         assert_eq!(own.pid, std::process::id() as i32);
 

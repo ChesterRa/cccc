@@ -2,12 +2,59 @@ use cccc_contracts::ActorRuntime;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+mod json_entry;
 mod kimi;
 pub use kimi::ensure as ensure_kimi;
+mod cursor;
+pub use cursor::ensure as ensure_cursor;
 mod antigravity;
 pub use antigravity::ensure as ensure_antigravity;
 mod grok;
 pub use grok::ensure as ensure_grok;
+
+/// The variables that tell a CCCC MCP server its home and its member's identity.
+pub const CONTEXT_VARIABLES: [&str; 3] = ["CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID"];
+
+/// The value Auggie's `cccc` entry gives a context variable: Auggie expands it
+/// to the variable's value, or to `$NAME` when the variable is unset.
+#[must_use]
+pub fn auggie_context_value(name: &str) -> String {
+    format!("${{{name}:-${name}}}")
+}
+
+/// The `cccc` entry CCCC registers with Auggie (1.2.1). Auggie passes an MCP
+/// server only HOME, LOGNAME, PATH, SHELL, TERM and USER from its own
+/// environment, so the entry maps each context variable: a member's server
+/// receives that member's values, and a session outside CCCC passes `$NAME`,
+/// which CCCC reads as unset. Without `useShellInterpolation: false`, Auggie
+/// joins the command and its arguments into one `/bin/sh -c` line, which
+/// breaks an executable path with spaces.
+#[must_use]
+pub fn auggie_entry(executable: &Path) -> serde_json::Value {
+    let env: serde_json::Map<String, serde_json::Value> = CONTEXT_VARIABLES
+        .iter()
+        .map(|name| ((*name).to_owned(), auggie_context_value(name).into()))
+        .collect();
+    serde_json::json!({
+        "type": "stdio",
+        "command": executable.to_string_lossy(),
+        "args": ["mcp"],
+        "env": env,
+        "useShellInterpolation": false
+    })
+}
+
+/// The directory whose project MCP files Cursor and Auggie read: the top of the
+/// enclosing Git work tree, or the working directory outside one (Cursor CLI
+/// 2026.11.11, Auggie 1.2.1). The runtimes see the resolved working directory,
+/// so symbolic links are followed.
+#[must_use]
+pub fn workspace_root(cwd: &Path) -> PathBuf {
+    let cwd = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    cwd.ancestors()
+        .find(|directory| directory.join(".git").exists())
+        .map_or_else(|| cwd.clone(), Path::to_path_buf)
+}
 
 #[must_use]
 pub const fn is_auto_managed(runtime: ActorRuntime) -> bool {
@@ -20,6 +67,7 @@ pub const fn is_auto_managed(runtime: ActorRuntime) -> bool {
             | ActorRuntime::Cline
             | ActorRuntime::Codex
             | ActorRuntime::Copilot
+            | ActorRuntime::Cursor
             | ActorRuntime::Devin
             | ActorRuntime::Kiro
             | ActorRuntime::Droid
@@ -146,7 +194,14 @@ pub fn add_command(runtime: ActorRuntime, executable: &Path) -> Option<Vec<Strin
             "droid", "mcp", "add", "--type", "stdio", "cccc", &cccc, "mcp",
         ]),
         ActorRuntime::Amp => common(&["amp", "mcp", "add", "cccc", &cccc, "mcp"]),
-        ActorRuntime::Auggie => common(&["auggie", "mcp", "add", "cccc", "--", &cccc, "mcp"]),
+        // `mcp add` cannot turn off Auggie's shell interpolation; see [`auggie_entry`].
+        ActorRuntime::Auggie => vec![
+            "auggie".into(),
+            "mcp".into(),
+            "add-json".into(),
+            "cccc".into(),
+            auggie_entry(executable).to_string(),
+        ],
         _ => return None,
     })
 }
@@ -173,6 +228,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn auggie_registration_writes_the_whole_entry() {
+        let command = add_command(ActorRuntime::Auggie, Path::new("/opt/cccc")).expect("command");
+        assert_eq!(command.len(), 5);
+        assert_eq!(command[..4], ["auggie", "mcp", "add-json", "cccc"]);
+        let entry: serde_json::Value = serde_json::from_str(&command[4]).expect("entry JSON");
+        assert_eq!(
+            entry,
+            serde_json::json!({
+                "type":"stdio","command":"/opt/cccc","args":["mcp"],
+                "env":{
+                    "CCCC_HOME":"${CCCC_HOME:-$CCCC_HOME}",
+                    "CCCC_GROUP_ID":"${CCCC_GROUP_ID:-$CCCC_GROUP_ID}",
+                    "CCCC_ACTOR_ID":"${CCCC_ACTOR_ID:-$CCCC_ACTOR_ID}"
+                },
+                "useShellInterpolation":false
+            })
+        );
+    }
+
+    #[test]
     fn auto_managed_runtime_catalog_matches_supported_contract() {
         let runtimes = [
             ActorRuntime::Antigravity,
@@ -180,6 +255,7 @@ mod tests {
             ActorRuntime::Cline,
             ActorRuntime::Codex,
             ActorRuntime::Copilot,
+            ActorRuntime::Cursor,
             ActorRuntime::Devin,
             ActorRuntime::Kiro,
             ActorRuntime::Droid,
@@ -193,7 +269,6 @@ mod tests {
             ActorRuntime::Pi,
         ];
         assert!(runtimes.into_iter().all(is_auto_managed));
-        assert!(!is_auto_managed(ActorRuntime::Cursor));
         assert!(!is_auto_managed(ActorRuntime::Custom));
     }
 

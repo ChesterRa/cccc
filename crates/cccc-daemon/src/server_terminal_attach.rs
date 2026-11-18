@@ -220,18 +220,6 @@ where
     Ok(())
 }
 
-#[cfg(test)]
-async fn pump_input<R>(
-    read: R,
-    input: TerminalInput,
-    write_timeout: std::time::Duration,
-) -> Result<()>
-where
-    R: AsyncRead + Unpin,
-{
-    pump_input_guarded(read, input, write_timeout, None).await
-}
-
 async fn pump_input_guarded<R>(
     mut read: R,
     input: TerminalInput,
@@ -334,7 +322,7 @@ mod tests {
         drop(client);
         let result = tokio::time::timeout(
             Duration::from_secs(1),
-            pump_input(server, attachment.input(), Duration::from_millis(50)),
+            pump_input_guarded(server, attachment.input(), Duration::from_millis(50), None),
         )
         .await;
         // The outer stream select drops this owner on the pump's error.

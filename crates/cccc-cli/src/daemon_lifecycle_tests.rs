@@ -814,7 +814,7 @@ fn receipt_lines_count_only_confirmed_agents_and_name_the_rest_as_possibly_runni
 }
 
 #[cfg(unix)]
-fn reattaching_daemon(
+fn daemon_with_retained_agents(
     op: &str,
     _args: &serde_json::Map<String, serde_json::Value>,
 ) -> DaemonResponse {
@@ -830,24 +830,20 @@ fn quiet_daemon(op: &str, _args: &serde_json::Map<String, serde_json::Value>) ->
     compatible_ping(json!({}))
 }
 
-/// A daemon that does not report reattached agents says nothing, which is not "none".
 #[cfg(unix)]
 #[tokio::test]
-async fn reattached_agents_are_reported_only_when_the_daemon_names_them() {
+async fn startup_names_retained_agents_without_claiming_web_has_reconnected() {
     let (_temp, home) = home();
-    fake_daemon(&home, reattaching_daemon);
-    let line = super::reattached_line(&DaemonClient::new(home.clone()), &home)
+    fake_daemon(&home, daemon_with_retained_agents);
+    let line = super::retained_line(&DaemonClient::new(home.clone()), &home)
         .await
-        .expect("reattached agents are reported");
-    assert!(
-        line.contains("Reattached 1 agent that kept running (k1 in g_x)"),
-        "{line}"
-    );
+        .expect("retained agents are reported");
+    assert_eq!(line, "[cccc] Found 1 agent that kept running (k1 in g_x).");
 
     let (_temp, quiet) = self::home();
     fake_daemon(&quiet, quiet_daemon);
     assert!(
-        super::reattached_line(&DaemonClient::new(quiet.clone()), &quiet)
+        super::retained_line(&DaemonClient::new(quiet.clone()), &quiet)
             .await
             .is_none()
     );

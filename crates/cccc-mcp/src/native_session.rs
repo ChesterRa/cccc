@@ -516,6 +516,7 @@ mod tests {
     use super::*;
 
     /// Every call cccc_bootstrap suggests, with the key it is returned under.
+    #[cfg(target_os = "linux")]
     fn bootstrap_examples(payload: &Value) -> Vec<(String, String)> {
         let text = |example: &Value| example.as_str().expect("example").to_owned();
         payload["next_calls"]

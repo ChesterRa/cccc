@@ -11,7 +11,9 @@ use crate::AppState;
 use crate::api::{ApiError, ApiResult};
 use crate::codex_voice::CodexVoiceSessions;
 use crate::codex_voice::restart::VoiceGateError;
-use crate::update_hook::{UpdateCheckHook, UpdateHook, UpdateMode, UpdateRejection, UpdateRequest};
+use crate::update_hook::{
+    UpdateCheckHook, UpdateHook, UpdateMode, UpdateRejection, UpdateRequest, UpdateSource,
+};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -33,14 +35,22 @@ async fn status(State(state): State<AppState>) -> ApiResult {
 /// Asks release discovery once, because an administrator asked.
 async fn check(State(state): State<AppState>) -> ApiResult {
     let (checker, in_place) = update_checker(&state)?;
+    let hook = state
+        .restart
+        .as_ref()
+        .and_then(|restart| restart.update_hook());
+    let local_restart = hook.as_ref().is_some_and(|hook| hook.local_restart());
+    let release_keep = hook.as_ref().is_some_and(|hook| hook.release_keep());
     let check = checker.check().await;
     Ok(Json(json!({"ok":true,"result":{
         "check":check,
-        "in_place":in_place
+        "in_place":in_place,
+        "local_restart":local_restart,
+        "release_keep":release_keep
     }})))
 }
 
-/// The host's check, and whether this process can carry out an update itself.
+/// The host's check, and whether this process can install a release itself.
 fn update_checker(state: &AppState) -> Result<(UpdateCheckHook, bool), ApiError> {
     let restart = state.restart.as_ref();
     let checker = restart
@@ -52,7 +62,9 @@ fn update_checker(state: &AppState) -> Result<(UpdateCheckHook, bool), ApiError>
                 json!({}),
             )
         })?;
-    let in_place = restart.is_some_and(|restart| restart.update_hook().is_some());
+    let in_place = restart
+        .and_then(|restart| restart.update_hook())
+        .is_some_and(|hook| hook.release_in_place());
     Ok((checker, in_place))
 }
 
@@ -61,11 +73,7 @@ async fn start(
     Extension(principal): Extension<crate::auth::Principal>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let version = body
-        .get("version")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::bad("version is required"))?
-        .to_owned();
+    let source = update_source(&body)?;
     let mode = body
         .get("mode")
         .and_then(Value::as_str)
@@ -75,7 +83,7 @@ async fn start(
     let transaction = hand_over(
         restart,
         &state.codex_voice,
-        UpdateRequest { version, mode },
+        UpdateRequest { source, mode },
         || require_current_admin(&state, &principal),
     )
     .await?;
@@ -84,6 +92,29 @@ async fn start(
         "transaction":transaction,
         "mode":mode.as_str()
     }})))
+}
+
+/// A published release by its version, or the rebuilt program a check offered,
+/// by what that check saw. The path is never taken from the request.
+fn update_source(body: &Value) -> Result<UpdateSource, ApiError> {
+    let text = |name: &str| {
+        body.get(name)
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| ApiError::bad(format!("{name} is required")))
+    };
+    // A start without a source names a release, as before there were two.
+    match body.get("source").map(Value::as_str) {
+        None | Some(Some("release")) => Ok(UpdateSource::Release {
+            version: text("version")?,
+        }),
+        Some(Some("local")) => Ok(UpdateSource::Local {
+            token: text("token")?,
+            source_id: text("source_id")?,
+        }),
+        Some(_) => Err(ApiError::bad("source must be release or local")),
+    }
 }
 
 fn unavailable() -> ApiError {

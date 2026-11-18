@@ -12,6 +12,8 @@ type Key = (String, String);
 
 #[derive(Default)]
 pub(super) struct Backend {
+    pub(super) browsers: super::browser_backend::Browsers,
+    mcp: Mutex<super::mcp::Registry>,
     actors: Mutex<BTreeMap<Key, ActorRef>>,
     cancelled: Mutex<BTreeMap<Key, Arc<AtomicBool>>>,
     starting: Mutex<BTreeSet<Key>>,
@@ -26,6 +28,55 @@ pub(super) struct Backend {
 }
 
 impl Backend {
+    pub(super) fn with_owner(home: HomeLayout, owner_id: String, instance: String) -> Self {
+        Self {
+            browsers: super::browser_backend::Browsers::new(owner_id.clone(), instance.clone()),
+            mcp: Mutex::new(super::mcp::Registry::new(home, owner_id, instance)),
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn set_browser_launcher(
+        &mut self,
+        launcher: Option<Arc<dyn super::browser::BrowserLauncher>>,
+    ) {
+        self.browsers.set_launcher(launcher);
+    }
+
+    pub(super) fn mcp_binding_file(&self, group: &str, actor: &str) -> Option<std::path::PathBuf> {
+        self.mcp.lock().ok()?.file(group, actor)
+    }
+
+    #[cfg(test)]
+    pub(super) fn mcp_binding(
+        &self,
+        group: &str,
+        actor: &str,
+    ) -> Option<cccc_core::owned_mcp::Binding> {
+        self.mcp.lock().ok()?.binding(group, actor)
+    }
+
+    pub(super) fn register_mcp(
+        &self,
+        native: cccc_core::local_sessions::NativeHost,
+        report: cccc_core::owned_mcp::Registration,
+    ) -> Result<(), Failure> {
+        self.mcp
+            .lock()
+            .map_err(|_| poisoned())?
+            .register(native, report)
+    }
+    pub(super) fn owner_snapshot(&self) -> Result<super::protocol::OwnerSnapshot, Failure> {
+        Ok(super::protocol::OwnerSnapshot {
+            actors: self.snapshots()?,
+            browsers: self.browsers.snapshots()?,
+        })
+    }
+
+    pub(super) fn control_acquired(&self, epoch: u64) -> Result<(), Failure> {
+        self.browsers.control_acquired(epoch)
+    }
+
     pub(super) fn snapshots(&self) -> Result<Vec<ActorSnapshot>, Failure> {
         let actors = self
             .actors
@@ -38,6 +89,13 @@ impl Backend {
             .iter()
             .map(|actor| snapshot(actor).unwrap_or_else(|error| unknown_snapshot(actor, error)))
             .collect::<Vec<_>>();
+        {
+            let mut mcp = self.mcp.lock().map_err(|_| poisoned())?;
+            mcp.refresh();
+            for snapshot in &mut snapshots {
+                snapshot.mcp = mcp.snapshot(&snapshot.actor);
+            }
+        }
         {
             let work = self.detached_work.lock().map_err(|_| poisoned())?;
             let starting = self.starting.lock().map_err(|_| poisoned())?;
@@ -75,6 +133,22 @@ impl Backend {
     }
 
     pub(super) fn validate(&self, mutation: &Mutation) -> Result<(), Failure> {
+        if matches!(
+            mutation,
+            Mutation::BrowserEnsure { .. }
+                | Mutation::BrowserPagesSet { .. }
+                | Mutation::BrowserClose { .. }
+        ) {
+            if matches!(mutation, Mutation::BrowserEnsure { .. })
+                && self.stopping.load(Ordering::Acquire)
+            {
+                return Err(Failure::new(
+                    "owner_stopping",
+                    "the browser holder is stopping",
+                ));
+            }
+            return self.browsers.validate(mutation);
+        }
         if matches!(mutation, Mutation::StopAll) && self.stop_all_pending.load(Ordering::Acquire) {
             return Err(Failure::new(
                 "already_stopping",
@@ -176,6 +250,9 @@ impl Backend {
             | Mutation::RetryConfirmation { actor }
             | Mutation::Terminal { actor, .. } => actor,
             Mutation::StopAll
+            | Mutation::BrowserEnsure { .. }
+            | Mutation::BrowserPagesSet { .. }
+            | Mutation::BrowserClose { .. }
             | Mutation::Acknowledge { .. }
             | Mutation::Retire
             | Mutation::Recovery { .. } => return Ok(()),
@@ -217,7 +294,28 @@ impl Backend {
     /// launches already own their member; StopAll closes their cancellation gate.
     pub(super) fn reserve(&self, mutation: &Mutation) -> Result<(), Failure> {
         match mutation {
+            Mutation::BrowserEnsure { .. }
+            | Mutation::BrowserPagesSet { .. }
+            | Mutation::BrowserClose { .. } => {
+                self.browsers.reserve(mutation)?;
+            }
             Mutation::Start { actor, launch } => {
+                if let PreparedLaunch::Managed {
+                    group,
+                    actor: configured,
+                    ..
+                } = &**launch
+                {
+                    self.mcp.lock().map_err(|_| poisoned())?.reserve(
+                        actor,
+                        group,
+                        matches!(
+                            configured.runtime,
+                            cccc_contracts::ActorRuntime::Codex
+                                | cccc_contracts::ActorRuntime::Claude
+                        ),
+                    )?;
+                }
                 let actor_key = key(actor);
                 self.actors
                     .lock()
@@ -248,6 +346,7 @@ impl Backend {
                 }
             }
             Mutation::StopAll => {
+                self.browsers.prevent_starts()?;
                 self.stop_all_pending.store(true, Ordering::Release);
                 self.stopping.store(true, Ordering::Release);
                 for cancelled in self.cancelled.lock().map_err(|_| poisoned())?.values() {
@@ -274,6 +373,15 @@ impl Backend {
     }
 
     pub(super) fn execute(&self, home: &HomeLayout, mutation: Mutation) -> Result<Value, Failure> {
+        self.execute_in_epoch(home, mutation, 0)
+    }
+
+    pub(super) fn execute_in_epoch(
+        &self,
+        home: &HomeLayout,
+        mutation: Mutation,
+        epoch: u64,
+    ) -> Result<Value, Failure> {
         let _stop_completion = match &mutation {
             Mutation::Stop { actor } => Some(StopCompletion {
                 backend: self,
@@ -316,6 +424,20 @@ impl Backend {
             }
         }
         match mutation {
+            Mutation::BrowserEnsure { spec } => {
+                serde_json::to_value(self.browsers.ensure(spec)?).map_err(serialization_failure)
+            }
+            Mutation::BrowserPagesSet {
+                resource_id,
+                sessions,
+                ..
+            } => serde_json::to_value(self.browsers.set_pages(&resource_id, sessions, epoch)?)
+                .map_err(serialization_failure),
+            Mutation::BrowserClose { resource_id, .. } => {
+                self.browsers
+                    .close(&resource_id, std::time::Duration::from_secs(15))?;
+                Ok(json!({"closed":true}))
+            }
             Mutation::Start { actor, launch } => {
                 let actor_key = key(&actor);
                 let _completion = StartCompletion {
@@ -386,6 +508,7 @@ impl Backend {
                 Ok(json!({"stopped":true}))
             }
             Mutation::StopAll => {
+                let browser_before = self.browsers.snapshots();
                 let actors = self
                     .actors
                     .lock()
@@ -426,7 +549,36 @@ impl Backend {
                         unconfirmed.push(actual);
                     }
                 }
-                Ok(json!({"stopped":stopped,"unconfirmed":unconfirmed}))
+                let browsers = self
+                    .browsers
+                    .stop_all(deadline.saturating_duration_since(std::time::Instant::now()));
+                let browser_actor = |member: super::receipt::AgentIdentity| ActorRef {
+                    group_id: member.group_id,
+                    actor_id: member.actor_id,
+                    actor_created_at: member.actor_created_at,
+                    generation: member.generation,
+                };
+                let browser_error = match browsers {
+                    Ok(report) => {
+                        stopped.extend(report.stopped.into_iter().map(browser_actor));
+                        unconfirmed.extend(report.unconfirmed.into_iter().map(browser_actor));
+                        report.error
+                    }
+                    Err(error) => {
+                        if let Ok(before) = browser_before {
+                            unconfirmed.extend(
+                                before
+                                    .iter()
+                                    .flat_map(|browser| browser.identities())
+                                    .map(browser_actor),
+                            );
+                        }
+                        Some(error)
+                    }
+                };
+                Ok(
+                    json!({"stopped":stopped,"unconfirmed":unconfirmed,"browsers_stopped":browser_error.is_none(),"browser_error":browser_error}),
+                )
             }
             Mutation::Submit {
                 source,
@@ -609,6 +761,9 @@ impl Backend {
                 let group = &actor.group_id;
                 let id = &actor.actor_id;
                 match action {
+                    TerminalAction::ReleaseStartupInput { generation } => {
+                        cccc_runtime::release_startup_input(group, id, &generation).map(json)
+                    }
                     TerminalAction::Write { data } => {
                         cccc_runtime::write(group, id, &data).map(|()| Value::Null)
                     }
@@ -665,11 +820,13 @@ impl Backend {
         self.forget_member(actor)
     }
 
+    /// The registration is removed last: until then Start refuses this member,
+    /// so nothing below can touch a newer generation's state.
     fn forget_member(&self, actor: &ActorRef) -> Result<(), Failure> {
-        self.actors
-            .lock()
-            .map_err(|_| poisoned())?
-            .remove(&key(actor));
+        // Only this owner could still show or clear a paused confirmation.
+        local_headless::forget_confirmation(&actor.group_id, &actor.actor_id)
+            .map_err(io_failure)?;
+        self.mcp.lock().map_err(|_| poisoned())?.forget(actor);
         self.cancelled
             .lock()
             .map_err(|_| poisoned())?
@@ -683,6 +840,10 @@ impl Backend {
             .map_err(|_| poisoned())?
             .remove(&key(actor));
         self.provider_exits
+            .lock()
+            .map_err(|_| poisoned())?
+            .remove(&key(actor));
+        self.actors
             .lock()
             .map_err(|_| poisoned())?
             .remove(&key(actor));
@@ -836,7 +997,7 @@ impl Backend {
     }
 
     pub(super) fn is_empty(&self) -> Result<bool, Failure> {
-        Ok(self.actors.lock().map_err(|_| poisoned())?.is_empty())
+        Ok(self.actors.lock().map_err(|_| poisoned())?.is_empty() && self.browsers.is_empty()?)
     }
 
     pub(super) fn accepting_starts(&self) -> bool {
@@ -964,6 +1125,7 @@ fn snapshot(actor: &ActorRef) -> Result<ActorSnapshot, Failure> {
             ..actor.clone()
         },
         observation_error: None,
+        mcp: None,
         owner,
         terminal_launch: terminal.as_ref().and_then(|terminal| terminal.launch),
         terminal,
@@ -986,6 +1148,7 @@ fn unknown_snapshot(actor: &ActorRef, error: Failure) -> ActorSnapshot {
     ActorSnapshot {
         actor: actor.clone(),
         observation_error: Some(error),
+        mcp: None,
         owner: None,
         terminal: None,
         terminal_launch: None,
@@ -1034,6 +1197,96 @@ fn serialization_failure(error: serde_json::Error) -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn controlled_mcp_provenance_follows_the_selected_launch_method() {
+        use cccc_contracts::ActorRuntime;
+        let temp = tempfile::tempdir().expect("isolated admission fixture");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let group: cccc_core::GroupDoc = serde_json::from_value(json!({
+            "v":1, "group_id":"g_launch_provenance", "generation":"resource",
+            "title":"launch provenance", "created_at":"created", "updated_at":"created"
+        }))
+        .expect("group");
+        let actor = ActorRef {
+            group_id: group.group_id.clone(),
+            actor_id: "member".into(),
+            actor_created_at: "created".into(),
+            generation: None,
+        };
+        for (runtime, controlled) in [
+            (ActorRuntime::Codex, true),
+            (ActorRuntime::Claude, true),
+            (ActorRuntime::Pi, false),
+        ] {
+            let backend = Backend::with_owner(home.clone(), "owner".into(), "instance".into());
+            let mut configured = cccc_contracts::Actor::new(&actor.actor_id);
+            configured.created_at.clone_from(&actor.actor_created_at);
+            configured.runtime = runtime;
+            backend
+                .reserve(&Mutation::Start {
+                    actor: actor.clone(),
+                    launch: Box::new(PreparedLaunch::Managed {
+                        group: group.clone(),
+                        actor: configured,
+                        host_environment: Default::default(),
+                    }),
+                })
+                .expect("reserve selected managed path");
+            let sample = backend
+                .mcp
+                .lock()
+                .expect("registry")
+                .snapshot(&actor)
+                .expect("reserved MCP source");
+            assert_eq!(sample.source_controlled, Some(controlled));
+            assert!(!sample.initialized, "admission alone is not a live MCP");
+        }
+        // A traditional terminal can run the same provider without going
+        // through either managed main-MCP injection path.
+        let backend = Backend::with_owner(home, "owner".into(), "instance".into());
+        backend
+            .reserve(&Mutation::Start {
+                actor: actor.clone(),
+                launch: Box::new(PreparedLaunch::Pty {
+                    spec: cccc_runtime::LaunchSpec {
+                        group_id: actor.group_id.clone(),
+                        actor_id: actor.actor_id.clone(),
+                        runner: cccc_contracts::RunnerKind::Pty,
+                        command: vec!["claude".into()],
+                        cwd: temp.path().into(),
+                        env: Default::default(),
+                        cols: 80,
+                        rows: 24,
+                    },
+                    history: cccc_runtime::HistoryConfig {
+                        path: temp.path().join("history"),
+                        max_bytes: 4096,
+                        hot_bytes: 4096,
+                        persist: false,
+                    },
+                    launch: cccc_runtime::ActorLaunch {
+                        runtime: ActorRuntime::Claude,
+                        submit: cccc_contracts::Actor::new("member").submit,
+                    },
+                    preamble: String::new(),
+                }),
+            })
+            .expect("reserve traditional terminal, without executing it");
+        assert!(
+            backend
+                .mcp
+                .lock()
+                .expect("registry")
+                .snapshot(&actor)
+                .is_none()
+        );
+        assert!(
+            backend
+                .mcp_binding_file(&actor.group_id, &actor.actor_id)
+                .is_none()
+        );
+    }
 
     #[test]
     fn live_recovery_releases_only_the_reviewed_unknown_launch() {

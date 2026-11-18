@@ -33,7 +33,7 @@ pub(crate) async fn call_with_context(
         // The external schema does not contain CCCC routing fields. A bound
         // session supplies them; a local user session uses its active Group.
         let mut envelope = Map::new();
-        if let Some(group) = runtime_group_id(home, std::env::var("CCCC_GROUP_ID").ok()) {
+        if let Some(group) = runtime_group_id(home, cccc_core::home::context_var("CCCC_GROUP_ID")) {
             envelope.insert("group_id".into(), json!(group));
         }
         envelope
@@ -906,14 +906,13 @@ pub(crate) async fn daemon(
 
 fn add_runtime_context(home: &HomeLayout, args: &mut Map<String, Value>) {
     if !args.contains_key("group_id") {
-        let group = runtime_group_id(home, std::env::var("CCCC_GROUP_ID").ok());
+        let group = runtime_group_id(home, cccc_core::home::context_var("CCCC_GROUP_ID"));
         if let Some(group) = group {
             args.insert("group_id".into(), Value::String(group));
         }
     }
-    let actor = std::env::var("CCCC_ACTOR_ID")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
+    let actor =
+        cccc_core::home::context_var("CCCC_ACTOR_ID").filter(|value| !value.trim().is_empty());
     apply_actor_context(args, actor.as_deref());
 }
 

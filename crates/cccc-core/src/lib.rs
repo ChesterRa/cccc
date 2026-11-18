@@ -54,6 +54,7 @@ pub mod mail_pending;
 pub mod membership;
 pub mod monitor_records;
 pub mod nomcp;
+pub mod owned_mcp;
 pub mod path_input;
 pub mod peer_insight;
 pub mod permissions;
@@ -66,6 +67,10 @@ pub mod scope;
 pub mod settings;
 pub mod space_credentials;
 pub mod system_prompt;
+#[cfg(unix)]
+pub mod unix_socket_path;
+pub mod update_capabilities;
+pub mod update_image;
 pub mod user_requests;
 pub mod voice_notifications;
 pub mod voice_recording_lease;
@@ -87,3 +92,5 @@ pub use capability_builtin::{
 pub use group::{GroupDoc, GroupStore, Scope};
 pub use home::{HomeError, HomeLayout};
 pub use registry::{GroupMeta, Registry};
+#[cfg(test)]
+cccc_runtime::process_watchdog_test_entry!();

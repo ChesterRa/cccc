@@ -14,6 +14,7 @@ mod local_sessions;
 mod local_tools;
 mod mapping;
 mod native_session;
+mod owned_registration;
 mod repo;
 mod repo_inspect;
 mod response_projection;
@@ -32,6 +33,7 @@ use cccc_client::DaemonClient;
 use cccc_core::{CORE_TOOL_NAMES, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::fmt;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const SUPPORTED_LEGACY_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2024-11-05"];
@@ -140,14 +142,20 @@ async fn run_stdio_loop(
     runtime: Option<&str>,
     host_pid: Option<u32>,
 ) -> Result<()> {
-    let client = DaemonClient::new(home.clone());
+    let client = DaemonClient::new(home.clone()).with_connect_wait(Duration::from_secs(30));
     let mut native = runtime
         .filter(|_| !cccc_core::local_sessions::cccc_owned_environment())
         .map(|runtime| native_session::Context::new(runtime, host_pid))
         .transpose()?;
-    let notice_runtime = runtime.filter(|_| native.is_some());
+    let notice_runtime = if cccc_core::local_sessions::cccc_owned_environment() {
+        Some("cccc_owned")
+    } else {
+        runtime.filter(|_| native.is_some())
+    };
     let mut notice = version_notice::VersionNotice::default();
     let mut codex_client = false;
+    let owned_binding = std::env::var_os(cccc_core::owned_mcp::BINDING_FILE_ENV);
+    let mut registration_attempted = owned_binding.is_none();
     let mut input = BufReader::new(tokio::io::stdin()).lines();
     let mut output = tokio::io::stdout();
     while let Some(line) = input.next_line().await? {
@@ -168,6 +176,14 @@ async fn run_stdio_loop(
         }
         if request.get("id").is_none() {
             continue;
+        }
+        if !registration_attempted {
+            if let Err(error) = owned_registration::register(home, owned_binding.as_deref()).await {
+                cccc_runtime::diagnostic(format_args!(
+                    "[cccc] tool-process observation unavailable: {error}"
+                ));
+            }
+            registration_attempted = true;
         }
         if request.get("method").and_then(Value::as_str) == Some("initialize") {
             codex_client = request
@@ -481,15 +497,12 @@ async fn visible_tools_with_context(
         return catalog;
     }
     let group_id = context.map(|value| value.group_id.to_owned()).or_else(|| {
-        std::env::var("CCCC_GROUP_ID")
-            .ok()
+        cccc_core::home::context_var("CCCC_GROUP_ID")
             .filter(|value| !value.trim().is_empty())
             .or_else(|| cccc_core::active::get(home).ok().flatten())
     });
     let actor_id = context.map(|value| value.actor_id.to_owned()).or_else(|| {
-        std::env::var("CCCC_ACTOR_ID")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
+        cccc_core::home::context_var("CCCC_ACTOR_ID").filter(|value| !value.trim().is_empty())
     });
     let (Some(group_id), Some(actor_id)) = (group_id, actor_id) else {
         return core_tools(catalog);

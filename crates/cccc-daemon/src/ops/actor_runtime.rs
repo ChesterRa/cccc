@@ -22,7 +22,7 @@ pub(crate) use attributed_reap::reap_group;
 pub(super) use confirmation::require_restored_managed_actor;
 pub(super) use confirmation::{
     AUTOMATIC_LIFECYCLE, actor_response, confirmation_pause_applies, confirmation_required,
-    restore_runtime, user_confirmation_retry,
+    hermes_setup_open, restore_runtime, user_confirmation_retry,
 };
 pub(crate) use owner::{
     OwnerIdentity, OwnerState, RegisteredOwner, as_launched, delivery_owner, hold_browser_work,
@@ -128,18 +128,31 @@ pub(super) fn apply_resolved(
             },
         );
     }
-    // A closed confirmation PTY can still belong to its watcher until the next poll.
-    // Do not let an automatic delivery cancel that owner and reopen the prompt first.
-    if kind == "actor.start"
-        && !super::local_headless::running(&group.group_id, actor_id)
-        && super::local_headless::confirmation_pending_active(&group.group_id, actor_id)
+    #[cfg(all(test, unix))]
+    start_interleaving::run(&group.group_id, actor_id);
+    // A closed confirmation PTY can still belong to its watcher until the next poll,
+    // and an open one outlives a daemon restart in its session owner. Neither an
+    // automatic delivery nor the restart's restore may cancel it and reopen the prompt,
+    // nor replace the session it connected since the check above. The watcher connects
+    // the member before it releases its recovery, so pending is read first.
+    if matches!(kind, "actor.start" | "actor.restore")
+        && (super::local_headless::confirmation_pending_active(&group.group_id, actor_id)
             .map_err(OpError::io)?
+            || super::local_headless::running(&group.group_id, actor_id))
     {
         return Ok(None);
     }
     // A confirmation that ends before connecting pauses only this member.
     // Check it before teardown, startup baselines or provider configuration.
-    if actor.runtime == ActorRuntime::Claude && super::local_headless::supports(actor) {
+    if startup_input_paused(&group.group_id, actor_id) {
+        return Err(OpError::new(
+            RUNTIME_CONFIRMATION_PAUSED,
+            "The terminal exited before startup input was ready; ask the user to start this member again",
+        ));
+    }
+    if super::local_headless::pauses_after_confirmation(actor.runtime)
+        && super::local_headless::supports(actor)
+    {
         super::local_headless::ensure_confirmation_allowed(&group.group_id, actor_id)
             .map_err(launch_error)?;
     }
@@ -184,6 +197,11 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
     let mut env = environment::launch_env(home, group, &actor);
     if super::local_headless::uses_managed_provider_cli(&actor) {
         super::runtime_mcp::prepare(home, actor.runtime, &actor.command, &cwd, &mut env)?;
+    }
+    if actor.runtime == ActorRuntime::Hermes {
+        // Only this launch's copy names the profile; the saved command stays.
+        actor.command =
+            super::hermes_runtime::prepare_member_start(home, &actor.command, &cwd, &env)?;
     }
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
@@ -378,6 +396,10 @@ pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
     cccc_runtime::status(group_id, actor_id).ok()
 }
 
+pub(super) fn startup_input_paused(group_id: &str, actor_id: &str) -> bool {
+    status(group_id, actor_id).is_some_and(|status| !status.running && status.startup_input_pending)
+}
+
 /// Whether the Actor's own primary PTY is registered, running or kept after it
 /// exited. A saved runner of another kind applies only from the next launch.
 pub fn has_primary_pty(group_id: &str, actor_id: &str) -> bool {
@@ -492,4 +514,36 @@ pub(super) fn working_directory(group: &GroupDoc, actor: &Actor) -> Result<PathB
 
 fn runtime_error(error: cccc_runtime::RuntimeError) -> OpError {
     OpError::new("runtime_error", error.to_string())
+}
+
+/// Code a test runs once inside one member's start, between its running check
+/// and its recovery check, to replay a recovery that connects the member there.
+#[cfg(all(test, unix))]
+pub(crate) mod start_interleaving {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    type Hook = Box<dyn FnOnce() + Send>;
+    static HOOKS: Mutex<BTreeMap<(String, String), Hook>> = Mutex::new(BTreeMap::new());
+
+    pub(crate) fn after_running_check(
+        group_id: &str,
+        actor_id: &str,
+        hook: impl FnOnce() + Send + 'static,
+    ) {
+        HOOKS
+            .lock()
+            .expect("start hooks")
+            .insert((group_id.to_owned(), actor_id.to_owned()), Box::new(hook));
+    }
+
+    pub(super) fn run(group_id: &str, actor_id: &str) {
+        let hook = HOOKS
+            .lock()
+            .expect("start hooks")
+            .remove(&(group_id.to_owned(), actor_id.to_owned()));
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
 }

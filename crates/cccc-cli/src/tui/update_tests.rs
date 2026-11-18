@@ -25,6 +25,7 @@ impl cccc_web::UpdateChecker for Newer {
                 failure: None,
                 release_notes_url: None,
                 command: Some("cccc update --channel stable".into()),
+                local: None,
             }
         })
     }
@@ -33,7 +34,7 @@ impl cccc_web::UpdateChecker for Newer {
 #[tokio::test]
 async fn a_check_is_reported_and_an_update_without_a_serving_web_does_not_start() {
     // No Web serves, so the host has no entry to start an update through.
-    let entry = UpdateEntry::new(Arc::new(Newer), TriggerSlot::default(), true);
+    let entry = UpdateEntry::new(Arc::new(Newer), TriggerSlot::default(), true, false, false);
     let (commands, commands_rx) = mpsc::unbounded_channel();
     let (progress_tx, mut progress) = watch::channel(UpdateProgress::default());
     let (stop, stop_rx) = watch::channel(false);
@@ -55,15 +56,23 @@ async fn a_check_is_reported_and_an_update_without_a_serving_web_does_not_start(
     );
 
     // A start meant for another visit is ignored.
+    let release = || UpdateRequest {
+        source: UpdateSource::Release {
+            version: "0.4.46".into(),
+        },
+        mode: cccc_web::UpdateMode::Restart,
+    };
     commands
         .send(UpdateCommand::Start {
             generation: 7,
+            request: release(),
             version: "0.4.46".into(),
         })
         .expect("worker");
     commands
         .send(UpdateCommand::Start {
             generation: 1,
+            request: release(),
             version: "0.4.46".into(),
         })
         .expect("worker");
@@ -73,6 +82,7 @@ async fn a_check_is_reported_and_an_update_without_a_serving_web_does_not_start(
         .expect("progress")
         .clone();
     assert_eq!(rejected.preparing, None);
+    assert!(!rejected.local);
     assert!(!rejected.handed_over);
     assert!(
         rejected

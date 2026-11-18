@@ -2,7 +2,7 @@
 //! the transport, cwd, MCP binding and session identity.
 use super::{AcpClient, ActorRuntime};
 use serde_json::{Value, json};
-use std::{io, path::Path, time::Duration};
+use std::{collections::BTreeMap, fmt, io, path::Path, time::Duration};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(40);
 
@@ -12,6 +12,111 @@ pub(super) struct Options {
     pub mode: Option<String>,
     pub effort: Option<String>,
     pub unrestricted: bool,
+    /// Hermes stores the session in this profile. The ACP client and terminal
+    /// viewer must use the same profile to open it.
+    pub profile: Option<String>,
+}
+
+/// Hermes's terminal auth method for its own provider setup. CCCC runs a
+/// command on its own only for exactly this method.
+const HERMES_SETUP_METHOD: &str = "hermes-setup";
+const HERMES_SETUP_ARGS: [&str; 1] = ["--setup"];
+
+/// Hermes without provider credentials advertises only its own setup, as an
+/// ACP terminal auth method, and cannot create a session.
+fn setup_advertised(capabilities: &Value) -> bool {
+    let Some([method]) = capabilities["authMethods"].as_array().map(Vec::as_slice) else {
+        return false;
+    };
+    method["id"] == HERMES_SETUP_METHOD
+        && method["type"] == "terminal"
+        && method["args"] == json!(HERMES_SETUP_ARGS)
+}
+
+/// A failed `session/new` on a Hermes that advertised only its terminal setup.
+#[derive(Debug)]
+struct SetupAdvertised {
+    detail: String,
+}
+
+impl fmt::Display for SetupAdvertised {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for SetupAdvertised {}
+
+/// The setup a Hermes profile needs before its first session: the member's
+/// own ACP command with the setup method's args, in the member's environment.
+pub(crate) struct HermesSetup {
+    pub(crate) command: Vec<String>,
+    pub(crate) environment: BTreeMap<String, String>,
+    detail: String,
+}
+
+impl fmt::Debug for HermesSetup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HermesSetup")
+            .field("command", &self.command)
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Display for HermesSetup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Hermes has no provider set up for this profile yet ({}). Run `{}` in a terminal to set it up, then start the agent again.",
+            self.detail,
+            self.command.join(" ")
+        )
+    }
+}
+
+impl std::error::Error for HermesSetup {}
+
+/// Names the setup to run when `initialize` saw only Hermes's terminal setup;
+/// any other error is returned unchanged.
+pub(super) fn setup_required(
+    error: io::Error,
+    command: &[String],
+    environment: &BTreeMap<String, String>,
+) -> io::Error {
+    let Some(advertised) = error
+        .get_ref()
+        .and_then(|inner| inner.downcast_ref::<SetupAdvertised>())
+    else {
+        return error;
+    };
+    let mut command = command.to_vec();
+    command.extend(HERMES_SETUP_ARGS.map(str::to_owned));
+    let setup = HermesSetup {
+        command,
+        environment: environment.clone(),
+        detail: advertised.detail.clone(),
+    };
+    io::Error::new(error.kind(), setup)
+}
+
+pub(crate) fn hermes_setup(error: &io::Error) -> Option<&HermesSetup> {
+    error.get_ref()?.downcast_ref::<HermesSetup>()
+}
+
+/// Hermes's own terminal attached to the member's ACP session. It shows and
+/// accepts turns in that session; the only input CCCC writes to it is the
+/// Ctrl+C of a stop.
+pub(super) fn hermes_viewer(options: &Options, session_id: &str) -> Vec<String> {
+    let mut command = vec![options.command[0].clone()];
+    if let Some(profile) = &options.profile {
+        command.extend(["--profile".into(), profile.clone()]);
+    }
+    command.push("--tui".into());
+    if options.unrestricted {
+        command.push("--yolo".into());
+    }
+    command.extend(["--resume".into(), session_id.into()]);
+    command
 }
 
 pub(crate) fn name(runtime: ActorRuntime) -> &'static str {
@@ -26,6 +131,12 @@ pub(crate) fn name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Droid => "droid",
         _ => unreachable!("native ACP runtime was validated at launch"),
     }
+}
+
+/// The Hermes profile a member command selects, read as the launch reads it.
+/// `None` leaves the choice to Hermes, a sticky `hermes profile use` included.
+pub(crate) fn hermes_profile(command: &[String]) -> io::Result<Option<String>> {
+    options(ActorRuntime::Hermes, command).map(|options| options.profile)
 }
 
 pub(super) fn options(runtime: ActorRuntime, command: &[String]) -> io::Result<Options> {
@@ -61,6 +172,7 @@ pub(super) fn options(runtime: ActorRuntime, command: &[String]) -> io::Result<O
         mode: None,
         effort: None,
         unrestricted: false,
+        profile: None,
     };
     let mut args = command.iter().skip(1).peekable();
     if matches!(
@@ -91,6 +203,11 @@ pub(super) fn options(runtime: ActorRuntime, command: &[String]) -> io::Result<O
                 }
             }
             (ActorRuntime::Hermes, "--tui") if inline.is_none() => {}
+            (ActorRuntime::Hermes, "-p" | "--profile") => {
+                let profile = value(inline, &mut args)?;
+                result.command.extend(["--profile".into(), profile.clone()]);
+                result.profile = Some(profile);
+            }
             (ActorRuntime::Kiro, "--trust-all-tools" | "-a")
             | (ActorRuntime::Hermes, "--yolo" | "-y")
                 if inline.is_none() =>
@@ -311,7 +428,23 @@ pub(super) async fn initialize(
     } else {
         "session/new"
     };
-    let result = protocol.request(method, params, HANDSHAKE_TIMEOUT).await?;
+    let result = match protocol.request(method, params, HANDSHAKE_TIMEOUT).await {
+        Ok(result) => result,
+        // A Hermes profile without a provider: its client is to run the setup.
+        Err(error) if runtime == ActorRuntime::Hermes && resume.is_none() => {
+            return Err(if setup_advertised(&capabilities) {
+                io::Error::new(
+                    error.kind(),
+                    SetupAdvertised {
+                        detail: error.to_string(),
+                    },
+                )
+            } else {
+                error
+            });
+        }
+        Err(error) => return Err(error),
+    };
     if !result.is_object() {
         return Err(io::Error::other(
             "Official ACP server returned an invalid session response",
@@ -562,6 +695,51 @@ pub(crate) fn valid_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Hermes always offers its terminal setup and adds its provider once one
+    /// resolves; only its setup method alone, exactly as Hermes advertises it,
+    /// means the profile has none and is run.
+    #[test]
+    fn only_hermes_own_setup_method_alone_names_the_hermes_setup() {
+        let setup = json!({"id":"hermes-setup","type":"terminal","args":["--setup"]});
+        let provider = json!({"id":"openrouter","name":"openrouter runtime credentials"});
+        assert!(setup_advertised(&json!({"authMethods":[setup.clone()]})));
+        for methods in [
+            json!([provider, setup]),
+            // Another terminal method is never run on its own.
+            json!([{"id":"vendor-login","type":"terminal","args":["--setup"]}]),
+            // Nor Hermes's method in another shape.
+            json!([{"id":"hermes-setup","type":"terminal","args":["--setup", "--yes"]}]),
+            json!([{"id":"hermes-setup","type":"terminal","args":["login"]}]),
+            json!([{"id":"hermes-setup","type":"terminal"}]),
+            json!([{"id":"hermes-setup","args":["--setup"]}]),
+            json!([provider]),
+            json!([]),
+        ] {
+            assert!(
+                !setup_advertised(&json!({"authMethods":methods})),
+                "{methods}"
+            );
+        }
+        assert!(!setup_advertised(&json!({})));
+        let refused = io::Error::other(SetupAdvertised {
+            detail: "storage_unavailable".into(),
+        });
+        let environment = BTreeMap::from([("HERMES_HOME".to_owned(), "/profile".to_owned())]);
+        let command = ["hermes".to_owned(), "acp".to_owned()];
+        let error = setup_required(refused, &command, &environment);
+        let setup = hermes_setup(&error).expect("setup to run");
+        assert_eq!(setup.command, ["hermes", "acp", "--setup"]);
+        assert_eq!(setup.environment, environment);
+        assert!(!format!("{setup:?}").contains("/profile"));
+        assert!(
+            error.to_string().contains("`hermes acp --setup`"),
+            "{error}"
+        );
+        let other = setup_required(io::Error::other("unrelated"), &command, &environment);
+        assert!(hermes_setup(&other).is_none());
+    }
+
     #[test]
     fn explicit_models_use_advertised_ids_without_guessing_or_defaulting() {
         let cursor = json!({"models":{"availableModels":[

@@ -5,12 +5,15 @@ mod command_output;
 mod command_session;
 mod diagnostic;
 pub use diagnostic::{DiagnosticLog, diagnostic, log_diagnostics_to};
+#[cfg(target_os = "macos")]
+pub mod darwin_process;
 pub mod deepseek_acp;
 pub mod deepseek_supervisor;
 mod executable;
 mod history_access;
 mod manager;
 mod native_codex;
+pub mod process_children;
 pub mod process_recovery;
 pub use native_codex::{
     NativeCodexSessionInfo, NativeCodexSteerOutcome, native_codex_can_receive,
@@ -26,10 +29,12 @@ mod pty_input;
 #[cfg(target_os = "linux")]
 mod pty_io;
 mod registry;
+pub mod running_image;
 mod session;
 mod session_history;
 #[cfg(test)]
 mod session_history_tests;
+mod startup_input;
 mod terminal_attach;
 mod terminal_attachment_registry;
 mod terminal_initial_output;
@@ -68,18 +73,26 @@ pub use history_access::{
     history_since, last_output, retained_history, retained_history_tail,
 };
 pub use manager::{
-    PtyHandoff, PtyHandoffReason, reap, resize, start, start_actor_with_history,
-    start_with_history, start_with_history_isolated_environment, status, stop, stop_all,
-    stop_if_started_at, submit, submit_interruptible, submit_sequence_for_session_interruptible,
+    PtyHandoff, PtyHandoffReason, reap, release_startup_input, reset_exited_startup_input, resize,
+    start, start_actor_with_history, start_with_history, start_with_history_isolated_environment,
+    status, stop, stop_all, stop_if_started_at, submit, submit_interruptible,
+    submit_sequence_for_new_kilo_viewer, submit_sequence_for_session_interruptible,
     submit_sequence_for_session_with_evidence_interruptible, submit_sequence_interruptible,
-    wait_for_input_ready, write,
+    wait_for_input_ready, wait_for_new_kilo_composer, write, write_to_session_within,
 };
 pub use output::HistoryPage;
 pub use path_form::compatible_path;
+#[doc(hidden)]
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub use process_tree::run_process_watchdog_test_child;
 pub use process_tree::{
     CommandError, OwnedProcessTree, ProcessStartUnconfirmed, background_command,
     background_tokio_command, force_terminate_owned, owned_process_recovery_pending,
+    run_process_watchdog_from_args,
 };
+
+#[cfg(test)]
+crate::process_watchdog_test_entry!();
 #[cfg(unix)]
 pub use process_tree::{
     DetachedWork, protect_detached_work, recover_inactive_owned_process_groups,
@@ -88,6 +101,7 @@ pub use process_tree::{
 pub use process_tree::{prepare_web_process_guard, protect_owned_process_groups};
 pub use session::{ActorLaunch, LaunchSpec, SessionStatus};
 pub use session_history::OutputObservation;
+pub use startup_input::required as startup_input_required;
 pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput, TerminalOutput};
 pub use terminal_initial_output::{TerminalInitialOutput, TerminalInitialOutputKind};
 pub use terminal_manager::{

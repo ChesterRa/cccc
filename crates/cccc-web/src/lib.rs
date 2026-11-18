@@ -43,8 +43,9 @@ use tower_http::trace::TraceLayer;
 
 pub use readonly::WebMode;
 pub use update_hook::{
-    LastUpdate, UpdateCheck, UpdateCheckHook, UpdateChecker, UpdateHook, UpdateHost, UpdateMode,
-    UpdatePreparation, UpdateRejection, UpdateRequest, UpdateServices, UpdateStatus,
+    KeepPreview, KeepRefusal, LastUpdate, LocalBuild, UpdateAgent, UpdateAgents, UpdateCheck,
+    UpdateCheckHook, UpdateChecker, UpdateHook, UpdateHost, UpdateMode, UpdatePreparation,
+    UpdateRejection, UpdateRequest, UpdateServices, UpdateSource, UpdateStatus,
 };
 pub use web_banner::print as print_listening_banner;
 
@@ -133,6 +134,12 @@ struct WebAssets;
 
 mod web_assets;
 pub use web_assets::{WebAssetsInfo, web_assets_info};
+
+/// The browser launch a session owner runs, so that a browser it holds starts
+/// exactly as one this Web would start itself.
+pub fn browser_launcher() -> Arc<dyn cccc_daemon::session_owner::browser::BrowserLauncher> {
+    Arc::new(browser_surface::held::Launcher)
+}
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -695,6 +702,11 @@ where
             runtime_id,
             process_recovery,
         );
+    // Where session owners run, they keep the shared browsers of Web model
+    // members, so those members keep running across Web restarts too.
+    if cccc_daemon::session_owner::platform_supported() && !web_mode.is_read_only() {
+        browser_surfaces.hold_shared_browsers(app_state.client.clone());
+    }
     if let Err(error) = web_runtime_state::write(
         &app_state.home,
         host,
@@ -875,4 +887,4 @@ mod static_asset_tests;
 mod lifecycle_tests;
 
 #[cfg(test)]
-cccc_daemon::session_owner_test_entry!();
+cccc_daemon::session_owner_test_entry!(crate::browser_launcher());

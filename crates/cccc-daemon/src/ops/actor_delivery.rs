@@ -16,7 +16,7 @@ pub use lifecycle::{
     ShutdownReason, shutdown_actor, shutdown_actor_for, shutdown_all, shutdown_group,
 };
 pub(super) use terminal::submit_terminal_text;
-pub(crate) use terminal::submit_terminal_text_for_session;
+pub(crate) use terminal::{submit_terminal_text_for_session, submit_viewer_text};
 
 const QUEUE_CAPACITY: usize = 256;
 const COMPLETION_CAPACITY: usize = 4096;

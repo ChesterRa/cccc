@@ -8,8 +8,8 @@ use std::path::Path;
 use tokio::task::JoinHandle;
 
 use super::{
-    BrowserMode, profile_owner::ProfileLease, proxy::BrowserProxy, stop_browser,
-    system_browser::SystemBrowserLaunch,
+    BrowserMode, profile_owner::ProfileLease, proxy::BrowserProxy, resources::HeldResource,
+    stop_browser, system_browser::SystemBrowserLaunch,
 };
 
 /// Process resources have one owner even when several surfaces share its pages.
@@ -18,10 +18,22 @@ pub(super) struct BrowserOwner {
     pub handler: JoinHandle<()>,
     pub system_browser: Option<SystemBrowserLaunch>,
     profile_lease: Option<ProfileLease>,
+    /// The browser process this owner started; `None` for one it connected to.
+    pub pid: Option<u32>,
+    /// Set when the session owner keeps the browser and this is only a
+    /// connection to it: the owner stops it, never this Web.
+    pub held: Option<HeldResource>,
     pub shared: bool,
     pub strategy: String,
     pub metadata: Value,
     pub viewer: Value,
+}
+
+/// A launch that failed after the browser started. `started` still holds
+/// what was started, so the caller decides whether it is stopped or kept.
+pub(super) struct StartFailure {
+    pub error: anyhow::Error,
+    pub started: Option<BrowserOwner>,
 }
 
 impl BrowserOwner {
@@ -32,17 +44,50 @@ impl BrowserOwner {
         mode: BrowserMode,
         shared: bool,
         storage_state: Option<&Value>,
+        proxy: Option<BrowserProxy>,
     ) -> Result<Self> {
-        let mut profile_lease = ProfileLease::acquire(profile).await?;
+        match Self::start(profile, width, height, mode, shared, storage_state, proxy).await {
+            Ok(owner) => Ok(owner),
+            Err(StartFailure {
+                error,
+                started: None,
+            }) => Err(error),
+            Err(StartFailure {
+                error,
+                started: Some(mut owner),
+            }) => {
+                owner
+                    .stop()
+                    .await
+                    .with_context(|| format!("clean up the browser after: {error:#}"))?;
+                Err(error)
+            }
+        }
+    }
+
+    pub async fn start(
+        profile: &Path,
+        width: u32,
+        height: u32,
+        mode: BrowserMode,
+        shared: bool,
+        storage_state: Option<&Value>,
+        proxy: Option<BrowserProxy>,
+    ) -> std::result::Result<Self, StartFailure> {
+        let not_started = |error| StartFailure {
+            error,
+            started: None,
+        };
+        let profile_lease = ProfileLease::acquire(profile).await.map_err(not_started)?;
         let mut system_browser = match mode {
             BrowserMode::Headless => None,
-            BrowserMode::System { background } => {
-                Some(SystemBrowserLaunch::prepare(width, height, background).await?)
-            }
+            BrowserMode::System { background } => Some(
+                SystemBrowserLaunch::prepare(width, height, background)
+                    .await
+                    .map_err(not_started)?,
+            ),
         };
-        let proxy_args = BrowserProxy::from_env()?
-            .map(|proxy| proxy.chromium_args())
-            .unwrap_or_default();
+        let proxy_args = proxy.map(|proxy| proxy.chromium_args()).unwrap_or_default();
         let launched = match &mut system_browser {
             Some(system_browser) => system_browser.launch(profile, proxy_args).await,
             None => {
@@ -60,48 +105,62 @@ impl BrowserOwner {
                 }
                 // Preserve explicit CHROME and normal detection precedence.
                 // Only try our additional binary names if that lookup fails.
-                let config = config
-                    .clone()
-                    .build()
-                    .or_else(|error| {
-                        let (executable, _) =
-                            super::system_browser::find_system_browser().ok_or(error)?;
-                        config.chrome_executable(executable).build()
-                    })
-                    .map_err(anyhow::Error::msg)?;
-                Browser::launch(config)
-                    .await
-                    .map(|(mut browser, handler)| {
-                        let pid = browser
-                            .get_mut_child()
-                            .and_then(|child| child.as_mut_inner().id())
-                            .unwrap_or_default();
-                        (browser, handler, pid)
-                    })
-                    .map_err(anyhow::Error::from)
+                match config.clone().build().or_else(|error| {
+                    let (executable, _) =
+                        super::system_browser::find_system_browser().ok_or(error)?;
+                    config.chrome_executable(executable).build()
+                }) {
+                    Ok(config) => Browser::launch(config)
+                        .await
+                        .map(|(mut browser, handler)| {
+                            let pid = browser
+                                .get_mut_child()
+                                .and_then(|child| child.as_mut_inner().id())
+                                .unwrap_or_default();
+                            (browser, handler, pid)
+                        })
+                        .map_err(anyhow::Error::from),
+                    Err(error) => Err(anyhow::Error::msg(error)),
+                }
             }
         };
-        let (mut browser, mut handler, browser_pid) = match launched {
+        let (browser, mut handler, browser_pid) = match launched {
             Ok(browser) => browser,
             Err(error) => {
-                if let Some(system_browser) = &mut system_browser {
-                    system_browser.stop().await;
-                }
-                return Err(error);
+                // Display children left running end when this launch drops.
+                let error = match &mut system_browser {
+                    Some(system_browser) => match system_browser.stop().await {
+                        Ok(()) => error,
+                        Err(stop_error) => anyhow::anyhow!(
+                            "{error:#}; stopping its display also failed: {stop_error:#}"
+                        ),
+                    },
+                    None => error,
+                };
+                // A browser macOS opened that no stop confirmed ended stays in
+                // the profile lease, so the next acquire verifies and stops it.
+                #[cfg(target_os = "macos")]
+                let error = match system_browser
+                    .as_ref()
+                    .and_then(SystemBrowserLaunch::opened)
+                {
+                    None => error,
+                    Some(opened) => {
+                        let mut profile_lease = profile_lease;
+                        match profile_lease
+                            .record_unstopped_browser(opened.process.as_ref())
+                            .await
+                        {
+                            Ok(()) => error,
+                            Err(record_error) => anyhow::anyhow!(
+                                "{error:#}; the browser may still be running and could not be recorded: {record_error:#}"
+                            ),
+                        }
+                    }
+                };
+                return Err(not_started(error));
             }
         };
-        let recorded = if system_browser.is_some() {
-            profile_lease.record_pid(browser_pid).await
-        } else {
-            profile_lease.record_browser(&mut browser).await
-        };
-        if let Err(error) = recorded {
-            let _ = browser.kill().await;
-            if let Some(system_browser) = &mut system_browser {
-                system_browser.stop().await;
-            }
-            return Err(error);
-        }
         let handler = tokio::spawn(async move {
             while let Some(message) = handler.next().await {
                 if message.is_err() {
@@ -109,7 +168,6 @@ impl BrowserOwner {
                 }
             }
         });
-
         let (strategy, metadata) = system_browser.as_ref().map_or_else(
             || {
                 (
@@ -128,11 +186,25 @@ impl BrowserOwner {
             handler,
             system_browser,
             profile_lease: Some(profile_lease),
+            pid: Some(browser_pid),
+            held: None,
             shared,
             strategy,
             metadata,
             viewer,
         };
+        // From here on the browser runs: a failure hands it back with the error.
+        let recorded = match owner.profile_lease.as_mut() {
+            Some(lease) if owner.system_browser.is_some() => lease.record_pid(browser_pid).await,
+            Some(lease) => lease.record_browser(&mut owner.browser).await,
+            None => Ok(()),
+        };
+        if let Err(error) = recorded {
+            return Err(StartFailure {
+                error,
+                started: Some(owner),
+            });
+        }
         if let Some(cookies) = storage_state
             .and_then(|state| state.get("cookies"))
             .cloned()
@@ -147,20 +219,66 @@ impl BrowserOwner {
             }
             .await;
             if let Err(error) = seeded {
-                owner
-                    .stop()
-                    .await
-                    .context("clean up browser after cookie initialization failed")?;
-                return Err(error);
+                return Err(StartFailure {
+                    error,
+                    started: Some(owner),
+                });
             }
         }
         Ok(owner)
     }
 
+    /// Connects to a browser the session owner keeps. This Web owns only the
+    /// CDP connection; the owner keeps the process, its profile and display.
+    pub async fn adopt(preserved: &super::PreservedBrowser, held: HeldResource) -> Result<Self> {
+        let (browser, mut handler) = Browser::connect(preserved.websocket_url.clone())
+            .await
+            .context("connect to the preserved browser")?;
+        let handler = tokio::spawn(async move {
+            while let Some(message) = handler.next().await {
+                if message.is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(Self {
+            browser,
+            handler,
+            system_browser: None,
+            profile_lease: None,
+            pid: None,
+            held: Some(held),
+            shared: preserved.shared,
+            strategy: preserved.strategy.clone(),
+            metadata: preserved.metadata.clone(),
+            viewer: preserved.viewer.clone(),
+        })
+    }
+
+    /// Whether the browser draws on a desktop or virtual display rather
+    /// than headless, whoever runs it.
+    pub fn is_system_browser(&self) -> bool {
+        self.system_browser.is_some() || self.held.as_ref().is_some_and(HeldResource::system)
+    }
+
+    pub fn vnc_port(&self) -> Option<u16> {
+        self.system_browser
+            .as_ref()
+            .and_then(SystemBrowserLaunch::vnc_port)
+            .or_else(|| self.held.as_ref().and_then(|held| held.vnc_port))
+    }
+
+    /// Closes only this Web's connection; the browser and its pages stay.
+    pub async fn detach(&mut self) {
+        self.handler.abort();
+        let _ = (&mut self.handler).await;
+    }
+
     pub async fn stop(&mut self) -> Result<()> {
         stop_browser(&mut self.browser, &mut self.handler).await?;
+        // A failure keeps the lease and what failed, so a retry finishes.
         if let Some(system) = &mut self.system_browser {
-            system.stop().await;
+            system.stop().await?;
         }
         if let Some(lease) = &mut self.profile_lease {
             lease.clear_owner()?;

@@ -1,13 +1,16 @@
 //! The host's update check, offered to the Web it serves: the same check
-//! `cccc update --check` makes, as data instead of text.
+//! `cccc update --check` makes, as data instead of text, and on a host that
+//! can restart into it, whether its program has been rebuilt since it started.
 
 use std::future::Future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use cccc_core::HomeLayout;
+use cccc_core::update_image::FileIdentity;
 use cccc_web::{
-    LastUpdate, UpdateCheck, UpdateCheckHook, UpdateMode, UpdateRejection, UpdateRequest,
+    LastUpdate, LocalBuild, UpdateCheck, UpdateCheckHook, UpdateRejection, UpdateRequest,
     UpdateStatus, UpdateTrigger,
 };
 
@@ -46,14 +49,24 @@ pub(crate) struct UpdateEntry {
     checker: UpdateCheckHook,
     trigger: TriggerSlot,
     in_place: bool,
+    local_restart: bool,
+    release_keep: bool,
 }
 
 impl UpdateEntry {
-    pub(crate) fn new(checker: UpdateCheckHook, trigger: TriggerSlot, in_place: bool) -> Self {
+    pub(crate) fn new(
+        checker: UpdateCheckHook,
+        trigger: TriggerSlot,
+        in_place: bool,
+        local_restart: bool,
+        release_keep: bool,
+    ) -> Self {
         Self {
             checker,
             trigger,
             in_place,
+            local_restart,
+            release_keep,
         }
     }
 
@@ -62,35 +75,113 @@ impl UpdateEntry {
         self.in_place
     }
 
+    /// Whether this host restarts into a rebuilt program at its launch path.
+    pub(crate) fn local_restart(&self) -> bool {
+        self.local_restart
+    }
+
+    /// Whether this host offers to keep agents running through a release update.
+    pub(crate) fn release_keep(&self) -> bool {
+        self.release_keep
+    }
+
     pub(crate) async fn check(&self) -> UpdateCheck {
         self.checker.check().await
     }
 
     /// Resolves once the update is prepared and the Web has closed for it.
-    /// Dropping this future before then gives the update up. The terminal
-    /// interface offers restarting agents only.
-    pub(crate) async fn start(&self, version: String) -> Result<String, UpdateRejection> {
+    /// Dropping this future before then gives the update up.
+    pub(crate) async fn start(&self, request: UpdateRequest) -> Result<String, UpdateRejection> {
         let trigger = self.trigger.current().ok_or_else(|| UpdateRejection {
             code: "update_unavailable".into(),
             message: "CCCC can update itself only while its Web is serving".into(),
         })?;
-        trigger
-            .start(UpdateRequest {
-                version,
-                mode: UpdateMode::Restart,
-            })
-            .await
+        trigger.start(request).await
     }
 }
 
 pub(crate) struct HostChecker {
     home: HomeLayout,
+    /// Only a host that can restart into a rebuilt program has one.
+    launch: Option<LaunchProgram>,
 }
 
 impl HostChecker {
-    pub(crate) fn new(home: HomeLayout) -> Self {
-        Self { home }
+    pub(crate) fn new(home: HomeLayout, launch: Option<LaunchProgram>) -> Self {
+        Self { home, launch }
     }
+}
+
+/// The program this host was started from, as it was then. A rebuild replaces
+/// the file at that path while this process keeps running the old one, so the
+/// path is read once, at start.
+#[derive(Clone, Debug)]
+pub(crate) struct LaunchProgram {
+    pub(crate) path: PathBuf,
+    pub(crate) identity: FileIdentity,
+}
+
+impl LaunchProgram {
+    /// The running program: the path it was started from, and the file this
+    /// process actually runs, read from its own image rather than from the
+    /// path, in case a build replaced the file meanwhile. Writing a new program
+    /// at the path changes that file even when the build's source id stays the
+    /// same, as after a Web-only rebuild. Unknown where the running image
+    /// cannot be read, or when the path no longer names a file.
+    pub(crate) fn current() -> Option<Self> {
+        let path = std::env::current_exe().ok()?;
+        let identity = FileIdentity::running().ok()?;
+        path.is_file().then_some(Self { path, identity })
+    }
+}
+
+/// What is now at the launch path, when it is no longer the program this host
+/// was started from. An unchanged file is not run; one that cannot be read is
+/// reported as such, never as nothing new. Whether agents could keep running
+/// through a restart into it is the daemon's own first look; it decides again
+/// when it is asked to stop.
+async fn local_build(home: HomeLayout, launch: Option<LaunchProgram>) -> Option<LocalBuild> {
+    let launch = launch?;
+    let unreadable = |error: std::io::Error| LocalBuild::Unreadable {
+        reason: format!("{}: {error}", launch.path.display()),
+    };
+    let identity = match FileIdentity::read(&launch.path) {
+        Ok(identity) if identity == launch.identity => return None,
+        Ok(identity) => identity,
+        Err(error) => return Some(unreadable(error)),
+    };
+    let token = match identity.token() {
+        Ok(token) => token,
+        Err(error) => return Some(unreadable(error)),
+    };
+    let check = crate::update_host::self_check(&launch.path).await;
+    // What answered must be the file read before it, not one a build was
+    // still writing.
+    if FileIdentity::read(&launch.path).ok().as_ref() != Some(&identity) {
+        return Some(LocalBuild::Unreadable {
+            reason: "it changed while it was being read; check again".into(),
+        });
+    }
+    Some(match check {
+        Ok(check) if !check.accepts_local_restart() => LocalBuild::Incompatible {
+            version: check.version,
+        },
+        Ok(check) => {
+            let mut keep =
+                cccc_daemon::session_owner::preservation_check(&home, &check.capabilities).await;
+            crate::update_host::name_refusals(&home, &mut keep);
+            LocalBuild::rebuilt(
+                check.version,
+                check.build.source_id,
+                identity.written,
+                token,
+                keep,
+            )
+        }
+        Err(error) => LocalBuild::Unreadable {
+            reason: format!("{error:#}"),
+        },
+    })
 }
 
 impl cccc_web::UpdateChecker for HostChecker {
@@ -106,8 +197,13 @@ impl cccc_web::UpdateChecker for HostChecker {
     }
 
     fn check(&self) -> Pin<Box<dyn Future<Output = UpdateCheck> + Send>> {
-        Box::pin(async {
-            match update::check_running_program().await {
+        let home = self.home.clone();
+        let launch = self.launch.clone();
+        Box::pin(async move {
+            // Independent answers: a failed release check still shows a rebuild.
+            let (release, local) =
+                tokio::join!(update::check_running_program(), local_build(home, launch));
+            let mut check = match release {
                 Ok(outcome) => describe(outcome),
                 Err(error) => UpdateCheck {
                     current: crate::PRODUCT_VERSION.into(),
@@ -118,8 +214,11 @@ impl cccc_web::UpdateChecker for HostChecker {
                     failure: Some(format!("{error:#}")),
                     release_notes_url: None,
                     command: None,
+                    local: None,
                 },
-            }
+            };
+            check.local = local;
+            check
         })
     }
 }
@@ -149,6 +248,7 @@ fn describe(outcome: CheckOutcome) -> UpdateCheck {
         status: status.map(|status| status_name(status).into()),
         failure,
         command,
+        local: None,
     }
 }
 
@@ -182,7 +282,13 @@ fn release_notes_url(version: &str) -> String {
 /// The latest attended update's recorded result. An unreadable record is
 /// left out rather than guessed.
 fn last_update(home: &HomeLayout) -> Option<LastUpdate> {
-    let last: LastResult = cccc_core::fs::read_json(&home.root().join("update/last.json")).ok()?;
+    let mut last: LastResult =
+        cccc_core::fs::read_json(&home.root().join("update/last.json")).ok()?;
+    // Recorded while this host looked for its agents, and nothing looks now:
+    // the look was cut short, so the agents it lists stay unconfirmed.
+    if last.agents.state == "observing" && !crate::update_host::observing_agents() {
+        last.agents.state = "unconfirmed".into();
+    }
     Some(LastUpdate {
         transaction: last.transaction,
         from_version: last.from_version,
@@ -192,6 +298,10 @@ fn last_update(home: &HomeLayout) -> Option<LastUpdate> {
         stage: last.stage,
         reason: last.reason,
         finished_at: last.finished_at,
+        source: last.source,
+        token: last.token,
+        source_id: last.source_id,
+        agents: last.agents,
     })
 }
 

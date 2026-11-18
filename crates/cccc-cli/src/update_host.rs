@@ -13,29 +13,66 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
 use cccc_core::HomeLayout;
-use cccc_core::attended_update::{self, BuildIdentity};
+use cccc_core::attended_update::{self, BuildIdentity, Source};
 use cccc_core::local_sessions::NativeHost;
-use cccc_web::{UpdateMode, UpdatePreparation, UpdateRejection, UpdateRequest};
+use cccc_core::update_capabilities::{
+    KeepDecision, KeepRefusal, UpdateCandidate, UpdateCapabilities,
+};
+use cccc_core::update_image::FileIdentity;
+use cccc_daemon::session_owner::{AgentIdentity, AgentObservations, ShutdownMode, ShutdownReport};
+use cccc_web::{
+    UpdateAgent, UpdateAgents, UpdateMode, UpdatePreparation, UpdateRejection, UpdateRequest,
+    UpdateSource,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{oneshot, watch};
 
+use crate::update_checker::LaunchProgram;
+
 /// The relay record this build writes before exec and reads after it. A
 /// candidate lists the schemas its `--resume` reads in its self-check.
-pub(crate) const RELAY_SCHEMA: u32 = 1;
+pub(crate) const RELAY_SCHEMA: u32 = 2;
 const SELF_CHECK_SCHEMA: u32 = 1;
-const TRANSACTION_SCHEMA: u32 = 1;
+const TRANSACTION_SCHEMA: u32 = 2;
 const INSTALLER_MAX_BYTES: usize = 1024 * 1024;
 /// The installer's own line naming the phase contract it implements.
 const INSTALLER_PHASE_API: &str = "# CCCC_INSTALL_PHASE_API=1";
 const SELF_CHECK_MAX_BYTES: usize = 64 * 1024;
 const PHASE_OUTPUT_MAX_BYTES: usize = 256 * 1024;
 const PROGRAM: &str = if cfg!(windows) { "cccc.exe" } else { "cccc" };
-/// The host sees its own relay only; agents are not checked yet.
-const AGENTS_NOT_OBSERVED: &str = "not_observed";
+/// How long a host that came back looks for the agents its update stopped or
+/// kept before it records what it found.
+const AGENTS_OBSERVE_BUDGET: Duration = Duration::from_secs(10);
+
+/// Set while this host looks for the agents of the result it just recorded.
+/// The same host serves that result, so one still marked as observing while
+/// nothing looks was cut short.
+static OBSERVING_AGENTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this host is still looking for the agents of its latest result.
+pub(crate) fn observing_agents() -> bool {
+    OBSERVING_AGENTS.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Marks this host as looking for agents until it is dropped.
+struct Observing;
+
+impl Observing {
+    fn start() -> Self {
+        OBSERVING_AGENTS.store(true, std::sync::atomic::Ordering::Release);
+        Self
+    }
+}
+
+impl Drop for Observing {
+    fn drop(&mut self) {
+        OBSERVING_AGENTS.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const PHASE_TIMEOUT: Duration = Duration::from_secs(120);
 const SELF_CHECK_TIMEOUT: Duration = Duration::from_secs(20);
@@ -50,11 +87,24 @@ pub(crate) struct SelfCheck {
     pub build: SelfCheckBuild,
     pub daemon_compatibility: String,
     pub relay_schemas: Vec<u32>,
+    #[serde(default)]
+    pub capabilities: UpdateCapabilities,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct SelfCheckBuild {
     pub source_id: String,
+}
+
+impl SelfCheck {
+    pub(crate) fn accepts_local_restart(&self) -> bool {
+        self.capabilities.local_restart
+            && self
+                .capabilities
+                .intent_schemas
+                .contains(&attended_update::INTENT_SCHEMA)
+            && self.relay_schemas.contains(&RELAY_SCHEMA)
+    }
 }
 
 pub(crate) fn print_self_check() -> Result<()> {
@@ -68,9 +118,28 @@ pub(crate) fn print_self_check() -> Result<()> {
         },
         daemon_compatibility: cccc_contracts::RUST_DAEMON_COMPATIBILITY.into(),
         relay_schemas: vec![RELAY_SCHEMA],
+        capabilities: this_build(),
     };
     println!("{}", serde_json::to_string(&check)?);
     Ok(())
+}
+
+/// What this build can finish when an update hands over to it.
+fn this_build() -> UpdateCapabilities {
+    // On Linux and macOS this build reads its running image, so it finishes a
+    // restart into it as a rebuilt program. It takes over the agents a stop
+    // kept for it, once the daemon's own check allowed that stop, only where
+    // session owners run; elsewhere agents do not outlive the daemon.
+    UpdateCapabilities {
+        local_restart: cfg!(any(target_os = "linux", target_os = "macos")),
+        preserve_agents: cccc_daemon::session_owner::platform_supported(),
+        intent_schemas: vec![attended_update::INTENT_SCHEMA],
+        owner_contracts: cccc_daemon::session_owner::ownership_contract()
+            .into_iter()
+            .collect(),
+        mcp_registration_apis: vec![cccc_core::owned_mcp::REGISTRATION_API],
+        mcp_daemon_contracts: cccc_contracts::MCP_DAEMON_ACCEPTED_CONTRACTS.to_vec(),
+    }
 }
 
 /// Where the host served, replayed by the program it relays to: the address
@@ -121,10 +190,15 @@ pub(crate) struct RelayRecord {
     pub transaction: String,
     pub from_version: String,
     pub to_version: String,
+    pub source_id: String,
     pub mode: String,
-    pub install_dir: PathBuf,
+    pub source: Source,
     pub launch: LaunchSpec,
     pub outcome: RelayOutcome,
+    /// The receipt of the stop this update asked for, checked before the
+    /// relay: the agents the program started next looks for. The daemon it
+    /// starts clears the receipt file, so the receipt travels here.
+    pub stopped: Option<ShutdownReport>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -132,6 +206,8 @@ pub(crate) struct RelayRecord {
 pub(crate) enum RelayOutcome {
     /// The new files are in place; the new program finishes the update.
     Applied,
+    /// The checked Local image may start; nothing was installed or restored.
+    LocalReady,
     /// Nothing was replaced, or the previous files were restored.
     Abandoned { stage: String, reason: String },
 }
@@ -146,8 +222,31 @@ pub(crate) struct LastResult {
     pub result: String,
     pub stage: Option<String>,
     pub reason: Option<String>,
-    pub agents: String,
+    pub agents: UpdateAgents,
     pub finished_at: String,
+    /// `release` or `local`.
+    pub source: Option<String>,
+    /// For a restart into a rebuilt program, the file it restarted into, as the
+    /// check that offered it named it.
+    pub token: Option<String>,
+    /// The build it moved to, as its self-check named it.
+    pub source_id: Option<String>,
+}
+
+fn agents_not_observed() -> UpdateAgents {
+    UpdateAgents {
+        state: "not_observed".into(),
+        ..UpdateAgents::default()
+    }
+}
+
+/// How a result names what it moved to: `release` or `local`, and for a
+/// rebuilt program, the file its check offered.
+fn result_source(source: &Source) -> (Option<String>, Option<String>) {
+    match source {
+        Source::Release { .. } => (Some("release".into()), None),
+        Source::Local { file_identity, .. } => (Some("local".into()), file_identity.token().ok()),
+    }
 }
 
 /// Written when a transaction is created, so an update that never reserved
@@ -157,7 +256,7 @@ pub(crate) struct LastResult {
 #[serde(deny_unknown_fields)]
 struct TransactionRecord {
     schema: u32,
-    install_dir: PathBuf,
+    source: Source,
     creator: NativeHost,
 }
 
@@ -169,7 +268,8 @@ pub(crate) struct Transaction {
 }
 
 impl Transaction {
-    fn create(home: &HomeLayout, id: &str, install_dir: &Path) -> io::Result<Self> {
+    fn create(home: &HomeLayout, id: &str, source: Source) -> io::Result<Self> {
+        source.validate()?;
         let root = home.root().join("update");
         create_private_dir_all(&root)?;
         let dir = root.join(id);
@@ -183,7 +283,7 @@ impl Transaction {
             };
             let record = TransactionRecord {
                 schema: TRANSACTION_SCHEMA,
-                install_dir: install_dir.to_path_buf(),
+                source,
                 creator: NativeHost::capture(std::process::id())?,
             };
             cccc_core::fs::write_secret_json(&transaction.record_path(), &record)?;
@@ -233,12 +333,13 @@ impl Transaction {
     fn record(&self) -> Result<TransactionRecord> {
         let record: TransactionRecord = cccc_core::fs::read_json(&self.record_path())
             .with_context(|| format!("could not read {}", self.record_path().display()))?;
-        if record.schema != TRANSACTION_SCHEMA || !record.install_dir.is_absolute() {
+        if record.schema != TRANSACTION_SCHEMA {
             bail!(
                 "update record {} is not usable",
                 self.record_path().display()
             );
         }
+        record.source.validate()?;
         Ok(record)
     }
 
@@ -251,6 +352,36 @@ impl Transaction {
                 self.relay_path().display(),
                 record.schema
             );
+        }
+        record.source.validate()?;
+        BuildIdentity {
+            version: record.to_version.clone(),
+            source_id: record.source_id.clone(),
+        }
+        .validate()?;
+        if record.source != self.record()?.source
+            || !matches!(record.mode.as_str(), "keep" | "restart")
+            || !matches!(
+                (&record.source, &record.outcome),
+                (
+                    Source::Release { .. },
+                    RelayOutcome::Applied | RelayOutcome::Abandoned { .. }
+                ) | (Source::Local { .. }, RelayOutcome::LocalReady)
+            )
+        {
+            bail!("update relay source or outcome does not match its transaction");
+        }
+        if let Some(stopped) = &record.stopped {
+            let asked = match record.mode.as_str() {
+                "keep" => ShutdownMode::PreserveAgents,
+                _ => ShutdownMode::Stop,
+            };
+            if stopped.v != 1
+                || stopped.mode != asked
+                || matches!(record.outcome, RelayOutcome::Abandoned { .. })
+            {
+                bail!("update relay stop receipt does not match its mode or outcome");
+            }
         }
         Ok(record)
     }
@@ -292,43 +423,131 @@ fn create_private_dir_all(path: &Path) -> io::Result<()> {
     }
 }
 
-/// The installation and launch an update replaces and replays.
+/// What an update replaces and replays.
 #[derive(Clone, Debug)]
 pub(crate) struct UpdateContext {
     pub home: HomeLayout,
-    pub install_dir: PathBuf,
-    /// The installed program: what is replaced, and what the host relays to.
+    /// The standalone installation a release replaces in place; none when
+    /// another installer or a build put this program where it is.
+    pub install_dir: Option<PathBuf>,
+    /// The program recovery commands name: the installed one, or the one this
+    /// host was started from.
     pub executable: PathBuf,
     pub launch: LaunchSpec,
 }
 
 impl UpdateContext {
-    /// Only a standalone installation can replace its own files in place. The
+    /// Any installation can restart into a rebuilt program at its own path;
+    /// only a standalone one can also replace its files with a release. The
     /// launch to replay is filled in when the Web hands an update over.
     pub(crate) fn for_running_program(home: &HomeLayout) -> Result<Self> {
         let executable =
             std::env::current_exe().context("could not resolve the CCCC executable")?;
-        let install_dir = crate::commands::update::standalone_install_dir(&executable)?;
-        Ok(Self::for_installation(home, install_dir))
+        Ok(
+            match crate::commands::update::standalone_install_dir(&executable) {
+                Ok(install_dir) => Self::for_installation(home, install_dir),
+                Err(_) => Self {
+                    home: home.clone(),
+                    install_dir: None,
+                    executable,
+                    launch: LaunchSpec::default(),
+                },
+            },
+        )
     }
 
     fn for_installation(home: &HomeLayout, install_dir: PathBuf) -> Self {
         Self {
             home: home.clone(),
             executable: install_dir.join(PROGRAM),
-            install_dir,
+            install_dir: Some(install_dir),
             launch: LaunchSpec::default(),
         }
     }
+
+    /// The standalone installation a release replaces.
+    fn release_dir(&self) -> Result<&Path> {
+        self.install_dir
+            .as_deref()
+            .context("this CCCC was not installed by the CCCC installer")
+    }
 }
 
-/// A prepared update: staged, checked, and holding the install lock.
+/// A prepared update: a staged and checked release holding the install lock,
+/// or a checked rebuilt program at the path the host was started from.
 #[derive(Debug)]
 pub(crate) struct Prepared {
     pub transaction: Transaction,
     pub version: String,
     pub mode: UpdateMode,
     pub target: BuildIdentity,
+    /// What the same self-check that named `target` declared: a final stop
+    /// that keeps agents is checked against these, never against another
+    /// check's.
+    pub capabilities: UpdateCapabilities,
+    pub source: Source,
+}
+
+impl Prepared {
+    /// The program the relay starts.
+    pub(crate) fn program(&self) -> PathBuf {
+        match &self.source {
+            Source::Release { install_dir } => install_dir.join(PROGRAM),
+            Source::Local { program, .. } => program.clone(),
+        }
+    }
+
+    pub(crate) fn is_local(&self) -> bool {
+        matches!(self.source, Source::Local { .. })
+    }
+
+    /// What a stop that keeps agents is checked against: this build, with what
+    /// its own self-check declared.
+    pub(crate) fn candidate(&self) -> UpdateCandidate {
+        UpdateCandidate {
+            build: self.target.clone(),
+            capabilities: self.capabilities.clone(),
+        }
+    }
+
+    /// What this is, for the lines that report it.
+    pub(crate) fn what(&self) -> String {
+        if self.is_local() {
+            format!("restart into the local build {}", self.version)
+        } else {
+            format!("update to CCCC {}", self.version)
+        }
+    }
+
+    /// What did not happen when this did not start.
+    pub(crate) fn unchanged(&self) -> &'static str {
+        if self.is_local() {
+            "CCCC was not restarted"
+        } else {
+            "CCCC was not updated"
+        }
+    }
+
+    /// What the terminal interface says while this replaces the process.
+    pub(crate) fn notice(&self) -> String {
+        // What is being attempted: whether agents were kept is known only once
+        // CCCC is back.
+        let agents = match self.mode {
+            UpdateMode::Keep => "trying to keep its agents running",
+            UpdateMode::Restart => "restarting its agents",
+        };
+        if self.is_local() {
+            format!(
+                "Restarting CCCC into the local build {}: {agents}, then CCCC starts again here.",
+                self.version
+            )
+        } else {
+            format!(
+                "Updating CCCC to {}: {agents}, then CCCC starts again here.",
+                self.version
+            )
+        }
+    }
 }
 
 enum Slot {
@@ -338,7 +557,7 @@ enum Slot {
         id: String,
         abandoned: bool,
     },
-    Prepared(Prepared),
+    Prepared(Box<Prepared>),
 }
 
 /// The host's one attended update, shared with the Web as its update hook.
@@ -349,6 +568,9 @@ pub(crate) struct Coordinator {
 
 struct Inner {
     context: UpdateContext,
+    /// The program this host was started from, as it was then, on a host that
+    /// can restart into a rebuilt one.
+    launch: Option<LaunchProgram>,
     slot: Mutex<Slot>,
     /// Bumped whenever a preparation or cleanup settles.
     settled: watch::Sender<u64>,
@@ -357,10 +579,11 @@ struct Inner {
 }
 
 impl Coordinator {
-    pub(crate) fn new(context: UpdateContext) -> Self {
+    pub(crate) fn new(context: UpdateContext, launch: Option<LaunchProgram>) -> Self {
         Self {
             inner: Arc::new(Inner {
                 context,
+                launch,
                 slot: Mutex::new(Slot::Idle),
                 settled: watch::channel(0).0,
                 cancel: tokio::sync::Notify::new(),
@@ -385,7 +608,7 @@ impl Coordinator {
                     id: prepared.transaction.id.clone(),
                     abandoned: false,
                 };
-                Some(prepared)
+                Some(*prepared)
             }
             other => {
                 *slot = other;
@@ -416,7 +639,7 @@ impl Coordinator {
                                 abandoned: true,
                             },
                         ) {
-                            Slot::Prepared(prepared) => Some(prepared),
+                            Slot::Prepared(prepared) => Some(*prepared),
                             _ => unreachable!("the slot was just matched as prepared"),
                         }
                     }
@@ -451,6 +674,12 @@ impl Coordinator {
         }
         self.inner.release(&prepared.transaction.id);
     }
+
+    /// Give up an update whose intent could not be withdrawn: its record stays
+    /// for the recovery command, and no update starts while the intent stands.
+    pub(crate) fn keep_for_recovery(&self, prepared: Prepared) {
+        self.inner.release(&prepared.transaction.id);
+    }
 }
 
 impl Inner {
@@ -483,13 +712,41 @@ impl Inner {
 
 impl cccc_web::UpdateHost for Coordinator {
     fn begin(&self, request: UpdateRequest) -> Result<UpdatePreparation, UpdateRejection> {
-        if request.mode == UpdateMode::Keep {
+        let requested = match request.source {
+            UpdateSource::Release { version } => {
+                if self.inner.context.install_dir.is_none() {
+                    return Err(rejection(
+                        "update_unavailable",
+                        "this CCCC was not installed by the CCCC installer; update it the way it was installed",
+                    ));
+                }
+                Requested::Release {
+                    version: release_version(&version)?,
+                }
+            }
+            UpdateSource::Local { token, source_id } => {
+                let Some(launch) = self.inner.launch.clone() else {
+                    return Err(rejection(
+                        "local_not_supported",
+                        "this CCCC cannot restart into a rebuilt program",
+                    ));
+                };
+                Requested::Local {
+                    launch,
+                    token,
+                    source_id,
+                }
+            }
+        };
+        if request.mode == UpdateMode::Keep
+            && matches!(requested, Requested::Release { .. })
+            && !self.release_keep()
+        {
             return Err(rejection(
-                "keep_preflight_incomplete",
-                "keeping agents running through an update is not available yet; choose restart",
+                "keep_not_supported",
+                "this CCCC cannot keep agents running through an update; choose restart",
             ));
         }
-        let version = release_version(&request.version)?;
         refuse_active_intent(&self.inner.context.home)?;
         let id = uuid::Uuid::new_v4().simple().to_string();
         {
@@ -511,7 +768,7 @@ impl cccc_web::UpdateHost for Coordinator {
         let transaction = id.clone();
         let mode = request.mode;
         tokio::spawn(async move {
-            let result = prepare_unless_abandoned(&inner, &id, &version, mode).await;
+            let result = prepare_unless_abandoned(&inner, &id, &requested, mode).await;
             let outcome = settle_preparation(&inner, &id, result).await;
             let _ = sender.send(outcome);
         });
@@ -526,6 +783,20 @@ impl cccc_web::UpdateHost for Coordinator {
                 })
             }),
         })
+    }
+
+    fn release_in_place(&self) -> bool {
+        self.inner.context.install_dir.is_some()
+    }
+
+    fn local_restart(&self) -> bool {
+        self.inner.launch.is_some()
+    }
+
+    /// A host that replaces its installation, running a build that takes
+    /// agents over, offers to keep them; the release is checked once staged.
+    fn release_keep(&self) -> bool {
+        self.release_in_place() && this_build().preserve_agents
     }
 
     fn abandon(&self, transaction: &str) {
@@ -547,7 +818,7 @@ impl cccc_web::UpdateHost for Coordinator {
                             abandoned: true,
                         },
                     ) {
-                        Slot::Prepared(prepared) => Some(prepared),
+                        Slot::Prepared(prepared) => Some(*prepared),
                         _ => unreachable!("the slot was just matched as prepared"),
                     }
                 }
@@ -564,16 +835,40 @@ impl cccc_web::UpdateHost for Coordinator {
     }
 }
 
+/// What a start asked for, once the host accepted that it can do it.
+enum Requested {
+    Release {
+        version: String,
+    },
+    Local {
+        launch: LaunchProgram,
+        token: String,
+        source_id: String,
+    },
+}
+
 /// Prepare until done or abandoned. An abandoned preparation is dropped at
 /// once, which stops its download and kills its installer's process group;
 /// what it left behind is then undone like any failed preparation.
 async fn prepare_unless_abandoned(
     inner: &Inner,
     id: &str,
-    version: &str,
+    requested: &Requested,
     mode: UpdateMode,
 ) -> Result<Prepared, PrepareFailure> {
-    unless_abandoned(inner, id, prepare(&inner.context, id, version, mode)).await
+    match requested {
+        Requested::Release { version } => {
+            unless_abandoned(inner, id, prepare(&inner.context, id, version, mode)).await
+        }
+        Requested::Local {
+            launch,
+            token,
+            source_id,
+        } => {
+            let preparation = prepare_local(&inner.context, launch, id, token, source_id, mode);
+            unless_abandoned(inner, id, preparation).await
+        }
+    }
 }
 
 async fn unless_abandoned(
@@ -626,7 +921,7 @@ async fn settle_preparation(
             let unpublished = {
                 let mut slot = inner.lock();
                 if matches!(&*slot, Slot::Busy { id: current, abandoned: false } if current == id) {
-                    *slot = Slot::Prepared(prepared);
+                    *slot = Slot::Prepared(Box::new(prepared));
                     None
                 } else {
                     Some(prepared)
@@ -769,7 +1064,7 @@ fn refuse_active_intent(home: &HomeLayout) -> Result<(), UpdateRejection> {
         Ok(Some(intent)) => Err(rejection(
             "update_in_progress",
             format!(
-                "update {} still holds this CCCC home; if it does not finish shortly, stop CCCC and recover it with `{}`",
+                "update {} holds this CCCC home: if it is still running, wait for it; if it was interrupted, recover it with `{}`",
                 intent.transaction_id,
                 intent.recovery_command()
             ),
@@ -777,6 +1072,21 @@ fn refuse_active_intent(home: &HomeLayout) -> Result<(), UpdateRejection> {
         Err(error) => Err(rejection(
             "update_state_unreadable",
             format!("could not read this CCCC home's update state: {error}"),
+        )),
+    }
+}
+
+/// A forced exit can cut short an update that already holds this home. Name the
+/// command that finishes it, or why the update state could not be read.
+pub(crate) fn forced_exit_update_hint(home: &HomeLayout) -> Option<String> {
+    match attended_update::active(home) {
+        Ok(None) => None,
+        Ok(Some(intent)) => Some(format!(
+            "An update was in progress; finish it with `{}`.",
+            intent.recovery_command()
+        )),
+        Err(error) => Some(format!(
+            "could not read this CCCC home's update state: {error}"
         )),
     }
 }
@@ -791,16 +1101,22 @@ async fn prepare(
     version: &str,
     mode: UpdateMode,
 ) -> Result<Prepared, PrepareFailure> {
-    let transaction =
-        Transaction::create(&context.home, id, &context.install_dir).map_err(|error| {
-            (
-                None,
-                rejection(
-                    "update_prepare_failed",
-                    format!("could not create the update directory: {error}"),
-                ),
-            )
-        })?;
+    let install_dir = context
+        .release_dir()
+        .map_err(|error| (None, rejection("update_unavailable", format!("{error:#}"))))?
+        .to_path_buf();
+    let source = Source::Release {
+        install_dir: install_dir.clone(),
+    };
+    let transaction = Transaction::create(&context.home, id, source.clone()).map_err(|error| {
+        (
+            None,
+            rejection(
+                "update_prepare_failed",
+                format!("could not create the update directory: {error}"),
+            ),
+        )
+    })?;
     let fail = |code: &str, message: String| (Some(transaction.clone()), rejection(code, message));
     let installer = download_installer(version).await.map_err(|error| {
         fail(
@@ -836,9 +1152,7 @@ async fn prepare(
             format!("the CCCC installer could not prepare {version}: {error:#}"),
         )
     })?;
-    let staged = context
-        .install_dir
-        .join(format!("{PROGRAM}.cccc-install.{}", transaction.id));
+    let staged = install_dir.join(format!("{PROGRAM}.cccc-install.{}", transaction.id));
     match run.value("CCCC_INSTALL_STAGED").filter(|_| run.success) {
         Some(reported) if Path::new(reported) == staged => {}
         Some(reported) => {
@@ -875,11 +1189,27 @@ async fn prepare(
             ),
         ));
     }
-    if !check.relay_schemas.contains(&RELAY_SCHEMA) {
+    if !check.relay_schemas.contains(&RELAY_SCHEMA)
+        || !check
+            .capabilities
+            .intent_schemas
+            .contains(&attended_update::INTENT_SCHEMA)
+    {
         return Err(fail(
             "update_candidate_rejected",
             format!("CCCC {version} cannot finish an update started by this version"),
         ));
+    }
+    // Whether this release can take the agents over is known only now, from
+    // what it declares; the daemon decides again when it is asked to stop.
+    if mode == UpdateMode::Keep {
+        let mut decision =
+            cccc_daemon::session_owner::preservation_check(&context.home, &check.capabilities)
+                .await;
+        if !decision.allowed {
+            name_refusals(&context.home, &mut decision);
+            return Err(fail("keep_refused", keep_refused(&decision)));
+        }
     }
     Ok(Prepared {
         transaction: transaction.clone(),
@@ -889,6 +1219,106 @@ async fn prepare(
             version: check.version,
             source_id: check.build.source_id,
         },
+        capabilities: check.capabilities,
+        source,
+    })
+}
+
+/// Check the rebuilt program at the path this host was started from: it must
+/// still be the file the check offered, answer its self-check as that build,
+/// and be able to finish a restart this version starts. Nothing is downloaded,
+/// installed or stopped; same and older versions are allowed.
+async fn prepare_local(
+    context: &UpdateContext,
+    launch: &LaunchProgram,
+    id: &str,
+    token: &str,
+    source_id: &str,
+    mode: UpdateMode,
+) -> Result<Prepared, PrepareFailure> {
+    let program = &launch.path;
+    let changed = || {
+        (
+            None,
+            rejection(
+                "local_changed",
+                format!(
+                    "{} changed after it was checked; check again",
+                    program.display()
+                ),
+            ),
+        )
+    };
+    let identity = FileIdentity::read(program).map_err(|error| {
+        (
+            None,
+            rejection(
+                "local_changed",
+                format!("could not read {}: {error}", program.display()),
+            ),
+        )
+    })?;
+    if identity == launch.identity || identity.token().ok().as_deref() != Some(token) {
+        return Err(changed());
+    }
+    let check = self_check(program).await.map_err(|error| {
+        (
+            None,
+            rejection(
+                "local_candidate_rejected",
+                format!("the rebuilt program did not pass its self-check: {error:#}"),
+            ),
+        )
+    })?;
+    // What answered must be the file that was checked, not one a build wrote since.
+    if FileIdentity::read(program).ok().as_ref() != Some(&identity)
+        || check.build.source_id != source_id
+    {
+        return Err(changed());
+    }
+    if !check.accepts_local_restart() {
+        return Err((
+            None,
+            rejection(
+                "local_candidate_rejected",
+                "the rebuilt program cannot finish a restart started by this version",
+            ),
+        ));
+    }
+    // A first look while CCCC still serves; the daemon decides again when it
+    // is asked to stop.
+    if mode == UpdateMode::Keep {
+        let mut decision =
+            cccc_daemon::session_owner::preservation_check(&context.home, &check.capabilities)
+                .await;
+        if !decision.allowed {
+            name_refusals(&context.home, &mut decision);
+            return Err((None, rejection("keep_refused", keep_refused(&decision))));
+        }
+    }
+    let source = Source::Local {
+        program: program.clone(),
+        file_identity: identity,
+    };
+    let transaction = Transaction::create(&context.home, id, source.clone()).map_err(|error| {
+        (
+            None,
+            rejection(
+                "update_prepare_failed",
+                format!("could not create the update directory: {error}"),
+            ),
+        )
+    })?;
+    Ok(Prepared {
+        transaction,
+        version: check.version.clone(),
+        mode,
+        target: BuildIdentity {
+            version: check.version,
+            source_id: check.build.source_id,
+        },
+        capabilities: check.capabilities,
+        source,
     })
 }
 
@@ -1079,7 +1509,7 @@ async fn run_phase(
         .arg(transaction.script())
         .env("CCCC_INSTALL_PHASE", phase)
         .env("CCCC_INSTALL_TXN", &transaction.dir)
-        .env("CCCC_INSTALL_DIR", &context.install_dir)
+        .env("CCCC_INSTALL_DIR", context.release_dir()?)
         .env("CCCC_HOME", context.home.root())
         .env("CCCC_NO_MODIFY_PATH", "1")
         .env("CCCC_TRUSTED_EXISTING_CLI", &context.executable);
@@ -1102,8 +1532,10 @@ async fn run_phase(
     })
 }
 
-async fn self_check(staged: &Path) -> Result<SelfCheck> {
-    let mut command = cccc_runtime::background_tokio_command(staged);
+/// Runs `update --self-check` of the program at `program`: a staged release, or
+/// a rebuilt program at the path a host was started from.
+pub(crate) async fn self_check(program: &Path) -> Result<SelfCheck> {
+    let mut command = cccc_runtime::background_tokio_command(program);
     command
         .args(["update", "--self-check"])
         .stdin(Stdio::null())
@@ -1112,13 +1544,13 @@ async fn self_check(staged: &Path) -> Result<SelfCheck> {
         .kill_on_drop(true);
     let output = tokio::time::timeout(SELF_CHECK_TIMEOUT, command.output())
         .await
-        .map_err(|_| anyhow!("the staged program did not answer in time"))?
-        .context("could not run the staged program")?;
+        .map_err(|_| anyhow!("the program did not answer its self-check in time"))?
+        .context("could not run the program")?;
     if !output.status.success() {
-        bail!("the staged program cannot check itself ({})", output.status);
+        bail!("the program cannot check itself ({})", output.status);
     }
     if output.stdout.len() > SELF_CHECK_MAX_BYTES {
-        bail!("the staged program's self-check is too large");
+        bail!("the program's self-check is too large");
     }
     let check: SelfCheck =
         serde_json::from_slice(&output.stdout).context("unreadable self-check")?;
@@ -1129,13 +1561,29 @@ async fn self_check(staged: &Path) -> Result<SelfCheck> {
 }
 
 /// Publish the startup intent right before the stop request. Until it is
-/// withdrawn, only this update's relay may start a daemon for this home.
+/// withdrawn, only this update's relay may start a daemon for this home. The
+/// relay starts whatever is at a rebuilt program's path, so that must still be
+/// the file that was checked.
 pub(crate) fn arm(context: &UpdateContext, prepared: &Prepared) -> Result<()> {
+    if let Source::Local {
+        program,
+        file_identity,
+    } = &prepared.source
+    {
+        let now = FileIdentity::read(program)
+            .with_context(|| format!("could not read {}", program.display()))?;
+        if &now != file_identity {
+            bail!(
+                "{} changed after it was checked; check again",
+                program.display()
+            );
+        }
+    }
     let intent = attended_update::Intent::new(
         &context.home,
         &prepared.transaction.id,
         prepared.target.clone(),
-        context.install_dir.clone(),
+        prepared.source.clone(),
     )?;
     attended_update::arm(&context.home, &intent)?;
     Ok(())
@@ -1201,16 +1649,19 @@ pub(crate) fn write_relay(
     context: &UpdateContext,
     prepared: &Prepared,
     outcome: RelayOutcome,
+    stopped: Option<ShutdownReport>,
 ) -> Result<()> {
     let record = RelayRecord {
         schema: RELAY_SCHEMA,
         transaction: prepared.transaction.id.clone(),
         from_version: crate::PRODUCT_VERSION.into(),
         to_version: prepared.version.clone(),
+        source_id: prepared.target.source_id.clone(),
         mode: prepared.mode.as_str().into(),
-        install_dir: context.install_dir.clone(),
+        source: prepared.source.clone(),
         launch: context.launch.clone(),
         outcome,
+        stopped,
     };
     cccc_core::fs::write_secret_json(&prepared.transaction.relay_path(), &record)?;
     Ok(())
@@ -1228,10 +1679,12 @@ pub(crate) struct Handoff {
 
 impl Handoff {
     /// What starts next, as the terminal interface closes for it.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     pub(crate) fn announcement(&self) -> String {
         match &self.outcome {
-            RelayOutcome::Applied => format!("Starting CCCC {}...", self.prepared.version),
+            RelayOutcome::Applied | RelayOutcome::LocalReady => {
+                format!("Starting CCCC {}...", self.prepared.version)
+            }
             RelayOutcome::Abandoned { stage, reason } => format!(
                 "CCCC was not updated to {} ({stage}: {reason}); starting CCCC {} again...",
                 self.prepared.version,
@@ -1269,6 +1722,12 @@ pub(crate) fn exec(relay: &Relay) -> io::Error {
 pub(crate) async fn relay(context: &UpdateContext, prepared: Prepared, relay: Relay) -> Result<()> {
     let error = exec(&relay);
     let record = prepared.transaction.read_relay()?;
+    if record.outcome == RelayOutcome::LocalReady {
+        bail!(
+            "could not start the local CCCC build ({error}); recover with `{}`",
+            recovery_command(&context.home)
+        );
+    }
     if record.outcome == RelayOutcome::Applied {
         // Still the old image, holding the daemon lock: put the old files back.
         let reason = format!("could not start the new program: {error}");
@@ -1287,6 +1746,7 @@ pub(crate) async fn relay(context: &UpdateContext, prepared: Prepared, relay: Re
                         stage: "exec".into(),
                         reason,
                     },
+                    None,
                 )?;
                 let retry = exec(&relay);
                 bail!("could not start CCCC again after restoring it: {retry}");
@@ -1308,12 +1768,93 @@ pub(crate) fn recovery_command(home: &HomeLayout) -> String {
     }
 }
 
+/// Why agents cannot keep running, in CCCC's own words, one reason each.
+pub(crate) fn keep_refused(decision: &KeepDecision) -> String {
+    let reasons = decision
+        .refusals
+        .iter()
+        .map(refusal_text)
+        .collect::<Vec<_>>();
+    format!("agents cannot keep running: {}", reasons.join(" "))
+}
+
+/// One reason, led by the agent it is about when it is about one.
+pub(crate) fn refusal_text(refusal: &KeepRefusal) -> String {
+    match refusal.display_name.as_ref().or(refusal.actor_id.as_ref()) {
+        Some(name) => format!("{name}: {}", refusal.message),
+        None => refusal.message.clone(),
+    }
+}
+
+/// How the daemon answered a stop that keeps agents.
+pub(crate) enum KeepingStop {
+    /// It may be stopping; the receipt for this request decides what happened.
+    Requested(String),
+    /// It refused before choosing to stop, and stopped nothing. `withdrawn`
+    /// says whether the update's intent was lifted; if not, only recovery may
+    /// finish it, and it needs the update's record.
+    Refused { reason: String, withdrawn: bool },
+}
+
+/// Ask the daemon to stop and keep every agent running, after it checks each
+/// one again. Only a refusal it states before choosing to stop withdraws the
+/// update's intent; any other answer may have stopped it.
+pub(crate) async fn request_keeping_stop(
+    client: &cccc_client::DaemonClient,
+    home: &HomeLayout,
+    prepared: &Prepared,
+) -> KeepingStop {
+    use cccc_client::attended_update::PreservationStopReply;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let reply = client
+        .request_preserving_shutdown(
+            std::process::id(),
+            &request_id,
+            &prepared.transaction.id,
+            &prepared.candidate(),
+        )
+        .await;
+    match reply {
+        Ok(PreservationStopReply::Refused(mut decision)) => {
+            name_refusals(home, &mut decision);
+            let reason = keep_refused(&decision);
+            match attended_update::disarm(home, &prepared.transaction.id) {
+                Ok(()) => KeepingStop::Refused {
+                    reason,
+                    withdrawn: true,
+                },
+                // Nothing stopped, but only recovery may lift the intent now.
+                Err(error) => KeepingStop::Refused {
+                    reason: format!(
+                        "{reason} Its update intent could not be withdrawn ({error}); after stopping CCCC, run `{}`.",
+                        recovery_command(home)
+                    ),
+                    withdrawn: false,
+                },
+            }
+        }
+        Ok(PreservationStopReply::Requested { .. }) => KeepingStop::Requested(request_id),
+        Err(error) => {
+            cccc_runtime::diagnostic(format_args!(
+                "[cccc] The daemon gave no clear answer to keeping agents running ({error}); waiting for its stop"
+            ));
+            KeepingStop::Requested(request_id)
+        }
+    }
+}
+
 /// Write this home's latest attended update result. Paths are fixed.
-pub(crate) fn record_result(home: &HomeLayout, record: &RelayRecord, result: &str) {
+pub(crate) fn record_result(
+    home: &HomeLayout,
+    record: &RelayRecord,
+    result: &str,
+    agents: UpdateAgents,
+) {
     let (stage, reason) = match &record.outcome {
-        RelayOutcome::Applied => (None, None),
+        RelayOutcome::Applied | RelayOutcome::LocalReady => (None, None),
         RelayOutcome::Abandoned { stage, reason } => (Some(stage.clone()), Some(reason.clone())),
     };
+    let (source, token) = result_source(&record.source);
     write_last(
         home,
         LastResult {
@@ -1324,14 +1865,24 @@ pub(crate) fn record_result(home: &HomeLayout, record: &RelayRecord, result: &st
             result: result.into(),
             stage,
             reason,
-            agents: AGENTS_NOT_OBSERVED.into(),
+            agents,
             finished_at: cccc_contracts::utc_now(),
+            source,
+            token,
+            source_id: Some(record.source_id.clone()),
         },
     );
 }
 
 /// The Web closed for an update that then could not start; nothing stopped.
-pub(crate) fn record_not_started(context: &UpdateContext, prepared: &Prepared, reason: &str) {
+/// `stage` names the step that refused it.
+pub(crate) fn record_not_started(
+    context: &UpdateContext,
+    prepared: &Prepared,
+    stage: &str,
+    reason: &str,
+) {
+    let (source, token) = result_source(&prepared.source);
     write_last(
         &context.home,
         LastResult {
@@ -1340,10 +1891,13 @@ pub(crate) fn record_not_started(context: &UpdateContext, prepared: &Prepared, r
             to_version: prepared.version.clone(),
             mode: Some(prepared.mode.as_str().into()),
             result: "not_started".into(),
-            stage: Some("arm".into()),
+            stage: Some(stage.into()),
             reason: Some(reason.into()),
-            agents: AGENTS_NOT_OBSERVED.into(),
+            agents: agents_not_observed(),
             finished_at: cccc_contracts::utc_now(),
+            source,
+            token,
+            source_id: Some(prepared.target.source_id.clone()),
         },
     );
 }
@@ -1357,15 +1911,18 @@ fn write_last(home: &HomeLayout, last: LastResult) {
 }
 
 /// After the relay: the daemon is ready and the Web listens on the new
-/// program, so the previous files can go and ordinary starts may resume. This
-/// records the installation only; the agents are not observed here. An error
+/// program, so the previous files can go and ordinary starts may resume. The
+/// result names the agents the update stopped or kept, as found now. An error
 /// says what is left to do.
 pub(crate) async fn confirm(
     home: &HomeLayout,
     transaction: &Transaction,
     record: &RelayRecord,
-) -> Result<(), String> {
-    let context = UpdateContext::for_installation(home, record.install_dir.clone());
+) -> Result<UpdateAgents, String> {
+    let Some(install_dir) = record.source.release_dir() else {
+        return confirm_local(home, transaction, record).await;
+    };
+    let context = UpdateContext::for_installation(home, install_dir.to_path_buf());
     let run = run_phase(&context, transaction, "confirm", None, PHASE_TIMEOUT).await;
     let confirmed = matches!(
         &run,
@@ -1392,16 +1949,318 @@ pub(crate) async fn confirm(
     };
     if let Some(problem) = problem {
         cccc_runtime::diagnostic(format_args!("{problem}"));
-        record_result(home, record, "unconfirmed");
+        record_result(home, record, "unconfirmed", agents_not_observed());
         return Err(problem);
     }
-    record_result(home, record, "installed");
+    let observing = record_first(home, record, "installed");
     transaction.remove();
     cccc_runtime::diagnostic(format_args!(
         "[cccc] Updated CCCC {} to {}",
         record.from_version, record.to_version
     ));
-    Ok(())
+    Ok(record_agents(home, record, "installed", observing).await)
+}
+
+/// A restart into a rebuilt program replaced no files: once it runs, ordinary
+/// starts may resume.
+async fn confirm_local(
+    home: &HomeLayout,
+    transaction: &Transaction,
+    record: &RelayRecord,
+) -> Result<UpdateAgents, String> {
+    if let Err(error) = attended_update::disarm(home, &transaction.id) {
+        let problem = format!(
+            "CCCC {} is running, but its restart intent could not be withdrawn: {error}; stop CCCC, then finish it with `{}`",
+            record.to_version,
+            recovery_command(home)
+        );
+        cccc_runtime::diagnostic(format_args!("{problem}"));
+        record_result(home, record, "unconfirmed", agents_not_observed());
+        return Err(problem);
+    }
+    let observing = record_first(home, record, "restarted");
+    transaction.remove();
+    cccc_runtime::diagnostic(format_args!(
+        "[cccc] Restarted CCCC into the local build {}",
+        record.to_version
+    ));
+    Ok(record_agents(home, record, "restarted", observing).await)
+}
+
+/// Record the result at once. When its stop named agents, they are recorded
+/// as not yet confirmed while the host looks for them.
+fn record_first(home: &HomeLayout, record: &RelayRecord, result: &str) -> Option<Observing> {
+    let Some(stopped) = &record.stopped else {
+        record_result(home, record, result, agents_not_observed());
+        return None;
+    };
+    let observing = Observing::start();
+    let looking = Reconciled {
+        unconfirmed: expected(stopped)
+            .iter()
+            .chain(&stopped.unconfirmed)
+            .cloned()
+            .collect(),
+        ..Reconciled::default()
+    };
+    let mut agents = named(home, looking);
+    agents.state = "observing".into();
+    record_result(home, record, result, agents);
+    Some(observing)
+}
+
+/// Look for the agents of a result just recorded and record what was found,
+/// unless a later update's result has replaced it meanwhile.
+async fn record_agents(
+    home: &HomeLayout,
+    record: &RelayRecord,
+    result: &str,
+    observing: Option<Observing>,
+) -> UpdateAgents {
+    let (Some(_observing), Some(stopped)) = (observing, &record.stopped) else {
+        return agents_not_observed();
+    };
+    let agents = observe_agents(home, stopped).await;
+    let last: Option<LastResult> =
+        cccc_core::fs::read_json(&home.root().join("update/last.json")).ok();
+    if last.is_some_and(|last| last.transaction == record.transaction) {
+        record_result(home, record, result, agents.clone());
+    }
+    agents
+}
+
+/// The agents a stop receipt says the update kept or stopped.
+fn expected(stopped: &ShutdownReport) -> &[AgentIdentity] {
+    match stopped.mode {
+        ShutdownMode::PreserveAgents => &stopped.retained,
+        ShutdownMode::Stop => &stopped.confirmed_stopped,
+    }
+}
+
+/// Look for the agents the stop receipt names, for a few seconds after CCCC
+/// is back: one kept running should be found with the same launch, one
+/// stopped with a launch of its own. What one look proves stays proven.
+async fn observe_agents(home: &HomeLayout, stopped: &ShutdownReport) -> UpdateAgents {
+    let deadline = Instant::now() + AGENTS_OBSERVE_BUDGET;
+    let mut found = Reconciled::default();
+    loop {
+        let budget = deadline
+            .saturating_duration_since(Instant::now())
+            .clamp(Duration::from_millis(500), Duration::from_secs(3));
+        let observed = cccc_daemon::session_owner::observations(home, budget)
+            .await
+            .ok();
+        found = reconcile(stopped, observed.as_ref(), &found);
+        if found.settled || Instant::now() >= deadline {
+            return named(home, found);
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// The agents a stop receipt names, as one observation found them.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Reconciled {
+    reattached: Vec<AgentIdentity>,
+    restarted: Vec<AgentIdentity>,
+    not_back: Vec<AgentIdentity>,
+    unconfirmed: Vec<AgentIdentity>,
+    /// Every agent the update kept or stopped was found running.
+    settled: bool,
+}
+
+/// Each agent the receipt names, as this observation found it. One that an
+/// `earlier` look found kept or started again stays so, with the launch then
+/// found: a holder that does not answer now does not undo that.
+fn reconcile(
+    stopped: &ShutdownReport,
+    observed: Option<&AgentObservations>,
+    earlier: &Reconciled,
+) -> Reconciled {
+    let same_agent = |one: &AgentIdentity, other: &AgentIdentity| {
+        one.group_id == other.group_id
+            && one.actor_id == other.actor_id
+            && one.actor_created_at == other.actor_created_at
+    };
+    let keep = stopped.mode == ShutdownMode::PreserveAgents;
+    let mut found = Reconciled {
+        settled: true,
+        ..Reconciled::default()
+    };
+    for identity in expected(stopped) {
+        let proven = |list: &[AgentIdentity]| {
+            list.iter()
+                .find(|proven| same_agent(proven, identity))
+                .cloned()
+        };
+        if let Some(proven) = proven(&earlier.reattached) {
+            found.reattached.push(proven);
+            continue;
+        }
+        if let Some(proven) = proven(&earlier.restarted) {
+            found.restarted.push(proven);
+            continue;
+        }
+        let running = observed.and_then(|observed| {
+            observed
+                .running
+                .iter()
+                .find(|running| same_agent(running, identity))
+        });
+        // A launch without a known generation proves neither.
+        let known = identity.generation.is_some();
+        match running {
+            // Kept: the same launch, with the holder that kept it.
+            Some(running)
+                if keep
+                    && known
+                    && identity.owner_id.is_some()
+                    && running.generation == identity.generation
+                    && running.owner_id == identity.owner_id =>
+            {
+                found.reattached.push(running.clone());
+            }
+            // Started again, with a launch of its own.
+            Some(running)
+                if known
+                    && running.generation.is_some()
+                    && running.generation != identity.generation =>
+            {
+                found.restarted.push(running.clone());
+            }
+            _ => {
+                found.settled = false;
+                let unknown = running.is_some()
+                    || observed.is_none_or(|observed| {
+                        !observed.unavailable_owners.is_empty()
+                            || observed
+                                .unconfirmed
+                                .iter()
+                                .any(|other| same_agent(other, identity))
+                    });
+                // Only a kept agent's absence is evidence: every holder answered
+                // and none holds it. After a restart the daemon starts agents
+                // again in the background, one by one, so one not seen yet may
+                // still start.
+                if unknown || !keep {
+                    found.unconfirmed.push(identity.clone());
+                } else {
+                    found.not_back.push(identity.clone());
+                }
+            }
+        }
+    }
+    // What the stop itself could not confirm stays unconfirmed.
+    found
+        .unconfirmed
+        .extend(stopped.unconfirmed.iter().cloned());
+    found
+}
+
+/// Agents' current titles, each Group read once. The daemon names agents by
+/// ID; the person reading a result knows them by title.
+struct Titles {
+    store: Option<cccc_core::GroupStore>,
+    groups: std::collections::BTreeMap<String, Option<cccc_core::GroupDoc>>,
+}
+
+impl Titles {
+    fn new(home: &HomeLayout) -> Self {
+        Self {
+            store: cccc_core::GroupStore::new(home.clone()).ok(),
+            groups: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// The title of `actor_id`, while it is still the agent created at
+    /// `created_at` when that is known.
+    fn title(
+        &mut self,
+        group_id: &str,
+        actor_id: &str,
+        created_at: Option<&str>,
+    ) -> Option<String> {
+        let store = self.store.as_ref();
+        self.groups
+            .entry(group_id.to_owned())
+            .or_insert_with(|| store.and_then(|store| store.load(group_id).ok()))
+            .as_ref()?
+            .actors
+            .iter()
+            .find(|actor| {
+                actor.id == actor_id && created_at.is_none_or(|created| actor.created_at == created)
+            })
+            .map(|actor| actor.title.trim().to_owned())
+            .filter(|title| !title.is_empty())
+    }
+}
+
+/// Name each agent a refusal is about by its current title.
+pub(crate) fn name_refusals(home: &HomeLayout, decision: &mut KeepDecision) {
+    let mut titles = Titles::new(home);
+    for refusal in &mut decision.refusals {
+        if let (Some(group_id), Some(actor_id)) = (&refusal.group_id, &refusal.actor_id) {
+            refusal.display_name = titles.title(group_id, actor_id, None);
+        }
+    }
+}
+
+/// Name each agent by its current title, while it is still the same agent.
+fn named(home: &HomeLayout, found: Reconciled) -> UpdateAgents {
+    let mut titles = Titles::new(home);
+    let mut name = |identity: &AgentIdentity| UpdateAgent {
+        group_id: identity.group_id.clone(),
+        actor_id: identity.actor_id.clone(),
+        actor_created_at: identity.actor_created_at.clone(),
+        generation: identity.generation.clone(),
+        owner_id: identity.owner_id.clone(),
+        title: titles.title(
+            &identity.group_id,
+            &identity.actor_id,
+            Some(&identity.actor_created_at),
+        ),
+    };
+    let mut names = |list: Vec<AgentIdentity>| list.iter().map(&mut name).collect::<Vec<_>>();
+    let unconfirmed = names(found.unconfirmed);
+    UpdateAgents {
+        state: if unconfirmed.is_empty() {
+            "observed"
+        } else {
+            "unconfirmed"
+        }
+        .into(),
+        reattached: names(found.reattached),
+        restarted: names(found.restarted),
+        not_back: names(found.not_back),
+        unconfirmed,
+    }
+}
+
+/// The agents a result names, for the terminal's one-line notice. Those not
+/// found or not confirmed lead, so a narrow terminal still shows them.
+pub(crate) fn agents_line(agents: &UpdateAgents) -> String {
+    let names = |list: &[UpdateAgent]| {
+        list.iter()
+            .map(|agent| {
+                agent
+                    .title
+                    .clone()
+                    .unwrap_or_else(|| agent.actor_id.clone())
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    [
+        ("Not running", &agents.not_back),
+        ("Could not be confirmed", &agents.unconfirmed),
+        ("Kept running", &agents.reattached),
+        ("Restarted", &agents.restarted),
+    ]
+    .into_iter()
+    .filter(|(_, list)| !list.is_empty())
+    .map(|(label, list)| format!("{label}: {}.", names(list)))
+    .collect::<Vec<_>>()
+    .join(" ")
 }
 
 /// What `--resume` hands the host: the transaction to confirm once the daemon
@@ -1413,7 +2272,7 @@ pub(crate) struct Resumed {
 
 /// `cccc update --resume`: start the host again from the recorded launch.
 pub(crate) async fn resume(home: HomeLayout, dir: PathBuf) -> Result<crate::web_host::LaunchExit> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     reap_inherited_children();
     let transaction = Transaction::open(&home, &dir)?;
     let record = transaction.read_relay()?;
@@ -1424,7 +2283,7 @@ pub(crate) async fn resume(home: HomeLayout, dir: PathBuf) -> Result<crate::web_
     };
     let web_mode = launch.web_mode()?;
     match &record.outcome {
-        RelayOutcome::Applied => {
+        RelayOutcome::Applied | RelayOutcome::LocalReady => {
             crate::web_host::launch_resumed(
                 home,
                 launch.host,
@@ -1443,7 +2302,7 @@ pub(crate) async fn resume(home: HomeLayout, dir: PathBuf) -> Result<crate::web_
                 "[cccc] CCCC was not updated to {} ({stage}: {reason}); starting CCCC {} again",
                 record.to_version, record.from_version
             ));
-            record_result(&home, &record, "abandoned");
+            record_result(&home, &record, "abandoned", agents_not_observed());
             transaction.remove();
             let result = crate::host_state::UpdateResult {
                 transaction: transaction.id.clone(),
@@ -1470,7 +2329,8 @@ pub(crate) async fn resume(home: HomeLayout, dir: PathBuf) -> Result<crate::web_
 /// installer reports. While the previous program is kept, the update is undone.
 /// Once the installer reports it gone, the installed version the user confirmed
 /// is kept, after it proves to be that build. An update that never reserved
-/// this home's startup replaced nothing, so only its files are cleaned up.
+/// this home's startup replaced nothing, so only its files are cleaned up. A
+/// restart into a rebuilt program replaced nothing either, so it is given up.
 pub(crate) async fn recover(home: &HomeLayout, dir: &Path) -> Result<()> {
     // The intent first: when it cannot be used, its error says how to get out,
     // even if the transaction directory is gone.
@@ -1479,7 +2339,10 @@ pub(crate) async fn recover(home: &HomeLayout, dir: &Path) -> Result<()> {
     let Some(intent) = active.filter(|intent| intent.transaction_id == transaction.id) else {
         return clean_up(home, &transaction).await;
     };
-    let context = UpdateContext::for_installation(home, intent.install_dir.clone());
+    let Some(install_dir) = intent.source.release_dir() else {
+        return recover_local(home, &transaction, &intent);
+    };
+    let context = UpdateContext::for_installation(home, install_dir.to_path_buf());
     // Proves that the update host has exited and that no daemon runs for this
     // home while files are restored or kept.
     let _daemon_lock = attended_update::claim_stopped(home, &transaction.id)?;
@@ -1489,7 +2352,7 @@ pub(crate) async fn recover(home: &HomeLayout, dir: &Path) -> Result<()> {
              After checking {} by hand, remove {} to start CCCC again",
             transaction.id,
             transaction.script().display(),
-            intent.install_dir.display(),
+            install_dir.display(),
             home.root().join("update/active.json").display()
         );
     }
@@ -1497,7 +2360,7 @@ pub(crate) async fn recover(home: &HomeLayout, dir: &Path) -> Result<()> {
     let run = run_phase(&context, &transaction, "abort", None, PHASE_TIMEOUT).await?;
     if run.aborted(&transaction) {
         attended_update::disarm(home, &transaction.id)?;
-        record_recovered(home, &transaction, target, "undone");
+        record_recovered(home, &transaction, target, &intent.source, "undone");
         transaction.remove();
         println!(
             "The interrupted update was undone; the previous CCCC is in place. Start CCCC again with `cccc`."
@@ -1535,12 +2398,88 @@ pub(crate) async fn recover(home: &HomeLayout, dir: &Path) -> Result<()> {
         );
     }
     attended_update::disarm(home, &transaction.id)?;
-    record_recovered(home, &transaction, target, "kept");
+    record_recovered(home, &transaction, target, &intent.source, "kept");
     transaction.remove();
     println!(
         "The update had already replaced the previous program, so CCCC {} stays installed. CCCC is not running; start it with `cccc`.",
         target.version
     );
+    Ok(())
+}
+
+/// A restart into a rebuilt program changed no files, so nothing is undone:
+/// once its host has exited, ordinary starts may resume, and they start
+/// whatever is at the program's path now.
+fn recover_local(
+    home: &HomeLayout,
+    transaction: &Transaction,
+    intent: &attended_update::Intent,
+) -> Result<()> {
+    // Proves that the host has exited and that no daemon runs for this home.
+    let _daemon_lock = attended_update::claim_stopped(home, &transaction.id)?;
+    finish_local_recovery(home, transaction, intent)?;
+    println!(
+        "The interrupted restart was given up; CCCC changed no files. CCCC is not running; start it with `cccc`."
+    );
+    Ok(())
+}
+
+/// A normal invocation can finish an interrupted Local restart. The active
+/// intent remains authoritative until the previous host and the daemon lock
+/// both allow recovery.
+pub(crate) fn recover_local_before_start(
+    home: &HomeLayout,
+) -> Result<Option<crate::host_state::UpdateResult>> {
+    let Some(intent) = attended_update::active(home)? else {
+        return Ok(None);
+    };
+    if !matches!(&intent.source, Source::Local { .. }) || !intent.holder.has_exited() {
+        return Ok(None);
+    }
+    let _daemon_lock = match attended_update::claim_stopped(home, &intent.transaction_id) {
+        Ok(lock) => lock,
+        Err(error) => {
+            // Another startup may have finished this Local recovery first.
+            if attended_update::active(home)?.is_none() {
+                return Ok(None);
+            }
+            if error.kind() == io::ErrorKind::WouldBlock {
+                return Err(error).context(
+                    "Another CCCC process holds this home's daemon lock. Retry after it finishes. Run `cccc daemon status` if the lock stays busy",
+                );
+            }
+            return Err(error.into());
+        }
+    };
+    let transaction = Transaction::open(home, &intent.transaction_dir)?;
+    finish_local_recovery(home, &transaction, &intent)?;
+    let message = format!(
+        "The restart to the selected local build (CCCC {}) did not complete and was abandoned. Starting CCCC {} from the program you launched.",
+        intent.target.version,
+        crate::PRODUCT_VERSION,
+    );
+    cccc_runtime::diagnostic(format_args!("[cccc] {message}"));
+    Ok(Some(crate::host_state::UpdateResult {
+        transaction: transaction.id,
+        failed: true,
+        message,
+    }))
+}
+
+fn finish_local_recovery(
+    home: &HomeLayout,
+    transaction: &Transaction,
+    intent: &attended_update::Intent,
+) -> Result<()> {
+    attended_update::disarm(home, &transaction.id)?;
+    record_recovered(
+        home,
+        transaction,
+        &intent.target,
+        &intent.source,
+        "abandoned",
+    );
+    transaction.remove();
     Ok(())
 }
 
@@ -1563,6 +2502,12 @@ async fn clean_up(home: &HomeLayout, transaction: &Transaction) -> Result<()> {
             record.creator.pid
         );
     }
+    // A restart into a rebuilt program staged nothing.
+    if matches!(record.source, Source::Local { .. }) {
+        transaction.remove();
+        println!("The unfinished restart was cleaned up; nothing was changed.");
+        return Ok(());
+    }
     if !transaction.script().is_file() {
         transaction.remove();
         println!("The unfinished update was cleaned up; the installed CCCC was not changed.");
@@ -1574,7 +2519,11 @@ async fn clean_up(home: &HomeLayout, transaction: &Transaction) -> Result<()> {
             transaction.dir.display()
         )
     };
-    let context = UpdateContext::for_installation(home, record.install_dir);
+    let install_dir = record
+        .source
+        .release_dir()
+        .context("the update record names no installation")?;
+    let context = UpdateContext::for_installation(home, install_dir.to_path_buf());
     let run = run_phase(&context, transaction, "abort", None, PHASE_TIMEOUT)
         .await
         .with_context(|| format!("could not clean up update {}; {}", transaction.id, kept()))?;
@@ -1620,10 +2569,13 @@ fn record_recovered(
     home: &HomeLayout,
     transaction: &Transaction,
     target: &BuildIdentity,
+    source: &Source,
     result: &str,
 ) {
     // The relay record exists only when the host got as far as the relay.
     let relay = transaction.read_relay().ok();
+    let (source, token) = result_source(source);
+    let source_id = Some(target.source_id.clone());
     write_last(
         home,
         LastResult {
@@ -1634,42 +2586,30 @@ fn record_recovered(
             result: result.into(),
             stage: Some("recover".into()),
             reason: None,
-            agents: AGENTS_NOT_OBSERVED.into(),
+            agents: agents_not_observed(),
             finished_at: cccc_contracts::utc_now(),
+            source,
+            token,
+            source_id,
         },
     );
 }
 
 /// Children of the replaced program survive exec without anyone to wait for
 /// them. Reap each one when it exits, without touching children started later.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn reap_inherited_children() {
-    let me = std::process::id();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
+    let Ok(children) = cccc_runtime::process_children::children_of(std::process::id()) else {
         return;
     };
-    for entry in entries.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|name| name.parse::<i32>().ok())
-        else {
+    // An unreaped child keeps its PID, so each wait can only ever end that child.
+    for pid in children {
+        let Ok(pid) = i32::try_from(pid) else {
             continue;
         };
-        let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
-            continue;
-        };
-        // The command name may contain spaces or parentheses; fields resume
-        // after its last ')': state, then the parent PID.
-        let parent = stat
-            .rsplit_once(')')
-            .and_then(|(_, rest)| rest.split_whitespace().nth(1))
-            .and_then(|field| field.parse::<u32>().ok());
-        if parent == Some(me) {
-            std::thread::spawn(move || {
-                let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(pid), None);
-            });
-        }
+        std::thread::spawn(move || {
+            let _ = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(pid), None);
+        });
     }
 }
 

@@ -360,7 +360,7 @@ pub enum RuntimeAction {
         #[arg(long)]
         all: bool,
     },
-    /// Inspect and prepare the optional Hermes adapter.
+    /// Check Hermes setup for CCCC members.
     Hermes {
         #[command(subcommand)]
         action: HermesAction,
@@ -369,33 +369,18 @@ pub enum RuntimeAction {
 
 #[derive(Debug, Subcommand)]
 pub enum HermesAction {
-    /// Show the local Hermes installation and adapter state.
+    /// Show the Hermes installation and the profile's cccc MCP entry.
     Status,
-    /// Configure the cccc MCP server in the Hermes profile.
+    /// Remove the cccc MCP server earlier CCCC versions saved in the Hermes
+    /// profile; members get CCCC's server in their own sessions.
     Prepare {
-        /// Project directory used for runtime preparation.
+        /// Directory to run Hermes in.
         #[arg(long = "path", default_value = ".")]
         cwd: String,
-        /// Confirm Hermes MCP setup and enable the discovered CCCC tools (required).
-        #[arg(long)]
-        yes: bool,
-        /// Configure again even when the cccc MCP server is already ready.
-        #[arg(long)]
-        force: bool,
     },
-    /// Run Hermes' MCP test against CCCC with a probe agent.
+    /// Explain how to check a Hermes member's CCCC tools.
     #[command(name = "mcp-test")]
-    McpTest {
-        /// Project directory used for runtime preparation.
-        #[arg(long = "path", default_value = ".")]
-        cwd: String,
-        /// Target Group ID.
-        #[arg(long, default_value = "g_probe")]
-        group_id: String,
-        /// Agent ID within the Group.
-        #[arg(long, default_value = "hermes-probe")]
-        actor_id: String,
-    },
+    McpTest,
 }
 
 #[cfg(test)]

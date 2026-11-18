@@ -676,7 +676,9 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
         // confirmation pauses. User controls may retry an Active or Stopped Group.
         if actor_runtime::user_confirmation_retry(request) {
             for actor in group.actors.iter().filter(|actor| actor.enabled) {
-                if !actor_runtime::actor_is_running(&group, actor) {
+                if !actor_runtime::actor_is_running(&group, actor)
+                    && !actor_runtime::hermes_setup_open(home, &group.group_id, actor)?
+                {
                     super::local_headless::retry_confirmation(&group.group_id, &actor.id)
                         .map_err(OpError::io)?;
                 }

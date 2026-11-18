@@ -71,18 +71,15 @@ impl Interface {
     }
 
     /// Shows that an update is replacing this process, while the daemon stops.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    fn updating(&self, version: &str) {
-        self.state.send_modify(|state| {
-            state.phase = HostPhase::Updating {
-                version: version.to_owned(),
-            }
-        });
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
+    fn updating(&self, notice: String) {
+        self.state
+            .send_modify(|state| state.phase = HostPhase::Updating { notice });
     }
 
     /// Closes the interface before this process is replaced: the terminal goes
     /// back to its own modes, and `message` says what starts next.
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
     async fn finish_for_update(self, message: String) -> Result<()> {
         self.state.send_modify(|state| {
             state.web = WebState::Stopped;
@@ -206,6 +203,11 @@ async fn launch_with(
     update_result: Option<UpdateResult>,
 ) -> Result<LaunchExit> {
     home.initialize()?;
+    let update_result = if resumed.is_none() && update_result.is_none() {
+        crate::update_host::recover_local_before_start(&home)?
+    } else {
+        update_result
+    };
     // Before anything that could stop another host: while an update holds this
     // home, only its own relay may start here.
     cccc_core::attended_update::check_start(
@@ -337,20 +339,34 @@ async fn launch_with(
     let voice_recovery = crate::web_voice_recovery::new(&home, daemon_owned);
 
     let mode = web_mode.unwrap_or_else(cccc_web::WebMode::from_env);
-    // An attended update replaces this process in place, so it is offered by a
-    // Linux host that runs its own daemon from a standalone installation, with
-    // or without the terminal interface.
-    let coordinator =
-        (cfg!(target_os = "linux") && daemon_owned && mode == cccc_web::WebMode::Normal)
-            .then(|| crate::update_host::UpdateContext::for_running_program(&home).ok())
-            .flatten()
-            .map(crate::update_host::Coordinator::new);
-    // Any administrator of this Web can check for a newer release; only a host
-    // that can replace itself also offers to carry the update out.
+    // An attended update replaces this process in place, so only a Linux or
+    // macOS host that runs its own daemon offers one, with or without the terminal
+    // interface: a standalone installation installs a release, and any
+    // installation restarts into the program it was started from once that has
+    // been rebuilt. It records that program now, before a build can replace it.
+    let replaces_itself = cfg!(any(target_os = "linux", target_os = "macos"))
+        && daemon_owned
+        && mode == cccc_web::WebMode::Normal;
+    let launch_program = replaces_itself
+        .then(crate::update_checker::LaunchProgram::current)
+        .flatten();
+    let coordinator = replaces_itself
+        .then(|| crate::update_host::UpdateContext::for_running_program(&home).ok())
+        .flatten()
+        .map(|context| crate::update_host::Coordinator::new(context, launch_program.clone()))
+        .filter(|coordinator| {
+            use cccc_web::UpdateHost;
+            coordinator.release_in_place() || coordinator.local_restart()
+        });
+    // Any administrator of this Web can check for a newer release and for a
+    // rebuilt program; only a host that can replace itself also offers to
+    // carry either out.
     let update_checker: Option<cccc_web::UpdateCheckHook> = (mode == cccc_web::WebMode::Normal)
         .then(|| {
-            std::sync::Arc::new(crate::update_checker::HostChecker::new(home.clone()))
-                as cccc_web::UpdateCheckHook
+            std::sync::Arc::new(crate::update_checker::HostChecker::new(
+                home.clone(),
+                launch_program,
+            )) as cccc_web::UpdateCheckHook
         });
     // The terminal interface starts an update through the Web serving now.
     let update_trigger = crate::update_checker::TriggerSlot::default();
@@ -358,7 +374,15 @@ async fn launch_with(
         crate::update_checker::UpdateEntry::new(
             checker,
             update_trigger.clone(),
-            coordinator.is_some(),
+            coordinator
+                .as_ref()
+                .is_some_and(cccc_web::UpdateHost::release_in_place),
+            coordinator
+                .as_ref()
+                .is_some_and(cccc_web::UpdateHost::local_restart),
+            coordinator
+                .as_ref()
+                .is_some_and(cccc_web::UpdateHost::release_keep),
         )
     });
 
@@ -402,23 +426,38 @@ async fn launch_with(
             let confirmed =
                 crate::update_host::confirm(&home, &resumed.transaction, &resumed.record).await;
             if let Some(state) = state {
+                let record = &resumed.record;
+                let local = record.source.release_dir().is_none();
                 let result = match confirmed {
-                    Ok(()) => UpdateResult {
-                        transaction: resumed.transaction.id.clone(),
-                        failed: false,
-                        message: format!(
-                            "Updated CCCC {} to {}.",
-                            resumed.record.from_version, resumed.record.to_version
-                        ),
-                    },
+                    Ok(agents) => {
+                        let done = if local {
+                            format!("Restarted CCCC into the local build {}.", record.to_version)
+                        } else {
+                            format!(
+                                "Updated CCCC {} to {}.",
+                                record.from_version, record.to_version
+                            )
+                        };
+                        let agents = crate::update_host::agents_line(&agents);
+                        UpdateResult {
+                            transaction: resumed.transaction.id.clone(),
+                            failed: false,
+                            message: if agents.is_empty() {
+                                done
+                            } else {
+                                format!("{done} {agents}")
+                            },
+                        }
+                    }
                     // The full problem, with its recovery command, is in the log;
                     // the notice is one line.
                     Err(_) => UpdateResult {
                         transaction: resumed.transaction.id.clone(),
                         failed: true,
                         message: format!(
-                            "CCCC {} runs, but its update was not confirmed; the CCCC log has the recovery command.",
-                            resumed.record.to_version
+                            "CCCC {} runs, but its {} was not confirmed; the CCCC log has the recovery command.",
+                            record.to_version,
+                            if local { "restart" } else { "update" }
                         ),
                     },
                 };
@@ -453,7 +492,11 @@ async fn launch_with(
             .ok()
     });
 
-    let loop_result: Result<Option<crate::update_host::Prepared>> = if let Some(error) =
+    // A handover carries the update, and for one that keeps agents, the ID of
+    // the stop the daemon already accepted.
+    let loop_result: Result<Option<(crate::update_host::Prepared, Option<String>)>> = if let Some(
+        error,
+    ) =
         startup_error
     {
         Err(error)
@@ -573,8 +616,30 @@ async fn launch_with(
                             break Ok(None);
                         }
                         Some(prepared) => {
-                            match crate::update_host::arm(coordinator.context(), &prepared) {
-                                Ok(()) => {
+                            // Keeping agents: the daemon checks every agent again
+                            // and stops only if each one can be kept.
+                            let started =
+                                match crate::update_host::arm(coordinator.context(), &prepared) {
+                                    Err(error) => Err(("arm", format!("{error:#}"), true)),
+                                    Ok(()) if prepared.mode == cccc_web::UpdateMode::Keep => {
+                                        match crate::update_host::request_keeping_stop(
+                                            &client, &home, &prepared,
+                                        )
+                                        .await
+                                        {
+                                            crate::update_host::KeepingStop::Requested(id) => {
+                                                Ok(Some(id))
+                                            }
+                                            crate::update_host::KeepingStop::Refused {
+                                                reason,
+                                                withdrawn,
+                                            } => Err(("keep", reason, withdrawn)),
+                                        }
+                                    }
+                                    Ok(()) => Ok(None),
+                                };
+                            match started {
+                                Ok(preserving) => {
                                     // From here an interrupt must not force an exit or
                                     // stop agents halfway through the replacement.
                                     if let Some(watchdog) = plain_watchdog.take() {
@@ -583,24 +648,25 @@ async fn launch_with(
                                     if let Some(control) = terminal_control.as_mut() {
                                         control.stand_down();
                                     }
-                                    break Ok(Some(prepared));
+                                    break Ok(Some((prepared, preserving)));
                                 }
                                 // Nothing was stopped: report it and serve again.
-                                Err(error) => {
-                                    let reason = format!("{error:#}");
+                                Err((stage, reason, withdrawn)) => {
                                     cccc_runtime::diagnostic(format_args!(
-                                        "[cccc] The update to CCCC {} did not start: {reason}",
-                                        prepared.version
+                                        "[cccc] The {} did not start: {reason}",
+                                        prepared.what()
                                     ));
                                     crate::update_host::record_not_started(
                                         coordinator.context(),
                                         &prepared,
+                                        stage,
                                         &reason,
                                     );
                                     if let Some(interface) = &interface {
                                         let message = format!(
-                                            "The update to CCCC {} did not start ({reason}). CCCC was not updated and no agent was stopped.",
-                                            prepared.version
+                                            "The {} did not start ({reason}). {} and no agent was stopped.",
+                                            prepared.what(),
+                                            prepared.unchanged()
                                         );
                                         interface.state.send_modify(|state| {
                                             state.update = Some(UpdateResult {
@@ -610,7 +676,11 @@ async fn launch_with(
                                             })
                                         });
                                     }
-                                    coordinator.undo(prepared).await;
+                                    if withdrawn {
+                                        coordinator.undo(prepared).await;
+                                    } else {
+                                        coordinator.keep_for_recovery(prepared);
+                                    }
                                     continue;
                                 }
                             }
@@ -656,8 +726,8 @@ async fn launch_with(
         Ok(handover) => (Ok(()), handover),
         Err(error) => (Err(error), None),
     };
-    if let Some(prepared) = handover {
-        #[cfg(target_os = "linux")]
+    if let Some((prepared, preserving)) = handover {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         if let Some(coordinator) = &coordinator {
             // The relay reopens the Web where it listened, even when that came
             // from a saved binding or an ephemeral port rather than the options.
@@ -675,11 +745,18 @@ async fn launch_with(
             // The screen stays to show the update; the work it started on the
             // daemon ends before the daemon goes away.
             if let Some(interface) = interface.as_mut() {
-                interface.updating(&prepared.version);
+                interface.updating(prepared.notice());
                 interface.session.stop_work().await;
             }
-            let exit =
-                finish_handover(&home, &client, embedded_daemon.take(), context, prepared).await;
+            let exit = finish_handover(
+                &home,
+                &client,
+                embedded_daemon.take(),
+                context,
+                prepared,
+                preserving,
+            )
+            .await;
             // Whatever runs next replaces this process or ends it, so the
             // terminal interface closes first and gives the terminal back.
             if let Some(interface) = interface.take() {
@@ -694,8 +771,8 @@ async fn launch_with(
             }
             return exit;
         }
-        // Only a Linux host with its own daemon offers updates.
-        drop(prepared);
+        // Only a Linux or macOS host with its own daemon offers updates.
+        drop((prepared, preserving));
         bail!("this CCCC process cannot finish an update");
     }
     // A relay that never confirmed must not be cut off mid-confirm by shutdown.
@@ -762,8 +839,8 @@ async fn launch_with(
     }
     // The receipt of the daemon this launch started, whoever asked it to exit: this
     // launch's stop, or `cccc daemon stop [--keep-agents]` from another terminal. Only
-    // Linux has session owners, so only there does a receipt list the agents.
-    let agents = match owned_pid.filter(|_| cfg!(target_os = "linux")) {
+    // where session owners run does a receipt list the agents.
+    let agents = match owned_pid.filter(|_| cccc_daemon::session_owner::platform_supported()) {
         None => AgentsResult::NotOwned,
         Some(pid) => {
             let receipt = match cccc_daemon::session_owner::read_shutdown_report(&home, pid, None) {
@@ -813,54 +890,94 @@ async fn launch_with(
 /// for the update, replace the files under the stopped daemon's lock, and
 /// relay to the installed program. A stop or replacement that does not go
 /// cleanly relays to the unchanged program instead, which starts as before.
-#[cfg(target_os = "linux")]
+/// A restart into a rebuilt program replaces no files, and the program at its
+/// path is already the rebuilt one: when its stop does not go cleanly, the
+/// host leaves its intent in place and names the recovery command.
+/// `preserving` is the stop that keeps agents, already accepted by the daemon:
+/// the host then only waits for the daemon to end.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn finish_handover(
     home: &HomeLayout,
     client: &DaemonClient,
     daemon: Option<tokio::task::JoinHandle<Result<()>>>,
     context: crate::update_host::UpdateContext,
     prepared: crate::update_host::Prepared,
+    preserving: Option<String>,
 ) -> Result<LaunchExit> {
     use crate::update_host::{self, ApplyOutcome, RelayOutcome};
+    use cccc_daemon::session_owner::ShutdownMode;
 
-    // The daemon binds its stop receipt to this ID, so only this stop counts.
-    let request_id = uuid::Uuid::new_v4().to_string();
     cccc_mcp::shutdown(home).await;
-    let stop_error = finish_embedded_daemon(home, client, daemon, Some(&request_id)).await;
+    // The daemon binds its stop receipt to the request's ID, so only this
+    // stop counts.
+    let (request_id, mode, stop_error) = match preserving {
+        Some(request_id) => {
+            let stop_error = join_embedded_daemon(daemon).await;
+            (request_id, ShutdownMode::PreserveAgents, stop_error)
+        }
+        None => {
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let stop_error = finish_embedded_daemon(home, client, daemon, Some(&request_id)).await;
+            (request_id, ShutdownMode::Stop, stop_error)
+        }
+    };
     let stopped = verify_daemon_stopped(home).await;
     let receipt = cccc_daemon::session_owner::read_shutdown_report(
         home,
         std::process::id(),
         Some(&request_id),
     );
-    let stop_problem = match (stop_error, stopped, receipt) {
-        (Some(error), _, _) | (None, Err(error), _) => Some(format!("{error:#}")),
-        (None, Ok(()), Ok(Some(report))) if report.unconfirmed.is_empty() => None,
-        (None, Ok(()), Ok(Some(report))) => Some(format!(
-            "{} agent(s) could not be confirmed stopped; see `cccc daemon process-recovery`",
-            report.unconfirmed.len()
-        )),
-        (None, Ok(()), Ok(None)) => Some("the daemon left no stop receipt for this update".into()),
-        (None, Ok(()), Err(error)) => Some(format!("could not read the stop receipt: {error}")),
+    let (stop_problem, report) = match (stop_error, stopped, receipt) {
+        (Some(error), _, _) | (None, Err(error), _) => (Some(format!("{error:#}")), None),
+        (None, Ok(()), Ok(Some(report))) if report.mode != mode => (
+            Some("the daemon did not stop the way this update asked".into()),
+            None,
+        ),
+        // Agents a stop that keeps them could not confirm are named in the
+        // result; a stop that ends them must confirm every one.
+        (None, Ok(()), Ok(Some(report)))
+            if report.unconfirmed.is_empty() || mode == ShutdownMode::PreserveAgents =>
+        {
+            (None, Some(report))
+        }
+        (None, Ok(()), Ok(Some(report))) => (
+            Some(format!(
+                "{} agent(s) could not be confirmed stopped; see `cccc daemon process-recovery`",
+                report.unconfirmed.len()
+            )),
+            None,
+        ),
+        (None, Ok(()), Ok(None)) => (
+            Some("the daemon left no stop receipt for this update".into()),
+            None,
+        ),
+        (None, Ok(()), Err(error)) => (
+            Some(format!("could not read the stop receipt: {error}")),
+            None,
+        ),
     };
     let abandon = |stage: &str, reason: String| RelayOutcome::Abandoned {
         stage: stage.into(),
         reason,
     };
+    let stopped_halfway = |reason: String| {
+        anyhow::anyhow!(
+            "the {} stopped halfway ({reason}); recover with `{}`",
+            prepared.what(),
+            update_host::recovery_command(home)
+        )
+    };
     let (outcome, daemon_lock) = match stop_problem {
+        Some(reason) if prepared.is_local() => return Err(stopped_halfway(reason)),
         Some(reason) => (abandon("stop", reason), None),
         None => match cccc_core::attended_update::claim_stopped(home, &prepared.transaction.id) {
+            Err(error) if prepared.is_local() => return Err(stopped_halfway(error.to_string())),
             Err(error) => (abandon("claim", error.to_string()), None),
+            Ok(lock) if prepared.is_local() => (RelayOutcome::LocalReady, Some(lock)),
             Ok(lock) => match update_host::apply(&context, &prepared, &lock).await {
                 ApplyOutcome::Applied => (RelayOutcome::Applied, Some(lock)),
                 ApplyOutcome::Restored { reason } => (abandon("apply", reason), Some(lock)),
-                ApplyOutcome::Unknown { reason } => {
-                    bail!(
-                        "the update to CCCC {} stopped halfway ({reason}); recover with `{}`",
-                        prepared.version,
-                        update_host::recovery_command(home)
-                    );
-                }
+                ApplyOutcome::Unknown { reason } => return Err(stopped_halfway(reason)),
             },
         },
     };
@@ -888,15 +1005,21 @@ async fn finish_handover(
             );
         }
     }
-    if let Err(error) = update_host::write_relay(&context, &prepared, outcome.clone()) {
+    // A relay that goes ahead carries the receipt: the program it starts looks
+    // for the agents it names.
+    let stopped = match &outcome {
+        RelayOutcome::Abandoned { .. } => None,
+        RelayOutcome::Applied | RelayOutcome::LocalReady => report,
+    };
+    if let Err(error) = update_host::write_relay(&context, &prepared, outcome.clone(), stopped) {
         bail!(
-            "could not record the update to CCCC {} ({error:#}); recover with `{}`",
-            prepared.version,
+            "could not record the {} ({error:#}); recover with `{}`",
+            prepared.what(),
             update_host::recovery_command(home)
         );
     }
     let relay = update_host::Relay {
-        program: context.executable.clone(),
+        program: prepared.program(),
         transaction: prepared.transaction.clone(),
         daemon_lock,
     };
@@ -966,7 +1089,7 @@ async fn finish_embedded_daemon(
 ) -> Option<anyhow::Error> {
     use crate::commands::common::call;
 
-    let mut daemon = daemon?;
+    let daemon = daemon?;
     // This host is stopping its own daemon, so the agents stop with it. Decide
     // that here rather than through the request below: a request queued behind
     // a long Group operation may still be waiting when the deadline cancels the
@@ -986,6 +1109,16 @@ async fn finish_embedded_daemon(
         )
         .await;
     }
+    join_embedded_daemon(Some(daemon)).await
+}
+
+/// Wait for the embedded daemon to end, cancelling it at the deadline, and
+/// report why it ended, when it ended badly.
+#[cfg(not(windows))]
+async fn join_embedded_daemon(
+    daemon: Option<tokio::task::JoinHandle<Result<()>>>,
+) -> Option<anyhow::Error> {
+    let mut daemon = daemon?;
     match tokio::time::timeout(daemon_lifecycle::DAEMON_SHUTDOWN_TIMEOUT, &mut daemon).await {
         Ok(Ok(Err(error))) => Some(error),
         Ok(Err(error)) if !error.is_cancelled() => {

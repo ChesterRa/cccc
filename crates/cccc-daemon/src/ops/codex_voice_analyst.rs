@@ -15,6 +15,7 @@ mod control;
 mod grok;
 mod grok_voice_auth;
 pub(crate) use grok_voice_auth::{grok_voice_bearer, grok_voice_credentials_available};
+mod kilo_input;
 mod launch;
 pub(crate) use launch::ANALYST_INSTRUCTIONS;
 pub(crate) use launch_secretary::{
@@ -22,7 +23,9 @@ pub(crate) use launch_secretary::{
 };
 mod launch_antigravity;
 mod native_acp;
-pub(crate) use native_acp::{name as native_acp_name, valid_id as valid_native_acp_id};
+pub(crate) use native_acp::{
+    hermes_profile, hermes_setup, name as native_acp_name, valid_id as valid_native_acp_id,
+};
 mod launch_claude;
 mod launch_codex;
 mod launch_command;
@@ -348,7 +351,9 @@ impl ManagedProtocol {
                 Ok(())
             }
             Self::Acp(protocol) => {
-                protocol.close().await;
+                if !protocol.close().await {
+                    tracing::warn!("managed ACP client did not close in time and was aborted");
+                }
                 Ok(())
             }
             Self::Claude(protocol) => protocol.close().await,
