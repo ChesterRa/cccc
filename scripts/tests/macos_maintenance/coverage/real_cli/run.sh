@@ -28,6 +28,6 @@ private=(env -i PATH="$node_dir:/usr/bin:/bin" HOME="$fixture_root/home"
     CLAUDE_CONFIG_DIR="$fixture_root/claude" TMPDIR="$fixture_root/tmp"
     LANG=C CCCC_TEST_KILO_EARLY="${CCCC_TEST_KILO_EARLY:-0}" CCCC_TEST_SDK_INSPECTOR="$inspect")
 cp "$here/$runtime"/{package,package-lock}.json "$fixture_root/pkg/"
-"${private[@]}" "$npm_exe" ci --prefix "$fixture_root/pkg" --ignore-scripts --no-audit --no-fund >"$out/npm.log" 2>&1
+(cd "$fixture_root/pkg" && "${private[@]}" "$npm_exe" ci --ignore-scripts --no-audit --no-fund) >"$out/npm.log" 2>&1
 "${private[@]}" HTTP_PROXY=http://127.0.0.1:1 HTTPS_PROXY=http://127.0.0.1:1 NO_PROXY=127.0.0.1,localhost \
     "$python" -I "$here/managed_cli.py" "$runtime" "$old" "$new" "$here/../portable/mock_model.py" "$fixture_root/pkg" "$out/$runtime"

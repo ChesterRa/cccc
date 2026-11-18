@@ -50,6 +50,13 @@ case "$case_name" in
     browser|browser-local|browser-release)
         browser_case=daemon
         if [ "$case_name" != browser ]; then browser_case=${case_name#browser-}; fi
+        if [ "$(uname -s)" = Darwin ]; then
+            if [ "$(cat "$RUNNER_TEMP/cccc-browser-available")" != yes ]; then
+                echo 'Browser maintenance not exercised: neither isolated nor system LaunchServices opened a private Chrome on this runner.' >&2
+                exit 1
+            fi
+            private+=(CCCC_TEST_BROWSER_ENV_FILE="$RUNNER_TEMP/cccc-browser-environment.json")
+        fi
         if [ "$(uname -s)" = Linux ]; then
             private=(bwrap --unshare-net --dev-bind / / --ro-bind
                 "$here/wave/headless_chrome" /opt/google/chrome/google-chrome -- "${private[@]}")

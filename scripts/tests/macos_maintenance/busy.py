@@ -45,6 +45,21 @@ def exercise(kind, root, out, old, new, before, after, archive_server):
         PATH=str(install) + ":/usr/bin:/bin",
     )
     assert Path(env["HOME"]).parent.name.startswith("cccc-isolated.")
+    if sys.platform == "darwin" and os.environ.get("CCCC_TEST_BROWSER_ENV_FILE"):
+        # Only the CCCC child uses the OS context the positive Chrome control identified.
+        overrides = json.loads(
+            Path(os.environ["CCCC_TEST_BROWSER_ENV_FILE"]).read_text()
+        )
+        assert set(overrides) <= {
+            "HOME",
+            "TMPDIR",
+            "XPC_FLAGS",
+            "XPC_SERVICE_NAME",
+            "__CF_USER_TEXT_ENCODING",
+            "COMMAND_MODE",
+        }
+        env.update(overrides)
+
     import socket
 
     with socket.socket() as listener:

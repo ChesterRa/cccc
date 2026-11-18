@@ -19,16 +19,16 @@ private=(env -i PATH="$node_dir:/usr/bin:/bin" HOME="$root/home" CCCC_HOME="$roo
     CODEX_HOME="$root/codex" TMPDIR="$root/tmp" USER="$(id -un)" LANG=C
     CCCC_TEST_SDK_INSPECTOR="$inspector")
 copy_cache=${CCCC_TEST_DEEPSEEK_CACHE:-}
-if [ -z "$copy_cache" ]; then
-    cp "$here"/deepseek/{package,package-lock}.json "$root/pinned-node/"
-    "${private[@]}" "$npm_path" ci --ignore-scripts --no-audit --no-fund --prefix "$root/pinned-node" >"$out/npm.log" 2>&1
-    copy_cache="$root/pinned-node"
-fi
 failed=0
 for phase in structured real_deepseek; do
     if [ "$phase" = structured ]; then
         args=("$here/managed.py" "$old" "$new" "$out/structured")
     else
+        if [ -z "$copy_cache" ]; then
+            cp "$here"/deepseek/{package,package-lock}.json "$root/pinned-node/"
+            (cd "$root/pinned-node" && "${private[@]}" "$npm_path" ci --ignore-scripts --no-audit --no-fund) >"$out/npm.log" 2>&1
+            copy_cache="$root/pinned-node"
+        fi
         args=("$here/real_deepseek.py" "$old" "$new" "$here/mock_model.py" "$out/real_deepseek")
     fi
     rc=0

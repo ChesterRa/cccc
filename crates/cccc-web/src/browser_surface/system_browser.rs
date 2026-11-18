@@ -158,46 +158,62 @@ impl SystemBrowserLaunch {
     ) -> Result<(Browser, Handler, u32)> {
         let app =
             macos_app_bundle(&self.executable).context("system browser app bundle not found")?;
-        let browser_args = self.browser_args(profile, extra_args);
-        let mut command = cccc_runtime::background_tokio_command("/usr/bin/open");
+        // The profile lease compares this path to Chrome's command line when
+        // recovering a launch, including profiles reached through a symlink.
+        let profile = profile
+            .canonicalize()
+            .context("resolve the system browser profile")?;
+        let browser_args = self.browser_args(&profile, extra_args);
+        let mut command = cccc_runtime::background_command("/usr/bin/open");
         command.args(macos_open_args(app));
         command.args(&browser_args);
-        #[cfg(not(test))]
-        let output = command.output().await;
-        #[cfg(test)]
-        let output = if std::env::var_os("CCCC_TEST_TRACE_MACOS_OPEN").is_some() {
-            macos_tests::open_with_trace(&mut command).await
-        } else {
-            eprintln!("[native-browser] waiting for macOS open and its pipes");
-            command.output().await
-        };
-        let output = output.context("launch system browser in background")?;
-        #[cfg(test)]
-        eprintln!("[native-browser] macOS open completed");
-        if !output.status.success() {
-            bail!(
-                "background system browser launch failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        // From here a browser may run for this profile until a stop proves
-        // that the process it recorded has ended.
+        self.launch_with_macos_open(&profile, &mut command, CDP_START_TIMEOUT)
+            .await
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn launch_with_macos_open(
+        &mut self,
+        profile: &Path,
+        command: &mut std::process::Command,
+        timeout: Duration,
+    ) -> Result<(Browser, Handler, u32)> {
+        let request =
+            match cccc_runtime::capture_command_with_start_evidence(command, None, timeout, 4096)
+                .await
+            {
+                Ok(output) if output.status.success() => Ok(()),
+                Ok(output) => bail!(
+                    "background system browser launch failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+                Err(cccc_runtime::CommandError::NotStarted(error)) => {
+                    return Err(error).context("start the macOS browser launcher");
+                }
+                Err(cccc_runtime::CommandError::Started(error)) => {
+                    let context = if error.kind() == std::io::ErrorKind::TimedOut {
+                        "macOS did not respond to the background browser launch request in time"
+                    } else {
+                        "could not confirm the background browser launch request on macOS"
+                    };
+                    Err(error).context(context)
+                }
+            };
+        // LaunchServices may have accepted the request even if open timed out.
+        // Cleanup can identify only the browser using this launch's profile.
         self.opened = Some(OpenedBrowser {
             profile: profile.to_owned(),
             process: None,
         });
-        #[cfg(test)]
-        eprintln!("[native-browser] begin connecting to the browser");
-        let connected = match self.connect_background_macos(profile).await {
-            Ok((browser, handler, pid)) => match process_identity(pid) {
-                Ok(Some(identity)) => Ok((browser, handler, pid, identity)),
-                Ok(None) => Err(anyhow::anyhow!(
-                    "system browser process {pid} ended right after it started"
-                )),
-                Err(error) => Err(error),
-            },
-            Err(error) => Err(error),
-        };
+        let connected: Result<_> = async {
+            request?;
+            let (browser, handler, pid) = self.connect_background_macos(profile).await?;
+            let identity = process_identity(pid)?.with_context(|| {
+                format!("system browser process {pid} ended right after it started")
+            })?;
+            Ok((browser, handler, pid, identity))
+        }
+        .await;
         match connected {
             Ok((browser, handler, pid, identity)) => {
                 if let Some(opened) = &mut self.opened {
@@ -206,13 +222,9 @@ impl SystemBrowserLaunch {
                 Ok((browser, handler, pid))
             }
             Err(error) => {
-                #[cfg(test)]
-                eprintln!("[native-browser] begin failed launch cleanup");
                 if let Err(cleanup_error) = self.stop_opened().await {
                     tracing::warn!(%cleanup_error, "failed to clean up background system browser launch");
                 }
-                #[cfg(test)]
-                eprintln!("[native-browser] failed launch cleanup returned");
                 Err(error)
             }
         }
@@ -233,13 +245,9 @@ impl SystemBrowserLaunch {
     async fn connect_background_macos(&self, profile: &Path) -> Result<(Browser, Handler, u32)> {
         let endpoint = format!("http://127.0.0.1:{}/json/version", self.cdp_port);
         let client = reqwest::Client::builder().no_proxy().build()?;
-        #[cfg(test)]
-        eprintln!("[native-browser] HTTP client ready");
         let deadline = Instant::now() + CDP_START_TIMEOUT;
         loop {
             if let Some(websocket_url) = cdp_websocket_url(&client, &endpoint).await {
-                #[cfg(test)]
-                eprintln!("[native-browser] CDP websocket advertised");
                 match Browser::connect(websocket_url).await {
                     Ok((browser, handler)) => {
                         let pid = wait_for_browser_pid(profile, deadline).await?;
@@ -252,8 +260,6 @@ impl SystemBrowserLaunch {
                 }
             }
             if Instant::now() >= deadline {
-                #[cfg(test)]
-                eprintln!("[native-browser] CDP discovery deadline reached");
                 bail!("system browser CDP endpoint did not become ready");
             }
             tokio::time::sleep(Duration::from_millis(100)).await;

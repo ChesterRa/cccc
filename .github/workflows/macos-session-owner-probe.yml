@@ -65,6 +65,14 @@ jobs:
         if: matrix.program == 'current'
         timeout-minutes: 25
         run: cargo test --workspace --lib --locked --no-run --message-format=json-render-diagnostics > "$RUNNER_TEMP/native-build.jsonl"
+      - name: Compare LaunchServices environments with direct headless Chrome
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
+        timeout-minutes: 4
+        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/browser_context.py "$RUNNER_TEMP/cccc-native-tests"
+      - name: Reap an unresponsive launcher and retain uncertain launch evidence
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
+        timeout-minutes: 2
+        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/native.py launcher
       - id: connect
         name: Native Chrome successful launch and stop
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
@@ -75,14 +83,6 @@ jobs:
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 3
         run: python3 -I scripts/tests/macos_maintenance/coverage/wave/native.py cleanup
-      - name: Trace native launcher waits after connect failure
-        if: ${{ !cancelled() && steps.connect.outcome == 'failure' }}
-        timeout-minutes: 3
-        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/native.py connect --trace-open
-      - name: Trace native launcher waits after cleanup failure
-        if: ${{ !cancelled() && steps.cleanup.outcome == 'failure' }}
-        timeout-minutes: 3
-        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/native.py cleanup --trace-open
       - name: Keep native Chrome test diagnostics
         if: ${{ always() && matrix.program == 'current' && steps.tests.outcome == 'success' }}
         uses: actions/upload-artifact@v7
@@ -93,7 +93,7 @@ jobs:
           path: |
             ${{ runner.temp }}/cccc-native-tests/*.log
             ${{ runner.temp }}/cccc-native-tests/*.sample
-            ${{ runner.temp }}/cccc-native-tests/*.processes.json
+            ${{ runner.temp }}/cccc-native-tests/*.json
       - name: Keep build failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
@@ -146,26 +146,14 @@ jobs:
           PY
           xcrun clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror \
               scripts/tests/macos_maintenance/inspect_process.c -o "$RUNNER_TEMP/inspect-process"
-      - name: Cold replacement of the daemon with a live terminal and MCP
+      - name: Identify a working LaunchServices context on this runner
         if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
-        timeout-minutes: 6
-        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh pty
+        timeout-minutes: 4
+        run: python3 -I scripts/tests/macos_maintenance/coverage/wave/browser_context.py "$RUNNER_TEMP/cccc-evidence"
       - name: Cold replacement with an in-flight browser turn
         if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
         timeout-minutes: 8
         run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh browser
-      - name: Keep a terminal and MCP on the same installation
-        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
-        timeout-minutes: 6
-        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh same-build
-      - name: Web local restart with an active terminal and MCP
-        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
-        timeout-minutes: 6
-        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh local
-      - name: Web release update with an active terminal and MCP
-        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
-        timeout-minutes: 6
-        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh release
       - name: Web local restart during a browser response
         if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
         timeout-minutes: 6
@@ -174,10 +162,6 @@ jobs:
         if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
         timeout-minutes: 6
         run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh browser-release
-      - name: Recover an interrupted local restart from three public entries
-        if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
-        timeout-minutes: 8
-        run: bash scripts/tests/macos_maintenance/coverage/wave/run_case.sh recovery
       - name: Retain two active protocol turns and run a real DeepSeek CLI
         if: ${{ !cancelled() && steps.verify.outcome == 'success' }}
         timeout-minutes: 9

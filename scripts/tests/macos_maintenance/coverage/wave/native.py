@@ -11,6 +11,7 @@ import tempfile
 import time
 
 CASES = {
+    "launcher": "unresponsive_macos_launcher_is_reaped_and_reports_an_unconfirmed_browser",
     "connect": "system_browser_answers_cdp_and_stops_its_original_process",
     "cleanup": "failed_cdp_connection_stops_the_browser_opened_for_its_profile",
 }
@@ -130,9 +131,8 @@ def observe_stall(proc, root, evidence, deadline):
 
 def main():
     case = sys.argv[1]
-    if sys.argv[2:] not in ([], ["--trace-open"]):
-        raise SystemExit("expected CASE [--trace-open]")
-    trace = len(sys.argv) == 3
+    if len(sys.argv) != 2:
+        raise SystemExit("expected CASE")
     name = "browser_surface::system_browser::macos_tests::" + CASES[case]
     runner = Path(os.environ["RUNNER_TEMP"])
     rows = (
@@ -150,7 +150,7 @@ def main():
     if len(bins) != 1:
         raise RuntimeError(f"Expected one Web unit test executable, found {len(bins)}")
     binary = bins.pop()
-    label = case + "-trace" if trace else case
+    label = case
     evidence = runner / "cccc-native-tests" / (label + ".log")
     evidence.parent.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="cccc-native-", dir="/tmp"))
@@ -166,8 +166,10 @@ def main():
             CLAUDE_CONFIG_DIR=str(root / "claude"),
             LANG="en_US.UTF-8",
         )
-        if trace:
-            env["CCCC_TEST_TRACE_MACOS_OPEN"] = "1"
+        if case != "launcher":
+            env.update(
+                json.loads((runner / "cccc-browser-environment.json").read_text())
+            )
         with evidence.open("wb") as log:
             started = time.monotonic()
             with subprocess.Popen(
