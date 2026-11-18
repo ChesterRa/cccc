@@ -37,6 +37,7 @@ phase daemon_keep "$daemon_probe" --program "$new" --shared-fixture "$update_pro
 for action in local release; do
     phase "$action" "$update_probe" "$old" "$new" "$out" "$action"
 done
+phase busy_browser "$here/busy.py" "$old" "$new" "$out/busy"
 if [ "$failed" -eq 0 ]; then
     rm -r "$root"
 else

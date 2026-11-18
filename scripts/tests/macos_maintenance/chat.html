@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8"><main><form><textarea id="prompt-textarea" style="width:500px;height:120px"></textarea><button type="submit">Send</button></form><button id="stop" type="button" aria-label="Stop generating" hidden>Stop</button></main>
+<script>
+const doc = crypto.randomUUID();
+const main = document.querySelector("main");
+const stopButton = document.querySelector("#stop");
+const composer = document.querySelector("textarea");
+let active = "", attempts = 0;
+function record(event, token) {
+  return fetch("/event", {method:"POST",body:JSON.stringify({doc,event,token,attempts})});
+}
+function message(role, text) {
+  const article = document.createElement("article");
+  article.dataset.messageAuthorRole = role;
+  article.textContent = text;
+  main.append(article);
+}
+record("open", "");
+document.querySelector("form").onsubmit = event => {
+  event.preventDefault();
+  const token = (composer.value.match(/W2-ROUND-[12]/)||["unrecognized"])[0];
+  message("user", composer.value);
+  composer.value="";
+  attempts++;
+  active=token;
+  stopButton.hidden=false;
+  record("submit", token);
+};
+setInterval(async () => {
+  if (!active) return;
+  const request=active;
+  const reply=await (await fetch("/state",{cache:"no-store"})).json();
+  if(active===request && reply.finished.includes(request)) {
+    active="";
+    message("assistant", "Completed " + request);
+    stopButton.hidden=true;
+    await record("finish",request);
+  }
+},250);
+</script>

@@ -39,6 +39,8 @@ if [ -x target/debug/cccc ] && [ "$(cat "$out/candidate_build.rc")" = 0 ]; then
         CLAUDE_CONFIG_DIR="$root/claude" TMPDIR="$root/tmp/" LANG=en_US.UTF-8
         RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
         CARGO_TERM_COLOR=never CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0)
+    # Keep the diagnostics from either phase even if the other one fails.
+    phase candidate_clippy "${test_env[@]}" cargo clippy --workspace --all-targets --locked -- -D warnings || true
     phase candidate_check "${test_env[@]}" target/debug/cccc update --self-check || true
     # libtest accepts multiple positional filters. The report requires an exact PASS
     # for each name so a filter with zero matches cannot pass this job.

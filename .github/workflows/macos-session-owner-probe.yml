@@ -12,60 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  native-rust:
-    runs-on: macos-15
-    timeout-minutes: 60
-    steps:
-      - name: Locate private evidence directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -m 700 "$RUNNER_TEMP/cccc-macos-native"
-          printf 'PROBE_DIR=%s/cccc-macos-native\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          fetch-depth: 3
-
-      - name: Select the baseline with preservation disabled
-        run: git checkout --detach HEAD~2
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24.19.0'
-
-      - uses: dtolnay/rust-toolchain@1.88.0
-        with:
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Check the frozen source and native process boundaries
-        shell: bash
-        run: bash scripts/tests/macos_owner_native_check.sh "$PROBE_DIR"
-
-      - name: Publish bounded public evidence
-        if: always()
-        shell: bash
-        run: python3 -I scripts/tests/macos_owner_native_report.py "$PROBE_DIR"
-
-      - name: Keep the evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: macos-session-owner-native-rust-evidence
-          retention-days: 3
-          if-no-files-found: error
-          path: |
-            ${{ env.PROBE_DIR }}/*.txt
-            ${{ env.PROBE_DIR }}/*.log
-            ${{ env.PROBE_DIR }}/*.json
-            ${{ env.PROBE_DIR }}/*.rc
-            ${{ env.PROBE_DIR }}/*.sha256
-
   maintenance:
-    needs: native-rust
     runs-on: macos-15
     timeout-minutes: 120
     steps:
@@ -79,6 +26,8 @@ jobs:
           node-version: '24.19.0'
 
       - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: clippy
 
       - name: Test retained sessions across two Apple Silicon builds
         shell: bash
@@ -101,5 +50,7 @@ jobs:
             ${{ runner.temp }}/cccc-maintenance/*.rc
             ${{ runner.temp }}/cccc-maintenance/*.log
             ${{ runner.temp }}/cccc-maintenance/*.json
+            ${{ runner.temp }}/cccc-maintenance/busy/*/result.json
+            ${{ runner.temp }}/cccc-maintenance/busy/*/events.json
             ${{ runner.temp }}/cccc-maintenance/local/result.json
             ${{ runner.temp }}/cccc-maintenance/release/result.json

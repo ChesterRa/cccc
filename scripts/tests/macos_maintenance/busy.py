@@ -1,0 +1,364 @@
+"""An in-flight local Web Model turn across the real maintenance entry points."""
+
+import http.server
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import threading
+import traceback
+import time
+
+here = Path(__file__).resolve().parent
+src = here / "update_keep.py"
+spec = importlib.util.spec_from_file_location("update_fixture", src)
+u = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(u)
+
+actor = "browser-test"
+one, two = "W2-ROUND-1", "W2-ROUND-2"
+
+
+def exercise(kind, root, out, old, new, before, after, archive_server):
+    assert kind in ("daemon", "local", "release")
+    case = out / kind
+    case.mkdir()
+    root = root / kind
+    root.mkdir()
+    home = root / "cccc"
+    project = root / "work"
+    project.mkdir()
+    install = root / "bin"
+    install.mkdir()
+    program = install / "cccc"
+    shutil.copy2(old, program)
+    if kind == "release":
+        (install / ".cccc-standalone").write_text("standalone-v1\n")
+    env = dict(
+        os.environ,
+        CCCC_HOME=str(home),
+        CCCC_RELEASE_BASE_URL=archive_server,
+        CCCC_RELEASE_INDEX_URL="https://127.0.0.1:1/releases",
+        PATH=str(install) + ":/usr/bin:/bin",
+    )
+    assert Path(env["HOME"]).parent.name.startswith("cccc-isolated.")
+    import socket
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+
+    def cli(*args):
+        return json.loads(
+            subprocess.check_output(
+                [program, *args, "--port", str(port)], env=env, timeout=60
+            )
+        )
+
+    def expect(fn, name, seconds=65):
+        try:
+            return u.wait_for(fn, name, seconds=seconds)
+        except TimeoutError:
+            print("timeout:", name, "events:", events, flush=True)
+            raise
+
+    def trace(text):
+        print(kind, text, flush=True)
+
+    events = []
+    finished = set()
+    page = here.joinpath("chat.html").read_bytes()
+
+    class Model(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def respond(self, body, mime):
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path == "/state":
+                self.respond(
+                    json.dumps({"finished": list(finished)}).encode(),
+                    "application/json",
+                )
+            elif self.path == "/":
+                self.respond(page, "text/html; charset=utf-8")
+            else:
+                self.send_error(404)
+
+        def do_POST(self):
+            if self.path != "/event":
+                self.send_error(404)
+                return
+            v = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            events.append(v)
+            self.respond(b"{}", "application/json")
+
+    model = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Model)
+    thread = threading.Thread(target=model.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{model.server_port}/"
+
+    def browser():
+        rows = u.daemon_request(home, "browser_resources", by="user")["resources"]
+        for r in rows:
+            for p in r.get("sessions", []):
+                if (p.get("actor") or {}).get("actor_id") == actor:
+                    pid = r["metadata"]["pid"]
+                    return {
+                        "instance": r["instance"],
+                        "owner": r["owner_id"],
+                        "target": p["target_id"],
+                        "identity": u.process_identity(pid),
+                        "pid": pid,
+                    }
+
+    def ev(name, token):
+        return [v for v in events if v["event"] == name and v["token"] == token]
+
+    logs = (case / "host.log").open("wb")
+    host = None
+
+    def start_host():
+        return subprocess.Popen(
+            [program, "web", "--port", str(port)],
+            stdin=subprocess.DEVNULL,
+            stdout=logs,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+
+    try:
+        first_daemon = subprocess.Popen(
+            [program, "daemon", "run"],
+            stdin=subprocess.DEVNULL,
+            stdout=logs,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+        try:
+            expect(lambda: u.daemon_ping(home), "seed daemon")
+            gid = cli("attach", str(project))["group_id"]
+            row = cli(
+                "actor",
+                "add",
+                actor,
+                "--runtime",
+                "web_model",
+                "--env",
+                "CCCC_WEB_MODEL_DELIVERY_MODE=browser",
+                "--group",
+                gid,
+            )["actor"]
+        finally:
+            cli("daemon", "stop")
+            assert first_daemon.wait(timeout=30) == 0
+        # Seed a synthetic paired browser while the fixture home is offline, as
+        # in the in-process recovery regression. No login or real provider is used.
+        groupfile = home / "groups" / gid / "group.yaml"
+        generation = row.get("generation") or "legacy:" + row["created_at"]
+        group = json.loads(
+            subprocess.check_output(
+                [
+                    "/usr/bin/ruby",
+                    "-rjson",
+                    "-ryaml",
+                    "-e",
+                    "print JSON.generate(YAML.safe_load(File.read(ARGV.fetch(0))))",
+                    str(groupfile),
+                ]
+            )
+        )
+        assert group["group_id"] == gid
+        group["running"] = True
+        group["web_model_browser_targets"] = {
+            actor: {
+                "kind": "existing_chat",
+                "url": url,
+                "last_delivery_status": "bound",
+            }
+        }
+        groupfile.write_text(json.dumps(group))
+        key = json.dumps([gid, actor], separators=(",", ":"))
+        store = {
+            "version": 3,
+            "connectors": {
+                "chatgpt_web": {
+                    "provider": "chatgpt_web",
+                    "connector_id": "fixture-connector",
+                    "revoked": False,
+                    "bindings": {
+                        key: {
+                            "group_id": gid,
+                            "actor_id": actor,
+                            "generation": generation,
+                            "revision": "fixture",
+                            "state": "bound",
+                            "url": url,
+                        }
+                    },
+                }
+            },
+        }
+        f = home / "web_model_connectors.yaml"
+        f.write_text(json.dumps(store))
+        f.chmod(0o600)
+        host = start_host()
+        source = expect(lambda: u.daemon_ping(home), "first Web")
+        assert source["build"]["source_id"] == before["source_id"]
+        original = expect(browser, "open first held window")
+        if sys.platform == "linux":
+            assert b"--headless=new" in Path(
+                "/proc", str(original["pid"]), "cmdline"
+            ).read_bytes().split(b"\0")
+        elif sys.platform == "darwin":
+            argv = subprocess.check_output(
+                ["/bin/ps", "-ww", "-p", str(original["pid"]), "-o", "command="],
+                text=True,
+            )
+            assert "--headless=new" in argv.split() and "--user-data-dir=" in argv
+        else:
+            raise RuntimeError(
+                "the fixture needs a native process identity on this platform"
+            )
+
+        def send(text):
+            return cli("send", "--group", gid, "--to", actor, text)
+
+        send(one)
+        expect(lambda: ev("submit", one), "first prompt on page")
+        trace("first turn started")
+        if kind == "daemon":
+            cli("daemon", "stop", "--keep-agents")
+            assert host.wait(timeout=45) == 0
+            assert u.process_identity(original["pid"]) == original["identity"]
+            host = start_host()
+            target = expect(lambda: u.daemon_ping(home), "replacement Web")
+            assert source["pid"] != target["pid"] and target["build"] == source["build"]
+            receipt = None
+        else:
+            if kind == "local":
+                next_image = install / "cccc.next"
+                shutil.copy2(new, next_image)
+                next_image.replace(program)
+                check = u.post(port, "/api/v1/update/check", {})["check"]["local"]
+                assert check["state"] == "rebuilt" and check["keep"]["allowed"], check
+                selection = {
+                    "source": kind,
+                    "token": check["token"],
+                    "source_id": after["source_id"],
+                }
+            else:
+                selection = {"source": kind, "version": after["version"]}
+            accepted = u.post(
+                port, "/api/v1/update/start", {**selection, "mode": "keep"}
+            )
+            assert accepted["accepted"], accepted
+
+            def completed():
+                val = json.loads((home / "update/last.json").read_text())
+                return (
+                    val
+                    if val.get("transaction") == accepted["transaction"]
+                    and val.get("agents", {}).get("state") != "observing"
+                    else None
+                )
+
+            receipt = expect(completed, "completed maintenance", 120)
+            assert receipt["result"] == (
+                "installed" if kind == "release" else "restarted"
+            ), receipt
+            target = expect(lambda: u.daemon_ping(home), "new build")
+            assert (
+                target["build"]["source_id"] == after["source_id"]
+                and target["pid"] == source["pid"]
+            )
+        current = expect(browser, "same browser after restart")
+        assert current == original, (current, original)
+        send(two)
+        time.sleep(2)
+        assert (
+            len(ev("submit", one)) == 1
+            and not ev("finish", one)
+            and not ev("submit", two)
+        )
+        finished.add(one)
+        expect(lambda: ev("finish", one), "original answer finished")
+        expect(lambda: ev("submit", two), "next prompt delivered", 100)
+        finished.add(two)
+        expect(lambda: ev("finish", two), "second answer finished")
+        filtered = [(v["event"], v["token"]) for v in events if v["event"] != "open"]
+        assert filtered == [
+            ("submit", one),
+            ("finish", one),
+            ("submit", two),
+            ("finish", two),
+        ], filtered
+        assert len({v["doc"] for v in events if v["event"] != "open"}) == 1
+        assert len([v for v in events if v["event"] == "open"]) == 1, events
+        if receipt:
+            actors = [
+                (v["group_id"], v["actor_id"]) for v in receipt["agents"]["reattached"]
+            ]
+            assert actors == [(gid, actor)], receipt
+        cli("daemon", "stop")
+        assert host.wait(timeout=45) == 0
+        expect(
+            lambda: u.process_gone(original["pid"]),
+            "normal stop closes original browser",
+        )
+        result = dict(
+            kind=kind,
+            source=source["build"],
+            target=target["build"],
+            browser=original,
+            events=events,
+            agents=receipt["agents"] if receipt else target.get("retained_agents"),
+            clean_stop=True,
+        )
+        (case / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+        trace("passed")
+    finally:
+        if host and host.poll() is None:
+            try:
+                cli("daemon", "stop")
+            except Exception:
+                pass
+            try:
+                host.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                host.kill()
+                host.wait()
+        model.shutdown()
+        model.server_close()
+        logs.close()
+        (case / "events.json").write_text(json.dumps(events, indent=2) + "\n")
+
+
+def run_requested(_kind, *args):
+    failed = []
+    for kind in ("daemon", "local", "release"):
+        try:
+            exercise(kind, *args)
+        except Exception:
+            failed.append(kind)
+            traceback.print_exc()
+    if failed:
+        raise RuntimeError("Busy browser checks failed: " + ", ".join(failed))
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        raise SystemExit("usage: busy.py OLD_BINARY NEW_BINARY OUTPUT")
+    # Build the mock release once, then use a separate home for each maintenance action.
+    sys.argv.append("local")
+    u.run_case = run_requested
+    u.main()
