@@ -1577,18 +1577,42 @@ fn watchdog_command(watch_list: &Path) -> io::Result<Command> {
 
 fn spawn_watchdog(watch_list: &Path) -> io::Result<ChildStdin> {
     use std::os::unix::process::CommandExt;
-    let mut watchdog = watchdog_command(watch_list)?
+    let mut command = watchdog_command(watch_list)?;
+    command
         // Terminal signals to the owner's process group must not reach it.
         .process_group(0)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    #[cfg(target_os = "macos")]
+    let mut watchdog = spawn_native_watchdog(&mut command)?;
+    #[cfg(not(target_os = "macos"))]
+    let mut watchdog = command.spawn()?;
     // Its exit is reaped by init once the owner is gone; it never exits first.
     watchdog
         .stdin
         .take()
         .ok_or_else(|| io::Error::other("watchdog has no stdin"))
+}
+
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+fn watchdog_signals() -> nix::sys::signal::SigSet {
+    use nix::sys::signal::{SigSet, Signal};
+    let mut signals = SigSet::empty();
+    signals.add(Signal::SIGHUP);
+    signals.add(Signal::SIGINT);
+    signals
+}
+
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+fn spawn_native_watchdog(command: &mut Command) -> io::Result<std::process::Child> {
+    // A stopped group receives SIGHUP when its parent exits. Start the child
+    // with these signals blocked, including during exec and on every thread
+    // it creates. Restore the owner's calling thread even if exec fails.
+    let previous = watchdog_signals().thread_swap_mask(nix::sys::signal::SigmaskHow::SIG_BLOCK)?;
+    let child = command.spawn();
+    previous.thread_set_mask()?;
+    child
 }
 
 #[cfg(target_os = "macos")]
@@ -1614,7 +1638,6 @@ pub(super) fn run_native_watchdog_test_child() {
 
 #[cfg(target_os = "macos")]
 fn run_native_watchdog(path: &Path) -> io::Result<()> {
-    use nix::sys::signal::{SigSet, Signal};
     if !path.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -1623,10 +1646,7 @@ fn run_native_watchdog(path: &Path) -> io::Result<()> {
     }
     // Match the shell watchdog's terminal-signal policy without installing
     // handlers or constructing an application runtime.
-    let mut blocked = SigSet::empty();
-    blocked.add(Signal::SIGHUP);
-    blocked.add(Signal::SIGINT);
-    blocked.thread_block().map_err(io::Error::from)?;
+    watchdog_signals().thread_block()?;
     io::copy(&mut io::stdin().lock(), &mut io::sink())?;
     let bytes = match File::open(path).and_then(read_ledger_bytes) {
         Ok(bytes) => bytes,
@@ -1641,9 +1661,9 @@ fn run_native_watchdog(path: &Path) -> io::Result<()> {
     }
     let watch: NativeWatch = serde_json::from_slice(&bytes).map_err(io::Error::other)?;
     let (written_at, records) = watch.records()?;
-    if !now()
+    if now()
         .checked_sub(written_at)
-        .is_some_and(|age| age <= WATCH_LIST_MAX_AGE.as_secs())
+        .is_none_or(|age| age > WATCH_LIST_MAX_AGE.as_secs())
     {
         return Ok(());
     }

@@ -2280,6 +2280,63 @@ fn the_watchdog_leaves_a_stale_watch_list_to_verified_reconciliation() {
 
 const LATEST_MODE: &str = "CCCC_GUARD_LATEST_TEST";
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn native_watchdog_inherits_its_signal_mask_and_restores_the_callers_mask() {
+    use nix::sys::signal::{SigSet, Signal};
+    const CHILD: &str = "CCCC_TEST_INHERITED_WATCHDOG_SIGNALS";
+    let original = SigSet::thread_get_mask().expect("read mask");
+    if let Some(marker) = std::env::var_os(CHILD) {
+        // This libtest worker inherited its mask from the new image's main thread.
+        for signal in [Signal::SIGHUP, Signal::SIGINT, Signal::SIGUSR1] {
+            assert!(original.contains(signal), "{signal} was not inherited");
+        }
+        std::fs::write(marker, b"verified").expect("report inherited mask");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let marker = tmp.path().join("mask");
+    let mut caller = original;
+    caller.remove(Signal::SIGHUP);
+    caller.remove(Signal::SIGINT);
+    caller.add(Signal::SIGUSR1);
+    caller.thread_set_mask().expect("prepare caller mask");
+    let mut command = Command::new(std::env::current_exe().expect("test executable"));
+    let test = "process_tree::guard::tests::native_watchdog_inherits_its_signal_mask_and_restores_the_callers_mask";
+    command
+        .args(["--exact", test])
+        .env(CHILD, &marker)
+        .stdout(Stdio::piped());
+    let child = spawn_native_watchdog(&mut command);
+    let after_success = SigSet::thread_get_mask().expect("mask after spawn");
+    let failure = spawn_native_watchdog(&mut Command::new(tmp.path().join("missing")));
+    let after_failure = SigSet::thread_get_mask().expect("mask after failed spawn");
+    original.thread_set_mask().expect("restore fixture mask");
+
+    assert_eq!(after_success, caller);
+    assert_eq!(after_failure, caller);
+    assert_eq!(
+        failure
+            .expect_err("missing executable must fail to spawn")
+            .kind(),
+        io::ErrorKind::NotFound
+    );
+    let output = child
+        .expect("spawn test child")
+        .wait_with_output()
+        .expect("reap test child");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        std::fs::read(marker).expect("child checked signals"),
+        b"verified"
+    );
+}
+
 #[test]
 fn a_group_published_while_the_watchdog_is_paused_still_ends_with_its_owner() {
     if !fixture_pidfds_available() {
@@ -2332,6 +2389,12 @@ fn a_group_published_while_the_watchdog_is_paused_still_ends_with_its_owner() {
     // The watchdog must act now, without a later owner start.
     let first_ended = exited_within(first, Duration::from_secs(10));
     let latest_ended = exited_within(latest, Duration::from_secs(10));
+    if !first_ended || !latest_ended {
+        eprintln!(
+            "owner exited: first_ended={first_ended}, latest_ended={latest_ended}, watchdog_running={}",
+            running(watchdog)
+        );
+    }
     // On platforms without pidfds, these self-created sleeps are bounded and
     // expire naturally on failure; do not signal a possibly recycled number.
     #[cfg(not(target_os = "linux"))]
@@ -2373,6 +2436,27 @@ fn latest_list_owner_helper() {
             .expect("stop watchdog")
             .success()
     );
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+        let child = Pid::from_raw(watchdog.parse().expect("watchdog pid")).expect("positive pid");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = waitid(
+                WaitId::Pid(child),
+                WaitIdOptions::STOPPED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+            )
+            .expect("observe owned child");
+            if state.is_some_and(|status| status.stopped()) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watchdog did not stop before publication"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     let (latest, _latest_tree) = spawn();
     std::fs::write(
         dir.join("pids"),

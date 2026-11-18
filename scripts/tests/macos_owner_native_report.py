@@ -12,6 +12,7 @@ REQUIRED = (
     "running_image_keeps_its_identity_after_its_launch_path_is_replaced",
     "lists_a_running_and_an_exited_unreaped_child_but_not_the_caller",
     "empty_darwin_watch_is_a_complete_native_record",
+    "native_watchdog_inherits_its_signal_mask_and_restores_the_callers_mask",
     "the_watchdog_terminates_groups_in_a_fresh_watch_list",
     "the_watchdog_leaves_a_stale_watch_list_to_verified_reconciliation",
     "a_fresh_watch_list_does_not_authorize_a_recycled_group",
