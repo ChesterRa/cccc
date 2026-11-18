@@ -497,15 +497,12 @@ async fn visible_tools_with_context(
         return catalog;
     }
     let group_id = context.map(|value| value.group_id.to_owned()).or_else(|| {
-        std::env::var("CCCC_GROUP_ID")
-            .ok()
+        cccc_core::home::context_var("CCCC_GROUP_ID")
             .filter(|value| !value.trim().is_empty())
             .or_else(|| cccc_core::active::get(home).ok().flatten())
     });
     let actor_id = context.map(|value| value.actor_id.to_owned()).or_else(|| {
-        std::env::var("CCCC_ACTOR_ID")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
+        cccc_core::home::context_var("CCCC_ACTOR_ID").filter(|value| !value.trim().is_empty())
     });
     let (Some(group_id), Some(actor_id)) = (group_id, actor_id) else {
         return core_tools(catalog);

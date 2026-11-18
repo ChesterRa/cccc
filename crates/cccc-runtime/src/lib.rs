@@ -34,6 +34,7 @@ mod session;
 mod session_history;
 #[cfg(test)]
 mod session_history_tests;
+mod startup_input;
 mod terminal_attach;
 mod terminal_attachment_registry;
 mod terminal_initial_output;
@@ -72,9 +73,10 @@ pub use history_access::{
     history_since, last_output, retained_history, retained_history_tail,
 };
 pub use manager::{
-    PtyHandoff, PtyHandoffReason, reap, resize, start, start_actor_with_history,
-    start_with_history, start_with_history_isolated_environment, status, stop, stop_all,
-    stop_if_started_at, submit, submit_interruptible, submit_sequence_for_session_interruptible,
+    PtyHandoff, PtyHandoffReason, reap, release_startup_input, reset_exited_startup_input, resize,
+    start, start_actor_with_history, start_with_history, start_with_history_isolated_environment,
+    status, stop, stop_all, stop_if_started_at, submit, submit_interruptible,
+    submit_sequence_for_session_interruptible,
     submit_sequence_for_session_with_evidence_interruptible, submit_sequence_interruptible,
     wait_for_input_ready, write,
 };
@@ -99,6 +101,7 @@ pub use process_tree::{
 pub use process_tree::{prepare_web_process_guard, protect_owned_process_groups};
 pub use session::{ActorLaunch, LaunchSpec, SessionStatus};
 pub use session_history::OutputObservation;
+pub use startup_input::required as startup_input_required;
 pub use terminal_attach::{TerminalAttachMode, TerminalAttachment, TerminalInput, TerminalOutput};
 pub use terminal_initial_output::{TerminalInitialOutput, TerminalInitialOutputKind};
 pub use terminal_manager::{

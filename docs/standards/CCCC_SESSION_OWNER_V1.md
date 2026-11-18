@@ -62,6 +62,21 @@ existing explicit environment allowlist. Stop, StopAll, Submit, generation-bound
 controls and bounded terminal actions reuse the existing runtime mechanisms.
 This channel does not dispatch arbitrary daemon operations.
 
+For runtimes with a startup input gate, the primary PTY's Session retains the
+gate across daemon controllers. Native startup confirmation, onboarding and
+promotion screens MUST NOT receive automatic preambles, payload bytes or submit
+keys. A verified chat input region or an explicit user release for the exact
+PTY generation may pass the gate; reconnecting a controller or preserving the
+owner MUST NOT reset it. A generation-bound release writes no native input.
+Generic viewer/confirmation terminals and ACP sessions do not use this gate.
+
+While a new PTY is still waiting, the controller may return a zero-input result
+before admission only after excluding any existing source execution. A final
+writer check remains necessary. An admitted operation that explicitly proves
+zero submission may be reclaimed only after every source event's Unsubmitted
+state is durably recorded. This permits the same pending work to retry; unknown
+or partially written execution MUST retain its original non-replay semantics.
+
 Hello reports whether Start remains open. StopAll permanently closes Start on
 that instance; an unrelated new member then uses a fresh default owner. An old
 member registration must still be confirmed stopped before it can move. The
@@ -238,6 +253,21 @@ starting routing, scheduling or providers. A held or unverifiable lock/socket
 must not be treated as an empty registry. Process reclamation still requires
 the existing recorded identity and confirmation policy; owner death or a closed
 PTY alone does not prove every provider-created process has stopped.
+
+Cloud-backed Dots and Grok Webhook routes are daemon-owned persistent resources,
+not OS resources in this owner protocol. Maintenance checks their current Actor
+identity, route revision/epoch and unfinished work from existing atomic stores.
+No owner is invented for them. During preservation, active work is included in
+the final report's `unconfirmed` set with no owner or process generation; startup
+`retained_agents` remains an actual holder observation. An idle remote route has
+no activity to add to either list. Unreadable or conflicting route facts refuse
+preservation, and queries do not repair or initialize the connector document.
+Post-restart queries still return independent local holder observations when
+remote facts cannot be read; remote work in the stop receipt stays unconfirmed.
+Failure/expiry and explicit turn resolution retain their existing provider
+semantics; neither a saved route nor a failed callback proves cloud termination.
+HTTP calls during host downtime can still fail. These limits and the recovery
+rules are part of the public maintenance contract referenced above.
 
 Startup and offline Stop hold the home lock and each dead owner's instance lock
 while reusing the process guard's existing recovery rules. A verified boot

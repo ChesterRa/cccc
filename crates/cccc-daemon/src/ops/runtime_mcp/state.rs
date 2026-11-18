@@ -72,12 +72,7 @@ pub(super) fn json_state(
             expected,
             EntryShape::Common,
         ),
-        ActorRuntime::Auggie => entry_at(
-            &home_dir(env).join(".augment/settings.json"),
-            &["mcpServers", "cccc"],
-            expected,
-            EntryShape::Common,
-        ),
+        ActorRuntime::Auggie => auggie_state(cwd, env, expected),
         _ => Report::new(State::Missing),
     }
 }
@@ -209,6 +204,7 @@ fn first_state(paths: &[PathBuf], keys: &[&str], expected: &[String], shape: Ent
 enum EntryShape {
     Common,
     Cline,
+    Auggie,
 }
 
 fn entry_at(path: &Path, keys: &[&str], expected: &[String], shape: EntryShape) -> Report {
@@ -224,6 +220,7 @@ fn entry_at(path: &Path, keys: &[&str], expected: &[String], shape: EntryShape) 
     let ready = match shape {
         EntryShape::Common => common_matches(entry, expected),
         EntryShape::Cline => cline_matches(entry, expected),
+        EntryShape::Auggie => auggie_matches(entry, expected),
     };
     Report::new(if ready { State::Ready } else { State::Stale })
 }
@@ -241,6 +238,53 @@ fn cline_matches(entry: &Value, expected: &[String]) -> bool {
         .unwrap_or("stdio")
         == "stdio"
         && command_and_args_match(transport, expected)
+}
+
+/// Auggie merges its user, project and local settings, later scopes winning
+/// (Auggie 1.2.1): a `cccc` entry in the local or project file at the
+/// workspace root replaces the user entry, so it is reported with its scope.
+fn auggie_state(cwd: &Path, env: &BTreeMap<String, String>, expected: &[String]) -> Report {
+    let user = home_dir(env).join(".augment/settings.json");
+    let resolved_user = std::fs::canonicalize(&user).ok();
+    let root = cccc_core::runtime_mcp::workspace_root(cwd).join(".augment");
+    for (file, scope) in [
+        ("settings.local.json", "local"),
+        ("settings.json", "project"),
+    ] {
+        let path = root.join(file);
+        if path == user
+            || (resolved_user.is_some() && std::fs::canonicalize(&path).ok() == resolved_user)
+        {
+            continue;
+        }
+        let mut report = entry_at(&path, &["mcpServers", "cccc"], expected, EntryShape::Auggie);
+        if report.state != State::Missing {
+            report.source = scope.into();
+            return report;
+        }
+    }
+    entry_at(&user, &["mcpServers", "cccc"], expected, EntryShape::Auggie)
+}
+
+/// The entry CCCC registers, field by field: Auggie passes a server only the
+/// variables its entry names, so each context variable must map to its
+/// placeholder and no other CCCC variable may be fixed, and the executable must
+/// start without a shell. Other entries are replaced.
+fn auggie_matches(entry: &Value, expected: &[String]) -> bool {
+    let context = cccc_core::runtime_mcp::CONTEXT_VARIABLES;
+    common_matches(entry, expected)
+        && entry.get("useShellInterpolation").and_then(Value::as_bool) == Some(false)
+        && entry
+            .get("env")
+            .and_then(Value::as_object)
+            .is_some_and(|env| {
+                context.iter().all(|name| {
+                    env.get(*name).and_then(Value::as_str)
+                        == Some(cccc_core::runtime_mcp::auggie_context_value(name).as_str())
+                }) && env
+                    .keys()
+                    .all(|key| !key.starts_with("CCCC_") || context.contains(&key.as_str()))
+            })
 }
 
 fn common_matches(entry: &Value, expected: &[String]) -> bool {
@@ -391,7 +435,7 @@ fn string_values(value: Option<&Value>) -> Vec<String> {
 }
 
 fn has_context_env(entry: &Value) -> bool {
-    const KEYS: [&str; 3] = ["CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID"];
+    const KEYS: [&str; 3] = cccc_core::runtime_mcp::CONTEXT_VARIABLES;
     let Some(env) = entry.get("env").or_else(|| entry.get("environment")) else {
         return false;
     };
@@ -555,6 +599,8 @@ mod tests {
             std::fs::create_dir_all(path.parent().expect("parent")).expect("directory");
             let entry = if nested_cline {
                 json!({"transport":{"type":"stdio","command":"/opt/cccc","args":["mcp"]}})
+            } else if runtime == ActorRuntime::Auggie {
+                auggie_entry()
             } else {
                 json!({"command":"/opt/cccc","args":["mcp"]})
             };
@@ -571,6 +617,98 @@ mod tests {
                 cccc_core::runtime_mcp::name(runtime)
             );
         }
+    }
+
+    fn auggie_entry() -> Value {
+        json!({
+            "type":"stdio","command":"/opt/cccc","args":["mcp"],
+            "env":{
+                "CCCC_HOME":"${CCCC_HOME:-$CCCC_HOME}",
+                "CCCC_GROUP_ID":"${CCCC_GROUP_ID:-$CCCC_GROUP_ID}",
+                "CCCC_ACTOR_ID":"${CCCC_ACTOR_ID:-$CCCC_ACTOR_ID}"
+            },
+            "useShellInterpolation":false
+        })
+    }
+
+    #[test]
+    fn auggie_entry_must_be_the_registered_shape() {
+        let expected = vec!["/opt/cccc".into(), "mcp".into()];
+        assert!(auggie_matches(&auggie_entry(), &expected));
+        let mut other_server_setting = auggie_entry();
+        other_server_setting["env"]["OTHER"] = json!("kept");
+        assert!(auggie_matches(&other_server_setting, &expected));
+
+        let changed = |change: fn(&mut Value)| {
+            let mut entry = auggie_entry();
+            change(&mut entry);
+            entry
+        };
+        let stale = [
+            changed(|entry| entry["env"]["CCCC_ACTOR_ID"] = json!("peer1")),
+            changed(|entry| entry["env"]["CCCC_HOME"] = json!("${CCCC_HOME:-}")),
+            changed(|entry| {
+                entry["env"]
+                    .as_object_mut()
+                    .expect("env")
+                    .remove("CCCC_GROUP_ID");
+            }),
+            changed(|entry| entry["env"]["CCCC_MCP_TOOL_PROFILE"] = json!("full")),
+            changed(|entry| entry["env"] = json!({})),
+            changed(|entry| {
+                entry.as_object_mut().expect("entry").remove("env");
+            }),
+            changed(|entry| {
+                entry
+                    .as_object_mut()
+                    .expect("entry")
+                    .remove("useShellInterpolation");
+            }),
+            changed(|entry| entry["useShellInterpolation"] = json!(true)),
+            changed(|entry| entry["command"] = json!("/usr/local/bin/cccc")),
+        ];
+        for entry in stale {
+            assert!(!auggie_matches(&entry, &expected), "{entry}");
+        }
+    }
+
+    #[test]
+    fn auggie_local_and_project_entries_at_the_workspace_root_override_the_user_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let user_home = temp.path().join("user");
+        let env = BTreeMap::from([("HOME".into(), user_home.to_string_lossy().into_owned())]);
+        let expected = vec!["/opt/cccc".into(), "mcp".into()];
+        let write = |path: &Path, entry: Value| {
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("directory");
+            cccc_core::fs::write_json(path, &json!({"mcpServers":{"cccc":entry}}))
+                .expect("fixture");
+        };
+        let repo = temp.path().join("repo");
+        let cwd = repo.join("sub");
+        std::fs::create_dir_all(repo.join(".git")).expect("git marker");
+        std::fs::create_dir_all(&cwd).expect("cwd");
+        write(&user_home.join(".augment/settings.json"), auggie_entry());
+        let state = |cwd: &Path| {
+            let report = json_state(ActorRuntime::Auggie, cwd, &env, &expected);
+            (report.state, report.source)
+        };
+        assert_eq!(state(&cwd), (State::Ready, String::new()));
+
+        // Auggie does not read a nested directory's file inside the work tree.
+        let old = json!({"type":"stdio","command":"/opt/cccc","args":["mcp"]});
+        write(&cwd.join(".augment/settings.json"), old.clone());
+        assert_eq!(state(&cwd), (State::Ready, String::new()));
+
+        write(&repo.join(".augment/settings.json"), old.clone());
+        assert_eq!(state(&cwd), (State::Stale, "project".into()));
+        write(&repo.join(".augment/settings.local.json"), auggie_entry());
+        assert_eq!(state(&cwd), (State::Ready, "local".into()));
+        write(&repo.join(".augment/settings.local.json"), old.clone());
+        assert_eq!(state(&cwd), (State::Stale, "local".into()));
+
+        // Started in the home directory, the project file is the user file.
+        write(&user_home.join(".augment/settings.json"), old);
+        assert_eq!(state(&user_home), (State::Stale, String::new()));
     }
 
     #[test]

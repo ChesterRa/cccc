@@ -18,6 +18,10 @@ pub enum PtyHandoff {
 
 #[derive(Debug, thiserror::Error)]
 pub enum PtyHandoffReason {
+    #[error(
+        "waiting for the terminal's startup input; handle its native prompts or explicitly release this session"
+    )]
+    StartupInputPending,
     #[error("terminal submission was cancelled")]
     Cancelled,
     #[error("terminal session changed before submission finished")]
@@ -126,6 +130,29 @@ fn submit_sequence(
     };
     if cancelled.load(Ordering::Acquire) {
         return PtyHandoff::NotWritten(PtyHandoffReason::Cancelled);
+    }
+    if let Some(expected) = expected {
+        let mut current = match session.lock() {
+            Ok(current) => current,
+            Err(_) => {
+                return PtyHandoff::NotWritten(PtyHandoffReason::Runtime(RuntimeError::Poisoned));
+            }
+        };
+        let actual = current.status();
+        if actual.pid != expected.pid || actual.started_at != expected.started_at {
+            return PtyHandoff::NotWritten(PtyHandoffReason::SessionChanged);
+        }
+        if !actual.running {
+            return PtyHandoff::NotWritten(PtyHandoffReason::Runtime(RuntimeError::NotRunning(
+                actual.group_id,
+                actual.actor_id,
+            )));
+        }
+        match current.startup_input_ready() {
+            Ok(true) => {}
+            Ok(false) => return PtyHandoff::NotWritten(PtyHandoffReason::StartupInputPending),
+            Err(error) => return PtyHandoff::NotWritten(PtyHandoffReason::Runtime(error)),
+        }
     }
     submit_writes(
         payload,

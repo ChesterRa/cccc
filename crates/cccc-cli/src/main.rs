@@ -207,7 +207,10 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
             Some(transaction) => {
                 cccc_daemon::run_with_diagnostics_resuming(home, &transaction).await
             }
-            None => cccc_daemon::run_with_diagnostics(home).await,
+            None => {
+                let _ = update_host::recover_local_before_start(&home)?;
+                cccc_daemon::run_with_diagnostics(home).await
+            }
         },
         DaemonAction::SessionOwner { owner_id } => {
             cccc_daemon::session_owner::run_with_browser_launcher(
@@ -263,6 +266,7 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
             }
         }
         DaemonAction::Start => {
+            let _ = update_host::recover_local_before_start(&home)?;
             // Before anything that could stop, replace or adopt a daemon: while
             // an update holds this home, only its own relay may start one.
             cccc_core::attended_update::check_start(

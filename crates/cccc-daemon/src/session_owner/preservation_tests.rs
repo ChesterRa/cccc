@@ -177,23 +177,26 @@ fn confirmed_exits_are_absent_while_unknown_observations_stay_unconfirmed() {
     let mut no_generation = member("current");
     no_generation.actor.actor_id = "no_generation".into();
     no_generation.actor.generation = None;
-    let observations = observed_agents(vec![
-        OwnerRead {
-            owner_id: "old".into(),
-            contract: 1,
-            result: Ok(sample(vec![old_provider, old_terminal])),
-        },
-        OwnerRead {
-            owner_id: "current".into(),
-            contract: 1,
-            result: Ok(sample(vec![current.clone(), unknown, no_generation])),
-        },
-        OwnerRead {
-            owner_id: "unavailable".into(),
-            contract: 1,
-            result: Err(io::Error::other("fixture connection failed")),
-        },
-    ]);
+    let observations = observed_agents(
+        vec![
+            OwnerRead {
+                owner_id: "old".into(),
+                contract: 1,
+                result: Ok(sample(vec![old_provider, old_terminal])),
+            },
+            OwnerRead {
+                owner_id: "current".into(),
+                contract: 1,
+                result: Ok(sample(vec![current.clone(), unknown, no_generation])),
+            },
+            OwnerRead {
+                owner_id: "unavailable".into(),
+                contract: 1,
+                result: Err(io::Error::other("fixture connection failed")),
+            },
+        ],
+        Vec::new(),
+    );
     assert_eq!(
         observations.running,
         vec![controller::identity(&current.actor, "current")]
@@ -283,6 +286,78 @@ fn a_closed_browser_is_absence_only_after_all_holders_are_confirmed() {
     browser.resource.sessions.clear();
     browser.resource.state = BrowserResourceState::Pending;
     assert!(!configured_decision(&home, browser_owner(browser)).allowed);
+}
+
+#[test]
+fn remote_members_need_saved_resource_facts_instead_of_a_process_holder() {
+    for runtime in [
+        cccc_contracts::ActorRuntime::ChatgptDots,
+        cccc_contracts::ActorRuntime::GrokWebModel,
+    ] {
+        let (_temp, home, group) = configured_home(runtime);
+        assert!(
+            configured_decision(&home, Vec::new()).allowed,
+            "an unconfigured idle member is empty"
+        );
+        let groups = cccc_core::GroupStore::new(home.clone()).expect("groups");
+        groups
+            .mutate(&group.group_id, |group| {
+                group.extra.insert(
+                    "runtime_states".into(),
+                    serde_json::json!({"worker":{
+                "active_turn_id":"unfinished","active_event_ids":["original"]}}),
+                );
+                Ok(())
+            })
+            .expect("accepted remote work without its route");
+        let missing = configured_decision(&home, Vec::new());
+        assert!(!missing.allowed);
+        assert_eq!(missing.refusals[0].code, "remote_resource_unconfirmed");
+        assert!(!home.daemon_dir().join("session-owners").exists());
+    }
+}
+
+#[test]
+fn unavailable_remote_facts_do_not_erase_verified_local_observations() {
+    let (_temp, home, group) = configured_home(cccc_contracts::ActorRuntime::GrokWebModel);
+    cccc_core::GroupStore::new(home.clone())
+        .expect("groups")
+        .mutate(&group.group_id, |group| {
+            group.extra.insert(
+                "runtime_states".into(),
+                serde_json::json!({"worker":{"active_turn_id":"unfinished"}}),
+            );
+            Ok(())
+        })
+        .expect("remote work without its route");
+    let remote =
+        super::super::remote::read(&home, Instant::now() + PREFLIGHT_BUDGET, &BTreeSet::new())
+            .expect("read conflicting remote facts");
+    assert!(!remote.refusals.is_empty());
+    let current = member("local");
+    let owners = || {
+        vec![OwnerRead {
+            owner_id: "local".into(),
+            contract: 1,
+            result: Ok(sample(vec![current.clone()])),
+        }]
+    };
+    let assert_local = || {
+        let observed = observed_members(&home, owners(), Instant::now() + PREFLIGHT_BUDGET);
+        assert_eq!(
+            observed.running,
+            vec![controller::identity(&current.actor, "local")]
+        );
+        assert!(observed.unconfirmed.is_empty());
+        assert!(observed.unavailable_owners.is_empty());
+    };
+    assert_local();
+    std::fs::write(home.registry_path(), b"{").expect("unreadable remote registry");
+    assert_local();
+    assert_eq!(
+        std::fs::read(home.registry_path()).expect("unchanged registry"),
+        b"{"
+    );
 }
 
 #[test]
@@ -432,11 +507,11 @@ fn a_saved_browser_mapping_covers_the_cohort_but_needs_web_publication_to_count_
     let mut browser = browser_sample(&group);
     let expected = browser.identities().next().expect("actual member mapping");
     assert!(configured_decision(&home, browser_owner(browser.clone())).allowed);
-    let before_web = observed_agents(browser_owner(browser.clone()));
+    let before_web = observed_agents(browser_owner(browser.clone()), Vec::new());
     assert!(before_web.running.is_empty());
     assert_eq!(before_web.unconfirmed, vec![expected.clone()]);
     browser.reattached = true;
-    let after_web = observed_agents(browser_owner(browser.clone()));
+    let after_web = observed_agents(browser_owner(browser.clone()), Vec::new());
     assert_eq!(after_web.running, vec![expected.clone()]);
     assert!(after_web.unconfirmed.is_empty());
 
@@ -483,11 +558,11 @@ fn browser_exit_unknown_state_and_duplicate_members_are_not_interchangeable() {
     let mut browser = browser_sample(&group);
     browser.reattached = true;
     browser.resource.state = BrowserResourceState::Exited;
-    let exited = observed_agents(browser_owner(browser.clone()));
+    let exited = observed_agents(browser_owner(browser.clone()), Vec::new());
     assert!(exited.running.is_empty() && exited.unconfirmed.is_empty());
     browser.resource.state = BrowserResourceState::Unconfirmed;
     assert_eq!(
-        observed_agents(browser_owner(browser.clone()))
+        observed_agents(browser_owner(browser.clone()), Vec::new())
             .unconfirmed
             .len(),
         1
@@ -512,7 +587,7 @@ fn browser_exit_unknown_state_and_duplicate_members_are_not_interchangeable() {
             )),
         }]
     };
-    let duplicated = observed_agents(owners());
+    let duplicated = observed_agents(owners(), Vec::new());
     assert!(duplicated.running.is_empty());
     assert_eq!(duplicated.unconfirmed.len(), 2);
     assert!(!decide(&capabilities(), owners()).allowed);

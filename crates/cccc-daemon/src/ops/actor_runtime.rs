@@ -139,6 +139,12 @@ pub(super) fn apply_resolved(
     }
     // A confirmation that ends before connecting pauses only this member.
     // Check it before teardown, startup baselines or provider configuration.
+    if startup_input_paused(&group.group_id, actor_id) {
+        return Err(OpError::new(
+            RUNTIME_CONFIRMATION_PAUSED,
+            "The terminal exited before startup input was ready; ask the user to start this member again",
+        ));
+    }
     if actor.runtime == ActorRuntime::Claude && super::local_headless::supports(actor) {
         super::local_headless::ensure_confirmation_allowed(&group.group_id, actor_id)
             .map_err(launch_error)?;
@@ -376,6 +382,10 @@ pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
         Ok(None) => {}
     }
     cccc_runtime::status(group_id, actor_id).ok()
+}
+
+pub(super) fn startup_input_paused(group_id: &str, actor_id: &str) -> bool {
+    status(group_id, actor_id).is_some_and(|status| !status.running && status.startup_input_pending)
 }
 
 /// Whether the Actor's own primary PTY is registered, running or kept after it

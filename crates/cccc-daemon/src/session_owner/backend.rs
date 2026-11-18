@@ -761,6 +761,9 @@ impl Backend {
                 let group = &actor.group_id;
                 let id = &actor.actor_id;
                 match action {
+                    TerminalAction::ReleaseStartupInput { generation } => {
+                        cccc_runtime::release_startup_input(group, id, &generation).map(json)
+                    }
                     TerminalAction::Write { data } => {
                         cccc_runtime::write(group, id, &data).map(|()| Value::Null)
                     }

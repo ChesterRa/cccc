@@ -1380,7 +1380,8 @@
       "mcp_identity_unconfirmed": "无法确认智能体的 CCCC 工具进程是否还在；请先通过 CCCC 重新启动它。",
       "mcp_contract_mismatch": "智能体正在用的 CCCC 工具和新构建不兼容。",
       "preflight_timeout": "检查智能体状态超时，请稍后再试。",
-      "runtime_not_covered": "这个智能体当前的启动方式还不支持在重启时保留；请选「重启智能体」。"
+      "runtime_not_covered": "这个智能体当前的启动方式还不支持在重启时保留；请选「重启智能体」。",
+      "remote_resource_unconfirmed": "无法确认已保存的远程连接或其未完成的工作。请先查看它们的当前状态再重试。"
     },
     "preparingLocal": "正在检查新构建。在此期间 CCCC 照常运行。",
     "restartingLocal": "正在重启到新构建 {{version}}。CCCC 回来后在这里显示结果。",

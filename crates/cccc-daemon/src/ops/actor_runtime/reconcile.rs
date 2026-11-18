@@ -274,6 +274,7 @@ mod tests {
                 exit_code: Some(1),
                 exit_detail: Some("Terminated by Killed".into()),
                 launch: None,
+                startup_input_pending: false,
             }],
         );
         assert!(result.is_ok());
@@ -321,6 +322,7 @@ mod tests {
                 exit_code: Some(1),
                 exit_detail: None,
                 launch: None,
+                startup_input_pending: false,
             }],
         )
         .expect("reconcile terminal exit");
@@ -376,6 +378,7 @@ mod tests {
                 exit_code: Some(1),
                 exit_detail: None,
                 launch: None,
+                startup_input_pending: false,
             }],
         )
         .expect("reconcile stale exit");

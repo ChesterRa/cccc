@@ -28,6 +28,7 @@ import { RuntimeDockTicker } from "./RuntimeDockTicker";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
+import { useStartupInputWaiting } from "../../hooks/useStartupInputWaiting";
 import { useUiStylePrefs, type LcdMotion } from "../../utils/uiStyle";
 
 function lcdRingDelay(): number {
@@ -228,7 +229,8 @@ function RuntimeDockActorButtonView({
   const groupState = useGroupStore((state) =>
     state.groupDoc?.group_id === groupId ? state.groupDoc.state : undefined,
   );
-  const ringTone = getRuntimeRingTone(item, isRunning, workingState);
+  const startupWaiting = useStartupInputWaiting(groupId, item.actor);
+  const ringTone = getRuntimeRingTone(item, isRunning, workingState, startupWaiting);
   // The existing active tone also covers queued tasks. A moving ring must
   // describe work actually in progress, not merely a pending item.
   const working =
@@ -265,15 +267,21 @@ function RuntimeDockActorButtonView({
     : null;
   const statusLabel = item.actor.runtime_confirmation_required
     ? t("actors:runtimeConfirmationPending")
-    : item.actor.runtime_confirmation_paused === true
-      ? t("actors:runtimeConfirmationPaused")
-      : nativeStatusKey
-        ? t(nativeStatusKey.includes(":") ? nativeStatusKey : `actors:${nativeStatusKey}`)
-        : item.liveWorkCard && !useRuntimeStatus
-          ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
-          : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
-              t(key === "error" ? "common:error" : `actors:${key}`, options),
-            );
+    : startupWaiting
+      ? t("actors:runtimeStartupInputPending")
+      : item.actor.runtime_confirmation_paused === true
+        ? t(
+            item.actor.runtime === "claude"
+              ? "actors:runtimeConfirmationPaused"
+              : "actors:runtimeStartupInputPaused",
+          )
+        : nativeStatusKey
+          ? t(nativeStatusKey.includes(":") ? nativeStatusKey : `actors:${nativeStatusKey}`)
+          : item.liveWorkCard && !useRuntimeStatus
+            ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
+            : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
+                t(key === "error" ? "common:error" : `actors:${key}`, options),
+              );
   // When the daemon could not observe the agent, its diagnostic names the next step.
   const observationError = String(item.actor.runtime_observation_error || "").trim();
   const queuedCount = Math.max(0, Number(item.webModelQueuedCount || 0));

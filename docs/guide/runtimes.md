@@ -15,7 +15,7 @@ Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can al
 | Codex CLI | `codex` | CCCC-managed app-server + native TUI | Agent-scoped MCP injected into the managed session |
 | DeepSeek Harness | `deepseek` | CCCC-managed `dsh-acp-demo` (structured ACP, no native terminal) | Automatic on first start; explicit setup remains available |
 | GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Auto for TUI; injected per ACP session |
-| Cursor CLI | `cursor` | Native `cursor-agent` TUI or official ACP | Prompt-assisted for TUI; injected per ACP session |
+| Cursor CLI | `cursor` | Native `cursor-agent` TUI or official ACP | Native registration for TUI; injected per ACP session |
 | Devin CLI | `devin` | Native `devin` TUI or official ACP | Auto for TUI; injected per ACP session |
 | Kiro CLI | `kiro` | Native TUI or official V3 ACP | Native registration for TUI; injected per ACP session |
 | Kilo Code CLI | `kilo` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
@@ -82,6 +82,7 @@ cccc setup --runtime cline
 cccc setup --runtime codex
 cccc setup --runtime deepseek
 cccc setup --runtime copilot
+cccc setup --runtime cursor
 cccc setup --runtime devin
 cccc setup --runtime kiro
 cccc setup --runtime droid
@@ -100,12 +101,6 @@ DeepSeek Harness is an upstream developer preview, so CCCC owns and isolates the
 
 DeepSeek's connection form writes `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and `DEEPSEEK_MODEL` to the Agent's existing private environment, and Runtime Profiles can carry the same variables. A saved value wins; without one, the Agent uses `DEEPSEEK_BASE_URL` or `DEEPSEEK_MODEL` from the environment it starts with (its own environment settings first, then the daemon's), and otherwise `https://api.deepseek.com` and `deepseek-flash`, the name DeepSeek's API documentation gives for its current Flash model; custom model IDs are passed unchanged after trimming surrounding whitespace. The shared managed ACP config reads the model from each launched process's environment, so changing one Agent does not change other Agents. Save and restart the Agent to apply connection changes. Custom gateways must support DeepSeek streaming Chat Completions and tool calls; an OpenAI-compatible label alone does not establish that compatibility. A missing API key, or an authentication failure CCCC recognizes (such as DeepSeek rejecting the key), stops the current DeepSeek process and pauses automatic delivery; correct the saved connection settings and explicitly launch or restart the Agent to retry its pending messages. Editing a draft or using a separate inspector restart does not save it.
 
-Prompt-assisted runtimes print an idempotent setup prompt or contract that you run inside that runtime:
-
-```bash
-cccc setup --runtime cursor
-```
-
 For a custom runtime, provide the command when creating or editing the agent:
 
 ```bash
@@ -119,6 +114,8 @@ Users choose a Runtime, not an arbitrary runner. Antigravity, Auggie, Copilot, D
 Agent messages still enter those managed Runtimes through their native terminal. CCCC does not decide whether a message steers an active turn or waits behind it; the receiving Runtime applies its own configuration. DeepSeek Harness has only a structured ACP surface, while ChatGPT Web Model uses browser delivery plus a remote MCP connector. These are Runtime capabilities, not user-selectable modes.
 
 Cline currently opens a fresh native terminal on each start. CCCC does not persist or reuse Cline's `--id` session identifier.
+
+In terminal mode, Amp, Auggie, Cline, Copilot, Cursor, Devin, Droid, Hermes, Kimi Code and Kiro can open with a trust, privacy or welcome screen. CCCC types nothing into such a terminal until it shows its chat input box: answer the screen in the terminal yourself, and the waiting messages are then sent without duplicates. Only if the chat input box shows and nothing is sent, for example because a runtime update changed its screen, choose **Done, send now** above the terminal. Choosing it while a prompt is still open would let CCCC's text reach that prompt. If the terminal closes before CCCC has confirmed that it can deliver, CCCC stops retrying and messages wait until you start the agent again.
 
 #### Admission evidence (2026-09-05)
 
@@ -815,12 +812,12 @@ Common checks:
 | Symptom | Check |
 |---------|-------|
 | Runtime is listed but unavailable | Install the CLI and make sure the command is on `PATH`. |
-| MCP tools are missing in the runtime | Run `cccc setup --runtime <id>` or follow the prompt-assisted setup instructions. |
+| MCP tools are missing in the runtime | Run `cccc setup --runtime <id>`; for `custom` and `hermes`, add the configuration it prints. |
 | Custom agent will not start | Ensure `--command` is set; CCCC cannot infer a command for `custom`. |
 | Existing agent does not pick up setup changes | Restart the agent after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
 
-Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, Kilo, and Pi receive an agent-scoped server inside their managed session. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the agent process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Native Cursor TUI retains its prompt-assisted startup setup contract; the prompt checks the registered executable and arguments as well as tool availability, because a legacy MCP can expose the same bootstrap name. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, Kilo and Pi reports session ownership. Optional ACP setup reports session injection without modifying global MCP files; it does not certify provider login. For Grok it prepares and verifies the same native registration used during agent and Chet startup.
+Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, Kilo, and Pi receive an agent-scoped server inside their managed session. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the agent process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Cursor starts MCP servers without the CCCC variables of the agent's environment, so its user entry in `~/.cursor/mcp.json` maps `CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` with Cursor's `${env:NAME}` interpolation; an entry with fixed values, other CCCC variables or another executable is replaced. Cursor CLI 2026.11.11 reads project servers only from `.cursor/mcp.json` at the top of the enclosing Git work tree, or in the working directory outside one; a `cccc` entry there takes precedence, so CCCC checks that file. Outside CCCC, Cursor fills these placeholders from the environment of the session that starts it; CCCC treats a placeholder Cursor could not fill as unset, so such a session uses the default CCCC home with no agent identity. Auggie 1.2.1 likewise passes an MCP server only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` and the variables its entry names. CCCC's user entry in `~/.augment/settings.json` therefore maps each of the three to `${NAME:-$NAME}`, and sets `useShellInterpolation: false` so that Auggie starts the CCCC executable directly rather than through a shell; an entry without these values, or with other fixed CCCC variables, is replaced. A `cccc` entry in `.augment/settings.local.json` or `.augment/settings.json` at the top of the enclosing Git work tree, or in the working directory outside one, takes precedence over the user entry, so a different one there stops the agent from starting with an error. Outside CCCC, Auggie expands an unset variable to the exact text `$NAME`, which CCCC treats as unset in the same way. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, Kilo and Pi reports session ownership. Optional ACP setup reports session injection without modifying global MCP files; it does not certify provider login. For Grok it prepares and verifies the same native registration used during agent and Chet startup.
 
 This preflight runs before the provider discovers its tools. It therefore repairs Python-to-Rust executable path changes without requiring a second restart. Sessions that were already running when an external MCP configuration changed still need to be restarted because provider tool catalogs are session-scoped.
 
@@ -881,10 +878,7 @@ For a failed or uncertain delivery, check the terminal before using the existing
 retry action; an uncertain handoff requires explicit retry confirmation.
 
 The agent environment exposes the owning CCCC launcher as `CCCC_CLI` and places
-its directory on PATH, including extracted installations. Prompt-assisted MCP
-configuration must inherit `CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` from
-the agent process, rather than pinning one instance in a shared MCP registration.
-Managed runtime sessions continue to use their protocol/session injection path.
+its directory on PATH, including extracted installations.
 Native PTY submission proves bytes were written, not that a provider completed
 bootstrap or accepted a task; this change does not add a provider acknowledgement
 protocol to PTY runtimes.

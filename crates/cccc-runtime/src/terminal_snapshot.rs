@@ -141,6 +141,11 @@ impl TerminalStateMirror {
         (self.cols, self.rows)
     }
 
+    pub(crate) fn visible_text(&self) -> Option<Vec<String>> {
+        self.emulator_enabled
+            .then(|| self.screen.visible_rows().map(|row| row.text()).collect())
+    }
+
     pub(crate) fn clear(&mut self) {
         *self = Self::new(self.cols, self.rows);
     }

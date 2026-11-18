@@ -828,6 +828,9 @@ fn find_executable(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,7 +7,7 @@ use super::receipt::{AgentIdentity, ShutdownMode, ShutdownReport};
 use super::transport::Paths;
 use cccc_core::HomeLayout;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -546,6 +546,15 @@ pub(super) fn submit(
                     .insert(source_key.clone(), operation.clone());
                 operation
             } else {
+                if snapshot
+                    .terminal
+                    .as_ref()
+                    .is_some_and(|terminal| terminal.running && terminal.startup_input_pending)
+                {
+                    return Ok(
+                        serde_json::json!({"backend":"pty","outcome":"not_written","reason":"waiting for terminal startup input"}),
+                    );
+                }
                 if cancelled.load(Ordering::Acquire) {
                     return Err(io::Error::new(
                         io::ErrorKind::Interrupted,
@@ -796,7 +805,21 @@ pub(super) fn finish(
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    let report = finish_clients(clients, mode, request_id)?;
+    let mut held = BTreeSet::new();
+    let mut report = finish_clients(clients, mode, request_id, &mut held)?;
+    if mode == ShutdownMode::PreserveAgents {
+        let remote = super::remote::read(
+            home,
+            std::time::Instant::now() + Duration::from_secs(5),
+            &held,
+        )?;
+        if !remote.refusals.is_empty() {
+            return Err(io::Error::other(
+                "saved remote member resources could not be confirmed",
+            ));
+        }
+        report.unconfirmed.extend(remote.active);
+    }
     // Do not remove on failure before collecting the report; a failed Stop
     // still owns resources and must remain discoverable to an offline Stop.
     controllers().lock().map_err(poisoned)?.remove(home.root());
@@ -807,6 +830,7 @@ fn finish_clients(
     clients: Vec<Arc<Client>>,
     mode: ShutdownMode,
     request_id: String,
+    held: &mut BTreeSet<super::remote::MemberKey>,
 ) -> io::Result<ShutdownReport> {
     let mut report = ShutdownReport {
         v: 1,
@@ -827,6 +851,14 @@ fn finish_clients(
                     // observation at this point, not a promise of future liveness.
                     let observed = client.owner_snapshot()?;
                     for snapshot in observed.actors {
+                        // A local launch overrides its next-start Runtime settings.
+                        // Collect only typed member processes: a leftover browser
+                        // page cannot hide the member's current remote work.
+                        held.insert((
+                            snapshot.actor.group_id.clone(),
+                            snapshot.actor.actor_id.clone(),
+                            snapshot.actor.actor_created_at.clone(),
+                        ));
                         if running(&snapshot) {
                             report
                                 .retained
@@ -942,6 +974,7 @@ pub(super) fn stop_offline(home: &HomeLayout) -> anyhow::Result<ShutdownReport> 
         clients.into_values().collect(),
         ShutdownMode::Stop,
         uuid::Uuid::new_v4().simple().to_string(),
+        &mut BTreeSet::new(),
     );
     if let Some(error) = discovery_error {
         return Err(error.into());
@@ -1335,7 +1368,8 @@ mod tests {
             finish_clients(
                 vec![first, second.clone()],
                 ShutdownMode::Stop,
-                "stop-all".into()
+                "stop-all".into(),
+                &mut BTreeSet::new(),
             )
             .is_err()
         );

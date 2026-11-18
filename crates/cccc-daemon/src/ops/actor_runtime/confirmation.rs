@@ -35,6 +35,9 @@ pub(in crate::ops) fn confirmation_pause_applies(
     group_id: &str,
     actor: &Actor,
 ) -> Result<bool, OpError> {
+    if super::startup_input_paused(group_id, &actor.id) {
+        return Ok(true);
+    }
     let paused = local_headless::confirmation_paused(group_id, &actor.id).map_err(|error| {
         // A poisoned registry remains unusable until restart. Actor lists may be
         // polled frequently, so report that one persistent failure only once.
@@ -69,6 +72,12 @@ pub(in crate::ops) fn actor_response(
     }
     value["runtime_confirmation_required"] =
         serde_json::json!(confirmation_required(group_id, &actor.id));
+    if let Some(status) = super::status(group_id, &actor.id)
+        && status.running
+        && status.startup_input_pending
+    {
+        value["runtime_startup_input"] = serde_json::json!({"generation":status.started_at});
+    }
     match confirmation_pause_applies(home, group_id, actor) {
         Ok(paused) => value["runtime_confirmation_paused"] = serde_json::json!(paused),
         Err(error) => tracing::debug!(group_id, actor_id = %actor.id, code = %error.code,

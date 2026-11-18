@@ -592,9 +592,9 @@ cccc setup --runtime grok
 cccc setup --runtime hermes
 cccc setup --runtime kimi
 cccc setup --runtime opencode
-cccc setup --runtime cursor       # Prompt-assisted setup inside Cursor CLI
-cccc setup --runtime kilo         # Prompt-assisted setup inside Kilo Code CLI
-cccc setup --runtime antigravity  # Prompt-assisted setup inside Antigravity
+cccc setup --runtime cursor
+cccc setup --runtime kilo         # Report CCCC-owned per-session MCP
+cccc setup --runtime antigravity
 cccc setup --runtime custom
 ```
 

@@ -14,13 +14,13 @@ pub const CLAUDE_PLUGIN_ID: &str = "cccc-local-sessions@cccc-local";
 /// Global native configuration can also be loaded by CCCC-owned Actors and
 /// assistants. It must not replace their existing identity or receive path.
 pub fn cccc_owned_environment() -> bool {
-    [
-        "CCCC_ACTOR_ID",
-        "CCCC_SECRETARY_TASK_TOKEN",
-        "CCCC_SECRETARY_TASK_TOKEN_FILE",
-    ]
-    .iter()
-    .any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()))
+    crate::home::context_var_os("CCCC_ACTOR_ID").is_some_and(|value| !value.is_empty())
+        || [
+            "CCCC_SECRETARY_TASK_TOKEN",
+            "CCCC_SECRETARY_TASK_TOKEN_FILE",
+        ]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()))
         || std::env::var("CCCC_MCP_TOOL_PROFILE").is_ok_and(|value| value == "secretary-task")
 }
 

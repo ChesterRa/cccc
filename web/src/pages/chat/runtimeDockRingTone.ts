@@ -8,8 +8,11 @@ export function getRuntimeRingTone(
   item: Pick<RuntimeDockItem, "actor" | "liveWorkCard" | "runner">,
   isRunning: boolean,
   workingState: string,
+  // A terminal still waiting for its startup input past the shown delay.
+  startupWaiting = false,
 ): RuntimeRingTone {
   if (item.actor.runtime_confirmation_required) return "attention";
+  if (startupWaiting) return "attention";
   if (item.actor.runtime_confirmation_paused === true) return "attention";
   const actorState = String(workingState || "")
     .trim()

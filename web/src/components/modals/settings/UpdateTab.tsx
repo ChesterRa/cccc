@@ -549,6 +549,7 @@ const KEEP_REASONS = new Set([
   "mcp_contract_mismatch",
   "preflight_timeout",
   "runtime_not_covered",
+  "remote_resource_unconfirmed",
 ]);
 
 /** One refusal, led by whom it is about when it names someone. */

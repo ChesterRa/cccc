@@ -1199,6 +1199,66 @@ mod local {
     }
 
     #[tokio::test]
+    async fn ordinary_start_recovers_only_a_local_restart_with_a_dead_host_and_an_idle_daemon() {
+        let host = host();
+        let (prepared, _) = host.relayed().await;
+        let active_path = host.home.root().join("update/active.json");
+        let mut intent = host.armed().expect("armed Local restart");
+        assert!(
+            recover_local_before_start(&host.home)
+                .expect("live holder is left to the startup gate")
+                .is_none()
+        );
+        assert_eq!(host.armed(), Some(intent.clone()));
+
+        let mut previous = std::process::Command::new("/bin/sleep")
+            .arg("30")
+            .spawn()
+            .expect("fixture previous host");
+        intent.holder = NativeHost::capture(previous.id()).expect("previous host identity");
+        previous.kill().expect("end previous host");
+        previous.wait().expect("confirm previous host exited");
+
+        let mut release_intent = intent.clone();
+        release_intent.source = release(host.launch.path.parent().expect("installation path"));
+        cccc_core::fs::write_secret_json(&active_path, &release_intent).expect("Release intent");
+        assert!(
+            recover_local_before_start(&host.home)
+                .expect("Release remains for explicit recovery")
+                .is_none()
+        );
+        assert_eq!(host.armed(), Some(release_intent));
+
+        cccc_core::fs::write_secret_json(&active_path, &intent).expect("interrupted Local intent");
+        let lock = cccc_core::fs::try_exclusive_lock(&host.home.daemon_dir().join("ccccd.lock"))
+            .expect("daemon lock")
+            .expect("take fixture lock");
+        let blocked = recover_local_before_start(&host.home).expect_err("daemon still owns home");
+        assert!(format!("{blocked:#}").contains("daemon_running"));
+        assert_eq!(host.armed(), Some(intent));
+        drop(lock);
+
+        let old_executable = std::fs::read(&host.launch.path).expect("before recovery");
+        let update = recover_local_before_start(&host.home)
+            .expect("recover interrupted Local restart")
+            .expect("report the recovered transaction");
+        assert!(update.failed);
+        assert_eq!(update.transaction, prepared.transaction.id);
+        assert!(host.armed().is_none());
+        assert_eq!(host.last()["result"], "abandoned");
+        assert!(!prepared.transaction.dir.exists());
+        assert_eq!(
+            std::fs::read(&host.launch.path).expect("after recovery"),
+            old_executable
+        );
+        assert!(
+            recover_local_before_start(&host.home)
+                .expect("normal repeat start")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn a_restart_that_never_reserved_the_home_is_cleaned_up() {
         let host = host();
         build(&host.launch.path, "0.4.58", &source_id('b'), true);

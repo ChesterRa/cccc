@@ -44,6 +44,8 @@ mod quick_reply_templates;
 mod realtime;
 mod remote_access;
 mod remote_access_projection;
+#[cfg(test)]
+mod remote_maintenance_test_daemon;
 mod settings;
 mod streams;
 mod system;

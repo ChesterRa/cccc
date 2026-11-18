@@ -28,8 +28,12 @@ mod protocol;
 pub(crate) mod receipt;
 #[cfg(unix)]
 mod recovery;
+#[cfg(unix)]
+mod remote;
 pub(crate) mod runtime;
 mod shutdown;
+#[cfg(all(test, unix))]
+mod startup_input_tests;
 #[cfg(all(test, unix, debug_assertions))]
 mod test_entry;
 #[cfg(unix)]
@@ -52,8 +56,8 @@ pub const fn platform_supported() -> bool {
     ))
 }
 
-/// Read current holder facts without starting or acquiring a holder. The
-/// deadline covers connection and the complete observation exchange.
+/// Read current holder and saved remote-work facts without starting or
+/// acquiring resources. The deadline covers the complete observation.
 #[cfg(unix)]
 pub async fn observations(
     home: &cccc_core::HomeLayout,

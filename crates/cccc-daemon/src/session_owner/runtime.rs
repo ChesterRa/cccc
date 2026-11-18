@@ -58,6 +58,7 @@ change!(write(data: &[u8]) -> (), super::protocol::TerminalAction::Write { data:
 change!(resize(cols: u16, rows: u16) -> (), super::protocol::TerminalAction::Resize { cols, rows });
 change!(resize_from_attachment(attachment_id: u64, cols: u16, rows: u16) -> bool, super::protocol::TerminalAction::ResizeAttachment { attachment_id, cols, rows });
 change!(clear() -> (), super::protocol::TerminalAction::Clear);
+change!(release_startup_input(generation: &str) -> bool, super::protocol::TerminalAction::ReleaseStartupInput { generation: generation.to_owned() });
 
 #[cfg(unix)]
 fn read(
@@ -84,28 +85,49 @@ fn change(
     let Some(snapshot) = super::snapshot(group, actor).map_err(RuntimeError::Io)? else {
         return Ok(None);
     };
-    super::controller::perform(
+    let releasing_startup = matches!(
+        &action,
+        super::protocol::TerminalAction::ReleaseStartupInput { .. }
+    );
+    let result = super::controller::perform(
         &snapshot.actor,
         super::protocol::Mutation::Terminal {
             actor: snapshot.actor.clone(),
             action,
         },
-    )
-    .map(Some)
-    .map_err(|error| runtime_error(error, group, actor))
+    );
+    match result {
+        Err(error)
+            if releasing_startup
+                && matches!(
+                    failure_code(&error),
+                    Some("actor_not_owned" | "actor_replaced" | "session_replaced")
+                ) =>
+        {
+            // The owner can reject the old target before executing the release.
+            Ok(Some(serde_json::Value::Bool(false)))
+        }
+        result => result
+            .map(Some)
+            .map_err(|error| runtime_error(error, group, actor)),
+    }
 }
 
 #[cfg(unix)]
 fn runtime_error(error: std::io::Error, group: &str, actor: &str) -> RuntimeError {
-    match error
-        .get_ref()
-        .and_then(|cause| cause.downcast_ref::<super::protocol::Failure>())
-        .map(|error| error.code.as_str())
-    {
+    match failure_code(&error) {
         Some("not_found") => RuntimeError::NotFound(group.into(), actor.into()),
         Some("not_running") => RuntimeError::NotRunning(group.into(), actor.into()),
         _ => RuntimeError::Io(error),
     }
+}
+
+#[cfg(unix)]
+fn failure_code(error: &std::io::Error) -> Option<&str> {
+    error
+        .get_ref()
+        .and_then(|cause| cause.downcast_ref::<super::protocol::Failure>())
+        .map(|error| error.code.as_str())
 }
 
 #[cfg(unix)]

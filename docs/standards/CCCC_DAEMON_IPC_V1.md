@@ -490,9 +490,15 @@ Notes:
   exchanged request with no confirmed response remains `OutcomeUnknown`.
   Ordinary lifecycle clients and stream upgrades retain their existing behavior.
 - A supervised local update MAY reserve this home's next startup through a
-  private `update/active.json` intent. Ordinary starts, including adoption of an
-  already-running daemon, MUST then fail with `update_in_progress` and a recovery
-  instruction. An explicit replacement-host permit MUST match the recorded
+  private `update/active.json` intent. The startup gate MUST refuse ordinary
+  starts, including adoption of an already-running daemon, while that intent
+  is active. It reports `update_in_progress` and a recovery instruction. An
+  ordinary CLI startup
+  MAY complete recovery of an interrupted Local restart first, after confirming
+  the recorded update host's exit by native identity and claiming the daemon
+  lock. It MUST report the interrupted restart as abandoned and leave the
+  executable files intact. Release recovery still requires its explicit
+  recovery action. An explicit replacement-host permit MUST match the recorded
   transaction directory and the actual executable's target version and compiled
   source identity. This exact-candidate check is not an assertion of protocol
   compatibility or an independent artifact checksum.
@@ -667,6 +673,35 @@ reattachment requires a successful complete page publication in the current
 holder control epoch. An old saved mapping alone remains unconfirmed. An
 unmapped login profile still participates in preservation and cleanup checks,
 without inventing a member for the result lists.
+
+Remote ChatGPT Dots and Grok Webhook members retain their existing saved route,
+binding revision, epoch, wake and canonical unfinished turn. They do not acquire
+a synthetic session owner. The preservation check reads the published connector
+and Group documents without taking the connector write lock or creating files.
+An idle or unconfigured member with no unfinished work is an empty resource set;
+an unreadable, conflicting or identity-mismatched saved route is refused with
+`remote_resource_unconfirmed`, rather than a suggestion to await startup.
+
+For `preserve_agents`, an active canonical/private execution or a current
+nonterminal wake is reported in `unconfirmed`, with `generation: null` and no
+`owner_id`. It MUST NOT be called reattached, running or confirmed stopped on
+the strength of a persisted route. Completed wakes and idle members add no row.
+A terminal failed delivery retains its saved state and existing failure status
+without becoming a permanent maintenance activity row. This does not revoke a
+late Grok claim; Dots still requires its existing live wake/subscription checks.
+No new claim expiry or automatic work replay is introduced. Ordinary `shutdown`
+keeps its existing semantics.
+
+Post-restart observations preserve independently verified local holder results
+when remote facts become unreadable or conflicting. Such remote facts add no
+new activity observation; unfinished work in the matching stop receipt remains
+unconfirmed. Preflight and the final preservation receipt still fail closed.
+
+These observations prove local state retention, not cloud-process continuation.
+During restart the HTTP endpoint can be unavailable, and a cloud tool call can
+fail or end that run. Inspect the original turn and result before using the
+existing resolve/recovery entry; retry original input only after confirming it
+was not accepted. The maintenance operation MUST NOT silently issue a new turn.
 
 #### Local browser resources
 
@@ -4433,6 +4468,31 @@ Process liveness or a last message timestamp MUST NOT establish idle state or
 its duration. Existing managed-session and Dots execution observations keep
 precedence over this fallback.
 
+A primary PTY for a runtime with a startup input gate may publish
+`runtime_startup_input: { generation: string }` while its first automatic input
+is waiting for the native chat input region. The generation identifies the
+actual PTY instance. It is a read-only observation; it contains no terminal text
+and grants no consent. ACP, external native sessions and generic viewer or
+confirmation terminals do not use this gate. Automatic preambles, business text
+and submission keys MUST remain unwritten until a verified input region or an
+explicit user release. A timeout MUST NOT release the gate. Pending work resumes
+without being duplicated when the same terminal becomes ready. Once passed,
+this gate belongs to the Session and MUST survive maintenance preservation;
+launching a new Session requires a new gate.
+
+`actor_terminal_ready` accepts
+`{ by: "user", group_id: string, actor_id: string, generation: string }` and
+returns `{ released: true }`. It is explicitly user-only, checks the current
+live PTY generation, and is idempotent for that generation. The operation fails
+with `runtime_session_changed` if the supplied generation does not identify the
+member's current live primary PTY. This allows queued CCCC input into the
+selected Session; it MUST NOT press a native key, answer a trust/privacy prompt,
+change provider permissions or start a terminal. Callers should first let the
+user inspect and handle the native startup UI. If the terminal exits before
+the gate passes, automatic delivery remains paused until an explicit user
+lifecycle retry. Ready detection is limited to startup; it is not provider
+admission evidence or a general native permission-dialog protocol.
+
 Each observable Actor row includes the Boolean `runtime_confirmation_required`.
 For a managed Claude Actor it is true while a recovery-owned confirmation PTY
 is running without a ready managed session. It is a live projection, not Actor
@@ -4440,8 +4500,9 @@ configuration, consent, provider readiness or task-delivery acceptance. A false
 value alone MUST NOT be interpreted as approval. Reads MUST NOT start a Runtime.
 
 Actor rows may also include `runtime_confirmation_paused: boolean`. When true,
-the effective Runtime is a managed Claude session whose automatic retries are
-paused in this daemon process after a confirmation ended before connection.
+automatic retries are paused after a managed Claude confirmation ended before
+connection, or an ordinary primary terminal exited before passing its startup
+input gate. The latter gate follows the actual Session across owner retention.
 This is a live observation, not Actor configuration or a statement that the
 user declined. Explicit user `actor_start`, `actor_restart`, `actor_new_session`,
 `group_start`, or `actor_update` with `enabled=true` can clear the pause, subject

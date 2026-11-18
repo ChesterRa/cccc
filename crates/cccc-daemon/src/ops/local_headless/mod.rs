@@ -122,6 +122,8 @@ pub(crate) fn retry_confirmation(group_id: &str, actor_id: &str) -> std::io::Res
     }
     let key = (group_id.to_owned(), actor_id.to_owned());
     workspace_trust_recovery::cancel(&key)?;
+    cccc_runtime::reset_exited_startup_input(group_id, actor_id)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
     confirmation_pause::retry(&key)
 }
 

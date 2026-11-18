@@ -1,5 +1,5 @@
 use super::{Session, block_on_managed, managed_runtime, output};
-use cccc_contracts::{Actor, utc_now};
+use cccc_contracts::{Actor, ActorRuntime, utc_now};
 use serde_json::Value;
 use std::io;
 use std::sync::atomic::Ordering;
@@ -20,6 +20,11 @@ impl Session {
         if self.stopped.load(Ordering::Acquire) {
             return Ok(false);
         }
+        // Grok's viewer can start a replacement leader when its leader goes away.
+        if self.managed.runtime() == ActorRuntime::Grok && self.has_terminal.load(Ordering::Acquire)
+        {
+            self.stop_grok_viewer()?;
+        }
         block_on_managed(self.managed.stop(self.managed.generation()).instrument(
             tracing::info_span!("actor_runtime_stop", group_id = %self.group_id, actor_id = %self.actor_id),
         ))?;
@@ -34,6 +39,34 @@ impl Session {
         self.set_status("stopped", None);
         output::emit(self, "headless.session.stopped", serde_json::Map::new());
         Ok(true)
+    }
+
+    fn stop_grok_viewer(&self) -> io::Result<()> {
+        match cccc_runtime::status(&self.group_id, &self.actor_id) {
+            Ok(viewer) => {
+                // Keep the registration if this terminal cannot be stopped.
+                let stopped = cccc_runtime::stop_if_started_at(
+                    &self.group_id,
+                    &self.actor_id,
+                    &viewer.started_at,
+                )
+                .map_err(io::Error::other)?;
+                if stopped.is_none()
+                    && !matches!(
+                        cccc_runtime::status(&self.group_id, &self.actor_id),
+                        Err(cccc_runtime::RuntimeError::NotFound(..)),
+                    )
+                {
+                    return Err(io::Error::other(
+                        "could not confirm Grok's terminal stopped",
+                    ));
+                }
+            }
+            Err(cccc_runtime::RuntimeError::NotFound(..)) => {}
+            Err(error) => return Err(io::Error::other(error)),
+        }
+        self.record_viewer_detached();
+        Ok(())
     }
 
     pub(super) fn stop_after_process_exit(&self) -> bool {
@@ -107,12 +140,16 @@ impl Session {
         {
             return Ok(false);
         }
+        Ok(self.record_viewer_detached())
+    }
+
+    fn record_viewer_detached(&self) -> bool {
         let detached = self.has_terminal.swap(false, Ordering::AcqRel);
         if detached && let Ok(mut status) = self.status.lock() {
             status.pid = None;
             status.updated_at = utc_now();
         }
-        Ok(detached)
+        detached
     }
 
     pub(super) fn reattach_viewer(&self) -> io::Result<()> {

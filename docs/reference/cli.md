@@ -495,7 +495,7 @@ cccc setup                         # Configure every supported runtime; unavaila
 cccc setup --runtime claude        # Report CCCC-owned per-session MCP for Claude Code
 cccc setup --runtime codex         # Auto-configure for Codex
 cccc setup --runtime copilot       # Auto-configure for GitHub Copilot CLI
-cccc setup --runtime cursor        # Show prompt-assisted setup contract for Cursor CLI
+cccc setup --runtime cursor        # Configure native Cursor CLI MCP
 cccc setup --runtime devin         # Auto-configure for Devin CLI
 cccc setup --runtime kiro          # Auto-configure for Kiro CLI
 cccc setup --runtime kimi          # Configure native Kimi Code MCP
@@ -505,12 +505,12 @@ cccc setup --runtime kiro --runtime-mode acp   # Official V3; session-owned MCP
 cccc setup --runtime hermes --runtime-mode acp # Official ACP; session-owned MCP
 cccc setup --runtime droid --runtime-mode acp  # Official ACP; session-owned MCP
 cccc setup --runtime pi            # Report CCCC-owned RPC session MCP
-cccc setup --runtime kilo          # Show prompt-assisted setup contract for Kilo Code CLI
-cccc setup --runtime antigravity   # Show prompt-assisted setup contract for Antigravity CLI
+cccc setup --runtime kilo          # Report CCCC-owned per-session MCP for Kilo Code CLI
+cccc setup --runtime antigravity   # Auto-configure for Antigravity CLI
 ```
 
 Without `--runtime`, setup performs one batch pass: installed CLI runtimes are configured,
-prompt-assisted/manual runtimes return their configuration contract, and missing runtimes are
+manual runtimes (`custom`, `hermes`) return their configuration contract, and missing runtimes are
 reported without aborting the remaining setup work.
 
 ### `cccc update`
@@ -614,6 +614,10 @@ cccc mcp                           # Start MCP server (stdio mode)
 | `CCCC_WEB_PORT` | saved setting, then `8848` | Web UI port; `--port` overrides both |
 | `CCCC_WEB_MODE` | `normal` | Set to `exhibit` for a read-only Web UI |
 | `CCCC_WEB_READONLY` | unset | Truthy value also enables read-only exhibit mode |
+
+`CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` reserve two exact values each
+as an MCP placeholder that a runtime could not fill, such as `${env:CCCC_HOME}`
+and `$CCCC_HOME`; either one counts as unset.
 
 For `cccc` and `cccc web`, an existing live Web binding is reused when neither
 `--host` nor `--port` is supplied. Otherwise, each value resolves from its command

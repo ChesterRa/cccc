@@ -291,6 +291,9 @@ pub(super) enum TerminalRead {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(super) enum TerminalAction {
+    ReleaseStartupInput {
+        generation: String,
+    },
     Write {
         data: Vec<u8>,
     },

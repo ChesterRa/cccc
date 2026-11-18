@@ -123,6 +123,30 @@ pub fn status(group_id: &str, actor_id: &str) -> Result<SessionStatus, RuntimeEr
     with_session(group_id, actor_id, |session| Ok(session.status()))
 }
 
+/// Explicit user release for the exact primary PTY observed in the waiting UI.
+/// This writes no native key and does not affect a replacement session.
+pub fn release_startup_input(
+    group: &str,
+    actor: &str,
+    generation: &str,
+) -> Result<bool, RuntimeError> {
+    with_session(group, actor, |session| {
+        Ok(session.release_startup_input(generation))
+    })
+}
+
+/// A user retry may start a new guarded PTY after the previous one exited.
+pub fn reset_exited_startup_input(group: &str, actor: &str) -> Result<(), RuntimeError> {
+    match status(group, actor) {
+        Ok(status) if !status.running && status.startup_input_pending => {
+            stop_if_started_at(group, actor, &status.started_at)?;
+            Ok(())
+        }
+        Ok(_) | Err(RuntimeError::NotFound(..)) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn stop(group_id: &str, actor_id: &str) -> Result<SessionStatus, RuntimeError> {
     let key = (group_id.to_owned(), actor_id.to_owned());
     let session = sessions()
@@ -297,30 +321,40 @@ pub fn reap() -> Result<Vec<SessionStatus>, RuntimeError> {
         .iter()
         .map(|(key, session)| (key.clone(), Arc::clone(session)))
         .collect::<Vec<_>>();
-    let mut remove = Vec::new();
+    let mut candidates = Vec::new();
     for (key, shared) in snapshot {
         let mut session = shared.lock().map_err(|_| RuntimeError::Poisoned)?;
-        let status = session.status();
-        if !status.running {
-            session.finish_output()?;
+        if let Some(status) = session.prepare_reap()? {
             let history = session.history_handle();
             drop(session);
-            remove.push((key, shared, history, status));
+            candidates.push((key, shared, history, status));
         }
     }
-    commit_reaped(remove)
+    commit_reaped(candidates)
 }
 
-fn commit_reaped(remove: Vec<ReapCandidate>) -> Result<Vec<SessionStatus>, RuntimeError> {
+fn commit_reaped(candidates: Vec<ReapCandidate>) -> Result<Vec<SessionStatus>, RuntimeError> {
     let mut exited = Vec::new();
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
-    for (key, session, history, status) in remove {
+    for (key, session, history, status) in candidates {
         if registry
             .get(&key)
             .is_some_and(|registered| Arc::ptr_eq(registered, &session))
         {
-            registry.remove(&key);
-            remember_history(key, history)?;
+            // Preserve the closed PTY's pending gate until its explicit retry or
+            // removal. Delivery can observe the pause before exit reconciliation.
+            if status.startup_input_pending {
+                if !session
+                    .lock()
+                    .map_err(|_| RuntimeError::Poisoned)?
+                    .report_retained_exit()
+                {
+                    continue;
+                }
+            } else {
+                registry.remove(&key);
+                remember_history(key, history)?;
+            }
             exited.push(status);
         }
     }
@@ -330,3 +364,7 @@ fn commit_reaped(remove: Vec<ReapCandidate>) -> Result<Vec<SessionStatus>, Runti
 #[cfg(all(test, unix))]
 #[path = "manager_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "manager/startup_tests.rs"]
+mod startup_tests;

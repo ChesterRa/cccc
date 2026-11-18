@@ -1014,6 +1014,9 @@ fn ensure_running(
     actor: &Actor,
     wakes: &mut WakeBudget,
 ) -> Result<Option<cccc_runtime::SessionStatus>, String> {
+    if actor_runtime::confirmation_pause_applies(home, &group.group_id, actor).unwrap_or(true) {
+        return Ok(None);
+    }
     if let Ok(status) = cccc_runtime::status(&group.group_id, &actor.id)
         && status.running
     {

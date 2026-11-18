@@ -219,7 +219,15 @@ pub fn active(home: &HomeLayout) -> io::Result<Option<Intent>> {
         intent.validate(home)?;
         Ok(Some(intent))
     };
-    read().map_err(|error| unreadable_intent(&path, error))
+    match read() {
+        Ok(intent) => Ok(intent),
+        // Another invocation can remove the intent and transaction after
+        // the first metadata read. Only confirmed absence lifts the fence.
+        Err(error) => match fs::symlink_metadata(&path) {
+            Err(missing) if missing.kind() == io::ErrorKind::NotFound => Ok(None),
+            _ => Err(unreadable_intent(&path, error)),
+        },
+    }
 }
 
 fn unreadable_intent(path: &Path, error: io::Error) -> io::Error {

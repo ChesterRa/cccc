@@ -121,8 +121,26 @@ delivery was in progress is settled after the start and is not sent twice.
   them, which still runs the previous version, and agents started later join that
   process. A plain `cccc daemon stop` ends it; after the next `cccc daemon start`,
   the agents run under the new version.
+- ChatGPT Dots and Grok Bot Web Model agents run in the provider's cloud. Keeping agents
+  keeps their saved connection and any unfinished turn; the update result lists one with
+  unfinished work as unconfirmed, because CCCC cannot see whether the cloud run went on.
+  While CCCC restarts, its address does not answer, so a CCCC tool call from that run can
+  fail or end it. Check the turn's result before sending its input again. If a saved remote
+  connection or its unfinished work cannot be confirmed, CCCC does not keep agents.
 - macOS and Windows cannot keep agents yet: the daemon refuses `--keep-agents` and
   stops nothing.
+
+### Starting after an interrupted local restart
+
+If a restart into a local build leaves CCCC down, start a working CCCC executable
+with the same `CCCC_HOME`. Once CCCC verifies that the previous update host has
+exited and takes the daemon lock, it reports the interrupted restart as abandoned
+and starts the executable you chose. On Linux, the daemon can reconnect to agents
+that stayed running during the interrupted restart.
+
+If another CCCC process holds the daemon lock, wait and retry. Run
+`cccc daemon status` if the lock stays busy. For an interrupted release
+installation, use the `cccc update --recover` command that CCCC prints.
 
 ### When CCCC cannot confirm an agent {#when-cccc-cannot-confirm-an-agent}
 

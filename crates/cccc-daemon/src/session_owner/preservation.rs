@@ -44,10 +44,45 @@ pub(super) async fn observations(
     home: &HomeLayout,
     budget: Duration,
 ) -> io::Result<AgentObservations> {
-    Ok(observed_agents(read_owners(home, budget).await?))
+    let deadline = Instant::now() + budget;
+    let owners = read_owners(home, budget).await?;
+    Ok(observed_members(home, owners, deadline))
 }
 
-fn observed_agents(owners: Vec<OwnerRead>) -> AgentObservations {
+fn observed_members(
+    home: &HomeLayout,
+    owners: Vec<OwnerRead>,
+    deadline: Instant,
+) -> AgentObservations {
+    // A changed or unreadable remote route cannot invalidate a local holder's
+    // observation. Unreadable remote work stays unconfirmed in the stop receipt;
+    // preflight and the final preservation report still require readable facts.
+    let active = match super::remote::read(home, deadline, &held_members(&owners)) {
+        Ok(remote) => remote.active,
+        Err(error) => {
+            tracing::debug!(kind = ?error.kind(), "remote member observations unavailable");
+            Vec::new()
+        }
+    };
+    observed_agents(owners, active)
+}
+
+fn held_members(owners: &[OwnerRead]) -> BTreeSet<super::remote::MemberKey> {
+    owners
+        .iter()
+        .filter_map(|owner| owner.result.as_ref().ok())
+        .flat_map(|(_, snapshot)| snapshot.actors.iter())
+        .map(|actor| {
+            (
+                actor.actor.group_id.clone(),
+                actor.actor.actor_id.clone(),
+                actor.actor.actor_created_at.clone(),
+            )
+        })
+        .collect()
+}
+
+fn observed_agents(owners: Vec<OwnerRead>, remote: Vec<AgentIdentity>) -> AgentObservations {
     let mut result = AgentObservations {
         running: Vec::new(),
         unconfirmed: Vec::new(),
@@ -106,6 +141,16 @@ fn observed_agents(owners: Vec<OwnerRead>) -> AgentObservations {
             Err(_) => result.unavailable_owners.push(owner.owner_id),
         }
     }
+    for identity in remote {
+        members
+            .entry((
+                identity.group_id.clone(),
+                identity.actor_id.clone(),
+                identity.actor_created_at.clone(),
+            ))
+            .or_default()
+            .push((identity, false));
+    }
     for observations in members.into_values() {
         let unique = observations.len() == 1;
         for (identity, running) in observations {
@@ -157,16 +202,12 @@ fn complete_decision(
 ) -> KeepDecision {
     // Include confirmed exits too: their absence from the retained cohort is
     // positive evidence, unlike a configured member with no holder sample.
-    let mut covered = BTreeSet::new();
+    let held = held_members(&owners);
+    let mut covered = held.clone();
     let mut occupied = BTreeSet::new();
     for (_, snapshot) in owners.iter().filter_map(|owner| owner.result.as_ref().ok()) {
         for actor in &snapshot.actors {
             let member = &actor.actor;
-            covered.insert((
-                member.group_id.clone(),
-                member.actor_id.clone(),
-                member.actor_created_at.clone(),
-            ));
             if !positively_exited(actor) {
                 occupied.insert((member.group_id.clone(), member.actor_id.clone()));
             }
@@ -188,7 +229,29 @@ fn complete_decision(
     if !decision.allowed {
         return decision;
     }
-    match uncovered_members(home, &covered, &occupied, deadline) {
+    let remote = match super::remote::read(home, deadline, &held) {
+        Ok(remote) => remote,
+        Err(error) => {
+            return refused(refusal(
+                None,
+                None,
+                if error.kind() == io::ErrorKind::TimedOut {
+                    "preflight_timeout"
+                } else {
+                    "member_state_unconfirmed"
+                },
+                "CCCC could not read the complete saved member resources; inspect their connections and current work before retrying.",
+            ));
+        }
+    };
+    if !remote.refusals.is_empty() {
+        return KeepDecision {
+            allowed: false,
+            refusals: remote.refusals,
+        };
+    }
+    covered.extend(remote.covered);
+    match uncovered_members(&remote.groups, &covered, &occupied, deadline) {
         Ok(refusals) => KeepDecision {
             allowed: refusals.is_empty(),
             refusals,
@@ -209,7 +272,7 @@ fn complete_decision(
 }
 
 fn uncovered_members(
-    home: &HomeLayout,
+    groups: &[cccc_core::GroupDoc],
     covered: &BTreeSet<(String, String, String)>,
     occupied: &BTreeSet<(String, String)>,
     deadline: Instant,
@@ -225,26 +288,10 @@ fn uncovered_members(
         }
     };
     within_deadline()?;
-    // Read directly: Registry::load would create an empty registry on a read.
-    let registry: cccc_core::Registry = match cccc_core::fs::read_json(&home.registry_path()) {
-        Ok(registry) => registry,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let store = cccc_core::GroupStore::new(home.clone())?;
     let mut refusals = Vec::new();
-    for (id, meta) in registry.groups {
+    for group in groups {
         within_deadline()?;
-        let group = store.load(&id)?;
-        if meta.group_id != id || group.group_id != id {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "registered group identity changed",
-            ));
-        }
-        if !group.running || group.state == cccc_contracts::GroupState::Stopped {
-            continue;
-        }
+        let id = &group.group_id;
         for actor in &group.actors {
             if !actor.enabled
                 || !actor.external_session_id.is_empty()

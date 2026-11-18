@@ -32,6 +32,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "terminal_write" => Operation::new(ResourceOwned, session_control::write),
         "term_resize" | "terminal_resize" => Operation::new(Write, session_control::resize),
         "terminal_clear" => Operation::new(Write, session_control::clear),
+        "actor_terminal_ready" => Operation::new(ResourceOwned, session_control::ready),
         _ => return None,
     })
 }

@@ -2412,6 +2412,60 @@ fn recover_local(
 ) -> Result<()> {
     // Proves that the host has exited and that no daemon runs for this home.
     let _daemon_lock = attended_update::claim_stopped(home, &transaction.id)?;
+    finish_local_recovery(home, transaction, intent)?;
+    println!(
+        "The interrupted restart was given up; CCCC changed no files. CCCC is not running; start it with `cccc`."
+    );
+    Ok(())
+}
+
+/// A normal invocation can finish an interrupted Local restart. The active
+/// intent remains authoritative until the previous host and the daemon lock
+/// both allow recovery.
+pub(crate) fn recover_local_before_start(
+    home: &HomeLayout,
+) -> Result<Option<crate::host_state::UpdateResult>> {
+    let Some(intent) = attended_update::active(home)? else {
+        return Ok(None);
+    };
+    if !matches!(&intent.source, Source::Local { .. }) || !intent.holder.has_exited() {
+        return Ok(None);
+    }
+    let _daemon_lock = match attended_update::claim_stopped(home, &intent.transaction_id) {
+        Ok(lock) => lock,
+        Err(error) => {
+            // Another startup may have finished this Local recovery first.
+            if attended_update::active(home)?.is_none() {
+                return Ok(None);
+            }
+            if error.kind() == io::ErrorKind::WouldBlock {
+                return Err(error).context(
+                    "Another CCCC process holds this home's daemon lock. Retry after it finishes. Run `cccc daemon status` if the lock stays busy",
+                );
+            }
+            return Err(error.into());
+        }
+    };
+    let transaction = Transaction::open(home, &intent.transaction_dir)?;
+    finish_local_recovery(home, &transaction, &intent)?;
+    let message = format!(
+        "The restart to the selected local build (CCCC {}) did not complete and was abandoned. Starting CCCC {} from the program you launched.",
+        intent.target.version,
+        crate::PRODUCT_VERSION,
+    );
+    cccc_runtime::diagnostic(format_args!("[cccc] {message}"));
+    Ok(Some(crate::host_state::UpdateResult {
+        transaction: transaction.id,
+        failed: true,
+        message,
+    }))
+}
+
+fn finish_local_recovery(
+    home: &HomeLayout,
+    transaction: &Transaction,
+    intent: &attended_update::Intent,
+) -> Result<()> {
     attended_update::disarm(home, &transaction.id)?;
     record_recovered(
         home,
@@ -2421,9 +2475,6 @@ fn recover_local(
         "abandoned",
     );
     transaction.remove();
-    println!(
-        "The interrupted restart was given up; CCCC changed no files. CCCC is not running; start it with `cccc`."
-    );
     Ok(())
 }
 

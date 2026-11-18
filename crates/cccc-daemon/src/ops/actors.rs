@@ -1146,6 +1146,11 @@ pub(super) fn delivery_shutdown_reason(
     actor: &Actor,
     kind: &str,
 ) -> Result<actor_delivery::ShutdownReason, OpError> {
+    if kind == "actor.start" && actor_runtime::startup_input_paused(group_id, &actor.id) {
+        // This Start replaces the terminal that closed before receiving input.
+        // Keep a claimed Mail retryable when the old worker proved no submission.
+        return Ok(actor_delivery::ShutdownReason::Replace);
+    }
     if !matches!(kind, "actor.restart" | "actor.new_session") {
         return Ok(actor_delivery::ShutdownReason::Stop);
     }

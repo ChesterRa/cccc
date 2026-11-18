@@ -1,4 +1,4 @@
-name: macOS session owner native Rust probe
+name: macOS session owner and maintenance probe
 
 on:
   push:
@@ -26,6 +26,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 3
+
+      - name: Select the baseline with preservation disabled
+        run: git checkout --detach HEAD~2
 
       - uses: actions/setup-node@v7
         with:
@@ -59,3 +63,43 @@ jobs:
             ${{ env.PROBE_DIR }}/*.json
             ${{ env.PROBE_DIR }}/*.rc
             ${{ env.PROBE_DIR }}/*.sha256
+
+  maintenance:
+    needs: native-rust
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.19.0'
+
+      - uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Test retained sessions across two Apple Silicon builds
+        shell: bash
+        run: bash scripts/tests/macos_maintenance/check_candidate.sh "$RUNNER_TEMP/cccc-maintenance"
+
+      - name: Publish maintenance outcomes
+        if: always()
+        shell: bash
+        run: python3 -I scripts/tests/macos_maintenance/report.py "$RUNNER_TEMP/cccc-maintenance"
+
+      - name: Keep isolated maintenance evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-retained-session-evidence
+          retention-days: 3
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/cccc-maintenance/*.txt
+            ${{ runner.temp }}/cccc-maintenance/*.rc
+            ${{ runner.temp }}/cccc-maintenance/*.log
+            ${{ runner.temp }}/cccc-maintenance/*.json
+            ${{ runner.temp }}/cccc-maintenance/local/result.json
+            ${{ runner.temp }}/cccc-maintenance/release/result.json

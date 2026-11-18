@@ -1383,7 +1383,8 @@
       "mcp_identity_unconfirmed": "CCCC cannot tell whether the agent's CCCC tools are still running. Restart it through CCCC first.",
       "mcp_contract_mismatch": "The CCCC tools the agent is using do not work with the rebuilt program.",
       "preflight_timeout": "Checking the agents took too long. Try again shortly.",
-      "runtime_not_covered": "This agent's current launch method cannot be kept running through a restart yet; choose Restart agents."
+      "runtime_not_covered": "This agent's current launch method cannot be kept running through a restart yet; choose Restart agents.",
+      "remote_resource_unconfirmed": "Saved remote connections or their unfinished work cannot be confirmed. Check their current state before trying again."
     },
     "preparingLocal": "Checking the rebuilt program. CCCC keeps running meanwhile.",
     "restartingLocal": "Restarting into the rebuilt program {{version}}. The result appears here when CCCC is back.",

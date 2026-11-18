@@ -203,6 +203,11 @@ async fn launch_with(
     update_result: Option<UpdateResult>,
 ) -> Result<LaunchExit> {
     home.initialize()?;
+    let update_result = if resumed.is_none() && update_result.is_none() {
+        crate::update_host::recover_local_before_start(&home)?
+    } else {
+        update_result
+    };
     // Before anything that could stop another host: while an update holds this
     // home, only its own relay may start here.
     cccc_core::attended_update::check_start(

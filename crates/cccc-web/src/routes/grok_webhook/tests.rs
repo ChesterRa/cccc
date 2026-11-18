@@ -1,3 +1,4 @@
+use super::super::remote_maintenance_test_daemon::TestDaemons;
 use super::*;
 use axum::{
     body::{Body, to_bytes},
@@ -18,9 +19,11 @@ struct Fixture {
     secret: String,
     admin: String,
     daemon: Option<tokio::task::JoinHandle<()>>,
+    daemon_sources: TestDaemons,
 }
 impl Fixture {
     async fn new() -> Self {
+        let mut daemon_sources = TestDaemons::new();
         let temp = tempfile::tempdir().expect("isolated Grok fixture");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("isolated Grok fixture");
         home.initialize().expect("isolated Grok fixture");
@@ -68,10 +71,8 @@ impl Fixture {
             },
             "grok-http-fixture".into(),
         );
-        let daemon = tokio::spawn(async move {
-            cccc_daemon::run(home).await.expect("isolated Grok fixture");
-        });
-        let f = Self {
+        let daemon = daemon_sources.spawn(home);
+        let mut f = Self {
             _temp: temp,
             state,
             router,
@@ -83,26 +84,9 @@ impl Fixture {
                 .into(),
             admin,
             daemon: Some(daemon),
+            daemon_sources,
         };
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if f.state
-                    .client
-                    .call(&DaemonRequest {
-                        v: 1,
-                        op: "ping".into(),
-                        args: Default::default(),
-                    })
-                    .await
-                    .is_ok()
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("isolated Grok fixture");
+        f.daemon_sources.started(&f.state.client).await;
         f
     }
     async fn op(&self, op: &str, args: Value) -> Value {
@@ -174,6 +158,99 @@ impl Fixture {
         .expect("isolated Grok fixture");
         e.id
     }
+    #[cfg(target_os = "linux")]
+    async fn restart_preserving(&mut self) {
+        let ping = self
+            .state
+            .client
+            .call(&DaemonRequest {
+                v: 1,
+                op: "ping".into(),
+                args: Default::default(),
+            })
+            .await
+            .expect("daemon identity before maintenance");
+        assert!(ping.ok);
+        let daemon_pid = u32::try_from(ping.result["pid"].as_u64().expect("daemon PID"))
+            .expect("native daemon PID");
+        if self.daemon_sources.runs_in_test_process() {
+            let candidate = cccc_core::update_capabilities::UpdateCapabilities {
+                preserve_agents: true,
+                owner_contracts: vec![1],
+                mcp_daemon_contracts: cccc_contracts::MCP_DAEMON_ACCEPTED_CONTRACTS.to_vec(),
+                ..Default::default()
+            };
+            assert!(
+                cccc_daemon::session_owner::preservation_check(&self.state.home, &candidate)
+                    .await
+                    .allowed
+            );
+        }
+        let response = self
+            .state
+            .client
+            .call(&DaemonRequest {
+                v: 1,
+                op: "shutdown_preserving_agents".into(),
+                args: Default::default(),
+            })
+            .await
+            .expect("maintenance request");
+        assert!(response.ok, "{:?}", response.error);
+        assert_eq!(response.result["mode"], "preserve_agents");
+        tokio::time::timeout(Duration::from_secs(5), self.daemon.take().expect("daemon"))
+            .await
+            .expect("maintenance timeout")
+            .expect("daemon task");
+        let receipt = cccc_daemon::session_owner::read_shutdown_report(
+            &self.state.home,
+            daemon_pid,
+            response.result["request_id"].as_str(),
+        )
+        .expect("shutdown report")
+        .expect("matching maintenance receipt");
+        assert!(receipt.retained.is_empty() && receipt.confirmed_stopped.is_empty());
+        if self.daemon_sources.expects_remote_receipt() {
+            assert_eq!(receipt.unconfirmed.len(), 1);
+            assert_eq!(receipt.unconfirmed[0].group_id, self.group);
+            assert_eq!(receipt.unconfirmed[0].actor_id, "bot");
+            assert!(receipt.unconfirmed[0].owner_id.is_none());
+            assert!(receipt.unconfirmed[0].generation.is_none());
+        } else {
+            assert!(
+                receipt.unconfirmed.is_empty(),
+                "selected old build has no remote receipt rows"
+            );
+        }
+        let _ = self.state.shutdown.send(());
+        let home = self.state.home.clone();
+        let (shutdown, _) = tokio::sync::broadcast::channel(1);
+        let (router, _, _, state) = crate::app_with_shutdown(
+            home.clone(),
+            shutdown,
+            crate::WebMode::Normal,
+            None,
+            crate::LiveBinding {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            "grok-http-after-maintenance".into(),
+        );
+        self.router = router;
+        self.state = state;
+        self.daemon = Some(self.daemon_sources.spawn(home));
+        self.daemon_sources.started(&self.state.client).await;
+        if self.daemon_sources.runs_in_test_process() {
+            let observed =
+                cccc_daemon::session_owner::observations(&self.state.home, Duration::from_secs(5))
+                    .await
+                    .expect("remote observations");
+            assert!(observed.running.is_empty());
+            assert_eq!(observed.unconfirmed.len(), 1);
+            assert!(observed.unconfirmed[0].owner_id.is_none());
+            assert!(observed.unconfirmed[0].generation.is_none());
+        }
+    }
     async fn close(mut self) {
         self.state
             .client
@@ -200,6 +277,121 @@ impl Drop for Fixture {
             d.abort();
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn claimed_grok_turn_survives_maintenance_without_replaying_input() {
+    let mut fixture = Fixture::new().await;
+    let (status, configured) = fixture
+        .api(json!({"action":"configure",
+            "url":"https://api2.cursor.sh/automations/webhook/fixture",
+            "key":"synthetic-maintenance-key"}))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(configured["result"]["configured"], true);
+    fixture.op("actor_start", json!({})).await;
+    let source = fixture.source("one remote task across maintenance");
+    let delivery = fixture.op("grok_webhook_next_delivery", json!({})).await["delivery"].clone();
+    assert_eq!(delivery["attempt"], 1);
+    let connector_before = store::load(&fixture.state.home).expect("connectors");
+
+    // The remote side may already have received this wake, while its HTTP
+    // response was lost. Maintenance must preserve its lease and identity.
+    fixture.restart_preserving().await;
+    assert!(
+        store::load(&fixture.state.home).expect("connectors") == connector_before,
+        "maintenance must preserve the saved connector state"
+    );
+    assert!(fixture.op("grok_webhook_next_delivery", json!({})).await["delivery"].is_null());
+    store::grok_webhook::change(
+        &fixture.state.home,
+        &fixture.id,
+        &fixture.group,
+        "bot",
+        |_, state| {
+            state["wake"]["sent_at_ms"] = json!(0);
+            Ok(())
+        },
+    )
+    .expect("expire only the sending lease");
+    let retried = fixture.op("grok_webhook_next_delivery", json!({})).await["delivery"].clone();
+    assert_eq!(retried["event_id"], delivery["event_id"]);
+    assert_eq!(retried["epoch"], delivery["epoch"]);
+    assert_eq!(retried["body"], delivery["body"]);
+    assert_eq!(retried["attempt"], 2);
+    let claim = fixture
+        .tool(
+            "cccc_runtime_wait_next_turn",
+            json!({"actor_token":delivery["body"]["actor_token"]}),
+        )
+        .await;
+    assert_eq!(claim["result"]["isError"], false);
+    let work = claim["result"]["structuredContent"].clone();
+    assert_eq!(work["status"], "work_available");
+    assert_eq!(work["turn"]["event_ids"], json!([source]));
+    let connector_claimed = store::load(&fixture.state.home).expect("claimed connector");
+
+    fixture.restart_preserving().await;
+    assert!(
+        store::load(&fixture.state.home).expect("connectors") == connector_claimed,
+        "maintenance must preserve the original execution state"
+    );
+    let duplicate = fixture
+        .tool(
+            "cccc_runtime_wait_next_turn",
+            json!({"actor_token":retried["body"]["actor_token"]}),
+        )
+        .await;
+    assert_eq!(
+        duplicate["result"]["structuredContent"]["status"],
+        "turn_in_progress"
+    );
+    let reply = fixture
+        .tool(
+            "cccc_message_reply",
+            json!({"actor_token":work["actor_token"],
+            "event_id":source,"text":"Original remote turn completed after restart",
+            "mode":"send","insight":"One claimed turn retains its authority"}),
+        )
+        .await;
+    assert_ne!(reply["result"]["isError"], true, "{reply}");
+    let completion = json!({"actor_token":work["actor_token"],
+        "turn_id":work["turn"]["turn_id"],"event_ids":work["turn"]["event_ids"]});
+    for _ in 0..2 {
+        let result = fixture
+            .tool("cccc_runtime_complete_turn", completion.clone())
+            .await;
+        assert_ne!(result["result"]["isError"], true, "{result}");
+    }
+    assert!(fixture.op("grok_webhook_next_delivery", json!({})).await["delivery"].is_null());
+    let events = ledger::read_all(
+        &GroupStore::new(fixture.state.home.clone())
+            .expect("store")
+            .ledger_path(&fixture.group)
+            .expect("ledger"),
+    )
+    .expect("events");
+    assert_eq!(events.iter().filter(|event| event.id == source).count(), 1);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "runtime.delivery"
+                && event.data["source_event_id"] == source
+                && event.data["state"] == "accepted")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.kind == "runtime.turn.completed"
+                && event.data["turn_id"] == work["turn"]["turn_id"])
+            .count(),
+        1
+    );
+    fixture.daemon_sources.assert_switched();
+    fixture.close().await;
 }
 
 #[tokio::test]
