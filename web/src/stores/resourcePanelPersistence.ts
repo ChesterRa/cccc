@@ -132,7 +132,8 @@ function projectPanels(value: unknown): Panels {
     panels[groupId] = {
       tabs,
       activeKey,
-      open: panel.open && !!tabs.length,
+      // An empty panel stays open after a reload, as it stays after its last tab closes.
+      open: panel.open,
       maximized: panel.open && panel.maximized && !!tabs.length,
       closed: [],
       split,

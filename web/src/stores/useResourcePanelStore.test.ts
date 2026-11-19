@@ -53,16 +53,36 @@ describe("resource panel store", () => {
     expect(state().groups.g1.activeKey).toBe(resourceKey(image("m1")));
   });
 
-  it("hides the panel without closing tabs, and disappears with the last tab", () => {
+  it("hides the panel without closing tabs, and keeps it open, empty, after the last tab", () => {
     state().open("g1", image("m1"), "1");
     state().setOpen("g1", false);
     expect(state().groups.g1).toMatchObject({ open: false });
     expect(state().groups.g1.tabs).toHaveLength(1);
     state().setOpen("g1", true);
     state().closeTabs("g1", [resourceKey(image("m1"))]);
-    expect(state().groups.g1).toMatchObject({ open: false, tabs: [] });
-    state().setOpen("g1", true);
+    expect(state().groups.g1).toMatchObject({ open: true, tabs: [] });
+    state().setOpen("g1", false);
     expect(state().groups.g1.open).toBe(false);
+    // The header entry opens the empty panel for the next attachment.
+    state().setOpen("g1", true);
+    expect(state().groups.g1.open).toBe(true);
+    state().setMaximized("g1", true);
+    expect(state().groups.g1.maximized).toBe(false);
+  });
+
+  it("leaves the split view and maximized size with the last tab", () => {
+    state().open("g1", image("m1"), "1");
+    state().open("g1", image("m2"), "2");
+    const keys = state().groups.g1.tabs.map((tab) => tab.key);
+    state().setSplit("g1", { left: keys[0], right: keys[1], focus: "right", ratio: 0.5 });
+    state().setMaximized("g1", true);
+    state().closeTabs("g1", keys);
+    expect(state().groups.g1).toMatchObject({
+      tabs: [],
+      open: true,
+      maximized: false,
+      split: null,
+    });
   });
 
   it("restores a close-all as one entry, newest first", () => {
@@ -107,27 +127,6 @@ describe("resource panel store", () => {
     expect(panel.tabs[0]).toMatchObject({ eventId: "ev1", blobPath: "state/blobs/real" });
     expect(panel.activeKey).toBe(resourceKey(image("m2")));
     expect(panel.open).toBe(false);
-  });
-
-  it("steps a tab to another attachment of the message in place, or selects it where open", () => {
-    state().open("g1", file("docs/a.md"), "a.md");
-    state().open("g1", image("m1", 0), "one.png");
-    state().open("g1", image("m2", 0), "other.png");
-    state().replaceAttachment("g1", resourceKey(image("m1", 0)), image("m1", 2), "three.png");
-    let panel = state().groups.g1;
-    expect(panel.tabs.map((tab) => tab.key)).toEqual([
-      resourceKey(file("docs/a.md")),
-      resourceKey(image("m1", 2)),
-      resourceKey(image("m2", 0)),
-    ]);
-    expect(panel.tabs[1].title).toBe("three.png");
-    expect(panel.activeKey).toBe(resourceKey(image("m1", 2)));
-    expect(panel.closed).toEqual([]);
-
-    state().replaceAttachment("g1", resourceKey(image("m1", 2)), image("m2", 0), "other.png");
-    panel = state().groups.g1;
-    expect(panel.tabs).toHaveLength(3);
-    expect(panel.activeKey).toBe(resourceKey(image("m2", 0)));
   });
 
   it("keeps each Group's tabs apart", () => {

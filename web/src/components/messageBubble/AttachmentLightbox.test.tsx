@@ -87,6 +87,12 @@ it("steps with the keys and the arrows, stopping at either end", () => {
   show(0);
   const previous = document.querySelector('[data-attachment-step="previous"]')!;
   const next = document.querySelector<HTMLButtonElement>('[data-attachment-step="next"]')!;
+  // The keys stand on either side of the attachment; where it stands goes beside its name.
+  const body = document.querySelector("[data-media-body]")!;
+  expect(
+    [...body.children].map((child) => child.getAttribute("data-media-step") ?? "view"),
+  ).toEqual(["previous", "view", "next"]);
+  expect(document.querySelector("[data-media-title] [data-attachment-position]")).not.toBeNull();
   expect(position()).toBe("1/3");
   expect(previous.getAttribute("aria-disabled")).toBe("true");
   // The clicked video plays by itself; one reached by stepping waits.
@@ -132,7 +138,7 @@ it("closes with Esc and gives focus back to what opened it", () => {
   expect(document.activeElement).toBe(opener);
 });
 
-it("moves the attachment into a panel tab that can still step through the message", () => {
+it("moves the attachment into a panel tab, keeping the message's list for the reader", () => {
   show(2);
   act(() => document.querySelector<HTMLButtonElement>("[data-attachment-open-in-panel]")!.click());
   const panel = useResourcePanelStore.getState().groups.g1;

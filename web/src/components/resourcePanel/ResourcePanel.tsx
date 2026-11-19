@@ -7,7 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent,
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -27,7 +26,6 @@ import {
 } from "lucide-react";
 import type { GroupPresentation } from "../../types";
 import {
-  attachmentSequence,
   attachmentSetKey,
   useAttachmentPreviewStore,
 } from "../../stores/useAttachmentPreviewStore";
@@ -36,7 +34,6 @@ import {
   type PresentationResource,
   type ResourceDock,
   type ResourceTab,
-  resourceKey,
   useGroupResourcePanel,
   useResourcePanelStore,
 } from "../../stores/useResourcePanelStore";
@@ -46,15 +43,13 @@ import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks"
 import { readFrameProof } from "../../features/connect/protocol";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { CloseIcon, LcdIcon } from "../Icons";
-import { AttachmentStepper } from "../messageBubble/AttachmentStepper";
-import { attachmentStepKey } from "../messageBubble/attachmentStepKey";
 import { buttonVariants } from "../ui/button-variants";
 import { toolbarIconKey, toolbarTextKey } from "../ui/toolbarKey";
 import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover";
 import { WorkspaceEntryMenu } from "../workspace/WorkspaceEntryMenu";
 import { WorkspaceViewer } from "../workspace/WorkspaceViewer";
 import type { WorkspaceFilesController } from "../workspace/useWorkspaceFiles";
-import { ResourceTabsList } from "./ResourceTabsList";
+import { ClosedEntryRow, ResourceTabsList } from "./ResourceTabsList";
 import { SplitDivider, SplitPaneHeader } from "./ResourceSplit";
 import {
   followTabs,
@@ -73,6 +68,7 @@ import { findPresentationSlot } from "../../utils/presentation";
 import type { PresentationResourceHandlers } from "./views/PresentationResourceView";
 import { useFrontWorkspaceLoad } from "./useFrontWorkspaceLoad";
 import { useWorkspaceScrollMemory } from "./useWorkspaceScrollMemory";
+import { loadAttachmentList } from "./loadAttachmentList";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import {
   NO_RECENT_ATTACHMENTS,
@@ -219,6 +215,8 @@ export function ResourcePanel({
   presentation,
   onLocateMessage,
   onAttachPath,
+  onRestore,
+  onEmptied,
 }: {
   groupId: string;
   dock: ResourceDock;
@@ -244,6 +242,16 @@ export function ResourcePanel({
   /** Shows a message, bringing the message view forward from whatever covers it. */
   onLocateMessage: (eventId: string) => void;
   onAttachPath: (path: string) => void;
+  /**
+   * Reopens a recently closed entry from the empty panel, bringing forward the view its tabs
+   * show in; by default the panel reopens it itself.
+   */
+  onRestore?: (entry: ClosedEntry) => void;
+  /**
+   * The last tab was closed. The panel stays open, empty, unless the page collapses it here, as
+   * where a surface beneath it should come back.
+   */
+  onEmptied?: () => void;
 }) {
   const { t, i18n } = useTranslation("chat");
   const panel = useGroupResourcePanel(groupId);
@@ -414,7 +422,13 @@ export function ResourcePanel({
       : "",
     files.navigation,
   );
-  const shown = visible && panel.open && !!active && (phone || !!slot || maximized);
+  // With every tab closed the panel stays open, empty, where the next attachment opens; a phone
+  // has no empty panel.
+  const empty = !tabs.length;
+  // The tab list's anchor goes with the last tab; it must not open again with the next one.
+  if (empty && listOpen) setListOpen(false);
+  const shown =
+    visible && panel.open && (!!active || (empty && !phone)) && (phone || !!slot || maximized);
   // A late open or a change of folder can leave another file in the shared editor; the tab in
   // front then loads its own file again. That load is not a choice: it must not select a tab.
   useFrontWorkspaceLoad(
@@ -441,34 +455,29 @@ export function ResourcePanel({
     return kept;
   }, [panel.activeKey, tabs, recentAttachments, split]);
 
-  // Previous and next replace the attachment in its tab with another one of the same message, or
-  // select it where it is already open, so stepping through a message adds no tabs. A video
-  // reached that way waits to be played, until the selection moves on.
-  const replaceAttachment = useResourcePanelStore((state) => state.replaceAttachment);
-  const activeSiblings = useAttachmentPreviewStore((state) =>
-    active?.kind === "attachment"
-      ? state.sets[attachmentSetKey(groupId, active.messageKey)]
-      : undefined,
-  );
-  const sequence =
-    active?.kind === "attachment" ? attachmentSequence(activeSiblings, active.index) : null;
-  const [steppedTo, setSteppedTo] = useState("");
-  if (steppedTo && steppedTo !== panel.activeKey) setSteppedTo("");
-  const stepAttachment = (delta: -1 | 1) => {
-    const target = delta < 0 ? sequence?.previous : sequence?.next;
-    if (!active || !target) return;
-    setPending(null);
-    setSteppedTo(resourceKey(target.resource));
-    replaceAttachment(groupId, active.key, target.resource, target.title);
+  // The tab strip manages what is open; stepping through a message's attachments belongs to the
+  // full-screen reader. An attachment shown alone opens there from the maximize key, with the
+  // message's list, and the panel comes back as it was, the same tab in front.
+  const fullScreen =
+    !phone && !maximized && !split && active?.kind === "attachment" ? active : null;
+  const viewFullScreen = () => {
+    if (!fullScreen) return;
+    const { key: _key, title, ...resource } = fullScreen;
+    const previews = useAttachmentPreviewStore.getState();
+    const items = previews.sets[attachmentSetKey(groupId, resource.messageKey)];
+    const listed = items?.some((item) => item.resource.index === resource.index);
+    previews.view(
+      groupId,
+      resource.messageKey,
+      listed && items ? items : [{ resource, title }],
+      resource.index,
+    );
+    // A tab restored before its message is shown again has no list yet: the reader opens with
+    // this attachment, and the message itself is read for the rest.
+    if (!listed) void loadAttachmentList(groupId, resource);
   };
-  // On the attachment's bar, and on an image itself; the tab strip keeps its arrows for tabs.
-  const stepFromKey = (event: KeyboardEvent<HTMLElement>) => {
-    if (split || active?.kind !== "attachment" || !sequence) return;
-    const delta = attachmentStepKey(event, active.media, "[data-resource-attachment]");
-    if (!delta) return;
-    event.preventDefault();
-    stepAttachment(delta);
-  };
+  // Under the reader the panel is out of sight: its video pauses rather than play on unseen.
+  const underReader = useAttachmentPreviewStore((state) => state.viewing?.panelGroupId === groupId);
 
   const select = useCallback(
     (tab: ResourceTab) => {
@@ -535,6 +544,8 @@ export function ResourcePanel({
       })();
       const entryId = closeTabs(groupId, keys);
       forgetScroll(keys);
+      if (entryId !== null && useResourcePanelStore.getState().groups[groupId]?.tabs.length === 0)
+        onEmptied?.();
       // Closing the file on screen, or one still loading, retires the editor's request too, so
       // a late response cannot reopen the tab.
       if (
@@ -569,6 +580,7 @@ export function ResourcePanel({
       files,
       forgetScroll,
       groupId,
+      onEmptied,
       panel.activeKey,
       split,
       tabs,
@@ -698,27 +710,14 @@ export function ResourcePanel({
 
   // Over the message list, or maximized over everything, the panel keeps the messages from view.
   const unreadShown = !phone && (dock === "left" || maximized) && unread > 0;
+  const hideLabel = t(empty ? "resourcePanel.hideEmpty" : "resourcePanel.hide");
   const collapseLabel = unreadShown
-    ? `${t("resourcePanel.hide")} · ${t("workView.unread", { count: unread })}`
-    : t("resourcePanel.hide");
+    ? `${hideLabel} · ${t("workView.unread", { count: unread })}`
+    : hideLabel;
 
   const toolbar =
     active?.kind === "attachment" ? (
-      <div
-        className="flex h-9 max-sm:h-12 pointer-coarse:h-12 shrink-0 items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 text-xs text-[var(--color-text-tertiary)]"
-        onKeyDown={stepFromKey}
-      >
-        {/* Before the name, so the keys keep their place while the keys on the right change
-            with each file. */}
-        {sequence ? (
-          <AttachmentStepper
-            position={sequence.position}
-            count={sequence.count}
-            onStep={stepAttachment}
-            keyClassName={toolbarIconKey}
-            iconSize={14}
-          />
-        ) : null}
+      <div className="flex h-9 max-sm:h-12 pointer-coarse:h-12 shrink-0 items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 text-xs text-[var(--color-text-tertiary)]">
         <span className="min-w-0 flex-1 truncate" title={active.title}>
           {active.sender ? `${active.title} · ${active.sender}` : active.title}
         </span>
@@ -803,11 +802,18 @@ export function ResourcePanel({
             <span className="max-[359px]:sr-only">{t("common:back")}</span>
           </button>
         ) : null}
+        {empty ? (
+          <span className="flex min-w-0 flex-1 items-center px-3 text-sm text-[var(--color-text-secondary)]">
+            <span className="truncate">{t("resourcePanel.tabs")}</span>
+          </span>
+        ) : null}
+        {/* Kept while empty, hidden, so its wheel handler is still in place for the next tab. */}
         <div
           ref={strip}
           role="tablist"
           aria-label={t("resourcePanel.tabs")}
           className="flex min-w-0 flex-1 overflow-x-auto [scrollbar-width:none]"
+          hidden={empty}
           data-resource-tabs
         >
           {tabs.map((tab) => {
@@ -897,43 +903,45 @@ export function ResourcePanel({
           })}
         </div>
         <div className="flex shrink-0 items-center gap-0.5 border-l border-[var(--glass-border-subtle)] px-1">
-          <Popover open={listOpen} onOpenChange={setListOpen}>
-            <PopoverAnchor asChild>
-              <button
-                ref={listAnchor}
-                type="button"
-                className={`${barKey} px-2`}
-                onClick={() => setListOpen((value) => !value)}
-                aria-expanded={listOpen}
-                aria-haspopup="listbox"
-                title={t("resourcePanel.tabs")}
-                data-resource-all
-                data-lcd-key
+          {empty ? null : (
+            <Popover open={listOpen} onOpenChange={setListOpen}>
+              <PopoverAnchor asChild>
+                <button
+                  ref={listAnchor}
+                  type="button"
+                  className={`${barKey} px-2`}
+                  onClick={() => setListOpen((value) => !value)}
+                  aria-expanded={listOpen}
+                  aria-haspopup="listbox"
+                  title={t("resourcePanel.tabs")}
+                  data-resource-all
+                  data-lcd-key
+                >
+                  {t("resourcePanel.all", { open: tabs.length })}
+                  <LcdIcon icon={ChevronDown} glyph="chevron-down" className="h-3.5 w-3.5" />
+                </button>
+              </PopoverAnchor>
+              <PopoverContent
+                align="end"
+                sideOffset={4}
+                collisionPadding={8}
+                className="rounded-xl p-0"
+                data-lcd-menu
               >
-                {t("resourcePanel.all", { open: tabs.length })}
-                <LcdIcon icon={ChevronDown} glyph="chevron-down" className="h-3.5 w-3.5" />
-              </button>
-            </PopoverAnchor>
-            <PopoverContent
-              align="end"
-              sideOffset={4}
-              collisionPadding={8}
-              className="rounded-xl p-0"
-              data-lcd-menu
-            >
-              <ResourceTabsList
-                tabs={tabs}
-                activeKey={panel.activeKey}
-                closed={panel.closed}
-                onSelect={select}
-                onClose={(tab) => close([tab.key])}
-                onRestore={restoreEntry}
-                onCloseOthers={() => active && close(keysExcept(active))}
-                onCloseAll={() => close(allKeys())}
-                onDone={() => setListOpen(false)}
-              />
-            </PopoverContent>
-          </Popover>
+                <ResourceTabsList
+                  tabs={tabs}
+                  activeKey={panel.activeKey}
+                  closed={panel.closed}
+                  onSelect={select}
+                  onClose={(tab) => close([tab.key])}
+                  onRestore={restoreEntry}
+                  onCloseOthers={() => active && close(keysExcept(active))}
+                  onCloseAll={() => close(allKeys())}
+                  onDone={() => setListOpen(false)}
+                />
+              </PopoverContent>
+            </Popover>
+          )}
           {tabs.length ? (
             <button
               type="button"
@@ -950,20 +958,36 @@ export function ResourcePanel({
           ) : null}
           {phone ? null : (
             <>
-              {/* One icon, set in reverse while maximized, so it never looks like Collapse. */}
-              <button
-                type="button"
-                className={barKey}
-                aria-label={t(maximized ? "resourcePanel.restore" : "resourcePanel.maximize")}
-                title={t(maximized ? "resourcePanel.restore" : "resourcePanel.maximize")}
-                aria-pressed={maximized}
-                onClick={() => setMaximized(groupId, !maximized)}
-                data-resource-maximize
-                data-lcd-key
-              >
-                <LcdIcon icon={Maximize2} glyph="maximize" className="h-[18px] w-[18px]" />
-              </button>
-              {!maximized ? (
+              {/* One icon, set in reverse while maximized, so it never looks like Collapse. An
+                  attachment shown alone goes full screen instead, where it steps through its
+                  message. */}
+              {fullScreen ? (
+                <button
+                  type="button"
+                  className={barKey}
+                  aria-label={t("resourcePanel.viewFullScreen")}
+                  title={t("resourcePanel.viewFullScreen")}
+                  onClick={viewFullScreen}
+                  data-resource-full-screen
+                  data-lcd-key
+                >
+                  <LcdIcon icon={Maximize2} glyph="maximize" className="h-[18px] w-[18px]" />
+                </button>
+              ) : empty ? null : (
+                <button
+                  type="button"
+                  className={barKey}
+                  aria-label={t(maximized ? "resourcePanel.restore" : "resourcePanel.maximize")}
+                  title={t(maximized ? "resourcePanel.restore" : "resourcePanel.maximize")}
+                  aria-pressed={maximized}
+                  onClick={() => setMaximized(groupId, !maximized)}
+                  data-resource-maximize
+                  data-lcd-key
+                >
+                  <LcdIcon icon={Maximize2} glyph="maximize" className="h-[18px] w-[18px]" />
+                </button>
+              )}
+              {!maximized && !empty ? (
                 <button
                   type="button"
                   className={barKey}
@@ -1066,9 +1090,31 @@ export function ResourcePanel({
       <div
         ref={body}
         className="relative flex min-h-0 flex-1 flex-col"
-        role="tabpanel"
+        role={empty ? undefined : "tabpanel"}
         data-resource-split={split ? (phone ? "stacked" : "columns") : undefined}
       >
+        {/* What the empty panel is for, and what was closed recently, to bring back. */}
+        {empty ? (
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto py-3" data-resource-empty>
+            <p className="px-3 text-sm text-[var(--color-text-secondary)]">
+              {t("resourcePanel.emptyHint")}
+            </p>
+            {panel.closed.length ? (
+              <>
+                <p className="mt-4 px-3 pb-1 text-xs text-[var(--color-text-tertiary)]">
+                  {t("resourcePanel.recentlyClosed")}
+                </p>
+                {panel.closed.map((entry) => (
+                  <ClosedEntryRow
+                    key={entry.id}
+                    entry={entry}
+                    onRestore={onRestore ?? restoreEntry}
+                  />
+                ))}
+              </>
+            ) : null}
+          </div>
+        ) : null}
         {split
           ? (["left", "right"] as const).map((side) => {
               const tab = tabs.find((item) => item.key === split[side]);
@@ -1164,7 +1210,7 @@ export function ResourcePanel({
                     isSvg={tab.isSvg}
                     isDark={isDark}
                     active={false}
-                    visible={shown}
+                    visible={shown && !underReader}
                     resourceKey={`${tab.key}:right`}
                     actionsTarget={rightDocumentActions}
                   />
@@ -1297,7 +1343,6 @@ export function ResourcePanel({
               hidden={!front}
               onPointerDownCapture={side ? () => focusSide(side) : undefined}
               onFocusCapture={side ? () => focusSide(side) : undefined}
-              onKeyDown={!split && tab.key === panel.activeKey ? stepFromKey : undefined}
               data-resource-attachment={tab.key}
             >
               <AttachmentResourceView
@@ -1306,8 +1351,8 @@ export function ResourcePanel({
                 title={tab.title}
                 isSvg={tab.isSvg}
                 isDark={isDark}
-                active={shown && !split && tab.key === panel.activeKey && tab.key !== steppedTo}
-                visible={shown && front}
+                active={shown && !split && tab.key === panel.activeKey}
+                visible={shown && front && !underReader}
                 resourceKey={tab.key}
                 actionsTarget={
                   !front

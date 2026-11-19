@@ -156,10 +156,11 @@ it("repairs selection and split after omitting an unconfirmed attachment", () =>
   expect(result.tabs).toEqual([a]);
   expect(result.activeKey).toBe(a.key);
   expect(result.split).toBeNull();
-  expect(read({ g: panel([pending]) }).g).toMatchObject({
+  // The panel stays open, empty, as after its last tab closes; it is no longer maximized.
+  expect(read({ g: panel([pending], { maximized: true }) }).g).toMatchObject({
     tabs: [],
     activeKey: "",
-    open: false,
+    open: true,
     maximized: false,
   });
 });

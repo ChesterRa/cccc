@@ -1,7 +1,6 @@
 import { create } from "zustand";
 import {
   resourceKey,
-  type AttachmentResource,
   type AttachmentUpdate,
   type GroupPanel,
   type ResourceDescriptor,
@@ -71,20 +70,11 @@ type ResourcePanelState = {
    */
   ensure: (groupId: string, resource: ResourceDescriptor, title: string) => void;
   open: (groupId: string, resource: ResourceDescriptor, title: string) => string;
-  /**
-   * Shows another attachment of the same message in place of the given tab, or selects it where
-   * it is already open, so stepping through a message does not add tabs.
-   */
-  replaceAttachment: (
-    groupId: string,
-    fromKey: string,
-    resource: AttachmentResource,
-    title: string,
-  ) => void;
   activate: (groupId: string, key: string) => void;
   /**
    * Closes the given tabs as one step, so "close all" is restored as a whole. Returns the
-   * recently closed entry it made, or null when none of the tabs was open.
+   * recently closed entry it made, or null when none of the tabs was open. An open panel stays
+   * open after its last tab, empty and no longer split or maximized.
    */
   closeTabs: (groupId: string, keys: string[]) => number | null;
   /** Reopens a closed entry from its source; discarded edits do not come back with it. */
@@ -172,17 +162,6 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
       }));
       return key;
     },
-    replaceAttachment: (groupId, fromKey, resource, title) => {
-      const key = resourceKey(resource);
-      update(groupId, (panel) => {
-        if (panel.tabs.some((tab) => tab.key === key)) return { ...panel, activeKey: key };
-        const at = panel.tabs.findIndex((tab) => tab.key === fromKey);
-        if (at < 0) return panel;
-        const tabs = [...panel.tabs];
-        tabs[at] = { ...resource, key, title };
-        return { ...panel, tabs, activeKey: key };
-      });
-    },
     activate: (groupId, key) =>
       update(groupId, (panel) =>
         panel.tabs.some((tab) => tab.key === key)
@@ -211,7 +190,7 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
         return {
           tabs,
           activeKey,
-          open: panel.open && tabs.length > 0,
+          open: panel.open,
           maximized: panel.maximized && tabs.length > 0,
           closed: [{ id, tabs: closing }, ...panel.closed].slice(0, CLOSED_LIMIT),
           split: tabs.length ? panel.split : null,
@@ -304,10 +283,7 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
         false,
       ),
     setOpen: (groupId, open) =>
-      update(groupId, (panel) => {
-        const next = open && panel.tabs.length > 0;
-        return { ...panel, open: next, maximized: next && panel.maximized };
-      }),
+      update(groupId, (panel) => ({ ...panel, open, maximized: open && panel.maximized })),
     setMaximized: (groupId, maximized) =>
       update(groupId, (panel) => ({
         ...panel,

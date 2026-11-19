@@ -8,12 +8,47 @@ import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { classNames } from "../../utils/classNames";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { ModalFocusGuard } from "../ModalFocusGuard";
-import { CloseIcon, DownloadIcon, LcdIcon } from "../Icons";
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, DownloadIcon, LcdIcon } from "../Icons";
 import type { AttachmentResourceMedia } from "../resourcePanel/views/AttachmentResourceView";
 import { dialogIconKey } from "../ui/toolbarKey";
-import { AttachmentStepper } from "./AttachmentStepper";
 import { attachmentStepKey } from "./attachmentStepKey";
 import "./mediaLightbox.css";
+
+/**
+ * Previous or next through the message's attachments. A key at either end stays focusable and
+ * in place, so the arrow keys can turn back from it and the other key never moves.
+ */
+function StepKey({
+  direction,
+  disabled,
+  onStep,
+}: {
+  direction: "previous" | "next";
+  disabled: boolean;
+  onStep: (delta: -1 | 1) => void;
+}) {
+  const { t } = useTranslation("chat");
+  const label = t(direction === "previous" ? "attachmentPrevious" : "attachmentNext");
+  const Icon = direction === "previous" ? ChevronLeftIcon : ChevronRightIcon;
+  return (
+    <div data-media-step={direction}>
+      <button
+        type="button"
+        className={`${dialogIconKey} aria-disabled:pointer-events-none aria-disabled:opacity-35`}
+        aria-label={label}
+        title={label}
+        aria-disabled={disabled || undefined}
+        onClick={() => {
+          if (!disabled) onStep(direction === "previous" ? -1 : 1);
+        }}
+        data-attachment-step={direction}
+        data-lcd-key
+      >
+        <Icon size={24} strokeWidth={1.25} absoluteStrokeWidth={false} />
+      </button>
+    </div>
+  );
+}
 
 /** The full-screen dialog an attachment preview opens into. */
 export function MediaLightbox({
@@ -95,34 +130,33 @@ export function MediaLightbox({
             data-media-header
           >
             <div className="flex min-w-0 flex-1 items-center gap-2" data-media-title>
-              {/* Before the name, so the keys keep their place while the actions on the right
-                  change with each file. */}
-              {stepping ? (
-                <AttachmentStepper
-                  position={stepping.position}
-                  count={stepping.count}
-                  onStep={stepping.onStep}
-                  keyClassName={dialogIconKey}
-                  iconSize={18}
-                />
-              ) : null}
               <div className="min-w-0">
-                <p
-                  className={classNames(
-                    "truncate text-sm font-medium",
-                    "text-[var(--color-text-primary)]",
-                  )}
-                >
-                  {title}
+                <p className="flex min-w-0 items-baseline gap-2">
+                  <span
+                    className={classNames(
+                      "truncate text-sm font-medium",
+                      "text-[var(--color-text-primary)]",
+                    )}
+                  >
+                    {title}
+                  </span>
+                  {stepping ? (
+                    <span
+                      className="shrink-0 text-xs tabular-nums text-[var(--color-text-tertiary)]"
+                      title={t("attachmentPosition", {
+                        position: stepping.position + 1,
+                        count: stepping.count,
+                      })}
+                      aria-live="polite"
+                      aria-atomic="true"
+                      data-attachment-position
+                    >
+                      {stepping.position + 1}/{stepping.count}
+                    </span>
+                  ) : null}
                 </p>
                 <p
-                  className={classNames(
-                    "text-xs",
-                    "text-[var(--color-text-tertiary)]",
-                    // On a phone the previous and next keys take the room the hint had; the
-                    // file name keeps its line, and the hint stays the dialog's description.
-                    stepping && "max-sm:sr-only",
-                  )}
+                  className={classNames("text-xs", "text-[var(--color-text-tertiary)]")}
                   data-media-hint
                   id={hintId}
                 >
@@ -176,8 +210,30 @@ export function MediaLightbox({
             </div>
           </div>
 
-          <div className="min-h-0 flex-1" data-media-content>
-            {children}
+          {/* Beside the attachment, or below it on a narrow screen, where a video's own controls
+              take the bottom corners. */}
+          <div
+            className="flex min-h-0 flex-1 flex-col"
+            data-media-body
+            data-stepping={stepping ? "" : undefined}
+          >
+            {stepping ? (
+              <StepKey
+                direction="previous"
+                disabled={stepping.position <= 0}
+                onStep={stepping.onStep}
+              />
+            ) : null}
+            <div className="min-h-0 flex-1" data-media-content>
+              {children}
+            </div>
+            {stepping ? (
+              <StepKey
+                direction="next"
+                disabled={stepping.position >= stepping.count - 1}
+                onStep={stepping.onStep}
+              />
+            ) : null}
           </div>
           <ModalFocusGuard />
         </div>

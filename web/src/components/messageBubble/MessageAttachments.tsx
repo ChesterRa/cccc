@@ -1,10 +1,8 @@
 import { useEffect } from "react";
 import {
-  type AttachmentPreviewItem,
   useAttachmentPreviewStore,
   useAttachmentSetShown,
 } from "../../stores/useAttachmentPreviewStore";
-import type { MessageAttachment } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
 import {
@@ -14,7 +12,6 @@ import {
   isSvgAttachment,
   isVideoAttachment,
 } from "../../utils/messageAttachments";
-import type { AttachmentResourceMedia } from "../resourcePanel/views/AttachmentResourceView";
 import { FileIcon } from "../Icons";
 import { AudioAttachments } from "./AudioAttachments";
 import { DocumentAttachment } from "./DocumentAttachment";
@@ -22,6 +19,7 @@ import { ImagePreview } from "./ImagePreview";
 import { VideoPreview } from "./VideoPreview";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import type { MessageAttachmentSource } from "../resourcePanel/openAttachmentResource";
+import { type PlacedAttachment, previewItems } from "./attachmentPreviewItems";
 
 export function MessageAttachments({
   attachments,
@@ -35,7 +33,7 @@ export function MessageAttachments({
   sourceEventId = "",
   downloadTitle,
 }: {
-  attachments: Array<MessageAttachment & { sourceIndex?: number }>;
+  attachments: PlacedAttachment[];
   blobGroupId: string;
   panelGroupId: string;
   sender?: string;
@@ -56,7 +54,7 @@ export function MessageAttachments({
       !isAudioAttachment(attachment),
   );
   const useImageGrid = imageAttachments.length > 1;
-  const where = (attachment: MessageAttachment & { sourceIndex?: number }) => ({
+  const where = (attachment: PlacedAttachment) => ({
     blobGroupId,
     messageKey: attachmentKeyPrefix,
     sender,
@@ -68,31 +66,12 @@ export function MessageAttachments({
   });
   // The attachments the page can show, in the message's own order rather than the order of the
   // sections below; audio plays in place and other files download.
-  const siblings = attachments.flatMap((attachment): AttachmentPreviewItem[] => {
-    const media = previewMedia(attachment);
-    if (!media) return [];
-    const { label } = buildMessageAttachmentLinks({
-      groupId: blobGroupId,
-      path: attachment.path,
-      title: attachment.title,
-      localPreviewUrl: attachment.local_preview_url,
-      fallbackLabel: media === "image" || media === "video" ? media : "file",
-    });
-    return [
-      {
-        resource: {
-          kind: "attachment",
-          ...where(attachment),
-          media,
-          isSvg: media === "image" && isSvgAttachment(attachment),
-        },
-        title: label,
-      },
-    ];
+  const siblings = previewItems(attachments, blobGroupId, where);
+  const sourceFor = (attachment: PlacedAttachment): MessageAttachmentSource => ({
+    panelGroupId,
+    ...where(attachment),
+    siblings,
   });
-  const sourceFor = (
-    attachment: MessageAttachment & { sourceIndex?: number },
-  ): MessageAttachmentSource => ({ panelGroupId, ...where(attachment), siblings });
   // A preview or tab showing one of these attachments steps through the current list, such as
   // the stored copies once an upload is confirmed.
   const shown = useAttachmentSetShown(panelGroupId, attachmentKeyPrefix);
@@ -248,10 +227,4 @@ export function MessageAttachments({
       )}
     </div>
   );
-}
-
-function previewMedia(attachment: MessageAttachment): AttachmentResourceMedia | null {
-  if (isImageAttachment(attachment)) return "image";
-  if (isVideoAttachment(attachment)) return "video";
-  return attachmentDocumentKind(attachment);
 }

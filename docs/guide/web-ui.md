@@ -270,12 +270,13 @@ Collapse returns to the compact rail; closing the sidebar only hides it and keep
 
 ### Resource panel
 
-Workspace files (from **Files**, a path in a message, or a link inside a document), message
-attachments (images, videos, Markdown, static HTML, text and PDF) and Presentation slots (from the slot list or
-a message's reference) open as tabs in one panel. Opening something that is already open selects
-its tab. Each Group keeps its own tabs. Refreshing the same browser tab restores their order,
-selection, side-by-side layout, and whether the panel was collapsed or maximized, when browser
-session storage is available. This also keeps the layout when you switch Groups and return.
+Workspace files (from **Files**, a path in a message, or a link inside a document) and
+Presentation slots (from the slot list or a message's reference) open as tabs in one panel.
+[Message attachments](#message-attachments) open as tabs when the desktop panel is visible.
+Opening something that is already open selects its tab. Each Group keeps its own tabs.
+Refreshing the same browser tab restores their order, selection, side-by-side layout, and
+whether the panel was open, collapsed, or maximized, when browser session storage is available.
+This also keeps the layout when you switch Groups and return.
 Renaming or moving a file or folder in **Files** takes its open tabs and unsaved edits along.
 
 Restoration saves resource references, not document contents or unsaved edits. Resources are read
@@ -288,21 +289,24 @@ guarantee recovery after closing a tab.
 The panel sits in one of two places. Docked right, the default, it takes the right-hand column.
 Docked left, it covers the message list and keeps the composer. The arrow button in the panel's
 bar moves it, and this browser remembers the choice. Docked left, the panel belongs to the
-message view: the terminal view hides it and the message view brings it back. **Maximize**
-covers the messages and the right column together, and its key stays pressed until you press it
-again or Escape to restore. While the panel covers the messages, docked left or maximized, they do
-not count as read, and the collapse key, the same in every position, shows how many arrived beside
-its icon. Collapsing hides the panel and keeps its tabs: the resource button in the Group header
-shows how many are open and brings them back. Escape collapses the panel only from its bar;
-editors and PDF viewers keep their own Escape.
+message view: the terminal view hides it and the message view brings it back. For an attachment
+tab shown alone, **View full screen** opens its preview over the page. With two resources shown side
+by side, or when viewing a workspace file or Presentation slot, **Maximize** covers the messages
+and the right column together. Press it again or Escape to restore. While the panel covers the
+messages, docked left or maximized, newly arrived messages stay unread, and the collapse key shows
+how many arrived. The resource button in the Group header shows how many tabs are open and opens
+or collapses the panel. An empty panel opens alongside the messages, where you can click an
+attachment to open it there. Escape collapses the panel only from its bar. Editors and PDF viewers
+keep their own Escape.
 
 When the tabs do not fit, the tab strip scrolls sideways, also with the mouse wheel. **All** lists every tab in order with a
 filter by name, path or sender, followed by **Recently closed**. Several tabs closed at once
 come back together, from that list or from the **Undo** notice that follows for eight seconds.
-When every tab is closed, the header's resource button stays, showing 0, until nothing is left
-to reopen. Right-click a tab for **Close**, **Close others**, **Close tabs to the right** and
-**Close all**; **All** also offers **Close others** and **Close all**. Delete closes the selected
-tab.
+Closing the last tab leaves the desktop panel open with **Recently closed** available inside it.
+If **Files** or **Presentation** is open in the right column, it takes that space again.
+Focus the tab strip and use the left and right arrow keys to select open tabs. Right-click a tab
+for **Close**, **Close others**, **Close tabs to the right** and **Close all**. **All** also offers
+**Close others** and **Close all**. Delete closes the selected tab.
 
 A file with unsaved edits never closes silently. Closing it asks whether to save, close
 without saving or cancel; closing several stops and offers to close only the saved ones.
@@ -587,7 +591,7 @@ quoted snapshots share a static graphics viewer. Use **Fit**, **100%**, **+** or
 and workspace SVG previews can grow to fill the view. Ctrl/⌘ + wheel and a trackpad or touch pinch zoom at the
 pointer; the plain wheel keeps native scrolling and dragging pans enlarged content. A click
 on the content switches between fit and actual size; on touch screens, double-tap.
-Message images and videos open in the [resource panel](#resource-panel).
+See [Message attachments](#message-attachments) for opening images and videos from a message.
 Focus the viewport for `+`/`−`, `0` (fit),
 `1` (actual size) and native arrow-key scrolling. Closing a modal restores focus
 to its opener. Regular message scrolling, PDF controls and interactive browser
@@ -1231,16 +1235,27 @@ attachments, and delivery options remain those currently shown in the composer.
 
 ### Message attachments
 
-Click an image or a video's first frame to open it in the
-[resource panel](#resource-panel). Video frames load when their message comes into view;
-playback starts in the panel. The player uses native browser controls and pauses other
-message videos, and it pauses when its tab is no longer in front. **Show in messages** in the
-panel returns to the message. Downloads remain available when the browser cannot decode a
-video. Confirmed uploads play and download from the Group's stored blob, so they remain
-available after the local upload preview expires.
+Click an image, a video's first frame, or a previewable file name. It opens in the desktop
+[resource panel](#resource-panel) while that panel is visible. When the panel is collapsed or
+you are on a phone, the attachment opens in a full-screen preview. **View full screen** on an
+attachment tab opens a new preview, starting a PDF at its first page or a video at the beginning.
+Close the preview to return to the original tab and its reading or playback position.
 
-Markdown, HTML, PDF and common text files open in the panel when you click their name; their
-download sits next to it. Markdown renders by default; **View source** and **Preview** switch
+Use the previous and next buttons to browse the previewable attachments in the same message in
+order. On a wide screen the buttons flank the preview. On a narrow screen they sit beneath it.
+The left and right arrow keys also work when focus is on the preview's controls. Within a PDF
+or HTML frame, use the viewer's own controls. On desktop, **Open in a resource tab** opens
+the attachment shown in the preview in a resource tab.
+
+Video frames load when their message comes into view. Click a video to start playback, or
+press Play after reaching it with the previous and next buttons. The player uses native browser
+controls and pauses other message videos. A video also pauses when its tab is no longer in front.
+**Show in messages** in the panel returns to the message. Downloads remain available when the
+browser cannot decode a video. Confirmed uploads play and download from the Group's stored blob,
+so they remain available after the local upload preview expires.
+
+Markdown, HTML, PDF and common text files have a download button beside their name. Markdown
+renders by default. **View source** and **Preview** switch
 between its unchanged text and rendered view without downloading it again. Text and logs stay
 plain. HTML uses the same controls and opens as a static document: scripts, forms and external
 resources are disabled; inline styles and embedded images are supported. Links can be opened

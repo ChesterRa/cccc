@@ -7,6 +7,66 @@
   outline: 1px solid var(--glass-border-subtle);
 }
 
+/* Previous and next for the message's other attachments. On a narrow screen they take a strip of
+   their own below the attachment, one at each end, so they never cover a video's own controls in
+   its bottom corners. From the sm width, and on a short landscape screen from the width where the
+   image layout below starts, they stand in the gutters on either side, at the middle of the
+   attachment's height. Only the screen decides, so stepping to another kind of file never moves
+   them. */
+[data-media-body][data-stepping] {
+  display: grid;
+  grid-template-areas: "view view" "previous next";
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+[data-media-body][data-stepping] > [data-media-content] {
+  grid-area: view;
+  min-width: 0;
+}
+
+[data-media-step] {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--glass-border-subtle);
+  padding-top: 0.25rem;
+  padding-bottom: max(0.25rem, env(safe-area-inset-bottom, 0px));
+}
+
+[data-media-step="previous"] {
+  grid-area: previous;
+  justify-content: flex-start;
+  padding-left: max(0.5rem, env(safe-area-inset-left, 0px));
+}
+
+[data-media-step="next"] {
+  grid-area: next;
+  justify-content: flex-end;
+  padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
+}
+
+@media (min-width: 640px), (max-height: 480px) and (min-width: 560px) {
+  [data-media-body][data-stepping] {
+    grid-template-areas: "previous view next";
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  [data-media-step] {
+    border-top: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  [data-media-step="previous"] {
+    padding-right: 0.5rem;
+  }
+
+  [data-media-step="next"] {
+    padding-left: 0.5rem;
+  }
+}
+
 /* Keep the close hint available to assistive technology without spending a
    large share of a short screen on it. */
 @media (max-height: 480px) {
@@ -24,7 +84,7 @@
 }
 
 /* In a short landscape viewport, keep the image controls on the title line.
-   Other GraphicViewer callers and the native video controls keep their layout. */
+   Other GraphicViewer callers, documents and the native video controls keep their layout. */
 @media (max-height: 480px) and (min-width: 560px) {
   [data-media-lightbox]:has([data-graphic-viewer]) {
     display: grid;
@@ -35,12 +95,13 @@
   }
 
   [data-media-lightbox]:has([data-graphic-viewer]) > [data-media-header],
-  [data-media-lightbox]:has([data-graphic-viewer]) > [data-media-content],
+  [data-media-lightbox]:has([data-graphic-viewer]) > [data-media-body],
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-media-content],
   [data-media-lightbox] [data-graphic-viewer] {
     display: contents;
   }
 
-  [data-media-lightbox] [data-media-title] {
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-media-title] {
     grid-area: title;
     display: flex;
     min-width: 0;
@@ -49,19 +110,46 @@
     border-bottom: 1px solid var(--glass-border-subtle);
   }
 
-  [data-media-lightbox] [data-graphic-controls] {
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-graphic-controls] {
     grid-area: controls;
   }
 
-  [data-media-lightbox] [data-media-actions] {
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-media-actions] {
     grid-area: actions;
     padding: 0.25rem max(1rem, env(safe-area-inset-right, 0px)) 0.25rem 0.5rem;
     border-bottom: 1px solid var(--glass-border-subtle);
   }
 
-  [data-media-lightbox] [data-graphic-canvas] {
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-graphic-canvas] {
     grid-area: canvas;
     min-width: 0;
+  }
+
+  /* Previous and next keep to gutters beside the image: the image gives up the room they take,
+     and they stand in it at the middle of its height. */
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-media-step] {
+    position: relative;
+    z-index: 1;
+    grid-area: canvas;
+    align-self: center;
+    border-top: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-media-step="previous"] {
+    justify-self: start;
+    padding-right: 0.5rem;
+  }
+
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-media-step="next"] {
+    justify-self: end;
+    padding-left: 0.5rem;
+  }
+
+  [data-media-lightbox]:has([data-media-step]) [data-graphic-canvas] {
+    margin-left: calc(max(0.5rem, env(safe-area-inset-left, 0px)) + 3.25rem);
+    margin-right: calc(max(0.5rem, env(safe-area-inset-right, 0px)) + 3.25rem);
   }
 }
 
@@ -80,7 +168,7 @@
     min-width: 4ch;
   }
 
-  [data-media-lightbox] [data-media-actions] {
+  [data-media-lightbox]:has([data-graphic-viewer]) [data-media-actions] {
     gap: 0.25rem;
     padding-right: max(0.5rem, env(safe-area-inset-right, 0px));
     padding-left: 0.25rem;

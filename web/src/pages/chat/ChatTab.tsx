@@ -500,19 +500,23 @@ export function ChatTab({
   const resourceDock = useResourcePanelStore((state) => state.dock);
   const resourcePanel = useGroupResourcePanel(selectedGroupId);
   const setResourcePanelOpen = useResourcePanelStore((state) => state.setOpen);
+  const resourcePanelEmpty = resourcePanel.tabs.length === 0;
+  // An empty panel waits in the right column, wherever it is docked, so the messages whose
+  // attachments it waits for stay in reach. A phone shows no empty panel.
+  const resourcePanelDock = resourcePanelEmpty ? "right" : resourceDock;
   const resourcePanelExpanded =
-    !!selectedGroupId && resourcePanel.open && resourcePanel.tabs.length > 0;
+    !!selectedGroupId && resourcePanel.open && (!resourcePanelEmpty || !isSmallScreen);
   // A phone shows the panel as its own full-screen surface instead.
   const resourcePanelShown = !isSmallScreen && resourcePanelExpanded;
   // Docked right, the panel takes the column over the surface beneath it; collapsing it shows
   // that surface again.
-  const resourcePanelInColumn = resourcePanelShown && resourceDock === "right";
+  const resourcePanelInColumn = resourcePanelShown && resourcePanelDock === "right";
   // Docked over the messages it belongs to the message view: the terminal view hides it
   // without collapsing it. Maximized, it covers the messages wherever it is docked.
   const resourcePanelCoversChat =
     resourcePanelShown &&
     workView !== "terminals" &&
-    (resourceDock === "left" || resourcePanel.maximized);
+    (resourcePanelDock === "left" || resourcePanel.maximized);
   const showSplitFiles = !isSmallScreen && activeSidePanel === "files" && !resourcePanelInColumn;
   const showSplitPresentation =
     !isSmallScreen && activeSidePanel === "presentation" && !resourcePanelInColumn;
@@ -658,7 +662,7 @@ export function ChatTab({
   // Docked over the messages, the panel is hidden in the terminal view without being collapsed;
   // the header entry then brings back the messages with it rather than collapsing it unseen.
   const resourcePanelVisible =
-    resourcePanelShown && (resourceDock === "right" || workView !== "terminals");
+    resourcePanelShown && (resourcePanelDock === "right" || workView !== "terminals");
   // A message attachment opens in the panel only while the panel is on screen beside it.
   const setResourcePanelShown = useResourcePanelStore((state) => state.setShown);
   useEffect(() => {
@@ -671,13 +675,13 @@ export function ChatTab({
       setResourcePanelOpen(selectedGroupId, false);
       return;
     }
-    if (!isSmallScreen && resourceDock === "left" && workView === "terminals") {
+    if (!isSmallScreen && resourcePanelDock === "left" && workView === "terminals") {
       setGroupWorkView(selectedGroupId, "messages");
     }
     setResourcePanelOpen(selectedGroupId, true);
   }, [
     isSmallScreen,
-    resourceDock,
+    resourcePanelDock,
     resourcePanelVisible,
     selectedGroupId,
     setGroupWorkView,
@@ -687,7 +691,7 @@ export function ChatTab({
   const closeResourcePanel = useCallback(() => {
     if (selectedGroupId) setResourcePanelOpen(selectedGroupId, false);
   }, [selectedGroupId, setResourcePanelOpen]);
-  // Reopening what was closed, from the header when no tab is left open.
+  // Reopening what was closed, from the empty panel: its tabs go where the panel is docked.
   const restoreResourceEntry = useCallback(
     (entry: ClosedEntry) => {
       if (!selectedGroupId) return;
@@ -1266,7 +1270,6 @@ export function ChatTab({
                           groupId={selectedGroupId}
                           shown={resourcePanelVisible}
                           onToggle={toggleResourcePanel}
-                          onRestore={restoreResourceEntry}
                         />
                         <WorkspaceFilesTrigger
                           active={columnSurface === "files"}
@@ -1801,14 +1804,16 @@ export function ChatTab({
             </ResizableSidePanel>
           ) : null}
 
-          {!isSmallScreen && selectedGroupId && resourcePanel.tabs.length > 0 ? (
+          {!isSmallScreen &&
+          selectedGroupId &&
+          (resourcePanel.tabs.length > 0 || resourcePanel.open) ? (
             <Suspense fallback={null}>
               <ResourcePanel
                 key={selectedGroupId}
                 groupId={selectedGroupId}
-                dock={resourceDock}
-                visible={resourceDock === "right" || workView !== "terminals"}
-                slot={resourceDock === "right" ? resourceColumnSlot : chatWorkSurface}
+                dock={resourcePanelDock}
+                visible={resourcePanelDock === "right" || workView !== "terminals"}
+                slot={resourcePanelDock === "right" ? resourceColumnSlot : chatWorkSurface}
                 container={splitLayoutRef}
                 files={panelWorkspaceFiles}
                 scopeReady={workspaceScopeReady}
@@ -1817,6 +1822,10 @@ export function ChatTab({
                 presentation={resourcePresentation}
                 onLocateMessage={locateMessageFromPanel}
                 onAttachPath={attachWorkspacePath}
+                onRestore={restoreResourceEntry}
+                // Files or Presentation in the right column comes back when the last tab closes,
+                // as when the panel collapses; otherwise the empty panel waits for the next one.
+                onEmptied={activeSidePanel ? closeResourcePanel : undefined}
               />
             </Suspense>
           ) : null}

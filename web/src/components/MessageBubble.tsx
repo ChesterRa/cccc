@@ -57,6 +57,7 @@ import {
 } from "../features/quickReplies/templateStore";
 import { effectiveReplyTemplates } from "../features/quickReplies/effective";
 import { PinIcon } from "./Icons";
+import { messageBlobAttachments } from "./messageBubble/attachmentPreviewItems";
 import { useGroupStore, useUIStore } from "../stores";
 import { CHET_NAME, CHET_PRINCIPAL, chetGeneration, isChetMessage } from "../utils/chetIdentity";
 import {
@@ -278,23 +279,7 @@ export const MessageBubble = memo(
       scopeKey: String(ev.scope_key || ""),
       foreign: !!srcGroupId || isRemoteSource,
     });
-    const blobAttachments = rawAttachments.flatMap((a, sourceIndex) => {
-      if (a == null || typeof a !== "object") return [];
-      const attachment = {
-        kind: String(a.kind || "file"),
-        path: String(a.path || ""),
-        title: String(a.title || ""),
-        bytes: Number(a.bytes || 0),
-        mime_type: String(a.mime_type || ""),
-        local_preview_url: "local_preview_url" in a ? String(a.local_preview_url || "") : "",
-        // Use the original message position even after unsupported entries are filtered out.
-        sourceIndex,
-      };
-      return attachment.path.startsWith("state/blobs/") ||
-        attachment.local_preview_url.startsWith("blob:")
-        ? [attachment]
-        : [];
-    });
+    const blobAttachments = messageBlobAttachments(rawAttachments);
     const displayMessageText = useMemo(() => {
       if (isRedundantWecomImagePlaceholder(messageText, blobAttachments, sourcePlatform)) {
         return "";
