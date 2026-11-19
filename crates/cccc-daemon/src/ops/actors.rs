@@ -995,13 +995,19 @@ pub(super) fn lifecycle_leading(
         && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
     let runtime_was_running =
         (actor_process_running(&group, &original_actor) && !orphaned_confirmation) || setup_open;
-    let retry_runtime = if original_actor.external_session_id.is_empty()
-        && matches!(kind, "actor.start" | "actor.restart")
+    let replacing_running =
+        runtime_was_running && matches!(kind, "actor.restart" | "actor.new_session");
+    let effective_runtime = if original_actor.external_session_id.is_empty()
+        && (matches!(kind, "actor.start" | "actor.restart") || replacing_running)
     {
         Some(actor_profile_runtime::resolve(home, &original_actor)?.runtime)
     } else {
         None
     };
+    if replacing_running && effective_runtime == Some(cccc_contracts::ActorRuntime::Deepseek) {
+        super::deepseek_runtime::check_replacement(home, &group, &original_actor)?;
+    }
+    let retry_runtime = effective_runtime.filter(|_| kind != "actor.new_session");
     let retry_claude_trust = retry_runtime == Some(cccc_contracts::ActorRuntime::Claude)
         && !super::local_headless::running(&group_id, &actor_id)
         && super::local_headless::waiting_for_workspace_trust(&group_id, &actor_id)

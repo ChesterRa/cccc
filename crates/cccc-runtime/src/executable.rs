@@ -113,14 +113,6 @@ fn resolve_executable(
     })
 }
 
-pub(crate) fn is_executable_file(path: &Path) -> bool {
-    is_executable_file_for(
-        path,
-        cfg!(windows),
-        std::env::var("PATHEXT").ok().as_deref(),
-    )
-}
-
 fn is_executable_file_for(path: &Path, windows: bool, pathext: Option<&str>) -> bool {
     if !path.is_file() {
         return false;

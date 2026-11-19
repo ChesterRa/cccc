@@ -1,8 +1,25 @@
 {
   "valid": {
-    "name": "dsh-profile-cccc-acp",
+    "name": "cccc-deepseek-runtime",
     "private": true,
     "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh": "0.2.2-rc.5"}
+  },
+  "empty_shell": {"ccccManaged": true, "dependencies": {}},
+  "unmanaged": {
+    "name": "cccc-deepseek-runtime", "private": true,
+    "dependencies": {"@deepseek-ai/dsh": "0.2.2-rc.5"}
+  },
+  "extra_dependency": {
+    "name": "cccc-deepseek-runtime", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh": "0.2.2-rc.5", "@deepseek-ai/dsh-headless": "0.2.2-rc.5"}
+  },
+  "wrong_version": {
+    "name": "cccc-deepseek-runtime", "private": true, "ccccManaged": true,
+    "dependencies": {"@deepseek-ai/dsh": "0.2.2-rc.4"}
+  },
+  "previous_release": {
+    "name": "cccc-deepseek-runtime", "private": true, "ccccManaged": true,
     "dependencies": {
       "@deepseek-ai/dsh-acp": "0.1.0-rc.6",
       "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
@@ -10,26 +27,5 @@
       "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"
     }
   },
-  "empty_shell": {"ccccManaged": true, "dependencies": {}},
-  "extra_dependency": {
-    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
-    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6", "@deepseek-ai/dsh-headless": "0.1.0-rc.6"}
-  },
-  "wrong_version": {
-    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
-    "dependencies": {"@deepseek-ai/dsh-acp": "0.0.0", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"}
-  },
-  "missing_app": {
-    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
-    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.6"}
-  },
-  "missing_adapter": {
-    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
-    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6"}
-  },
-  "adapter_version_mismatch": {
-    "name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true,
-    "dependencies": {"@deepseek-ai/dsh-acp": "0.1.0-rc.6", "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6", "@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6", "@deepseek-ai/dsh-llm-deepseek": "0.1.0-rc.7"}
-  },
-  "truncated": {"name": "dsh-profile-cccc-acp", "private": true, "ccccManaged": true}
+  "truncated": {"name": "cccc-deepseek-runtime", "private": true, "ccccManaged": true}
 }

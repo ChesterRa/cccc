@@ -1,0 +1,24 @@
+- id: llm-deepseek
+  disabled: true
+- id: llm-deepseek-account
+  disabled: true
+- id: llm-pi-ai
+  config:
+    providers:
+      cccc-deepseek-chat:
+        api: openai-completions
+        apiKeyEnv: DEEPSEEK_API_KEY
+        baseURL: !!js process.env.DEEPSEEK_BASE_URL
+        compat:
+          maxTokensField: max_tokens
+          thinkingFormat: deepseek
+          supportsDeveloperRole: false
+          supportsStore: false
+        models:
+          - id: !!js process.env.DEEPSEEK_MODEL
+            contextWindow: 1048576
+            maxTokens: __MAX_OUTPUT_TOKENS__
+- id: acp
+  config:
+    provider: cccc-deepseek-chat
+    model: !!js process.env.DEEPSEEK_MODEL

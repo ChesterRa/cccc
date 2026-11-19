@@ -5,7 +5,8 @@ use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use std::path::Path;
 
-pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+// Native tool updates can carry the full contents of a file written by the agent.
+pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 pub const MAX_PENDING_REQUESTS: usize = 256;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -98,12 +99,12 @@ pub fn initialize_request(client_version: &str) -> Value {
     json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":DEEPSEEK_PROTOCOL_VERSION,"clientCapabilities":{},"clientInfo":{"name":"cccc","version":client_version}}})
 }
 
-pub fn session_new_request(cwd: &str) -> Result<Value, &'static str> {
+pub fn session_new_request(cwd: &str, mcp_servers: &[Value]) -> Result<Value, &'static str> {
     if !is_absolute_cwd(cwd) {
         return Err("session/new cwd must be absolute");
     }
     Ok(
-        json!({"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":cwd,"mcpServers":[],"additionalDirectories":[]}}),
+        json!({"jsonrpc":"2.0","id":2,"method":"session/new","params":{"cwd":cwd,"mcpServers":mcp_servers,"additionalDirectories":[]}}),
     )
 }
 

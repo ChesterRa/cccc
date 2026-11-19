@@ -264,6 +264,23 @@ fn messages_reach_the_terminal_that_runs_whatever_was_saved_since() {
 }
 
 #[test]
+fn a_running_member_receives_messages_after_a_deepseek_replacement_requires_setup() {
+    let fixture = Fixture::new();
+    fixture.start_reader();
+    fixture.save_for_next_launch(json!({"runtime":"deepseek"}));
+    for operation in ["actor_restart", "actor_new_session"] {
+        let response = fixture.request(operation, json!({"actor_id":"member","by":"user"}));
+        assert_eq!(
+            response.error.expect("setup required").code,
+            "setup_required"
+        );
+    }
+    let event = fixture.send("AFTER_REFUSED_REPLACEMENT");
+    assert_eq!(fixture.accepted_on(&event), "pty");
+    assert!(fixture.received().contains("AFTER_REFUSED_REPLACEMENT"));
+}
+
+#[test]
 fn a_terminal_keeps_the_submit_key_it_launched_with() {
     let fixture = Fixture::new();
     fixture.start_reader();

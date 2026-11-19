@@ -13,7 +13,7 @@ Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can al
 | Claude Code | `claude` | CCCC-managed Agent View session + native TUI | Injected into each managed session |
 | Cline CLI | `cline` | `cline` | Auto |
 | Codex CLI | `codex` | CCCC-managed app-server + native TUI | Agent-scoped MCP injected into the managed session |
-| DeepSeek Harness | `deepseek` | CCCC-managed `dsh-acp-demo` (structured ACP, no native terminal) | Automatic on first start; explicit setup remains available |
+| DeepSeek Harness | `deepseek` | CCCC-managed `dsh --profile acp` (structured ACP, no native terminal) | Injected per ACP session; install once with `cccc setup --runtime deepseek` |
 | GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Auto for TUI; injected per ACP session |
 | Cursor CLI | `cursor` | Native `cursor-agent` TUI or official ACP | Native registration for TUI; injected per ACP session |
 | Devin CLI | `devin` | Native `devin` TUI or official ACP | Auto for TUI; injected per ACP session |
@@ -45,7 +45,7 @@ CCCC applies runtime-specific launch defaults for agents it starts. These defaul
 | `claude` | `claude --dangerously-skip-permissions` | Skips Claude Code permission prompts. |
 | `cline` | `cline --tui --auto-approve true` | Opens Cline's interactive TUI and enables tool auto-approval. |
 | `codex` | `codex -c check_for_update_on_startup=false -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search` | Bypasses Codex approvals/sandbox and preserves agent environment inheritance for MCP subprocesses. |
-| `deepseek` | CCCC-managed `dsh-acp-demo --config …/cordis.yml` | Official ACP app composition; provider permission requests are rejected rather than implicitly approved. |
+| `deepseek` | CCCC-managed `dsh --profile acp` | The official ACP profile; provider permission requests are rejected rather than implicitly approved. |
 | `copilot` | `copilot --allow-all` | Allows Copilot CLI tool execution without per-action approval. |
 | `cursor` | `cursor-agent --yolo --approve-mcps` | Uses Cursor YOLO mode and approves MCP usage. |
 | `devin` | `devin --permission-mode dangerous` | Uses Devin's dangerous permission mode. |
@@ -97,9 +97,11 @@ cccc setup --runtime kilo
 cccc setup --runtime antigravity
 ```
 
-DeepSeek Harness is an upstream developer preview, so CCCC owns and isolates the tested ACP composition. On first use, it installs only the four required packages (`dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek`) under `CCCC_HOME/runtimes/deepseek/<release>`. Exact direct versions plus an npm release cutoff keep every transitive `@deepseek-ai/dsh*` package on the same validated preview release. The managed LLM adapter caps output at 65,536 tokens so prompt and MCP tool context retain headroom inside the model window. Setup also prunes the obsolete direct `dsh` bundle and its managed profile patch from earlier preview installs. CCCC does not modify `~/.dsh` or a project `package.json`; the legacy one-shot `dsh --profile cccc-acp` path and its unused bundle profile are not used. Concurrent starts share one setup lock, and a failed installation remains retryable. Running `cccc setup --runtime deepseek` performs the same idempotent setup eagerly. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
+DeepSeek Harness is an upstream developer preview, so CCCC pins the release it has verified. Run `cccc setup --runtime deepseek` once before starting the first DeepSeek Agent: it installs the official `@deepseek-ai/dsh` launcher at that release under `CCCC_HOME/runtimes/deepseek/<release>`, and Agents then start with the launcher's built-in ACP profile (`dsh --profile acp`). Starting an Agent never installs anything, so a download never holds up the Group; without a complete installation the start reports `setup_required` with that command. The exact launcher version plus an npm release cutoff keep every `@deepseek-ai/dsh*` package on that release and its other dependencies on the verified versions. npm runs no dependency install scripts; in this release they only check prebuilt native modules or print notices. DeepSeek Harness needs Node 24.9 or later. The first installation downloads about 300 MB and uses about 1.3 GB of disk (measured on Linux x64). An installation still running after 15 minutes is stopped and can be retried; npm's output from the latest attempt is kept in `npm-install.log` in that directory. Concurrent setups share one lock, and running setup again repairs an incomplete installation. CCCC caps output at 65,536 tokens so prompt and MCP tool context retain headroom inside the model window. CCCC does not modify `~/.dsh` or a project `package.json`, and setup does nothing when the installation is already complete. Once every DeepSeek Agent has restarted on the current release, the directories of earlier releases under `CCCC_HOME/runtimes/deepseek` can be deleted. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
 
-DeepSeek's connection form writes `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and `DEEPSEEK_MODEL` to the Agent's existing private environment, and Runtime Profiles can carry the same variables. A saved value wins; without one, the Agent uses `DEEPSEEK_BASE_URL` or `DEEPSEEK_MODEL` from the environment it starts with (its own environment settings first, then the daemon's), and otherwise `https://api.deepseek.com` and `deepseek-flash`, the name DeepSeek's API documentation gives for its current Flash model; custom model IDs are passed unchanged after trimming surrounding whitespace. The shared managed ACP config reads the model from each launched process's environment, so changing one Agent does not change other Agents. Save and restart the Agent to apply connection changes. Custom gateways must support DeepSeek streaming Chat Completions and tool calls; an OpenAI-compatible label alone does not establish that compatibility. A missing API key, or an authentication failure CCCC recognizes (such as DeepSeek rejecting the key), stops the current DeepSeek process and pauses automatic delivery; correct the saved connection settings and explicitly launch or restart the Agent to retry its pending messages. Editing a draft or using a separate inspector restart does not save it.
+Updating CCCC from a release that used an earlier DeepSeek Harness takes two steps. First run `cccc setup --runtime deepseek` once on the CCCC host. A DeepSeek Agent kept running through the update (**Keep agents running**) continues its current conversation with the tools of the process it started with; then restart it to use the current release's tools. Every DeepSeek launch starts a new Harness session: sessions from earlier releases stay in `CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/sessions`, and CCCC's Group messages and tasks are unaffected. Until setup completes, **Restart** and **New session** report `setup_required` without stopping the running Agent, and an Agent that is not running reports the same when it starts, including after **Restart agents**; start it again once setup completes.
+
+DeepSeek's connection form writes `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and `DEEPSEEK_MODEL` to the Agent's existing private environment, and Runtime Profiles can carry the same variables. A saved value wins; without one, the Agent uses `DEEPSEEK_BASE_URL` or `DEEPSEEK_MODEL` from the environment it starts with (its own environment settings first, then the daemon's), and otherwise `https://api.deepseek.com` and `deepseek-flash`, the name DeepSeek's API documentation gives for its current Flash model; custom model IDs are passed unchanged after trimming surrounding whitespace. Each Agent's profile layer reads the model from that Agent's own process environment, so changing one Agent does not change other Agents. Save and restart the Agent to apply connection changes. Custom gateways must support DeepSeek streaming Chat Completions and tool calls; an OpenAI-compatible label alone does not establish that compatibility. A missing API key, or an authentication failure CCCC recognizes (such as DeepSeek rejecting the key), stops the current DeepSeek process and pauses automatic delivery; correct the saved connection settings and explicitly launch or restart the Agent to retry its pending messages. Editing a draft or using a separate inspector restart does not save it.
 
 For a custom runtime, provide the command when creating or editing the agent:
 
@@ -111,7 +113,7 @@ cccc actor add worker --runtime custom --command "my-agent --with-flags"
 
 Users choose a Runtime, not an arbitrary runner. Antigravity, Auggie, Copilot, Devin, Cursor, Kimi Code, Kiro, Hermes and Droid offer an explicit official ACP mode without a terminal. Pi uses its official RPC surface by default and has no same-session native terminal attachment. Other CLI runtimes expose their native terminal so the user can inspect and operate the agent. Codex, Claude Code, Grok Build, OpenCode, and Kilo additionally run a structured background protocol against the same provider session; CCCC uses that protocol for identity, lifecycle, progress, completion, and cancellation.
 
-Agent messages still enter those managed Runtimes through their native terminal. Hermes differs: CCCC runs it on an ACP session, opens Hermes's TUI on that session in the default mode, and sends messages through ACP. CCCC does not decide whether a message steers an active turn or waits behind it; the receiving Runtime applies its own configuration. DeepSeek Harness has only a structured ACP surface, while ChatGPT Web Model uses browser delivery plus a remote MCP connector. These are Runtime capabilities, not user-selectable modes.
+Agent messages still enter those managed Runtimes through their native terminal. Hermes differs: CCCC runs it on an ACP session, opens Hermes's TUI on that session in the default mode, and sends messages through ACP. CCCC does not decide whether a message steers an active turn or waits behind it; the receiving Runtime applies its own configuration. CCCC runs DeepSeek Harness only through its structured ACP surface, while ChatGPT Web Model uses browser delivery plus a remote MCP connector. These are Runtime capabilities, not user-selectable modes.
 
 Cline currently opens a fresh native terminal on each start. CCCC does not persist or reuse Cline's `--id` session identifier.
 
@@ -368,7 +370,7 @@ If delivery is uncertain, check Kilo's history before choosing **Retry**.
 
 Codex, Claude, Grok, OpenCode, and Kilo always pair their native terminal with the
 managed background session described above. DeepSeek uses ACP NDJSON through
-CCCC's fixed composition and has no terminal surface. Provider health determines
+the official ACP profile and has no terminal surface. Provider health determines
 the agent's `running` value, and stopping the agent or Group closes the owned
 provider session. Internal `headless.*` event names remain a wire-format detail;
 they are not a selectable agent mode.
@@ -378,10 +380,13 @@ projected to `headless.message.delta` and `headless.message.completed`; turn
 boundaries use `headless.turn.started` plus `headless.turn.completed` or
 `headless.turn.failed`. This is the same durable event contract used by Web SSE
 and reconnect snapshots. The daemon inherits its process environment, then
-overlays actor/profile values, but forces the managed `DSH_HOME` into CCCC's
-versioned runtime directory. ACP session data is isolated per agent at
-`CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/sessions`, never in the
-attached project. Installation and provider turns each have a 300-second bound.
+overlays actor/profile values. For the managed launcher it sets `DSH_HOME` to
+the agent's own `CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/harness`
+directory, so ACP session data stays per agent in `harness/sessions` there,
+never in the attached project. A custom launcher command keeps the sibling
+`<actor_id>/sessions` directory, where sessions from earlier preview releases
+also remain. Installation stops after 15 minutes, and a provider turn fails
+after 300 seconds without provider output.
 A timed-out turn is cancelled and recorded as failed only after its terminal
 response; if confirmation cannot be obtained, the supervisor is stopped before
 the source message remains eligible for retry. Missing credentials and

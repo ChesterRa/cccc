@@ -12,6 +12,7 @@ pub use delivery::deliver;
 pub(crate) use delivery::deliver_prepared;
 pub use delivery::{TurnDelivery, deliver_marked};
 pub use lifecycle::apply;
+pub(crate) use lifecycle::check_replacement;
 
 use cccc_contracts::Actor;
 use cccc_core::{GroupDoc, HomeLayout};
@@ -75,30 +76,27 @@ pub(crate) fn start_with_private_values(
     );
     env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
     env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
-    let session_root = home
+    let member_state = home
         .root()
         .join("groups")
         .join(&group.group_id)
         .join("state/deepseek")
-        .join(&actor.id)
-        .join("sessions");
-    std::fs::create_dir_all(&session_root)?;
-    env.insert(
-        "CCCC_DEEPSEEK_SESSION_ROOT".into(),
-        session_root.to_string_lossy().into_owned(),
-    );
+        .join(&actor.id);
     if let Some(key) = env.get("DEEPSEEK_API_KEY") {
         private_values.push(key.clone());
     }
     private_values.retain(|value| !value.is_empty());
     private_values.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
     private_values.dedup();
-    let command = launch_command::resolve(actor, &env)?;
+    let cccc = super::codex_mcp::resolve_cccc_executable();
+    let launch = launch_command::prepare(actor, &mut env, &member_state, &cwd, cccc.as_deref())?;
     let env = env.into_iter().collect::<Vec<_>>();
     supervisor
-        .start(&command, &cwd, &env)
+        .start(&launch.command, &launch.cwd, &env)
         .map_err(std::io::Error::other)?;
-    if let Err(error) = supervisor.handshake(&cwd, Duration::from_secs(5)) {
+    // The official profile can spend five seconds fetching its model catalog during initialize.
+    let handshake_timeout = Duration::from_secs(if launch.mcp_servers.is_empty() { 5 } else { 30 });
+    if let Err(error) = supervisor.handshake(&cwd, &launch.mcp_servers, handshake_timeout) {
         let _ = supervisor.stop();
         return Err(std::io::Error::other(format!(
             "deepseek ACP handshake failed: {error}"

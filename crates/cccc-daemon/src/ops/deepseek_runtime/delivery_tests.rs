@@ -320,6 +320,11 @@ fn credential_failure_is_structured_secret_free_and_stops_runtime() {
             "credential_rejected",
             "DeepSeek API credential was rejected",
         ),
+        (
+            r#"Internal error: turn failed: 401: {"message":"Unauthorized"}"#,
+            "credential_rejected",
+            "DeepSeek API credential was rejected",
+        ),
     ] {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -332,12 +337,16 @@ elif printf '%s' "$line" | grep -q '"method":"session/new"'; then
   printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fake-session"}}'
 else
   rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
-  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":"no API key for DEEPSEEK_API_KEY","data":"diagnostic=should-not-leak"}}\n' "${rid:-3}"
+  printf '{"jsonrpc":"2.0","id":%s,"error":{"code":-32603,"message":%s,"data":"diagnostic=should-not-leak"}}\n' "${rid:-3}" "$TEST_FAILURE_JSON"
 fi
-done"#.replace("no API key for DEEPSEEK_API_KEY", message);
+done"#;
         let mut actor = Actor::new("deepseek");
         actor.runtime = ActorRuntime::Deepseek;
-        actor.command = vec!["sh".into(), "-c".into(), script];
+        actor.command = vec!["sh".into(), "-c".into(), script.into()];
+        actor.env.insert(
+            "TEST_FAILURE_JSON".into(),
+            serde_json::json!(message).to_string(),
+        );
         group.actors.push(actor.clone());
         store.save(&group).expect("save");
         start(&home, &group, &actor, temp.path()).expect("start");

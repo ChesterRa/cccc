@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-const STDOUT_FRAME_CAPACITY: usize = 512;
+// Bound the buffered input to 32 MiB even when the provider sends file-sized updates.
+const STDOUT_FRAME_CAPACITY: usize = 32;
 
 impl DeepSeekSupervisor {
     pub fn start(
@@ -107,7 +108,12 @@ impl DeepSeekSupervisor {
 
     /// Complete the ACP initialize/session-new handshake for this generation.
     /// The caller must invoke this before treating the actor as runnable.
-    pub fn handshake(&mut self, cwd: &Path, timeout: Duration) -> Result<String, SupervisorError> {
+    pub fn handshake(
+        &mut self,
+        cwd: &Path,
+        mcp_servers: &[serde_json::Value],
+        timeout: Duration,
+    ) -> Result<String, SupervisorError> {
         self.send_request(&deepseek_acp::initialize_request("0.1.0"), 1)?;
         let initialize = self.recv_response(1, timeout)?;
         deepseek_acp::validate_initialize_result(&initialize)?;
@@ -115,7 +121,7 @@ impl DeepSeekSupervisor {
         let cwd = cwd
             .to_str()
             .ok_or_else(|| SupervisorError::Io(io::Error::other("deepseek cwd is not UTF-8")))?;
-        let request = deepseek_acp::session_new_request(cwd)
+        let request = deepseek_acp::session_new_request(cwd, mcp_servers)
             .map_err(|_| SupervisorError::Protocol(ProtocolError::InvalidFrame))?;
         self.send_request(&request, 2)?;
         let response = self.recv_response(2, timeout)?;
@@ -244,6 +250,22 @@ mod tests {
     use super::read_bounded_frame;
     use crate::deepseek_acp;
     use std::io::{BufReader, Cursor};
+
+    #[test]
+    fn reads_native_tool_calls_with_file_sized_arguments() {
+        let contents = "abcdef".repeat(16_000);
+        let message = serde_json::json!({
+            "jsonrpc":"2.0", "method":"session/update",
+            "params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","rawInput":{"content":contents}}}
+        });
+        let mut line = serde_json::to_vec(&message).expect("serialize tool call");
+        line.push(b'\n');
+        let frame = read_bounded_frame(&mut BufReader::new(Cursor::new(line)))
+            .expect("read tool call")
+            .expect("complete frame");
+        let mut session = deepseek_acp::NdjsonSession::default();
+        assert_eq!(session.feed_line(&frame).expect("valid tool call"), message);
+    }
 
     #[test]
     fn oversized_frame_is_discarded_as_one_physical_record() {

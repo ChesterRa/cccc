@@ -1760,7 +1760,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   codex: { label: "Codex CLI", desc: "" },
   deepseek: {
     label: "DeepSeek Harness",
-    desc: "Experimental ACP runtime; CCCC installs its pinned composition on first start",
+    desc: "Experimental ACP runtime. Install with cccc setup --runtime deepseek.",
   },
   copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot's native terminal with CCCC MCP" },
   cursor: {

@@ -1,4 +1,6 @@
-use super::delivery_projection::{TurnProjection, agent_message_text, persist_terminal};
+use super::delivery_projection::{
+    TurnProjection, activity_detail, agent_message_text, persist_terminal,
+};
 use super::turn_failure::fail_sent_request;
 use super::turn_timeout::settle_timed_out_request;
 use super::{cancellation_requested, sessions};
@@ -322,11 +324,11 @@ fn deliver_prepared_with_timeout(
             if cccc_runtime::deepseek_acp::validate_session_update(&frame, &session_id).is_err() {
                 fail!(false);
             }
-            let update = params.get("update").cloned().unwrap_or(Value::Null);
+            let update = &params["update"];
             let ordinal = update_ordinal;
             update_ordinal = update_ordinal.saturating_add(1);
             let update_key = format!("deepseek.update:{}:{attempt_id}:{ordinal}", event.id);
-            let (kind, data) = if let Some(delta) = agent_message_text(&update) {
+            let (kind, data) = if let Some(delta) = agent_message_text(update) {
                 message_text.push_str(delta);
                 (
                     "headless.message.delta",
@@ -354,7 +356,10 @@ fn deliver_prepared_with_timeout(
                         ("kind".into(), json!("thinking")),
                         ("status".into(), json!("updated")),
                         ("summary".into(), json!(update_kind)),
-                        ("detail".into(), json!(update.to_string())),
+                        (
+                            "detail".into(),
+                            json!(activity_detail(update, &holder.private_values)),
+                        ),
                         ("raw_item_type".into(), json!(update_kind)),
                     ]),
                 )

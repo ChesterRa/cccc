@@ -94,7 +94,7 @@
     "custom": "Configured manually",
     "recheck": "Check again",
     "scope": "Checks the machine running CCCC. Detection does not confirm login or task readiness.",
-    "automaticSetup": "Installs automatically on first start"
+    "deepseekSetup": "Before the first start, run <0>cccc setup --runtime deepseek</0> on the CCCC host."
   },
   "manualMcpRequired": "Manual MCP install required",
   "customCommandHint": "Provide a command for your runtime in <1>Advanced options → Command Override</1>.",

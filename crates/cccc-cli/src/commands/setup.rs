@@ -137,7 +137,7 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
     if runtime == "deepseek" {
         println!(
             "{}",
-            serde_json::to_string_pretty(&setup_deepseek(home, &executable)?)?
+            serde_json::to_string_pretty(&setup_deepseek(home, true))?
         );
         return Ok(());
     }
@@ -148,10 +148,16 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
     Ok(())
 }
 
-fn setup_deepseek(home: &HomeLayout, executable: &Path) -> Result<serde_json::Value> {
+fn setup_deepseek(home: &HomeLayout, install: bool) -> serde_json::Value {
     let mut env = std::env::vars().collect();
-    match cccc_daemon::deepseek_setup::ensure(home, &mut env, executable) {
-        Ok(outcome) => Ok(json!({
+    let result = if install {
+        cccc_daemon::deepseek_setup::ensure(home, &mut env)
+    } else {
+        let command = cccc_runtime::default_command(cccc_contracts::ActorRuntime::Deepseek);
+        cccc_daemon::deepseek_setup::prepare_for_start(home, &mut env, &command)
+    };
+    match result {
+        Ok(outcome) => json!({
             "runtime":"deepseek",
             "status":"ready",
             "managed":true,
@@ -160,8 +166,8 @@ fn setup_deepseek(home: &HomeLayout, executable: &Path) -> Result<serde_json::Va
             "profile":outcome.profile,
             "packages_installed":outcome.packages_installed,
             "profile_created":outcome.profile_created
-        })),
-        Err(error) => Ok(setup_required(error)),
+        }),
+        Err(error) => setup_required(error),
     }
 }
 
@@ -213,7 +219,7 @@ fn setup_one(
     config: &serde_json::Value,
 ) -> Result<serde_json::Value> {
     if runtime == "deepseek" {
-        return setup_deepseek(home, executable);
+        return Ok(setup_deepseek(home, false));
     }
     if runtime == "hermes" {
         return Ok(hermes_setup());

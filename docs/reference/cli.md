@@ -506,6 +506,7 @@ cccc setup --runtime hermes        # Report session-owned MCP (both modes)
 cccc setup --runtime droid --runtime-mode acp  # Official ACP; session-owned MCP
 cccc setup --runtime pi            # Report CCCC-owned RPC session MCP
 cccc setup --runtime kilo          # Report CCCC-owned per-session MCP for Kilo Code CLI
+cccc setup --runtime deepseek      # Install or repair the pinned DeepSeek Harness
 cccc setup --runtime antigravity   # Auto-configure for Antigravity CLI
 ```
 

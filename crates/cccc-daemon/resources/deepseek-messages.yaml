@@ -1,0 +1,7 @@
+- id: acp
+  config:
+    provider: deepseek-official
+    model: !!js process.env.DEEPSEEK_MODEL
+- id: llm-deepseek
+  config:
+    maxTokens: __MAX_OUTPUT_TOKENS__

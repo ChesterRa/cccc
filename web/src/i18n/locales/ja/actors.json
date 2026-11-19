@@ -94,7 +94,7 @@
     "custom": "手動で設定",
     "recheck": "再確認",
     "scope": "CCCC が動作するマシンを確認します。検出済みでも、ログインやタスクの実行が保証されるわけではありません。",
-    "automaticSetup": "初回起動時に自動インストール"
+    "deepseekSetup": "初回起動の前に、CCCC を実行しているマシンで <0>cccc setup --runtime deepseek</0> を実行してください。"
   },
   "manualMcpRequired": "手動 MCP インストールが必要です",
   "customCommandHint": "<1>詳細オプション → コマンドオーバーライド</1> でランタイムのコマンドを指定します。",

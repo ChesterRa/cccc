@@ -1,6 +1,6 @@
 import { supportsAcpMode } from "../../types";
 import { useEffect } from "react";
-import { useTranslation } from "react-i18next";
+import { Trans, useTranslation } from "react-i18next";
 import { RefreshCw } from "lucide-react";
 import { useGroupStore } from "../../stores";
 import { RUNTIME_INFO, SUPPORTED_RUNTIMES, type RuntimeMode } from "../../types";
@@ -44,7 +44,7 @@ export function RuntimeSelector({
     status === "error"
       ? "failed"
       : value === "deepseek" && selectedKey === "detected" && !selectedInfo?.path
-        ? "automaticSetup"
+        ? "deepseekSetup"
         : selectedKey;
   const checking = status === "idle" || status === "loading";
   const modeLabel = supportsAcpMode(value)
@@ -106,7 +106,15 @@ export function RuntimeSelector({
           }
         >
           {modeLabel ? `${modeLabel}: ` : ""}
-          {t(`runtimeDetection.${captionKey}`)}
+          {captionKey === "deepseekSetup" ? (
+            <Trans
+              ns="actors"
+              i18nKey="runtimeDetection.deepseekSetup"
+              components={[<code key="command" className="whitespace-nowrap" />]}
+            />
+          ) : (
+            t(`runtimeDetection.${captionKey}`)
+          )}
         </span>
         <Button
           type="button"

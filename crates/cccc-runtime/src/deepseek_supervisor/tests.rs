@@ -44,7 +44,7 @@ done"#
     let command = vec!["sh".into(), "-c".into(), script];
     supervisor.start(&command, root.path(), &[]).expect("start");
     let session = supervisor
-        .handshake(root.path(), Duration::from_secs(2))
+        .handshake(root.path(), &[], Duration::from_secs(2))
         .expect("handshake");
     assert_eq!(session, "fake-session");
     assert_eq!(supervisor.enqueue("hello").expect("enqueue"), 3);

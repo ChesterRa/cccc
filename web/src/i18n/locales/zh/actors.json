@@ -94,7 +94,7 @@
     "custom": "自行配置",
     "recheck": "重新检测",
     "scope": "检测运行 CCCC 的机器。检测到组件不代表已登录或可以执行任务。",
-    "automaticSetup": "可在首次启动时自动安装"
+    "deepseekSetup": "首次启动前，请在运行 CCCC 的机器上执行 <0>cccc setup --runtime deepseek</0>。"
   },
   "manualMcpRequired": "需要手动安装 MCP",
   "customCommandHint": "请在 <1>高级选项 → 命令覆盖</1> 中提供运行时命令。",

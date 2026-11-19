@@ -11,11 +11,7 @@ fn managed_launch_uses_the_platform_resolved_acp_executable() {
         .join(cccc_contracts::DEEPSEEK_RELEASE_VERSION);
     let bin = dsh_home.join("node_modules/.bin");
     fs::create_dir_all(&bin).expect("bin");
-    let executable = bin.join(if cfg!(windows) {
-        "dsh-acp-demo.cmd"
-    } else {
-        "dsh-acp-demo"
-    });
+    let executable = bin.join(if cfg!(windows) { "dsh.cmd" } else { "dsh" });
     fs::write(&executable, b"launcher").expect("launcher");
     #[cfg(unix)]
     {
@@ -37,14 +33,53 @@ fn managed_launch_uses_the_platform_resolved_acp_executable() {
             .into_owned(),
     );
 
-    let command = launch_command::resolve(&actor, &actor.env).expect("launch command");
-
-    assert_eq!(command[0], executable.to_string_lossy());
-    assert_eq!(command[1], "--config");
+    let state = temp.path().join("actor-state");
+    let workspace = temp.path().join("project");
+    let cccc = temp.path().join("cccc");
+    let mut env = actor.env.clone();
+    env.insert("CCCC_GROUP_ID".into(), "g_test".into());
+    env.insert("CCCC_ACTOR_ID".into(), "member".into());
+    let launch = launch_command::prepare(&actor, &mut env, &state, &workspace, Some(&cccc))
+        .expect("managed launch");
+    assert_eq!(launch.command[0], executable.to_string_lossy());
+    assert_eq!(&launch.command[1..4], ["--profile", "acp", "--patch"]);
+    assert_eq!(launch.cwd, state.join("harness"));
+    assert_eq!(env["DSH_HOME"], launch.cwd.to_string_lossy());
     assert_eq!(
-        command[2],
-        dsh_home
-            .join("profiles/cccc-acp/cordis.yml")
-            .to_string_lossy()
+        env["DEEPSEEK_BASE_URL"],
+        "https://api.deepseek.com/anthropic"
     );
+    assert_eq!(launch.mcp_servers[0]["command"], serde_json::json!(cccc));
+    assert_eq!(launch.mcp_servers[0]["env"][2]["value"], "member");
+    assert!(
+        fs::read_to_string(&launch.command[4])
+            .expect("Messages overlay")
+            .contains("provider: deepseek-official")
+    );
+
+    env.insert(
+        "DEEPSEEK_BASE_URL".into(),
+        "https://api.deepseek.com/v1/".into(),
+    );
+    launch_command::prepare(&actor, &mut env, &state, &workspace, Some(&cccc))
+        .expect("saved official API base");
+    assert_eq!(
+        env["DEEPSEEK_BASE_URL"],
+        "https://api.deepseek.com/anthropic"
+    );
+
+    env.insert(
+        "DEEPSEEK_BASE_URL".into(),
+        "https://gateway.example/v1".into(),
+    );
+    let launch = launch_command::prepare(&actor, &mut env, &state, &workspace, Some(&cccc))
+        .expect("custom gateway");
+    let patch = fs::read_to_string(&launch.command[4]).expect("Chat overlay");
+    assert!(patch.contains("api: openai-completions"));
+    assert!(patch.contains(&format!(
+        "maxTokens: {}",
+        cccc_contracts::DEEPSEEK_MAX_OUTPUT_TOKENS
+    )));
+    assert!(!patch.contains("gateway.example"));
+    assert_eq!(env["DEEPSEEK_BASE_URL"], "https://gateway.example/v1");
 }
