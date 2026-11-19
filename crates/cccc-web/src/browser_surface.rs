@@ -26,7 +26,7 @@ pub(crate) use prompt_submission::{
 use anyhow::{Context, Result, bail};
 use cccc_contracts::utc_now;
 use cccc_daemon::session_owner::browser::{
-    BrowserActorIdentity, BrowserLaunchSpec, BrowserMode as HeldMode, BrowserPage,
+    BrowserActorIdentity, BrowserLaunchSpec, BrowserMode, BrowserPage,
 };
 use chromiumoxide::Page;
 use chromiumoxide::browser::Browser;
@@ -157,12 +157,6 @@ fn kept_page(key: &str, session: &Session) -> BrowserPage {
             recover_closed_page: session.recover_closed_page,
         }),
     }
-}
-
-#[derive(Clone, Copy)]
-enum BrowserMode {
-    Headless,
-    System { background: bool },
 }
 
 struct OpenRequest<'a> {
@@ -1556,7 +1550,7 @@ fn state(session: &Session) -> Value {
         "started_at":session.started_at,"updated_at":session.updated_at,
         "last_frame_seq":session.seq,"last_frame_at":session.updated_at,"controller_attached":false,
         "metadata":session.metadata,
-        "viewer":session.viewer
+        "viewer":system_browser::web_viewer(&session.viewer, system_browser::vnc_viewer_enabled())
     });
     if let Some(initial_url) = &session.initial_url {
         value["initial_url"] = json!(initial_url);
@@ -1608,10 +1602,7 @@ fn held_spec(
 ) -> Result<BrowserLaunchSpec> {
     Ok(BrowserLaunchSpec {
         profile: profile.to_owned(),
-        mode: match mode {
-            BrowserMode::Headless => HeldMode::Headless,
-            BrowserMode::System { background } => HeldMode::System { background },
-        },
+        mode,
         width,
         height,
         proxy: proxy::BrowserProxy::from_env()?

@@ -1,6 +1,5 @@
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use anyhow::bail;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use cccc_daemon::session_owner::browser::{BrowserMode, BrowserPrograms};
 #[cfg(not(target_os = "macos"))]
 use chromiumoxide::BrowserConfig;
 #[cfg(not(target_os = "macos"))]
@@ -32,7 +31,7 @@ const CDP_START_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub(super) struct SystemBrowserLaunch {
     executable: PathBuf,
-    channel: &'static str,
+    channel: String,
     cdp_port: u16,
     background: bool,
     width: u32,
@@ -55,16 +54,28 @@ pub(super) struct OpenedBrowser {
 }
 
 impl SystemBrowserLaunch {
-    pub(super) async fn prepare(width: u32, height: u32, background: bool) -> Result<Self> {
-        let (executable, channel) = find_system_browser().ok_or_else(|| {
+    pub(super) async fn prepare(
+        width: u32,
+        height: u32,
+        background: bool,
+        programs: BrowserPrograms,
+    ) -> Result<Self> {
+        let (executable, channel) = programs.browser.zip(programs.channel).ok_or_else(|| {
             anyhow::anyhow!(
                 "Chrome, Microsoft Edge, or Chromium is required for projected browser authentication"
             )
         })?;
-        let display = VirtualDisplay::start(width, height).await?;
+        let display = VirtualDisplay::start(width, height, programs.xvfb.as_deref()).await?;
         #[cfg(target_os = "linux")]
         let (vnc, vnc_error) = match &display {
-            Some(display) => ProjectedVncServer::start(display.name()).await,
+            Some(display) => {
+                ProjectedVncServer::start(
+                    display.name(),
+                    programs.desktop_view,
+                    programs.x11vnc.as_deref(),
+                )
+                .await
+            }
             None => (None, "missing_display".to_owned()),
         };
         #[cfg(not(target_os = "linux"))]
@@ -291,9 +302,9 @@ impl SystemBrowserLaunch {
         json!({
             "pid":pid,
             "cdp_port":self.cdp_port,
-            "browser_binary":self.executable,
+            "browser_binary":self.executable.to_string_lossy(),
             "channel":self.channel,
-            "profile_dir":profile,
+            "profile_dir":profile.to_string_lossy(),
             "visibility":if self.background||self.display.is_some(){"background"}else{"visible"},
             "display":self.display.as_ref().map_or("", VirtualDisplay::name),
             "display_owned":self.display.is_some(),
@@ -438,6 +449,48 @@ fn window_position(background: bool) -> &'static str {
     }
 }
 
+/// Resolve each program in the Web's environment while preserving Chromium's
+/// own headless search order. Keep symlink names (including macOS app paths).
+pub(super) fn programs(mode: BrowserMode) -> BrowserPrograms {
+    let desktop_view = vnc_viewer_enabled();
+    let (browser, channel) = match mode {
+        BrowserMode::System { .. } => find_system_browser().unzip(),
+        BrowserMode::Headless => (
+            chromiumoxide::detection::default_executable(Default::default())
+                .ok()
+                .or_else(|| find_system_browser().map(|(path, _)| path)),
+            None,
+        ),
+    };
+    #[cfg(target_os = "linux")]
+    let (xvfb, x11vnc) = if matches!(mode, BrowserMode::System { .. }) {
+        (
+            find_executable("Xvfb"),
+            desktop_view.then(|| find_executable("x11vnc")).flatten(),
+        )
+    } else {
+        (None, None)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (xvfb, x11vnc) = (None, None);
+    let absolute = |path: PathBuf| std::path::absolute(path).ok();
+    BrowserPrograms {
+        browser: browser.and_then(absolute),
+        channel: channel.map(str::to_owned),
+        xvfb: xvfb.and_then(absolute),
+        x11vnc: x11vnc.and_then(absolute),
+        desktop_view,
+    }
+}
+
+pub(super) fn web_viewer(viewer: &Value, enabled: bool) -> Value {
+    if !enabled && viewer["vnc"]["available"] == true {
+        json!({"kind":"screencast","vnc":{"available":false,"error":"disabled"}})
+    } else {
+        viewer.clone()
+    }
+}
+
 pub(super) fn find_system_browser() -> Option<(PathBuf, &'static str)> {
     fixed_browser_candidates()
         .into_iter()
@@ -526,13 +579,13 @@ struct VirtualDisplay {
 
 impl VirtualDisplay {
     #[cfg(not(target_os = "linux"))]
-    async fn start(_width: u32, _height: u32) -> Result<Option<Self>> {
+    async fn start(_width: u32, _height: u32, _binary: Option<&Path>) -> Result<Option<Self>> {
         Ok(None)
     }
 
     #[cfg(target_os = "linux")]
-    async fn start(width: u32, height: u32) -> Result<Option<Self>> {
-        let Some(binary) = find_executable("Xvfb") else {
+    async fn start(width: u32, height: u32, binary: Option<&Path>) -> Result<Option<Self>> {
+        let Some(binary) = binary else {
             bail!(
                 "Xvfb is required for projected browser authentication on Linux; install the xvfb package and retry"
             );
@@ -542,7 +595,7 @@ impl VirtualDisplay {
             if xvfb_display_in_use(number) {
                 continue;
             }
-            if let Some(display) = start_xvfb_candidate(&binary, number, width, height).await? {
+            if let Some(display) = start_xvfb_candidate(binary, number, width, height).await? {
                 return Ok(Some(display));
             }
         }
@@ -571,14 +624,14 @@ struct ProjectedVncServer {
 
 #[cfg(target_os = "linux")]
 impl ProjectedVncServer {
-    async fn start(display: &str) -> (Option<Self>, String) {
-        if !vnc_viewer_enabled() {
+    async fn start(display: &str, enabled: bool, binary: Option<&Path>) -> (Option<Self>, String) {
+        if !enabled {
             return (None, "disabled".to_owned());
         }
-        let Some(binary) = find_executable("x11vnc") else {
+        let Some(binary) = binary else {
             return (None, "x11vnc_not_found".to_owned());
         };
-        match start_x11vnc(&binary, display).await {
+        match start_x11vnc(binary, display).await {
             Ok(server) => (Some(server), String::new()),
             Err(error) => (None, x11vnc_start_error(&error.to_string())),
         }
@@ -593,8 +646,13 @@ impl ProjectedVncServer {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+pub(super) fn vnc_viewer_enabled() -> bool {
+    false
+}
+
 #[cfg(target_os = "linux")]
-fn vnc_viewer_enabled() -> bool {
+pub(super) fn vnc_viewer_enabled() -> bool {
     !matches!(
         std::env::var("CCCC_PROJECTED_BROWSER_VNC")
             .unwrap_or_else(|_| "1".to_owned())
@@ -861,6 +919,46 @@ mod macos_tests;
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn metadata_displays_native_browser_paths_with_non_utf8_bytes() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let launch = SystemBrowserLaunch {
+            executable: PathBuf::from(OsStr::from_bytes(b"/tools/\xff/chrome")),
+            channel: "chrome".to_owned(),
+            cdp_port: 1234,
+            background: true,
+            width: 800,
+            height: 600,
+            display: None,
+            #[cfg(target_os = "linux")]
+            vnc: None,
+            vnc_error: String::new(),
+            #[cfg(target_os = "macos")]
+            opened: None,
+        };
+        let profile = Path::new(OsStr::from_bytes(b"/profiles/\xfe"));
+        let metadata = launch.metadata(123, profile);
+        assert_eq!(metadata["browser_binary"], "/tools/\u{fffd}/chrome");
+        assert_eq!(metadata["profile_dir"], "/profiles/\u{fffd}");
+    }
+
+    #[test]
+    fn a_web_that_disables_vnc_hides_a_retained_desktop_without_changing_it() {
+        let held = json!({"kind":"vnc","vnc":{"available":true,"port":5903}});
+        assert_eq!(
+            web_viewer(&held, false),
+            json!({
+                "kind":"screencast","vnc":{"available":false,"error":"disabled"}
+            })
+        );
+        assert_eq!(web_viewer(&held, true), held);
+        let page = json!({"kind":"screencast","vnc":{"available":false,"error":"actor_page_only"}});
+        assert_eq!(web_viewer(&page, false), page);
+    }
+
     #[test]
     fn xvfb_keeps_local_unix_transport_enabled() {
         let args = xvfb_args(99, 800, 600);
@@ -908,7 +1006,7 @@ mod tests {
             return;
         };
         assert!(xvfb.is_file());
-        let mut display = VirtualDisplay::start(1024, 768)
+        let mut display = VirtualDisplay::start(1024, 768, Some(&xvfb))
             .await
             .expect("Xvfb start")
             .expect("virtual display");
@@ -938,12 +1036,12 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn concurrent_xvfb_sessions_choose_distinct_high_displays() {
-        if find_executable("Xvfb").is_none() {
+        let Some(xvfb) = find_executable("Xvfb") else {
             return;
-        }
+        };
         let (first, second) = tokio::join!(
-            VirtualDisplay::start(1024, 768),
-            VirtualDisplay::start(1024, 768)
+            VirtualDisplay::start(1024, 768, Some(&xvfb)),
+            VirtualDisplay::start(1024, 768, Some(&xvfb))
         );
         let mut first = first.expect("first Xvfb start").expect("first display");
         let mut second = second.expect("second Xvfb start").expect("second display");
@@ -1028,7 +1126,7 @@ mod tests {
     fn system_browser_state_describes_visible_persistent_profile() {
         let launch = SystemBrowserLaunch {
             executable: PathBuf::from("/Applications/Google Chrome"),
-            channel: "chrome",
+            channel: "chrome".to_owned(),
             cdp_port: 9222,
             background: false,
             width: 1366,
@@ -1109,7 +1207,7 @@ mod tests {
             executable: PathBuf::from(
                 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             ),
-            channel: "chrome",
+            channel: "chrome".to_owned(),
             cdp_port: 9222,
             background: false,
             width: 1366,

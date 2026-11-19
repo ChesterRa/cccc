@@ -11,7 +11,7 @@ use crate::host_state::{
     WebState,
 };
 use crate::web_instance;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::watch;
 
 pub(crate) fn use_terminal_interface(
     enabled: bool,
@@ -32,7 +32,7 @@ impl Interface {
     async fn start(
         home: &HomeLayout,
         daemon: DaemonState,
-        control: &mut crate::shutdown::TerminalControl,
+        stop: crate::shutdown::Controller,
         entry: Option<crate::update_checker::UpdateEntry>,
         update: Option<UpdateResult>,
     ) -> Result<Self> {
@@ -44,9 +44,7 @@ impl Interface {
             phase: HostPhase::Running,
             update,
         });
-        let (intents, receiver_intents) = mpsc::unbounded_channel();
-        control.connect(receiver_intents);
-        let session = crate::tui::start(home.clone(), receiver, intents, entry).await?;
+        let session = crate::tui::start(home.clone(), receiver, stop, entry).await?;
         Ok(Self {
             state,
             session,
@@ -232,11 +230,34 @@ async fn launch_with(
             crate::update_host::recovery_command(&home)
         );
     }
+    let startup_failure_intent = match &resumed {
+        Some(relay) if relay.record.mode == cccc_web::UpdateMode::Keep.as_str() => {
+            daemon_lifecycle::StopIntent::KeepAgents
+        }
+        _ => daemon_lifecycle::StopIntent::StopAgents,
+    };
+    let with_recovery_hint = |error: anyhow::Error| {
+        if startup_failure_intent == daemon_lifecycle::StopIntent::KeepAgents {
+            error.context(format!(
+                "CCCC could not finish restarting; recover with `{}`",
+                crate::update_host::recovery_command(&home)
+            ))
+        } else {
+            error
+        }
+    };
     let mut terminal_control = if terminal {
         Some(crate::shutdown::TerminalControl::new(daemon_missing)?)
     } else {
         None
     };
+    // Nobody asks to stop by losing the terminal interface: until the Web is
+    // back, that fails a relay that keeps agents like any other failure.
+    if startup_failure_intent == daemon_lifecycle::StopIntent::KeepAgents
+        && let Some(control) = &terminal_control
+    {
+        control.controller.fail_on_loss_until_listening();
+    }
 
     // Running the daemon as a task inside the Web host is unreliable on
     // Windows once the daemon installs its kill-on-close Job object, so it
@@ -294,24 +315,30 @@ async fn launch_with(
             } => false,
         };
         if !ready {
-            let cause = finish_embedded_daemon(&home, &client, embedded_daemon.take(), None).await;
-            if terminal_control
+            let requested = terminal_control
                 .as_ref()
-                .is_some_and(|control| control.controller.is_requested())
-            {
+                .is_some_and(|control| control.controller.is_requested());
+            let intent = if requested {
+                daemon_lifecycle::StopIntent::StopAgents
+            } else {
+                startup_failure_intent
+            };
+            let cause =
+                finish_embedded_daemon(&home, &client, embedded_daemon.take(), intent, None).await;
+            if requested {
                 if let Some(error) = cause {
                     return Err(error);
                 }
                 eprintln!("CCCC stopped during startup.");
                 return Ok(LaunchExit::Done);
             }
-            return Err(match cause {
+            return Err(with_recovery_hint(match cause {
                 Some(cause) => cause.context("Rust daemon failed to become ready"),
                 None => anyhow::anyhow!(
                     "Rust daemon failed to become ready; see {}",
                     home.daemon_dir().join("ccccd.log").display()
                 ),
-            });
+            }));
         }
     }
     #[cfg(not(windows))]
@@ -386,12 +413,18 @@ async fn launch_with(
         )
     });
 
-    let (mut interface, startup_error) = if let Some(control) = terminal_control.as_mut() {
+    let (mut interface, startup_error) = if let Some(control) = &terminal_control {
         if control.controller.is_requested() {
             (None, None)
         } else {
-            match Interface::start(&home, daemon_state, control, update_entry, update_result)
-                .await
+            match Interface::start(
+                &home,
+                daemon_state,
+                control.controller.clone(),
+                update_entry,
+                update_result,
+            )
+            .await
             {
                 Ok(interface) => (Some(interface), None),
                 Err(error) => (
@@ -541,7 +574,18 @@ async fn launch_with(
                 let signal = web_listening.clone();
                 let port = std::sync::Arc::clone(&listening_port);
                 let host = binding.host.clone();
+                let interface_stop = terminal_control
+                    .as_ref()
+                    .map(|control| control.controller.clone());
                 std::sync::Arc::new(move |address: std::net::SocketAddr| {
+                    // Lost before this, the interface failed the launch: its
+                    // Web has not listened, and confirms no update.
+                    if interface_stop
+                        .as_ref()
+                        .is_some_and(|stop| !stop.web_listening())
+                    {
+                        return;
+                    }
                     port.store(address.port(), std::sync::atomic::Ordering::Release);
                     match &listening {
                         Some(listening) => listening(address),
@@ -784,6 +828,33 @@ async fn launch_with(
         }
     }
 
+    let stop = terminal_control
+        .as_ref()
+        .map(|control| &control.controller)
+        .or(plain_stop.as_ref());
+    let interface_failed = stop.is_some_and(crate::shutdown::Controller::failed);
+    if interface_failed && result.is_ok() {
+        result = Err(anyhow::anyhow!(
+            "the terminal interface stopped working before the Web listened"
+        ));
+    }
+    let stop_intent = if result.is_err()
+        && listening_port.load(std::sync::atomic::Ordering::Acquire) == 0
+        && (interface_failed || !stop.is_some_and(crate::shutdown::Controller::is_requested))
+    {
+        result = result.map_err(with_recovery_hint);
+        // The open interface sends diagnostics to its log, and its terminal
+        // cannot be trusted with the receipt.
+        if interface_failed
+            && interface.is_some()
+            && let Err(error) = &result
+        {
+            cccc_runtime::diagnostic(format_args!("[cccc] {error:#}"));
+        }
+        startup_failure_intent
+    } else {
+        daemon_lifecycle::StopIntent::StopAgents
+    };
     let web_result = match &result {
         Ok(()) => StopResult::Stopped,
         Err(error) => StopResult::Failed {
@@ -817,7 +888,9 @@ async fn launch_with(
     #[cfg(not(windows))]
     if daemon_owned {
         daemon_result =
-            match finish_embedded_daemon(&home, &client, embedded_daemon.take(), None).await {
+            match finish_embedded_daemon(&home, &client, embedded_daemon.take(), stop_intent, None)
+                .await
+            {
                 None => StopResult::Stopped,
                 Some(error) => StopResult::Failed {
                     message: error.to_string(),
@@ -849,13 +922,15 @@ async fn launch_with(
             };
             if interface.is_none() {
                 let intent = match &receipt {
-                    daemon_lifecycle::Receipt::Confirmed(report)
-                        if report.mode
-                            == cccc_daemon::session_owner::ShutdownMode::PreserveAgents =>
-                    {
-                        daemon_lifecycle::StopIntent::KeepAgents
-                    }
-                    _ => daemon_lifecycle::StopIntent::StopAgents,
+                    daemon_lifecycle::Receipt::Confirmed(report) => match report.mode {
+                        cccc_daemon::session_owner::ShutdownMode::PreserveAgents => {
+                            daemon_lifecycle::StopIntent::KeepAgents
+                        }
+                        cccc_daemon::session_owner::ShutdownMode::Stop => {
+                            daemon_lifecycle::StopIntent::StopAgents
+                        }
+                    },
+                    _ => stop_intent,
                 };
                 if let Some(line) = daemon_lifecycle::receipt_line(&home, intent, &receipt) {
                     cccc_runtime::diagnostic(format_args!("{line}"));
@@ -917,7 +992,14 @@ async fn finish_handover(
         }
         None => {
             let request_id = uuid::Uuid::new_v4().to_string();
-            let stop_error = finish_embedded_daemon(home, client, daemon, Some(&request_id)).await;
+            let stop_error = finish_embedded_daemon(
+                home,
+                client,
+                daemon,
+                daemon_lifecycle::StopIntent::StopAgents,
+                Some(&request_id),
+            )
+            .await;
             (request_id, ShutdownMode::Stop, stop_error)
         }
     };
@@ -1085,17 +1167,18 @@ async fn finish_embedded_daemon(
     home: &HomeLayout,
     client: &DaemonClient,
     daemon: Option<tokio::task::JoinHandle<Result<()>>>,
+    intent: daemon_lifecycle::StopIntent,
     request_id: Option<&str>,
 ) -> Option<anyhow::Error> {
     use crate::commands::common::call;
 
     let daemon = daemon?;
-    // This host is stopping its own daemon, so the agents stop with it. Decide
-    // that here rather than through the request below: a request queued behind
-    // a long Group operation may still be waiting when the deadline cancels the
-    // daemon, and a cancelled daemon with nothing chosen keeps its agents.
+    // Bind an ordinary stop even if the IPC request times out. A failed Keep
+    // relay leaves the daemon's preserve-on-cancellation behavior in effect.
     #[cfg(unix)]
-    cccc_daemon::session_owner::begin_owned_stop(home);
+    if intent == daemon_lifecycle::StopIntent::StopAgents {
+        cccc_daemon::session_owner::begin_owned_stop(home);
+    }
     #[cfg(not(unix))]
     let _ = home;
     if !daemon.is_finished() {
@@ -1105,7 +1188,7 @@ async fn finish_embedded_daemon(
         // default deadline would spend a minute here before that wait starts.
         let _ = tokio::time::timeout(
             DAEMON_SHUTDOWN_REQUEST_TIMEOUT,
-            call(client, "shutdown", stop_request(request_id)),
+            call(client, intent.operation(), stop_request(request_id)),
         )
         .await;
     }

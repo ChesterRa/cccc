@@ -25,12 +25,17 @@ struct Connection(BufReader<UnixStream>);
 
 impl Client {
     pub(super) fn connect(address: Address) -> io::Result<Self> {
+        Self::connect_with_build(address).map(|(client, _)| client)
+    }
+
+    fn connect_with_build(address: Address) -> io::Result<(Self, serde_json::Value)> {
         let mut connection = Connection::connect(&address)?;
-        connection.verify(&address)?;
-        Ok(Self {
+        let build = connection.verify(&address)?;
+        let client = Self {
             address,
             control: Mutex::new(None),
-        })
+        };
+        Ok((client, build))
     }
 
     /// A read never acquires or replaces the mutating stream.
@@ -118,44 +123,17 @@ impl Client {
                     "owner observation deadline elapsed",
                 )
             })?;
-        let exchange =
-            async {
-                let socket = SocketPath::new(&self.address.socket)?;
-                let stream = tokio::net::UnixStream::connect(&socket.path).await?;
-                drop(socket);
-                let mut stream = tokio::io::BufReader::new(stream);
-                let registration =
-                    match observe_exchange(&mut stream, &Request::Hello { contract: CONTRACT })
-                        .await?
-                    {
-                        Response::Hello {
-                            contract,
-                            instance,
-                            pid,
-                            mcp_registration,
-                            ..
-                        } if contract == CONTRACT
-                            && instance == self.address.instance
-                            && pid == self.address.pid =>
-                        {
-                            mcp_registration
-                        }
-                        Response::Failed { error } => return Err(failure(error)),
-                        _ => {
-                            return Err(io::Error::other(
-                                "session owner identity or contract changed",
-                            ));
-                        }
-                    };
-                match observe_exchange(&mut stream, &Request::Snapshot).await? {
-                    Response::Snapshot { snapshot } => {
-                        self.check_browser_holders(&snapshot)?;
-                        Ok((registration, snapshot))
-                    }
-                    Response::Failed { error } => Err(failure(error)),
-                    _ => Err(invalid_response()),
+        let exchange = async {
+            let (mut stream, registration) = verified_stream(&self.address).await?;
+            match observe_exchange(&mut stream, &Request::Snapshot).await? {
+                Response::Snapshot { snapshot } => {
+                    self.check_browser_holders(&snapshot)?;
+                    Ok((registration, snapshot))
                 }
-            };
+                Response::Failed { error } => Err(failure(error)),
+                _ => Err(invalid_response()),
+            }
+        };
         tokio::time::timeout(remaining, exchange)
             .await
             .map_err(|_| {
@@ -452,6 +430,68 @@ mod current_start_factory_tests {
             &json!({"source_id":4})
         ));
     }
+
+    #[cfg(all(
+        debug_assertions,
+        any(target_os = "linux", all(target_os = "macos", target_arch = "aarch64"))
+    ))]
+    #[test]
+    fn a_new_owner_with_a_different_source_is_reaped_before_admission() {
+        let directory = tempfile::tempdir().expect("private home");
+        let home = cccc_core::HomeLayout::from_path(directory.path().join("home")).expect("home");
+        home.initialize().expect("initialize home");
+        let _home_lock = cccc_core::fs::try_exclusive_lock(&home.daemon_dir().join("ccccd.lock"))
+            .expect("check home lock")
+            .expect("hold home lock");
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let error = super::start_with_source(&home, &id, Some(&"a".repeat(64)))
+            .err()
+            .expect("fixture owner does not have the requested build");
+        assert!(error.to_string().contains("restart CCCC"));
+        let replacement = super::start(&home, &id).expect("start under the released owner lock");
+        assert!(replacement.snapshots().expect("read members").is_empty());
+        replacement.retire().expect("retire the empty fixture");
+    }
+}
+
+/// Whether the holder at this address answers Hello within the deadline,
+/// which also covers connect. It registers nothing and changes nothing.
+pub(super) async fn answers(address: &Address, deadline: Instant) -> io::Result<()> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    match tokio::time::timeout(remaining, verified_stream(address)).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(with_owner(address, error)),
+        Err(_) => Err(with_owner(
+            address,
+            io::Error::new(io::ErrorKind::TimedOut, "no reply to Hello"),
+        )),
+    }
+}
+
+/// Connect for read-only requests after checking the holder's identity and
+/// contract. The caller bounds the time, including connect.
+async fn verified_stream(
+    address: &Address,
+) -> io::Result<(tokio::io::BufReader<tokio::net::UnixStream>, u32)> {
+    let socket = SocketPath::new(&address.socket)?;
+    let stream = tokio::net::UnixStream::connect(&socket.path).await?;
+    drop(socket);
+    let mut stream = tokio::io::BufReader::new(stream);
+    match observe_exchange(&mut stream, &Request::Hello { contract: CONTRACT }).await? {
+        Response::Hello {
+            contract,
+            instance,
+            pid,
+            mcp_registration,
+            ..
+        } if contract == CONTRACT && instance == address.instance && pid == address.pid => {
+            Ok((stream, mcp_registration))
+        }
+        Response::Failed { error } => Err(failure(error)),
+        _ => Err(io::Error::other(
+            "session owner identity or contract changed",
+        )),
+    }
 }
 
 async fn observe_exchange(
@@ -545,7 +585,7 @@ impl Connection {
         Ok(Self(BufReader::new(socket)))
     }
 
-    fn verify(&mut self, address: &Address) -> io::Result<()> {
+    fn verify(&mut self, address: &Address) -> io::Result<serde_json::Value> {
         match self
             .exchange(&Request::Hello { contract: CONTRACT })
             .map_err(|error| with_owner(address, error))?
@@ -554,9 +594,10 @@ impl Connection {
                 contract,
                 instance,
                 pid,
+                build,
                 ..
             } if contract == CONTRACT && instance == address.instance && pid == address.pid => {
-                Ok(())
+                Ok(build)
             }
             Response::Failed { error } => Err(failure(error)),
             _ => Err(io::Error::other(
@@ -596,6 +637,14 @@ impl Connection {
 /// Called only on an authorized start path while the controller owns its home
 /// lock. Status and startup discovery never construct a replacement owner.
 pub(super) fn start(home: &HomeLayout, owner_id: &str) -> io::Result<Client> {
+    start_with_source(home, owner_id, cccc_core::build_info::source_id())
+}
+
+fn start_with_source(
+    home: &HomeLayout,
+    owner_id: &str,
+    expected_source: Option<&str>,
+) -> io::Result<Client> {
     let paths = Paths::new(home, owner_id)?;
     paths.initialize()?;
     // Holding the owner lock proves an old process no longer owns it; release
@@ -678,8 +727,19 @@ pub(super) fn start(home: &HomeLayout, owner_id: &str) -> io::Result<Client> {
         }
         if let Ok(address) = load(home, owner_id)
             && address.pid == child.id()
-            && let Ok(client) = Client::connect(address)
+            && let Ok((client, build)) = Client::connect_with_build(address)
         {
+            if let Some(source) = expected_source
+                && !same_execution_source(Some(source), &build)
+            {
+                // The launch path can be replaced while this daemon runs. This
+                // direct child has not been handed any member or browser.
+                let _ = child.kill();
+                child.wait()?;
+                return Err(io::Error::other(
+                    "the new session owner is from a different build than the running daemon; restart CCCC before starting new agents or browsers",
+                ));
+            }
             // Reap on eventual exit without retaining kill-on-drop ownership.
             std::thread::spawn(move || {
                 let _ = child.wait();

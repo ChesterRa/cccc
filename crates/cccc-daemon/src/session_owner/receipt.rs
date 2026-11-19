@@ -53,6 +53,28 @@ pub(crate) fn write_shutdown_report(home: &HomeLayout, report: &ShutdownReport) 
     cccc_core::fs::write_json(&home.daemon_dir().join("shutdown-result.json"), report)
 }
 
+/// Remove the previous exit's receipt. Call with the exclusive home lock.
+pub(crate) fn clear_shutdown_report(home: &HomeLayout) -> io::Result<()> {
+    match std::fs::remove_file(home.daemon_dir().join("shutdown-result.json")) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+        _ => Ok(()),
+    }
+}
+
+/// Whether the last daemon exit kept its agents for a later daemon. Every
+/// daemon start and offline stop removes the receipt first, so with the home
+/// lock held the one left on disk belongs to the last exit.
+#[cfg(unix)]
+pub(super) fn last_exit_kept_agents(home: &HomeLayout) -> io::Result<bool> {
+    match cccc_core::fs::read_json::<ShutdownReport>(
+        &home.daemon_dir().join("shutdown-result.json"),
+    ) {
+        Ok(report) => Ok(report.v == 1 && report.mode == ShutdownMode::PreserveAgents),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

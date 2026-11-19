@@ -38,7 +38,10 @@ def website(tmp_path):
         binary = tmp_path / package / "cccc"
         binary.parent.mkdir()
         binary.write_text(
-            f'#!/bin/sh\n[ "$1" = "--version" ] || exit 1\necho "cccc {version}"\n'
+            # A current release also answers the installer's check of agents
+            # left running without a daemon; there are none here.
+            f'#!/bin/sh\n[ "$1 $2" = "update --installer-check" ] && exit 0\n'
+            f'[ "$1" = "--version" ] || exit 1\necho "cccc {version}"\n'
         )
         binary.chmod(0o755)
         release = tmp_path / "releases" / "download" / f"v{version}"

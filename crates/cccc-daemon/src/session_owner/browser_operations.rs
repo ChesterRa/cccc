@@ -13,7 +13,7 @@ use serde_json::json;
 
 #[cfg(unix)]
 use super::{
-    browser::BrowserLaunchSpec,
+    browser::{BrowserLaunchSpec, BrowserPrograms},
     controller,
     protocol::{Failure, Mutation},
 };
@@ -55,8 +55,20 @@ fn local(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             object(json!({"resources":controller::browser_resources(home).map_err(owner_error)?}))
         }
         "browser_resource_ensure" => {
-            let mut spec: BrowserLaunchSpec =
+            #[derive(Deserialize)]
+            struct Ensure {
+                #[serde(flatten)]
+                spec: BrowserLaunchSpec,
+                programs: Option<BrowserPrograms>,
+            }
+            let Ensure { mut spec, programs } =
                 serde_json::from_value(json!(request.args)).map_err(OpError::invalid)?;
+            if programs.as_ref().is_some_and(|programs| !programs.valid()) {
+                return Err(OpError::new(
+                    "invalid_args",
+                    "invalid browser program selection",
+                ));
+            }
             if !spec.profile.is_absolute() || spec.width == 0 || spec.height == 0 {
                 return Err(OpError::new(
                     "invalid_args",
@@ -72,7 +84,9 @@ fn local(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                         "a runtime start is in progress; retry after it settles",
                     )
                 })?;
-            object(json!({"resource":controller::ensure_browser(home, spec).map_err(owner_error)?}))
+            object(
+                json!({"resource":controller::ensure_browser(home, spec, programs).map_err(owner_error)?}),
+            )
         }
         "browser_resource_pages_set" => {
             #[derive(Deserialize)]

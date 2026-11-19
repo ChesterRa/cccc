@@ -432,6 +432,47 @@ fn stop_all_terminates_every_runtime() {
 }
 
 #[test]
+fn a_stopping_terminal_remains_registered_until_its_process_is_reaped() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_stopping_terminal";
+    let actor = "peer";
+    let started = start(spec(&temp, group, actor, "sleep 30")).expect("start");
+    let current = lookup(group, actor).expect("registered terminal");
+    let session = current
+        .lock()
+        .expect("hold terminal before it can be stopped");
+    let stopping = std::thread::spawn(move || stop(group, actor));
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    // The stop thread either takes a reference alongside the registry, or
+    // removes the entry prematurely. Holding the mutex keeps the child alive.
+    let still_registered = loop {
+        if lookup(group, actor).is_err() {
+            break false;
+        }
+        if Arc::strong_count(&current) >= 3 {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    drop(session);
+    let stopped = stopping.join().expect("stop worker").expect("stop");
+    assert!(
+        still_registered,
+        "the live terminal disappeared during stop"
+    );
+    assert_eq!(started.started_at, stopped.started_at);
+    assert!(!stopped.running);
+    assert!(matches!(
+        lookup(group, actor),
+        Err(RuntimeError::NotFound(..))
+    ));
+}
+
+#[test]
 fn conditional_stop_preserves_a_different_session() {
     let _guard = test_guard();
     let temp = tempfile::tempdir().expect("tempdir");

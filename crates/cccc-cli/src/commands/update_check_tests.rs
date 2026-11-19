@@ -6,6 +6,7 @@ fn args(offline: bool) -> UpdateArgs {
         check: true,
         offline,
         self_check: false,
+        installer_check: false,
         resume: None,
         recover: None,
     }

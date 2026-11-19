@@ -2,8 +2,8 @@
 //! stop work runs outside it; a lost controller never drops the held browser.
 
 use super::browser::{
-    BrowserLaunchSpec, BrowserLauncher, BrowserPage, BrowserProcess, BrowserResource,
-    BrowserResourceState,
+    BrowserLaunchSpec, BrowserLauncher, BrowserPage, BrowserProcess, BrowserPrograms,
+    BrowserResource, BrowserResourceState,
 };
 use super::protocol::{Failure, Mutation};
 use cccc_core::local_sessions::NativeHost;
@@ -71,14 +71,15 @@ impl Browsers {
     pub(super) fn validate(&self, mutation: &Mutation) -> Result<(), Failure> {
         let state = self.state()?;
         match mutation {
-            Mutation::BrowserEnsure { spec } => {
+            Mutation::BrowserEnsure { spec, programs } => {
                 if state.closed {
                     return Err(failed("the browser holder is stopping"));
                 }
                 if !spec.profile.is_absolute()
                     || spec.width == 0
                     || spec.height == 0
-                    || serde_json::to_vec(spec)
+                    || programs.as_ref().is_some_and(|p| !p.valid())
+                    || serde_json::to_vec(&(spec, programs))
                         .map_err(|_| failed("could not encode browser settings"))?
                         .len()
                         > MAX_SETTING_BYTES
@@ -172,7 +173,7 @@ impl Browsers {
     pub(super) fn reserve(&self, mutation: &Mutation) -> Result<(), Failure> {
         let mut state = self.state()?;
         match mutation {
-            Mutation::BrowserEnsure { spec } => {
+            Mutation::BrowserEnsure { spec, .. } => {
                 state
                     .entries
                     .entry(spec.profile.clone())
@@ -223,7 +224,11 @@ impl Browsers {
             .collect())
     }
 
-    pub(super) fn ensure(&self, spec: BrowserLaunchSpec) -> Result<BrowserResource, Failure> {
+    pub(super) fn ensure(
+        &self,
+        spec: BrowserLaunchSpec,
+        programs: Option<BrowserPrograms>,
+    ) -> Result<BrowserResource, Failure> {
         {
             let mut state = self.state()?;
             let entry = state
@@ -245,7 +250,8 @@ impl Browsers {
             .ok_or_else(|| failed("browser launcher is missing"))?;
         // Browser launch owns its cleanup: Err means no resource remains.
         // Failed cleanup returns a process with initialization_error instead.
-        let launched = tokio::runtime::Handle::current().block_on(launcher.launch(spec.clone()));
+        let launched =
+            tokio::runtime::Handle::current().block_on(launcher.launch(spec.clone(), programs));
         let mut state = self.state()?;
         match launched {
             Ok(process) => {
@@ -491,6 +497,7 @@ mod tests {
         fn launch(
             &self,
             _spec: BrowserLaunchSpec,
+            _programs: Option<BrowserPrograms>,
         ) -> BoxFuture<'_, anyhow::Result<Box<dyn BrowserProcess>>> {
             Box::pin(async move {
                 let first = self.starts.fetch_add(1, Ordering::SeqCst) == 0;
@@ -586,10 +593,13 @@ mod tests {
     }
 
     fn ensure(browsers: &Browsers, spec: &BrowserLaunchSpec) -> Result<BrowserResource, Failure> {
-        let mutation = Mutation::BrowserEnsure { spec: spec.clone() };
+        let mutation = Mutation::BrowserEnsure {
+            spec: spec.clone(),
+            programs: None,
+        };
         browsers.validate(&mutation)?;
         browsers.reserve(&mutation)?;
-        browsers.ensure(spec.clone())
+        browsers.ensure(spec.clone(), None)
     }
 
     fn member_page(target: &str) -> BrowserPage {
@@ -794,11 +804,14 @@ mod tests {
     async fn stop_all_withdraws_an_admitted_launch_before_it_starts() {
         tokio::task::spawn_blocking(|| {
             let (_temp, browsers, spec, starts) = fixture(false, 0);
-            let mutation = Mutation::BrowserEnsure { spec: spec.clone() };
+            let mutation = Mutation::BrowserEnsure {
+                spec: spec.clone(),
+                programs: None,
+            };
             browsers.validate(&mutation).expect("validate");
             browsers.reserve(&mutation).expect("reserve before worker");
             browsers.prevent_starts().expect("stop selected");
-            assert!(browsers.ensure(spec).is_err());
+            assert!(browsers.ensure(spec, None).is_err());
             browsers
                 .stop_all(Duration::from_millis(10))
                 .expect("nothing started");
@@ -824,7 +837,10 @@ mod tests {
                 fail_stop: Arc::new(AtomicUsize::new(0)),
                 issue: false,
             })));
-            let launch = Mutation::BrowserEnsure { spec };
+            let launch = Mutation::BrowserEnsure {
+                spec,
+                programs: None,
+            };
             backend.validate(&launch).expect("validate launch");
             backend.reserve(&launch).expect("reserve launch");
             backend.execute(&home, launch).expect("launch held browser");

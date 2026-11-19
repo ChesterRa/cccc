@@ -8,7 +8,7 @@ async fn unresponsive_macos_launcher_is_reaped_and_reports_an_unconfirmed_browse
     let profile = tempfile::tempdir()?;
     let mut launch = SystemBrowserLaunch {
         executable: "/bin/sh".into(),
-        channel: "fixture",
+        channel: "fixture".to_owned(),
         cdp_port: 0,
         background: true,
         width: 800,
@@ -53,7 +53,13 @@ async fn system_browser_answers_cdp_and_stops_its_original_process() -> Result<(
     let aliases = tempfile::tempdir()?;
     let profile_alias = aliases.path().join("browser profile");
     std::os::unix::fs::symlink(profile.path(), &profile_alias)?;
-    let mut launch = SystemBrowserLaunch::prepare(800, 600, true).await?;
+    let mut launch = SystemBrowserLaunch::prepare(
+        800,
+        600,
+        true,
+        programs(BrowserMode::System { background: true }),
+    )
+    .await?;
     let (browser, mut handler, pid) = launch
         .launch(
             &profile_alias,
@@ -95,7 +101,13 @@ async fn failed_cdp_connection_stops_the_browser_opened_for_its_profile() -> Res
     let _guard = chrome_test_guard().await;
     let temp = tempfile::tempdir()?;
     let profile = temp.path().canonicalize()?;
-    let mut launch = SystemBrowserLaunch::prepare(800, 600, true).await?;
+    let mut launch = SystemBrowserLaunch::prepare(
+        800,
+        600,
+        true,
+        programs(BrowserMode::System { background: true }),
+    )
+    .await?;
     // Start a real browser before inducing the connection failure. This
     // exercises cleanup even on a host where LaunchServices cannot open apps.
     launch.cdp_port = 0;

@@ -4,12 +4,11 @@
 
 use anyhow::{Result, anyhow};
 use cccc_daemon::session_owner::browser::{
-    BrowserConnection, BrowserLaunchSpec, BrowserLauncher, BrowserMode as OwnerMode, BrowserProcess,
+    BrowserConnection, BrowserLaunchSpec, BrowserLauncher, BrowserProcess, BrowserPrograms,
 };
 use futures_util::future::BoxFuture;
 
 use super::{
-    BrowserMode,
     owner::{BrowserOwner, StartFailure},
     proxy::BrowserProxy,
 };
@@ -17,20 +16,20 @@ use super::{
 pub(crate) struct Launcher;
 
 impl BrowserLauncher for Launcher {
-    fn launch(&self, spec: BrowserLaunchSpec) -> BoxFuture<'_, Result<Box<dyn BrowserProcess>>> {
+    fn launch(
+        &self,
+        spec: BrowserLaunchSpec,
+        programs: Option<BrowserPrograms>,
+    ) -> BoxFuture<'_, Result<Box<dyn BrowserProcess>>> {
         Box::pin(async move {
-            let mode = match spec.mode {
-                OwnerMode::Headless => BrowserMode::Headless,
-                OwnerMode::System { background } => BrowserMode::System { background },
-            };
             let proxy = spec.proxy.map(BrowserProxy::from_owner).transpose()?;
             // Saved cookies are the Web's to seed, over its own connection;
             // `shared` only matters to a Web that opens pages.
             let started = BrowserOwner::start(
                 &spec.profile,
-                spec.width,
-                spec.height,
-                mode,
+                (spec.width, spec.height),
+                spec.mode,
+                programs.unwrap_or_else(|| super::system_browser::programs(spec.mode)),
                 true,
                 None,
                 proxy,

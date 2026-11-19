@@ -92,6 +92,54 @@ download() {
   esac
 }
 
+# Whether the reply of `cccc daemon stop` confirms that the agents stopped. A
+# CCCC whose agents can outlive its daemon adds the daemon's exit receipt to the
+# reply, or null when it has none, and its agents count as stopped only when the
+# receipt leaves none retained or unconfirmed. Earlier releases, whose agents
+# stop with their daemon, print exactly their daemon's acceptance; an earlier
+# CLI that stopped a newer daemon prints more keys and no receipt, which
+# confirms nothing. Whitespace is removed first; string values cannot forge
+# these keys because JSON escapes their quotes.
+stop_confirmed() {
+  stop_compact=$(printf '%s' "$1" | tr -d '[:space:]')
+  case "$stop_compact" in
+    *'"receipt":'*) ;;
+    '{"shutting_down":true}') return 0 ;;
+    *) return 1 ;;
+  esac
+  case "$stop_compact" in
+    *'"receipt":{'*) ;;
+    *) return 1 ;;
+  esac
+  case "$stop_compact" in
+    *'"retained":[]'*) ;;
+    *) return 1 ;;
+  esac
+  case "$stop_compact" in
+    *'"unconfirmed":[]'*) ;;
+    *) return 1 ;;
+  esac
+}
+
+# Without a running daemon, agents can still run under their session owners.
+# The new program decides whether it can take them over, and prints why not.
+# A release from before this check rejects the option with exactly this error
+# and cannot verify them, so CCCC has to stop them first, which the installer
+# does itself when the daemon runs.
+takeover_confirmed() {
+  takeover_status=0
+  takeover_output=$("$INSTALL_DIR/cccc$stage_suffix" update --installer-check 2>&1) ||
+    takeover_status=$?
+  [ "$takeover_status" -ne 0 ] || return 0
+  if [ "$takeover_status" -eq 2 ] &&
+    [ "$(printf '%s\n' "$takeover_output" | sed -n 1p)" = "error: unexpected argument '--installer-check' found" ]; then
+    printf '%s\n' "The release being installed cannot check for CCCC agents left running without a daemon. Start the daemon with 'cccc daemon start' from the CCCC installation that last ran it, so that the installer stops it and checks that every agent stopped." >&2
+    return 1
+  fi
+  [ -z "$takeover_output" ] || printf '%s\n' "$takeover_output" >&2
+  return 1
+}
+
 os=$(uname -s)
 arch=$(uname -m)
 case "$os:$arch" in
@@ -202,8 +250,9 @@ rollback_install() {
       printf 'CCCC installer: rollback failed to restore %s\n' "$marker_path" >&2
     fi
   fi
+  # The daemon's own error stays visible: it names the recovery command.
   if [ "$daemon_was_running" -eq 1 ] && [ -x "$INSTALL_DIR/cccc" ]; then
-    if ! "$INSTALL_DIR/cccc" daemon start >/dev/null 2>&1; then
+    if ! "$INSTALL_DIR/cccc" daemon start >/dev/null; then
       printf 'CCCC installer: rollback restored the previous binary but failed to restart its daemon\n' >&2
     fi
   fi
@@ -665,14 +714,24 @@ fi
 mkdir "$backup_dir"
 transaction_started=1
 if [ -x "$INSTALL_DIR/cccc" ] && "$INSTALL_DIR/cccc" daemon status >/dev/null 2>&1; then
-  daemon_was_running=1
-  "$INSTALL_DIR/cccc" daemon stop >/dev/null || fail "could not stop the running CCCC daemon"
+  stop_reply=$("$INSTALL_DIR/cccc" daemon stop) || fail "could not stop the running CCCC daemon"
   attempts=0
   while "$INSTALL_DIR/cccc" daemon status >/dev/null 2>&1; do
     attempts=$((attempts + 1))
     [ "$attempts" -lt 40 ] || fail "the running CCCC daemon did not stop in time"
     sleep 0.25
   done
+  # Unconfirmed agents may belong to a daemon newer than this CLI, which would
+  # not see them if it started its own daemon, so CCCC stays stopped. Running
+  # the installer again then has the staged program check them.
+  stop_confirmed "$stop_reply" ||
+    fail "CCCC stopped, but it could not confirm that every agent stopped, so the update was not installed, the previous version is kept and CCCC stays stopped. Finish stopping CCCC with 'cccc daemon stop' from the CCCC installation that last ran the daemon, following what it reports, then run the installer again"
+  # Only after a confirmed stop does a failure below start the previous daemon
+  # again, and a successful update start the new one.
+  daemon_was_running=1
+elif [ -x "$INSTALL_DIR/cccc" ]; then
+  takeover_confirmed ||
+    fail "the update was not installed and the previous version is kept. Follow the message above, then run the installer again"
 fi
 
 replace_binaries

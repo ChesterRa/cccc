@@ -25,11 +25,7 @@ fn states() -> &'static Mutex<BTreeMap<PathBuf, State>> {
 /// Called with the exclusive home lock, before publishing this daemon's PID.
 /// Clearing the previous receipt prevents a reused PID from reading an old exit.
 pub(crate) fn prepare_shutdown(home: &HomeLayout, retained: Vec<AgentIdentity>) -> io::Result<()> {
-    match std::fs::remove_file(home.daemon_dir().join("shutdown-result.json")) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
-    }
+    super::receipt::clear_shutdown_report(home)?;
     states()
         .lock()
         .map_err(|_| io::Error::other("shutdown state poisoned"))?

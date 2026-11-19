@@ -91,6 +91,11 @@ member registration would be replaced. A failed owner observation is an error,
 not permission to assume its members absent. Existing members keep their actual
 holder and execution code until explicitly stopped.
 
+A controller with a known source also verifies the Hello from a newly spawned
+owner before admitting its first member or browser. If replacing the program
+at its launch path starts another build, the controller reaps that unused child
+and reports that CCCC must restart before a new launch.
+
 Once a replacement factory is ready, non-default owners may retire when their
 last member and execution fact have been released. For an owner still accepting
 Start, Retire MUST check both an empty member backend and no unsettled operations
@@ -111,7 +116,10 @@ holder entry. The daemon and Web do not hold the process or acquire a second
 control epoch. No arbitrary command arguments or environment enter this API.
 
 BrowserEnsure carries an absolute canonical profile, mode, dimensions and
-normalized credential-free proxy settings. The controller checks every actual
+normalized credential-free proxy settings. For a new browser the Web also
+supplies its resolved program paths and desktop-view preference. A retained
+browser keeps its original launch settings, while the current Web can disable
+desktop access on its own connection. The controller checks every actual
 holder before choosing its current launch factory: a source change must not
 create a second browser for a retained profile. Existing profile/mode/proxy
 must match; shared browsers retain the first launch's dimensions. A conflicting launch setting,
@@ -306,3 +314,29 @@ ledger recovery remain mandatory. All records must be resolved before a stale
 address is retired. Ordinary Stop makes a best effort across every discovered
 owner even if another cannot be contacted; missing complete ownership still
 prevents reporting a successful complete stop.
+
+## Contract versions
+
+The contract number covers every message on the control socket and every type
+reachable from one, wherever that type is defined, including field and variant
+names. An optional field may be added under the same number when a peer of the
+previous release that omits or ignores it still behaves correctly. Any other
+change needs a new number: a renamed or removed field or variant, a new
+required field, or a new meaning for an existing one.
+
+An owner kept across an update runs the code of the release that started it
+until it stops. A release lists in `owner_contracts` only the contracts whose
+owners it can observe, control and stop. Before an attended update keeps
+agents, the running daemon refuses when the candidate does not list the
+contract of every running owner, and the offline installer check refuses
+unless the staged program can reach every kept owner. Those agents then have
+to be stopped by the release that started them. A daemon, offline stop or
+recovery does not adopt, signal or stop a live owner of a contract it does not
+implement; today it reports only an invalid discovery record. A release that
+introduces a new contract MUST therefore either still implement the previous
+one, or detect its owners and tell the user, for each, how the release that
+started it stops it. Its release notes say whether agents keep running across
+that update. Each release that lists the previous release's contract MUST be
+checked by keeping real agents of that release across
+`cccc daemon stop --keep-agents`, a restart into a local build and a release
+update.

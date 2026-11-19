@@ -184,7 +184,14 @@ async fn run() -> Result<()> {
             tokio::task::spawn_blocking(move || commands::setup::run(&home, args)).await?
         }
         Some(CommandKind::Update(args)) => {
-            if let Some(transaction) = args.resume {
+            if args.installer_check {
+                // Read by the installer, which shows this line when it refuses.
+                if let Err(reason) = cccc_daemon::session_owner::installer_check(&home).await {
+                    eprintln!("{reason}");
+                    std::process::exit(1);
+                }
+                Ok(())
+            } else if let Some(transaction) = args.resume {
                 let exit = update_host::resume(home, transaction).await?;
                 web_host::finish_launch(exit).await
             } else if let Some(transaction) = args.recover {

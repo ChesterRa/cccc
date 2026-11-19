@@ -70,6 +70,10 @@ pub struct UpdateArgs {
     /// Internal: print this program's update constants as JSON and exit.
     #[arg(long, hide = true, conflicts_with_all = ["check", "channel", "resume", "recover"])]
     pub self_check: bool,
+    /// Internal: exit 0 when an installer may replace the program while no
+    /// daemon runs, otherwise print why and exit 1.
+    #[arg(long, hide = true, conflicts_with_all = ["check", "channel", "self_check", "resume", "recover"])]
+    pub installer_check: bool,
     /// Internal: finish an attended update after the program was replaced.
     #[arg(long, hide = true, value_name = "TRANSACTION", conflicts_with_all = ["check", "channel", "recover"])]
     pub resume: Option<std::path::PathBuf>,
@@ -468,10 +472,32 @@ mod tests {
                 channel: None,
                 offline: false,
                 self_check: false,
+                installer_check: false,
                 resume: None,
                 recover: None,
             }))
         ));
+    }
+
+    #[test]
+    fn the_installer_check_stands_alone() {
+        let cli =
+            Cli::try_parse_from(["cccc", "update", "--installer-check"]).expect("installer check");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Update(UpdateArgs {
+                installer_check: true,
+                check: false,
+                self_check: false,
+                ..
+            }))
+        ));
+        for other in ["--check", "--self-check"] {
+            assert!(
+                Cli::try_parse_from(["cccc", "update", "--installer-check", other]).is_err(),
+                "{other}"
+            );
+        }
     }
 
     #[test]

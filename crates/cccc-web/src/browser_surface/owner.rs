@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use cccc_daemon::session_owner::browser::BrowserPrograms;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::network::CookieParam;
 use chromiumoxide::handler::viewport::Viewport;
@@ -46,7 +47,17 @@ impl BrowserOwner {
         storage_state: Option<&Value>,
         proxy: Option<BrowserProxy>,
     ) -> Result<Self> {
-        match Self::start(profile, width, height, mode, shared, storage_state, proxy).await {
+        match Self::start(
+            profile,
+            (width, height),
+            mode,
+            super::system_browser::programs(mode),
+            shared,
+            storage_state,
+            proxy,
+        )
+        .await
+        {
             Ok(owner) => Ok(owner),
             Err(StartFailure {
                 error,
@@ -67,22 +78,24 @@ impl BrowserOwner {
 
     pub async fn start(
         profile: &Path,
-        width: u32,
-        height: u32,
+        size: (u32, u32),
         mode: BrowserMode,
+        programs: BrowserPrograms,
         shared: bool,
         storage_state: Option<&Value>,
         proxy: Option<BrowserProxy>,
     ) -> std::result::Result<Self, StartFailure> {
+        let (width, height) = size;
         let not_started = |error| StartFailure {
             error,
             started: None,
         };
         let profile_lease = ProfileLease::acquire(profile).await.map_err(not_started)?;
+        let browser_program = programs.browser.clone();
         let mut system_browser = match mode {
             BrowserMode::Headless => None,
             BrowserMode::System { background } => Some(
-                SystemBrowserLaunch::prepare(width, height, background)
+                SystemBrowserLaunch::prepare(width, height, background, programs)
                     .await
                     .map_err(not_started)?,
             ),
@@ -103,13 +116,10 @@ impl BrowserOwner {
                 if !proxy_args.is_empty() {
                     config = config.args(proxy_args);
                 }
-                // Preserve explicit CHROME and normal detection precedence.
-                // Only try our additional binary names if that lookup fails.
-                match config.clone().build().or_else(|error| {
-                    let (executable, _) =
-                        super::system_browser::find_system_browser().ok_or(error)?;
-                    config.chrome_executable(executable).build()
-                }) {
+                match browser_program
+                    .ok_or_else(|| "Could not auto detect a chrome executable".to_owned())
+                    .and_then(|path| config.chrome_executable(path).build())
+                {
                     Ok(config) => Browser::launch(config)
                         .await
                         .map(|(mut browser, handler)| {
@@ -262,6 +272,9 @@ impl BrowserOwner {
     }
 
     pub fn vnc_port(&self) -> Option<u16> {
+        if !super::system_browser::vnc_viewer_enabled() {
+            return None;
+        }
         self.system_browser
             .as_ref()
             .and_then(SystemBrowserLaunch::vnc_port)

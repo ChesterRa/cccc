@@ -568,9 +568,14 @@ Notes:
   and close foreground CCCC processes before asking pip to replace it.
 - A standalone update restarts the daemon when it was running, while the old
   combined Web process remains stopped; the next bare `cccc` starts the updated
-  Web process. Restarting the daemon this way also stops its agents. On Linux and native arm64 macOS,
+  Web process. Restarting the daemon this way also stops its agents. If CCCC
+  cannot confirm that every agent stopped, the update is not installed, the
+  previous version is kept and CCCC stays stopped; finish stopping CCCC with
+  `cccc daemon stop`, following what it reports, then run the update again. On Linux and native arm64 macOS,
   to update while agents keep running, run `cccc daemon stop --keep-agents`,
-  then `cccc update`, then `cccc daemon start`.
+  then `cccc update`, then `cccc daemon start`. When the daemon is not running,
+  the update goes ahead only if no agent is left running, or if CCCC kept them
+  this way and the new version can reach each of them; otherwise it says why.
 - On Windows, standalone self-update continues in a separate PowerShell process
   after the original executable exits so the binary can be replaced safely.
 

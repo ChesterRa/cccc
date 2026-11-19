@@ -38,6 +38,69 @@ impl BrowserLaunchSpec {
     }
 }
 
+/// Programs selected for a new launch. The holder does not store this request
+/// with the resource or compare it when reusing a browser.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserPrograms {
+    #[serde(default, with = "program_path")]
+    pub browser: Option<PathBuf>,
+    pub channel: Option<String>,
+    #[serde(default, with = "program_path")]
+    pub xvfb: Option<PathBuf>,
+    #[serde(default, with = "program_path")]
+    pub x11vnc: Option<PathBuf>,
+    pub desktop_view: bool,
+}
+
+// Keep ordinary paths readable in local IPC and preserve native paths that
+// cannot be represented as JSON strings.
+mod program_path {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::{ffi::OsString, path::PathBuf};
+
+    pub fn serialize<S: Serializer>(
+        path: &Option<PathBuf>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match path {
+            Some(path) if path.to_str().is_none() => path.as_os_str().serialize(serializer),
+            path => path.serialize(serializer),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<PathBuf>, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WirePath {
+            Text(String),
+            Native(OsString),
+        }
+        Ok(
+            Option::<WirePath>::deserialize(deserializer)?.map(|path| match path {
+                WirePath::Text(text) => PathBuf::from(text),
+                WirePath::Native(native) => PathBuf::from(native),
+            }),
+        )
+    }
+}
+
+#[cfg(unix)]
+impl BrowserPrograms {
+    pub(super) fn valid(&self) -> bool {
+        [&self.browser, &self.xvfb, &self.x11vnc]
+            .into_iter()
+            .flatten()
+            .all(|path| path.is_absolute())
+            && self
+                .channel
+                .as_deref()
+                .is_none_or(|channel| matches!(channel, "chrome" | "msedge" | "chromium"))
+    }
+}
+
 /// Connection and presentation data. This is private local IPC, not a public
 /// health response: a CDP endpoint grants control of the browser.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,7 +114,11 @@ pub struct BrowserConnection {
 }
 
 pub trait BrowserLauncher: Send + Sync {
-    fn launch(&self, spec: BrowserLaunchSpec) -> BoxFuture<'_, Result<Box<dyn BrowserProcess>>>;
+    fn launch(
+        &self,
+        spec: BrowserLaunchSpec,
+        programs: Option<BrowserPrograms>,
+    ) -> BoxFuture<'_, Result<Box<dyn BrowserProcess>>>;
 }
 
 /// Keeps the profile lease and browser/display children until an explicit stop.
@@ -103,4 +170,33 @@ pub struct BrowserResource {
     pub state: BrowserResourceState,
     pub error: Option<String>,
     pub sessions: Vec<BrowserPage>,
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    #[test]
+    fn browser_programs_preserve_native_paths_and_require_absolute_paths_and_known_channels() {
+        let browser = PathBuf::from(OsString::from_vec(b"/tmp/\xff/chrome".to_vec()));
+        let programs = BrowserPrograms {
+            browser: Some(browser.clone()),
+            channel: Some("chrome".into()),
+            xvfb: None,
+            x11vnc: Some("/usr/bin/x11vnc".into()),
+            desktop_view: true,
+        };
+        let value = serde_json::to_value(programs).expect("encode browser programs");
+        assert_eq!(value["x11vnc"], "/usr/bin/x11vnc");
+        let mut decoded: BrowserPrograms =
+            serde_json::from_value(value).expect("decode browser programs");
+        assert_eq!(decoded.browser.as_ref(), Some(&browser));
+        assert!(decoded.valid());
+        decoded.channel = Some("other".into());
+        assert!(!decoded.valid());
+        decoded.channel = None;
+        decoded.xvfb = Some("relative/Xvfb".into());
+        assert!(!decoded.valid());
+    }
 }

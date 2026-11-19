@@ -123,10 +123,17 @@ impl Backend {
         }
         // Publish only a still-matching registration. Actual provider reads
         // happen before this short metadata lock, outside the admission mutex.
+        let stopping = self.stop_pending.lock().map_err(|_| poisoned())?;
         let mut registered = self.actors.lock().map_err(|_| poisoned())?;
-        for (before, snapshot) in actors.iter().zip(&snapshots) {
-            if registered.get(&key(before)) == Some(before) {
-                registered.insert(key(before), snapshot.actor.clone());
+        for (before, snapshot) in actors.iter().zip(&mut snapshots) {
+            let member = key(before);
+            if registered.get(&member) == Some(before) {
+                // An individual stop may have reaped the process while it still
+                // owns the registration. An overlapping StopAll needs its identity.
+                if snapshot.actor.generation.is_none() && stopping.contains(&member) {
+                    snapshot.actor.generation.clone_from(&before.generation);
+                }
+                registered.insert(member, snapshot.actor.clone());
             }
         }
         Ok(snapshots)
@@ -424,8 +431,9 @@ impl Backend {
             }
         }
         match mutation {
-            Mutation::BrowserEnsure { spec } => {
-                serde_json::to_value(self.browsers.ensure(spec)?).map_err(serialization_failure)
+            Mutation::BrowserEnsure { spec, programs } => {
+                serde_json::to_value(self.browsers.ensure(spec, programs)?)
+                    .map_err(serialization_failure)
             }
             Mutation::BrowserPagesSet {
                 resource_id,
@@ -518,40 +526,28 @@ impl Backend {
                     .collect::<Vec<_>>();
                 let mut stopped = Vec::new();
                 let mut unconfirmed = Vec::new();
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-                for actor in actors {
-                    let mut starting = self.starting.lock().map_err(|_| poisoned())?;
-                    while starting.contains(&key(&actor)) {
-                        let remaining =
-                            deadline.saturating_duration_since(std::time::Instant::now());
-                        if remaining.is_zero() {
-                            break;
+                let timeout = std::time::Duration::from_secs(10);
+                let deadline = std::time::Instant::now() + timeout;
+                let browsers = std::thread::scope(|scope| {
+                    let workers = actors
+                        .iter()
+                        .map(|actor| {
+                            std::thread::Builder::new().spawn_scoped(scope, move || {
+                                self.stop_registered_member(actor, deadline)
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    // Browser cleanup can begin as soon as member stops have been dispatched.
+                    let report = self.browsers.stop_all(timeout);
+                    for (actor, worker) in actors.iter().zip(workers) {
+                        let outcome = worker.ok().and_then(|worker| worker.join().ok());
+                        match outcome.unwrap_or_else(|| Err(actor.clone())) {
+                            Ok(member) => stopped.push(member),
+                            Err(member) => unconfirmed.push(member),
                         }
-                        starting = self
-                            .started
-                            .wait_timeout(starting, remaining)
-                            .map_err(|_| poisoned())?
-                            .0;
                     }
-                    let pending = starting.contains(&key(&actor));
-                    drop(starting);
-                    if pending {
-                        unconfirmed.push(actor);
-                        continue;
-                    }
-                    // A failed observation must not prevent stopping the rest.
-                    // The known registration still identifies the resources
-                    // that an explicit Stop is allowed to reclaim.
-                    let actual = snapshot(&actor).map_or_else(|_| actor.clone(), |s| s.actor);
-                    if self.stop(&actor).is_ok() {
-                        stopped.push(actual);
-                    } else {
-                        unconfirmed.push(actual);
-                    }
-                }
-                let browsers = self
-                    .browsers
-                    .stop_all(deadline.saturating_duration_since(std::time::Instant::now()));
+                    report
+                });
                 let browser_actor = |member: super::receipt::AgentIdentity| ActorRef {
                     group_id: member.group_id,
                     actor_id: member.actor_id,
@@ -788,6 +784,37 @@ impl Backend {
                 "invalid_operation",
                 "retirement is handled at admission",
             )),
+        }
+    }
+
+    /// An admitted launch may still be creating this member's processes. Wait
+    /// for it to settle before claiming its cleanup in the ordinary stop receipt.
+    fn stop_registered_member(
+        &self,
+        actor: &ActorRef,
+        deadline: std::time::Instant,
+    ) -> Result<ActorRef, ActorRef> {
+        let member_key = key(actor);
+        let starting = self.starting.lock().map_err(|_| actor.clone())?;
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let (starting, _) = self
+            .started
+            .wait_timeout_while(starting, remaining, |pending| pending.contains(&member_key))
+            .map_err(|_| actor.clone())?;
+        if starting.contains(&member_key) {
+            return Err(actor.clone());
+        }
+        drop(starting);
+        // A concurrent individual stop may already have released the terminal.
+        // Keep the registered generation if observation cannot supply a newer one.
+        let actual = snapshot(actor)
+            .ok()
+            .map(|snapshot| snapshot.actor)
+            .filter(|observed| observed.generation.is_some())
+            .unwrap_or_else(|| actor.clone());
+        match self.stop(actor) {
+            Ok(()) => Ok(actual),
+            Err(_) => Err(actual),
         }
     }
 
@@ -1197,6 +1224,78 @@ fn serialization_failure(error: serde_json::Error) -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_all_can_finish_another_member_while_one_launch_is_still_pending() {
+        let temp = tempfile::tempdir().expect("isolated stop fixture");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let backend = Backend::default();
+        let pending = ActorRef {
+            group_id: "g_overlapping_owner_stop".into(),
+            actor_id: "a-starting".into(),
+            actor_created_at: "first".into(),
+            generation: None,
+        };
+        let finished = ActorRef {
+            actor_id: "b-finished".into(),
+            actor_created_at: "second".into(),
+            generation: Some("last-known-generation".into()),
+            ..pending.clone()
+        };
+        for actor in [&pending, &finished] {
+            backend
+                .actors
+                .lock()
+                .expect("member registrations")
+                .insert(key(actor), actor.clone());
+        }
+        backend
+            .starting
+            .lock()
+            .expect("pending launches")
+            .insert(key(&pending));
+        backend
+            .reserve(&Mutation::Stop {
+                actor: finished.clone(),
+            })
+            .expect("admit individual stop");
+        backend
+            .owner_snapshot()
+            .expect("controller observes members before StopAll");
+        backend.reserve(&Mutation::StopAll).expect("fence startup");
+        let (finished_first, report) = std::thread::scope(|scope| {
+            let stop = scope.spawn(|| backend.execute(&home, Mutation::StopAll));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while backend
+                .actors
+                .lock()
+                .expect("member registrations")
+                .contains_key(&key(&finished))
+                && std::time::Instant::now() < deadline
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let finished_first = !backend
+                .actors
+                .lock()
+                .expect("member registrations")
+                .contains_key(&key(&finished));
+            drop(StartCompletion {
+                backend: &backend,
+                key: key(&pending),
+            });
+            (
+                finished_first,
+                stop.join().expect("stop worker").expect("stop all"),
+            )
+        });
+        assert!(
+            finished_first,
+            "one pending launch blocked the unrelated member"
+        );
+        assert_eq!(report["stopped"], json!([pending, finished]));
+        assert_eq!(report["unconfirmed"], json!([]));
+    }
 
     #[test]
     fn controlled_mcp_provenance_follows_the_selected_launch_method() {

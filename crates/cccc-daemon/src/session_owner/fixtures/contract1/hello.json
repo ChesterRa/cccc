@@ -1,0 +1,11 @@
+{
+  "result": "hello",
+  "contract": 1,
+  "instance": "98ab8ea9bc2e46cc8a5c592dc6ef5ef9",
+  "pid": 120,
+  "build": {
+    "source_id": "fdd20fd457936c9d47d6327694e0e91463de5a1fe5e02161857c1544e1e58a96"
+  },
+  "accepting_starts": true,
+  "mcp_registration": 1
+}

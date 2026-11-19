@@ -19,6 +19,12 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 struct StopState {
     requested: bool,
     interrupts: u8,
+    /// Until the Web first listens, losing the terminal interface fails the
+    /// launch instead of stopping it.
+    loss_fails: bool,
+    /// The stop is that failure: the interface was lost before the Web
+    /// listened and before any stop was asked for.
+    failed: bool,
 }
 
 #[derive(Clone)]
@@ -28,11 +34,12 @@ pub(crate) struct Controller {
 
 /// Tasks belong to the foreground launch, including its startup/error paths.
 /// Dropping the launch must not leave a signal listener or force-exit timer.
+/// The terminal interface reports stop keys and its own loss to a clone of
+/// `controller` directly from its thread, so nothing queues between them.
 pub(crate) struct TerminalControl {
     pub controller: Controller,
     signals: tokio::task::JoinHandle<()>,
     watchdog: tokio::task::JoinHandle<()>,
-    intents: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TerminalControl {
@@ -45,27 +52,8 @@ impl TerminalControl {
             controller,
             signals,
             watchdog,
-            intents: None,
         })
     }
-
-    pub(crate) fn connect(
-        &mut self,
-        mut intents: tokio::sync::mpsc::UnboundedReceiver<crate::host_state::HostIntent>,
-    ) {
-        let controller = self.controller.clone();
-        self.intents = Some(tokio::spawn(async move {
-            while let Some(intent) = intents.recv().await {
-                match intent {
-                    crate::host_state::HostIntent::Quit => controller.request(),
-                    crate::host_state::HostIntent::Interrupt => controller.interrupt(),
-                }
-            }
-        }));
-    }
-}
-
-impl TerminalControl {
     /// An update is replacing this process: neither a signal nor a lost
     /// terminal may force an exit or stop agents halfway through it.
     pub(crate) fn stand_down(&mut self) {
@@ -78,9 +66,6 @@ impl Drop for TerminalControl {
     fn drop(&mut self) {
         self.signals.abort();
         self.watchdog.abort();
-        if let Some(intents) = &self.intents {
-            intents.abort();
-        }
     }
 }
 
@@ -105,8 +90,47 @@ impl Controller {
         });
     }
 
+    /// The terminal interface is gone, and with it the only way to quit, so
+    /// the host stops. A stop already asked for stays as it was; otherwise
+    /// this stop fails the launch while [`Self::fail_on_loss_until_listening`]
+    /// holds.
+    pub(crate) fn lose(&self) {
+        self.state.send_if_modified(|state| {
+            if state.requested {
+                return false;
+            }
+            state.requested = true;
+            state.failed = state.loss_fails;
+            true
+        });
+    }
+
+    /// For a launch an update relayed to while keeping agents: until its Web
+    /// first listens, a lost terminal interface means the launch failed, and
+    /// the host keeps the agents, as for any other failure before then.
+    pub(crate) fn fail_on_loss_until_listening(&self) {
+        self.state.send_modify(|state| state.loss_fails = true);
+    }
+
+    /// The Web listens, so from now on a lost interface stops the host as
+    /// usual. False when the interface was lost first: the launch is failing,
+    /// and its Web must neither show nor confirm anything.
+    pub(crate) fn web_listening(&self) -> bool {
+        let mut failed = false;
+        self.state.send_if_modified(|state| {
+            failed = state.failed;
+            std::mem::take(&mut state.loss_fails)
+        });
+        !failed
+    }
+
     pub(crate) fn is_requested(&self) -> bool {
         self.state.borrow().requested
+    }
+
+    /// The stop is a failed launch, not a request: see [`Self::lose`].
+    pub(crate) fn failed(&self) -> bool {
+        self.state.borrow().failed
     }
 
     pub(crate) async fn requested(&self) {
@@ -354,6 +378,54 @@ mod tests {
         assert_eq!(controller.state.borrow().interrupts, 1);
         controller.interrupt();
         controller.forced().await;
+    }
+
+    #[test]
+    fn a_lost_interface_stops_the_host_like_quitting() {
+        let controller = Controller::new();
+        controller.lose();
+        assert!(controller.is_requested());
+        assert!(!controller.failed());
+        assert!(controller.web_listening());
+    }
+
+    #[test]
+    fn a_lost_interface_fails_a_keeping_relay_whose_web_has_not_listened() {
+        let controller = Controller::new();
+        controller.fail_on_loss_until_listening();
+        controller.lose();
+        assert!(controller.is_requested());
+        assert!(controller.failed());
+        // A Web that opens afterwards belongs to the failed launch.
+        assert!(!controller.web_listening());
+        // The first reason to stop decides how.
+        controller.request();
+        controller.interrupt();
+        assert!(controller.failed());
+    }
+
+    #[test]
+    fn once_the_web_listens_a_lost_interface_stops_the_host_as_usual() {
+        let controller = Controller::new();
+        controller.fail_on_loss_until_listening();
+        assert!(controller.web_listening());
+        controller.lose();
+        assert!(controller.is_requested());
+        assert!(!controller.failed());
+    }
+
+    #[test]
+    fn a_stop_asked_for_before_the_interface_is_lost_stays_ordinary() {
+        let quit = Controller::new();
+        quit.fail_on_loss_until_listening();
+        quit.request();
+        quit.lose();
+        assert!(!quit.failed());
+        let interrupted = Controller::new();
+        interrupted.fail_on_loss_until_listening();
+        interrupted.interrupt();
+        interrupted.lose();
+        assert!(!interrupted.failed());
     }
 
     #[tokio::test]

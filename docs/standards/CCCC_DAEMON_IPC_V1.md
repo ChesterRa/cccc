@@ -504,6 +504,12 @@ Notes:
   transaction directory and the actual executable's target version and compiled
   source identity. This exact-candidate check is not an assertion of protocol
   compatibility or an independent artifact checksum.
+- If a replacement host for a Keep update fails before its Web listener opens,
+  it MUST preserve the managed members when shutting down its embedded daemon.
+  The update remains recoverable. Losing its terminal interface before then is
+  such a failure even if the listener opens afterwards, and that listener MUST
+  NOT confirm the update. If the host receives an explicit ordinary stop before
+  it detects the interface failure, it stops the members normally.
 - Update intent schema 2 distinguishes `source: {kind: "release", install_dir}`
   from `source: {kind: "local", program, file_identity}`. A Local source reserves
   an executable image and performs no installation or restoration. Its record
@@ -665,8 +671,17 @@ all three arrays and for startup observations; older records may omit it.
 Absence means the holder reference is unknown. This reference does not prove
 the member stopped. Readers
 MUST match the expected daemon PID and, when known, request UUID. A new daemon
-MUST clear the old report under its home lock before publishing its PID.
+MUST clear the old report under its home lock before publishing its PID. An
+offline ordinary stop MUST clear it under the home lock before it contacts any
+holder, so that a stop that fails leaves no earlier `preserve_agents` report.
 A missing, stale or unreadable report is unconfirmed, not a successful stop.
+With the home lock held, the report on disk therefore belongs to the last
+exit. The installer check of a staged program (`cccc update --installer-check`)
+relies on this instead of a PID: with no daemon running, it allows the program
+to be replaced only when no session owner holds its instance lock, or when that
+report has `v: 1` and `mode: preserve_agents` and every holding owner answers
+Hello within one deadline. It creates or changes no file under `CCCC_HOME`,
+registers and reconciles nothing, and its locks end with it.
 Counts MUST come only from verified sets. Independent ownership and its private
 contract are described in [CCCC_SESSION_OWNER_V1.md](CCCC_SESSION_OWNER_V1.md).
 
@@ -717,13 +732,20 @@ The table omits the required `by` field for brevity.
 | Operation | Arguments | Result |
 | --- | --- | --- |
 | `browser_resources` | `{}` | `{ resources: BrowserResource[] }` |
-| `browser_resource_ensure` | `{ profile, mode, width, height, proxy }` | `{ resource: BrowserResource }` |
+| `browser_resource_ensure` | `{ profile, mode, width, height, proxy, programs? }` | `{ resource: BrowserResource }` |
 | `browser_resource_pages_set` | `{ resource_id, instance, sessions }` | `{ resource: BrowserResource }` |
 | `browser_resource_close` | `{ resource_id, instance }` | `{ closed: true }` |
 
 `profile` is an absolute canonical directory. `mode` is `{ kind: "headless" }`
 or `{ kind: "system", background: boolean }`. `proxy` is null or normalized
 `{ server, bypass_list }`, without credentials, arbitrary arguments or environment.
+For a new browser the private Web can supply `programs` with its resolved
+`browser` path, system browser `channel`, `xvfb` and `x11vnc` paths, and
+boolean `desktop_view` setting. Paths are absolute or null. UTF-8 paths use
+JSON strings. Other paths use Serde's native `OsString` representation. A program that
+could not be found matters only if the holder needs it for a new launch.
+This input is omitted from resource snapshots. Without it, a new launch uses
+the holder's own discovery.
 Each session mapping contains `key`, optional `actor` creation identity
 `{ group_id, actor_id, actor_created_at }`, `target_id` and opaque Web `state`.
 The holder preserves Web state without interpreting its delivery protocol.

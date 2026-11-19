@@ -16,9 +16,13 @@ pub(crate) mod browser_operations;
 mod client;
 #[cfg(all(test, unix))]
 mod confirmation_tests;
+#[cfg(all(test, unix))]
+mod contract_tests;
 #[cfg(unix)]
 mod controller;
 mod facade;
+#[cfg(unix)]
+mod installer;
 #[cfg(unix)]
 mod mcp;
 #[cfg(unix)]
@@ -246,6 +250,20 @@ pub async fn stop_without_daemon(
     {
         let _ = home;
         anyhow::bail!("independent session ownership is not implemented on this platform")
+    }
+}
+
+/// Whether an installer may replace the program while no daemon runs: either
+/// no session owner runs, or the last daemon exit kept its agents and every
+/// owner answers now. Err carries the reason and the next step. The check
+/// creates or changes no file under CCCC_HOME and holds no lock afterwards.
+pub async fn installer_check(home: &cccc_core::HomeLayout) -> Result<(), String> {
+    #[cfg(unix)]
+    return installer::check(home).await;
+    #[cfg(not(unix))]
+    {
+        let _ = home;
+        Ok(())
     }
 }
 

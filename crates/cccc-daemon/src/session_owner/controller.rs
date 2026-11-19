@@ -205,6 +205,7 @@ pub(super) fn browser_resources(
 pub(super) fn ensure_browser(
     home: &HomeLayout,
     spec: super::browser::BrowserLaunchSpec,
+    programs: Option<super::browser::BrowserPrograms>,
 ) -> io::Result<super::browser::BrowserResource> {
     let controller = for_home(home)?;
     let construction = controller.construction.lock().map_err(poisoned)?;
@@ -246,7 +247,7 @@ pub(super) fn ensure_browser(
         }
     }
     let (client, created) = current_factory(&controller)?;
-    let operation = client.mutate(Mutation::BrowserEnsure { spec })?;
+    let operation = client.mutate(Mutation::BrowserEnsure { spec, programs })?;
     drop(construction);
     let result = wait_browser_operation(&client, &operation);
     if created {
@@ -980,6 +981,9 @@ pub(super) fn stop_offline(home: &HomeLayout) -> anyhow::Result<Option<ShutdownR
                 "daemon still owns its home; cannot stop retained agents offline",
             )
         })?;
+    // An ordinary stop withdraws an earlier Keep even when it fails, so that
+    // receipt no longer hands its agents to an update.
+    super::receipt::clear_shutdown_report(home)?;
     let (clients, discovery_error) = discover_all(home)?;
     // A holder can own a login window with no member in the shutdown report.
     if clients.is_empty() && discovery_error.is_none() {

@@ -71,7 +71,8 @@ impl OwnerResources {
         &self,
         spec: &BrowserLaunchSpec,
     ) -> Result<(BrowserResource, BrowserConnection)> {
-        let args = serde_json::to_value(spec).context("encode the browser launch")?;
+        let mut args = serde_json::to_value(spec).context("encode the browser launch")?;
+        args["programs"] = serde_json::to_value(super::system_browser::programs(spec.mode))?;
         let deadline = Instant::now() + START_BUSY_WAIT;
         let mut result = loop {
             match self.call("browser_resource_ensure", args.clone()).await {

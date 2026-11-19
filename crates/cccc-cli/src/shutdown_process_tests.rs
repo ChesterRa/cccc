@@ -158,7 +158,7 @@ fn second_terminal_interrupt_restores_modes_before_process_exit() {
         runtime.block_on(async {
             let home = HomeLayout::resolve().expect("isolated home");
             home.initialize().expect("initialize");
-            let mut control = TerminalControl::new(true).expect("signals");
+            let control = TerminalControl::new(true).expect("signals");
             let (state, receiver) = tokio::sync::watch::channel(HostState {
                 update: None,
                 daemon: DaemonState::StartedHere {
@@ -167,11 +167,10 @@ fn second_terminal_interrupt_restores_modes_before_process_exit() {
                 web: WebState::Starting,
                 phase: HostPhase::Running,
             });
-            let (intents, receiver_intents) = tokio::sync::mpsc::unbounded_channel();
-            control.connect(receiver_intents);
-            let _interface = crate::tui::start(home.clone(), receiver, intents, None)
-                .await
-                .expect("terminal interface");
+            let _interface =
+                crate::tui::start(home.clone(), receiver, control.controller.clone(), None)
+                    .await
+                    .expect("terminal interface");
             std::fs::write(home.root().join("force-ready"), "ready").expect("ready");
             // Deliberately do not perform ordinary shutdown: the second real
             // key event must reach the same controller and use its force path.

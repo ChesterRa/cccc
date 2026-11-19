@@ -149,18 +149,8 @@ pub fn reset_exited_startup_input(group: &str, actor: &str) -> Result<(), Runtim
 }
 
 pub fn stop(group_id: &str, actor_id: &str) -> Result<SessionStatus, RuntimeError> {
-    let key = (group_id.to_owned(), actor_id.to_owned());
-    let session = sessions()
-        .write()
-        .map_err(|_| RuntimeError::Poisoned)?
-        .remove(&key)
-        .ok_or_else(|| RuntimeError::NotFound(group_id.into(), actor_id.into()))?;
-    let mut session = session.lock().map_err(|_| RuntimeError::Poisoned)?;
-    let status = session.stop()?;
-    let history = session.history_handle();
-    drop(session);
-    remember_history(key, history)?;
-    Ok(status)
+    stop_registered(group_id, actor_id, None)?
+        .ok_or_else(|| RuntimeError::NotFound(group_id.into(), actor_id.into()))
 }
 
 pub fn stop_if_started_at(
@@ -168,17 +158,28 @@ pub fn stop_if_started_at(
     actor_id: &str,
     expected_started_at: &str,
 ) -> Result<Option<SessionStatus>, RuntimeError> {
-    let key = (group_id.to_owned(), actor_id.to_owned());
-    let Ok(current) = lookup(group_id, actor_id) else {
-        return Ok(None);
+    stop_registered(group_id, actor_id, Some(expected_started_at))
+}
+
+fn stop_registered(
+    group_id: &str,
+    actor_id: &str,
+    expected_started_at: Option<&str>,
+) -> Result<Option<SessionStatus>, RuntimeError> {
+    let current = match lookup(group_id, actor_id) {
+        Ok(current) => current,
+        Err(RuntimeError::NotFound(..)) => return Ok(None),
+        Err(error) => return Err(error),
     };
     let mut session = current.lock().map_err(|_| RuntimeError::Poisoned)?;
-    if session.status().started_at != expected_started_at {
+    if expected_started_at.is_some_and(|expected| session.status().started_at != expected) {
         return Ok(None);
     }
+    // A concurrent stop must still find this session until its cleanup has succeeded.
     let status = session.stop()?;
     let history = session.history_handle();
     drop(session);
+    let key = (group_id.to_owned(), actor_id.to_owned());
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry
         .get(&key)

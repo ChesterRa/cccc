@@ -50,8 +50,8 @@ pub(crate) use terminal::restore as restore_terminal;
 const THREAD_NAME: &str = "cccc-tui";
 // Input wait per loop; also the longest a host change waits to be drawn.
 const TICK: Duration = Duration::from_millis(100);
-// Entering the interface is a few mode changes and one write; only a console
-// that has stopped accepting output takes longer.
+// Entering the interface and drawing its first frame are a few mode changes
+// and two writes; only a console that has stopped accepting output takes longer.
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 // Interrupting an install drops its provider command, whose process tree the
 // runtime capture ends; the bound only covers a task that fails to notice.
@@ -77,13 +77,16 @@ pub(crate) struct Session {
 }
 
 /// Take over the terminal and show the interface. `host` carries this
-/// process's lifecycle; `intents` carries the user's stop requests back. An
-/// error means the terminal is back in its own modes, or will be as soon as
-/// a stalled console lets the interface thread continue.
+/// process's lifecycle; `host_stop` takes the user's stop requests, and learns
+/// directly from the interface thread when the interface is lost. This returns
+/// once the first frame is drawn or the interface is lost, so the host starts
+/// its Web knowing which. An error means the terminal is back in its own
+/// modes, or will be as soon as a stalled console lets the interface thread
+/// continue.
 pub(crate) async fn start(
     home: HomeLayout,
     host: watch::Receiver<HostState>,
-    intents: mpsc::UnboundedSender<HostIntent>,
+    host_stop: crate::shutdown::Controller,
     update: Option<crate::update_checker::UpdateEntry>,
 ) -> Result<Session> {
     let (sessions_tx, sessions) = watch::channel(SessionList::default());
@@ -123,7 +126,7 @@ pub(crate) async fn start(
             initial,
         ),
         host,
-        intents,
+        host_stop,
         sessions,
         groups,
         members,
@@ -145,10 +148,7 @@ pub(crate) async fn start(
         .name(THREAD_NAME.into())
         .spawn(move || {
             match terminal::enter() {
-                Ok(screen) => {
-                    let _ = entered_tx.send(Ok(()));
-                    ui.run(screen);
-                }
+                Ok(screen) => ui.run(screen, entered_tx),
                 Err(error) => {
                     let _ = entered_tx.send(Err(error));
                 }
@@ -300,7 +300,7 @@ impl Drop for Session {
 struct Ui {
     app: App,
     host: watch::Receiver<HostState>,
-    intents: mpsc::UnboundedSender<HostIntent>,
+    host_stop: crate::shutdown::Controller,
     sessions: watch::Receiver<SessionList>,
     groups: watch::Receiver<GroupList>,
     members: watch::Receiver<MemberList>,
@@ -320,8 +320,10 @@ struct Ui {
 }
 
 impl Ui {
-    fn run(mut self, mut screen: terminal::Screen) {
-        let _stop_host = StopHostOnPanic(self.intents.clone());
+    /// `opened` hears once the first frame is drawn or the interface is lost.
+    fn run(mut self, mut screen: terminal::Screen, opened: oneshot::Sender<std::io::Result<()>>) {
+        let mut opened = Some(opened);
+        let _stop_host = StopHostOnPanic(self.host_stop.clone());
         let mut usable = true;
         let mut dirty = true;
         let mut last_draw = Instant::now();
@@ -363,6 +365,9 @@ impl Ui {
                     usable = false;
                     self.lose_terminal();
                 }
+            }
+            if let Some(opened) = opened.take() {
+                let _ = opened.send(Ok(()));
             }
             if !usable {
                 std::thread::sleep(TICK);
@@ -467,9 +472,8 @@ impl Ui {
             let was_answering =
                 self.app.screen == app::Screen::Pending && self.app.pending_view.detail.is_some();
             match allowed.then(|| self.app.handle(input)).flatten() {
-                Some(Effect::Host(intent)) => {
-                    let _ = self.intents.send(intent);
-                }
+                Some(Effect::Host(HostIntent::Quit)) => self.host_stop.request(),
+                Some(Effect::Host(HostIntent::Interrupt)) => self.host_stop.interrupt(),
                 Some(Effect::Setup(command)) => {
                     let _ = self.setup_commands.send(command);
                 }
@@ -502,10 +506,11 @@ impl Ui {
         }
     }
 
-    // Without a terminal there is no way left to quit, so losing it is an
-    // ordinary stop request; the loop keeps waiting for the host's report.
+    // Without a terminal there is no way left to quit, so the host stops; the
+    // loop keeps waiting for its report. Losing the interface is no request
+    // from the user, and the controller orders it against the Web's listener.
     fn lose_terminal(&self) {
-        let _ = self.intents.send(HostIntent::Quit);
+        self.host_stop.lose();
     }
 
     fn print_receipt(&self, restored: std::io::Result<()>) {
@@ -561,13 +566,14 @@ fn repaint(screen: &mut terminal::Screen) -> std::io::Result<()> {
 }
 
 /// The interface thread is the only way to quit from the keyboard, so its
-/// panic asks the host to stop rather than leaving CCCC running unseen.
-struct StopHostOnPanic(mpsc::UnboundedSender<HostIntent>);
+/// panic loses the interface and the host stops rather than leaving CCCC
+/// running unseen.
+struct StopHostOnPanic(crate::shutdown::Controller);
 
 impl Drop for StopHostOnPanic {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            let _ = self.0.send(HostIntent::Quit);
+            self.0.lose();
         }
     }
 }

@@ -37,7 +37,8 @@ make_release() {
     if [[ -n "$custom_binary" ]]; then
       cp "$custom_binary" "$TMP_ROOT/package/$package/$binary"
     else
-      printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc %s\\n"; exit 0; fi\nexit 1\n' "$reported_version" > "$TMP_ROOT/package/$package/$binary"
+      # A current release: it can check a home without a running daemon.
+      printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc %s\\n"; exit 0; fi\nif [ "${1:-}" = update ] && [ "${2:-}" = --installer-check ]; then exit 0; fi\nexit 1\n' "$reported_version" > "$TMP_ROOT/package/$package/$binary"
     fi
     chmod 755 "$TMP_ROOT/package/$package/$binary"
   fi
@@ -349,6 +350,7 @@ if [ "${1:-}" = daemon ] && [ "${2:-}" = status ]; then
 fi
 if [ "${1:-}" = daemon ] && [ "${2:-}" = stop ]; then
   printf 'stopped\n' > "$CCCC_TEST_DAEMON_STATE"
+  printf '{\n  "shutting_down": true\n}\n'
   exit 0
 fi
 if [ "${1:-}" = daemon ] && [ "${2:-}" = start ]; then
@@ -617,6 +619,7 @@ if [ "\${1:-}" = daemon ] && [ "\${2:-}" = status ]; then
 fi
 if [ "\${1:-}" = daemon ] && [ "\${2:-}" = stop ]; then
   printf 'stopped\n' > "\$state_file"
+  printf '{\n  "shutting_down": true\n}\n'
   exit 0
 fi
 if [ "\${1:-}" = daemon ] && [ "\${2:-}" = start ]; then
@@ -642,6 +645,269 @@ if HOME="$TMP_ROOT/restart-home" \
 fi
 grep -Fq 'rollback restored the previous binary but failed to restart its daemon' "$TMP_ROOT/restart-error"
 [[ "$(checksum "$restart_install/cccc")" == "$restart_hash" ]]
+
+# A CCCC whose agents can outlive its daemon adds its exit receipt to the reply
+# of `cccc daemon stop`. The confirmed, missing and earlier replies below are
+# what the b0361d1f and 0.4.58 builds printed in isolated runs (the missing one
+# while the session owner did not answer); the unconfirmed and retained replies
+# move the confirmed agents into those lists, and the mixed reply stands for an
+# earlier CLI stopping a newer daemon, which answers with more than acceptance.
+# Without a reply that confirms every agent stopped, the previous binary stays
+# and CCCC stays stopped; running the installer again then has the staged
+# program check the agents left without a daemon (a file here stands for them).
+receipt_version=0.0.18-test
+receipt_release="$TMP_ROOT/receipt-release-cccc"
+cat > "$receipt_release" <<EOF
+#!/usr/bin/env sh
+if [ "\${1:-}" = "--version" ]; then
+  printf 'cccc $receipt_version\\n'
+  exit 0
+fi
+if [ "\${1:-}" = daemon ] && [ "\${2:-}" = start ]; then
+  printf 'new-running\\n' > "\$CCCC_TEST_DAEMON_STATE"
+  exit 0
+fi
+if [ "\${1:-}" = update ] && [ "\${2:-}" = --installer-check ]; then
+  printf 'checked\\n' >> "\$CCCC_TEST_DAEMON_STATE.checked"
+  [ -e "\$CCCC_TEST_DAEMON_STATE.owners" ] || exit 0
+  printf 'CCCC agents may still be running without a daemon (session owner 0123)\\n' >&2
+  exit 1
+fi
+exit 1
+EOF
+chmod 755 "$receipt_release"
+make_release "$receipt_version" valid "$receipt_version" "" "$receipt_release"
+receipt_old="$TMP_ROOT/receipt-old-cccc"
+cat > "$receipt_old" <<'EOF'
+#!/usr/bin/env sh
+if [ "${1:-}" = daemon ] && [ "${2:-}" = status ]; then
+  [ "$(cat "$CCCC_TEST_DAEMON_STATE")" = old-running ]
+  exit
+fi
+if [ "${1:-}" = daemon ] && [ "${2:-}" = stop ]; then
+  printf 'stopped\n' > "$CCCC_TEST_DAEMON_STATE"
+  cat "$CCCC_TEST_STOP_REPLY"
+  exit 0
+fi
+if [ "${1:-}" = daemon ] && [ "${2:-}" = start ]; then
+  printf 'old-running\n' > "$CCCC_TEST_DAEMON_STATE"
+  exit 0
+fi
+exit 1
+EOF
+chmod 755 "$receipt_old"
+receipt_replies="$TMP_ROOT/receipt-replies"
+mkdir -p "$receipt_replies"
+cat > "$receipt_replies/confirmed" <<'EOF'
+{
+  "mode": "stop",
+  "receipt": {
+    "confirmed_stopped": [
+      {
+        "actor_created_at": "2026-11-18T17:08:05.566818Z",
+        "actor_id": "probe1",
+        "generation": "2026-11-18T17:08:05.623010Z",
+        "group_id": "g_c5b12c3808ff",
+        "owner_id": "9bb7b1fba68d47368ae370ee8f841a35"
+      },
+      {
+        "actor_created_at": "2026-11-18T17:08:06.164865Z",
+        "actor_id": "probe2",
+        "generation": "2026-11-18T17:08:06.201247Z",
+        "group_id": "g_c5b12c3808ff",
+        "owner_id": "9bb7b1fba68d47368ae370ee8f841a35"
+      },
+      {
+        "actor_created_at": "2026-11-18T17:08:06.744014Z",
+        "actor_id": "probe3",
+        "generation": "2026-11-18T17:08:06.777949Z",
+        "group_id": "g_c5b12c3808ff",
+        "owner_id": "9bb7b1fba68d47368ae370ee8f841a35"
+      }
+    ],
+    "daemon_pid": 21,
+    "mode": "stop",
+    "request_id": "e737eda3-1112-4f16-a7fc-0df927c2d402",
+    "retained": [],
+    "unconfirmed": [],
+    "v": 1
+  },
+  "request_id": "e737eda3-1112-4f16-a7fc-0df927c2d402",
+  "shutting_down": true
+}
+EOF
+cat > "$receipt_replies/missing" <<'EOF'
+{
+  "mode": "stop",
+  "receipt": null,
+  "request_id": "93d718c9-29e3-43d3-bbd2-335d3a070ed3",
+  "shutting_down": true
+}
+EOF
+printf '{\n  "shutting_down": true\n}\n' > "$receipt_replies/earlier"
+printf '{\n  "mode": "stop",\n  "request_id": "6f1d2c3b4a5e4f60a1b2c3d4e5f60718",\n  "shutting_down": true\n}\n' > "$receipt_replies/mixed"
+: > "$receipt_replies/empty"
+for receipt_list in unconfirmed retained; do
+  sed -e "s/\"confirmed_stopped\": \\[\$/\"$receipt_list\": [/" \
+    -e "s/\"$receipt_list\": \\[\\],\$/\"confirmed_stopped\": [],/" \
+    "$receipt_replies/confirmed" > "$receipt_replies/$receipt_list"
+  grep -q "\"$receipt_list\": \\[\$" "$receipt_replies/$receipt_list"
+  grep -q '"confirmed_stopped": \[\],$' "$receipt_replies/$receipt_list"
+done
+
+receipt_setup() {
+  receipt_dir="$TMP_ROOT/receipt-$1"
+  mkdir -p "$receipt_dir/bin"
+  cp "$receipt_old" "$receipt_dir/bin/cccc"
+  printf 'standalone-v1\n' > "$receipt_dir/bin/.cccc-standalone"
+  printf 'old-running\n' > "$receipt_dir/state"
+  receipt_old_hash=$(checksum "$receipt_dir/bin/cccc")
+}
+
+receipt_install() {
+  cp "$receipt_replies/$1" "$receipt_dir/reply"
+  HOME="$receipt_dir/home" \
+    CCCC_VERSION="$receipt_version" \
+    CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+    CCCC_INSTALL_DIR="$receipt_dir/bin" \
+    CCCC_NO_MODIFY_PATH=1 \
+    CCCC_TEST_DAEMON_STATE="$receipt_dir/state" \
+    CCCC_TEST_STOP_REPLY="$receipt_dir/reply" \
+    sh "$ROOT_DIR/scripts/install.sh" > "$receipt_dir/out" 2> "$receipt_dir/err"
+}
+
+receipt_kept() {
+  grep -Fq 'could not confirm that every agent stopped, so the update was not installed' "$receipt_dir/err"
+  [[ "$(checksum "$receipt_dir/bin/cccc")" == "$receipt_old_hash" ]]
+  [[ "$(cd "$receipt_dir/bin" && LC_ALL=C ls -A)" == $'.cccc-standalone\ncccc' ]]
+}
+
+for receipt_reply in missing unconfirmed retained empty mixed; do
+  receipt_setup "$receipt_reply"
+  if receipt_install "$receipt_reply"; then
+    echo "installer replaced CCCC after a '$receipt_reply' stop reply" >&2
+    exit 1
+  fi
+  receipt_kept
+  [[ "$(cat "$receipt_dir/state")" == stopped ]]
+  [[ ! -e "$receipt_dir/state.checked" ]]
+done
+
+for receipt_reply in confirmed earlier; do
+  receipt_setup "$receipt_reply"
+  receipt_install "$receipt_reply"
+  [[ "$("$receipt_dir/bin/cccc" --version)" == "cccc $receipt_version" ]]
+  [[ "$(cat "$receipt_dir/state")" == new-running ]]
+  [[ ! -e "$receipt_dir/state.checked" ]]
+done
+
+# Run again after a refusal: CCCC is still stopped, so the staged program
+# checks the agents left without a daemon. Once they are gone, it installs and
+# leaves CCCC for the user to start.
+receipt_setup rerun
+if receipt_install missing; then
+  echo "installer replaced CCCC after an unconfirmed stop" >&2
+  exit 1
+fi
+receipt_kept
+: > "$receipt_dir/state.owners"
+if receipt_install missing; then
+  echo "installer replaced CCCC while agents were left without a daemon" >&2
+  exit 1
+fi
+grep -Fq 'the update was not installed and the previous version is kept. Follow the message above' "$receipt_dir/err"
+grep -Fqx 'CCCC agents may still be running without a daemon (session owner 0123)' "$receipt_dir/err"
+[[ "$(checksum "$receipt_dir/bin/cccc")" == "$receipt_old_hash" ]]
+[[ "$(cat "$receipt_dir/state")" == stopped ]]
+rm "$receipt_dir/state.owners"
+receipt_install missing
+[[ "$("$receipt_dir/bin/cccc" --version)" == "cccc $receipt_version" ]]
+[[ "$(cat "$receipt_dir/state")" == stopped ]]
+[[ "$(cat "$receipt_dir/state.checked")" == $'checked\nchecked' ]]
+
+# Without a running daemon, the staged program decides whether it can take the
+# agents over, and only when an installed CLI is replaced. The two earlier
+# outputs below are what the 0.4.58 and b0361d1f builds printed for the option:
+# such a release cannot take agents over, so the installer asks for the daemon
+# to run, and like any other failure this keeps the previous version. The
+# receipt cases above also show that a running daemon never reaches this check:
+# their staged program fails it.
+takeover_version=0.0.19-test
+takeover_release="$TMP_ROOT/takeover-release-cccc"
+cat > "$takeover_release" <<EOF
+#!/usr/bin/env sh
+if [ "\${1:-}" = "--version" ]; then
+  printf 'cccc $takeover_version\\n'
+  exit 0
+fi
+if [ "\${1:-}" = update ] && [ "\${2:-}" = --installer-check ]; then
+  printf 'checked\\n' >> "\$CCCC_TEST_TAKEOVER/log"
+  takeover_mode=\$(cat "\$CCCC_TEST_TAKEOVER/mode")
+  [ "\$takeover_mode" != allow ] || exit 0
+  cat "\$CCCC_TEST_TAKEOVER/\$takeover_mode.out" >&2
+  exit "\$(cat "\$CCCC_TEST_TAKEOVER/\$takeover_mode.status")"
+fi
+exit 1
+EOF
+chmod 755 "$takeover_release"
+make_release "$takeover_version" valid "$takeover_version" "" "$takeover_release"
+takeover_outputs="$TMP_ROOT/takeover-outputs"
+mkdir -p "$takeover_outputs"
+printf "CCCC agents may still be running without a daemon (session owner 0123), and CCCC did not keep them for an update; stop them with 'cccc daemon stop' from the CCCC installation that last ran the daemon, following what it reports\n" > "$takeover_outputs/refuse.out"
+printf '1\n' > "$takeover_outputs/refuse.status"
+printf "error: unexpected argument '--installer-check' found\n\nUsage: cccc update [OPTIONS]\n\nFor more information, try '--help'.\n" > "$takeover_outputs/old-0458.out"
+printf "error: unexpected argument '--installer-check' found\n\n  tip: a similar argument exists: '--self-check'\n\nUsage: cccc update [OPTIONS]\n\nFor more information, try '--help'.\n" > "$takeover_outputs/old-b0361d1f.out"
+printf "error: unrecognized subcommand 'update'\n\nUsage: cccc [OPTIONS] [COMMAND]\n\nFor more information, try '--help'.\n" > "$takeover_outputs/other.out"
+for takeover_status_file in old-0458 old-b0361d1f other; do
+  printf '2\n' > "$takeover_outputs/$takeover_status_file.status"
+done
+
+takeover_install() {
+  takeover_dir="$TMP_ROOT/takeover-$1"
+  mkdir -p "$takeover_dir/bin" "$takeover_dir/check"
+  cp "$takeover_outputs"/* "$takeover_dir/check/"
+  printf '%s\n' "$2" > "$takeover_dir/check/mode"
+  takeover_old_hash=
+  if [[ "${3:-installed}" == installed ]]; then
+    printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc 0.0.1-test\\n"; exit 0; fi\nexit 1\n' > "$takeover_dir/bin/cccc"
+    chmod 755 "$takeover_dir/bin/cccc"
+    printf 'standalone-v1\n' > "$takeover_dir/bin/.cccc-standalone"
+    takeover_old_hash=$(checksum "$takeover_dir/bin/cccc")
+  fi
+  HOME="$takeover_dir/home" \
+    CCCC_VERSION="$takeover_version" \
+    CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+    CCCC_INSTALL_DIR="$takeover_dir/bin" \
+    CCCC_NO_MODIFY_PATH=1 \
+    CCCC_TEST_TAKEOVER="$takeover_dir/check" \
+    sh "$ROOT_DIR/scripts/install.sh" > "$takeover_dir/out" 2> "$takeover_dir/err"
+}
+
+takeover_install allow allow
+[[ "$("$takeover_dir/bin/cccc" --version)" == "cccc $takeover_version" ]]
+[[ "$(cat "$takeover_dir/check/log")" == checked ]]
+
+for takeover_mode in refuse other old-0458 old-b0361d1f; do
+  if takeover_install "$takeover_mode" "$takeover_mode"; then
+    echo "installer replaced CCCC after a '$takeover_mode' takeover check" >&2
+    exit 1
+  fi
+  grep -Fq 'the update was not installed and the previous version is kept. Follow the message above' "$takeover_dir/err"
+  case "$takeover_mode" in
+    old-*)
+      grep -Fq "cannot check for CCCC agents left running without a daemon. Start the daemon with 'cccc daemon start' from the CCCC installation that last ran it" "$takeover_dir/err"
+      ! grep -Fq 'unexpected argument' "$takeover_dir/err"
+      ;;
+    *) grep -Fqx "$(sed -n 1p "$takeover_outputs/$takeover_mode.out")" "$takeover_dir/err" ;;
+  esac
+  [[ "$(checksum "$takeover_dir/bin/cccc")" == "$takeover_old_hash" ]]
+  [[ "$(cd "$takeover_dir/bin" && LC_ALL=C ls -A)" == $'.cccc-standalone\ncccc' ]]
+done
+
+# A first installation replaces nothing, so it does not ask.
+takeover_install fresh refuse fresh
+[[ "$("$takeover_dir/bin/cccc" --version)" == "cccc $takeover_version" ]]
+[[ ! -e "$takeover_dir/check/log" ]]
 
 mkdir -p "$TMP_ROOT/fake-bin"
 cat > "$TMP_ROOT/fake-bin/uname" <<'EOF'

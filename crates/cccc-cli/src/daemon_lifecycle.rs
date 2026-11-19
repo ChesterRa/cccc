@@ -240,6 +240,15 @@ pub(crate) enum StopIntent {
     KeepAgents,
 }
 
+impl StopIntent {
+    pub(crate) fn operation(self) -> &'static str {
+        match self {
+            Self::StopAgents => "shutdown",
+            Self::KeepAgents => "shutdown_preserving_agents",
+        }
+    }
+}
+
 /// The daemon's final account of a stop request, read after it released the lock.
 #[derive(Debug)]
 pub(crate) enum Receipt {
@@ -294,17 +303,13 @@ pub(crate) async fn stop_for_user(
         return stop_without_daemon(client, home).await;
     }
     let request_id = uuid::Uuid::new_v4().to_string();
-    let (op, args) = match intent {
-        StopIntent::StopAgents => ("shutdown", json!({"request_id": request_id})),
-        StopIntent::KeepAgents => (
-            "shutdown_preserving_agents",
-            match pid {
-                Some(pid) => json!({"request_id": request_id, "expected_pid": pid}),
-                None => json!({"request_id": request_id}),
-            },
-        ),
+    let args = match (intent, pid) {
+        (StopIntent::KeepAgents, Some(pid)) => {
+            json!({"request_id": request_id, "expected_pid": pid})
+        }
+        _ => json!({"request_id": request_id}),
     };
-    let response = call(client, op, args).await?;
+    let response = call(client, intent.operation(), args).await?;
     if !response.ok {
         if intent == StopIntent::KeepAgents {
             match response.error.as_ref().map(|error| error.code.as_str()) {

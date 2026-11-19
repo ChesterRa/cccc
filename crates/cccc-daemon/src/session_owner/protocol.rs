@@ -93,6 +93,8 @@ pub(super) enum PreparedLaunch {
 pub(super) enum Mutation {
     BrowserEnsure {
         spec: super::browser::BrowserLaunchSpec,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        programs: Option<super::browser::BrowserPrograms>,
     },
     BrowserPagesSet {
         resource_id: String,
