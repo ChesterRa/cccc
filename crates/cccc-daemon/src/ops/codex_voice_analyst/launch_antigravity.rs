@@ -39,6 +39,11 @@ impl AnalystSession {
         actor: Option<(&str, &str)>,
     ) -> io::Result<Self> {
         let options = antigravity::options(&command)?;
+        let private_values = env
+            .values()
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .collect();
         let install_home = home.clone();
         let install = tokio::task::spawn_blocking(move || {
             crate::antigravity_acp_setup::ensure(&install_home)
@@ -82,13 +87,14 @@ impl AnalystSession {
         let generation = uuid::Uuid::new_v4().simple().to_string();
         let (process, stdin, stdout) =
             process::spawn_piped_quiet(&install.command, &binding.root, &env)?;
-        let protocol = AcpClient::new(
+        let protocol = AcpClient::new_with_private_values(
             stdin,
             stdout,
             generation.clone(),
             "antigravity",
             antigravity::permission_policy(&options),
             acp::PromptCompletion::ResponseWithActivityReceipt,
+            acp::PrivateValues::DiagnosticsOnly(private_values),
         )?;
         let (id, resumed) = match antigravity::initialize(
             &protocol,

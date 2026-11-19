@@ -63,6 +63,37 @@ fn manual_runtime_has_explicit_batch_status() {
 }
 
 #[test]
+fn batch_count_includes_only_written_or_registered_configuration() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let args = SetupArgs {
+        runtime: None,
+        path: ".".into(),
+        runtime_mode: "default".into(),
+        login: false,
+    };
+    let config = json!({"mcpServers":{}});
+    let setup =
+        |runtime| setup_one(&home, &args, runtime, Path::new("/opt/cccc"), &config).expect("setup");
+    let results = [
+        // CCCC injects these servers into each managed session: nothing to
+        // configure, even when the runtime's CLI is not installed.
+        setup("claude"),
+        setup("pi"),
+        hermes_setup(),
+        json!({"runtime":"deepseek","status":"ready","managed":true,"mcp":"injected_per_session"}),
+        // Nothing configured: a manual runtime and a missing CLI.
+        setup("custom"),
+        json!({"runtime":"kimi","status":"unavailable","error":"kimi CLI not found"}),
+        // Configuration setup wrote or found registered.
+        json!({"runtime":"cline","mode":"auto","status":"added"}),
+        json!({"runtime":"cursor","mode":"auto","status":"ready","path":"/home/u/.cursor/mcp.json"}),
+        json!({"runtime":"grok","mode":"managed_session","status":"ready","managed":true,"mcp":"native_registry"}),
+    ];
+    assert_eq!(configured_count(&results), 3);
+}
+
+#[test]
 fn builds_noninteractive_cline_command_with_compiled_binary() {
     assert_eq!(
         add_command("cline", Path::new("/opt/cccc")).expect("command"),

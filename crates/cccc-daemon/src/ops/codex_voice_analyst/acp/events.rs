@@ -21,6 +21,7 @@ pub(super) struct ToolCall {
     pub(super) raw_input: Value,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_notification(
     method: &str,
     message: &Value,
@@ -29,6 +30,7 @@ pub(super) fn handle_notification(
     session_id: &str,
     active: &mut Option<ActiveTurn>,
     tool_calls: &mut HashMap<String, ToolCall>,
+    private_values: &[String],
 ) {
     if message
         .pointer("/params/_meta/isReplay")
@@ -136,7 +138,14 @@ pub(super) fn handle_notification(
                     }
                 }
             }
-            "turn_completed" => settle_from_update(message, events, generation, session_id, active),
+            "turn_completed" => settle_from_update(
+                message,
+                events,
+                generation,
+                session_id,
+                active,
+                private_values,
+            ),
             _ => {}
         }
         return;
@@ -147,7 +156,14 @@ pub(super) fn handle_notification(
     ) {
         let update = &message["params"]["update"];
         if update["sessionUpdate"] == "turn_completed" {
-            settle_from_update(message, events, generation, session_id, active);
+            settle_from_update(
+                message,
+                events,
+                generation,
+                session_id,
+                active,
+                private_values,
+            );
         }
     }
     // Grok emits `prompt_complete` as a fire-and-forget duplicate of the
@@ -264,6 +280,7 @@ fn settle_from_update(
     generation: &str,
     session_id: &str,
     active: &mut Option<ActiveTurn>,
+    private_values: &[String],
 ) {
     // Grok send_now durably ends the old turn before echoing the new input.
     // Its RPC response may arrive later, including during the next turn. A
@@ -298,7 +315,7 @@ fn settle_from_update(
         .get("stopReason")
         .or_else(|| update.get("stop_reason"))
         .and_then(Value::as_str);
-    let (status, error) = status_from_stop_reason(reason);
+    let (status, error) = status_from_stop_reason(reason, private_values);
     settle_turn(
         events,
         generation,
@@ -310,20 +327,27 @@ fn settle_from_update(
     );
 }
 
-pub(super) fn status_from_stop_reason(reason: Option<&str>) -> (&'static str, Option<String>) {
-    match reason
-        .unwrap_or_default()
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
+pub(super) fn status_from_stop_reason(
+    reason: Option<&str>,
+    private_values: &[String],
+) -> (&'static str, Option<String>) {
+    let reason = reason.unwrap_or_default();
+    match reason.trim().to_ascii_lowercase().as_str() {
         "end_turn" | "completed" | "success" => ("completed", None),
         "cancelled" | "canceled" | "interrupted" => ("cancelled", None),
         "" => (
             "failed",
             Some("ACP turn ended without a stop reason".into()),
         ),
-        other => ("failed", Some(format!("ACP turn stopped: {other}"))),
+        // Redact the provider's own text: a private value no longer matches
+        // a trimmed or lowercased copy.
+        _ => (
+            "failed",
+            Some(super::diagnostic::sanitize(
+                &format!("ACP turn stopped: {reason}"),
+                private_values,
+            )),
+        ),
     }
 }
 

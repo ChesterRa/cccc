@@ -510,9 +510,13 @@ cccc setup --runtime deepseek      # Install or repair the pinned DeepSeek Harne
 cccc setup --runtime antigravity   # Auto-configure for Antigravity CLI
 ```
 
-Without `--runtime`, setup performs one batch pass: installed CLI runtimes are configured,
-manual runtimes (`custom`, `hermes`) return their configuration contract, and missing runtimes are
-reported without aborting the remaining setup work.
+Without `--runtime`, setup makes one pass over every supported runtime and reports each result
+without stopping at a failure. A runtime whose `cccc` MCP entry lives in its own configuration gets
+that entry written or confirmed when its CLI is installed; a missing CLI or a failed setup is
+reported as `unavailable`. Claude Code, OpenCode, Kilo, Pi, Hermes and DeepSeek report that CCCC
+injects their MCP into each managed session; DeepSeek reports `setup_required` until it is
+installed. `custom` returns the configuration to add by hand. The batch `configured` count includes
+only the runtimes whose entry setup wrote or confirmed.
 
 ### `cccc update`
 

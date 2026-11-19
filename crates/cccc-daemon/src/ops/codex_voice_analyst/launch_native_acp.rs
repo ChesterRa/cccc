@@ -126,7 +126,7 @@ impl AnalystSession {
                 acp::PermissionPolicy::Interactive
             },
             acp::PromptCompletion::ResponseWithActivityReceipt,
-            private_values,
+            acp::PrivateValues::DiagnosticsAndAdmission(private_values),
         )?;
         let initialized = native_acp::initialize(
             &protocol,

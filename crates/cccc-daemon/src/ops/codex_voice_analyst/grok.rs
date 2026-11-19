@@ -1,6 +1,6 @@
 use super::{
     AcpClient, SessionPurpose,
-    acp::{PermissionPolicy, PromptCompletion},
+    acp::{PermissionPolicy, PrivateValues, PromptCompletion},
     launch_command, process,
 };
 use cccc_core::HomeLayout;
@@ -113,6 +113,7 @@ pub(super) async fn launch(
     prepared: PreparedGrok,
     cwd: &Path,
     environment: &BTreeMap<String, String>,
+    private_values: &[String],
     generation: &str,
     purpose: SessionPurpose,
     resume_session_id: Option<&str>,
@@ -123,15 +124,23 @@ pub(super) async fn launch(
         environment,
         "grok-leader",
     )?);
-    let (protocol, acp_process) =
-        match connect_acp(&prepared.acp_command, cwd, environment, generation, &leader).await {
-            Ok(value) => value,
-            Err(error) => {
-                let _ = leader.stop();
-                let _ = std::fs::remove_file(&prepared.socket_path);
-                return Err(error);
-            }
-        };
+    let (protocol, acp_process) = match connect_acp(
+        &prepared.acp_command,
+        cwd,
+        environment,
+        private_values,
+        generation,
+        &leader,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = leader.stop();
+            let _ = std::fs::remove_file(&prepared.socket_path);
+            return Err(error);
+        }
+    };
     let result = async {
         let (session_id, resumed) =
             session::initialize(&protocol, cwd, purpose, &prepared.rules, resume_session_id)
@@ -184,6 +193,7 @@ async fn connect_acp(
     command: &[String],
     cwd: &Path,
     environment: &BTreeMap<String, String>,
+    private_values: &[String],
     generation: &str,
     leader: &Arc<process::ChildOwner>,
 ) -> io::Result<(AcpClient, Arc<process::ChildOwner>)> {
@@ -203,13 +213,14 @@ async fn connect_acp(
                 }
             };
         let owner = Arc::new(owner);
-        let protocol = AcpClient::new(
+        let protocol = AcpClient::new_with_private_values(
             stdin,
             stdout,
             generation.to_owned(),
             "grok",
             PermissionPolicy::Reject,
             PromptCompletion::BoundedPostResponseDrain,
+            PrivateValues::DiagnosticsOnly(private_values.to_vec()),
         )?;
         let initialized = protocol
             .request(

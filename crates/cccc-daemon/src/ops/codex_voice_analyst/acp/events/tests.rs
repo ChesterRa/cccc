@@ -29,6 +29,7 @@ fn grok_duplicate_terminals_cannot_settle_a_later_internal_turn() {
         "session-1",
         &mut active,
         &mut tool_calls,
+        &[],
     );
     handle_notification(
         "_x.ai/session/prompt_complete",
@@ -44,6 +45,7 @@ fn grok_duplicate_terminals_cannot_settle_a_later_internal_turn() {
         "session-1",
         &mut active,
         &mut tool_calls,
+        &[],
     );
 
     assert_eq!(
@@ -82,6 +84,7 @@ fn durable_terminal_settles_an_external_tui_turn() {
         "session-1",
         &mut active,
         &mut tool_calls,
+        &[],
     );
 
     assert!(active.is_none());
@@ -93,6 +96,62 @@ fn durable_terminal_settles_an_external_tui_turn() {
     assert_eq!(completed.message["method"], "turn/completed");
     assert_eq!(completed.message["params"]["turn"]["id"], "tui-turn-a");
     assert_eq!(completed.message["params"]["turn"]["status"], "cancelled");
+}
+
+/// A stop reason is matched without regard to case or surrounding space, but
+/// redacted as the provider sent it: a lowercased or trimmed copy would no
+/// longer match a private value.
+#[test]
+fn an_unrecognized_stop_reason_is_redacted_as_the_provider_sent_it() {
+    assert_eq!(
+        status_from_stop_reason(Some(" End_Turn "), &[]),
+        ("completed", None)
+    );
+    assert_eq!(
+        status_from_stop_reason(Some("Canceled"), &[]),
+        ("cancelled", None)
+    );
+    assert_eq!(
+        status_from_stop_reason(Some("max_tokens"), &[]),
+        ("failed", Some("ACP turn stopped: max_tokens".into()))
+    );
+
+    let private = "Stop-Reason-Secret\n".to_owned();
+    let (events, mut receiver) = broadcast::channel(8);
+    let mut active = Some(ActiveTurn {
+        turn_id: "tui-turn-a".into(),
+        external: true,
+        admitted: true,
+        provider_prompt_id: Some("provider-turn-a".into()),
+        provider_start_sequence: None,
+    });
+    handle_notification(
+        "_x.ai/session_notification",
+        &json!({
+            "params": {
+                "sessionId": "session-1",
+                "update": {
+                    "sessionUpdate": "turn_completed",
+                    "prompt_id": "provider-turn-a",
+                    "stopReason": private
+                }
+            }
+        }),
+        &events,
+        "generation-1",
+        "session-1",
+        &mut active,
+        &mut HashMap::new(),
+        std::slice::from_ref(&private),
+    );
+    let completed = std::iter::from_fn(|| receiver.try_recv().ok())
+        .find(|event| event.message["method"] == "turn/completed")
+        .expect("turn terminal");
+    assert_eq!(completed.message["params"]["turn"]["status"], "failed");
+    assert_eq!(
+        completed.message["params"]["turn"]["error"],
+        "ACP turn stopped: [redacted]"
+    );
 }
 
 #[test]
@@ -121,6 +180,7 @@ fn grok_persisted_cancel_releases_owned_turn_before_redirected_input() {
             "session-1",
             &mut active,
             &mut calls,
+            &[],
         );
     }
     assert!(
@@ -148,6 +208,7 @@ fn empty_grok_turn_uses_persisted_start_boundary_and_ignores_older_activity() {
             "session-1",
             &mut active,
             &mut calls,
+            &[],
         )
     };
     send(
@@ -200,6 +261,7 @@ fn tool_activity_observation_is_correlated_and_does_not_include_arguments() {
         "session-1",
         &mut active,
         &mut tools,
+        &[],
     );
     let observed = receiver.try_recv().expect("tool activity");
     assert_eq!(observed.generation, "generation-1");
@@ -220,6 +282,7 @@ fn tool_activity_observation_is_correlated_and_does_not_include_arguments() {
         "session-1",
         &mut active,
         &mut tools,
+        &[],
     );
     let mut wrong = update;
     wrong["params"]["_meta"]["promptId"] = json!("old-prompt");
@@ -231,6 +294,7 @@ fn tool_activity_observation_is_correlated_and_does_not_include_arguments() {
         "session-1",
         &mut active,
         &mut tools,
+        &[],
     );
     assert!(receiver.try_recv().is_err());
 }
@@ -256,6 +320,7 @@ fn tool_activity_names_each_call_from_its_announcement_to_its_finish() {
             "session-1",
             &mut active,
             &mut tools,
+            &[],
         );
         let event = receiver.try_recv().expect("tool activity");
         assert_eq!(event.message["method"], "cccc/toolActivity");

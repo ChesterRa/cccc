@@ -103,15 +103,7 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
                 })),
             }
         }
-        let configured = results
-            .iter()
-            .filter(|value| {
-                matches!(
-                    value["status"].as_str(),
-                    Some("added" | "managed_by_cccc_actor" | "ready")
-                )
-            })
-            .count();
+        let configured = configured_count(&results);
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
@@ -161,6 +153,7 @@ fn setup_deepseek(home: &HomeLayout, install: bool) -> serde_json::Value {
             "runtime":"deepseek",
             "status":"ready",
             "managed":true,
+            "mcp":"injected_per_session",
             "home":home.root(),
             "dsh_home":outcome.dsh_home,
             "profile":outcome.profile,
@@ -196,6 +189,19 @@ fn select_public_executable(current: PathBuf, launcher: Option<PathBuf>) -> Path
                 && path.file_stem().is_some_and(|name| name == "cccc")
         })
         .unwrap_or(current)
+}
+
+/// Counts the runtimes whose `cccc` MCP entry setup wrote or confirmed. A
+/// runtime whose CCCC server is injected into each managed session needs no
+/// entry, so its "ready" is not counted.
+fn configured_count(results: &[serde_json::Value]) -> usize {
+    results
+        .iter()
+        .filter(|value| {
+            matches!(value["status"].as_str(), Some("added" | "ready"))
+                && value["mcp"] != "injected_per_session"
+        })
+        .count()
 }
 
 /// The CLI batch setup looks for before preparing a runtime whose setup would

@@ -11,19 +11,19 @@ Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can al
 | Runtime | Runtime id | Entrypoint / surface | MCP setup |
 |---------|------------|----------------------|-----------|
 | Claude Code | `claude` | CCCC-managed Agent View session + native TUI | Injected into each managed session |
-| Cline CLI | `cline` | `cline` | Auto |
+| Cline CLI | `cline` | `cline` | Native registration |
 | Codex CLI | `codex` | CCCC-managed app-server + native TUI | Agent-scoped MCP injected into the managed session |
 | DeepSeek Harness | `deepseek` | CCCC-managed `dsh --profile acp` (structured ACP, no native terminal) | Injected per ACP session; install once with `cccc setup --runtime deepseek` |
-| GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Auto for TUI; injected per ACP session |
+| GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Native registration for TUI; injected per ACP session |
 | Cursor CLI | `cursor` | Native `cursor-agent` TUI or official ACP | Native registration for TUI; injected per ACP session |
-| Devin CLI | `devin` | Native `devin` TUI or official ACP | Auto for TUI; injected per ACP session |
+| Devin CLI | `devin` | Native `devin` TUI or official ACP | Native registration for TUI; injected per ACP session |
 | Kiro CLI | `kiro` | Native TUI or official V3 ACP | Native registration for TUI; injected per ACP session |
 | Kilo Code CLI | `kilo` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
 | Antigravity CLI | `antigravity` | Native `agy` TUI or official ACP | Native registration for TUI; injected into each ACP session |
 | Droid CLI | `droid` | Native TUI or official ACP | Native registration for TUI; injected per ACP session |
-| Amp | `amp` | `amp` | Auto |
+| Amp | `amp` | `amp` | Native registration |
 | Auggie (Augment) | `auggie` | Native TUI or official ACP | Native registration for TUI; injected per ACP session |
-| Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Automatic native MCP registration; identity inherited per session |
+| Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Native registration; identity inherited per session |
 | Hermes Agent | `hermes` | CCCC-managed ACP + native TUI on the same session, or official ACP only | Injected per ACP session |
 | Kimi Code | `kimi` | Native TUI or official ACP | Native registration for TUI; injected per ACP session |
 | OpenCode | `opencode` | CCCC-managed V2 HTTP/SSE + authenticated native TUI | Injected into each managed session |
@@ -33,6 +33,8 @@ Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can al
 | Grok Bot Web Model | `grok_web_model` | Dedicated Grok Bot URL | Native Webhook Routine + task-scoped remote MCP connector |
 
 `custom` is also supported as a manual fallback for any command-line agent that can be launched by CCCC.
+
+Native registration means that before each start CCCC checks the runtime's own MCP configuration and adds or repairs its `cccc` entry there; see [Verification and Troubleshooting](#verification-and-troubleshooting).
 
 Codex sessions use the CLI's documented [app-server interface](https://learn.chatgpt.com/docs/app-server). ChatGPT Web combines browser message delivery with remote MCP tool access; Dots uses [MCP Events](https://developers.openai.com/plugins/build/mcp-events) instead of browser delivery. These are distinct integration paths with their own setup requirements and provider dependencies.
 

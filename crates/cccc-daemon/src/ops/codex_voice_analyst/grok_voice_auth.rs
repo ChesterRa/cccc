@@ -1,6 +1,6 @@
 //! A native authentication consumer, not an Analyst session. No session/new or prompt.
 use super::{
-    acp::{AcpClient, PermissionPolicy, PromptCompletion},
+    acp::{AcpClient, PermissionPolicy, PrivateValues, PromptCompletion},
     process::ChildOwner,
 };
 use crate::ops::codex_voice_controller::RealtimeCallError;
@@ -131,7 +131,7 @@ pub(crate) async fn grok_voice_bearer(executable: &Path, auth_path: &Path) -> Re
         "grok-voice-auth",
         PermissionPolicy::Reject,
         PromptCompletion::Response,
-        private_values,
+        PrivateValues::DiagnosticsAndAdmission(private_values),
     )
     .context(RealtimeCallError::GrokAuthentication)?;
     let result = async {

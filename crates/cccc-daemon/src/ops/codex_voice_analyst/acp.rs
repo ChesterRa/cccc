@@ -131,6 +131,21 @@ pub(super) enum PermissionPolicy {
     Interactive,
 }
 
+pub(super) enum PrivateValues {
+    /// Redact configured values from diagnostics. Prompt admission still uses
+    /// the provider message with credential-shape redaction.
+    DiagnosticsOnly(Vec<String>),
+    DiagnosticsAndAdmission(Vec<String>),
+}
+
+impl PrivateValues {
+    fn diagnostics(&self) -> &[String] {
+        match self {
+            Self::DiagnosticsOnly(values) | Self::DiagnosticsAndAdmission(values) => values,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PromptCompletion {
     Response,
@@ -257,7 +272,7 @@ impl AcpClient {
             runtime,
             permission_policy,
             prompt_completion,
-            Vec::new(),
+            PrivateValues::DiagnosticsAndAdmission(Vec::new()),
         )
     }
 
@@ -269,7 +284,7 @@ impl AcpClient {
         runtime: &'static str,
         permission_policy: PermissionPolicy,
         prompt_completion: PromptCompletion,
-        private_values: Vec<String>,
+        private_values: PrivateValues,
     ) -> io::Result<Self> {
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
         let (frames, frame_receiver) = mpsc::channel(FRAME_CAPACITY);

@@ -508,6 +508,74 @@ mod structured_admission {
         assert_eq!(state["generation"], generation.as_str());
     }
 
+    /// A requested cancel alone does not confirm that a turn was cancelled. An
+    /// error or a missing stop reason after it fails the turn with that reason;
+    /// an end_turn answer stays cancelled, because some agents answer a cancel
+    /// that way.
+    #[test]
+    fn a_cancel_records_an_error_or_missing_stop_reason_as_a_failure() {
+        for (prompt, kind, reason) in [
+            (
+                "KEEP_OPEN UNKNOWN_AFTER_CANCEL",
+                "headless.turn.failed",
+                Some("unknown_execution"),
+            ),
+            (
+                "KEEP_OPEN EMPTY_AFTER_CANCEL",
+                "headless.turn.failed",
+                Some("without a stop reason"),
+            ),
+            (
+                "KEEP_OPEN END_AFTER_CANCEL",
+                "headless.turn.cancelled",
+                None,
+            ),
+        ] {
+            let fixture = Fixture::new();
+            let group = fixture.group.group_id.clone();
+            let generation =
+                local_headless::structured_state(&group, "worker").expect("running")["generation"]
+                    .as_str()
+                    .expect("generation")
+                    .to_owned();
+            let event = fixture.send(prompt);
+            fixture.wait(|| fixture.outcome(&event).as_deref() == Some("accepted"));
+            assert!(
+                local_headless::cancel_turn(&group, "worker", &generation).expect("cancel"),
+                "{prompt}: the open turn is cancellable"
+            );
+            fixture.wait(|| fixture.journal().iter().any(|item| item["type"] == kind));
+            let journal = fixture.journal();
+            let settled: Vec<_> = journal
+                .iter()
+                .filter_map(|item| item["type"].as_str())
+                .filter(|kind| {
+                    matches!(
+                        *kind,
+                        "headless.turn.failed"
+                            | "headless.turn.cancelled"
+                            | "headless.turn.completed"
+                    )
+                })
+                .collect();
+            assert_eq!(settled, [kind], "{prompt}: settled once, as {kind}");
+            if let Some(reason) = reason {
+                let failed = journal
+                    .iter()
+                    .find(|item| item["type"] == kind)
+                    .expect("failed turn");
+                assert!(
+                    failed["data"]["error"]
+                        .as_str()
+                        .is_some_and(|error| error.contains(reason)),
+                    "{prompt}: the provider's reason is kept: {failed}"
+                );
+            }
+            let next = fixture.send("AFTER_CANCEL");
+            fixture.wait(|| fixture.outcome(&next).as_deref() == Some("accepted"));
+        }
+    }
+
     /// Hermes finishes a turn in its shared gateway after the client closes,
     /// so stop must cancel it first and record what it observed. Only the
     /// prompt's own stopReason proves it ended; an error leaves it unknown.

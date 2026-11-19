@@ -13,6 +13,11 @@ impl AnalystSession {
         actor: Option<(&str, &str)>,
     ) -> io::Result<Self> {
         let generation = uuid::Uuid::new_v4().simple().to_string();
+        let private_values = env
+            .values()
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .collect::<Vec<_>>();
         let cccc = super::super::codex_mcp::configure_actor_cli(&mut env).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -56,6 +61,7 @@ impl AnalystSession {
             prepared,
             &binding.root,
             &env,
+            &private_values,
             &generation,
             purpose,
             resume_session_id.as_deref(),

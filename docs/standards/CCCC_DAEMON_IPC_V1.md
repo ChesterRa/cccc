@@ -7485,7 +7485,14 @@ matching thread and turn. A structured headless stream MUST record one terminal
 outcome: `headless.turn.completed`, `headless.turn.failed`, or
 `headless.turn.cancelled`. Native terminal sessions retain their existing
 successful-turn projection; published failures or cancellations MUST NOT create
-duplicate turn terminals.
+duplicate turn terminals. On the generic ACP path, when CCCC has asked to
+cancel an admitted prompt, the prompt's response settles the turn as cancelled
+if it carries a cancelled or successful stop reason (such as `end_turn`),
+because an agent may answer a cancel that way or finish while the cancel is in
+flight. A JSON-RPC error, a missing stop reason or any other stop reason (such
+as `max_tokens`) in that response settles it as failed with a bounded,
+private-value-redacted reason; the cancel request alone does not prove that the
+turn was cancelled.
 For Pi RPC sessions, identified `tool_execution_start` and
 `tool_execution_end` events project to `headless.activity.started` and
 `headless.activity.completed` under one turn-scoped `activity_id`. Failed

@@ -175,6 +175,13 @@ for line in sys.stdin:
             emit(id=active, error={"code": -32603,
                 "message": "unknown_execution: fixture turn outcome is unknown"})
             active = permission = None
+        elif "END_AFTER_CANCEL" in active_text:
+            # The turn finished before the cancel reached it.
+            finish()
+        elif "EMPTY_AFTER_CANCEL" in active_text and active is not None:
+            # A non-conforming answer without any stop reason.
+            emit(id=active, result={})
+            active = permission = None
         elif "IGNORE_CANCEL" not in active_text:
             finish("cancelled")
         continue

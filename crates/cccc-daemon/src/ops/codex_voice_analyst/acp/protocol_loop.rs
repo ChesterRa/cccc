@@ -7,7 +7,7 @@ use super::interactions;
 use super::pending::PendingKind;
 use super::permissions::{pending_request, permission_response};
 use super::{
-    AcpCommand, AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD, PermissionPolicy,
+    AcpCommand, AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD, PermissionPolicy, PrivateValues,
     PromptCompletion, TurnEnd,
 };
 use crate::ops::codex_voice_analyst::{MANAGED_AGENT_DELEGATION_ATTACHED_METHOD, native_input};
@@ -58,10 +58,11 @@ pub(super) async fn run(
     prompt_completion: PromptCompletion,
     permissions: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
     prompt_receipt: SharedPromptReceipt,
-    private_values: Vec<String>,
+    private_values: PrivateValues,
     open_prompt: Arc<AtomicBool>,
 ) {
     let _open_prompt_cleared = OpenPromptGuard(Arc::clone(&open_prompt));
+    let diagnostic_values = private_values.diagnostics();
     let mut next_id = 1_u64;
     let mut pending: HashMap<u64, PendingKind> = HashMap::new();
     let mut session_id = String::new();
@@ -351,7 +352,7 @@ pub(super) async fn run(
                         continue;
                     }
                     let message = json!({"method":"session/update", "params":{"sessionId":session_id, "update":update}});
-                    handle_notification("session/update", &message, &events, &generation, &session_id, &mut active, &mut tool_calls);
+                    handle_notification("session/update", &message, &events, &generation, &session_id, &mut active, &mut tool_calls, diagnostic_values);
                 }
                 Some(AcpCommand::ObservedUserText { session_id: observed, text, consumed, response }) => {
                     let result = if observed != session_id || session_id.is_empty() {
@@ -387,6 +388,7 @@ pub(super) async fn run(
                                 &session_id,
                                 &mut active,
                                 &mut tool_calls,
+                                diagnostic_values,
                             );
                         }
                         if !controlled_echo && consumed {
@@ -532,6 +534,7 @@ pub(super) async fn run(
                                 &session_id,
                                 &mut active,
                                 &mut tool_calls,
+                                diagnostic_values,
                             );
                         }
                         if !controlled_echo {
@@ -558,6 +561,7 @@ pub(super) async fn run(
                             &session_id,
                             &mut active,
                             &mut tool_calls,
+                            diagnostic_values,
                         );
                         if active.is_none() {
                             deferred_settlement = None;
@@ -679,20 +683,28 @@ pub(super) async fn run(
                                         &session_id,
                                         &mut active,
                                         &mut tool_calls,
+                                        diagnostic_values,
                                     );
                                     let _ = response.send(Ok(turn_id.clone()));
                                 }
                                 let cancellation_requested =
                                     cancelling_turn_id.as_deref() == Some(turn_id.as_str());
-                                let (status, error) = if cancellation_requested {
-                                    ("cancelled", None)
-                                } else {
-                                    match outcome {
-                                        Ok(result) => status_from_stop_reason(
-                                            result.get("stopReason").and_then(Value::as_str),
-                                        ),
-                                        Err(error) => ("failed", Some(error.to_string())),
-                                    }
+                                // Some agents answer a cancel with end_turn, and a turn
+                                // can end while the cancel is in flight, so a requested
+                                // cancel keeps a completed answer as cancelled. An error,
+                                // another stop reason or none at all is what the provider
+                                // reported, not a confirmed cancel.
+                                let (status, error) = match outcome {
+                                    Ok(result) => match status_from_stop_reason(
+                                        result.get("stopReason").and_then(Value::as_str),
+                                        diagnostic_values,
+                                    ) {
+                                        ("completed", _) if cancellation_requested => {
+                                            ("cancelled", None)
+                                        }
+                                        settled => settled,
+                                    },
+                                    Err(error) => ("failed", Some(error.to_string())),
                                 };
                                 if prompt_completion != PromptCompletion::BoundedPostResponseDrain {
                                     settle_turn(
@@ -811,6 +823,7 @@ fn flush_buffered_notifications(
     session_id: &str,
     active: &mut Option<ActiveTurn>,
     tool_calls: &mut HashMap<String, ToolCall>,
+    private_values: &[String],
 ) {
     let buffered = pending.values_mut().find_map(|kind| match kind {
         PendingKind::Prompt {
@@ -825,7 +838,15 @@ fn flush_buffered_notifications(
         _ => None,
     });
     if let Some(buffered) = buffered {
-        flush_notifications(buffered, events, generation, session_id, active, tool_calls);
+        flush_notifications(
+            buffered,
+            events,
+            generation,
+            session_id,
+            active,
+            tool_calls,
+            private_values,
+        );
     }
 }
 
@@ -836,13 +857,21 @@ fn flush_notifications(
     session_id: &str,
     active: &mut Option<ActiveTurn>,
     tool_calls: &mut HashMap<String, ToolCall>,
+    private_values: &[String],
 ) {
     for message in notifications {
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             continue;
         };
         handle_notification(
-            method, &message, events, generation, session_id, active, tool_calls,
+            method,
+            &message,
+            events,
+            generation,
+            session_id,
+            active,
+            tool_calls,
+            private_values,
         );
     }
 }
@@ -1099,8 +1128,7 @@ fn clear_unadmitted_turn(active: &mut Option<ActiveTurn>, turn_id: &str) {
     }
 }
 
-fn prompt_admission_error(error: io::Error) -> io::Error {
-    let message = error.to_string();
+fn prompt_admission_kind(message: &str) -> io::ErrorKind {
     let normalized = message.to_ascii_lowercase();
     let provider_busy = [
         "busy",
@@ -1112,28 +1140,34 @@ fn prompt_admission_error(error: io::Error) -> io::Error {
     ]
     .iter()
     .any(|marker| normalized.contains(marker));
-    io::Error::new(
-        if provider_busy {
-            io::ErrorKind::WouldBlock
-        } else {
-            error.kind()
-        },
-        message,
-    )
+    if provider_busy {
+        io::ErrorKind::WouldBlock
+    } else {
+        io::ErrorKind::Other
+    }
 }
 
-fn rpc_error(runtime: &str, method: &str, error: &Value, private_values: &[String]) -> io::Error {
-    let message = super::diagnostic::sanitize(
-        error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("Provider returned an error"),
-        private_values,
-    );
-    // Only the provider's original message establishes an explicit busy rejection.
-    // An explanatory details field cannot turn a failed prompt into deferred work.
+fn rpc_error(
+    runtime: &str,
+    method: &str,
+    error: &Value,
+    private_values: &PrivateValues,
+) -> io::Error {
+    let reported_message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Provider returned an error");
+    let diagnostic_values = private_values.diagnostics();
+    let message = super::diagnostic::sanitize(reported_message, diagnostic_values);
+    // Only error.message supplies evidence of a busy rejection. Use the
+    // admission policy selected by the adapter, regardless of the diagnostic.
     let kind = if method == "session/prompt" {
-        prompt_admission_error(io::Error::other(message.clone())).kind()
+        match private_values {
+            PrivateValues::DiagnosticsOnly(_) => {
+                prompt_admission_kind(&super::diagnostic::sanitize(reported_message, &[]))
+            }
+            PrivateValues::DiagnosticsAndAdmission(_) => prompt_admission_kind(&message),
+        }
     } else {
         io::ErrorKind::Other
     };
@@ -1144,7 +1178,7 @@ fn rpc_error(runtime: &str, method: &str, error: &Value, private_values: &[Strin
     let details = (runtime == "hermes")
         .then(|| error.pointer("/data/details").and_then(Value::as_str))
         .flatten()
-        .map(|value| super::diagnostic::sanitize(value, private_values))
+        .map(|value| super::diagnostic::sanitize(value, diagnostic_values))
         .filter(|value| !value.is_empty() && value != &message);
     let diagnostic = if let Some(details) = details {
         format!("{prefix}: {message}; {details}")
@@ -1163,8 +1197,8 @@ fn rpc_error(runtime: &str, method: &str, error: &Value, private_values: &[Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PENDING_NOTIFICATION_BYTES, admit_matching_native_input, admit_matching_prompt,
-        buffer_unadmitted_notification, prompt_admission_error, rpc_error,
+        MAX_PENDING_NOTIFICATION_BYTES, PrivateValues, admit_matching_native_input,
+        admit_matching_prompt, buffer_unadmitted_notification, rpc_error,
     };
     use crate::ops::codex_voice_analyst::acp::events::ActiveTurn;
     use crate::ops::codex_voice_analyst::acp::pending::PendingKind;
@@ -1175,15 +1209,61 @@ mod tests {
 
     #[test]
     fn provider_busy_before_admission_is_retryable() {
-        let error = prompt_admission_error(io::Error::other(
-            r#"ACP request failed: {"code":-32603,"message":"session is busy"}"#,
-        ));
+        let private_values = PrivateValues::DiagnosticsAndAdmission(Vec::new());
+        let error = rpc_error(
+            "hermes",
+            "session/prompt",
+            &json!({"code":-32603,"message":"session is busy"}),
+            &private_values,
+        );
         assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
 
-        let error = prompt_admission_error(io::Error::other(
-            r#"ACP request failed: {"code":-32603,"message":"provider failed"}"#,
-        ));
+        let error = rpc_error(
+            "hermes",
+            "session/prompt",
+            &json!({"code":-32603,"message":"provider failed"}),
+            &private_values,
+        );
         assert_eq!(error.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn diagnostic_only_private_values_preserve_prompt_admission() {
+        let message = json!({"code":-32603,"message":"session is busy"});
+        for (private, diagnostic) in [
+            ("y", "session is bus[redacted]"),
+            ("busy", "session is [redacted]"),
+        ] {
+            let error = rpc_error(
+                "antigravity",
+                "session/prompt",
+                &message,
+                &PrivateValues::DiagnosticsOnly(vec![private.into()]),
+            );
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            assert!(error.to_string().ends_with(diagnostic));
+        }
+
+        let error = rpc_error(
+            "hermes",
+            "session/prompt",
+            &message,
+            &PrivateValues::DiagnosticsAndAdmission(vec!["y".into()]),
+        );
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert!(error.to_string().ends_with("session is bus[redacted]"));
+    }
+
+    #[test]
+    fn diagnostic_only_private_values_still_filter_credential_shapes_for_admission() {
+        let error = rpc_error(
+            "grok",
+            "session/prompt",
+            &json!({"code":-32603,"message":"Internal error: token=private-busy-value"}),
+            &PrivateValues::DiagnosticsOnly(vec!["y".into()]),
+        );
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert!(error.to_string().ends_with("Internal error: [redacted]"));
     }
 
     #[test]
@@ -1192,18 +1272,11 @@ mod tests {
             "hermes",
             "session/prompt",
             &json!({"code":-32603,"message":"Internal error: private-busy-value","data":{"details":"Refresh request denied because its service is busy"}}),
-            &["private-busy-value".into()],
+            &PrivateValues::DiagnosticsAndAdmission(vec!["private-busy-value".into()]),
         );
         assert_eq!(error.kind(), io::ErrorKind::Other);
         assert!(error.to_string().contains("service is busy"));
         assert!(!error.to_string().contains("private-busy-value"));
-        let busy = rpc_error(
-            "hermes",
-            "session/prompt",
-            &json!({"code":-32603,"message":"session is busy"}),
-            &[],
-        );
-        assert_eq!(busy.kind(), io::ErrorKind::WouldBlock);
     }
 
     #[test]
@@ -1526,6 +1599,7 @@ mod tests {
             "session-1",
             &mut active,
             &mut HashMap::new(),
+            &[],
         );
         let result = receiver.try_recv().expect("the following result must flow");
         assert_eq!(result.message["params"]["turnId"], turn_id);

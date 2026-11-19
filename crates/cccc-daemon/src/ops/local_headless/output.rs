@@ -300,10 +300,11 @@ fn complete_turn(session: &Session, message: &Value) {
     // errored assistant message), and reporting "idle" for a rejected turn hid
     // a broken lane behind a healthy one. Classify before settling.
     //
-    // Cancellation is deliberately NOT a failure. It is usually an operator
-    // interrupt, a cccc cancel_turn, or the owner's Esc, and marking a
-    // deliberate stop as an error would train every reader to ignore the
-    // error state. It stays visible in history without claiming breakage.
+    // A confirmed cancellation is deliberately NOT a failure. It is usually
+    // an operator interrupt, a cccc cancel_turn, or the owner's Esc, and
+    // marking a deliberate stop as an error would train every reader to
+    // ignore the error state. It stays visible in history without claiming
+    // breakage.
     let mut data = Map::from_iter([
         ("turn_id".into(), json!(turn_id)),
         (
