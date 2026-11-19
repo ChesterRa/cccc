@@ -6,92 +6,12 @@ permissions:
   contents: read
   actions: read
 jobs:
-  package:
-    name: Package the ${{ matrix.role }} build
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - role: previous
-            commit: 4bdab600f31f4d3be5f7b84790719138105e503c
-            source: 05669bd542e265a9adf1e706c1776d6fcafa58348599ecf01df61065a319131c
-          - role: current
-            commit: 6398401fe70aa16f8d085b99a0386d58749bf046
-            source: e26d918c7edcec5119f497a59480feecdf9af948c7dd1139869d5e6c91eeb1dc
-    runs-on: macos-15
-    timeout-minutes: 65
-    env:
-      MACOSX_DEPLOYMENT_TARGET: "11.0"
-      CARGO_PROFILE_TEST_DEBUG: 0
-      CARGO_INCREMENTAL: 0
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ matrix.commit }}
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24.19.0"
-          package-manager-cache: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.14"
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - name: Build and verify the native archive
-        shell: bash
-        env:
-          PRODUCT_COMMIT: ${{ matrix.commit }}
-          PRODUCT_SOURCE: ${{ matrix.source }}
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = arm64
-          test "$(git rev-parse HEAD)" = "$PRODUCT_COMMIT"
-          test -z "$(git status --porcelain)"
-          out="$RUNNER_TEMP/package"
-          mkdir "$out"
-          df -k . > "$out/disk-before.txt"
-          started=$(date +%s)
-          bash scripts/build_package.sh
-          echo "$(( $(date +%s) - started ))" > "$out/build-seconds.txt"
-          df -k . > "$out/disk-after.txt"
-          du -sk target/release > "$out/release-size-kib.txt"
-          archive=(dist/*-aarch64-apple-darwin.tar.gz)
-          test "${#archive[@]}" -eq 1
-          test -f "${archive[0]}"
-          unpack=$(mktemp -d)
-          tar -xzf "${archive[0]}" -C "$unpack"
-          bin=("$unpack"/*/cccc)
-          test "${#bin[@]}" -eq 1
-          cmp "${bin[0]}" target/release/cccc
-          python3 scripts/verify_standalone_binary.py --platform macos "${bin[0]}"
-          "${bin[0]}" --version | tee "$out/version.txt"
-          "${bin[0]}" update --self-check > "$out/self-check.json"
-          python3 - "$out/self-check.json" <<'PYTHON'
-          import json, os, sys
-          with open(sys.argv[1]) as stream:
-              check = json.load(stream)
-          assert check["build"]["source_id"] == os.environ["PRODUCT_SOURCE"]
-          assert check["capabilities"]["preserve_agents"] is True
-          assert check["capabilities"]["local_restart"] is True
-          PYTHON
-          git rev-parse HEAD > "$out/product-commit.txt"
-          cp "${archive[0]}" "$out/"
-          (cd "$out" && shasum -a 256 *.tar.gz > SHA256SUMS)
-      - uses: actions/upload-artifact@v7
-        with:
-          name: cccc-apple-silicon-${{ matrix.role }}
-          path: ${{ runner.temp }}/package
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
   retention:
     name: Keep a real ${{ matrix.runtime }} session
-    needs: package
     strategy:
       fail-fast: false
-      max-parallel: 3
       matrix:
-        runtime: [claude, codex, cline, hermes, grok, antigravity]
+        runtime: [cline, hermes]
     runs-on: macos-15
     timeout-minutes: 25
     env:
@@ -109,19 +29,25 @@ jobs:
           package-manager-cache: false
       - uses: actions/download-artifact@v8
         with:
+          github-token: ${{ github.token }}
+          run-id: 44462655017
           name: cccc-apple-silicon-previous
           path: ${{ runner.temp }}/archives/cccc-apple-silicon-previous
       - uses: actions/download-artifact@v8
         with:
+          github-token: ${{ github.token }}
+          run-id: 44462655017
           name: cccc-apple-silicon-current
           path: ${{ runner.temp }}/archives/cccc-apple-silicon-current
-      - name: Verify and unpack both archives built in this run
+      - name: Verify and unpack the tested Apple Silicon archives
         id: unpack
         shell: bash
         run: |
           set -euo pipefail
           test "$(cat "$RUNNER_TEMP/archives/cccc-apple-silicon-current/product-commit.txt")" = 6398401fe70aa16f8d085b99a0386d58749bf046
           test "$(cat "$RUNNER_TEMP/archives/cccc-apple-silicon-previous/product-commit.txt")" = 4bdab600f31f4d3be5f7b84790719138105e503c
+          test "$(cat "$RUNNER_TEMP/archives/cccc-apple-silicon-current/SHA256SUMS")" = '28a367b1a2e40d1b917b32342b4b5b2add204c7695580a92b1b2e79ccb203d98  cccc-v0.4.58+6398401f-aarch64-apple-darwin.tar.gz'
+          test "$(cat "$RUNNER_TEMP/archives/cccc-apple-silicon-previous/SHA256SUMS")" = '7775502712641be3d7022a7d3b4a2d0bcc57caf5f8021a8a26998dd4e0b340e6  cccc-v0.4.58+4bdab600-aarch64-apple-darwin.tar.gz'
           for role in previous current; do
             pkg="$RUNNER_TEMP/archives/cccc-apple-silicon-$role"
             (cd "$pkg" && shasum -a 256 -c SHA256SUMS)
@@ -145,18 +71,8 @@ jobs:
           trap 'df -k "$RUNNER_TEMP" > "$out/disk-after.txt" || true' EXIT
           bash scripts/tests/macos_maintenance/coverage/real_cli/run.sh "$RUNTIME" \
             "$RUNNER_TEMP/bin/previous/cccc" "$RUNNER_TEMP/bin/current/cccc" "$out" \
-            "$RUNNER_TEMP/inspect-process"
+            "$RUNNER_TEMP/inspect-process" 2>&1 | tee "$out/run.log"
           test -s "$out/$RUNTIME/result.json"
-      - name: Check the first session owner after replacing the launch path
-        if: ${{ !cancelled() && matrix.runtime == 'codex' && steps.unpack.outcome == 'success' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/evidence"
-          python3 -I scripts/tests/macos_maintenance/first-holder-recovery.py \
-            "$RUNNER_TEMP/bin/current/cccc" "$RUNNER_TEMP/bin/previous/cccc" \
-            "$RUNNER_TEMP/evidence/first-holder"
-          test -s "$RUNNER_TEMP/evidence/first-holder/result.json"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -164,44 +80,3 @@ jobs:
           path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 7
-
-  native:
-    name: Check update capabilities and browser cleanup on Apple Silicon
-    runs-on: macos-15
-    timeout-minutes: 50
-    env:
-      CARGO_INCREMENTAL: 0
-      CARGO_PROFILE_TEST_DEBUG: 0
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: 6398401fe70aa16f8d085b99a0386d58749bf046
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24.19.0"
-          package-manager-cache: false
-      - uses: dtolnay/rust-toolchain@1.88.0
-      - run: node scripts/prepare_rust_web_assets.mjs --install-deps
-      - name: Verify update capabilities and running image
-        run: >-
-          cargo test --package cccc --bin cccc --locked --
-          self_check_reports_this_programs_constants
-          keeping_agents_through_a_release_is_offered_only_where_this_build_takes_them_over
-          the_running_program_is_its_own_launch_program_until_it_is_replaced
-      - name: Check that a failed CDP connection releases the original browser
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-          cargo test --package cccc-pair-web --lib --locked -- --exact \
-            browser_surface::system_browser::macos_tests::failed_cdp_connection_stops_the_browser_opened_for_its_profile \
-            | tee "$RUNNER_TEMP/cdp-cleanup.log"
-          grep -F 'test result: ok. 1 passed' "$RUNNER_TEMP/cdp-cleanup.log"
-      - name: Verify offline installer decisions with a native session owner
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --package cccc-pair-daemon --lib --locked session_owner::installer::tests:: \
-            -- --test-threads=1 | tee "$RUNNER_TEMP/offline-installer.log"
-          grep -E 'test result: ok\. [1-9][0-9]* passed' "$RUNNER_TEMP/offline-installer.log"

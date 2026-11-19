@@ -15,7 +15,12 @@ here=$(cd "$(dirname "$0")" && pwd)
 python=$(command -v python3)
 npm_exe=$(command -v npm)
 node_dir=$(dirname "$(command -v node)")
-if [ "$(uname -s)" = Darwin ]; then test -x "$inspect"; fi
+fixture_path="$node_dir:/usr/bin:/bin"
+if [ "$(uname -s)" = Darwin ]; then
+    test -x "$inspect"
+    # Include macOS system utilities such as ioreg in the isolated PATH.
+    fixture_path="$fixture_path:/usr/sbin"
+fi
 mkdir -p "$out"
 fixture_root=$(cd "$(mktemp -d /tmp/cccc-isolated.XXXXXXXX)" && pwd -P)
 cleanup() {
@@ -27,7 +32,7 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$fixture_root"/{home,cccc,codex,claude,tmp,pkg}
-private=(env -i PATH="$node_dir:/usr/bin:/bin" HOME="$fixture_root/home"
+private=(env -i PATH="$fixture_path" HOME="$fixture_root/home"
     CCCC_HOME="$fixture_root/cccc" CODEX_HOME="$fixture_root/codex"
     CLAUDE_CONFIG_DIR="$fixture_root/claude" TMPDIR="$fixture_root/tmp"
     LANG=C CCCC_TEST_KILO_EARLY="${CCCC_TEST_KILO_EARLY:-0}" CCCC_TEST_SDK_INSPECTOR="$inspect")

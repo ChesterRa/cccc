@@ -22,7 +22,8 @@ spec.loader.exec_module(u)
 
 
 def tree_roots():
-    """The session owner, and for Claude Code also its own background supervisor."""
+    """The session owner, for Claude Code also its own background supervisor, and
+    for Hermes the gateway that holds the member's MCP server."""
     addresses = list(home.glob("daemon/session-owners/*/address.json"))
     if not addresses:
         return []
@@ -35,6 +36,12 @@ def tree_roots():
         if not status.is_file():
             return []
         roots.append(json.loads(status.read_text())["supervisorPid"])
+    if runtime == "hermes":
+        # Hermes's gateway starts the member's MCP server; the ACP client only asks
+        # for it. On Linux the ACP client starts the gateway as its child, below the
+        # owner. On macOS with a GUI session Hermes submits the gateway to launchd,
+        # so the gateway and the MCP server sit outside the owner's tree.
+        roots.extend(pid for pid in hermes_gateways() if pid not in roots)
     return roots
 
 
@@ -147,8 +154,13 @@ def process_set():
         up[child] = ppid
     snapshots = []
     pending = [child for root in roots for child in parent.get(root, [])]
+    seen = set()
     while pending:
         pid = pending.pop()
+        # On Linux a Hermes gateway is a root and also below the owner: walk it once.
+        if pid in seen:
+            continue
+        seen.add(pid)
         pending.extend(parent.get(pid, []))
         command = subprocess.run(
             ["ps", "-ww", "-p", str(pid), "-o", "command="],
@@ -227,7 +239,13 @@ def process_set():
                 # that claims it keeps the spare's arguments, so the session's
                 # host and program are found above its MCP server, below.
                 continue
-        elif runtime == "cline" and argv and Path(argv[0]).name == "cline":
+        elif (
+            runtime == "cline"
+            and len(argv) >= 2
+            and Path(argv[0]).name == "cline"
+            and argv[1] == "--tui"
+        ):
+            # Cline starts its detached shared Hub from the same executable.
             role = "provider"
         elif runtime == "grok" and len(argv) >= 2 and Path(argv[0]).name == "grok":
             # CCCC runs Grok as a leader that runs the agent, an ACP client and a
@@ -308,9 +326,38 @@ def process_set():
     # already named, such as an attach viewer that happens to start the MCP.
     assert len({row[0] for row in snapshots}) == len(snapshots), snapshots
     (out / "owned-processes.json").write_text(
-        json.dumps({"owner": owner, "snapshot": snapshots}, indent=2)
+        json.dumps(
+            {
+                "owner": owner,
+                "roots": roots,
+                # The parent of each root and each named process, such as a
+                # gateway that launchd runs.
+                "parents": {
+                    str(pid): up.get(pid) for pid in [*roots, *(row[0] for row in snapshots)]
+                },
+                "snapshot": snapshots,
+            },
+            indent=2,
+        )
     )
     return result
+
+
+def write_process_dump(name):
+    """Saves the fixture's processes as "pid ppid command": everything below the
+    tree roots, whatever its command line, and anything else that runs from the
+    fixture's private root."""
+    rows = ps_rows()
+    below = set(tree_roots())
+    for _ in rows:
+        below |= {pid for pid, ppid, _ in rows if ppid in below}
+    (out / name).write_text(
+        "".join(
+            f"{pid} {ppid} {command}\n"
+            for pid, ppid, command in rows
+            if pid in below or str(private) in command
+        )
+    )
 
 
 runtime, *files = sys.argv[1:]
@@ -942,20 +989,7 @@ try:
                 home, "terminal_tail", by="user", group_id=gid, actor_id="m1", lines=48
             )["text"]
         )
-        # And the fixture's processes: everything below the owner (and Claude's
-        # supervisor), whatever its command line, and anything else that runs
-        # from the fixture's private root.
-        rows = ps_rows()
-        below = set(tree_roots())
-        for _ in rows:
-            below |= {pid for pid, ppid, _ in rows if ppid in below}
-        (out / "ready-timeout-processes.txt").write_text(
-            "".join(
-                f"{pid} {ppid} {command}\n"
-                for pid, ppid, command in rows
-                if pid in below or str(private) in command
-            )
-        )
+        write_process_dump("ready-timeout-processes.txt")
         raise
     mark("member processes ready")
     if runtime == "hermes":
@@ -1025,7 +1059,11 @@ try:
     mark("first reply")
     if first_turn_roles:
         started = before
-        before = u.wait_for(lambda: ready_set(expected_roles), "member MCP after the first turn", 30)
+        try:
+            before = u.wait_for(lambda: ready_set(expected_roles), "member MCP after the first turn", 30)
+        except TimeoutError:
+            write_process_dump("first-turn-timeout-processes.txt")
+            raise
         # The processes that ran before the turn are still the same instances.
         before_turn_roles = expected_roles - first_turn_roles
         assert {role: before[role] for role in before_turn_roles} == {
