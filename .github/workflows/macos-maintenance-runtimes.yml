@@ -1,4 +1,4 @@
-name: Apple Silicon runtime retention
+name: Apple Silicon Web update handover
 on:
   push:
     branches: [probe/macos-maintenance-runtimes]
@@ -7,15 +7,15 @@ permissions:
   actions: read
 jobs:
   retention:
-    name: Keep a real ${{ matrix.runtime }} session
+    name: ${{ matrix.label }}
     strategy:
       fail-fast: false
       matrix:
-        runtime: [cline, hermes]
+        include:
+          - { direction: current-host, source: current, target: previous, label: Final Web host initiates Keep }
+          - { direction: current-target, source: previous, target: current, label: Final Web host receives Keep }
     runs-on: macos-15
     timeout-minutes: 25
-    env:
-      RUNTIME: ${{ matrix.runtime }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -23,10 +23,6 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24.19.0"
-          package-manager-cache: false
       - uses: actions/download-artifact@v8
         with:
           github-token: ${{ github.token }}
@@ -61,22 +57,49 @@ jobs:
           done
           xcrun --sdk macosx clang -std=c11 -D_DARWIN_C_SOURCE -Wall -Wextra -Werror \
             scripts/tests/macos_maintenance/inspect_process.c -o "$RUNNER_TEMP/inspect-process"
-      - name: Exercise the real CLI against a local model
+      - name: Check out the original Web fixture and previous target installer
+        uses: actions/checkout@v7
+        with:
+          ref: 4bdab600f31f4d3be5f7b84790719138105e503c
+          path: previous-source
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/install.sh
+            /scripts/tests/macos_maintenance/update_keep.py
+            /scripts/tests/macos_maintenance/maintenance_mcp_member.py
+      - name: Exercise local restart and release update through the Web host
         shell: bash
+        env:
+          SOURCE_ROLE: ${{ matrix.source }}
+          TARGET_ROLE: ${{ matrix.target }}
         run: |
           set -euo pipefail
+          fixture="$GITHUB_WORKSPACE/previous-source/scripts/tests/macos_maintenance/update_keep.py"
           out="$RUNNER_TEMP/evidence"
           mkdir -p "$out"
-          df -k "$RUNNER_TEMP" > "$out/disk-before.txt"
-          trap 'df -k "$RUNNER_TEMP" > "$out/disk-after.txt" || true' EXIT
-          bash scripts/tests/macos_maintenance/coverage/real_cli/run.sh "$RUNTIME" \
-            "$RUNNER_TEMP/bin/previous/cccc" "$RUNNER_TEMP/bin/current/cccc" "$out" \
-            "$RUNNER_TEMP/inspect-process" 2>&1 | tee "$out/run.log"
-          test -s "$out/$RUNTIME/result.json"
+          # The fixture serves the destination build's installer from the working directory.
+          if [ "$TARGET_ROLE" = previous ]; then cd "$GITHUB_WORKSPACE/previous-source"; fi
+          root=$(mktemp -d /tmp/cccc-isolated.XXXXXXXX)
+          trap 'rm -rf "$root"' EXIT
+          mkdir -p "$root"/{home,cccc,tmp,codex,claude}
+          python=$(command -v python3)
+          failed=0
+          for action in local release; do
+            if ! env -i PATH=/usr/bin:/bin:/usr/sbin LANG=C HOME="$root/home" \
+              TMPDIR="$root/tmp" CCCC_HOME="$root/cccc" CODEX_HOME="$root/codex" \
+              CLAUDE_CONFIG_DIR="$root/claude" CCCC_TEST_SDK_INSPECTOR="$RUNNER_TEMP/inspect-process" \
+              "$python" -I "$fixture" "$RUNNER_TEMP/bin/$SOURCE_ROLE/cccc" \
+              "$RUNNER_TEMP/bin/$TARGET_ROLE/cccc" "$out" "$action" 2>&1 | tee "$out/$action.log"; then
+              failed=1
+            fi
+            test -s "$out/$action/result.json" || failed=1
+          done
+          exit "$failed"
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
-          name: macos-real-cli-${{ matrix.runtime }}
+          name: macos-web-relay-${{ matrix.direction }}
           path: ${{ runner.temp }}/evidence
           if-no-files-found: warn
           retention-days: 7
