@@ -7488,11 +7488,30 @@ For Pi RPC sessions, identified `tool_execution_start` and
 calls finish that activity with a failure summary; they do not themselves
 fail the model turn. Anonymous titles and streaming tool-result updates stay
 transient. The journal retains the tool name and category, with at most a
-bounded program/subcommand or file basename after private-value redaction;
-command arguments, directories, tool inputs and results are not copied.
+program/subcommand or file basename of up to 64 characters after private-value
+redaction; a longer one is omitted rather than cut. Command arguments,
+directories, tool inputs and results are not copied.
 Only simple shell commands receive a program/subcommand detail; commands with
 shell substitutions or control syntax retain just the tool name, because word
 splitting alone cannot safely identify their executable.
+For structured managed sessions on the generic ACP path, a `tool_call` that is
+pending, in progress or without a status projects to
+`headless.activity.started`, and a `completed` or `failed` status, on the
+`tool_call` or a later `tool_call_update`, projects to
+`headless.activity.completed` under one turn-scoped `activity_id` from the
+call's non-empty `toolCallId`. Only titled calls in the active turn are
+projected. A finish with no recorded start is still projected, because an
+adapter may send only updates. Other updates, and statuses outside ACP's
+vocabulary, stay transient. The journal keeps only the title, private-value
+redacted and at most 400 characters; a longer title is recorded as
+`Tool call` rather than cut. Tool inputs and results are not copied.
+Both projections judge private values by origin. Every value of the member's
+explicit launch environment counts, whether it comes from public or private
+settings or a linked Profile; only the fields the launch overwrites
+(`CCCC_HOME`, `CCCC_GROUP_ID`, `CCCC_ACTOR_ID` and `CCCC_CLI`) are exempt.
+Inherited values count only under credential names, so an inherited shell
+level, locale or home directory stays readable. Common credential shapes such
+as bearer tokens are redacted as well.
 
 Headless journal snapshots restore historical output only; replay MUST NOT
 overwrite current Actor or Group runtime state. Independent live streams can

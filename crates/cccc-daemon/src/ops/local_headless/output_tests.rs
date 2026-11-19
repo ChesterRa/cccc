@@ -24,6 +24,12 @@ impl Fixture {
         let group = store
             .create("output outcome fixture", "")
             .expect("fixture group");
+        // A private member setting, as the launch snapshot delivers it.
+        let snapshot = std::collections::BTreeMap::from([(
+            "OUTPUT_FIXTURE_PRIVATE".to_owned(),
+            private.to_owned(),
+        )]);
+        let journal_private = journal_private_values(&snapshot, std::iter::empty());
         let session = Session {
             home,
             group_id: group.group_id,
@@ -45,6 +51,7 @@ impl Fixture {
             stop_lock: Mutex::new(()),
             startup_prompt: Mutex::new(None),
             active_turn: Mutex::new(None),
+            journal_private,
         };
         Self {
             session,
@@ -428,7 +435,7 @@ async fn named_tool_activity_finishes_without_journaling_transient_or_foreign_up
         activity[0]["data"]["activity_id"],
         activity[1]["data"]["activity_id"]
     );
-    assert_eq!(activity[1]["data"]["summary"], "bash failed");
+    assert_eq!(activity[1]["data"]["summary"], "Failed: bash");
     assert_eq!(activity[1]["data"]["command"], "cargo test [redacted]");
     assert_eq!(
         f.session.status.lock().expect("state").status,
@@ -437,4 +444,100 @@ async fn named_tool_activity_finishes_without_journaling_transient_or_foreign_up
     );
     f.complete("turn-1", "completed", Value::Null);
     assert_eq!(f.terminals().len(), 1);
+}
+
+#[tokio::test]
+async fn a_tool_title_is_redacted_before_it_is_shortened() {
+    let f = Fixture::new(true, "private-token");
+    f.start("turn-1");
+    // The 400-character cut falls inside the private value: shortening first
+    // would keep a prefix that redaction no longer recognizes.
+    let title = format!("{}private-token and the rest", "a".repeat(395));
+    handle_message(
+        &f.session,
+        json!({"method":"cccc/toolActivity", "params":{
+            "threadId":"abcdef01", "turnId":"turn-1", "title":title,
+            "itemId":"call-1", "phase":"completed"
+        }}),
+    );
+    let events = f.events();
+    let activity = events
+        .iter()
+        .filter(|event| {
+            event["type"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("headless.activity."))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(activity.len(), 1, "a finish without a start is journaled");
+    assert_eq!(activity[0]["type"], "headless.activity.completed");
+    assert_eq!(activity[0]["data"]["activity_id"], "turn-1:call-1");
+    for field in ["summary", "tool_name"] {
+        let text = activity[0]["data"][field].as_str().expect("title field");
+        assert_eq!(text.chars().count(), 400, "{field}");
+        assert!(text.starts_with(&"a".repeat(395)), "{field}");
+        assert!(
+            !text.contains("priv"),
+            "{field} keeps part of the private value: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_journal_redacts_values_by_origin_and_keeps_ordinary_text() {
+    let mut f = Fixture::new(true, "");
+    let pairs = |entries: &[(&str, &str)]| {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    // The launch snapshot: the member's settings, a private PATH among them,
+    // and the fields the launch overwrites.
+    let snapshot = pairs(&[
+        ("DEPLOY_PIN", "4821"),
+        ("NOTES_DIR", "/srv/private/notes"),
+        ("PATH", "/srv/private/bin"),
+        ("CCCC_HOME", "/home/u/.cccc"),
+        ("CCCC_GROUP_ID", "g_fixture"),
+        ("CCCC_ACTOR_ID", "fixture-actor"),
+        ("CCCC_CLI", "/opt/cccc/cccc"),
+        ("EMPTY", ""),
+    ]);
+    // Inherited values count only under a credential name.
+    let inherited = pairs(&[
+        ("SHLVL", "0"),
+        ("HOME", "/home/u"),
+        ("LANG", "C.UTF-8"),
+        ("PI_SKIP_VERSION_CHECK", "1"),
+        ("PI_TELEMETRY", "0"),
+        ("GH_TOKEN", "private-token"),
+    ]);
+    f.session.journal_private = journal_private_values(&snapshot, inherited);
+    assert_eq!(
+        f.session.journal_private,
+        [
+            "/srv/private/bin",
+            "/srv/private/notes",
+            "4821",
+            "private-token"
+        ]
+    );
+
+    f.start("turn-1");
+    handle_message(
+        &f.session,
+        json!({"method":"cccc/toolActivity", "params":{
+            "threadId":"abcdef01", "turnId":"turn-1", "itemId":"call-1", "phase":"failed",
+            "title":"Read file1.txt --timeout 600 --pin 4821 --auth private-token /home/u/.cccc/groups/g_fixture/fixture-actor.md /srv/private/notes /srv/private/bin/deploy"
+        }}),
+    );
+    let events = f.events();
+    let finished = events
+        .iter()
+        .find(|event| event["type"] == "headless.activity.completed")
+        .expect("finished call");
+    let shown = "Read file1.txt --timeout 600 --pin [redacted] --auth [redacted] /home/u/.cccc/groups/g_fixture/fixture-actor.md [redacted] [redacted]/deploy";
+    assert_eq!(finished["data"]["tool_name"], shown);
+    assert_eq!(finished["data"]["summary"], format!("Failed: {shown}"));
 }

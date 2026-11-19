@@ -1,4 +1,5 @@
 use super::mcp_client::{self, Failure, Request, redact_diagnostic};
+use crate::ops::actor_secrets::sensitive_key;
 use crate::ops::local_headless::block_on_managed;
 use rmcp::ServiceExt;
 use serde_json::{Map, Value};
@@ -278,40 +279,4 @@ fn diagnostic_secrets(command: &[String], env: &Map<String, Value>) -> Vec<Strin
     secrets.sort_by_key(|value| std::cmp::Reverse(value.len()));
     secrets.dedup();
     secrets
-}
-
-fn sensitive_key(key: &str) -> bool {
-    let mut normalized = String::with_capacity(key.len());
-    let mut previous_lower_or_digit = false;
-    for character in key.chars() {
-        if character.is_ascii_uppercase() && previous_lower_or_digit {
-            normalized.push('_');
-        }
-        previous_lower_or_digit = character.is_ascii_lowercase() || character.is_ascii_digit();
-        normalized.push(character.to_ascii_lowercase());
-    }
-    let key = normalized;
-    key.split(|character: char| !character.is_ascii_alphanumeric())
-        .any(|part| {
-            matches!(
-                part,
-                "token"
-                    | "tokens"
-                    | "secret"
-                    | "secrets"
-                    | "password"
-                    | "passwords"
-                    | "passwd"
-                    | "apikey"
-                    | "credential"
-                    | "credentials"
-                    | "authorization"
-                    | "bearer"
-                    | "pat"
-            )
-        })
-        || key
-            .rsplit(|character: char| !character.is_ascii_alphanumeric())
-            .next()
-            == Some("key")
 }

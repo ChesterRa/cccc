@@ -114,6 +114,7 @@ pub(crate) async fn verify_claude_reader_release(
         stop_lock: Mutex::new(()),
         startup_prompt: Mutex::new(None),
         active_turn: Mutex::new(None),
+        journal_private: Vec::new(),
     });
     let weak = Arc::downgrade(&session);
     let receiver = managed.subscribe();

@@ -245,7 +245,8 @@ fn item_type(tool: &str) -> &'static str {
 /// few multi-command tools, as in `cargo test`) and the file name, without its
 /// directory, that `read`, `write` or `edit` works on. Command arguments,
 /// directories, patterns and every other tool's input, MCP tools included,
-/// never reach the journal.
+/// never reach the journal. A name past 64 characters is left out rather than
+/// cut, because a cut could split a private value the journal redacts.
 fn call_detail(tool: &str, args: &Value) -> String {
     const LIMIT: usize = 64;
     let detail = match tool {
@@ -258,7 +259,11 @@ fn call_detail(tool: &str, args: &Value) -> String {
             .to_owned(),
         _ => String::new(),
     };
-    detail.chars().take(LIMIT).collect()
+    if detail.chars().nth(LIMIT).is_some() {
+        String::new()
+    } else {
+        detail
+    }
 }
 
 /// `cargo test` for `KEY=value cargo test --locked`, `deploy` for
@@ -466,6 +471,8 @@ mod tests {
     fn a_call_shows_only_its_program_or_file_name() {
         const TOKEN: &str = "secret-token-0123456789abcdef";
         const PRIVATE: &str = "/home/someone/private-dir";
+        let at_bound = "a".repeat(64);
+        let past_bound = "b".repeat(65);
         let calls = [
             (
                 "bash",
@@ -523,6 +530,17 @@ mod tests {
                 "read",
                 json!({"path": format!("{PRIVATE}/notes.txt")}),
                 "notes.txt",
+            ),
+            // A name at the bound stays whole; one past it is left out, not cut.
+            (
+                "read",
+                json!({"path": format!("{PRIVATE}/{at_bound}")}),
+                at_bound.as_str(),
+            ),
+            (
+                "read",
+                json!({"path": format!("{PRIVATE}/{past_bound}")}),
+                "",
             ),
             (
                 "write",

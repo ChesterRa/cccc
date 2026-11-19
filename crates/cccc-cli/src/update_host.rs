@@ -1082,7 +1082,7 @@ pub(crate) fn forced_exit_update_hint(home: &HomeLayout) -> Option<String> {
     match attended_update::active(home) {
         Ok(None) => None,
         Ok(Some(intent)) => Some(format!(
-            "An update was in progress; finish it with `{}`.",
+            "An update was in progress. To recover, run `{}`.",
             intent.recovery_command()
         )),
         Err(error) => Some(format!(
@@ -1934,13 +1934,13 @@ pub(crate) async fn confirm(
             Err(error) => format!("{error:#}"),
         };
         Some(format!(
-            "CCCC {} is running, but the update could not be confirmed: {reason}; stop CCCC, then recover with `{}`",
+            "CCCC {} is running, but the update could not be confirmed: {reason}. Recovery restores the previous version if its backup is available. Stop CCCC, then use the same CCCC_HOME to run `{}`.",
             record.to_version,
             recovery_command(home)
         ))
     } else if let Err(error) = attended_update::disarm(home, &transaction.id) {
         Some(format!(
-            "CCCC {} is running, but its update intent could not be withdrawn: {error}; stop CCCC, then finish it with `{}`",
+            "CCCC {} is running. The installer confirmed this build and discarded the backup, but CCCC could not clear the update record: {error}. Stop CCCC, then use the same CCCC_HOME to run `{}`.",
             record.to_version,
             recovery_command(home)
         ))
@@ -1970,7 +1970,7 @@ async fn confirm_local(
 ) -> Result<UpdateAgents, String> {
     if let Err(error) = attended_update::disarm(home, &transaction.id) {
         let problem = format!(
-            "CCCC {} is running, but its restart intent could not be withdrawn: {error}; stop CCCC, then finish it with `{}`",
+            "Local build {} is running, but CCCC could not clear its restart record: {error}. Recovery leaves the program files in place. Stop CCCC, then use the same CCCC_HOME to run `{}`.",
             record.to_version,
             recovery_command(home)
         );

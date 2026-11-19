@@ -155,6 +155,8 @@ pub(super) fn handle_notification(
     // started and carries no CCCC turn id, so it must never settle `active`.
 }
 
+const MAX_TOOL_TITLE_CHARS: usize = 400;
+
 fn publish_tool_activity(
     update: &Value,
     tool_calls: &HashMap<String, ToolCall>,
@@ -166,20 +168,51 @@ fn publish_tool_activity(
     let Some(turn) = active else {
         return;
     };
-    let title = update["toolCallId"]
-        .as_str()
-        .and_then(|id| tool_calls.get(id))
+    let Some(id) = update["toolCallId"].as_str() else {
+        return;
+    };
+    let title = tool_calls
+        .get(id)
         .map(|call| call.title.as_str())
         .unwrap_or_default();
     if title.is_empty() {
         return;
     }
     // Observation only. Do not expose arguments, results, or permission authority.
+    // Titles are a few words. One past the bound is replaced whole rather than
+    // cut, because a cut could split a private value that consumers redact.
+    let title = if title.chars().nth(MAX_TOOL_TITLE_CHARS).is_some() {
+        "Tool call"
+    } else {
+        title
+    };
+    let mut params = json!({"threadId":session_id,"turnId":turn.turn_id,"title":title});
+    if let Some(phase) = tool_phase(update) {
+        params["itemId"] = json!(id);
+        params["phase"] = json!(phase);
+    }
     publish(
         events,
         generation,
-        json!({"method":"cccc/toolActivity","params":{"threadId":session_id,"turnId":turn.turn_id,"title":title.chars().take(400).collect::<String>()}}),
+        json!({"method":"cccc/toolActivity","params":params}),
     );
+}
+
+/// Where a frame takes its call in the journal. An announcement that is
+/// pending or in progress (no status reads as pending) starts the call. A
+/// finished status ends it, even with no announcement seen, because some
+/// adapters send only updates, as Kilo's OpenCode event stream does. Every
+/// other frame is progress and stays transient, so a status outside ACP's
+/// vocabulary never starts a call that would then be shown as running.
+fn tool_phase(update: &Value) -> Option<&'static str> {
+    match update["status"].as_str() {
+        Some("completed") => Some("completed"),
+        Some("failed") => Some("failed"),
+        None | Some("pending" | "in_progress") if update["sessionUpdate"] == "tool_call" => {
+            Some("started")
+        }
+        _ => None,
+    }
 }
 
 // Grok's persisted event IDs are session-scoped monotonically increasing

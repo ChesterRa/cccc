@@ -174,6 +174,11 @@ pub(super) fn attach_managed(
     let scope = workspace.clone().for_actor(actor);
     let prompt =
         cccc_core::system_prompt::render_session_with_scope(home, group, actor, scope.as_ref());
+    // The provider inherits this process's environment besides the one it was given.
+    let inherited = app.tui_environment().into_iter().chain(
+        std::env::vars_os()
+            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))),
+    );
     let item = Arc::new(Session {
         home: home.clone(),
         group_id: group.group_id.clone(),
@@ -199,6 +204,7 @@ pub(super) fn attach_managed(
         stop_lock: Mutex::new(()),
         startup_prompt: Mutex::new(Some(prompt)),
         active_turn: Mutex::new(None),
+        journal_private: super::output::journal_private_values(&actor.env, inherited),
     });
     if let Err(error) = managed_reader::spawn(Arc::clone(&item), app.subscribe()) {
         return Err(cleanup_failed_start(&item, error));

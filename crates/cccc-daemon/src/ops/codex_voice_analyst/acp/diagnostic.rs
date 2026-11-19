@@ -16,7 +16,7 @@ static CREDENTIALS: LazyLock<[Regex; 5]> = LazyLock::new(|| {
     .map(|pattern| Regex::new(pattern).expect("valid credential diagnostic pattern"))
 });
 
-pub(super) fn sanitize(text: &str, private_values: &[String]) -> String {
+pub(crate) fn sanitize(text: &str, private_values: &[String]) -> String {
     // Match against the original text: truncation or one replacement must not split
     // another secret (including multiline private values and short values inside JWTs).
     let mut spans = Vec::new();

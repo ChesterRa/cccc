@@ -487,11 +487,17 @@ async fn launch_with(
                     Err(_) => UpdateResult {
                         transaction: resumed.transaction.id.clone(),
                         failed: true,
-                        message: format!(
-                            "CCCC {} runs, but its {} was not confirmed; the CCCC log has the recovery command.",
-                            record.to_version,
-                            if local { "restart" } else { "update" }
-                        ),
+                        message: if local {
+                            format!(
+                                "Restart unconfirmed ({}). Recovery keeps the local build. See log.",
+                                record.to_version
+                            )
+                        } else {
+                            format!(
+                                "Update unconfirmed ({}). Recovery rolls back if a backup remains. See log.",
+                                record.to_version
+                            )
+                        },
                     },
                 };
                 state.send_modify(|state| state.update = Some(result));

@@ -56,18 +56,24 @@ fn tool_activity(
 ) -> Option<(&'static str, Map<String, Value>)> {
     let item_id = params["itemId"].as_str().filter(|id| !id.is_empty())?;
     let phase = params["phase"].as_str()?;
-    let tool = params["title"].as_str().unwrap_or_default();
+    // Redact before shortening, so the cut cannot split a private value.
+    let redact = |field: &str| {
+        crate::ops::codex_voice_analyst::sanitize_diagnostic(
+            params[field].as_str().unwrap_or_default(),
+            &session.journal_private,
+        )
+    };
+    let tool = redact("title").chars().take(400).collect::<String>();
     let item_type = params["itemType"].as_str().unwrap_or("toolCall");
-    let detail = session.managed.safe_diagnostic(&std::io::Error::other(
-        params["detail"].as_str().unwrap_or_default(),
-    ));
+    let detail = redact("detail");
     let (kind, status, summary) = match phase {
-        "started" => ("headless.activity.started", "started", tool.to_owned()),
-        "completed" => ("headless.activity.completed", "completed", tool.to_owned()),
+        "started" => ("headless.activity.started", "started", tool.clone()),
+        "completed" => ("headless.activity.completed", "completed", tool.clone()),
+        // The outcome leads, so a narrow trace that cuts the summary still shows it.
         "failed" => (
             "headless.activity.completed",
             "completed",
-            format!("{tool} failed"),
+            format!("Failed: {tool}"),
         ),
         _ => return None,
     };
@@ -88,6 +94,38 @@ fn tool_activity(
         activity.insert(field.into(), json!(detail));
     }
     Some((kind, activity))
+}
+
+/// Fields the launch overwrites: CCCC's location and identity, and its CLI.
+/// PATH is not one of them: the launch only prepends the CLI's directory to a
+/// value the member may have set privately.
+const WRITTEN_AT_LAUNCH: [&str; 4] = ["CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID", "CCCC_CLI"];
+
+/// Values the activity journal redacts, judged by where each came from. Every
+/// value of the member's explicit launch environment is private, except the
+/// fields the launch overwrites. Public settings stay included: the same
+/// value may also be declared private, which the snapshot cannot tell apart.
+/// Inherited values count only under a credential name, so a shell level,
+/// locale or home directory stays readable.
+pub(super) fn journal_private_values(
+    snapshot: &std::collections::BTreeMap<String, String>,
+    inherited: impl IntoIterator<Item = (String, String)>,
+) -> Vec<String> {
+    let mut values = snapshot
+        .iter()
+        .filter(|(key, _)| !WRITTEN_AT_LAUNCH.contains(&key.as_str()))
+        .map(|(_, value)| value.clone())
+        .chain(
+            inherited
+                .into_iter()
+                .filter(|(key, _)| crate::ops::actor_secrets::sensitive_key(key))
+                .map(|(_, value)| value),
+        )
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    values
 }
 
 fn respond_unsupported_server_request(session: &Session, message: &Value) {

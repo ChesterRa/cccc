@@ -203,6 +203,11 @@ fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> R
         actor.command =
             super::hermes_runtime::prepare_member_start(home, &actor.command, &cwd, &env)?;
     }
+    // The managed launcher adds the CLI directory to its child's PATH. Keep an
+    // explicit member or Profile PATH intact in the snapshot used for redaction.
+    if let Some(path) = actor.env.remove("PATH") {
+        env.insert("PATH".into(), path);
+    }
     actor.env = env;
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;

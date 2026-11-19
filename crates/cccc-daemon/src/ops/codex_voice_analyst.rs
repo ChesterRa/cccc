@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 mod acp;
+pub(crate) use acp::sanitize_diagnostic;
 mod antigravity;
 mod claude;
 pub(crate) use claude::capture_host_environment as claude_host_environment;

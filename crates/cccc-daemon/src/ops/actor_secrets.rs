@@ -360,6 +360,45 @@ pub(crate) fn validate_env_key(value: &str) -> Result<(), OpError> {
     }
 }
 
+/// Whether an environment or argument name marks its value as a credential,
+/// such as `GH_TOKEN`, `OPENAI_API_KEY` or `--clientSecret`. Camel case is
+/// split, so `authToken` counts while `TOKENIZERS_PARALLELISM` does not.
+pub(crate) fn sensitive_key(key: &str) -> bool {
+    let mut normalized = String::with_capacity(key.len());
+    let mut previous_lower_or_digit = false;
+    for character in key.chars() {
+        if character.is_ascii_uppercase() && previous_lower_or_digit {
+            normalized.push('_');
+        }
+        previous_lower_or_digit = character.is_ascii_lowercase() || character.is_ascii_digit();
+        normalized.push(character.to_ascii_lowercase());
+    }
+    let key = normalized;
+    key.split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|part| {
+            matches!(
+                part,
+                "token"
+                    | "tokens"
+                    | "secret"
+                    | "secrets"
+                    | "password"
+                    | "passwords"
+                    | "passwd"
+                    | "apikey"
+                    | "credential"
+                    | "credentials"
+                    | "authorization"
+                    | "bearer"
+                    | "pat"
+            )
+        })
+        || key
+            .rsplit(|character: char| !character.is_ascii_alphanumeric())
+            .next()
+            == Some("key")
+}
+
 pub(crate) fn python_string(value: &Value) -> Result<String, OpError> {
     match value {
         Value::Null => Err(OpError::new("invalid_args", "missing env value")),

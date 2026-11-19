@@ -1402,6 +1402,53 @@ mod recovery {
     }
 
     #[tokio::test]
+    async fn an_unconfirmed_release_warns_before_recovery_restores_the_backup() {
+        let fixture = fixture();
+        fixture.arm(&source_id('a'));
+        fixture.reach("applied");
+        let backup = fixture
+            .install_dir
+            .join(format!(".cccc-backup.{}", fixture.transaction.id));
+        std::fs::create_dir(&backup).expect("backup directory");
+        install_program(&backup, "0.4.58", &source_id('b'));
+        let previous = std::fs::read(backup.join("cccc")).expect("previous program");
+        // Fail confirmation with the backup intact. Recovery uses the real installer.
+        write_script(
+            &fixture.transaction,
+            &format!(
+                "[ \"$CCCC_INSTALL_PHASE\" != confirm ] || exit 1\nexec sh {}",
+                shell_words::quote(&installer().to_string_lossy())
+            ),
+        );
+        let relay = RelayRecord {
+            outcome: RelayOutcome::Applied,
+            source_id: source_id('a'),
+            ..record(&fixture.transaction.id, release(&fixture.install_dir))
+        };
+        let warning = confirm(&fixture.home, &fixture.transaction, &relay)
+            .await
+            .expect_err("installer could not confirm");
+        assert!(
+            warning.contains("restores the previous version"),
+            "{warning}"
+        );
+        let command = recovery_command(&fixture.home);
+        assert!(
+            command.contains(" update --recover ") && warning.contains(&command),
+            "{warning}"
+        );
+        assert_eq!(fixture.last()["result"], "unconfirmed");
+        recover(&fixture.home, &fixture.transaction.dir)
+            .await
+            .expect("recovered");
+        assert_eq!(fixture.last()["result"], "undone");
+        assert_eq!(
+            std::fs::read(fixture.install_dir.join("cccc")).expect("restored program"),
+            previous
+        );
+    }
+
+    #[tokio::test]
     async fn a_committed_update_keeps_the_version_the_user_confirmed() {
         let fixture = fixture();
         fixture.arm(&source_id('a'));

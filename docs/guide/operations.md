@@ -154,6 +154,14 @@ If another CCCC process holds the daemon lock, wait and retry. Run
 `cccc daemon status` if the lock stays busy. For an interrupted release
 installation, use the `cccc update --recover` command that CCCC prints.
 
+After a release update, the new CCCC can be running even if the installer could
+not confirm the update. In the terminal interface, the recovery command is in
+`CCCC_HOME/daemon/cccc-web.log`. With `cccc --headless` or `cccc web`, it is
+printed on standard error. Stop CCCC before running the command and use the
+same `CCCC_HOME`. If the installer still has the previous executable, recovery
+restores it. If the installer has already discarded the backup, recovery checks
+the installed build and keeps it if it matches the update.
+
 ### When CCCC cannot confirm an agent {#when-cccc-cannot-confirm-an-agent}
 
 On platforms that support keeping agents, an agent's launch can end before CCCC

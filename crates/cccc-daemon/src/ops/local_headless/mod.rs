@@ -221,6 +221,10 @@ struct Session {
     stop_lock: Mutex<()>,
     startup_prompt: Mutex<Option<String>>,
     active_turn: Mutex<Option<ActiveTurn>>,
+    /// Values the activity journal redacts. They come from the environment this
+    /// launch delivered, so a later settings change cannot unmask what the
+    /// running provider still holds.
+    journal_private: Vec<String>,
 }
 
 fn poisoned() -> std::io::Error {

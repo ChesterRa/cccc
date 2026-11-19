@@ -16,6 +16,8 @@ mod permissions;
 mod protocol_loop;
 mod tool_results;
 
+pub(crate) use diagnostic::sanitize as sanitize_diagnostic;
+
 const EVENT_CAPACITY: usize = 2048;
 const COMMAND_CAPACITY: usize = 32;
 const FRAME_CAPACITY: usize = 256;
