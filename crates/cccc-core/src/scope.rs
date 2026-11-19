@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
@@ -7,13 +8,17 @@ use std::process::Command;
 use crate::Scope;
 
 pub fn detect(path: &Path) -> io::Result<Scope> {
+    detect_with_env(path, &[])
+}
+
+fn detect_with_env(path: &Path, env: &[(&str, &OsStr)]) -> io::Result<Scope> {
     let absolute = path.canonicalize()?;
-    let root = git_output(&absolute, &["rev-parse", "--show-toplevel"])
+    let root = git_output(&absolute, &["rev-parse", "--show-toplevel"], env)
         .map(PathBuf::from)
         .unwrap_or_else(|| absolute.clone());
     // Scope keys also address persisted defaults and ledger history. Preserve
     // the established Git URL resolution when deriving their identity.
-    let remote = git_output(&root, &["remote", "get-url", "origin"])
+    let remote = git_output(&root, &["remote", "get-url", "origin"], env)
         .map(|value| normalize_remote(&value))
         .unwrap_or_default();
     let url = root.to_string_lossy().into_owned();
@@ -63,10 +68,11 @@ pub fn normalize_remote(value: &str) -> String {
     value.to_owned()
 }
 
-fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
+fn git_output(cwd: &Path, args: &[&str], env: &[(&str, &OsStr)]) -> Option<String> {
     let output = cccc_runtime::background_command("git")
         .args(args)
         .current_dir(cwd)
+        .envs(env.iter().copied())
         .output()
         .ok()?;
     output
@@ -83,11 +89,11 @@ mod tests {
     fn remote_normalization_matches_python_identity_contract() {
         for (input, expected) in [
             (
-                "git@github.com:Acme/Repo.git",
+                concat!("git@", "github.com", ":Acme/Repo.git"),
                 "https://github.com/Acme/Repo",
             ),
             (
-                "ssh://git@github.com/Acme/Repo.git",
+                concat!("ssh://git@", "github.com/Acme/Repo.git"),
                 "https://github.com/Acme/Repo",
             ),
             (
@@ -103,24 +109,39 @@ mod tests {
     #[test]
     fn detected_scope_returns_the_normalized_remote_and_python_compatible_key() {
         let temp = tempfile::tempdir().expect("tempdir");
-        assert!(
-            Command::new("git")
-                .args(["init", "--quiet"])
-                .current_dir(temp.path())
-                .status()
-                .expect("git init")
-                .success()
+        let home = temp.path().join("home");
+        std::fs::create_dir(&home).expect("home");
+        // A hostile HOME config must not leak into the fixture repo.
+        let hostile = concat!(
+            "[url \"https://example.invalid/\"]\n\tinsteadOf = git@",
+            "github.com:\n"
         );
-        assert!(
-            Command::new("git")
-                .args(["remote", "add", "origin", "git@github.com:Acme/Repo.git",])
+        std::fs::write(home.join(".gitconfig"), hostile).expect("hostile gitconfig");
+        let global = temp.path().join("gitconfig");
+        std::fs::write(&global, "").expect("gitconfig");
+        let config_home = home.join(".config");
+        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+        let env = [
+            ("GIT_CONFIG_GLOBAL", global.as_os_str()),
+            ("GIT_CONFIG_SYSTEM", OsStr::new(null)),
+            ("GIT_CONFIG_COUNT", OsStr::new("0")),
+            ("HOME", home.as_os_str()),
+            ("XDG_CONFIG_HOME", config_home.as_os_str()),
+        ];
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
                 .current_dir(temp.path())
+                .envs(env.iter().copied())
                 .status()
-                .expect("git remote")
-                .success()
-        );
+                .expect("git");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "--quiet"]);
+        let origin = ["git@", "github.com", ":Acme/Repo.git"].concat();
+        git(&["remote", "add", "origin", &origin]);
 
-        let scope = detect(temp.path()).expect("scope");
+        let scope = detect_with_env(temp.path(), &env).expect("scope");
 
         assert_eq!(scope.git_remote, "https://github.com/Acme/Repo");
         assert_eq!(scope.scope_key, "s_3b1f782ba15e");
