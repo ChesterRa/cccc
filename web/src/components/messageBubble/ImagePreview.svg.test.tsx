@@ -83,6 +83,7 @@ it("does not allocate an object URL when an SVG response arrives after the sourc
         eventId: "event",
         index: 0,
         blobPath: "state/blobs/image",
+        siblings: [],
       }}
       href={href}
       downloadHref={href}

@@ -522,6 +522,10 @@ Notes:
   self-checks declare readable intent and relay schemas independently; the host
   MUST check local restart support and both schemas before offering a restart
   into that build, and recheck the selected file before requesting shutdown.
+  A Local restart MAY select the unchanged executable. A confirmation for
+  the unchanged executable applies to the host run that offered it and
+  identifies a specific transaction. A delayed request cannot restart the
+  replacement host. The same file and source checks apply at handoff.
   Missing capability declarations
   establish no compatibility, even when their self-check can still be parsed.
 - The daemon MUST check that intent both before acquiring its exclusive home

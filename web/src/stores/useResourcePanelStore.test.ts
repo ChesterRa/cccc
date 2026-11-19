@@ -109,6 +109,27 @@ describe("resource panel store", () => {
     expect(panel.open).toBe(false);
   });
 
+  it("steps a tab to another attachment of the message in place, or selects it where open", () => {
+    state().open("g1", file("docs/a.md"), "a.md");
+    state().open("g1", image("m1", 0), "one.png");
+    state().open("g1", image("m2", 0), "other.png");
+    state().replaceAttachment("g1", resourceKey(image("m1", 0)), image("m1", 2), "three.png");
+    let panel = state().groups.g1;
+    expect(panel.tabs.map((tab) => tab.key)).toEqual([
+      resourceKey(file("docs/a.md")),
+      resourceKey(image("m1", 2)),
+      resourceKey(image("m2", 0)),
+    ]);
+    expect(panel.tabs[1].title).toBe("three.png");
+    expect(panel.activeKey).toBe(resourceKey(image("m1", 2)));
+    expect(panel.closed).toEqual([]);
+
+    state().replaceAttachment("g1", resourceKey(image("m1", 2)), image("m2", 0), "other.png");
+    panel = state().groups.g1;
+    expect(panel.tabs).toHaveLength(3);
+    expect(panel.activeKey).toBe(resourceKey(image("m2", 0)));
+  });
+
   it("keeps each Group's tabs apart", () => {
     state().open("g1", image("m1"), "1");
     state().open("g2", file("README.md"), "README.md");

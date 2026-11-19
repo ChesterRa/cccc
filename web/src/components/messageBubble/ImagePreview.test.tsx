@@ -16,6 +16,7 @@ const resource = {
   eventId: "event-1",
   index: 0,
   blobPath: "state/blobs/image",
+  siblings: [],
 };
 
 describe("ImagePreview fixed layout", () => {

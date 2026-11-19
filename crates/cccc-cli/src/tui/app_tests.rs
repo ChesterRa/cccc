@@ -206,7 +206,7 @@ fn the_main_menu_opens_and_navigates_without_typing_commands() {
     let mut app = app();
     app.handle(press(KeyCode::Tab));
     assert_eq!(app.input, "/");
-    assert_eq!(app.candidates().len(), super::COMMANDS.len());
+    assert_eq!(app.candidates().len(), super::COMMANDS.len() - 1);
     app.handle(press(KeyCode::Esc));
     assert_eq!(app.input, "");
     assert!(app.candidates().is_empty());
@@ -224,6 +224,18 @@ fn the_main_menu_opens_and_navigates_without_typing_commands() {
         app.handle(press(KeyCode::Enter)),
         Some(Effect::Setup(SetupCommand::Check { .. }))
     ));
+}
+
+#[test]
+fn restart_is_suggested_only_when_the_host_can_restart() {
+    let mut app = app();
+    type_text(&mut app, "/res");
+    assert!(app.candidates().is_empty());
+
+    app.context.local_restart = true;
+    let candidates = app.candidates();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(super::COMMANDS[candidates[0]].0, "/restart");
 }
 
 #[test]

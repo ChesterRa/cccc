@@ -127,7 +127,7 @@ pub(crate) fn print_self_check() -> Result<()> {
 /// What this build can finish when an update hands over to it.
 fn this_build() -> UpdateCapabilities {
     // On Linux and macOS this build reads its running image, so it finishes a
-    // restart into it as a rebuilt program. It takes over the agents a stop
+    // local restart that selects it. It takes over the agents a stop
     // kept for it, once the daemon's own check allowed that stop, only where
     // session owners run; elsewhere agents do not outlive the daemon.
     UpdateCapabilities {
@@ -226,8 +226,7 @@ pub(crate) struct LastResult {
     pub finished_at: String,
     /// `release` or `local`.
     pub source: Option<String>,
-    /// For a restart into a rebuilt program, the file it restarted into, as the
-    /// check that offered it named it.
+    /// For a local restart, the identity token of the file it started.
     pub token: Option<String>,
     /// The build it moved to, as its self-check named it.
     pub source_id: Option<String>,
@@ -240,8 +239,7 @@ fn agents_not_observed() -> UpdateAgents {
     }
 }
 
-/// How a result names what it moved to: `release` or `local`, and for a
-/// rebuilt program, the file its check offered.
+/// The source of a result, with the file identity for a local restart.
 fn result_source(source: &Source) -> (Option<String>, Option<String>) {
     match source {
         Source::Release { .. } => (Some("release".into()), None),
@@ -437,7 +435,7 @@ pub(crate) struct UpdateContext {
 }
 
 impl UpdateContext {
-    /// Any installation can restart into a rebuilt program at its own path;
+    /// Any installation can restart using the program at its own path;
     /// only a standalone one can also replace its files with a release. The
     /// launch to replay is filled in when the Web hands an update over.
     pub(crate) fn for_running_program(home: &HomeLayout) -> Result<Self> {
@@ -474,7 +472,7 @@ impl UpdateContext {
 }
 
 /// A prepared update: a staged and checked release holding the install lock,
-/// or a checked rebuilt program at the path the host was started from.
+/// or a checked program at the path the host was started from.
 #[derive(Debug)]
 pub(crate) struct Prepared {
     pub transaction: Transaction,
@@ -513,7 +511,7 @@ impl Prepared {
     /// What this is, for the lines that report it.
     pub(crate) fn what(&self) -> String {
         if self.is_local() {
-            format!("restart into the local build {}", self.version)
+            format!("restart CCCC {}", self.version)
         } else {
             format!("update to CCCC {}", self.version)
         }
@@ -538,7 +536,7 @@ impl Prepared {
         };
         if self.is_local() {
             format!(
-                "Restarting CCCC into the local build {}: {agents}, then CCCC starts again here.",
+                "Restarting CCCC {} and {agents}. CCCC starts again here.",
                 self.version
             )
         } else {
@@ -569,7 +567,7 @@ pub(crate) struct Coordinator {
 struct Inner {
     context: UpdateContext,
     /// The program this host was started from, as it was then, on a host that
-    /// can restart into a rebuilt one.
+    /// can restart in place.
     launch: Option<LaunchProgram>,
     slot: Mutex<Slot>,
     /// Bumped whenever a preparation or cleanup settles.
@@ -728,7 +726,7 @@ impl cccc_web::UpdateHost for Coordinator {
                 let Some(launch) = self.inner.launch.clone() else {
                     return Err(rejection(
                         "local_not_supported",
-                        "this CCCC cannot restart into a rebuilt program",
+                        "this CCCC cannot restart itself",
                     ));
                 };
                 Requested::Local {
@@ -748,13 +746,30 @@ impl cccc_web::UpdateHost for Coordinator {
             ));
         }
         refuse_active_intent(&self.inner.context.home)?;
-        let id = uuid::Uuid::new_v4().simple().to_string();
+        let offered_id = match &requested {
+            Requested::Local { launch, token, .. } => launch.current_transaction(token),
+            Requested::Release { .. } => None,
+        };
+        let id = offered_id
+            .map(str::to_owned)
+            .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
         {
             let mut slot = self.inner.lock();
             if !matches!(*slot, Slot::Idle) {
                 return Err(rejection(
                     "update_in_progress",
                     "another update of this CCCC is already in progress",
+                ));
+            }
+            if offered_id.is_some()
+                && cccc_core::fs::read_json::<LastResult>(
+                    &self.inner.context.home.root().join("update/last.json"),
+                )
+                .is_ok_and(|last| last.transaction == id)
+            {
+                return Err(rejection(
+                    "local_changed",
+                    "this restart offer was used. Check again.",
                 ));
             }
             refuse_unfinished_cleanup(&self.inner.context)?;
@@ -1224,7 +1239,7 @@ async fn prepare(
     })
 }
 
-/// Check the rebuilt program at the path this host was started from: it must
+/// Check the local program at the path this host was started from: it must
 /// still be the file the check offered, answer its self-check as that build,
 /// and be able to finish a restart this version starts. Nothing is downloaded,
 /// installed or stopped; same and older versions are allowed.
@@ -1258,7 +1273,12 @@ async fn prepare_local(
             ),
         )
     })?;
-    if identity == launch.identity || identity.token().ok().as_deref() != Some(token) {
+    let matches_offer = if identity == launch.identity {
+        launch.current_transaction(token) == Some(id)
+    } else {
+        identity.token().ok().as_deref() == Some(token)
+    };
+    if !matches_offer {
         return Err(changed());
     }
     let check = self_check(program).await.map_err(|error| {
@@ -1266,7 +1286,7 @@ async fn prepare_local(
             None,
             rejection(
                 "local_candidate_rejected",
-                format!("the rebuilt program did not pass its self-check: {error:#}"),
+                format!("the program did not pass its self-check: {error:#}"),
             ),
         )
     })?;
@@ -1281,7 +1301,7 @@ async fn prepare_local(
             None,
             rejection(
                 "local_candidate_rejected",
-                "the rebuilt program cannot finish a restart started by this version",
+                "the program cannot finish a restart started by this version",
             ),
         ));
     }
@@ -1533,7 +1553,7 @@ async fn run_phase(
 }
 
 /// Runs `update --self-check` of the program at `program`: a staged release, or
-/// a rebuilt program at the path a host was started from.
+/// the local program at the path a host was started from.
 pub(crate) async fn self_check(program: &Path) -> Result<SelfCheck> {
     let mut command = cccc_runtime::background_tokio_command(program);
     command
@@ -1562,7 +1582,7 @@ pub(crate) async fn self_check(program: &Path) -> Result<SelfCheck> {
 
 /// Publish the startup intent right before the stop request. Until it is
 /// withdrawn, only this update's relay may start a daemon for this home. The
-/// relay starts whatever is at a rebuilt program's path, so that must still be
+/// relay starts whatever is at the launch path, so that must still be
 /// the file that was checked.
 pub(crate) fn arm(context: &UpdateContext, prepared: &Prepared) -> Result<()> {
     if let Source::Local {
@@ -1961,7 +1981,7 @@ pub(crate) async fn confirm(
     Ok(record_agents(home, record, "installed", observing).await)
 }
 
-/// A restart into a rebuilt program replaced no files: once it runs, ordinary
+/// A local restart replaced no files: once it runs, ordinary
 /// starts may resume.
 async fn confirm_local(
     home: &HomeLayout,
@@ -1970,7 +1990,7 @@ async fn confirm_local(
 ) -> Result<UpdateAgents, String> {
     if let Err(error) = attended_update::disarm(home, &transaction.id) {
         let problem = format!(
-            "Local build {} is running, but CCCC could not clear its restart record: {error}. Recovery leaves the program files in place. Stop CCCC, then use the same CCCC_HOME to run `{}`.",
+            "CCCC {} is running, but CCCC could not clear its restart record: {error}. Recovery leaves the program files in place. Stop CCCC, then use the same CCCC_HOME to run `{}`.",
             record.to_version,
             recovery_command(home)
         );
@@ -1980,10 +2000,7 @@ async fn confirm_local(
     }
     let observing = record_first(home, record, "restarted");
     transaction.remove();
-    cccc_runtime::diagnostic(format_args!(
-        "[cccc] Restarted CCCC into the local build {}",
-        record.to_version
-    ));
+    cccc_runtime::diagnostic(format_args!("[cccc] Restarted CCCC {}", record.to_version));
     Ok(record_agents(home, record, "restarted", observing).await)
 }
 
@@ -2330,7 +2347,7 @@ pub(crate) async fn resume(home: HomeLayout, dir: PathBuf) -> Result<crate::web_
 /// Once the installer reports it gone, the installed version the user confirmed
 /// is kept, after it proves to be that build. An update that never reserved
 /// this home's startup replaced nothing, so only its files are cleaned up. A
-/// restart into a rebuilt program replaced nothing either, so it is given up.
+/// local restart replaced nothing either, so it is given up.
 pub(crate) async fn recover(home: &HomeLayout, dir: &Path) -> Result<()> {
     // The intent first: when it cannot be used, its error says how to get out,
     // even if the transaction directory is gone.
@@ -2407,7 +2424,7 @@ pub(crate) async fn recover(home: &HomeLayout, dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// A restart into a rebuilt program changed no files, so nothing is undone:
+/// A local restart changed no files, so nothing is undone:
 /// once its host has exited, ordinary starts may resume, and they start
 /// whatever is at the program's path now.
 fn recover_local(
@@ -2454,7 +2471,7 @@ pub(crate) fn recover_local_before_start(
     let transaction = Transaction::open(home, &intent.transaction_dir)?;
     finish_local_recovery(home, &transaction, &intent)?;
     let message = format!(
-        "The restart to the selected local build (CCCC {}) did not complete and was abandoned. Starting CCCC {} from the program you launched.",
+        "The restart to CCCC {} did not complete and was abandoned. Starting CCCC {} from the program you launched.",
         intent.target.version,
         crate::PRODUCT_VERSION,
     );
@@ -2502,7 +2519,7 @@ async fn clean_up(home: &HomeLayout, transaction: &Transaction) -> Result<()> {
             record.creator.pid
         );
     }
-    // A restart into a rebuilt program staged nothing.
+    // A local restart staged nothing.
     if matches!(record.source, Source::Local { .. }) {
         transaction.remove();
         println!("The unfinished restart was cleaned up; nothing was changed.");

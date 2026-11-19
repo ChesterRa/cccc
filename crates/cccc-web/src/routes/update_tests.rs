@@ -166,9 +166,9 @@ async fn an_update_is_handed_over_only_while_its_administrator_keeps_access() {
     );
 }
 
-/// A host check that answers from fixed facts and counts its release checks.
+/// A host check that answers from fixed facts and records what was requested.
 struct FixedChecker {
-    checks: std::sync::atomic::AtomicUsize,
+    checks: Mutex<Vec<UpdateCheckScope>>,
 }
 
 impl crate::UpdateChecker for FixedChecker {
@@ -182,9 +182,9 @@ impl crate::UpdateChecker for FixedChecker {
 
     fn check(
         &self,
+        scope: UpdateCheckScope,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = crate::UpdateCheck> + Send>> {
-        self.checks
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.checks.lock().expect("checks").push(scope);
         Box::pin(async {
             crate::UpdateCheck {
                 current: "0.4.58".into(),
@@ -252,8 +252,12 @@ async fn status_and_check_come_from_the_host_and_say_whether_it_can_update_itsel
     assert_eq!(status["status"]["current"], "0.4.58");
     assert_eq!(status["in_place"], true);
     // Reading the status never asks release discovery.
-    assert_eq!(checker.checks.load(std::sync::atomic::Ordering::SeqCst), 0);
-    let check = result(super::check(State(state)).await);
+    assert!(checker.checks.lock().expect("checks").is_empty());
+    let query = |endpoint: &str| {
+        Query::<CheckQuery>::try_from_uri(&endpoint.parse().expect("update check URI"))
+            .expect("update check query")
+    };
+    let check = result(super::check(State(state.clone()), query("/api/v1/update/check")).await);
     assert_eq!(check["check"]["latest"], "0.4.59");
     assert_eq!(check["check"]["status"], "newer");
     // A rebuilt program at the host's launch path, as the page reads it.
@@ -282,7 +286,20 @@ async fn status_and_check_come_from_the_host_and_say_whether_it_can_update_itsel
     // A host restarts into a rebuilt program only once it says it can.
     assert_eq!(check["local_restart"], false);
     assert_eq!(check["release_keep"], true);
-    assert_eq!(checker.checks.load(std::sync::atomic::Ordering::SeqCst), 1);
+    for scoped in [
+        "/api/v1/update/check?source=local",
+        "/api/v1/update/check?source=release",
+    ] {
+        result(super::check(State(state.clone()), query(scoped)).await);
+    }
+    assert_eq!(
+        *checker.checks.lock().expect("checks"),
+        [
+            UpdateCheckScope::All,
+            UpdateCheckScope::Local,
+            UpdateCheckScope::Release
+        ],
+    );
 
     // A host another installer put in place restarts into a rebuilt program,
     // but names the command for a release.
@@ -304,7 +321,7 @@ async fn status_and_check_come_from_the_host_and_say_whether_it_can_update_itsel
         result(super::status(State(state.clone())).await)["in_place"],
         false
     );
-    let check = result(super::check(State(state)).await);
+    let check = result(super::check(State(state), Query(CheckQuery::default())).await);
     assert_eq!(check["in_place"], false);
     assert_eq!(check["local_restart"], true);
     assert_eq!(check["release_keep"], false);
@@ -318,7 +335,7 @@ async fn status_and_check_come_from_the_host_and_say_whether_it_can_update_itsel
             on_trigger: None,
         },
     );
-    let check = result(super::check(State(state)).await);
+    let check = result(super::check(State(state), Query(CheckQuery::default())).await);
     assert_eq!(check["in_place"], false);
     assert_eq!(check["local_restart"], false);
     assert_eq!(check["release_keep"], false);

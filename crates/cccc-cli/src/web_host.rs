@@ -369,8 +369,8 @@ async fn launch_with(
     // An attended update replaces this process in place, so only a Linux or
     // macOS host that runs its own daemon offers one, with or without the terminal
     // interface: a standalone installation installs a release, and any
-    // installation restarts into the program it was started from once that has
-    // been rebuilt. It records that program now, before a build can replace it.
+    // installation can restart using the program at its launch path. Record
+    // the running program now, before a build can replace it.
     let replaces_itself = cfg!(any(target_os = "linux", target_os = "macos"))
         && daemon_owned
         && mode == cccc_web::WebMode::Normal;
@@ -385,9 +385,8 @@ async fn launch_with(
             use cccc_web::UpdateHost;
             coordinator.release_in_place() || coordinator.local_restart()
         });
-    // Any administrator of this Web can check for a newer release and for a
-    // rebuilt program; only a host that can replace itself also offers to
-    // carry either out.
+    // An administrator can check for a release. The host only offers the
+    // maintenance actions it can carry out.
     let update_checker: Option<cccc_web::UpdateCheckHook> = (mode == cccc_web::WebMode::Normal)
         .then(|| {
             std::sync::Arc::new(crate::update_checker::HostChecker::new(
@@ -464,7 +463,7 @@ async fn launch_with(
                 let result = match confirmed {
                     Ok(agents) => {
                         let done = if local {
-                            format!("Restarted CCCC into the local build {}.", record.to_version)
+                            format!("Restarted CCCC {}.", record.to_version)
                         } else {
                             format!(
                                 "Updated CCCC {} to {}.",
@@ -489,7 +488,7 @@ async fn launch_with(
                         failed: true,
                         message: if local {
                             format!(
-                                "Restart unconfirmed ({}). Recovery keeps the local build. See log.",
+                                "Restart unconfirmed ({}). Recovery keeps the program. See log.",
                                 record.to_version
                             )
                         } else {
@@ -971,9 +970,8 @@ async fn launch_with(
 /// for the update, replace the files under the stopped daemon's lock, and
 /// relay to the installed program. A stop or replacement that does not go
 /// cleanly relays to the unchanged program instead, which starts as before.
-/// A restart into a rebuilt program replaces no files, and the program at its
-/// path is already the rebuilt one: when its stop does not go cleanly, the
-/// host leaves its intent in place and names the recovery command.
+/// A local restart uses the file already at the launch path. If its stop
+/// fails, the host leaves its intent in place and names the recovery command.
 /// `preserving` is the stop that keeps agents, already accepted by the daemon:
 /// the host then only waits for the daemon to end.
 #[cfg(any(target_os = "linux", target_os = "macos"))]

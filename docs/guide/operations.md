@@ -142,9 +142,24 @@ delivery was in progress is settled after the start and is not sent twice.
 - On Windows and with an Intel macOS build, the daemon rejects `--keep-agents`
   before stopping any agents.
 
+### Restarting CCCC without checking for a release
+
+On Linux and macOS, when the CCCC host started its own daemon, open
+**Settings > This instance > Update** and select **Restart CCCC**, or type
+`/restart` in the terminal interface. The confirmation shows whether CCCC
+will use the current program or a new build at its launch path. Choose
+**Keep agents running** where offered, or **Restart agents** to restart them
+along with CCCC. The Web reconnects at the same address and shows the result.
+
+To run multiple instances on one machine, use a distinct `CCCC_HOME` and Web
+port for each. A restart only reconnects to sessions in its own home. Instances
+launched from the same executable path share the installation on disk. When
+one updates that installation, the others can still serve from their running
+builds and will use the shared file on their next launch.
+
 ### Starting after an interrupted local restart
 
-If a restart into a local build leaves CCCC down, start a working CCCC executable
+If a local restart leaves CCCC down, start a working CCCC executable
 with the same `CCCC_HOME`. Once CCCC verifies that the previous update host has
 exited and takes the daemon lock, it reports the interrupted restart as abandoned
 and starts the executable you chose. On platforms that support keeping agents, the

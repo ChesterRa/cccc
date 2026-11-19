@@ -43,9 +43,10 @@ use tower_http::trace::TraceLayer;
 
 pub use readonly::WebMode;
 pub use update_hook::{
-    KeepPreview, KeepRefusal, LastUpdate, LocalBuild, UpdateAgent, UpdateAgents, UpdateCheck,
-    UpdateCheckHook, UpdateChecker, UpdateHook, UpdateHost, UpdateMode, UpdatePreparation,
-    UpdateRejection, UpdateRequest, UpdateServices, UpdateSource, UpdateStatus,
+    KeepPreview, KeepRefusal, LastUpdate, LocalBuild, LocalCandidate, UpdateAgent, UpdateAgents,
+    UpdateCheck, UpdateCheckHook, UpdateCheckScope, UpdateChecker, UpdateHook, UpdateHost,
+    UpdateMode, UpdatePreparation, UpdateRejection, UpdateRequest, UpdateServices, UpdateSource,
+    UpdateStatus,
 };
 pub use web_banner::print as print_listening_banner;
 

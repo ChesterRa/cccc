@@ -993,10 +993,10 @@ mod local {
         let program = temp.path().join("target/release/cccc");
         std::fs::create_dir_all(program.parent().expect("build dir")).expect("build dir");
         build(&program, "0.4.58", &source_id('a'), true);
-        let launch = LaunchProgram {
-            identity: FileIdentity::read(&program).expect("launch identity"),
-            path: program.clone(),
-        };
+        let launch = LaunchProgram::new(
+            program.clone(),
+            FileIdentity::read(&program).expect("launch identity"),
+        );
         let context = UpdateContext {
             home: home.clone(),
             install_dir: None,
@@ -1012,7 +1012,7 @@ mod local {
     }
 
     impl Host {
-        /// What a check offers for the program now at the launch path.
+        /// The file token used when a check offers a rebuilt program.
         fn token(&self) -> String {
             FileIdentity::read(&self.launch.path)
                 .expect("identity")
@@ -1059,6 +1059,68 @@ mod local {
             let record = prepared.transaction.read_relay().expect("relay record");
             (prepared, record)
         }
+    }
+
+    #[tokio::test]
+    async fn a_current_program_offer_can_only_restart_the_host_that_made_it() {
+        use cccc_web::UpdateHost;
+
+        let host = host();
+        let coordinator = Coordinator::new(host.context.clone(), Some(host.launch.clone()));
+        let (offer, id) = host.launch.current_offer();
+        let (other_offer, other_id) = host.launch.current_offer();
+        assert_ne!(id, other_id);
+        assert_eq!(
+            host.launch.current_transaction(&other_offer),
+            Some(other_id.as_str())
+        );
+        let (_, digest) = offer
+            .split_once('.')
+            .expect("offered transaction and digest");
+        assert_eq!(
+            host.launch
+                .current_transaction(&format!("{other_id}.{digest}")),
+            None
+        );
+        let request = UpdateRequest {
+            source: UpdateSource::Local {
+                token: offer,
+                source_id: source_id('a'),
+            },
+            mode: UpdateMode::Restart,
+        };
+        let expected = coordinator.begin(request.clone()).expect("offer reserved");
+        assert_eq!(expected.transaction, id);
+        expected.ready.await.expect("current program can restart");
+        let prepared = coordinator.take_prepared().expect("prepared restart");
+        assert_eq!(prepared.program(), host.launch.path);
+        assert_eq!(prepared.target.source_id, source_id('a'));
+        coordinator.undo(prepared).await;
+        let last = serde_json::json!({
+            "transaction": id,
+            "to_version": "0.4.58",
+            "result": "not_started",
+            "agents": agents_not_observed(),
+            "finished_at": "2026-11-19T00:00:00Z"
+        });
+        cccc_core::fs::write_secret_json(&host.home.root().join("update/last.json"), &last)
+            .expect("record failed offer");
+        let Err(refusal) = coordinator.begin(request.clone()) else {
+            panic!("completed offer cannot start a second transaction");
+        };
+        assert_eq!(refusal.code, "local_changed");
+
+        let replacement = Coordinator::new(
+            host.context,
+            Some(LaunchProgram::new(host.launch.path, host.launch.identity)),
+        );
+        let refusal = replacement
+            .begin(request)
+            .expect("stale offer checked during preparation")
+            .ready
+            .await
+            .expect_err("earlier host's restart offer is stale");
+        assert_eq!(refusal.code, "local_changed");
     }
 
     #[tokio::test]

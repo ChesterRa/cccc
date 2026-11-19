@@ -19,11 +19,12 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
-const status = (over: Partial<UpdateStatus> = {}) => ({
+const status = (over: Partial<UpdateStatus> = {}, local_restart = false) => ({
   ok: true as const,
   result: {
     status: { current: "0.4.58", installation: "standalone", last: null, ...over },
     in_place: true,
+    local_restart,
   },
 });
 const newer: UpdateCheck = {
@@ -320,49 +321,22 @@ it("names the command when this CCCC cannot replace itself", async () => {
   expect(button("update.updateAndRestart")).toBeUndefined();
 });
 
-it("shows a rebuilt local program beside any release answer, and an unreadable one as such", async () => {
-  vi.mocked(api.checkForUpdate).mockResolvedValue({
-    ok: true,
-    result: {
-      check: {
-        ...newer,
-        latest: null,
-        status: null,
-        release_notes_url: null,
-        command: null,
-        failure: "timed out",
-        local: {
-          state: "rebuilt",
-          version: "0.4.58",
-          source_id: "a".repeat(64),
-          built_at: "2026-11-17T09:40:00Z",
-          token: "fixture-token",
-          keep: { allowed: true, refusals: [] },
-        },
-      },
-      in_place: false,
-      local_restart: false,
-    },
-  });
-  await render();
-  await click("update.check");
-  // A failed release check does not hide the rebuilt program.
-  expect(text()).toContain('update.checkFailed {"reason":"timed out"}');
-  expect(text()).toContain("update.localBuild");
-  expect(text()).toContain("update.builtAt");
-  expect(text()).not.toContain("update.localUnreadable");
-
+it("reports a local check failure independently of release discovery", async () => {
+  vi.mocked(api.fetchUpdateStatus).mockResolvedValue(status({}, true));
   vi.mocked(api.checkForUpdate).mockResolvedValue({
     ok: true,
     result: {
       check: { ...newer, local: { state: "unreadable", reason: "cannot check itself" } },
       in_place: true,
-      local_restart: false,
+      local_restart: true,
     },
   });
-  await click("update.check");
+  await render();
+  await click("update.restart");
+  expect(api.checkForUpdate).toHaveBeenCalledExactlyOnceWith("local");
   expect(text()).toContain('update.localUnreadable {"reason":"cannot check itself"}');
   expect(text()).not.toContain("update.builtAt");
+  expect(button("update.keepAgents")).toBeUndefined();
 
   vi.mocked(api.checkForUpdate).mockResolvedValue({
     ok: true,
@@ -372,17 +346,9 @@ it("shows a rebuilt local program beside any release answer, and an unreadable o
       local_restart: true,
     },
   });
-  await click("update.check");
+  await click("update.restart");
   expect(text()).toContain('update.localIncompatible {"version":"0.4.57"}');
-  expect(text()).not.toContain("update.builtAt");
-  expect(button("update.restartToBuild")).toBeUndefined();
-
-  vi.mocked(api.checkForUpdate).mockResolvedValue({
-    ok: true,
-    result: { check: newer, in_place: true, local_restart: false },
-  });
-  await click("update.check");
-  expect(text()).not.toContain("update.localBuild");
+  expect(button("update.keepAgents")).toBeUndefined();
 });
 
 const rebuilt = (keep: { allowed: boolean; refusals: KeepRefusal[] }): UpdateCheck => ({
@@ -404,7 +370,6 @@ it("restarts into a rebuilt program after one choice, keeping agents when allowe
   vi.mocked(api.checkForUpdate).mockResolvedValue({
     ok: true,
     result: {
-      // A standalone installation that also has a newer release: both are offered.
       check: { ...rebuilt({ allowed: true, refusals: [] }), installation: "standalone" },
       in_place: true,
       local_restart: true,
@@ -414,13 +379,13 @@ it("restarts into a rebuilt program after one choice, keeping agents when allowe
     ok: true,
     result: { accepted: true, transaction: "local-txn", mode: "keep" },
   });
+  vi.mocked(api.fetchUpdateStatus).mockResolvedValue(status({}, true));
   await render();
-  await click("update.check");
-  await click("update.restartToBuild");
+  await click("update.restart");
   expect(api.startUpdate).not.toHaveBeenCalled();
   expect(text()).toContain("update.confirmLocal");
-  // While this choice is open, the release's own update waits.
-  expect(button("update.updateAndRestart")?.disabled).toBe(true);
+  expect(api.checkForUpdate).toHaveBeenCalledExactlyOnceWith("local");
+  expect(button("update.check")?.disabled).toBe(true);
   expect(button("update.keepAgents")?.disabled).toBe(false);
   await click("update.keepAgents");
   expect(api.startUpdate).toHaveBeenCalledWith(
@@ -497,9 +462,9 @@ it("greys out keeping agents with the reasons, and restarts them on request", as
     ok: false,
     error: { code: "local_not_supported", message: "not yet" },
   });
+  vi.mocked(api.fetchUpdateStatus).mockResolvedValue(status({}, true));
   await render();
-  await click("update.check");
-  await click("update.restartToBuild");
+  await click("update.restart");
   expect(button("update.keepAgents")?.disabled).toBe(true);
   expect(text()).toContain("update.keepUnavailable");
   // A code this page does not know shows CCCC's own sentence, which names whom it is about.
@@ -537,9 +502,9 @@ it("a lost answer to a restart into a rebuilt program waits for that file's resu
     ok: false,
     error: { code: "NETWORK_ERROR", message: "Failed to fetch" },
   });
+  vi.mocked(api.fetchUpdateStatus).mockResolvedValue(status({}, true));
   await render();
-  await click("update.check");
-  await click("update.restartToBuild");
+  await click("update.restart");
   await click("update.restartAgents");
   expect(text()).toContain('update.lostLocal {"version":"0.4.58"}');
 
@@ -618,19 +583,73 @@ it("a lost answer to a restart into a rebuilt program waits for that file's resu
   expect(text()).not.toContain("update.agents.restarted");
 });
 
-it("offers no restart into a rebuilt program on a host that cannot carry it out", async () => {
+it("matches the current program's offered transaction if the start reply is lost", async () => {
+  vi.useFakeTimers();
+  vi.mocked(api.fetchUpdateStatus).mockResolvedValue(status({}, true));
   vi.mocked(api.checkForUpdate).mockResolvedValue({
     ok: true,
     result: {
-      check: rebuilt({ allowed: true, refusals: [] }),
-      in_place: false,
-      local_restart: false,
+      check: {
+        ...newer,
+        local: {
+          state: "current",
+          version: "0.4.58",
+          source_id: "a".repeat(64),
+          token: "current-run",
+          transaction: "local-txn",
+          keep: { allowed: true, refusals: [] },
+        },
+      },
+      in_place: true,
+      local_restart: true,
     },
   });
+  vi.mocked(api.startUpdate).mockResolvedValue({
+    ok: false,
+    error: { code: "NETWORK_ERROR", message: "Failed to fetch" },
+  });
   await render();
-  await click("update.check");
-  expect(text()).toContain("update.localBuild");
-  expect(button("update.restartToBuild")).toBeUndefined();
+  expect(api.checkForUpdate).not.toHaveBeenCalled();
+  await click("update.restart");
+  expect(text()).toContain('update.confirmCurrent {"version":"0.4.58"}');
+  expect(api.startUpdate).not.toHaveBeenCalled();
+  await click("update.keepAgents");
+  expect(api.checkForUpdate).toHaveBeenCalledExactlyOnceWith("local");
+  expect(api.startUpdate).toHaveBeenCalledExactlyOnceWith(
+    {
+      source: "local",
+      version: "0.4.58",
+      source_id: "a".repeat(64),
+      token: "current-run",
+      transaction: "local-txn",
+    },
+    "keep",
+  );
+  expect(text()).toContain("update.lostLocal");
+  const result = installed({
+    result: "restarted",
+    source: "local",
+    to_version: "0.4.58",
+    token: "file-token",
+    source_id: "a".repeat(64),
+  });
+  vi.mocked(api.fetchUpdateStatus).mockResolvedValue(
+    status({ last: { ...result, transaction: "different-txn" } }, true),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(text()).toContain("update.lostLocal");
+  vi.mocked(api.fetchUpdateStatus).mockResolvedValue(
+    status({ last: { ...result, transaction: "local-txn" } }, true),
+  );
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(text()).not.toContain("update.lostLocal");
+  expect(text()).toContain("update.last.restarted");
+});
+
+it("offers no restart on a host that cannot carry it out", async () => {
+  await render();
+  expect(button("update.restart")).toBeUndefined();
+  expect(button("update.check")).toBeDefined();
 });
 
 it("words a restart into a rebuilt program as a restart, never as an update to an earlier version", async () => {

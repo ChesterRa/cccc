@@ -714,6 +714,9 @@ fn help_screen(frame: &mut Frame, app: &App, theme: Theme) {
     let room = width.saturating_sub(2);
     let mut lines = vec![Line::default(), Line::styled("Commands", theme.bold())];
     for (name, meaning) in COMMANDS {
+        if !app.command_available(name) {
+            continue;
+        }
         let column = 14;
         for (index, part) in text::wrap(meaning, room.saturating_sub(column))
             .into_iter()
@@ -769,6 +772,13 @@ fn help_screen(frame: &mut Frame, app: &App, theme: Theme) {
         if let Some(command) = command {
             lines.push(Line::raw(format!("  {command}")));
         }
+    }
+    if cccc_daemon::session_owner::platform_supported() {
+        lines.extend([
+            Line::default(),
+            Line::raw("To stop CCCC and keep agents, run in another terminal"),
+            Line::raw("  cccc daemon stop --keep-agents"),
+        ]);
     }
     let body = Rect {
         x: area.x + 1,

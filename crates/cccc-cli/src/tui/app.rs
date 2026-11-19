@@ -20,18 +20,19 @@ use crate::host_state::{HostIntent, HostPhase, HostState, UpdateResult};
 use cccc_contracts::local_session::{LocalSessionRuntime, LocalSessionSource};
 use cccc_contracts::reply_question::{Answer, MAX_ANSWER_CHARS};
 use cccc_core::HomeLayout;
-use cccc_web::{LocalBuild, UpdateMode, UpdateRequest, UpdateSource};
+use cccc_web::{LocalBuild, UpdateCheckScope, UpdateMode, UpdateRequest, UpdateSource};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Completion candidates, in the order the command line lists them.
-pub(super) const COMMANDS: [(&str, &str); 6] = [
+pub(super) const COMMANDS: [(&str, &str); 7] = [
     ("/groups", "Open the selected group: tasks, start, stop"),
     ("/sessions", "Browse native sessions and their details"),
     ("/setup", "Connect Codex, Claude Code, Pi or OpenCode"),
     ("/update", "Check for a newer CCCC and update to it"),
+    ("/restart", "Restart CCCC using the program on disk"),
     ("/help", "Commands and keyboard shortcuts"),
     ("/quit", "Stop services started here and exit"),
 ];
@@ -47,8 +48,7 @@ pub(super) struct Context {
     /// False when NO_COLOR asks for no color.
     pub(super) color: bool,
     pub(super) update: UpdateOffer,
-    /// This process restarts into a rebuilt program at the path it was
-    /// started from, whatever installed it.
+    /// This process can restart using the program at its launch path.
     pub(super) local_restart: bool,
     /// This process offers to keep agents running through a release update.
     pub(super) release_keep: bool,
@@ -146,14 +146,14 @@ pub(super) struct ScrollRoom {
     pub(super) page: u16,
 }
 
-/// What a confirmed `/update` does.
+/// What a confirmed update or restart does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum UpdateChoice {
     #[default]
     Cancel,
-    /// Restarts into the rebuilt program; running agents keep running.
+    /// Restarts CCCC while keeping agents running.
     KeepAgents,
-    /// Restarts into the rebuilt program; running agents restart with it.
+    /// Restarts CCCC and its agents.
     RestartAgents,
     /// Installs the newer release once it is checked; running agents keep
     /// running.
@@ -162,10 +162,11 @@ pub(super) enum UpdateChoice {
     Release,
 }
 
-/// One `/update` visit. The confirmation starts on Cancel.
+/// One `/update` or `/restart` visit. The confirmation starts on Cancel.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct UpdateFlow {
     pub(super) generation: u64,
+    pub(super) scope: UpdateCheckScope,
     pub(super) choice: UpdateChoice,
     /// Confirmed and sent, so it cannot be confirmed twice.
     pub(super) started: bool,
@@ -968,6 +969,10 @@ impl App {
         self.edited();
     }
 
+    pub(super) fn command_available(&self, name: &str) -> bool {
+        name != "/restart" || self.context.local_restart
+    }
+
     /// Only a single slash token can be completed. In particular a pasted
     /// multi-command string must never execute its first command.
     pub(super) fn candidates(&self) -> Vec<usize> {
@@ -981,7 +986,9 @@ impl App {
         COMMANDS
             .iter()
             .enumerate()
-            .filter_map(|(index, (name, _))| name.starts_with(&prefix).then_some(index))
+            .filter_map(|(index, (name, _))| {
+                (name.starts_with(&prefix) && self.command_available(name)).then_some(index)
+            })
             .collect()
     }
 
@@ -1030,7 +1037,8 @@ impl App {
                 None
             }
             "/setup" => Some(self.open_setup()),
-            "/update" => self.open_update(),
+            "/update" => self.open_update(UpdateCheckScope::Release),
+            "/restart" => self.open_update(UpdateCheckScope::Local),
             "/groups" => {
                 self.open_groups();
                 None
@@ -1226,23 +1234,32 @@ impl App {
         None
     }
 
-    /// Opening `/update` is the user asking for a check, so it checks now.
-    fn open_update(&mut self) -> Option<Effect> {
-        if self.context.update == UpdateOffer::Unavailable {
-            self.notice = Some(Notice::Error(
-                "This CCCC cannot check for updates here; run `cccc update --check`.".into(),
-            ));
+    /// These commands explicitly ask for one release or local restart check.
+    fn open_update(&mut self, scope: UpdateCheckScope) -> Option<Effect> {
+        let unavailable = match scope {
+            UpdateCheckScope::Local if !self.context.local_restart => {
+                Some("This CCCC cannot restart itself here.")
+            }
+            _ if self.context.update == UpdateOffer::Unavailable => {
+                Some("This CCCC cannot check for updates here. Run `cccc update --check`.")
+            }
+            _ => None,
+        };
+        if let Some(message) = unavailable {
+            self.notice = Some(Notice::Error(message.into()));
             return None;
         }
         self.generation += 1;
         self.update_flow = Some(UpdateFlow {
             generation: self.generation,
+            scope,
             choice: UpdateChoice::Cancel,
             started: false,
         });
         self.screen = Screen::Update;
         Some(Effect::Update(UpdateCommand::Check {
             generation: self.generation,
+            scope,
         }))
     }
 
@@ -1253,10 +1270,8 @@ impl App {
     }
 
     /// What this visit's confirmation offers, in order, each with whether it
-    /// can be chosen; empty while nothing can be confirmed. Cancel leads. A
-    /// rebuilt program is offered by a host that restarts into one, a newer
-    /// release by a host that replaces itself, once the check has finished and
-    /// nothing is under way.
+    /// can be chosen. Once the check settles, a usable local program or a
+    /// newer release follows Cancel.
     pub(super) fn update_options(&self) -> Vec<(UpdateChoice, bool)> {
         let mut options = Vec::new();
         if self.update_flow.as_ref().is_none_or(|flow| flow.started) {
@@ -1276,8 +1291,8 @@ impl App {
         let Some(check) = progress.check.as_ref() else {
             return options;
         };
-        if let Some(LocalBuild::Rebuilt { keep, .. }) = self.offered_local(check) {
-            options.push((UpdateChoice::KeepAgents, keep.allowed));
+        if let Some(candidate) = self.offered_local(check).and_then(LocalBuild::candidate) {
+            options.push((UpdateChoice::KeepAgents, candidate.keep.allowed));
             options.push((UpdateChoice::RestartAgents, true));
         }
         if self.offered_release(check).is_some() {
@@ -1292,19 +1307,28 @@ impl App {
         options
     }
 
-    /// The rebuilt program a restart would run, when this host offers one.
+    /// The program a restart would run, when this host offers one.
     pub(super) fn offered_local<'a>(
         &self,
         check: &'a cccc_web::UpdateCheck,
     ) -> Option<&'a LocalBuild> {
         check.local.as_ref().filter(|local| {
-            self.context.local_restart && matches!(local, LocalBuild::Rebuilt { .. })
+            self.context.local_restart
+                && self
+                    .update_flow
+                    .as_ref()
+                    .is_some_and(|flow| flow.scope == UpdateCheckScope::Local)
+                && local.candidate().is_some()
         })
     }
 
     /// The newer release an update would install, when this host offers one.
     fn offered_release<'a>(&self, check: &'a cccc_web::UpdateCheck) -> Option<&'a str> {
         (self.context.update == UpdateOffer::InPlace
+            && self
+                .update_flow
+                .as_ref()
+                .is_some_and(|flow| flow.scope == UpdateCheckScope::Release)
             && matches!(check.status.as_deref(), Some("newer" | "channel_switch")))
         .then_some(check.latest.as_deref())
         .flatten()
@@ -1330,20 +1354,12 @@ impl App {
             UpdateChoice::KeepAgents => UpdateMode::Keep,
             UpdateChoice::RestartAgents => UpdateMode::Restart,
         };
-        let Some(LocalBuild::Rebuilt {
-            version,
-            source_id,
-            token,
-            ..
-        }) = self.offered_local(check)
-        else {
-            return None;
-        };
+        let candidate = self.offered_local(check)?.candidate()?;
         let source = UpdateSource::Local {
-            token: token.clone(),
-            source_id: source_id.clone(),
+            token: candidate.token.clone(),
+            source_id: candidate.source_id.clone(),
         };
-        Some((UpdateRequest { source, mode }, version.clone()))
+        Some((UpdateRequest { source, mode }, candidate.version.clone()))
     }
 
     fn update_key(&mut self, code: KeyCode, press: bool) -> Option<Effect> {
@@ -1367,7 +1383,7 @@ impl App {
         }
         let checking = progress.is_none_or(|progress| progress.checking);
         if code == KeyCode::Char('r') && press && !checking {
-            return self.open_update();
+            return self.open_update(self.update_flow.as_ref()?.scope);
         }
         let options = self.update_options();
         if options.is_empty() {

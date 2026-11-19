@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -26,10 +27,16 @@ import {
 } from "lucide-react";
 import type { GroupPresentation } from "../../types";
 import {
+  attachmentSequence,
+  attachmentSetKey,
+  useAttachmentPreviewStore,
+} from "../../stores/useAttachmentPreviewStore";
+import {
   type ClosedEntry,
   type PresentationResource,
   type ResourceDock,
   type ResourceTab,
+  resourceKey,
   useGroupResourcePanel,
   useResourcePanelStore,
 } from "../../stores/useResourcePanelStore";
@@ -39,6 +46,8 @@ import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks"
 import { readFrameProof } from "../../features/connect/protocol";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import { CloseIcon, LcdIcon } from "../Icons";
+import { AttachmentStepper } from "../messageBubble/AttachmentStepper";
+import { attachmentStepKey } from "../messageBubble/attachmentStepKey";
 import { buttonVariants } from "../ui/button-variants";
 import { toolbarIconKey, toolbarTextKey } from "../ui/toolbarKey";
 import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover";
@@ -432,6 +441,35 @@ export function ResourcePanel({
     return kept;
   }, [panel.activeKey, tabs, recentAttachments, split]);
 
+  // Previous and next replace the attachment in its tab with another one of the same message, or
+  // select it where it is already open, so stepping through a message adds no tabs. A video
+  // reached that way waits to be played, until the selection moves on.
+  const replaceAttachment = useResourcePanelStore((state) => state.replaceAttachment);
+  const activeSiblings = useAttachmentPreviewStore((state) =>
+    active?.kind === "attachment"
+      ? state.sets[attachmentSetKey(groupId, active.messageKey)]
+      : undefined,
+  );
+  const sequence =
+    active?.kind === "attachment" ? attachmentSequence(activeSiblings, active.index) : null;
+  const [steppedTo, setSteppedTo] = useState("");
+  if (steppedTo && steppedTo !== panel.activeKey) setSteppedTo("");
+  const stepAttachment = (delta: -1 | 1) => {
+    const target = delta < 0 ? sequence?.previous : sequence?.next;
+    if (!active || !target) return;
+    setPending(null);
+    setSteppedTo(resourceKey(target.resource));
+    replaceAttachment(groupId, active.key, target.resource, target.title);
+  };
+  // On the attachment's bar, and on an image itself; the tab strip keeps its arrows for tabs.
+  const stepFromKey = (event: KeyboardEvent<HTMLElement>) => {
+    if (split || active?.kind !== "attachment" || !sequence) return;
+    const delta = attachmentStepKey(event, active.media, "[data-resource-attachment]");
+    if (!delta) return;
+    event.preventDefault();
+    stepAttachment(delta);
+  };
+
   const select = useCallback(
     (tab: ResourceTab) => {
       setPending(null);
@@ -666,7 +704,21 @@ export function ResourcePanel({
 
   const toolbar =
     active?.kind === "attachment" ? (
-      <div className="flex h-9 max-sm:h-12 pointer-coarse:h-12 shrink-0 items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 text-xs text-[var(--color-text-tertiary)]">
+      <div
+        className="flex h-9 max-sm:h-12 pointer-coarse:h-12 shrink-0 items-center gap-1 border-b border-[var(--glass-border-subtle)] px-2 text-xs text-[var(--color-text-tertiary)]"
+        onKeyDown={stepFromKey}
+      >
+        {/* Before the name, so the keys keep their place while the keys on the right change
+            with each file. */}
+        {sequence ? (
+          <AttachmentStepper
+            position={sequence.position}
+            count={sequence.count}
+            onStep={stepAttachment}
+            keyClassName={toolbarIconKey}
+            iconSize={14}
+          />
+        ) : null}
         <span className="min-w-0 flex-1 truncate" title={active.title}>
           {active.sender ? `${active.title} · ${active.sender}` : active.title}
         </span>
@@ -1245,6 +1297,7 @@ export function ResourcePanel({
               hidden={!front}
               onPointerDownCapture={side ? () => focusSide(side) : undefined}
               onFocusCapture={side ? () => focusSide(side) : undefined}
+              onKeyDown={!split && tab.key === panel.activeKey ? stepFromKey : undefined}
               data-resource-attachment={tab.key}
             >
               <AttachmentResourceView
@@ -1253,7 +1306,7 @@ export function ResourcePanel({
                 title={tab.title}
                 isSvg={tab.isSvg}
                 isDark={isDark}
-                active={shown && !split && tab.key === panel.activeKey}
+                active={shown && !split && tab.key === panel.activeKey && tab.key !== steppedTo}
                 visible={shown && front}
                 resourceKey={tab.key}
                 actionsTarget={

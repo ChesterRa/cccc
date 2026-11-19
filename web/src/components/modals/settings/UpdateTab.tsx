@@ -1,9 +1,5 @@
-// Check for a newer CCCC and update to it. Nothing asks release discovery until
-// the administrator clicks Check. A host that can replace itself carries the
-// update out after one confirmation; others name the command for their
-// installation. A failed check is shown as failed, never as up to date. A host
-// whose program has been rebuilt since it started also offers to restart into
-// that build, keeping agents running when its check allows it.
+// Check a release or the program at CCCC's launch path, then hand the chosen
+// update or restart to the host.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -36,7 +32,7 @@ const NO_ANSWER = new Set(["NETWORK_ERROR", "EMPTY_RESPONSE", "HTTP_ERROR", "PAR
 // had before the start. `undefined` means that earlier one is unknown too.
 type Awaiting = { transaction: string } | { before: string | null | undefined };
 
-// One update at a time: a published release, or the program rebuilt at the
+// One update at a time: a published release, or the program at the
 // path this CCCC was started from.
 type Phase =
   | { kind: "idle" }
@@ -62,8 +58,11 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
   const [releaseKeep, setReleaseKeep] = useState(false);
   const [unavailable, setUnavailable] = useState("");
   const [check, setCheck] = useState<UpdateCheck | null>(null);
+  const [local, setLocal] = useState<LocalBuild | null>(null);
   const [checking, setChecking] = useState(false);
+  const [checkingLocal, setCheckingLocal] = useState(false);
   const [checkError, setCheckError] = useState("");
+  const [localError, setLocalError] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [copied, setCopied] = useState(false);
   const mounted = useRef(true);
@@ -84,6 +83,7 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
     }
     setStatus(response.result.status);
     setInPlace(response.result.in_place);
+    setLocalRestart(response.result.local_restart === true);
     return response.result.status;
   }, []);
 
@@ -111,10 +111,12 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
         // The installed version and the last result shown stay CCCC's current ones.
         setStatus(response.result.status);
         setInPlace(response.result.in_place);
+        setLocalRestart(response.result.local_restart === true);
         if (isResult(response.result.status.last, updating)) {
           stopped = true;
           window.clearInterval(timer);
           setCheck(null);
+          setLocal(null);
           setPhase({ kind: "idle" });
           return;
         }
@@ -147,8 +149,35 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
     }
     setCheck(response.result.check);
     setInPlace(response.result.in_place);
-    setLocalRestart(response.result.local_restart === true);
     setReleaseKeep(response.result.release_keep === true);
+  };
+
+  const checkRestart = async () => {
+    setCheckingLocal(true);
+    setPhase({ kind: "idle" });
+    setLocalError("");
+    setLocal(null);
+    const response = await api.checkForUpdate("local");
+    if (!mounted.current) return;
+    setCheckingLocal(false);
+    if (!response.ok) {
+      setLocalError(response.error.message);
+      return;
+    }
+    const candidate = response.result.check.local;
+    setLocal(candidate);
+    setLocalRestart(response.result.local_restart);
+    if (candidate?.state === "current" || candidate?.state === "rebuilt") {
+      const { version, token, source_id } = candidate;
+      const target = { source: "local" as const, version, token, source_id };
+      setPhase({
+        kind: "confirming",
+        target:
+          candidate.state === "current"
+            ? { ...target, transaction: candidate.transaction }
+            : target,
+      });
+    }
   };
 
   const runUpdate = async (target: UpdateTarget, mode: UpdateMode) => {
@@ -165,6 +194,12 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
       setPhase({ ...waiting, awaiting: { transaction }, lost: false });
     } else if (!response.ok && !NO_ANSWER.has(response.error.code)) {
       setPhase({ kind: "rejected", target, reason: response.error.message });
+    } else if (
+      target.source === "local" &&
+      target.transaction &&
+      before?.last?.transaction !== target.transaction
+    ) {
+      setPhase({ ...waiting, awaiting: { transaction: target.transaction }, lost: true });
     } else {
       const earlier = before ? (before.last?.transaction ?? null) : undefined;
       setPhase({ ...waiting, awaiting: { before: earlier }, lost: true });
@@ -172,14 +207,18 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
   };
 
   const busy =
-    checking || phase.kind === "preparing" || (phase.kind === "updating" && phase.late === null);
+    checking ||
+    checkingLocal ||
+    phase.kind === "confirming" ||
+    phase.kind === "preparing" ||
+    (phase.kind === "updating" && phase.late === null);
   const actionable = check?.status === "newer" || check?.status === "channel_switch";
   // Each target's own steps show where it is offered; the other one waits.
   const releasePhase: Phase =
     phase.kind !== "idle" && phase.target.source === "release" ? phase : { kind: "idle" };
   const localPhase: Phase =
     phase.kind !== "idle" && phase.target.source === "local" ? phase : { kind: "idle" };
-  const rebuilt = check?.local?.state === "rebuilt" ? check.local : null;
+  const candidate = local?.state === "current" || local?.state === "rebuilt" ? local : null;
 
   return (
     <SettingsPage title={t("update.title")} description={t("update.description")}>
@@ -190,14 +229,26 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
         title={t("update.versionTitle")}
         actions={
           unavailable ? undefined : (
-            <button
-              type="button"
-              className={secondaryButtonClass("sm")}
-              onClick={() => void runCheck()}
-              disabled={busy}
-            >
-              {checking ? t("update.checking") : t("update.check")}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {localRestart ? (
+                <button
+                  type="button"
+                  className={secondaryButtonClass("sm")}
+                  onClick={() => void checkRestart()}
+                  disabled={busy}
+                >
+                  {checkingLocal ? t("update.checking") : t("update.restart")}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={secondaryButtonClass("sm")}
+                onClick={() => void runCheck()}
+                disabled={busy}
+              >
+                {checking ? t("update.checking") : t("update.check")}
+              </button>
+            </div>
           )
         }
       >
@@ -225,15 +276,22 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
             </span>
           </SettingsRow>
         ) : null}
-        {check?.local ? <LocalBuildRow local={check.local} language={i18n.language} /> : null}
-        {rebuilt && localRestart && check ? (
+        {local && local.state !== "current" ? (
+          <LocalBuildRow local={local} language={i18n.language} />
+        ) : null}
+        {localError ? (
+          <div className="px-5 py-3.5">
+            <SettingsNotice tone="error">
+              {t("update.checkFailed", { reason: localError })}
+            </SettingsNotice>
+          </div>
+        ) : null}
+        {candidate && localPhase.kind !== "idle" ? (
           <div className="px-5 py-3.5">
             <LocalAction
-              local={rebuilt}
+              local={candidate}
               language={i18n.language}
               phase={localPhase}
-              waiting={phase.kind !== "idle" && localPhase.kind === "idle"}
-              onConfirm={(target) => setPhase({ kind: "confirming", target })}
               onCancel={() => setPhase({ kind: "idle" })}
               onStart={(target, mode) => void runUpdate(target, mode)}
             />
@@ -258,7 +316,11 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
                 inPlace={inPlace}
                 releaseKeep={releaseKeep}
                 phase={releasePhase}
-                waiting={phase.kind !== "idle" && releasePhase.kind === "idle"}
+                waiting={
+                  checking ||
+                  checkingLocal ||
+                  (phase.kind !== "idle" && releasePhase.kind === "idle")
+                }
                 copied={copied}
                 onCopy={async (command) => setCopied(await copyTextToClipboard(command))}
                 onConfirm={(version) =>
@@ -269,9 +331,9 @@ export function UpdateTab({ isActive = true }: { isActive?: boolean }) {
               />
             ) : null}
           </div>
-        ) : phase.kind === "updating" ? (
+        ) : releasePhase.kind === "updating" ? (
           <div className="px-5 py-3.5">
-            <WaitingNotice phase={phase} />
+            <WaitingNotice phase={releasePhase} />
           </div>
         ) : null}
       </SettingsCard>
@@ -422,22 +484,17 @@ function UpdateAction({
   }
 }
 
-/** Restart into the rebuilt program, keeping agents running when its check allows it. */
+/** Restart the selected program, keeping agents running when allowed. */
 function LocalAction({
   local,
   language,
   phase,
-  waiting,
-  onConfirm,
   onCancel,
   onStart,
 }: {
-  local: Extract<LocalBuild, { state: "rebuilt" }>;
+  local: Extract<LocalBuild, { state: "current" | "rebuilt" }>;
   language: string;
   phase: Phase;
-  /** The other target's update is under way. */
-  waiting: boolean;
-  onConfirm: (target: UpdateTarget) => void;
   onCancel: () => void;
   onStart: (target: UpdateTarget, mode: UpdateMode) => void;
 }) {
@@ -473,10 +530,12 @@ function LocalAction({
         >
           <span className="flex min-w-0 flex-col gap-1.5">
             <span>
-              {t("update.confirmLocal", {
-                version: local.version,
-                time: formatTime(local.built_at, language),
-              })}
+              {local.state === "rebuilt"
+                ? t("update.confirmLocal", {
+                    version: local.version,
+                    time: formatTime(local.built_at, language),
+                  })
+                : t("update.confirmCurrent", { version: local.version })}
             </span>
             {allowed ? null : <KeepRefusals refusals={refusals} />}
           </span>
@@ -497,26 +556,8 @@ function LocalAction({
           {t("update.rejectedLocal", { reason: phase.reason })}
         </SettingsNotice>
       );
-    default:
-      return (
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            className={primaryButtonClass()}
-            disabled={waiting}
-            onClick={() =>
-              onConfirm({
-                source: "local",
-                version: local.version,
-                token: local.token,
-                source_id: local.source_id,
-              })
-            }
-          >
-            {t("update.restartToBuild")}
-          </button>
-        </div>
-      );
+    case "idle":
+      return null;
   }
 }
 
@@ -562,7 +603,13 @@ function keepReason(refusal: KeepRefusal, t: Translate): string {
 }
 
 /** The program this CCCC was started from has changed since, whatever the release check said. */
-function LocalBuildRow({ local, language }: { local: LocalBuild; language: string }) {
+function LocalBuildRow({
+  local,
+  language,
+}: {
+  local: Exclude<LocalBuild, { state: "current" }>;
+  language: string;
+}) {
   const { t } = useTranslation("settings");
   return (
     <SettingsRow label={t("update.localBuild")}>
@@ -616,8 +663,8 @@ function isResult(last: LastUpdate | null, phase: Extract<Phase, { kind: "updati
   if ("transaction" in awaiting) return last.transaction === awaiting.transaction;
   // Without the earlier result, an older one cannot be told apart.
   if (awaiting.before === undefined || last.transaction === awaiting.before) return false;
-  // A rebuilt program often keeps its version, so only the file its check
-  // offered, and the build it answered as, tell its result from another restart's.
+  // This fallback identifies a rebuild by file and source. An offer to
+  // restart the current program already names its own transaction.
   if (phase.target.source === "local") {
     return (
       last.source === "local" &&

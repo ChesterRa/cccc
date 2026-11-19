@@ -23,6 +23,7 @@ import {
   isBrowserWebModelRuntime,
 } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
+import { AttachmentLightbox } from "../../components/messageBubble/AttachmentLightbox";
 import { getReadingTopAnchorOffset } from "../../components/virtualMessageListAnchorRestore";
 import { PendingReplyEditingContext } from "../../components/messageBubble/PendingReplyEditingContext";
 import { LivePendingStatusContext } from "../../features/pendingReplies/liveStatusContext";
@@ -658,6 +659,12 @@ export function ChatTab({
   // the header entry then brings back the messages with it rather than collapsing it unseen.
   const resourcePanelVisible =
     resourcePanelShown && (resourceDock === "right" || workView !== "terminals");
+  // A message attachment opens in the panel only while the panel is on screen beside it.
+  const setResourcePanelShown = useResourcePanelStore((state) => state.setShown);
+  useEffect(() => {
+    setResourcePanelShown(resourcePanelVisible ? selectedGroupId : "");
+    return () => setResourcePanelShown("");
+  }, [resourcePanelVisible, selectedGroupId, setResourcePanelShown]);
   const toggleResourcePanel = useCallback(() => {
     if (!selectedGroupId) return;
     if (resourcePanelVisible) {
@@ -1905,6 +1912,14 @@ export function ChatTab({
               </Suspense>
             </div>
           </MobilePresentationSurface>
+
+          {selectedGroupId ? (
+            <AttachmentLightbox
+              groupId={selectedGroupId}
+              isDark={isDark}
+              canOpenInPanel={!isSmallScreen}
+            />
+          ) : null}
         </div>
       </main>
     </div>

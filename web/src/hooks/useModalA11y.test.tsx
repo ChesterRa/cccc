@@ -330,3 +330,37 @@ it("keeps a media player as one wrapping stop in a modal without a focus guard",
   expect(document.activeElement).toBe(player);
   await act(async () => root.unmount());
 });
+
+it("gives focus back without scrolling when asked, as a preview opened from a message does", async () => {
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    callback(0);
+    return 1;
+  });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const focus = vi.spyOn(HTMLElement.prototype, "focus");
+  function Preview({ open, preventReturnScroll }: { open: boolean; preventReturnScroll: boolean }) {
+    const { modalRef } = useModalA11y(open, () => {}, { preventReturnScroll });
+    return open ? (
+      <div ref={modalRef}>
+        <button>Close</button>
+      </div>
+    ) : null;
+  }
+  const opener = document.createElement("button");
+  document.body.append(opener);
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  for (const preventReturnScroll of [true, false]) {
+    opener.focus();
+    await act(async () => root.render(<Preview open preventReturnScroll={preventReturnScroll} />));
+    focus.mockClear();
+    await act(async () =>
+      root.render(<Preview open={false} preventReturnScroll={preventReturnScroll} />),
+    );
+    expect(document.activeElement).toBe(opener);
+    const back = focus.mock.calls.find((_, index) => focus.mock.contexts[index] === opener);
+    expect(back?.[0]).toEqual({ preventScroll: preventReturnScroll });
+  }
+  await act(async () => root.unmount());
+});

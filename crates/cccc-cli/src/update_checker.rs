@@ -1,6 +1,6 @@
 //! The host's update check, offered to the Web it serves: the same check
-//! `cccc update --check` makes, as data instead of text, and on a host that
-//! can restart into it, whether its program has been rebuilt since it started.
+//! `cccc update --check` makes, as data instead of text, and the local program
+//! an attended restart would use.
 
 use std::future::Future;
 use std::path::PathBuf;
@@ -10,9 +10,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use cccc_core::HomeLayout;
 use cccc_core::update_image::FileIdentity;
 use cccc_web::{
-    LastUpdate, LocalBuild, UpdateCheck, UpdateCheckHook, UpdateRejection, UpdateRequest,
-    UpdateStatus, UpdateTrigger,
+    LastUpdate, LocalBuild, LocalCandidate, UpdateCheck, UpdateCheckHook, UpdateCheckScope,
+    UpdateRejection, UpdateRequest, UpdateStatus, UpdateTrigger,
 };
+use sha2::{Digest, Sha256};
 
 use crate::commands::update::{self, CheckOutcome, InstallationOwner, Latest, Status};
 use crate::update_host::LastResult;
@@ -75,7 +76,7 @@ impl UpdateEntry {
         self.in_place
     }
 
-    /// Whether this host restarts into a rebuilt program at its launch path.
+    /// Whether this host restarts using the program at its launch path.
     pub(crate) fn local_restart(&self) -> bool {
         self.local_restart
     }
@@ -85,8 +86,8 @@ impl UpdateEntry {
         self.release_keep
     }
 
-    pub(crate) async fn check(&self) -> UpdateCheck {
-        self.checker.check().await
+    pub(crate) async fn check(&self, scope: UpdateCheckScope) -> UpdateCheck {
+        self.checker.check(scope).await
     }
 
     /// Resolves once the update is prepared and the Web has closed for it.
@@ -102,7 +103,7 @@ impl UpdateEntry {
 
 pub(crate) struct HostChecker {
     home: HomeLayout,
-    /// Only a host that can restart into a rebuilt program has one.
+    /// Only a host that can carry out a local restart has one.
     launch: Option<LaunchProgram>,
 }
 
@@ -119,9 +120,18 @@ impl HostChecker {
 pub(crate) struct LaunchProgram {
     pub(crate) path: PathBuf,
     pub(crate) identity: FileIdentity,
+    restart_nonce: uuid::Uuid,
 }
 
 impl LaunchProgram {
+    pub(crate) fn new(path: PathBuf, identity: FileIdentity) -> Self {
+        Self {
+            path,
+            identity,
+            restart_nonce: uuid::Uuid::new_v4(),
+        }
+    }
+
     /// The running program: the path it was started from, and the file this
     /// process actually runs, read from its own image rather than from the
     /// path, in case a build replaced the file meanwhile. Writing a new program
@@ -131,7 +141,30 @@ impl LaunchProgram {
     pub(crate) fn current() -> Option<Self> {
         let path = std::env::current_exe().ok()?;
         let identity = FileIdentity::running().ok()?;
-        path.is_file().then_some(Self { path, identity })
+        path.is_file().then(|| Self::new(path, identity))
+    }
+
+    /// Give each offer for the current program its own result ID and bind it
+    /// to this run of CCCC. After exec the next host has a different nonce.
+    pub(crate) fn current_offer(&self) -> (String, String) {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let digest = self.offer_digest(&id);
+        (format!("{id}.{digest}"), id)
+    }
+
+    pub(crate) fn current_transaction<'a>(&self, token: &'a str) -> Option<&'a str> {
+        let (id, digest) = token.split_once('.')?;
+        if id.len() != 32 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        (digest == self.offer_digest(id)).then_some(id)
+    }
+
+    fn offer_digest(&self, id: &str) -> String {
+        let mut hash = Sha256::new();
+        hash.update(id.as_bytes());
+        hash.update(self.restart_nonce.as_bytes());
+        format!("{:x}", hash.finalize())
     }
 }
 
@@ -140,20 +173,23 @@ impl LaunchProgram {
 /// reported as such, never as nothing new. Whether agents could keep running
 /// through a restart into it is the daemon's own first look; it decides again
 /// when it is asked to stop.
-async fn local_build(home: HomeLayout, launch: Option<LaunchProgram>) -> Option<LocalBuild> {
+async fn local_build(
+    home: HomeLayout,
+    launch: Option<LaunchProgram>,
+    include_current: bool,
+) -> Option<LocalBuild> {
     let launch = launch?;
     let unreadable = |error: std::io::Error| LocalBuild::Unreadable {
         reason: format!("{}: {error}", launch.path.display()),
     };
     let identity = match FileIdentity::read(&launch.path) {
-        Ok(identity) if identity == launch.identity => return None,
         Ok(identity) => identity,
         Err(error) => return Some(unreadable(error)),
     };
-    let token = match identity.token() {
-        Ok(token) => token,
-        Err(error) => return Some(unreadable(error)),
-    };
+    let current = identity == launch.identity;
+    if current && !include_current {
+        return None;
+    }
     let check = crate::update_host::self_check(&launch.path).await;
     // What answered must be the file read before it, not one a build was
     // still writing.
@@ -170,13 +206,30 @@ async fn local_build(home: HomeLayout, launch: Option<LaunchProgram>) -> Option<
             let mut keep =
                 cccc_daemon::session_owner::preservation_check(&home, &check.capabilities).await;
             crate::update_host::name_refusals(&home, &mut keep);
-            LocalBuild::rebuilt(
-                check.version,
-                check.build.source_id,
-                identity.written,
-                token,
-                keep,
-            )
+            if current {
+                let (token, transaction) = launch.current_offer();
+                LocalBuild::Current {
+                    transaction,
+                    candidate: LocalCandidate {
+                        version: check.version,
+                        source_id: check.build.source_id,
+                        token,
+                        keep,
+                    },
+                }
+            } else {
+                let token = match identity.token() {
+                    Ok(token) => token,
+                    Err(error) => return Some(unreadable(error)),
+                };
+                LocalBuild::rebuilt(
+                    check.version,
+                    check.build.source_id,
+                    identity.written,
+                    token,
+                    keep,
+                )
+            }
         }
         Err(error) => LocalBuild::Unreadable {
             reason: format!("{error:#}"),
@@ -188,39 +241,50 @@ impl cccc_web::UpdateChecker for HostChecker {
     fn status(&self) -> UpdateStatus {
         UpdateStatus {
             current: crate::PRODUCT_VERSION.into(),
-            installation: update::running_installation()
-                .map(|installation| owner_name(installation.owner))
-                .unwrap_or("unrecognized")
-                .into(),
+            installation: current_installation().into(),
             last: last_update(&self.home),
         }
     }
 
-    fn check(&self) -> Pin<Box<dyn Future<Output = UpdateCheck> + Send>> {
+    fn check(&self, scope: UpdateCheckScope) -> Pin<Box<dyn Future<Output = UpdateCheck> + Send>> {
         let home = self.home.clone();
         let launch = self.launch.clone();
         Box::pin(async move {
-            // Independent answers: a failed release check still shows a rebuild.
-            let (release, local) =
-                tokio::join!(update::check_running_program(), local_build(home, launch));
-            let mut check = match release {
-                Ok(outcome) => describe(outcome),
-                Err(error) => UpdateCheck {
+            match scope {
+                UpdateCheckScope::All => {
+                    let (mut release, local) =
+                        tokio::join!(check_release(), local_build(home, launch, false));
+                    release.local = local;
+                    release
+                }
+                UpdateCheckScope::Release => check_release().await,
+                UpdateCheckScope::Local => UpdateCheck {
                     current: crate::PRODUCT_VERSION.into(),
-                    channel: String::new(),
-                    installation: "unrecognized".into(),
-                    latest: None,
-                    status: None,
-                    failure: Some(format!("{error:#}")),
-                    release_notes_url: None,
-                    command: None,
-                    local: None,
+                    installation: current_installation().into(),
+                    local: local_build(home, launch, true).await,
+                    ..UpdateCheck::default()
                 },
-            };
-            check.local = local;
-            check
+            }
         })
     }
+}
+
+async fn check_release() -> UpdateCheck {
+    match update::check_running_program().await {
+        Ok(outcome) => describe(outcome),
+        Err(error) => UpdateCheck {
+            current: crate::PRODUCT_VERSION.into(),
+            installation: "unrecognized".into(),
+            failure: Some(format!("{error:#}")),
+            ..UpdateCheck::default()
+        },
+    }
+}
+
+fn current_installation() -> &'static str {
+    update::running_installation()
+        .map(|installation| owner_name(installation.owner))
+        .unwrap_or("unrecognized")
 }
 
 fn describe(outcome: CheckOutcome) -> UpdateCheck {

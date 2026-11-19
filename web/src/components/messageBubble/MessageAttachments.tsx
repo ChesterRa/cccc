@@ -1,3 +1,9 @@
+import { useEffect } from "react";
+import {
+  type AttachmentPreviewItem,
+  useAttachmentPreviewStore,
+  useAttachmentSetShown,
+} from "../../stores/useAttachmentPreviewStore";
 import type { MessageAttachment } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
@@ -8,6 +14,7 @@ import {
   isSvgAttachment,
   isVideoAttachment,
 } from "../../utils/messageAttachments";
+import type { AttachmentResourceMedia } from "../resourcePanel/views/AttachmentResourceView";
 import { FileIcon } from "../Icons";
 import { AudioAttachments } from "./AudioAttachments";
 import { DocumentAttachment } from "./DocumentAttachment";
@@ -49,10 +56,7 @@ export function MessageAttachments({
       !isAudioAttachment(attachment),
   );
   const useImageGrid = imageAttachments.length > 1;
-  const sourceFor = (
-    attachment: MessageAttachment & { sourceIndex?: number },
-  ): MessageAttachmentSource => ({
-    panelGroupId,
+  const where = (attachment: MessageAttachment & { sourceIndex?: number }) => ({
     blobGroupId,
     messageKey: attachmentKeyPrefix,
     sender,
@@ -62,6 +66,40 @@ export function MessageAttachments({
     blobPath: attachment.path || "",
     localPreviewUrl: attachment.path ? undefined : attachment.local_preview_url || undefined,
   });
+  // The attachments the page can show, in the message's own order rather than the order of the
+  // sections below; audio plays in place and other files download.
+  const siblings = attachments.flatMap((attachment): AttachmentPreviewItem[] => {
+    const media = previewMedia(attachment);
+    if (!media) return [];
+    const { label } = buildMessageAttachmentLinks({
+      groupId: blobGroupId,
+      path: attachment.path,
+      title: attachment.title,
+      localPreviewUrl: attachment.local_preview_url,
+      fallbackLabel: media === "image" || media === "video" ? media : "file",
+    });
+    return [
+      {
+        resource: {
+          kind: "attachment",
+          ...where(attachment),
+          media,
+          isSvg: media === "image" && isSvgAttachment(attachment),
+        },
+        title: label,
+      },
+    ];
+  });
+  const sourceFor = (
+    attachment: MessageAttachment & { sourceIndex?: number },
+  ): MessageAttachmentSource => ({ panelGroupId, ...where(attachment), siblings });
+  // A preview or tab showing one of these attachments steps through the current list, such as
+  // the stored copies once an upload is confirmed.
+  const shown = useAttachmentSetShown(panelGroupId, attachmentKeyPrefix);
+  useEffect(() => {
+    if (shown && blobGroupId)
+      useAttachmentPreviewStore.getState().remember(panelGroupId, attachmentKeyPrefix, siblings);
+  }, [attachmentKeyPrefix, blobGroupId, panelGroupId, shown, siblings]);
 
   if (attachments.length <= 0 || !blobGroupId) return null;
 
@@ -210,4 +248,10 @@ export function MessageAttachments({
       )}
     </div>
   );
+}
+
+function previewMedia(attachment: MessageAttachment): AttachmentResourceMedia | null {
+  if (isImageAttachment(attachment)) return "image";
+  if (isVideoAttachment(attachment)) return "video";
+  return attachmentDocumentKind(attachment);
 }

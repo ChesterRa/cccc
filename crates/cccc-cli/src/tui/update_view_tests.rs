@@ -4,7 +4,8 @@ use crate::tui::test_support::{context, running};
 use crate::tui::update::{UpdateCommand, UpdateProgress};
 use crate::tui::view::render;
 use cccc_web::{
-    KeepPreview, KeepRefusal, LocalBuild, UpdateCheck, UpdateMode, UpdateRequest, UpdateSource,
+    KeepPreview, KeepRefusal, LocalBuild, LocalCandidate, UpdateCheck, UpdateCheckScope,
+    UpdateMode, UpdateRequest, UpdateSource,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent};
 use ratatui::Terminal;
@@ -72,11 +73,20 @@ fn checked_on(offer: UpdateOffer, local_restart: bool, check: Option<UpdateCheck
     context.update = offer;
     context.local_restart = local_restart;
     let mut app = App::new(context, running());
-    app.input = "/update".into();
-    let Some(Effect::Update(UpdateCommand::Check { generation })) = press(&mut app, KeyCode::Enter)
+    app.input = if local_restart { "/restart" } else { "/update" }.into();
+    let Some(Effect::Update(UpdateCommand::Check { generation, scope })) =
+        press(&mut app, KeyCode::Enter)
     else {
-        panic!("opening /update checks");
+        panic!("opening the page checks");
     };
+    assert_eq!(
+        scope,
+        if local_restart {
+            UpdateCheckScope::Local
+        } else {
+            UpdateCheckScope::Release
+        }
+    );
     app.update = UpdateProgress {
         generation,
         checking: check.is_none(),
@@ -107,7 +117,7 @@ fn opening_checks_once_and_a_failed_check_never_reads_as_current() {
     assert!(!shows(&app, "up to date"));
     assert!(!shows(&app, "Update and restart agents"));
     // Checking again is a new visit, so a late answer to the first is ignored.
-    let Some(Effect::Update(UpdateCommand::Check { generation })) =
+    let Some(Effect::Update(UpdateCommand::Check { generation, .. })) =
         press(&mut app, KeyCode::Char('r'))
     else {
         panic!("r checks again");
@@ -127,7 +137,8 @@ fn a_host_that_keeps_agents_offers_it_for_a_release_checked_once_downloaded() {
     context.release_keep = true;
     let mut app = App::new(context, running());
     app.input = "/update".into();
-    let Some(Effect::Update(UpdateCommand::Check { generation })) = press(&mut app, KeyCode::Enter)
+    let Some(Effect::Update(UpdateCommand::Check { generation, .. })) =
+        press(&mut app, KeyCode::Enter)
     else {
         panic!("opening /update checks");
     };
@@ -340,7 +351,7 @@ fn a_handover_the_host_could_not_carry_out_returns_with_its_result() {
 
         // A later /update is a new visit with a newer release to confirm.
         app.input = "/update".into();
-        let Some(Effect::Update(UpdateCommand::Check { generation })) =
+        let Some(Effect::Update(UpdateCommand::Check { generation, .. })) =
             press(&mut app, KeyCode::Enter)
         else {
             panic!("a later /update checks again");
@@ -354,54 +365,27 @@ fn a_handover_the_host_could_not_carry_out_returns_with_its_result() {
 }
 
 #[test]
-fn a_rebuilt_local_program_shows_whatever_the_release_check_answered() {
-    let written = std::time::SystemTime::now() - std::time::Duration::from_secs(180);
-    let rebuilt = LocalBuild::rebuilt(
-        "0.4.46".into(),
-        "a".repeat(64),
-        written,
-        "fixture-token".into(),
-        cccc_web::KeepPreview {
-            allowed: false,
-            refusals: Vec::new(),
-        },
-    );
+fn the_release_screen_ignores_local_builds_and_restart_reports_unreadable_programs() {
     let app = checked(
         UpdateOffer::InPlace,
         Some(UpdateCheck {
-            local: Some(rebuilt.clone()),
+            local: Some(rebuilt(true)),
             ..newer()
         }),
     );
-    assert!(shows(&app, "Local build  0.4.46 · built 3m ago"));
     assert!(shows(&app, "Latest       0.4.46"));
+    assert!(!shows(&app, "Local build"));
 
-    // A failed release check still shows it.
-    let failed = UpdateCheck {
-        latest: None,
-        status: None,
-        failure: Some("release index timed out".into()),
-        local: Some(rebuilt),
-        ..newer()
-    };
-    let app = checked(UpdateOffer::InPlace, Some(failed));
-    assert!(shows(&app, "Local build  0.4.46"));
-    assert!(shows(&app, "Check failed"));
-    // A host that cannot restart into it offers nothing for it.
-    assert!(!app.confirming());
-    assert!(!shows(&app, "Keep agents; restart into the local build"));
-    assert!(!shows(&app, "Restart agents; use the local build"));
-
-    // One that could not be read says so, with the reason, and is not current.
     let unreadable = UpdateCheck {
         local: Some(LocalBuild::Unreadable {
             reason: "the program cannot check itself (exit status: 3)".into(),
         }),
-        ..newer()
+        ..UpdateCheck::default()
     };
-    let app = checked(UpdateOffer::InPlace, Some(unreadable));
-    assert!(shows(&app, "Local build  Changed, could not be read"));
+    let app = checked_local(UpdateOffer::InPlace, Some(unreadable));
+    assert!(shows(&app, "Local build  Could not read the program"));
     assert!(shows(&app, "exit status: 3"));
+    assert!(!shows(&app, "Keep agents and restart CCCC"));
 }
 
 /// A rebuilt program written three minutes ago, through which agents can or
@@ -444,8 +428,6 @@ fn local_start(generation: u64, mode: UpdateMode) -> Option<Effect> {
 
 #[test]
 fn a_rebuilt_program_is_restarted_into_once_and_keeping_agents_waits_for_every_one() {
-    // The release is current; a host that restarts into a rebuilt program
-    // still offers it, whatever installed this CCCC.
     let current = UpdateCheck {
         latest: Some("0.4.45".into()),
         status: Some("current".into()),
@@ -453,8 +435,8 @@ fn a_rebuilt_program_is_restarted_into_once_and_keeping_agents_waits_for_every_o
         ..newer()
     };
     let mut app = checked_local(UpdateOffer::CheckOnly, Some(current));
-    assert!(shows(&app, "CCCC is up to date."));
-    assert!(shows(&app, "from the rebuilt program on disk"));
+    assert!(!shows(&app, "Latest"));
+    assert!(shows(&app, "from the new local build"));
     assert!(shows(&app, "built 3m ago"));
     assert!(shows(&app, "Agents cannot keep running this time:"));
     assert!(shows(
@@ -462,15 +444,15 @@ fn a_rebuilt_program_is_restarted_into_once_and_keeping_agents_waits_for_every_o
         "- Peer: Its CCCC tools have not connected yet."
     ));
     assert!(shows(&app, "> Cancel"));
-    assert!(shows(&app, "   Keep agents; restart into the local build"));
+    assert!(shows(&app, "   Keep agents and restart CCCC"));
     assert!(app.confirming());
 
     // Keeping agents cannot be chosen, so Down passes it; the last option
     // stays chosen.
     press(&mut app, KeyCode::Down);
-    assert!(shows(&app, "> Restart agents; use the local build"));
+    assert!(shows(&app, "> Restart agents with CCCC"));
     press(&mut app, KeyCode::Down);
-    assert!(shows(&app, "> Restart agents; use the local build"));
+    assert!(shows(&app, "> Restart agents with CCCC"));
     let generation = app.update.generation;
     assert_eq!(
         press(&mut app, KeyCode::Enter),
@@ -481,10 +463,9 @@ fn a_rebuilt_program_is_restarted_into_once_and_keeping_agents_waits_for_every_o
 
     // The host checks the rebuilt program before it stops anything.
     app.update.preparing = Some("0.4.45".into());
-    app.update.local = true;
     assert!(shows(
         &app,
-        "Checking the rebuilt program. CCCC keeps running meanwhile."
+        "Checking the program. CCCC keeps running meanwhile."
     ));
     assert!(shows(&app, "Esc give up"));
     app.update.preparing = None;
@@ -506,23 +487,28 @@ fn a_rebuilt_program_is_restarted_into_once_and_keeping_agents_waits_for_every_o
 }
 
 #[test]
-fn agents_are_kept_when_every_one_can_be_and_a_newer_release_is_offered_beside() {
+fn the_current_program_can_restart_and_keep_agents_without_a_release_check() {
     let check = UpdateCheck {
-        local: Some(rebuilt(true)),
-        ..newer()
+        local: Some(LocalBuild::Current {
+            transaction: "fixture-transaction".into(),
+            candidate: LocalCandidate {
+                version: "0.4.45".into(),
+                source_id: "a".repeat(64),
+                token: "fixture-token".into(),
+                keep: KeepPreview {
+                    allowed: true,
+                    refusals: Vec::new(),
+                },
+            },
+        }),
+        ..UpdateCheck::default()
     };
     let mut app = checked_local(UpdateOffer::InPlace, Some(check));
-    assert!(!shows(&app, "Agents cannot keep running"));
-    assert!(shows(&app, "installs 0.4.46"));
-    // In order: Cancel, then the rebuilt program two ways, then the release.
+    assert!(reads(&app, "from the current program (0.4.45)"));
+    assert!(!shows(&app, "Latest"));
+    assert!(!shows(&app, "Update and restart agents"));
     press(&mut app, KeyCode::Down);
-    assert!(shows(&app, "> Keep agents; restart into the local build"));
-    press(&mut app, KeyCode::Down);
-    assert!(shows(&app, "> Restart agents; use the local build"));
-    press(&mut app, KeyCode::Down);
-    assert!(shows(&app, "> Update and restart agents"));
-    press(&mut app, KeyCode::Up);
-    press(&mut app, KeyCode::Up);
+    assert!(shows(&app, "> Keep agents and restart CCCC"));
     let generation = app.update.generation;
     assert_eq!(
         press(&mut app, KeyCode::Enter),

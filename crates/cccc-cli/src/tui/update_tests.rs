@@ -1,5 +1,6 @@
 use super::*;
 use crate::update_checker::TriggerSlot;
+use cccc_web::UpdateSource;
 use std::sync::Arc;
 
 /// Answers every check with a newer release, at once.
@@ -14,7 +15,11 @@ impl cccc_web::UpdateChecker for Newer {
         }
     }
 
-    fn check(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = UpdateCheck> + Send>> {
+    fn check(
+        &self,
+        scope: UpdateCheckScope,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = UpdateCheck> + Send>> {
+        assert_eq!(scope, UpdateCheckScope::Release);
         Box::pin(async {
             UpdateCheck {
                 current: "0.4.45".into(),
@@ -41,7 +46,10 @@ async fn a_check_is_reported_and_an_update_without_a_serving_web_does_not_start(
     let worker = tokio::spawn(run(entry, commands_rx, progress_tx, stop_rx));
 
     commands
-        .send(UpdateCommand::Check { generation: 1 })
+        .send(UpdateCommand::Check {
+            generation: 1,
+            scope: UpdateCheckScope::Release,
+        })
         .expect("worker");
     let checked = progress
         .wait_for(|progress| progress.check.is_some())
@@ -82,7 +90,6 @@ async fn a_check_is_reported_and_an_update_without_a_serving_web_does_not_start(
         .expect("progress")
         .clone();
     assert_eq!(rejected.preparing, None);
-    assert!(!rejected.local);
     assert!(!rejected.handed_over);
     assert!(
         rejected

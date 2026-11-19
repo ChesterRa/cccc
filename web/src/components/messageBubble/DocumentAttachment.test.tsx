@@ -94,6 +94,7 @@ describe("DocumentAttachment", () => {
             eventId: "event",
             index: 0,
             blobPath: "state/blobs/notes",
+            siblings: [],
           }}
           kind="markdown"
           downloadHref="/download"

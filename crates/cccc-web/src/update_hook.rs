@@ -35,7 +35,7 @@ impl UpdateMode {
 pub enum UpdateSource {
     /// A published release of this version.
     Release { version: String },
-    /// The rebuilt program at the path the host was started from, as the check
+    /// The program at the path the host was started from, as the check
     /// that offered it saw it. The host takes the path from its own record.
     Local { token: String, source_id: String },
 }
@@ -72,7 +72,7 @@ pub trait UpdateHost: Send + Sync {
     /// one the CCCC installer put in place can.
     fn release_in_place(&self) -> bool;
 
-    /// Whether this host can restart into a rebuilt program at its launch path.
+    /// Whether this host can restart using the program at its launch path.
     fn local_restart(&self) -> bool {
         false
     }
@@ -120,8 +120,7 @@ pub struct LastUpdate {
     pub finished_at: String,
     /// `release` or `local`.
     pub source: Option<String>,
-    /// For a restart into a rebuilt program, the token of the file it restarted
-    /// into, as the check that offered it named it.
+    /// For a local restart, the identity token of the file it started.
     pub token: Option<String>,
     /// The build it moved to, as its self-check named it.
     pub source_id: Option<String>,
@@ -160,8 +159,19 @@ pub struct UpdateAgent {
     pub title: Option<String>,
 }
 
-/// One release check, made when an administrator asks for it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+/// Which checks the administrator asked for. Unqualified requests retain the
+/// combined release and rebuild check.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateCheckScope {
+    #[default]
+    All,
+    Release,
+    Local,
+}
+
+/// A release or local restart check, made when an administrator asks for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
 pub struct UpdateCheck {
     pub current: String,
     /// `stable` or `rc`.
@@ -178,8 +188,7 @@ pub struct UpdateCheck {
     pub release_notes_url: Option<String>,
     /// The command that updates this installation by hand, when there is one.
     pub command: Option<String>,
-    /// The program at the path this host was started from, when it has changed
-    /// since. Only a host that can restart into it looks.
+    /// The program at the launch path, on a host that can restart using it.
     pub local: Option<LocalBuild>,
 }
 
@@ -187,25 +196,37 @@ pub struct UpdateCheck {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LocalBuild {
+    /// The program the host is running.
+    Current {
+        #[serde(flatten)]
+        candidate: LocalCandidate,
+        /// The result to watch for if the reply to the start is lost.
+        transaction: String,
+    },
     /// Another program, which answered its self-check.
     Rebuilt {
-        version: String,
-        source_id: String,
+        #[serde(flatten)]
+        candidate: LocalCandidate,
         /// When that file was last written, in UTC.
         built_at: String,
-        /// Names that file for a restart into it, so the host can tell whether
-        /// it changed again. Not a credential.
-        token: String,
-        keep: KeepPreview,
     },
     /// The program identified itself and cannot complete the current host's restart.
     Incompatible { version: String },
-    /// The file changed, but what it is could not be read, so whether it is a
-    /// newer build is unknown.
+    /// The program at the launch path could not be checked.
     Unreadable { reason: String },
 }
 
-/// Whether agents can keep running through a restart into a rebuilt program,
+/// A checked program and the host's offer to restart into it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LocalCandidate {
+    pub version: String,
+    pub source_id: String,
+    /// A value to compare when confirming this offer. It grants no authority.
+    pub token: String,
+    pub keep: KeepPreview,
+}
+
+/// Whether agents can keep running through a local restart,
 /// as checked now: the daemon's own decision, sent as it is. A start checks
 /// again. Each refusal names a member or session holder, or all of them when
 /// it names no one; the page words a code it knows and shows CCCC's own
@@ -222,12 +243,21 @@ impl LocalBuild {
         keep: KeepPreview,
     ) -> Self {
         Self::Rebuilt {
-            version,
-            source_id,
+            candidate: LocalCandidate {
+                version,
+                source_id,
+                token,
+                keep,
+            },
             built_at: chrono::DateTime::<chrono::Utc>::from(written)
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            token,
-            keep,
+        }
+    }
+
+    pub fn candidate(&self) -> Option<&LocalCandidate> {
+        match self {
+            Self::Current { candidate, .. } | Self::Rebuilt { candidate, .. } => Some(candidate),
+            Self::Incompatible { .. } | Self::Unreadable { .. } => None,
         }
     }
 
@@ -248,8 +278,7 @@ impl LocalBuild {
 pub trait UpdateChecker: Send + Sync {
     fn status(&self) -> UpdateStatus;
 
-    /// Asks release discovery once. A failure is reported, never read as current.
-    fn check(&self) -> Pin<Box<dyn Future<Output = UpdateCheck> + Send>>;
+    fn check(&self, scope: UpdateCheckScope) -> Pin<Box<dyn Future<Output = UpdateCheck> + Send>>;
 }
 
 pub type UpdateCheckHook = Arc<dyn UpdateChecker>;

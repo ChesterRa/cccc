@@ -2,7 +2,7 @@
 //! supervising host prepares that update, and this Web closes so the host can
 //! finish it. The Web never replaces files itself.
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use serde_json::{Value, json};
@@ -12,7 +12,8 @@ use crate::api::{ApiError, ApiResult};
 use crate::codex_voice::CodexVoiceSessions;
 use crate::codex_voice::restart::VoiceGateError;
 use crate::update_hook::{
-    UpdateCheckHook, UpdateHook, UpdateMode, UpdateRejection, UpdateRequest, UpdateSource,
+    UpdateCheckHook, UpdateCheckScope, UpdateHook, UpdateMode, UpdateRejection, UpdateRequest,
+    UpdateSource,
 };
 
 pub fn routes() -> Router<AppState> {
@@ -25,33 +26,34 @@ pub fn routes() -> Router<AppState> {
 /// Local facts only. Reading them never uses the network, so a page can read
 /// them whenever it opens, including when it reconnects after an update.
 async fn status(State(state): State<AppState>) -> ApiResult {
-    let (checker, in_place) = update_checker(&state)?;
+    let (checker, hook) = update_services(&state)?;
     Ok(Json(json!({"ok":true,"result":{
         "status":checker.status(),
-        "in_place":in_place
+        "in_place":hook.as_ref().is_some_and(|hook| hook.release_in_place()),
+        "local_restart":hook.as_ref().is_some_and(|hook| hook.local_restart())
     }})))
 }
 
-/// Asks release discovery once, because an administrator asked.
-async fn check(State(state): State<AppState>) -> ApiResult {
-    let (checker, in_place) = update_checker(&state)?;
-    let hook = state
-        .restart
-        .as_ref()
-        .and_then(|restart| restart.update_hook());
-    let local_restart = hook.as_ref().is_some_and(|hook| hook.local_restart());
-    let release_keep = hook.as_ref().is_some_and(|hook| hook.release_keep());
-    let check = checker.check().await;
+#[derive(Default, serde::Deserialize)]
+struct CheckQuery {
+    #[serde(default)]
+    source: UpdateCheckScope,
+}
+
+/// Checks the requested source once. Only a release check uses the network.
+async fn check(State(state): State<AppState>, Query(query): Query<CheckQuery>) -> ApiResult {
+    let (checker, hook) = update_services(&state)?;
+    let check = checker.check(query.source).await;
     Ok(Json(json!({"ok":true,"result":{
         "check":check,
-        "in_place":in_place,
-        "local_restart":local_restart,
-        "release_keep":release_keep
+        "in_place":hook.as_ref().is_some_and(|hook| hook.release_in_place()),
+        "local_restart":hook.as_ref().is_some_and(|hook| hook.local_restart()),
+        "release_keep":hook.as_ref().is_some_and(|hook| hook.release_keep())
     }})))
 }
 
-/// The host's check, and whether this process can install a release itself.
-fn update_checker(state: &AppState) -> Result<(UpdateCheckHook, bool), ApiError> {
+/// The host's checker and, when offered, its in-place maintenance handle.
+fn update_services(state: &AppState) -> Result<(UpdateCheckHook, Option<UpdateHook>), ApiError> {
     let restart = state.restart.as_ref();
     let checker = restart
         .and_then(|restart| restart.update_checker())
@@ -62,10 +64,7 @@ fn update_checker(state: &AppState) -> Result<(UpdateCheckHook, bool), ApiError>
                 json!({}),
             )
         })?;
-    let in_place = restart
-        .and_then(|restart| restart.update_hook())
-        .is_some_and(|hook| hook.release_in_place());
-    Ok((checker, in_place))
+    Ok((checker, restart.and_then(|restart| restart.update_hook())))
 }
 
 async fn start(
@@ -94,7 +93,7 @@ async fn start(
     }})))
 }
 
-/// A published release by its version, or the rebuilt program a check offered,
+/// A published release by its version, or the local program a check offered,
 /// by what that check saw. The path is never taken from the request.
 fn update_source(body: &Value) -> Result<UpdateSource, ApiError> {
     let text = |name: &str| {

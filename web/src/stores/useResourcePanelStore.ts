@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   resourceKey,
+  type AttachmentResource,
   type AttachmentUpdate,
   type GroupPanel,
   type ResourceDescriptor,
@@ -70,6 +71,16 @@ type ResourcePanelState = {
    */
   ensure: (groupId: string, resource: ResourceDescriptor, title: string) => void;
   open: (groupId: string, resource: ResourceDescriptor, title: string) => string;
+  /**
+   * Shows another attachment of the same message in place of the given tab, or selects it where
+   * it is already open, so stepping through a message does not add tabs.
+   */
+  replaceAttachment: (
+    groupId: string,
+    fromKey: string,
+    resource: AttachmentResource,
+    title: string,
+  ) => void;
   activate: (groupId: string, key: string) => void;
   /**
    * Closes the given tabs as one step, so "close all" is restored as a whole. Returns the
@@ -109,6 +120,12 @@ type ResourcePanelState = {
   setMaximized: (groupId: string, maximized: boolean) => void;
   setDock: (dock: ResourceDock) => void;
   setWidth: (width: number) => void;
+  /**
+   * The Group whose panel is on screen now, set by the page that lays it out; empty when no
+   * panel is. A message attachment opens in the panel only while it is. Not persisted.
+   */
+  shownGroupId: string;
+  setShown: (groupId: string) => void;
 };
 
 export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
@@ -154,6 +171,17 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
         open: true,
       }));
       return key;
+    },
+    replaceAttachment: (groupId, fromKey, resource, title) => {
+      const key = resourceKey(resource);
+      update(groupId, (panel) => {
+        if (panel.tabs.some((tab) => tab.key === key)) return { ...panel, activeKey: key };
+        const at = panel.tabs.findIndex((tab) => tab.key === fromKey);
+        if (at < 0) return panel;
+        const tabs = [...panel.tabs];
+        tabs[at] = { ...resource, key, title };
+        return { ...panel, tabs, activeKey: key };
+      });
     },
     activate: (groupId, key) =>
       update(groupId, (panel) =>
@@ -301,6 +329,10 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
         // The width still applies for this page when the browser refuses to store it.
       }
       set({ width: Math.round(width) });
+    },
+    shownGroupId: "",
+    setShown: (groupId) => {
+      if (get().shownGroupId !== groupId) set({ shownGroupId: groupId });
     },
   };
 });

@@ -181,11 +181,11 @@ async fn a_rebuilt_launch_program_is_read_and_an_unchanged_one_is_not_run() {
     let ran = temp.path().join("ran");
     // The program the host started from leaves a mark if it is run.
     program(&path, &format!("touch '{}'", ran.display()));
-    let launch = LaunchProgram {
-        identity: FileIdentity::read(&path).expect("identity"),
-        path: path.clone(),
-    };
-    assert_eq!(local_build(home.clone(), Some(launch.clone())).await, None);
+    let launch = LaunchProgram::new(path.clone(), FileIdentity::read(&path).expect("identity"));
+    assert_eq!(
+        local_build(home.clone(), Some(launch.clone()), false).await,
+        None
+    );
     assert!(!ran.exists(), "an unchanged program is not run");
 
     // A self-check can identify a build that cannot take over this restart.
@@ -194,7 +194,7 @@ async fn a_rebuilt_launch_program_is_read_and_an_unchanged_one_is_not_run() {
         r#"echo '{"schema":1,"version":"0.4.59","build":{"source_id":"fixture-source"},"daemon_compatibility":"fixture","relay_schemas":[1]}'"#,
     );
     assert_eq!(
-        local_build(home.clone(), Some(launch.clone())).await,
+        local_build(home.clone(), Some(launch.clone()), false).await,
         Some(LocalBuild::Incompatible {
             version: "0.4.59".into()
         })
@@ -217,7 +217,7 @@ async fn a_rebuilt_launch_program_is_read_and_an_unchanged_one_is_not_run() {
     let keep = cccc_daemon::session_owner::preservation_check(&home, &capabilities).await;
     assert!(!keep.allowed);
     assert_eq!(
-        local_build(home.clone(), Some(launch.clone())).await,
+        local_build(home.clone(), Some(launch.clone()), false).await,
         Some(LocalBuild::rebuilt(
             "0.4.59".into(),
             "fixture-source".into(),
@@ -231,20 +231,21 @@ async fn a_rebuilt_launch_program_is_read_and_an_unchanged_one_is_not_run() {
     // unreadable rather than nothing new.
     program(&path, "exit 3");
     assert!(matches!(
-        local_build(home.clone(), Some(launch.clone())).await,
+        local_build(home.clone(), Some(launch.clone()), false).await,
         Some(LocalBuild::Unreadable { .. })
     ));
 
     // So is a removed one, which names its path.
     std::fs::remove_file(&path).expect("remove");
-    let Some(LocalBuild::Unreadable { reason }) = local_build(home.clone(), Some(launch)).await
+    let Some(LocalBuild::Unreadable { reason }) =
+        local_build(home.clone(), Some(launch), false).await
     else {
         panic!("a removed program is unreadable");
     };
     assert!(reason.contains(&path.display().to_string()), "{reason}");
 
     // A host that cannot restart into a rebuilt program does not look.
-    assert_eq!(local_build(home, None).await, None);
+    assert_eq!(local_build(home, None, false).await, None);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -259,5 +260,5 @@ async fn the_running_program_is_its_own_launch_program_until_it_is_replaced() {
         launch.path,
         std::env::current_exe().expect("current executable")
     );
-    assert_eq!(local_build(home, Some(launch)).await, None);
+    assert_eq!(local_build(home, Some(launch), false).await, None);
 }

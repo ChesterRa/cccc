@@ -33,7 +33,7 @@ export interface LastUpdate {
   finished_at: string;
   /** release or local. */
   source?: string | null;
-  /** For a restart into a rebuilt program, the file it restarted into, as its check named it. */
+  /** For a local restart, the identity token of the file it started. */
   token?: string | null;
   /** The build it moved to, as its self-check named it. */
   source_id?: string | null;
@@ -59,25 +59,26 @@ export interface KeepRefusal {
   message: string;
 }
 
-/** Whether agents can keep running through a restart into a rebuilt program, as checked now. */
+/** Whether agents can keep running through a local restart, as checked now. */
 export interface KeepPreview {
   allowed: boolean;
   refusals: KeepRefusal[];
 }
 
-/** What is now at the path the host was started from, when it has changed since. */
+/** A program checked for a local restart. */
+export interface LocalCandidate {
+  version: string;
+  source_id: string;
+  token: string;
+  keep: KeepPreview;
+}
+
+/** What is now at the path the host was started from. */
 export type LocalBuild =
-  | {
-      state: "rebuilt";
-      version: string;
-      source_id: string;
-      built_at: string;
-      /** Names that file for a restart into it; not a credential. */
-      token: string;
-      keep: KeepPreview;
-    }
+  | (LocalCandidate &
+      ({ state: "current"; transaction: string } | { state: "rebuilt"; built_at: string }))
   | { state: "incompatible"; version: string }
-  /** It changed, but what it is could not be read: whether it is newer is unknown. */
+  /** The program at the launch path could not be checked. */
   | { state: "unreadable"; reason: string };
 
 export interface UpdateCheck {
@@ -92,32 +93,36 @@ export interface UpdateCheck {
   release_notes_url: string | null;
   /** The command that updates this installation by hand, when there is one. */
   command: string | null;
-  /** Only a host that can restart into a rebuilt program looks. */
+  /** Only a host that can carry out a local restart looks. */
   local: LocalBuild | null;
 }
 
 /** Local facts only; never asks release discovery. */
 export async function fetchUpdateStatus() {
-  return apiJson<{ status: UpdateStatus; in_place: boolean }>("/api/v1/update/status", {
-    signal: AbortSignal.timeout(10000),
-  });
+  return apiJson<{ status: UpdateStatus; in_place: boolean; local_restart?: boolean }>(
+    "/api/v1/update/status",
+    { signal: AbortSignal.timeout(10000) },
+  );
 }
 
-/** One release check, because the administrator asked for it. */
-export async function checkForUpdate() {
+/** Check the administrator's chosen target. */
+export async function checkForUpdate(source: "release" | "local" = "release") {
   return apiJson<{
     check: UpdateCheck;
     in_place: boolean;
     local_restart: boolean;
     /** Whether keeping agents running is offered for a release; it is checked once downloaded. */
     release_keep?: boolean;
-  }>("/api/v1/update/check", { method: "POST", signal: AbortSignal.timeout(60000) });
+  }>(`/api/v1/update/check?source=${source}`, {
+    method: "POST",
+    signal: AbortSignal.timeout(60000),
+  });
 }
 
-/** A published release, or the rebuilt program at the path the host was started from. */
+/** A published release, or the program at the path the host was started from. */
 export type UpdateTarget =
   | { source: "release"; version: string }
-  | { source: "local"; version: string; token: string; source_id: string };
+  | { source: "local"; version: string; token: string; source_id: string; transaction?: string };
 
 /** Whether running agents keep running or restart with CCCC. */
 export type UpdateMode = "keep" | "restart";

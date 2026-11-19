@@ -433,6 +433,10 @@ fn help_lists_commands_and_scrolls_to_the_headless_exit() {
     let rows = screen_rows(&draw(&app, 60, 16, now));
     assert!(row_with(&rows, "/groups").contains("Open the selected group"));
     assert!(row_with(&rows, "/sessions").contains("Browse native sessions"));
+    assert!(!rows.iter().any(|row| row.contains("/restart")));
+    app.context.local_restart = true;
+    let with_restart = screen_rows(&draw(&app, 60, 16, now));
+    assert!(row_with(&with_restart, "/restart").contains("Restart CCCC"));
     assert_eq!(rows[15], " Up/Down scroll   Esc back");
     app.handle(press(KeyCode::End));
     let rows = screen_rows(&draw(&app, 60, 16, now));

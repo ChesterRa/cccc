@@ -1,14 +1,11 @@
-//! The `/update` screen: the installed and latest versions from one check,
-//! and a rebuilt program at the path CCCC was started from, then one
-//! confirmation that this CCCC carries out, or the command that updates this
-//! installation. A failed check never reads as current.
+//! The shared confirmation and progress screen for `/update` and `/restart`.
 
 use super::app::{App, Notice, UpdateChoice, UpdateOffer};
 use super::groups_view::choice_row;
 use super::text;
 use super::update::UpdateProgress;
 use super::view::{Theme, separator};
-use cccc_web::{LocalBuild, UpdateCheck};
+use cccc_web::{LocalBuild, UpdateCheck, UpdateCheckScope};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -109,41 +106,47 @@ fn body(
     width: usize,
 ) -> (Vec<Line<'static>>, &'static str) {
     let room = width.saturating_sub(2);
+    let restart = app
+        .update_flow
+        .as_ref()
+        .is_some_and(|flow| flow.scope == UpdateCheckScope::Local);
+    let title = if restart {
+        "Restart CCCC"
+    } else {
+        "Update CCCC"
+    };
     let mut lines = vec![
-        Line::from(vec![
-            Span::raw(" "),
-            Span::styled("Update CCCC", theme.bold()),
-        ]),
+        Line::from(vec![Span::raw(" "), Span::styled(title, theme.bold())]),
         Line::default(),
         labelled("Installed", Span::raw(app.context.version), theme),
     ];
     let check = progress.and_then(|progress| progress.check.as_ref());
     let Some(check) = check.filter(|_| progress.is_some_and(|progress| !progress.checking)) else {
         lines.push(labelled(
-            "Latest",
+            if restart { "Program" } else { "Latest" },
             Span::styled("Checking...", theme.dim()),
             theme,
         ));
         return (lines, "Esc back");
     };
-    if let Some(local) = &check.local {
+    if restart && let Some(local) = &check.local {
         local_lines(&mut lines, local, theme, width);
     }
-    let release = release_lines(&mut lines, check, theme, width);
+    let release = !restart && release_lines(&mut lines, check, theme, width);
     let local = app.offered_local(check);
     if !release && local.is_none() {
         return (lines, "r check again   Esc back");
     }
     lines.push(Line::default());
     let progress = progress.expect("a finished check belongs to this visit");
-    let (what, done) = if progress.local {
+    let (what, done) = if restart {
         ("restart", "CCCC did not restart")
     } else {
         ("update", "CCCC was not updated")
     };
     let keys = if let Some(version) = &progress.preparing {
-        let message = if progress.local {
-            "Checking the rebuilt program. CCCC keeps running meanwhile.".to_owned()
+        let message = if restart {
+            "Checking the program. CCCC keeps running meanwhile.".to_owned()
         } else {
             format!(
                 "Preparing CCCC {}: downloading and checking it. CCCC keeps running meanwhile.",
@@ -153,7 +156,7 @@ fn body(
         paragraph(&mut lines, &message, Style::new(), room);
         "Esc give up"
     } else if progress.handed_over {
-        let message = if progress.local {
+        let message = if restart {
             "Restarting..."
         } else {
             "Updating..."
@@ -267,32 +270,36 @@ fn release_lines(
     true
 }
 
-/// What restarting into the rebuilt program does, and why agents cannot keep
+/// What the local restart does, and why agents cannot keep
 /// running through it this time, in CCCC's own words.
 fn local_offer(lines: &mut Vec<Line<'static>>, local: &LocalBuild, theme: Theme, room: usize) {
-    let LocalBuild::Rebuilt { version, keep, .. } = local else {
+    let Some(candidate) = local.candidate() else {
         return;
     };
-    let built = local
-        .built_ago()
-        .map_or_else(String::new, |ago| format!(", built {}", text::ago(ago)));
+    let version = text::one_line(&candidate.version);
+    let program = match local {
+        LocalBuild::Rebuilt { .. } => {
+            let built = local
+                .built_ago()
+                .map_or_else(String::new, |ago| format!(", built {}", text::ago(ago)));
+            format!("the new local build ({version}{built})")
+        }
+        _ => format!("the current program ({version})"),
+    };
     paragraph(
         lines,
-        &format!(
-            "CCCC stops and starts again here from the rebuilt program on disk ({}{built}). The Web disconnects until then.",
-            text::one_line(version)
-        ),
+        &format!("CCCC starts again here from {program}. The Web disconnects until then."),
         Style::new(),
         room,
     );
-    if !keep.allowed {
+    if !candidate.keep.allowed {
         paragraph(
             lines,
             "Agents cannot keep running this time:",
             theme.dim(),
             room,
         );
-        for refusal in &keep.refusals {
+        for refusal in &candidate.keep.refusals {
             let reason = crate::update_host::refusal_text(refusal);
             for (index, line) in text::wrap(&text::one_line(&reason), room.saturating_sub(2))
                 .into_iter()
@@ -309,24 +316,24 @@ fn option_label(option: UpdateChoice) -> &'static str {
     match option {
         UpdateChoice::Cancel => "Cancel",
         // What happens to agents leads, so a narrow terminal keeps the difference.
-        UpdateChoice::KeepAgents => "Keep agents; restart into the local build",
-        UpdateChoice::RestartAgents => "Restart agents; use the local build",
+        UpdateChoice::KeepAgents => "Keep agents and restart CCCC",
+        UpdateChoice::RestartAgents => "Restart agents with CCCC",
         UpdateChoice::ReleaseKeep => "Keep agents; update",
         UpdateChoice::Release => "Update and restart agents",
     }
 }
 
-/// The program this host was started from has changed since: what is there
-/// now, whatever the release check answered.
+/// The candidate at the launch path, shown as a separate line when changed.
 fn local_lines(lines: &mut Vec<Line<'static>>, local: &LocalBuild, theme: Theme, width: usize) {
     match local {
-        LocalBuild::Rebuilt { version, .. } => {
+        LocalBuild::Current { .. } => {}
+        LocalBuild::Rebuilt { candidate, .. } => {
             let built = local
                 .built_ago()
                 .map_or_else(String::new, |ago| format!(" · built {}", text::ago(ago)));
             lines.push(labelled(
                 "Local build",
-                Span::raw(format!("{}{built}", text::one_line(version))),
+                Span::raw(format!("{}{built}", text::one_line(&candidate.version))),
                 theme,
             ));
         }
@@ -346,7 +353,7 @@ fn local_lines(lines: &mut Vec<Line<'static>>, local: &LocalBuild, theme: Theme,
         LocalBuild::Unreadable { reason } => {
             lines.push(labelled(
                 "Local build",
-                Span::styled("Changed, could not be read", theme.error()),
+                Span::styled("Could not read the program", theme.error()),
                 theme,
             ));
             for line in text::wrap(&text::one_line(reason), width.saturating_sub(LABEL + 2)) {
