@@ -24,17 +24,18 @@ impl Publisher {
             .map(|group| group.group_id.clone())
             .collect::<BTreeSet<_>>();
         self.previous.retain(|group_id, _| known.contains(group_id));
-        for meta in groups {
-            let Ok(group) = store.load(&meta.group_id) else {
-                continue;
-            };
-            self.publish_group(&store, &group);
-        }
+        // One session-owner snapshot serves every Group in this round. Each
+        // Group would otherwise ask every owner again, once a second. A failed
+        // owner read is shared by this round only; the next round reads again.
+        crate::session_owner::read_scope(|| {
+            for meta in groups {
+                let Ok(group) = store.load(&meta.group_id) else {
+                    continue;
+                };
+                self.publish_group_snapshot(&store, &group);
+            }
+        });
         Ok(())
-    }
-
-    fn publish_group(&mut self, store: &GroupStore, group: &GroupDoc) {
-        crate::session_owner::read_scope(|| self.publish_group_snapshot(store, group));
     }
 
     fn publish_group_snapshot(&mut self, store: &GroupStore, group: &GroupDoc) {

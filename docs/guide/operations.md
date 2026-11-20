@@ -142,6 +142,19 @@ delivery was in progress is settled after the start and is not sent twice.
 - On Windows and with an Intel macOS build, the daemon rejects `--keep-agents`
   before stopping any agents.
 
+If you are returning to a version that cannot reattach running agents, let
+active work finish. If you stopped CCCC with `--keep-agents`, first use the
+newer executable and the same `CCCC_HOME` to run `cccc daemon start` and
+reattach the agents.
+
+- With the current website installer, leave the newer daemon running. The
+  installer stops it and checks that the managed agents exited before
+  replacing CCCC. If the installer says the older release cannot check for
+  agents left running without a daemon, start the newer daemon and retry.
+- For a manual replacement, run `cccc daemon stop` with the newer executable
+  and confirm the managed agents exited before replacing it. An older version
+  can start a second copy of an agent that is still running.
+
 ### Restarting CCCC without checking for a release
 
 On Linux and macOS, when the CCCC host started its own daemon, open
