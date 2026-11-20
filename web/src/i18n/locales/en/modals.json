@@ -435,6 +435,8 @@
     "subtasksDone": "{{done}} of {{total}} done",
     "subtasksHint": "Counts direct subtasks; archived ones are excluded. Subtask status does not complete this task.",
     "taskDetails": "Task editor",
+    "backToTasks": "Back to tasks",
+    "resizeTaskDetail": "Resize task details",
     "taskType": "Task type",
     "taskWorkflow": "Task type",
     "taskTypeDescFree": "Keep it lightweight. Use this when extra structure would add more ceremony than control.",

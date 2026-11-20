@@ -435,6 +435,8 @@
     "subtasksDone": "已完成 {{done}}/{{total}}",
     "subtasksHint": "只统计直接子任务，不含已归档的。子任务的状态不会让本任务自动完成。",
     "taskDetails": "任务编辑器",
+    "backToTasks": "返回任务",
+    "resizeTaskDetail": "调整任务详情宽度",
     "taskType": "任务类型",
     "taskWorkflow": "任务类型",
     "taskTypeDescFree": "保持轻量。适合那些再加结构只会增加形式成本、不会提升控制力的任务。",

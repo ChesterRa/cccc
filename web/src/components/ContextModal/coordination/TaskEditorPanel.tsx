@@ -80,6 +80,7 @@ interface TaskEditorPanelProps {
   taskTypeId: TaskTypeId;
   selectedTaskType: TaskTypeDefinition;
   titleRef?: RefObject<HTMLInputElement | null>;
+  closeLabel?: string;
   setTaskDraft: Dispatch<SetStateAction<TaskDraft | null>>;
   onTaskTypeChange: (value: TaskTypeId) => void;
   /** Drop the edits: a new task starts over, an existing one loads its latest version. */
@@ -118,6 +119,7 @@ export function TaskEditorPanel({
   taskTypeId,
   selectedTaskType,
   titleRef,
+  closeLabel,
   setTaskDraft,
   onTaskTypeChange,
   onResetTask,
@@ -129,6 +131,9 @@ export function TaskEditorPanel({
   backlogLink,
 }: TaskEditorPanelProps) {
   const { i18n } = useTranslation("modals");
+  useLayoutEffect(() => {
+    if (taskEditorMode === "create") titleRef?.current?.focus({ preventScroll: true });
+  }, [taskEditorMode, titleRef]);
   if (taskEditorMode === "none" || !taskDraft) {
     return null;
   }
@@ -238,7 +243,7 @@ export function TaskEditorPanel({
           ) : null}
         </div>
         <button type="button" onClick={onClose} className={ui.buttonSecondaryClass}>
-          {tr("context.close", "Close")}
+          {closeLabel ?? tr("context.close", "Close")}
         </button>
       </div>
 

@@ -804,10 +804,3 @@
   background: transparent;
   color: var(--lcd-ink);
 }
-
-/* The task drawer leaves the board beside it in view on wider screens. */
-@media (min-width: 640px) {
-  :root[data-ui-style="lcd"] [data-lcd-scope] [data-task-drawer-panel] {
-    width: min(560px, calc(100vw - 1.5rem));
-  }
-}
