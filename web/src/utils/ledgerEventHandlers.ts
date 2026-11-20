@@ -69,15 +69,14 @@ export function hasRenderableChatMessageContent(event: {
   return refs.length > 0;
 }
 
-export function isActorActivityEvent(
-  ev: unknown,
-): ev is BaseLedgerEvent & {
+export function isActorActivityEvent(ev: unknown): ev is BaseLedgerEvent & {
   kind: "actor.activity";
   data: {
     actors: Array<{
       id: string;
       idle_seconds?: number | null;
-      running: boolean;
+      /** Absent when the session owner cannot be observed. */
+      running?: boolean;
       effective_working_state?: string;
       effective_working_reason?: string;
       effective_working_updated_at?: string | null;
