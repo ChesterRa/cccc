@@ -36,14 +36,14 @@ impl AnalystSession {
         mut env: BTreeMap<String, String>,
         resume: Option<String>,
         purpose: SessionPurpose,
-        actor: Option<(&str, &str)>,
+        actor: Option<AcpActorLaunch<'_>>,
     ) -> io::Result<Self> {
         let options = antigravity::options(&command)?;
-        let private_values = env
-            .values()
-            .filter(|value| !value.is_empty())
-            .cloned()
-            .collect();
+        let private_values = actor.as_ref().map_or_else(
+            || nonempty_environment_values(&env),
+            |actor| actor.diagnostic_values.to_vec(),
+        );
+        let actor = actor.map(|actor| actor.ids);
         let install_home = home.clone();
         let install = tokio::task::spawn_blocking(move || {
             crate::antigravity_acp_setup::ensure(&install_home)

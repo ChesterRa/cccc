@@ -481,7 +481,14 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
         }
     }
     if messages.is_empty() {
-        set_runtime_status(home, &group, &actor_id, "waiting", "", "", &[])?;
+        // An idle browser asks again every few seconds; rewriting the same
+        // waiting state would rewrite group.yaml each time. The state read
+        // above is still current: this request holds the Group's write permit
+        // and claiming changes only delivery records.
+        let unchanged = transport == "web_model_browser" && idle_state_recorded(&active_state);
+        if !unchanged {
+            set_runtime_status(home, &group, &actor_id, "waiting", "", "", &[])?;
+        }
         return object(json!({"status":"idle","turn":null,"suggested_retry_after_ms":5000}));
     }
     let event_ids: Vec<_> = messages.iter().map(|event| event.id.clone()).collect();
@@ -1155,6 +1162,19 @@ fn set_runtime_status(
         state["updated_at"] = json!(utc_now());
         Ok(())
     })
+}
+
+/// Whether the stored state already holds what an idle poll would write.
+fn idle_state_recorded(state: &Value) -> bool {
+    state["status"] == "waiting"
+        && state["active_turn_id"] == ""
+        && state["latest_event_id"] == ""
+        && state["active_event_ids"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+        && state["updated_at"]
+            .as_str()
+            .is_some_and(|at| !at.is_empty())
 }
 
 /// The batch a browser left staged, as it was claimed: the limit of this request

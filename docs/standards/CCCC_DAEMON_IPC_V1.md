@@ -7516,13 +7516,18 @@ adapter may send only updates. Other updates, and statuses outside ACP's
 vocabulary, stay transient. The journal keeps only the title, private-value
 redacted and at most 400 characters; a longer title is recorded as
 `Tool call` rather than cut. Tool inputs and results are not copied.
-Both projections judge private values by origin. Every value of the member's
-explicit launch environment counts, whether it comes from public or private
-settings or a linked Profile; only the fields the launch overwrites
-(`CCCC_HOME`, `CCCC_GROUP_ID`, `CCCC_ACTOR_ID` and `CCCC_CLI`) are exempt.
-Inherited values count only under credential names, so an inherited shell
-level, locale or home directory stays readable. Common credential shapes such
-as bearer tokens are redacted as well.
+Managed failure diagnostics and both tool projections judge private values by
+origin. Every value of the member's explicit launch environment counts,
+whether it comes from public or private settings or a linked Profile. Only the
+fields the launch overwrites (`CCCC_HOME`, `CCCC_GROUP_ID`, `CCCC_ACTOR_ID` and
+`CCCC_CLI`) are exempt. An explicit `PATH` is protected both as configured and
+as passed to the provider after CCCC adds its executable directory.
+Inherited values count under credential names or when they carry authorization
+headers or URLs with user information. This includes a proxy address with user
+information and an implicit HTTP scheme under `HTTP_PROXY`, `HTTPS_PROXY` or
+`ALL_PROXY`. An inherited shell level, locale or home directory stays readable.
+Common credential shapes such as bearer tokens are redacted as well. The displayed
+diagnostic's private values do not change the adapter's ACP prompt admission policy.
 
 Headless journal snapshots restore historical output only; replay MUST NOT
 overwrite current Actor or Group runtime state. Independent live streams can
@@ -9463,6 +9468,11 @@ Result is one of:
   }
 }
 ```
+
+An `idle` result records the actor as waiting with no active turn. A
+`web_model_browser` wait whose stored runtime state already says exactly that
+leaves the Group document unchanged, so a browser polling while idle does not
+rewrite it; that state's `updated_at` is not a polling heartbeat.
 
 For `web_model_pull`, every returned source event MUST already have a durable
 `runtime.delivery` state of `accepted`. For `web_model_browser`, this operation

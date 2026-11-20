@@ -17,6 +17,23 @@ static CREDENTIALS: LazyLock<[Regex; 5]> = LazyLock::new(|| {
 });
 
 pub(crate) fn sanitize(text: &str, private_values: &[String]) -> String {
+    // ACP's exception details are useful prose, not authority to expose a traceback.
+    redact(text, private_values)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .take(LIMIT)
+        .collect()
+}
+
+pub(crate) fn sanitize_multiline(text: &str, private_values: &[String]) -> String {
+    redact(text, private_values).chars().take(LIMIT).collect()
+}
+
+fn redact(text: &str, private_values: &[String]) -> String {
     // Match against the original text: truncation or one replacement must not split
     // another secret (including multiline private values and short values inside JWTs).
     let mut spans = Vec::new();
@@ -52,20 +69,12 @@ pub(crate) fn sanitize(text: &str, private_values: &[String]) -> String {
         cursor = end;
     }
     safe.push_str(&text[cursor..]);
-    // ACP's exception details are useful prose, not authority to expose a traceback.
-    safe.lines()
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .chars()
-        .filter(|ch| !ch.is_control())
-        .take(LIMIT)
-        .collect()
+    safe
 }
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize;
+    use super::{sanitize, sanitize_multiline};
 
     #[test]
     fn diagnostic_redacts_credential_shapes_and_drops_traceback_lines() {
@@ -94,5 +103,16 @@ mod tests {
             &[private.into()],
         );
         assert_eq!(safe, "Refresh denied: [redacted]");
+    }
+
+    #[test]
+    fn multiline_diagnostic_redacts_on_the_original_text() {
+        let values = ["PRIVATE-FIXTURE".to_owned(), "a".to_owned()];
+        let raw = "Error PRIVATE-FIXTURE\nMore: a";
+        assert_eq!(
+            sanitize_multiline(raw, &values),
+            "Error [redacted]\nMore: [redacted]"
+        );
+        assert_eq!(sanitize(raw, &values), "Error [redacted]");
     }
 }

@@ -159,15 +159,29 @@ impl AnalystSession {
         Ok(session)
     }
 
+    #[cfg(test)]
     pub(crate) async fn launch_actor(
         home: &HomeLayout,
         config: ActorLaunchConfig,
+    ) -> io::Result<Self> {
+        let diagnostic_values = nonempty_environment_values(&config.environment);
+        Self::launch_actor_with_diagnostics(home, config, &diagnostic_values).await
+    }
+
+    pub(crate) async fn launch_actor_with_diagnostics(
+        home: &HomeLayout,
+        config: ActorLaunchConfig,
+        diagnostic_values: &[String],
     ) -> io::Result<Self> {
         let binding = bind_workspace(&config.workdir)?;
         config
             .runtime_mode
             .validate(config.runtime)
             .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+        let acp_actor = AcpActorLaunch {
+            ids: (&config.group_id, &config.actor_id),
+            diagnostic_values,
+        };
         if config.runtime == ActorRuntime::Antigravity && config.runtime_mode == RuntimeMode::Acp {
             return Self::launch_antigravity(
                 home,
@@ -176,7 +190,7 @@ impl AnalystSession {
                 config.environment,
                 None,
                 SessionPurpose::Actor,
-                Some((&config.group_id, &config.actor_id)),
+                Some(acp_actor),
             )
             .await;
         }
@@ -193,7 +207,7 @@ impl AnalystSession {
                 config.environment,
                 None,
                 SessionPurpose::Actor,
-                Some((&config.group_id, &config.actor_id)),
+                Some(acp_actor),
                 hermes_viewer,
             )
             .await;
@@ -230,7 +244,7 @@ impl AnalystSession {
                 config.environment,
                 None,
                 SessionPurpose::Actor,
-                Some((&config.group_id, &config.actor_id)),
+                Some(acp_actor),
             )
             .await;
         }
@@ -382,20 +396,6 @@ impl AnalystSession {
 
     pub(crate) fn tui_environment(&self) -> BTreeMap<String, String> {
         self.environment.clone()
-    }
-
-    pub(crate) fn safe_diagnostic(&self, error: &io::Error) -> String {
-        let mut message = error.to_string();
-        let mut values = self
-            .environment
-            .values()
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        values.sort_unstable_by_key(|value| std::cmp::Reverse(value.len()));
-        for value in values {
-            message = message.replace(value, "[redacted]");
-        }
-        message.chars().take(1600).collect()
     }
 
     /// Whether this session has a native terminal to show. A structured

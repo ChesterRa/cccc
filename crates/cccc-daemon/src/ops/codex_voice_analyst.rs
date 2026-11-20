@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 mod acp;
-pub(crate) use acp::sanitize_diagnostic;
+pub(crate) use acp::{sanitize_diagnostic, sanitize_multiline as sanitize_multiline_diagnostic};
 mod antigravity;
 mod claude;
 pub(crate) use claude::capture_host_environment as claude_host_environment;
@@ -121,6 +121,19 @@ pub(crate) struct ActorLaunchConfig {
     pub(crate) runtime_mode: RuntimeMode,
     pub(crate) command: Vec<String>,
     pub(crate) environment: BTreeMap<String, String>,
+}
+
+struct AcpActorLaunch<'a> {
+    ids: (&'a str, &'a str),
+    diagnostic_values: &'a [String],
+}
+
+fn nonempty_environment_values(environment: &BTreeMap<String, String>) -> Vec<String> {
+    environment
+        .values()
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .collect()
 }
 
 impl LaunchConfig {

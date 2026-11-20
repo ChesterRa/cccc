@@ -583,6 +583,115 @@ fn stranded_browser_mail_claim_remains_uncertain_until_real_submission_evidence_
     );
 }
 
+#[test]
+fn idle_browser_polls_rewrite_the_group_file_only_when_its_state_changes() {
+    const OLD: &str = "2000-01-01T00:00:00Z";
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"idle browser"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","by":"user"}),
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    store
+        .mutate(&group_id, |group| {
+            group.running = true;
+            Ok(())
+        })
+        .expect("fixture running");
+    let group_file = store
+        .group_dir(&group_id)
+        .expect("group dir")
+        .join("group.yaml");
+    let poll = |transport: &str| {
+        call(
+            &home,
+            "runtime_wait_next_turn",
+            json!({"group_id":group_id,"actor_id":"web1","by":"web1","transport":transport}),
+        )
+        .result["status"]
+            .clone()
+    };
+    let stored = || {
+        cccc_core::integration_state::group_get(&store, &group_id, "runtime_states")
+            .expect("runtime states")["web1"]
+            .clone()
+    };
+    let store_state = |state: Value| {
+        cccc_core::integration_state::group_update(&store, &group_id, "runtime_states", |states| {
+            states["web1"] = state;
+            Ok(())
+        })
+        .expect("state fixture");
+    };
+    let recorded_idle = |state: &Value| {
+        state["status"] == "waiting"
+            && state["active_turn_id"] == ""
+            && state["latest_event_id"] == ""
+            && state["active_event_ids"] == json!([])
+    };
+
+    assert_eq!(poll("web_model_browser"), "idle");
+    assert!(recorded_idle(&stored()), "{}", stored());
+
+    let mut settled = stored();
+    settled["updated_at"] = json!(OLD);
+    store_state(settled.clone());
+    let before = std::fs::read_to_string(&group_file).expect("group file");
+    for _ in 0..3 {
+        assert_eq!(poll("web_model_browser"), "idle");
+    }
+    assert_eq!(
+        std::fs::read_to_string(&group_file).expect("group file"),
+        before
+    );
+    assert_eq!(stored()["updated_at"], OLD);
+
+    assert_eq!(poll("web_model_pull"), "idle");
+    assert_ne!(stored()["updated_at"], OLD, "pull polls keep recording");
+
+    for (field, value) in [
+        ("status", Some(json!("idle"))),
+        ("active_turn_id", None),
+        ("latest_event_id", Some(json!("residual"))),
+        ("active_event_ids", Some(json!(["residual"]))),
+        ("active_event_ids", None),
+        ("updated_at", None),
+    ] {
+        let mut state = settled.clone();
+        match value {
+            Some(value) => state[field] = value,
+            None => {
+                state.as_object_mut().expect("state").remove(field);
+            }
+        }
+        store_state(state);
+        assert_eq!(poll("web_model_browser"), "idle");
+        let after = stored();
+        assert!(recorded_idle(&after), "{field}: {after}");
+        assert!(
+            after["updated_at"]
+                .as_str()
+                .is_some_and(|at| !at.is_empty() && at != OLD),
+            "{field}: {after}"
+        );
+    }
+
+    call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"new work","message_mode":"send"}),
+    );
+    assert_eq!(poll("web_model_browser"), "work_available");
+    assert_eq!(poll("web_model_browser"), "turn_in_progress");
+}
+
 fn browser_mail_notice_fixture() -> (tempfile::TempDir, HomeLayout, String, cccc_contracts::Event) {
     let temp = tempfile::tempdir().expect("fixture");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

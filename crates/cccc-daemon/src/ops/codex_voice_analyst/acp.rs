@@ -16,7 +16,7 @@ mod permissions;
 mod protocol_loop;
 mod tool_results;
 
-pub(crate) use diagnostic::sanitize as sanitize_diagnostic;
+pub(crate) use diagnostic::{sanitize as sanitize_diagnostic, sanitize_multiline};
 
 const EVENT_CAPACITY: usize = 2048;
 const COMMAND_CAPACITY: usize = 32;
@@ -132,16 +132,26 @@ pub(super) enum PermissionPolicy {
 }
 
 pub(super) enum PrivateValues {
-    /// Redact configured values from diagnostics. Prompt admission still uses
+    /// Redact environment values from diagnostics. Prompt admission still uses
     /// the provider message with credential-shape redaction.
     DiagnosticsOnly(Vec<String>),
     DiagnosticsAndAdmission(Vec<String>),
+    /// Managed native ACP uses the original launch values for admission.
+    SeparateAdmission {
+        diagnostics: Vec<String>,
+        admission: Vec<String>,
+    },
 }
 
 impl PrivateValues {
     fn diagnostics(&self) -> &[String] {
         match self {
-            Self::DiagnosticsOnly(values) | Self::DiagnosticsAndAdmission(values) => values,
+            Self::DiagnosticsOnly(values)
+            | Self::DiagnosticsAndAdmission(values)
+            | Self::SeparateAdmission {
+                diagnostics: values,
+                ..
+            } => values,
         }
     }
 }

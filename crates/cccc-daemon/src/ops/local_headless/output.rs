@@ -1,5 +1,7 @@
 use super::{ActiveTurn, Session, events};
+use crate::ops::codex_voice_analyst::sanitize_multiline_diagnostic;
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 
 pub(super) fn handle_message(session: &Session, message: Value) {
     if message.get("id").is_some() {
@@ -101,24 +103,35 @@ fn tool_activity(
 /// value the member may have set privately.
 const WRITTEN_AT_LAUNCH: [&str; 4] = ["CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID", "CCCC_CLI"];
 
-/// Values the activity journal redacts, judged by where each came from. Every
+/// Private values for managed diagnostics and the activity journal. Every
 /// value of the member's explicit launch environment is private, except the
-/// fields the launch overwrites. Public settings stay included: the same
-/// value may also be declared private, which the snapshot cannot tell apart.
-/// Inherited values count only under a credential name, so a shell level,
-/// locale or home directory stays readable.
+/// fields the launch overwrites. Inherited values count under credential names
+/// or when they carry authorization headers or URLs with user information.
 pub(super) fn journal_private_values(
-    snapshot: &std::collections::BTreeMap<String, String>,
-    inherited: impl IntoIterator<Item = (String, String)>,
+    snapshot: &BTreeMap<String, String>,
+    launch_environment: &BTreeMap<String, String>,
+    process_environment: impl IntoIterator<Item = (String, String)>,
 ) -> Vec<String> {
+    let launched_path = snapshot
+        .get("PATH")
+        .filter(|value| !value.is_empty())
+        .and_then(|_| launch_environment.get("PATH"));
     let mut values = snapshot
         .iter()
         .filter(|(key, _)| !WRITTEN_AT_LAUNCH.contains(&key.as_str()))
-        .map(|(_, value)| value.clone())
+        .map(|(_, value)| value)
+        .chain(launched_path)
         .chain(
-            inherited
+            launch_environment
+                .iter()
+                .filter(|(key, value)| inherited_private_value(key, value))
+                .map(|(_, value)| value),
+        )
+        .cloned()
+        .chain(
+            process_environment
                 .into_iter()
-                .filter(|(key, _)| crate::ops::actor_secrets::sensitive_key(key))
+                .filter(|(key, value)| inherited_private_value(key, value))
                 .map(|(_, value)| value),
         )
         .filter(|value| !value.is_empty())
@@ -126,6 +139,39 @@ pub(super) fn journal_private_values(
     values.sort_unstable();
     values.dedup();
     values
+}
+
+fn inherited_private_value(key: &str, value: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    crate::ops::actor_secrets::sensitive_key(key)
+        || matches!(
+            normalized.as_str(),
+            "pgpassword" | "mysql_pwd" | "docker_auth_config" | "npm_config__auth"
+        )
+        || (normalized.starts_with("npm_config_//") && normalized.ends_with(":_auth"))
+        || value.split_once(':').is_some_and(|(header, credentials)| {
+            let header = header.trim();
+            (header.eq_ignore_ascii_case("authorization")
+                || header.eq_ignore_ascii_case("proxy-authorization"))
+                && !credentials.trim().is_empty()
+        })
+        || address_has_user_information(&normalized, value)
+}
+
+fn address_has_user_information(key: &str, value: &str) -> bool {
+    let value = value.trim();
+    if !value.contains('@') {
+        return false;
+    }
+    // The HTTP client also accepts a proxy authority without a scheme.
+    let parsed = if value.contains("://") {
+        url::Url::parse(value)
+    } else if matches!(key, "http_proxy" | "https_proxy" | "all_proxy") {
+        url::Url::parse(&format!("http://{value}"))
+    } else {
+        return false;
+    };
+    parsed.is_ok_and(|url| !url.username().is_empty() || url.password().is_some())
 }
 
 fn respond_unsupported_server_request(session: &Session, message: &Value) {
@@ -318,9 +364,7 @@ fn complete_turn(session: &Session, message: &Value) {
     data.insert("status".into(), json!(settled.status));
     let kind = match settled.outcome {
         TurnSettle::Failed(reason) => {
-            let reason = session
-                .managed
-                .safe_diagnostic(&std::io::Error::other(reason));
+            let reason = sanitize_multiline_diagnostic(&reason, &session.journal_private);
             data.insert("error".into(), json!(reason));
             session.set_status_with_reason("error", None, Some(reason));
             "headless.turn.failed"

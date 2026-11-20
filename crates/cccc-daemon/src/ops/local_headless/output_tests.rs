@@ -29,7 +29,8 @@ impl Fixture {
             "OUTPUT_FIXTURE_PRIVATE".to_owned(),
             private.to_owned(),
         )]);
-        let journal_private = journal_private_values(&snapshot, std::iter::empty());
+        let journal_private =
+            journal_private_values(&snapshot, &BTreeMap::new(), std::iter::empty());
         let session = Session {
             home,
             group_id: group.group_id,
@@ -103,6 +104,81 @@ impl Fixture {
             })
             .collect()
     }
+}
+
+#[tokio::test]
+async fn managed_failure_keeps_ordinary_inherited_values_and_redacts_credentials() {
+    const MEMBER: &str = "member-pin-4821";
+    const TOKEN: &str = "inherited-opaque-value";
+    const AUTH_PROXY: &str = "http://probe-user:probe-password@proxy.example.test:8080";
+    const AUTH_AUTHORITY: &str = "probe-user:probe-password@bare.example.test:8080";
+    const PUBLIC_PROXY: &str = "https://proxy.example.test:443";
+    const INHERITED_URI: &str = "redis://fixture:fixture-redis-password@cache.example.test/0";
+    const CONFIGURED_PATH: &str = "/private/first:/bin/cccc:/private/last";
+    const LAUNCHED_PATH: &str = "/bin/cccc:/private/first:/private/last";
+    let extra_credentials = [
+        ("PGPASSWORD", "fixture-postgres-password"),
+        ("MYSQL_PWD", "fixture-mysql-password"),
+        ("npm_config__auth", "fixture-npm-basic-auth"),
+        (
+            "npm_config_//registry.example.test/:_auth",
+            "fixture-scoped-npm-auth",
+        ),
+        ("DOCKER_AUTH_CONFIG", "fixture-docker-auth-config"),
+        ("GIT_CONFIG_VALUE_0", "Authorization: Basic ZmljdHVyZQ=="),
+        ("VENDOR_ENDPOINT", INHERITED_URI),
+    ];
+    let ordinary = format!(
+        "attempt 1 of the dumb fixture {PUBLIC_PROXY} /workspace/fixture author@example.test /inherited/bin"
+    );
+    let mut f = Fixture::new(true, MEMBER);
+    let snapshot = BTreeMap::from([
+        ("DEPLOY_PIN".to_owned(), MEMBER.to_owned()),
+        ("PATH".to_owned(), CONFIGURED_PATH.to_owned()),
+    ]);
+    let launch_environment = BTreeMap::from([("PATH".to_owned(), LAUNCHED_PATH.to_owned())]);
+    let inherited = [
+        ("SHLVL", "1"),
+        ("TERM", "dumb"),
+        ("GH_TOKEN", TOKEN),
+        ("http_proxy", AUTH_PROXY),
+        ("HTTPS_PROXY", AUTH_AUTHORITY),
+        ("ALL_PROXY", PUBLIC_PROXY),
+        ("PWD", "/workspace/fixture"),
+        ("GIT_AUTHOR_EMAIL", "author@example.test"),
+        ("PATH", "/inherited/bin"),
+    ];
+    f.session.journal_private = journal_private_values(
+        &snapshot,
+        &launch_environment,
+        inherited
+            .into_iter()
+            .chain(extra_credentials)
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+    );
+    f.start("turn-origin");
+    let credentials = [
+        MEMBER,
+        TOKEN,
+        AUTH_PROXY,
+        AUTH_AUTHORITY,
+        CONFIGURED_PATH,
+        LAUNCHED_PATH,
+    ]
+    .into_iter()
+    .chain(extra_credentials.map(|(_, value)| value))
+    .collect::<Vec<_>>();
+    let diagnostic = format!("{ordinary}\n{}", credentials.join(" "));
+    f.complete("turn-origin", "failed", json!({"message": diagnostic}));
+    let expected = format!(
+        "{ordinary}\n{}[redacted]",
+        "[redacted] ".repeat(credentials.len() - 1)
+    );
+    assert_eq!(f.terminals()[0]["data"]["error"], expected);
+    assert_eq!(
+        f.session.status.lock().expect("state").reason.as_deref(),
+        Some(expected.as_str())
+    );
 }
 
 #[tokio::test]
@@ -513,7 +589,7 @@ async fn the_journal_redacts_values_by_origin_and_keeps_ordinary_text() {
         ("PI_TELEMETRY", "0"),
         ("GH_TOKEN", "private-token"),
     ]);
-    f.session.journal_private = journal_private_values(&snapshot, inherited);
+    f.session.journal_private = journal_private_values(&snapshot, &BTreeMap::new(), inherited);
     assert_eq!(
         f.session.journal_private,
         [

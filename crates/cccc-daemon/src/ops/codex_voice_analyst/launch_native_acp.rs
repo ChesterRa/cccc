@@ -11,15 +11,19 @@ impl AnalystSession {
         mut env: BTreeMap<String, String>,
         resume: Option<String>,
         purpose: SessionPurpose,
-        actor: Option<(&str, &str)>,
+        actor: Option<AcpActorLaunch<'_>>,
         viewer: bool,
     ) -> io::Result<Self> {
         let options = native_acp::options(runtime, &command)?;
-        let private_values = env
-            .values()
-            .filter(|value| !value.is_empty())
-            .cloned()
-            .collect();
+        let admission = nonempty_environment_values(&env);
+        let private_values = match &actor {
+            Some(actor) => acp::PrivateValues::SeparateAdmission {
+                diagnostics: actor.diagnostic_values.to_vec(),
+                admission,
+            },
+            None => acp::PrivateValues::DiagnosticsAndAdmission(admission),
+        };
+        let actor = actor.map(|actor| actor.ids);
         if runtime == ActorRuntime::Auggie {
             env.insert("AUGMENT_DISABLE_AUTO_UPDATE".into(), "1".into());
         }
@@ -126,7 +130,7 @@ impl AnalystSession {
                 acp::PermissionPolicy::Interactive
             },
             acp::PromptCompletion::ResponseWithActivityReceipt,
-            acp::PrivateValues::DiagnosticsAndAdmission(private_values),
+            private_values,
         )?;
         let initialized = native_acp::initialize(
             &protocol,

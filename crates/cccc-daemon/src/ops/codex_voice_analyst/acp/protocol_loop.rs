@@ -1167,6 +1167,9 @@ fn rpc_error(
                 prompt_admission_kind(&super::diagnostic::sanitize(reported_message, &[]))
             }
             PrivateValues::DiagnosticsAndAdmission(_) => prompt_admission_kind(&message),
+            PrivateValues::SeparateAdmission { admission, .. } => {
+                prompt_admission_kind(&super::diagnostic::sanitize(reported_message, admission))
+            }
         }
     } else {
         io::ErrorKind::Other
@@ -1264,6 +1267,43 @@ mod tests {
         );
         assert_eq!(error.kind(), io::ErrorKind::Other);
         assert!(error.to_string().ends_with("Internal error: [redacted]"));
+    }
+
+    #[test]
+    fn managed_native_diagnostics_keep_the_original_prompt_admission() {
+        let admission = vec![
+            "y".into(),
+            "progress_store".into(),
+            "fixture-secret-value".into(),
+        ];
+        let baseline = PrivateValues::DiagnosticsAndAdmission(admission.clone());
+        let managed = PrivateValues::SeparateAdmission {
+            diagnostics: vec!["fixture-secret-value".into()],
+            admission,
+        };
+        for (reported, kind, visible) in [
+            ("active turn", io::ErrorKind::WouldBlock, "active turn"),
+            ("session is busy", io::ErrorKind::Other, "session is busy"),
+            (
+                "Internal error in progress_store: fixture-secret-value",
+                io::ErrorKind::Other,
+                "Internal error in progress_store: [redacted]",
+            ),
+            (
+                "Internal error: token=private-busy-value",
+                io::ErrorKind::Other,
+                "Internal error: [redacted]",
+            ),
+        ] {
+            let response = json!({"code":-32603,"message":reported});
+            assert_eq!(
+                rpc_error("hermes", "session/prompt", &response, &baseline).kind(),
+                kind
+            );
+            let error = rpc_error("hermes", "session/prompt", &response, &managed);
+            assert_eq!(error.kind(), kind);
+            assert!(error.to_string().ends_with(visible));
+        }
     }
 
     #[test]

@@ -1,4 +1,6 @@
-use super::super::codex_voice_analyst::{AnalystSession, lifecycle_timing};
+use super::super::codex_voice_analyst::{
+    AnalystSession, lifecycle_timing, sanitize_multiline_diagnostic,
+};
 use super::{
     BatchSubmission, HeadlessStatus, Session, managed_reader, poisoned, provider_cli,
     run_managed_launch,
@@ -6,7 +8,7 @@ use super::{
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
@@ -132,6 +134,7 @@ pub(super) fn launch_managed(
     env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
     env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
     super::super::codex_mcp::configure_actor_cli(&mut env);
+    let private_values = managed_private_values(actor, &env);
     let config = super::super::codex_voice_analyst::ActorLaunchConfig {
         workdir: cwd.to_path_buf(),
         group_id: group.group_id.clone(),
@@ -143,11 +146,13 @@ pub(super) fn launch_managed(
     };
     let launch_home = home.clone();
     let app = run_managed_launch(
-        async move { AnalystSession::launch_actor(&launch_home, config).await }.instrument(
-            tracing::info_span!(
-                "actor_runtime_start", group_id = %group.group_id, actor_id = %actor.id
-            ),
-        ),
+        async move {
+            AnalystSession::launch_actor_with_diagnostics(&launch_home, config, &private_values)
+                .await
+        }
+        .instrument(tracing::info_span!(
+            "actor_runtime_start", group_id = %group.group_id, actor_id = %actor.id
+        )),
     )?;
     if let Some(snapshot) = instruction_snapshot {
         super::super::instruction_files::record(
@@ -159,6 +164,13 @@ pub(super) fn launch_managed(
         );
     }
     Ok(app)
+}
+
+fn managed_private_values(actor: &Actor, environment: &BTreeMap<String, String>) -> Vec<String> {
+    // The provider inherits this process's environment besides the one it was given.
+    let process_environment = std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)));
+    super::output::journal_private_values(&actor.env, environment, process_environment)
 }
 
 pub(super) fn attach_managed(
@@ -174,11 +186,7 @@ pub(super) fn attach_managed(
     let scope = workspace.clone().for_actor(actor);
     let prompt =
         cccc_core::system_prompt::render_session_with_scope(home, group, actor, scope.as_ref());
-    // The provider inherits this process's environment besides the one it was given.
-    let inherited = app.tui_environment().into_iter().chain(
-        std::env::vars_os()
-            .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))),
-    );
+    let journal_private = managed_private_values(actor, &app.tui_environment());
     let item = Arc::new(Session {
         home: home.clone(),
         group_id: group.group_id.clone(),
@@ -204,7 +212,7 @@ pub(super) fn attach_managed(
         stop_lock: Mutex::new(()),
         startup_prompt: Mutex::new(Some(prompt)),
         active_turn: Mutex::new(None),
-        journal_private: super::output::journal_private_values(&actor.env, inherited),
+        journal_private,
     });
     if let Err(error) = managed_reader::spawn(Arc::clone(&item), app.subscribe()) {
         return Err(cleanup_failed_start(&item, error));
@@ -787,7 +795,8 @@ fn submit_prepared_admitted(
                     false
                 }
                 Err(error) => {
-                    let diagnostic = item.managed.safe_diagnostic(&error);
+                    let diagnostic =
+                        sanitize_multiline_diagnostic(&error.to_string(), &item.journal_private);
                     tracing::warn!(
                         message = %diagnostic,
                         group_id = %group.group_id,
