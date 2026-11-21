@@ -7,6 +7,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BUILD_SCRIPT_RAN = "build-script-ran"
 
 
 def _checkout(root: Path, name: str, *, packaged: bool) -> Path:
@@ -19,11 +20,15 @@ def _checkout(root: Path, name: str, *, packaged: bool) -> Path:
     )
     shutil.copyfile(ROOT / "crates/cccc-web/build.rs", package / "build.rs")
     # This dependency-free probe isolates asset paths/cache reuse. The real
-    # fingerprint emitter is exercised by the executable identity tests.
+    # fingerprint emitter is exercised by the executable identity tests. The
+    # stand-in marks each build-script run in the package directory, outside
+    # the paths the script watches.
     identity = package.parent / "cccc-core/build_support"
     identity.mkdir(parents=True)
     (identity / "mod.rs").write_text(
-        "pub fn emit(_: &std::path::Path) -> std::io::Result<()> { Ok(()) }\n",
+        "pub fn emit(_: &std::path::Path) -> std::io::Result<()> {\n"
+        f'    std::fs::write("{BUILD_SCRIPT_RAN}", "")\n'
+        "}\n",
         encoding="utf-8",
     )
     # Resolve relative paths from the package root, as RustEmbed does. Absolute
@@ -118,12 +123,9 @@ def test_shared_cargo_cache_embeds_the_current_checkout(
     frontend(second).write_text("frontend_second_updated", encoding="utf-8")
     assert build(second) == "backend_second:frontend_second_updated"
 
-    outputs = list(
-        (tmp_path / "target/release/build").glob("web-assets-probe-*/output")
-    )
-    before = {path: path.stat().st_mtime_ns for path in outputs}
-    assert before
+    # An earlier build left the mark. Clear it; an unchanged rebuild must not
+    # run the build script again.
+    marker = second / BUILD_SCRIPT_RAN
+    marker.unlink()
     assert build(second) == "backend_second:frontend_second_updated"
-    assert {path: path.stat().st_mtime_ns for path in outputs} == before, (
-        "unchanged builds stay cached"
-    )
+    assert not marker.exists(), "unchanged builds stay cached"
