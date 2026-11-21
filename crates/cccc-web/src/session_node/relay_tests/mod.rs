@@ -1,3 +1,8 @@
 mod access;
 mod fixture;
+mod proxy;
+mod proxy_connector;
+mod proxy_contract;
+mod proxy_fixture;
+mod proxy_process;
 mod transport;

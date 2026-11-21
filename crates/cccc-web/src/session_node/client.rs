@@ -41,7 +41,8 @@ pub async fn connect(
             .clone(),
     };
     super::capabilities::verify(home, endpoint_address.relay_url.is_some()).await?;
-    let destination = network::destination(&endpoint_address)?;
+    // Preserve route validation before creating or updating the local identity.
+    network::destination(&endpoint_address)?;
     let relay_token = ticket.as_ref().and_then(|ticket| {
         ticket.relay_token.as_ref().map(|token| {
             format!(
@@ -52,14 +53,12 @@ pub async fn connect(
             )
         })
     });
-    let endpoint = network::builder(
+    let (builder, destination) = network::connect_builder(
         network::key(home, "client")?,
-        0,
-        endpoint_address.relay_url.as_deref(),
+        &endpoint_address,
         relay_token.as_deref(),
-    )?
-    .bind()
-    .await?;
+    )?;
+    let endpoint = builder.bind().await?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
     let descriptor = ClientDescriptor {
         endpoint: endpoint_address,

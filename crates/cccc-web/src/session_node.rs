@@ -14,6 +14,7 @@ mod relay_access;
 mod relay_copy;
 mod relay_http;
 mod relay_probe;
+mod relay_proxy;
 mod relay_runtime;
 
 pub use client::{connect, stop_signal};

@@ -27,10 +27,10 @@ flowchart LR
 当前源码的依据：
 
 - [原生会话说明](../guide/local-sessions.md)：原应用拥有进程、账号、上下文和审批；接入 CCCC 不导入其历史。
-- [NativeHost](../../crates/cccc-core/src/local_sessions.rs)：PID、启动时间、boot/平台命名空间是本机所有权信息。
-- [本地接入操作](../../crates/cccc-daemon/src/ops/local_sessions/mod.rs)与[接收租约](../../crates/cccc-daemon/src/ops/local_sessions/store.rs)：接收者、来源版本和租约受校验。
-- [原生 MCP](../../crates/cccc-mcp/src/native_session.rs)：调用者提供的身份绑定会被移除，再由受信来源建立绑定。
-- [本地 Web 入口](../../crates/cccc-web/src/routes/local_sessions.rs)：只给实例管理员提供目录与接入操作。
+- [NativeHost](https://github.com/ChesterRa/cccc/blob/main/crates/cccc-core/src/local_sessions.rs)：PID、启动时间、boot/平台命名空间是本机所有权信息。
+- [本地接入操作](https://github.com/ChesterRa/cccc/blob/main/crates/cccc-daemon/src/ops/local_sessions/mod.rs)与[接收租约](https://github.com/ChesterRa/cccc/blob/main/crates/cccc-daemon/src/ops/local_sessions/store.rs)：接收者、来源版本和租约受校验。
+- [原生 MCP](https://github.com/ChesterRa/cccc/blob/main/crates/cccc-mcp/src/native_session.rs)：调用者提供的身份绑定会被移除，再由受信来源建立绑定。
+- [本地 Web 入口](https://github.com/ChesterRa/cccc/blob/main/crates/cccc-web/src/routes/local_sessions.rs)：只给实例管理员提供目录与接入操作。
 - [Connect 的边界](../guide/connect.md#direct-connections-without-an-account)：不开放远端工作区、终端、完整历史或任意工具。
 
 因此不能只给现有本机接口加一个远程 URL，也不能把远端 PID 当成本机进程验证。

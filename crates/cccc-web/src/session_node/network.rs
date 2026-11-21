@@ -25,6 +25,33 @@ pub(super) fn builder(
     relay: Option<&str>,
     token: Option<&str>,
 ) -> Result<iroh::endpoint::Builder> {
+    configured_builder(key, port, relay, token).map(|(builder, _)| builder)
+}
+
+pub(super) fn connect_builder(
+    key: SecretKey,
+    endpoint: &SessionNodeEndpoint,
+    token: Option<&str>,
+) -> Result<(iroh::endpoint::Builder, EndpointAddr)> {
+    let (builder, relay_available) =
+        configured_builder(key, 0, endpoint.relay_url.as_deref(), token)?;
+    let mut route = endpoint.clone();
+    if !relay_available {
+        route.relay_url = None;
+    }
+    ensure!(
+        endpoint.relay_url.is_none() || relay_available || !route.addresses.is_empty(),
+        "No usable device route: the configured relay proxy is unsupported and no direct IP addresses are available"
+    );
+    Ok((builder, destination(&route)?))
+}
+
+fn configured_builder(
+    key: SecretKey,
+    port: u16,
+    relay: Option<&str>,
+    token: Option<&str>,
+) -> Result<(iroh::endpoint::Builder, bool)> {
     let mut builder = Endpoint::builder(presets::Minimal)
         .secret_key(key)
         .alpns(vec![SESSION_NODE_ALPN.to_vec()])
@@ -32,13 +59,24 @@ pub(super) fn builder(
         .bind_addr((Ipv4Addr::UNSPECIFIED, port))?;
     if let Some(relay) = relay {
         let relay = session_nodes::normalize_relay_url(relay)?;
+        match super::relay_proxy::select(&relay.parse()?) {
+            super::relay_proxy::Selection::Direct => {}
+            super::relay_proxy::Selection::Proxy(proxy) => builder = builder.proxy_url(proxy),
+            super::relay_proxy::Selection::Unavailable => {
+                eprintln!(
+                    "Public device relay disabled: configure an HTTP(S) proxy without embedded credentials. UDP direct paths remain enabled."
+                );
+                return Ok((builder, false));
+            }
+        }
         let mut config = iroh::RelayConfig::new(relay.parse()?, None);
         if let Some(token) = token {
             config = config.with_auth_token(token);
         }
         builder = builder.relay_mode(iroh::RelayMode::Custom(iroh::RelayMap::from_iter([config])));
+        return Ok((builder, true));
     }
-    Ok(builder)
+    Ok((builder, false))
 }
 
 pub(super) fn address(endpoint: &Endpoint) -> Result<SessionNodeEndpoint> {
