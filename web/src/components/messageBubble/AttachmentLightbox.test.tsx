@@ -129,6 +129,23 @@ it("leaves the arrows to a document or video, but steps from an image", () => {
   expect(position()).toBe("2/3");
 });
 
+it("keeps stepping with the arrows after a step removed the focused view", () => {
+  show(4);
+  expect(position()).toBe("3/3");
+  const view = document.querySelector<HTMLElement>("[data-view]")!;
+  act(() => view.focus());
+  key(view, { key: "ArrowLeft" });
+  expect(position()).toBe("2/3");
+  expect(view.isConnected).toBe(false);
+  // The image's view is gone with its focus; the dialog's first control takes it, so the next
+  // arrow arrives and Tab keeps its place in the dialog's order.
+  const dialog = document.querySelector('[role="dialog"]')!;
+  expect(document.activeElement).not.toBe(dialog);
+  expect(dialog.contains(document.activeElement)).toBe(true);
+  key(document.activeElement!, { key: "ArrowLeft" });
+  expect(position()).toBe("1/3");
+});
+
 it("closes with Esc and gives focus back to what opened it", () => {
   show(0);
   act(() => document.querySelector<HTMLButtonElement>('[data-attachment-step="next"]')!.click());

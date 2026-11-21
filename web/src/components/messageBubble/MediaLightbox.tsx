@@ -1,9 +1,9 @@
 import { FloatingPortal } from "@floating-ui/react";
 import { ExternalLink } from "lucide-react";
-import { useId } from "react";
+import { useEffect, useId } from "react";
 import type { ReactNode, Ref } from "react";
 import { useTranslation } from "react-i18next";
-import { useModalA11y } from "../../hooks/useModalA11y";
+import { focusFirst, useModalA11y } from "../../hooks/useModalA11y";
 import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { classNames } from "../../utils/classNames";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
@@ -92,11 +92,25 @@ export function MediaLightbox({
   // Opened from a message: closing must not scroll the conversation to the attachment.
   const { modalRef } = useModalA11y(open, onClose, { preventReturnScroll: true });
   const stepping = step && step.count > 1 ? step : null;
+  const position = stepping?.position;
+  // A step replaces the attachment's view; when that view held focus, the
+  // browser drops it to the page, where the arrows no longer reach the dialog,
+  // so focus goes to the dialog's first control, as when it opened.
+  useEffect(() => {
+    const modal = modalRef.current;
+    if (position === undefined || !modal) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && active.isConnected) return;
+    focusFirst(modal);
+  }, [position, modalRef]);
   useChatObscuringView(open);
   const hintId = useId();
   if (!open) return null;
   return (
-    <FloatingPortal>
+    // The dialog keeps Tab inside itself (useModalA11y). The portal's own tab-order
+    // guards would also pull its keys out of the order while focus leaves a view
+    // a step removed, leaving the dialog with nothing to focus.
+    <FloatingPortal preserveTabOrder={false}>
       <div className="fixed inset-0 z-[80] animate-fade-in">
         <div
           className={classNames(
