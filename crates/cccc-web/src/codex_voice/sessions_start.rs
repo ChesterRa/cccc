@@ -217,6 +217,15 @@ impl CodexVoiceSessions {
                 }
                 analyst
             };
+            // Register sources that arrived together while Chet was stopped,
+            // before a private input can acquire this owner.
+            for wait in state
+                .cold_group_waits
+                .drain(..)
+                .filter_map(|wait| wait.upgrade())
+            {
+                analyst.analyst.observe_group_wait(&wait).await;
+            }
             Ok::<_, anyhow::Error>((state, analyst))
         })
         .await
@@ -253,14 +262,17 @@ impl CodexVoiceSessions {
     /// Lets a running Chet note whether this Group message's wait runs out
     /// while a private input holds its inbox. Never starts Chet. It waits for
     /// a busy owner: a missed registration cannot be made up later.
-    pub(crate) async fn observe_chet_group_wait(
-        &self,
-        wait: &cccc_daemon::experimental_codex_voice::GroupWaitDeadline,
-    ) {
-        let analyst = self.state.lock().await.analyst.clone();
-        if let Some(analyst) = analyst {
-            analyst.analyst.observe_group_wait(wait).await;
-        }
+    pub(crate) async fn observe_chet_group_wait(&self, wait: &Arc<GroupWaitDeadline>) {
+        let mut state = self.state.lock().await;
+        let Some(analyst) = state.analyst.clone() else {
+            state
+                .cold_group_waits
+                .retain(|source| source.strong_count() > 0);
+            state.cold_group_waits.push(Arc::downgrade(wait));
+            return;
+        };
+        drop(state);
+        analyst.analyst.observe_group_wait(wait).await;
     }
 
     /// Whether the running Chet holds this Group input unsent past its

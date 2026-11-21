@@ -3,12 +3,13 @@ import { useUIStore } from "../stores";
 import type { ActorRuntimeActionResult } from "../services/api/actors";
 import { SESSION_REPLACED_REASONS } from "../components/AgentTab.model";
 
-/** A start that began a new conversation instead of the saved one says so once, at the action. */
-export function noticeRuntimeSessionReplaced(name: string, result: unknown): void {
-  if (!result || typeof result !== "object") return;
-  const replaced = (result as ActorRuntimeActionResult).runtime_session_replaced;
-  if (!replaced || typeof replaced !== "object") return;
-  const reported = Array.isArray(replaced.reasons) ? replaced.reasons : [];
+type Replaced = NonNullable<ActorRuntimeActionResult["runtime_session_replaced"]>;
+
+function describe(name: string, replaced: unknown): string {
+  if (!replaced || typeof replaced !== "object") return "";
+  const reported = Array.isArray((replaced as Replaced).reasons)
+    ? (replaced as Replaced).reasons
+    : [];
   // The daemon's list is open: a reason this build has no words for is left out.
   const reasons = SESSION_REPLACED_REASONS.filter((reason) => reported.includes(reason));
   const parts = [i18n.t("actors:runtimeSessionReplacedNow", { name })];
@@ -21,5 +22,31 @@ export function noticeRuntimeSessionReplaced(name: string, result: unknown): voi
       }),
     );
   }
-  useUIStore.getState().showNotice({ message: parts.join(" ") });
+  return parts.join(" ");
+}
+
+/** A start that began a new conversation instead of the saved one says so once, at the action. */
+export function noticeRuntimeSessionReplaced(name: string, result: unknown): void {
+  if (!result || typeof result !== "object") return;
+  const message = describe(name, (result as ActorRuntimeActionResult).runtime_session_replaced);
+  if (message) useUIStore.getState().showNotice({ message });
+}
+
+/** A Group start names each member whose start began a new conversation, in one notice. */
+export function noticeGroupSessionsReplaced(
+  nameOf: (actorId: string) => string,
+  result: unknown,
+): void {
+  if (!result || typeof result !== "object") return;
+  const replaced = (result as { runtime_sessions_replaced?: unknown }).runtime_sessions_replaced;
+  if (!Array.isArray(replaced)) return;
+  const message = replaced
+    .map((entry) => {
+      const actorId =
+        entry && typeof entry === "object" ? (entry as { actor_id?: unknown }).actor_id : "";
+      return typeof actorId === "string" && actorId ? describe(nameOf(actorId), entry) : "";
+    })
+    .filter(Boolean)
+    .join(" ");
+  if (message) useUIStore.getState().showNotice({ message });
 }

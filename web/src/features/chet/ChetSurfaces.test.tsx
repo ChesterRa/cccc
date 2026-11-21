@@ -411,8 +411,10 @@ it("names a cancelled queue entry and a too-long answer for what they are", () =
   timeline([
     request({ id: "c", state: "not_started", notStartedReason: "cancelled" }),
     request({ id: "t", state: "too_large" }),
+    request({ id: "w", state: "not_started", notStartedReason: "wait_expired" }),
   ]);
   expect(host.textContent).toContain("chet.state.notStartedCancelled");
+  expect(host.textContent).toContain("chet.state.notStartedWaitExpired");
   expect(host.textContent).toContain("chet.state.too_large");
   expect(buttonByText("chet.sendAgain")).toBeDefined();
 });

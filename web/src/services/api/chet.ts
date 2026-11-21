@@ -74,7 +74,13 @@ export type ChetRecord =
   | (Base & { kind: "group_dispatch"; input_id: string })
   | (Base & { kind: "receipt"; input_id: string; receipt: { generation: string; turn_id: string } })
   | (Base & { kind: "result"; input_ids: string[]; outcome: ChetOutcome })
-  | (Base & { kind: "not_started"; input_id: string; reason: string })
+  | (Base & {
+      kind: "not_started";
+      input_id: string;
+      reason: string;
+      /** A Group input whose wait for Chet expired: it was never sent. */
+      wait_expired?: boolean;
+    })
   | (Base & { kind: "transcript"; transcript: ChetTranscript });
 
 /** Claude Code refused to run Chet in a working folder it has not trusted. */

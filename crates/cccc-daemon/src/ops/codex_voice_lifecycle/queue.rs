@@ -1,5 +1,5 @@
 use super::*;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 pub(super) const MAX_QUEUED_INPUTS: usize = 32;
 
@@ -11,30 +11,16 @@ pub struct GroupWaitDeadline(Arc<ObservedDeadline>);
 #[derive(Debug)]
 pub(super) struct ObservedDeadline {
     at: tokio::time::Instant,
-    expired_while_blocked: AtomicBool,
+    blocked_at_deadline: OnceLock<bool>,
 }
 
 impl GroupWaitDeadline {
     pub fn new(at: tokio::time::Instant) -> Self {
         Self(Arc::new(ObservedDeadline {
             at,
-            expired_while_blocked: AtomicBool::new(false),
+            blocked_at_deadline: OnceLock::new(),
         }))
     }
-
-    fn initial_wait(&self) -> GroupWait {
-        if self.0.expired_while_blocked.load(Ordering::Acquire) {
-            GroupWait::AwaitingDurableExpiry
-        } else {
-            GroupWait::Until(self.0.at)
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum GroupWait {
-    Until(tokio::time::Instant),
-    AwaitingDurableExpiry,
 }
 
 #[derive(Debug)]
@@ -42,7 +28,7 @@ pub(super) struct QueuedInput {
     pub delegation_id: String,
     pub text: String,
     pub origin: AnalystTurnOrigin,
-    wait: Option<GroupWait>,
+    wait: Option<GroupWaitDeadline>,
 }
 
 impl QueuedInput {
@@ -56,7 +42,9 @@ impl QueuedInput {
     }
 
     pub(super) fn wait_expired(&self) -> bool {
-        self.wait == Some(GroupWait::AwaitingDurableExpiry)
+        self.wait
+            .as_ref()
+            .is_some_and(|wait| wait.0.blocked_at_deadline.get() == Some(&true))
     }
 }
 
@@ -181,31 +169,23 @@ pub(super) fn update_group_waits(
             .iter()
             .any(|item| item.origin == AnalystTurnOrigin::ChetText);
     let mut next = None;
+    let mut observe = |wait: &ObservedDeadline| {
+        if now < wait.at {
+            next = Some(next.map_or(wait.at, |at: tokio::time::Instant| at.min(wait.at)));
+            true
+        } else {
+            wait.blocked_at_deadline.get_or_init(|| blocked);
+            false
+        }
+    };
     // The submitting worker can be waiting for another Group's durable
     // outcome. Keep what was known at each source deadline even if its private
     // blocker is consumed before that worker reaches admission.
-    state.source_waits.retain(|weak| {
-        let Some(wait) = weak.upgrade() else {
-            return false;
-        };
-        if wait.at > now {
-            return true;
-        }
-        if blocked {
-            wait.expired_while_blocked.store(true, Ordering::Release);
-        }
-        false
-    });
-    for input in &mut state.queue {
-        if let Some(GroupWait::Until(deadline)) = input.wait
-            && blocked
-        {
-            if deadline <= now {
-                input.wait = Some(GroupWait::AwaitingDurableExpiry);
-            } else {
-                next = Some(next.map_or(deadline, |at: tokio::time::Instant| at.min(deadline)));
-            }
-        }
+    state
+        .source_waits
+        .retain(|weak| weak.upgrade().is_some_and(|wait| observe(&wait)));
+    for wait in state.queue.iter().filter_map(|input| input.wait.as_ref()) {
+        observe(&wait.0);
     }
     next
 }
@@ -217,9 +197,10 @@ impl AnalystLifecycle {
         }
         let mut state = self.state.lock().await;
         if !state.invalidated {
-            // Only the bounded Web work queue owns strong references.
+            // The Web work item and its eventual host queue entry share one observation.
             state.source_waits.push(Arc::downgrade(&wait.0));
             update_group_waits(&mut state, tokio::time::Instant::now());
+            self.queue_notify.notify_one();
         }
     }
 
@@ -357,10 +338,22 @@ impl AnalystLifecycle {
         // A user speaking or typing while a Group input runs should not wait
         // behind additional Group work. Preserve arrival order among user
         // inputs and among all other queued inputs.
-        let insert_at = if matches!(
-            origin,
-            AnalystTurnOrigin::Voice | AnalystTurnOrigin::Terminal | AnalystTurnOrigin::ChetText
-        ) {
+        let prioritize_user = self.session.runtime() != cccc_contracts::ActorRuntime::Opencode
+            || state
+                .pending
+                .as_ref()
+                .is_some_and(|input| input.origin == AnalystTurnOrigin::Group)
+            || state
+                .active
+                .as_ref()
+                .is_some_and(|turn| turn.origin == AnalystTurnOrigin::Group);
+        let insert_at = if prioritize_user
+            && matches!(
+                origin,
+                AnalystTurnOrigin::Voice
+                    | AnalystTurnOrigin::Terminal
+                    | AnalystTurnOrigin::ChetText
+            ) {
             state
                 .queue
                 .iter()
@@ -370,7 +363,7 @@ impl AnalystLifecycle {
             state.queue.len()
         };
         let mut input = QueuedInput::new(id, text, origin);
-        input.wait = deadline.map(GroupWaitDeadline::initial_wait);
+        input.wait = deadline.cloned();
         state.queue.insert(insert_at, input);
         state
             .acp_inputs

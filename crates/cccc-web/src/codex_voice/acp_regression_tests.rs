@@ -345,6 +345,14 @@ async fn opencode_chet_inputs_keep_the_bound_session_and_separate_results_while_
     use cccc_daemon::experimental_codex_voice::VoiceDelegationAdmission;
     let fixture = ChetHttpFixture::new().await;
     let root = fixture.configure_opencode();
+    // The Web registered this Group source while Chet was stopped. A later
+    // private admission must not turn its elapsed, unblocked wait into an expiry.
+    let group_wait = Arc::new(GroupWaitDeadline::new(tokio::time::Instant::now()));
+    fixture
+        .state
+        .codex_voice
+        .observe_chet_group_wait(&group_wait)
+        .await;
     let ids = [
         uuid::Uuid::new_v4(),
         uuid::Uuid::new_v4(),
@@ -416,7 +424,7 @@ async fn opencode_chet_inputs_keep_the_bound_session_and_separate_results_while_
     assert!(matches!(
         analyst
             .analyst
-            .submit_group_input("group-input", "GROUP")
+            .submit_group_input_until("group-input", "GROUP", &group_wait)
             .await
             .expect("queue Group input"),
         VoiceDelegationAdmission::Queued { .. }

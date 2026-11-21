@@ -271,13 +271,15 @@ function StateLine({ item, actions }: { item: ChetRequestItem; actions: ChetRequ
   const label =
     state === "not_started"
       ? t(
-          item.notStartedReason === "cancelled"
-            ? "chet.state.notStartedCancelled"
-            : item.notStartedReason === "assistant_unavailable"
-              ? "chet.state.notStartedUnavailable"
-              : item.notStartedReason === "source_unavailable"
-                ? "chet.state.notStartedSourceUnavailable"
-                : "chet.state.notStarted",
+          item.notStartedReason === "wait_expired"
+            ? "chet.state.notStartedWaitExpired"
+            : item.notStartedReason === "cancelled"
+              ? "chet.state.notStartedCancelled"
+              : item.notStartedReason === "assistant_unavailable"
+                ? "chet.state.notStartedUnavailable"
+                : item.notStartedReason === "source_unavailable"
+                  ? "chet.state.notStartedSourceUnavailable"
+                  : "chet.state.notStarted",
         )
       : state === "unconfirmed" && item.source === "voice"
         ? t("chet.state.voicePending")

@@ -246,15 +246,22 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: ActorArgs) -> R
 }
 
 /// A start that began a new conversation instead of the saved one says so where the
-/// operator is looking, on stderr so the JSON result stays parseable.
-fn note_session_replaced(response: &cccc_contracts::DaemonResponse) {
+/// operator is looking, on stderr so the JSON result stays parseable. A Group start
+/// reports each member it replaced.
+pub(crate) fn note_session_replaced(response: &cccc_contracts::DaemonResponse) {
     if !response.ok {
         return;
     }
-    if let Some(message) = response
+    let single = response.result.get("runtime_session_replaced").into_iter();
+    let each = response
         .result
-        .get("runtime_session_replaced")
-        .and_then(|replaced| replaced["message"].as_str())
+        .get("runtime_sessions_replaced")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    for message in single
+        .chain(each)
+        .filter_map(|replaced| replaced["message"].as_str())
     {
         eprintln!("Note: {message}");
     }

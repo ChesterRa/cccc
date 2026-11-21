@@ -105,6 +105,7 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: GroupArgs) -> R
             call(client, op, args).await?
         }
     };
+    crate::commands::actor::note_session_replaced(&response);
     print(response)
 }
 

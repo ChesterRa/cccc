@@ -1720,6 +1720,56 @@ fn queued_private_chat_can_resume_a_held_inbox_after_the_group_leaves() {
 }
 
 #[tokio::test]
+async fn opencode_private_inputs_precede_a_waiting_group_only_while_a_group_is_running() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session.into_opencode_lifecycle_fixture());
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    session.publish_event_for_test(json!({
+        "method":"turn/started", "params":{"threadId":"thread-lifecycle","turn":{"id":"busy"}}
+    }));
+    events.recv().await.expect("active turn");
+    lifecycle
+        .state
+        .lock()
+        .await
+        .active
+        .as_mut()
+        .expect("active")
+        .origin = AnalystTurnOrigin::Group;
+    lifecycle
+        .admit_group("next-group", "question")
+        .await
+        .expect("queue Group");
+    lifecycle
+        .admit_chet_text("first-private", "first")
+        .await
+        .expect("queue private during Group");
+    lifecycle
+        .state
+        .lock()
+        .await
+        .active
+        .as_mut()
+        .expect("active")
+        .origin = AnalystTurnOrigin::ChetText;
+    lifecycle
+        .admit_chet_text("later-private", "later")
+        .await
+        .expect("queue private during private turn");
+    let state = lifecycle.state.lock().await;
+    let order: Vec<_> = state
+        .queue
+        .iter()
+        .map(|input| input.delegation_id.as_str())
+        .collect();
+    assert_eq!(order, ["first-private", "next-group", "later-private"]);
+    drop(state);
+    drop(lifecycle);
+    server.abort();
+}
+
+#[tokio::test]
 async fn delayed_group_dispatch_keeps_each_sources_observed_inbox_deadline() {
     let (session, server) = test_session().await;
     let lifecycle = AnalystLifecycle::start(Arc::new(session.into_opencode_lifecycle_fixture()));
@@ -1756,6 +1806,13 @@ async fn delayed_group_dispatch_keeps_each_sources_observed_inbox_deadline() {
         .admit_group_until("two", "second", &second)
         .await
         .expect("admit the second Group request");
+    // The second deadline elapsed with an empty private inbox, before the
+    // serial worker admitted this Group. A later blocker cannot change that.
+    {
+        let mut state = lifecycle.state.lock().await;
+        state.resumed_inbox_pending = true;
+        queue::update_group_waits(&mut state, at + Duration::from_secs(30));
+    }
     assert!(lifecycle.group_wait_expired("one").await);
     assert!(!lifecycle.group_wait_expired("two").await);
     drop(lifecycle);
@@ -1801,11 +1858,23 @@ async fn opencode_group_expiry_reserves_only_unsent_work_until_persisted() {
         assert!(state.queue[0].wait_expired());
         // The private input is consumed after the first deadline, before the second.
         state.native_pending.clear();
-        assert_eq!(queue::update_group_waits(&mut state, deadline), None);
+        assert_eq!(
+            queue::update_group_waits(&mut state, deadline),
+            Some(deadline + Duration::from_secs(1))
+        );
         assert!(state.queue[0].wait_expired());
         assert!(!state.queue[1].wait_expired());
         // Simulate a long running tool after the private inbox item is consumed.
         queue::update_group_waits(&mut state, deadline + std::time::Duration::from_secs(900));
+        assert!(!state.queue[1].wait_expired());
+        // A private input entering the inbox now did not hold this Group
+        // request at its deadline, regardless of its host queue position.
+        state.native_pending.push_back(PendingStart {
+            delegation_id: "later-private".into(),
+            origin: AnalystTurnOrigin::ChetText,
+            cancelling: false,
+        });
+        queue::update_group_waits(&mut state, deadline + Duration::from_secs(901));
         assert!(!state.queue[1].wait_expired());
     }
     assert!(lifecycle.group_wait_expired("group-one").await);

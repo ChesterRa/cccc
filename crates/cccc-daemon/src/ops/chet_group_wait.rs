@@ -213,14 +213,32 @@ mod tests {
                 .collect()
         }
 
+        /// Not-started facts that clients read as this input's expired wait.
         fn not_started(&self) -> usize {
-            let history = call(&self.home, "chet_history_list", json!({"by":"user"}));
-            history.result["records"]
+            self.not_started_records()
+                .iter()
+                .filter(|record| record["wait_expired"] == true)
+                .count()
+        }
+
+        /// As the Web shows them. The host's own read stays plain stored records.
+        fn not_started_records(&self) -> Vec<Value> {
+            let plain = call(&self.home, "chet_history_list", json!({"by":"user"}));
+            for record in plain.result["records"].as_array().expect("records") {
+                serde_json::from_value::<Record>(record.clone()).expect("a stored record");
+            }
+            let shown = call(
+                &self.home,
+                "chet_history_list",
+                json!({"by":"user","resolve_sources":true}),
+            );
+            shown.result["records"]
                 .as_array()
                 .expect("records")
                 .iter()
                 .filter(|record| record["kind"] == "not_started")
-                .count()
+                .cloned()
+                .collect()
         }
     }
 
@@ -306,6 +324,18 @@ mod tests {
         assert_eq!(retry.result["delivery"], "recorded");
         assert_eq!(fixture.events("runtime.delivery").len(), 1);
         assert_eq!(fixture.not_started(), 1);
+    }
+
+    #[test]
+    fn another_cancellation_is_not_read_as_an_expired_wait() {
+        let fixture = Fixture::new();
+        Store::new(fixture.home.root())
+            .record_not_started(Uuid::new_v4(), fixture.input_id, StartFailure::Cancelled)
+            .expect("cancellation");
+        let records = fixture.not_started_records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["reason"], "cancelled");
+        assert!(records[0].get("wait_expired").is_none(), "{records:?}");
     }
 
     #[test]

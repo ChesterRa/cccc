@@ -1,12 +1,13 @@
 use cccc_core::HomeLayout;
 use cccc_core::codex_voice_settings::ResolvedAgentRuntime;
 use cccc_daemon::experimental_codex_voice::{
-    AnalystLifecycleEvent, CodexVoiceAnalyst, CodexVoiceCall, GrokRealtimeConnection, LaunchConfig,
-    RealtimeCallConfig, create_grok_connection, create_realtime_answer,
+    AnalystLifecycleEvent, CodexVoiceAnalyst, CodexVoiceCall, GrokRealtimeConnection,
+    GroupWaitDeadline, LaunchConfig, RealtimeCallConfig, create_grok_connection,
+    create_realtime_answer,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, Weak};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -143,6 +144,8 @@ pub(crate) struct SessionAttachment {
 struct ManagedState {
     active: Option<Arc<ActiveSession>>,
     analyst: Option<Arc<AnalystRuntime>>,
+    /// Group work registered before the first Analyst was ready.
+    cold_group_waits: Vec<Weak<GroupWaitDeadline>>,
 }
 
 pub(crate) struct AnalystSettingsOutcome {

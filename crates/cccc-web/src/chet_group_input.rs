@@ -2,6 +2,7 @@
 //! owns message content; Chet history records receipt and the dispatch claim.
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -41,7 +42,7 @@ struct Work {
     event: Event,
     /// Chet notes on it whether its message's wait ran out while a private
     /// input held the inbox, even before this worker reaches it.
-    wait: GroupWaitDeadline,
+    wait: Arc<GroupWaitDeadline>,
 }
 
 /// How often the worker reads what each Group committed since the last sweep.
@@ -627,11 +628,11 @@ async fn register_event(
         queued: false,
         expiry_unsettled: false,
     });
-    let wait = GroupWaitDeadline::new(wait_deadline(
+    let wait = Arc::new(GroupWaitDeadline::new(wait_deadline(
         &event.ts,
         chrono::Utc::now(),
         tokio::time::Instant::now(),
-    ));
+    )));
     state.codex_voice.observe_chet_group_wait(&wait).await;
     match work.try_send(Work {
         key,

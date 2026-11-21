@@ -962,6 +962,7 @@
       "notStarted": "Chet に渡されていません。",
       "notStartedUnavailable": "このメッセージは Chet に渡されていません。Chet のランタイム設定を確認してから、もう一度送信してください。",
       "notStartedCancelled": "キャンセルされ、実行されていません。",
+      "notStartedWaitExpired": "このリクエストは Chet に送られず、実行もされていません。必要なら、元のグループでもう一度送ってください。",
       "notStartedSourceUnavailable": "このグループメッセージは送信者または送信元が無効になったため、Chet には渡していません。",
       "received_unconfirmed": "Chet は受け取りましたが、結果は未確認です。自動で再送はしません。",
       "unconfirmed": "未確認：Chet に届いたかどうか分かりません。二重実行を避けるため、自動で再送はしません。",

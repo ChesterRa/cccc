@@ -282,7 +282,7 @@ fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             None
         };
         let mut result =
-            json!({"records":page.records,"after":page.next.to_string(),"has_more":page.has_more})
+            json!({"records":project(&page.records, with_sources)?,"after":page.next.to_string(),"has_more":page.has_more})
                 .as_object()
                 .expect("fixed object")
                 .clone();
@@ -299,12 +299,36 @@ fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     } else {
         None
     };
-    let mut result = json!({"records":page.records,"before":page.before.map(|n| n.to_string()),"after":page.head.to_string()})
+    let mut result = json!({"records":project(&page.records, with_sources)?,"before":page.before.map(|n| n.to_string()),"after":page.head.to_string()})
         .as_object().expect("fixed object").clone();
     if let Some(projection) = projection {
         result.insert("sources".into(), Value::Object(projection));
     }
     object(Value::Object(result))
+}
+
+/// Records as the caller reads them. A Group input whose wait for Chet expired is stored as a
+/// cancellation under an ID derived from the input, so older builds can still read it. A
+/// display read (one that resolves sources) also gets a flag saying which cancellation that
+/// was; other reads get the stored records unchanged, as the host parses them strictly.
+fn project(records: &[chet_history::Record], display: bool) -> Result<Value, OpError> {
+    records
+        .iter()
+        .map(|record| {
+            if !display {
+                return serde_json::to_value(record).map_err(|error| OpError::io(error.into()));
+            }
+            let mut value =
+                serde_json::to_value(record).map_err(|error| OpError::io(error.into()))?;
+            if let chet_history::Record::NotStarted { id, input_id, .. } = record
+                && *id == chet_history::group_wait_expired_id(*input_id)
+            {
+                value["wait_expired"] = Value::Bool(true);
+            }
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
 }
 
 fn find(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -317,6 +341,10 @@ fn find(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     } else {
         None
     };
+    let records = records
+        .as_deref()
+        .map(|records| project(records, with_sources))
+        .transpose()?;
     let mut result = json!({"records":records})
         .as_object()
         .expect("fixed object")
