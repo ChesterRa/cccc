@@ -27,15 +27,15 @@ async fn join_rejects_unsafe_origins_legacy_hubs_and_redirected_claims() {
     );
     let mut api = Api::start().await;
     let mut foreign = Api::start().await;
-    let old = f.join(&api.origin, &[]);
-    api.next("requests")
+    let mut old = f.join(&api.origin, &[]);
+    api.next(&mut old, "requests")
         .await
         .answer(StatusCode::NOT_FOUND, json!({}));
     let (ok, text) = output(old, &[]).await;
     assert!(!ok && text.contains("Update the hub") && text.contains("--ticket-stdin"));
 
-    let malformed = f.join(&api.origin, &[]);
-    let create = api.next("requests").await;
+    let mut malformed = f.join(&api.origin, &[]);
+    let create = api.next(&mut malformed, "requests").await;
     let private: CreateRequest =
         serde_json::from_value(create.body.clone()).expect("private test claim");
     let id = uuid::Uuid::new_v4().to_string();
@@ -52,8 +52,8 @@ async fn join_rejects_unsafe_origins_legacy_hubs_and_redirected_claims() {
     };
     assert!(!ok && text.contains("invalid confirmation details"));
 
-    let redirected = f.join(&api.origin, &[]);
-    let create = api.next("requests").await;
+    let mut redirected = f.join(&api.origin, &[]);
+    let create = api.next(&mut redirected, "requests").await;
     let value: CreateRequest = serde_json::from_value(create.body.clone()).expect("request body");
     let id = uuid::Uuid::new_v4().to_string();
     create.answer(
@@ -63,7 +63,7 @@ async fn join_rejects_unsafe_origins_legacy_hubs_and_redirected_claims() {
             &(chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
         ),
     );
-    api.next("poll")
+    api.next(&mut redirected, "poll")
         .await
         .redirect(&format!("{}/capture", foreign.origin));
     let (ok, text) = output(redirected, &[&value.device_code]).await;
@@ -119,15 +119,15 @@ async fn pending_join_preserves_a_newer_owner_and_a_live_owner_receives_no_reque
         hub_id: "different-authenticated-hub".into(),
     });
     session_nodes::set_client(&f.node, &descriptor).expect("controlled mismatched binding");
-    let pending = f.join(&api.origin, &["--runtime", "codex"]);
-    let request = api.next("requests").await;
+    let mut pending = f.join(&api.origin, &["--runtime", "codex"]);
+    let request = api.next(&mut pending, "requests").await;
     let claim: CreateRequest =
         serde_json::from_value(request.body.clone()).expect("new-origin claim");
     assert_eq!(claim.node_id, key);
     let id = uuid::Uuid::new_v4().to_string();
     let expiry = (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339();
     request.answer(StatusCode::OK, created(&id, &expiry));
-    let poll = api.next("poll").await;
+    let poll = api.next(&mut pending, "poll").await;
     descriptor.owner = owner;
     descriptor.connected = true;
     descriptor.grant_id = "concurrently-committed-grant".into();

@@ -8,7 +8,9 @@ use axum::{
 use serde_json::Value;
 use std::time::Duration;
 use tokio::{
+    io::AsyncReadExt,
     net::TcpListener,
+    process::Child,
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
@@ -41,6 +43,7 @@ impl Call {
 pub struct Api {
     pub origin: String,
     pub calls: mpsc::UnboundedReceiver<Call>,
+    received: usize,
     serve: JoinHandle<()>,
 }
 impl Drop for Api {
@@ -92,15 +95,36 @@ impl Api {
         Self {
             origin,
             calls,
+            received: 0,
             serve,
         }
     }
 
-    pub async fn next(&mut self, suffix: &str) -> Call {
-        let call = tokio::time::timeout(Duration::from_secs(12), self.calls.recv())
-            .await
-            .expect("request deadline")
-            .expect("request");
+    pub async fn next(&mut self, child: &mut Child, suffix: &str) -> Call {
+        let received = tokio::select! {
+            biased;
+            call = self.calls.recv() => Ok(call.expect("approval fixture closed")),
+            exit = child.wait() => Err(match exit {
+                Ok(status) => format!("exited with {status}"),
+                Err(error) => format!("wait failed ({:?})", error.kind()),
+            }),
+            () = tokio::time::sleep(Duration::from_secs(12)) => {
+                let _ = child.start_kill();
+                let _ = tokio::time::timeout(Duration::from_secs(1), child.wait()).await;
+                Err(String::from("was still running at the request deadline"))
+            }
+        };
+        let call = match received {
+            Ok(call) => call,
+            Err(state) => {
+                let phase = last_safe_phase(child).await;
+                panic!(
+                    "expected POST {suffix} (request {}): CLI {state}; {phase}",
+                    self.received + 1
+                );
+            }
+        };
+        self.received += 1;
         assert_eq!(call.method, Method::POST);
         assert_eq!(
             call.uri.path(),
@@ -116,4 +140,47 @@ impl Api {
         );
         call
     }
+}
+
+/// Report only fixed stage labels and a numeric OS error. A CLI error, confirmation link,
+/// request body, ticket, or captured stderr may contain data that must never reach CI logs.
+async fn last_safe_phase(child: &mut Child) -> String {
+    let mut bytes = Vec::new();
+    if let Some(stderr) = child.stderr.take() {
+        let _ = tokio::time::timeout(
+            Duration::from_millis(500),
+            stderr.take(8192).read_to_end(&mut bytes),
+        )
+        .await;
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let stage = [
+        ("Device join cancelled.", "cancelled"),
+        ("user's home directory", "user home unavailable"),
+        ("MissingUserHome", "user home unavailable"),
+        (
+            "Cannot initialize the device join HTTP client",
+            "HTTP client unavailable",
+        ),
+        (
+            "Cannot generate a private device join code",
+            "OS randomness unavailable",
+        ),
+        ("already runs for this Home", "another connector is running"),
+        ("changed during pairing", "reconnect state changed"),
+        ("temporarily unavailable", "HTTP request retry"),
+        ("Waiting for a hub administrator", "waiting for approval"),
+        ("Requesting device approval", "creating HTTP request"),
+        ("Error:", "CLI startup error"),
+    ]
+    .iter()
+    .find(|(pattern, _)| text.contains(pattern))
+    .map(|(_, stage)| *stage)
+    .unwrap_or("no recognized CLI progress");
+    let code = text
+        .split("(os error ")
+        .nth(1)
+        .and_then(|code| code.split(')').next())
+        .and_then(|code| code.parse::<i32>().ok());
+    format!("stage={stage}, os_error={code:?}")
 }

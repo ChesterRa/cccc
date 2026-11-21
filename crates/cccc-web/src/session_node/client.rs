@@ -214,14 +214,22 @@ impl Drop for ConnectorCleanup {
 }
 
 pub async fn stop_signal() {
+    let interrupt = wait_for_interrupt(tokio::signal::ctrl_c());
     #[cfg(unix)]
     if let Ok(mut terminate) =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
     {
-        tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+        tokio::select! { () = interrupt => {}, Some(()) = terminate.recv() => {} }
         return;
     }
-    let _ = tokio::signal::ctrl_c().await;
+    interrupt.await;
+}
+
+async fn wait_for_interrupt(signal: impl std::future::Future<Output = std::io::Result<()>>) {
+    if signal.await.is_err() {
+        // A headless process can have no console handler. Its device work still runs.
+        std::future::pending::<()>().await;
+    }
 }
 
 #[cfg(test)]

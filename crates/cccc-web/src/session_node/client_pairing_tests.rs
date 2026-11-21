@@ -243,6 +243,14 @@ async fn rejected_hello_preserves_old_reconnect_state() {
 
 #[tokio::test]
 async fn cancelled_hello_preserves_old_reconnect_state() {
+    use futures_util::FutureExt;
+    use std::{future::ready, io};
+    let unavailable = ready(Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "console unavailable",
+    )));
+    assert!(wait_for_interrupt(unavailable).now_or_never().is_none());
+    assert_eq!(wait_for_interrupt(ready(Ok(()))).now_or_never(), Some(()));
     let f = Fixture::new().await;
     let (task, _connection, _send) = f.hello().await;
     task.abort();

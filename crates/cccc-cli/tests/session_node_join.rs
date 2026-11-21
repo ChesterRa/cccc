@@ -22,7 +22,7 @@ async fn join_approval_is_single_use_and_resume_skips_http() {
     f.start().await;
     let mut api = Api::start().await;
     let mut first = f.join(&api.origin, &["--name", "Test laptop"]);
-    let create = api.next("requests").await;
+    let create = api.next(&mut first, "requests").await;
     let requested: CreateRequest =
         serde_json::from_value(create.body.clone()).expect("creation contract");
     assert_eq!(requested.name, "Test laptop");
@@ -31,7 +31,7 @@ async fn join_approval_is_single_use_and_resume_skips_http() {
             && requested.device_code.bytes().all(|b| b.is_ascii_hexdigit())
     );
     create.answer(StatusCode::SERVICE_UNAVAILABLE, json!({}));
-    let retry = api.next("requests").await;
+    let retry = api.next(&mut first, "requests").await;
     let repeated: CreateRequest =
         serde_json::from_value(retry.body.clone()).expect("creation retry");
     assert!(
@@ -42,7 +42,7 @@ async fn join_approval_is_single_use_and_resume_skips_http() {
     let id = uuid::Uuid::new_v4().to_string();
     let expiry = (chrono::Utc::now() + chrono::Duration::minutes(2)).to_rfc3339();
     retry.answer(StatusCode::OK, created(&id, &expiry));
-    let pending = api.next("poll").await;
+    let pending = api.next(&mut first, "poll").await;
     let claim: PollRequest =
         serde_json::from_value(pending.body.clone()).expect("private poll contract");
     assert_eq!(claim.request_id, id);
@@ -51,7 +51,7 @@ async fn join_approval_is_single_use_and_resume_skips_http() {
         StatusCode::OK,
         json!({"ok":true,"result":{"status":"pending"}}),
     );
-    let approved = api.next("poll").await;
+    let approved = api.next(&mut first, "poll").await;
     assert!(
         session_nodes::saved_client(&f.node)
             .expect("preapproval state")
@@ -132,14 +132,14 @@ async fn join_approval_is_single_use_and_resume_skips_http() {
         text.contains("Native codex integration enabled") && f.native_calls().contains("codex:mcp")
     );
     let saved = f.descriptor_bytes();
-    let retry = f.join(&api.origin, &["--reauthorize", "--runtime", "codex"]);
-    let fresh = api.next("requests").await;
+    let mut retry = f.join(&api.origin, &["--reauthorize", "--runtime", "codex"]);
+    let fresh = api.next(&mut retry, "requests").await;
     let value: CreateRequest = serde_json::from_value(fresh.body.clone()).expect("new request");
     assert_eq!(value.node_id, requested.node_id);
     assert!(value.device_code != requested.device_code);
     assert!(!value.name.trim().is_empty());
     fresh.answer(StatusCode::OK, created(&id, &expiry));
-    api.next("poll").await.answer(
+    api.next(&mut retry, "poll").await.answer(
         StatusCode::OK,
         json!({"ok":true,"result":{"status":"denied"}}),
     );
@@ -151,10 +151,10 @@ async fn join_approval_is_single_use_and_resume_skips_http() {
     );
 
     let mut other = Api::start().await;
-    let changed = f.join(&other.origin, &[]);
-    let create = other.next("requests").await;
+    let mut changed = f.join(&other.origin, &[]);
+    let create = other.next(&mut changed, "requests").await;
     create.answer(StatusCode::OK, created(&id, &expiry));
-    other.next("poll").await.answer(
+    other.next(&mut changed, "poll").await.answer(
         StatusCode::OK,
         json!({"ok":true,"result":{"status":"expired"}}),
     );

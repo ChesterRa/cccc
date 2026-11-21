@@ -31,6 +31,11 @@ impl Drop for Homes {
 impl Homes {
     pub fn new() -> Self {
         let temp = tempfile::tempdir().expect("isolated device homes");
+        #[cfg(windows)]
+        for dir in ["AppData/Roaming", "AppData/Local/Temp"] {
+            std::fs::create_dir_all(temp.path().join(dir))
+                .expect("isolated Windows profile folders");
+        }
         let node = HomeLayout::from_path(temp.path().join("node")).expect("node");
         let hub = HomeLayout::from_path(temp.path().join("hub")).expect("hub");
         Self {
@@ -87,6 +92,19 @@ impl Homes {
             "PATH",
             format!("{}:/usr/bin:/bin", self.temp.path().join("bin").display()),
         );
+        #[cfg(windows)]
+        {
+            let profile = self.temp.path();
+            let local = profile.join("AppData/Local");
+            c.env("APPDATA", profile.join("AppData/Roaming"))
+                .env("LOCALAPPDATA", &local)
+                .env("TEMP", local.join("Temp"))
+                .env("TMP", local.join("Temp"));
+            if let Some(windows) = std::env::var_os("SystemRoot") {
+                let system = std::path::PathBuf::from(windows).join("System32");
+                c.env("PATH", system);
+            }
+        }
         for key in ["SystemRoot", "WINDIR"] {
             if let Some(value) = std::env::var_os(key) {
                 c.env(key, value);
