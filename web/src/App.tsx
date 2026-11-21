@@ -15,6 +15,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useActorActions } from "./hooks/useActorActions";
 import { useSelectedGroupRuntime } from "./hooks/useSelectedGroupRuntime";
 import { useSSE } from "./hooks/useSSE";
+import { useStartupInputRefresh } from "./hooks/useStartupInputRefresh";
 import { useDragDrop } from "./hooks/useDragDrop";
 import { useGroupActions } from "./hooks/useGroupActions";
 import { useOrderedGroups } from "./hooks/useOrderedGroups";
@@ -273,6 +274,8 @@ export default function App({
     }, 60000);
     return () => window.clearInterval(interval);
   }, [selectedGroupId, refreshInternalRuntimeActors]);
+
+  useStartupInputRefresh(String(selectedGroupId || "").trim());
 
   // Custom hooks
   const {

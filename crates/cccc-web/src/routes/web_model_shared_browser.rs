@@ -176,7 +176,7 @@ mod tests {
             .expect("login");
         state
             .browser_surfaces
-            .ensure_open_shared_actor("actor", &profile, &url, (800, 600), "gen")
+            .ensure_open_shared_actor("actor", &profile, &url, (800, 600), "gen", "")
             .await
             .expect("actor");
         let page = state

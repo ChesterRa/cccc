@@ -141,15 +141,17 @@ Use `cccc sessions join --group <group_id> --sources <ids...>` to add sources to
 Manage the CCCC daemon.
 
 ```bash
-cccc daemon status      # Check daemon status
-cccc daemon start       # Start daemon
-cccc daemon stop        # Stop daemon
+cccc daemon status              # Check daemon status
+cccc daemon start               # Start daemon
+cccc daemon stop                # Stop the daemon and every agent it manages
+cccc daemon stop --keep-agents  # Linux and native arm64 macOS: stop only the daemon and keep agents running
 ```
 
 Notes:
 
 - `cccc daemon start` refuses to spawn a duplicate daemon if the pid-file process is still alive but IPC is not responding.
-- Check `cccc daemon status` and `cccc doctor` before restarting an unresponsive daemon. `cccc daemon stop` stops its managed processes across Groups; after it completes, `cccc daemon start` starts the daemon again.
+- Check `cccc daemon status` and `cccc doctor` before restarting an unresponsive daemon. `cccc daemon stop` stops its managed processes across Groups and reports which agents it stopped; after it completes, `cccc daemon start` starts the daemon again.
+- On Linux and Apple Silicon Macs running the native arm64 build, `cccc daemon stop --keep-agents` stops only the daemon for maintenance such as an update. The agents CCCC started keep running, and the next `cccc daemon start` reattaches them and names them. A daemon that cannot do this (an older version, an Intel macOS build, or a Windows build) refuses the option and stops nothing. See [Keeping agents across a restart](../guide/operations.md#keeping-agents-across-a-restart).
 
 ## Membership and Reach Commands
 
@@ -493,23 +495,28 @@ cccc setup                         # Configure every supported runtime; unavaila
 cccc setup --runtime claude        # Report CCCC-owned per-session MCP for Claude Code
 cccc setup --runtime codex         # Auto-configure for Codex
 cccc setup --runtime copilot       # Auto-configure for GitHub Copilot CLI
-cccc setup --runtime cursor        # Show prompt-assisted setup contract for Cursor CLI
+cccc setup --runtime cursor        # Configure native Cursor CLI MCP
 cccc setup --runtime devin         # Auto-configure for Devin CLI
 cccc setup --runtime kiro          # Auto-configure for Kiro CLI
 cccc setup --runtime kimi          # Configure native Kimi Code MCP
 cccc setup --runtime kimi --runtime-mode acp  # Report session-owned MCP
 cccc setup --runtime auggie --runtime-mode acp # Report session-owned MCP
 cccc setup --runtime kiro --runtime-mode acp   # Official V3; session-owned MCP
-cccc setup --runtime hermes --runtime-mode acp # Official ACP; session-owned MCP
+cccc setup --runtime hermes        # Report session-owned MCP (both modes)
 cccc setup --runtime droid --runtime-mode acp  # Official ACP; session-owned MCP
 cccc setup --runtime pi            # Report CCCC-owned RPC session MCP
-cccc setup --runtime kilo          # Show prompt-assisted setup contract for Kilo Code CLI
-cccc setup --runtime antigravity   # Show prompt-assisted setup contract for Antigravity CLI
+cccc setup --runtime kilo          # Report CCCC-owned per-session MCP for Kilo Code CLI
+cccc setup --runtime deepseek      # Install or repair the pinned DeepSeek Harness
+cccc setup --runtime antigravity   # Auto-configure for Antigravity CLI
 ```
 
-Without `--runtime`, setup performs one batch pass: installed CLI runtimes are configured,
-prompt-assisted/manual runtimes return their configuration contract, and missing runtimes are
-reported without aborting the remaining setup work.
+Without `--runtime`, setup makes one pass over every supported runtime and reports each result
+without stopping at a failure. A runtime whose `cccc` MCP entry lives in its own configuration gets
+that entry written or confirmed when its CLI is installed; a missing CLI or a failed setup is
+reported as `unavailable`. Claude Code, OpenCode, Kilo, Pi, Hermes and DeepSeek report that CCCC
+injects their MCP into each managed session; DeepSeek reports `setup_required` until it is
+installed. `custom` returns the configuration to add by hand. The batch `configured` count includes
+only the runtimes whose entry setup wrote or confirmed.
 
 ### `cccc update`
 
@@ -566,7 +573,14 @@ Notes:
   and close foreground CCCC processes before asking pip to replace it.
 - A standalone update restarts the daemon when it was running, while the old
   combined Web process remains stopped; the next bare `cccc` starts the updated
-  Web process.
+  Web process. Restarting the daemon this way also stops its agents. If CCCC
+  cannot confirm that every agent stopped, the update is not installed, the
+  previous version is kept and CCCC stays stopped; finish stopping CCCC with
+  `cccc daemon stop`, following what it reports, then run the update again. On Linux and native arm64 macOS,
+  to update while agents keep running, run `cccc daemon stop --keep-agents`,
+  then `cccc update`, then `cccc daemon start`. When the daemon is not running,
+  the update goes ahead only if no agent is left running, or if CCCC kept them
+  this way and the new version can reach each of them; otherwise it says why.
 - On Windows, standalone self-update continues in a separate PowerShell process
   after the original executable exits so the binary can be replaced safely.
 
@@ -610,6 +624,10 @@ cccc mcp                           # Start MCP server (stdio mode)
 | `CCCC_WEB_PORT` | saved setting, then `8848` | Web UI port; `--port` overrides both |
 | `CCCC_WEB_MODE` | `normal` | Set to `exhibit` for a read-only Web UI |
 | `CCCC_WEB_READONLY` | unset | Truthy value also enables read-only exhibit mode |
+
+`CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` reserve two exact values each
+as an MCP placeholder that a runtime could not fill, such as `${env:CCCC_HOME}`
+and `$CCCC_HOME`; either one counts as unset.
 
 For `cccc` and `cccc web`, an existing live Web binding is reused when neither
 `--host` nor `--port` is supplied. Otherwise, each value resolves from its command

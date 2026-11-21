@@ -148,10 +148,7 @@ fn details(frame: &mut Frame, app: &App, theme: Theme, now: Instant, area: Rect)
             text::one_line(&group.group_id),
             group.status.label(),
             text::one_line(&group.state),
-            count(
-                usize::try_from(group.running_actors).unwrap_or(usize::MAX),
-                "agent"
-            ),
+            running_agents(group.running_actors),
         ),
         width,
     )));
@@ -292,10 +289,7 @@ fn confirmation(
             &format!(
                 "  State {} | {} running",
                 text::one_line(&group.state),
-                count(
-                    usize::try_from(group.running_actors).unwrap_or(usize::MAX),
-                    "agent"
-                )
+                running_agents(group.running_actors)
             ),
             room.saturating_sub(text::width(&confirm.group_id) + 2),
         )));
@@ -402,7 +396,9 @@ fn member_row(member: &Member, theme: Theme, width: usize) -> Line<'static> {
     let role = text::fit(&text::one_line(&member.role), ROLE_COLUMN - 1);
     let state_style = match member.state {
         MemberState::Running | MemberState::Ready => theme.ok(),
-        MemberState::ConfirmationRequired | MemberState::ConfirmationPaused => theme.error(),
+        MemberState::ConfirmationRequired
+        | MemberState::ConfirmationPaused
+        | MemberState::Unknown => theme.error(),
         MemberState::WebAccessEnabled => Style::new(),
         MemberState::Stopped
         | MemberState::Off
@@ -441,6 +437,14 @@ fn row(area: Rect, y: u16, height: u16) -> Rect {
         width: area.width,
         height,
     }
+}
+
+/// "2 agents", or "? agents" when the daemon could not observe every member.
+fn running_agents(running: Option<u64>) -> String {
+    running.map_or_else(
+        || "? agents".to_owned(),
+        |n| count(usize::try_from(n).unwrap_or(usize::MAX), "agent"),
+    )
 }
 
 #[cfg(test)]

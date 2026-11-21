@@ -177,7 +177,7 @@ async fn scope(client: &DaemonClient, args: &Map<String, Value>) -> Result<PathB
 
 async fn one_shot(root: &Path, cmd: Vec<String>, seconds: u64) -> Result<Value, String> {
     let (program, arguments) = cmd.split_first().ok_or("command is required")?;
-    let mut command = std::process::Command::new(program);
+    let mut command = cccc_runtime::background_command(program);
     command.args(arguments).current_dir(root);
     capture(&mut command, seconds, 2_000_000).await
 }
@@ -185,7 +185,7 @@ async fn one_shot(root: &Path, cmd: Vec<String>, seconds: u64) -> Result<Value, 
 async fn shell(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
     let cmd = command(args)?;
     let (program, arguments) = cmd.split_first().ok_or("command is required")?;
-    let mut process = std::process::Command::new(program);
+    let mut process = cccc_runtime::background_command(program);
     process
         .args(arguments)
         .current_dir(command_cwd(root, args)?)
@@ -309,7 +309,7 @@ pub(super) async fn apply_patch(root: &Path, args: &Map<String, Value>) -> Resul
         let changed = crate::local_patch::apply(root, patch)?;
         return Ok(json!({"applied":true,"files":changed}));
     }
-    let mut command = std::process::Command::new("git");
+    let mut command = cccc_runtime::background_command("git");
     command.args(["apply", "-"]).current_dir(root);
     let output = cccc_runtime::capture_command(
         &mut command,

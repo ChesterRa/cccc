@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { VideoPreview } from "./VideoPreview";
 import { AttachmentResourceView } from "../resourcePanel/views/AttachmentResourceView";
+import { useAttachmentPreviewStore } from "../../stores/useAttachmentPreviewStore";
 import { useResourcePanelStore } from "../../stores/useResourcePanelStore";
 
 vi.mock("react-i18next", () => ({
@@ -38,12 +39,15 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
+  // The panel is on screen beside the messages, so an attachment opens there.
+  useResourcePanelStore.setState({ shownGroupId: "g" });
 });
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
-  useResourcePanelStore.setState({ groups: {} });
+  useResourcePanelStore.setState({ groups: {}, shownGroupId: "" });
+  useAttachmentPreviewStore.setState({ sets: {}, viewing: null });
 });
 
 const preview = (href: string, label = "clip.mp4") => (
@@ -56,6 +60,7 @@ const preview = (href: string, label = "clip.mp4") => (
       eventId: label,
       index: 0,
       blobPath: `state/blobs/${label}`,
+      siblings: [],
     }}
     href={href}
     downloadHref={`${href}?download=true`}

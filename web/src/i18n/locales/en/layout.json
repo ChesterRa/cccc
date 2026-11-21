@@ -96,6 +96,7 @@
   "statusIdle": "Idle",
   "statusOffline": "Offline",
   "statusStopped": "Stopped",
+  "statusUnknown": "Unknown",
   "switchToTheme": "Switch to {{theme}} theme",
   "switchToLanguage": "Switch to {{language}}",
   "currentLanguage": "Current language: {{language}}",

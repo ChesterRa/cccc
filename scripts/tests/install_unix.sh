@@ -37,7 +37,8 @@ make_release() {
     if [[ -n "$custom_binary" ]]; then
       cp "$custom_binary" "$TMP_ROOT/package/$package/$binary"
     else
-      printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc %s\\n"; exit 0; fi\nexit 1\n' "$reported_version" > "$TMP_ROOT/package/$package/$binary"
+      # A current release: it can check a home without a running daemon.
+      printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc %s\\n"; exit 0; fi\nif [ "${1:-}" = update ] && [ "${2:-}" = --installer-check ]; then exit 0; fi\nexit 1\n' "$reported_version" > "$TMP_ROOT/package/$package/$binary"
     fi
     chmod 755 "$TMP_ROOT/package/$package/$binary"
   fi
@@ -349,6 +350,7 @@ if [ "${1:-}" = daemon ] && [ "${2:-}" = status ]; then
 fi
 if [ "${1:-}" = daemon ] && [ "${2:-}" = stop ]; then
   printf 'stopped\n' > "$CCCC_TEST_DAEMON_STATE"
+  printf '{\n  "shutting_down": true\n}\n'
   exit 0
 fi
 if [ "${1:-}" = daemon ] && [ "${2:-}" = start ]; then
@@ -466,6 +468,10 @@ fi
 [[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
 [[ "$(checksum "$TMP_ROOT/home with space/.profile")" == "$login_profile_before" ]]
 [[ "$(checksum "$TMP_ROOT/home with space/.bashrc")" == "$interactive_profile_before" ]]
+if compgen -G "$TMP_ROOT/home with space/.local/bin/.cccc-backup.*" > /dev/null; then
+  echo "a rolled-back install left its backup directory" >&2
+  exit 1
+fi
 
 zsh_home="$TMP_ROOT/zsh-home"
 HOME="$zsh_home" \
@@ -613,6 +619,7 @@ if [ "\${1:-}" = daemon ] && [ "\${2:-}" = status ]; then
 fi
 if [ "\${1:-}" = daemon ] && [ "\${2:-}" = stop ]; then
   printf 'stopped\n' > "\$state_file"
+  printf '{\n  "shutting_down": true\n}\n'
   exit 0
 fi
 if [ "\${1:-}" = daemon ] && [ "\${2:-}" = start ]; then
@@ -638,6 +645,269 @@ if HOME="$TMP_ROOT/restart-home" \
 fi
 grep -Fq 'rollback restored the previous binary but failed to restart its daemon' "$TMP_ROOT/restart-error"
 [[ "$(checksum "$restart_install/cccc")" == "$restart_hash" ]]
+
+# A CCCC whose agents can outlive its daemon adds its exit receipt to the reply
+# of `cccc daemon stop`. The confirmed, missing and earlier replies below are
+# what the b0361d1f and 0.4.58 builds printed in isolated runs (the missing one
+# while the session owner did not answer); the unconfirmed and retained replies
+# move the confirmed agents into those lists, and the mixed reply stands for an
+# earlier CLI stopping a newer daemon, which answers with more than acceptance.
+# Without a reply that confirms every agent stopped, the previous binary stays
+# and CCCC stays stopped; running the installer again then has the staged
+# program check the agents left without a daemon (a file here stands for them).
+receipt_version=0.0.18-test
+receipt_release="$TMP_ROOT/receipt-release-cccc"
+cat > "$receipt_release" <<EOF
+#!/usr/bin/env sh
+if [ "\${1:-}" = "--version" ]; then
+  printf 'cccc $receipt_version\\n'
+  exit 0
+fi
+if [ "\${1:-}" = daemon ] && [ "\${2:-}" = start ]; then
+  printf 'new-running\\n' > "\$CCCC_TEST_DAEMON_STATE"
+  exit 0
+fi
+if [ "\${1:-}" = update ] && [ "\${2:-}" = --installer-check ]; then
+  printf 'checked\\n' >> "\$CCCC_TEST_DAEMON_STATE.checked"
+  [ -e "\$CCCC_TEST_DAEMON_STATE.owners" ] || exit 0
+  printf 'CCCC agents may still be running without a daemon (session owner 0123)\\n' >&2
+  exit 1
+fi
+exit 1
+EOF
+chmod 755 "$receipt_release"
+make_release "$receipt_version" valid "$receipt_version" "" "$receipt_release"
+receipt_old="$TMP_ROOT/receipt-old-cccc"
+cat > "$receipt_old" <<'EOF'
+#!/usr/bin/env sh
+if [ "${1:-}" = daemon ] && [ "${2:-}" = status ]; then
+  [ "$(cat "$CCCC_TEST_DAEMON_STATE")" = old-running ]
+  exit
+fi
+if [ "${1:-}" = daemon ] && [ "${2:-}" = stop ]; then
+  printf 'stopped\n' > "$CCCC_TEST_DAEMON_STATE"
+  cat "$CCCC_TEST_STOP_REPLY"
+  exit 0
+fi
+if [ "${1:-}" = daemon ] && [ "${2:-}" = start ]; then
+  printf 'old-running\n' > "$CCCC_TEST_DAEMON_STATE"
+  exit 0
+fi
+exit 1
+EOF
+chmod 755 "$receipt_old"
+receipt_replies="$TMP_ROOT/receipt-replies"
+mkdir -p "$receipt_replies"
+cat > "$receipt_replies/confirmed" <<'EOF'
+{
+  "mode": "stop",
+  "receipt": {
+    "confirmed_stopped": [
+      {
+        "actor_created_at": "2026-11-18T17:08:05.566818Z",
+        "actor_id": "probe1",
+        "generation": "2026-11-18T17:08:05.623010Z",
+        "group_id": "g_c5b12c3808ff",
+        "owner_id": "9bb7b1fba68d47368ae370ee8f841a35"
+      },
+      {
+        "actor_created_at": "2026-11-18T17:08:06.164865Z",
+        "actor_id": "probe2",
+        "generation": "2026-11-18T17:08:06.201247Z",
+        "group_id": "g_c5b12c3808ff",
+        "owner_id": "9bb7b1fba68d47368ae370ee8f841a35"
+      },
+      {
+        "actor_created_at": "2026-11-18T17:08:06.744014Z",
+        "actor_id": "probe3",
+        "generation": "2026-11-18T17:08:06.777949Z",
+        "group_id": "g_c5b12c3808ff",
+        "owner_id": "9bb7b1fba68d47368ae370ee8f841a35"
+      }
+    ],
+    "daemon_pid": 21,
+    "mode": "stop",
+    "request_id": "e737eda3-1112-4f16-a7fc-0df927c2d402",
+    "retained": [],
+    "unconfirmed": [],
+    "v": 1
+  },
+  "request_id": "e737eda3-1112-4f16-a7fc-0df927c2d402",
+  "shutting_down": true
+}
+EOF
+cat > "$receipt_replies/missing" <<'EOF'
+{
+  "mode": "stop",
+  "receipt": null,
+  "request_id": "93d718c9-29e3-43d3-bbd2-335d3a070ed3",
+  "shutting_down": true
+}
+EOF
+printf '{\n  "shutting_down": true\n}\n' > "$receipt_replies/earlier"
+printf '{\n  "mode": "stop",\n  "request_id": "6f1d2c3b4a5e4f60a1b2c3d4e5f60718",\n  "shutting_down": true\n}\n' > "$receipt_replies/mixed"
+: > "$receipt_replies/empty"
+for receipt_list in unconfirmed retained; do
+  sed -e "s/\"confirmed_stopped\": \\[\$/\"$receipt_list\": [/" \
+    -e "s/\"$receipt_list\": \\[\\],\$/\"confirmed_stopped\": [],/" \
+    "$receipt_replies/confirmed" > "$receipt_replies/$receipt_list"
+  grep -q "\"$receipt_list\": \\[\$" "$receipt_replies/$receipt_list"
+  grep -q '"confirmed_stopped": \[\],$' "$receipt_replies/$receipt_list"
+done
+
+receipt_setup() {
+  receipt_dir="$TMP_ROOT/receipt-$1"
+  mkdir -p "$receipt_dir/bin"
+  cp "$receipt_old" "$receipt_dir/bin/cccc"
+  printf 'standalone-v1\n' > "$receipt_dir/bin/.cccc-standalone"
+  printf 'old-running\n' > "$receipt_dir/state"
+  receipt_old_hash=$(checksum "$receipt_dir/bin/cccc")
+}
+
+receipt_install() {
+  cp "$receipt_replies/$1" "$receipt_dir/reply"
+  HOME="$receipt_dir/home" \
+    CCCC_VERSION="$receipt_version" \
+    CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+    CCCC_INSTALL_DIR="$receipt_dir/bin" \
+    CCCC_NO_MODIFY_PATH=1 \
+    CCCC_TEST_DAEMON_STATE="$receipt_dir/state" \
+    CCCC_TEST_STOP_REPLY="$receipt_dir/reply" \
+    sh "$ROOT_DIR/scripts/install.sh" > "$receipt_dir/out" 2> "$receipt_dir/err"
+}
+
+receipt_kept() {
+  grep -Fq 'could not confirm that every agent stopped, so the update was not installed' "$receipt_dir/err"
+  [[ "$(checksum "$receipt_dir/bin/cccc")" == "$receipt_old_hash" ]]
+  [[ "$(cd "$receipt_dir/bin" && LC_ALL=C ls -A)" == $'.cccc-standalone\ncccc' ]]
+}
+
+for receipt_reply in missing unconfirmed retained empty mixed; do
+  receipt_setup "$receipt_reply"
+  if receipt_install "$receipt_reply"; then
+    echo "installer replaced CCCC after a '$receipt_reply' stop reply" >&2
+    exit 1
+  fi
+  receipt_kept
+  [[ "$(cat "$receipt_dir/state")" == stopped ]]
+  [[ ! -e "$receipt_dir/state.checked" ]]
+done
+
+for receipt_reply in confirmed earlier; do
+  receipt_setup "$receipt_reply"
+  receipt_install "$receipt_reply"
+  [[ "$("$receipt_dir/bin/cccc" --version)" == "cccc $receipt_version" ]]
+  [[ "$(cat "$receipt_dir/state")" == new-running ]]
+  [[ ! -e "$receipt_dir/state.checked" ]]
+done
+
+# Run again after a refusal: CCCC is still stopped, so the staged program
+# checks the agents left without a daemon. Once they are gone, it installs and
+# leaves CCCC for the user to start.
+receipt_setup rerun
+if receipt_install missing; then
+  echo "installer replaced CCCC after an unconfirmed stop" >&2
+  exit 1
+fi
+receipt_kept
+: > "$receipt_dir/state.owners"
+if receipt_install missing; then
+  echo "installer replaced CCCC while agents were left without a daemon" >&2
+  exit 1
+fi
+grep -Fq 'the update was not installed and the previous version is kept. Follow the message above' "$receipt_dir/err"
+grep -Fqx 'CCCC agents may still be running without a daemon (session owner 0123)' "$receipt_dir/err"
+[[ "$(checksum "$receipt_dir/bin/cccc")" == "$receipt_old_hash" ]]
+[[ "$(cat "$receipt_dir/state")" == stopped ]]
+rm "$receipt_dir/state.owners"
+receipt_install missing
+[[ "$("$receipt_dir/bin/cccc" --version)" == "cccc $receipt_version" ]]
+[[ "$(cat "$receipt_dir/state")" == stopped ]]
+[[ "$(cat "$receipt_dir/state.checked")" == $'checked\nchecked' ]]
+
+# Without a running daemon, the staged program decides whether it can take the
+# agents over, and only when an installed CLI is replaced. The two earlier
+# outputs below are what the 0.4.58 and b0361d1f builds printed for the option:
+# such a release cannot take agents over, so the installer asks for the daemon
+# to run, and like any other failure this keeps the previous version. The
+# receipt cases above also show that a running daemon never reaches this check:
+# their staged program fails it.
+takeover_version=0.0.19-test
+takeover_release="$TMP_ROOT/takeover-release-cccc"
+cat > "$takeover_release" <<EOF
+#!/usr/bin/env sh
+if [ "\${1:-}" = "--version" ]; then
+  printf 'cccc $takeover_version\\n'
+  exit 0
+fi
+if [ "\${1:-}" = update ] && [ "\${2:-}" = --installer-check ]; then
+  printf 'checked\\n' >> "\$CCCC_TEST_TAKEOVER/log"
+  takeover_mode=\$(cat "\$CCCC_TEST_TAKEOVER/mode")
+  [ "\$takeover_mode" != allow ] || exit 0
+  cat "\$CCCC_TEST_TAKEOVER/\$takeover_mode.out" >&2
+  exit "\$(cat "\$CCCC_TEST_TAKEOVER/\$takeover_mode.status")"
+fi
+exit 1
+EOF
+chmod 755 "$takeover_release"
+make_release "$takeover_version" valid "$takeover_version" "" "$takeover_release"
+takeover_outputs="$TMP_ROOT/takeover-outputs"
+mkdir -p "$takeover_outputs"
+printf "CCCC agents may still be running without a daemon (session owner 0123), and CCCC did not keep them for an update; stop them with 'cccc daemon stop' from the CCCC installation that last ran the daemon, following what it reports\n" > "$takeover_outputs/refuse.out"
+printf '1\n' > "$takeover_outputs/refuse.status"
+printf "error: unexpected argument '--installer-check' found\n\nUsage: cccc update [OPTIONS]\n\nFor more information, try '--help'.\n" > "$takeover_outputs/old-0458.out"
+printf "error: unexpected argument '--installer-check' found\n\n  tip: a similar argument exists: '--self-check'\n\nUsage: cccc update [OPTIONS]\n\nFor more information, try '--help'.\n" > "$takeover_outputs/old-b0361d1f.out"
+printf "error: unrecognized subcommand 'update'\n\nUsage: cccc [OPTIONS] [COMMAND]\n\nFor more information, try '--help'.\n" > "$takeover_outputs/other.out"
+for takeover_status_file in old-0458 old-b0361d1f other; do
+  printf '2\n' > "$takeover_outputs/$takeover_status_file.status"
+done
+
+takeover_install() {
+  takeover_dir="$TMP_ROOT/takeover-$1"
+  mkdir -p "$takeover_dir/bin" "$takeover_dir/check"
+  cp "$takeover_outputs"/* "$takeover_dir/check/"
+  printf '%s\n' "$2" > "$takeover_dir/check/mode"
+  takeover_old_hash=
+  if [[ "${3:-installed}" == installed ]]; then
+    printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc 0.0.1-test\\n"; exit 0; fi\nexit 1\n' > "$takeover_dir/bin/cccc"
+    chmod 755 "$takeover_dir/bin/cccc"
+    printf 'standalone-v1\n' > "$takeover_dir/bin/.cccc-standalone"
+    takeover_old_hash=$(checksum "$takeover_dir/bin/cccc")
+  fi
+  HOME="$takeover_dir/home" \
+    CCCC_VERSION="$takeover_version" \
+    CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+    CCCC_INSTALL_DIR="$takeover_dir/bin" \
+    CCCC_NO_MODIFY_PATH=1 \
+    CCCC_TEST_TAKEOVER="$takeover_dir/check" \
+    sh "$ROOT_DIR/scripts/install.sh" > "$takeover_dir/out" 2> "$takeover_dir/err"
+}
+
+takeover_install allow allow
+[[ "$("$takeover_dir/bin/cccc" --version)" == "cccc $takeover_version" ]]
+[[ "$(cat "$takeover_dir/check/log")" == checked ]]
+
+for takeover_mode in refuse other old-0458 old-b0361d1f; do
+  if takeover_install "$takeover_mode" "$takeover_mode"; then
+    echo "installer replaced CCCC after a '$takeover_mode' takeover check" >&2
+    exit 1
+  fi
+  grep -Fq 'the update was not installed and the previous version is kept. Follow the message above' "$takeover_dir/err"
+  case "$takeover_mode" in
+    old-*)
+      grep -Fq "cannot check for CCCC agents left running without a daemon. Start the daemon with 'cccc daemon start' from the CCCC installation that last ran it" "$takeover_dir/err"
+      ! grep -Fq 'unexpected argument' "$takeover_dir/err"
+      ;;
+    *) grep -Fqx "$(sed -n 1p "$takeover_outputs/$takeover_mode.out")" "$takeover_dir/err" ;;
+  esac
+  [[ "$(checksum "$takeover_dir/bin/cccc")" == "$takeover_old_hash" ]]
+  [[ "$(cd "$takeover_dir/bin" && LC_ALL=C ls -A)" == $'.cccc-standalone\ncccc' ]]
+done
+
+# A first installation replaces nothing, so it does not ask.
+takeover_install fresh refuse fresh
+[[ "$("$takeover_dir/bin/cccc" --version)" == "cccc $takeover_version" ]]
+[[ ! -e "$takeover_dir/check/log" ]]
 
 mkdir -p "$TMP_ROOT/fake-bin"
 cat > "$TMP_ROOT/fake-bin/uname" <<'EOF'
@@ -677,5 +947,447 @@ if HOME="$TMP_ROOT/bad-home" \
   exit 1
 fi
 test ! -e "$TMP_ROOT/bad-home/.local/bin/cccc"
+
+# Phased updates: a running CCCC prepares one transaction, stops its own daemon,
+# applies it, and then confirms or aborts it. Paths carry spaces and UTF-8.
+phase_old_version=0.0.15-test
+phase_new_version=0.0.16-test
+phase_bad_version=0.0.17-test
+phase_daemon="$TMP_ROOT/phase-daemon-running"
+phase_root="$TMP_ROOT/phase home 更新"
+phase_cli() {
+  cat > "$1" <<EOF
+#!/usr/bin/env sh
+if [ "\${1:-}" = --version ]; then
+  printf 'cccc $2\\n'
+  exit 0
+fi
+if [ "\${1:-}" = daemon ] && [ "\${2:-}" = status ]; then
+  [ -e '$phase_daemon' ]
+  exit
+fi
+exit 1
+EOF
+  chmod 755 "$1"
+}
+phase_cli "$TMP_ROOT/phase-old-cccc" "$phase_old_version"
+phase_cli "$TMP_ROOT/phase-new-cccc" "$phase_new_version"
+make_release "$phase_new_version" valid "$phase_new_version" "" "$TMP_ROOT/phase-new-cccc"
+make_release "$phase_bad_version" valid 9.9.9
+
+phase_setup() {
+  phase_id="20261117T031511Z-$1"
+  phase_install="$phase_root/$1/bin"
+  phase_txn="$phase_root/$1/update/$phase_id"
+  phase_staged="$phase_install/cccc.cccc-install.$phase_id"
+  phase_backup="$phase_install/.cccc-backup.$phase_id"
+  rm -f "$phase_daemon"
+  mkdir -p "$phase_install" "$phase_txn"
+  cp "$TMP_ROOT/phase-old-cccc" "$phase_install/cccc"
+  printf 'standalone-v1\n' > "$phase_install/.cccc-standalone"
+  cp "$ROOT_DIR/scripts/install.sh" "$phase_txn/install.sh"
+  phase_old_hash=$(checksum "$phase_install/cccc")
+}
+
+run_phase() {
+  local phase=$1 txn=$2
+  shift 2
+  env HOME="$phase_root/home" \
+    CCCC_HOME="$phase_root/cccc home" \
+    CCCC_INSTALL_PHASE="$phase" \
+    CCCC_INSTALL_TXN="$txn" \
+    CCCC_INSTALL_DIR="$phase_install" \
+    CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+    CCCC_NO_MODIFY_PATH=1 \
+    "$@" sh "$txn/install.sh"
+}
+
+phase_listing() {
+  (cd "$phase_install" && LC_ALL=C ls -A)
+}
+
+phase_setup commit
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > "$TMP_ROOT/phase-prepare.out"
+grep -Fxq "CCCC_INSTALL_STAGED=$phase_staged" "$TMP_ROOT/phase-prepare.out"
+[[ "$("$phase_staged" --version)" == "cccc $phase_new_version" ]]
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_old_version" ]]
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+[[ "$(cat "$phase_txn/installer.state")" == "phase=prepared"$'\n'"version=$phase_new_version" ]]
+test ! -e "$phase_backup"
+run_phase apply "$phase_txn" > "$TMP_ROOT/phase-apply.out"
+grep -Fxq "CCCC_INSTALL_APPLIED=$phase_new_version" "$TMP_ROOT/phase-apply.out"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+[[ "$(checksum "$phase_backup/cccc")" == "$phase_old_hash" ]]
+grep -Fxq standalone-v1 "$phase_backup/.cccc-standalone"
+grep -Fxq standalone-v1 "$phase_install/.cccc-standalone"
+grep -Fxq phase=applied "$phase_txn/installer.state"
+test ! -e "$phase_staged"
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+run_phase confirm "$phase_txn" > "$TMP_ROOT/phase-confirm.out"
+grep -Fxq "CCCC_INSTALL_CONFIRMED=$phase_new_version" "$TMP_ROOT/phase-confirm.out"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+# The applied state stays until the caller removes the transaction: an abort
+# after a finished confirm reports the update as committed, never as undone,
+# and confirm can be repeated.
+grep -Fxq phase=applied "$phase_txn/installer.state"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-after-confirm.out" 2> "$TMP_ROOT/phase-after-confirm.err"; then
+  echo "phased abort after a finished confirm reported a restore" >&2
+  exit 1
+fi
+grep -Fxq "CCCC_INSTALL_COMMITTED=$phase_new_version" "$TMP_ROOT/phase-after-confirm.out"
+if grep -Fq CCCC_INSTALL_ABORTED "$TMP_ROOT/phase-after-confirm.out"; then
+  echo "phased abort after a finished confirm printed an aborted result" >&2
+  exit 1
+fi
+run_phase confirm "$phase_txn" > "$TMP_ROOT/phase-confirm.out"
+grep -Fxq "CCCC_INSTALL_CONFIRMED=$phase_new_version" "$TMP_ROOT/phase-confirm.out"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# Before anything moves, the old daemon may still run; abort only discards.
+phase_setup abort-prepared
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+: > "$phase_daemon"
+run_phase abort "$phase_txn" > "$TMP_ROOT/phase-abort.out"
+grep -Fxq "CCCC_INSTALL_ABORTED=$phase_id" "$TMP_ROOT/phase-abort.out"
+rm -f "$phase_daemon"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+test ! -e "$phase_txn/installer.state"
+
+# Neither apply nor a rollback swaps files under a running daemon.
+phase_setup rollback
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+: > "$phase_daemon"
+if run_phase apply "$phase_txn" > "$TMP_ROOT/phase-running.out" 2> "$TMP_ROOT/phase-running.err"; then
+  echo "phased apply replaced files while the daemon was running" >&2
+  exit 1
+fi
+grep -Fq 'daemon is still running' "$TMP_ROOT/phase-running.err"
+if grep -Fq CCCC_INSTALL_ROLLED_BACK "$TMP_ROOT/phase-running.out"; then
+  echo "a refused apply reported that it ended the transaction" >&2
+  exit 1
+fi
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+grep -Fxq phase=prepared "$phase_txn/installer.state"
+test -f "$phase_staged"
+rm -f "$phase_daemon"
+run_phase apply "$phase_txn" > /dev/null
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+: > "$phase_daemon"
+if run_phase abort "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-abort-running.err"; then
+  echo "phased abort rolled back files under a running daemon" >&2
+  exit 1
+fi
+grep -Fq 'stop it before rolling back' "$TMP_ROOT/phase-abort-running.err"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+rm -f "$phase_daemon"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+grep -Fxq standalone-v1 "$phase_install/.cccc-standalone"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+test ! -e "$phase_txn/installer.state"
+
+# An apply killed between its renames is refused again and undone by abort.
+phase_setup interrupted
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+mkdir "$phase_backup"
+mv "$phase_install/cccc" "$phase_backup/cccc"
+if run_phase apply "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-interrupted.err"; then
+  echo "phased apply ignored a half-applied transaction" >&2
+  exit 1
+fi
+grep -Fq 'interrupted while applying' "$TMP_ROOT/phase-interrupted.err"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# A failed apply restores the previous files and ends the transaction.
+phase_setup mismatch
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_bad_version" > /dev/null
+if run_phase apply "$phase_txn" > "$TMP_ROOT/phase-mismatch.out" 2> "$TMP_ROOT/phase-mismatch.err"; then
+  echo "phased apply accepted a mismatched binary version" >&2
+  exit 1
+fi
+grep -Fq 'installed version mismatch' "$TMP_ROOT/phase-mismatch.err"
+grep -Fxq "CCCC_INSTALL_ROLLED_BACK=$phase_id" "$TMP_ROOT/phase-mismatch.out"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+grep -Fxq standalone-v1 "$phase_install/.cccc-standalone"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+test ! -e "$phase_txn/installer.state"
+
+# When the restore itself fails, apply keeps the transaction so abort can
+# finish the restore; it does not report that the transaction ended.
+phase_setup restore-fails
+real_mv=$(command -v mv)
+mkdir -p "$TMP_ROOT/phase-mv-bin"
+cat > "$TMP_ROOT/phase-mv-bin/mv" <<EOF
+#!/usr/bin/env sh
+case "\$*" in
+  *'.cccc-backup.'*' '*'/cccc')
+    [ ! -e '$TMP_ROOT/phase-mv-fails' ] || exit 1
+    ;;
+esac
+exec '$real_mv' "\$@"
+EOF
+chmod 755 "$TMP_ROOT/phase-mv-bin/mv"
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_bad_version" > /dev/null
+: > "$TMP_ROOT/phase-mv-fails"
+if run_phase apply "$phase_txn" PATH="$TMP_ROOT/phase-mv-bin:$PATH" \
+  > "$TMP_ROOT/phase-restore.out" 2> "$TMP_ROOT/phase-restore.err"; then
+  echo "phased apply accepted a mismatched binary version" >&2
+  exit 1
+fi
+grep -Fq 'rollback failed to restore' "$TMP_ROOT/phase-restore.err"
+if grep -Fq CCCC_INSTALL_ROLLED_BACK "$TMP_ROOT/phase-restore.out"; then
+  echo "apply reported an ended transaction after a failed restore" >&2
+  exit 1
+fi
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+[[ "$(checksum "$phase_backup/cccc")" == "$phase_old_hash" ]]
+rm -f "$TMP_ROOT/phase-mv-fails"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+grep -Fxq standalone-v1 "$phase_install/.cccc-standalone"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# The install lock belongs to one transaction until it is confirmed or aborted.
+phase_setup lock
+other_txn="$phase_root/lock/update/20261117T031511Z-other"
+mkdir -p "$other_txn"
+cp "$ROOT_DIR/scripts/install.sh" "$other_txn/install.sh"
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+if run_phase apply "$other_txn" > /dev/null 2> "$TMP_ROOT/phase-other.err"; then
+  echo "phased apply ran without holding the install lock" >&2
+  exit 1
+fi
+grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-other.err"
+if run_phase confirm "$other_txn" > /dev/null 2> "$TMP_ROOT/phase-other.err"; then
+  echo "phased confirm finished a transaction that was never applied" >&2
+  exit 1
+fi
+grep -Fq 'has not been applied' "$TMP_ROOT/phase-other.err"
+# A transaction that holds nothing aborts without touching the holder's files.
+run_phase abort "$other_txn" > "$TMP_ROOT/phase-other.out"
+grep -Fxq 'CCCC_INSTALL_ABORTED=20261117T031511Z-other' "$TMP_ROOT/phase-other.out"
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+if run_phase prepare "$other_txn" CCCC_VERSION="$phase_new_version" > /dev/null 2> "$TMP_ROOT/phase-other.err"; then
+  echo "a second update was prepared while another held the install lock" >&2
+  exit 1
+fi
+grep -Fq 'another installation is using' "$TMP_ROOT/phase-other.err"
+if HOME="$phase_root/home" \
+  CCCC_VERSION="$phase_new_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$phase_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" > /dev/null 2> "$TMP_ROOT/phase-other.err"; then
+  echo "a one-go install ran while an update held the install lock" >&2
+  exit 1
+fi
+grep -Fq 'another installation is using' "$TMP_ROOT/phase-other.err"
+grep -Fq "held by CCCC update $(cd -P "$phase_txn" && pwd -P) for CCCC_HOME=$phase_root/cccc home" "$TMP_ROOT/phase-other.err"
+test -f "$phase_staged"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# The state file is read as two known keys, never as shell code.
+phase_setup tampered
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+printf 'source=/tmp/elsewhere\n' >> "$phase_txn/installer.state"
+if run_phase apply "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-tampered.err"; then
+  echo "phased apply accepted an unknown state key" >&2
+  exit 1
+fi
+grep -Fq 'invalid installer state' "$TMP_ROOT/phase-tampered.err"
+if run_phase abort "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-tampered.err"; then
+  echo "phased abort acted on an unreadable state" >&2
+  exit 1
+fi
+grep -Fq 'invalid installer state' "$TMP_ROOT/phase-tampered.err"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+test -f "$phase_staged"
+printf 'phase=prepared\nversion=%s\n' "$phase_new_version" > "$phase_txn/installer.state"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# A transaction with the same name under another CCCC_HOME is not the holder,
+# and a refused prepare leaves the holder's staged binary untouched.
+phase_setup same-name
+foreign_txn="$phase_root/same-name/other home/update/$phase_id"
+mkdir -p "$foreign_txn"
+cp "$ROOT_DIR/scripts/install.sh" "$foreign_txn/install.sh"
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+staged_hash=$(checksum "$phase_staged")
+printf 'phase=prepared\nversion=%s\n' "$phase_new_version" > "$foreign_txn/installer.state"
+for foreign_phase in apply abort; do
+  if run_phase "$foreign_phase" "$foreign_txn" > /dev/null 2> "$TMP_ROOT/phase-foreign.err"; then
+    echo "phased $foreign_phase accepted a same-name transaction from another home" >&2
+    exit 1
+  fi
+  grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-foreign.err"
+done
+printf 'phase=applied\nversion=%s\n' "$phase_new_version" > "$foreign_txn/installer.state"
+if run_phase confirm "$foreign_txn" > /dev/null 2> "$TMP_ROOT/phase-foreign.err"; then
+  echo "phased confirm accepted a same-name transaction from another home" >&2
+  exit 1
+fi
+grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-foreign.err"
+rm "$foreign_txn/installer.state"
+if run_phase prepare "$foreign_txn" CCCC_VERSION="$phase_new_version" > /dev/null 2> "$TMP_ROOT/phase-foreign.err"; then
+  echo "a same-name transaction was prepared while another held the install lock" >&2
+  exit 1
+fi
+grep -Fq 'another installation is using' "$TMP_ROOT/phase-foreign.err"
+[[ "$(checksum "$phase_staged")" == "$staged_hash" ]]
+[[ "$(cat "$phase_install/.cccc-install.lock/txn")" == "$(cd -P "$phase_txn" && pwd -P)" ]]
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# Once confirm has deleted the backup, abort cannot undo the update and says
+# so instead of reporting a restore; confirm then finishes.
+phase_setup confirm-interrupted
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+run_phase apply "$phase_txn" > /dev/null
+rm -rf "$phase_backup"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-committed.out" 2> "$TMP_ROOT/phase-committed.err"; then
+  echo "phased abort reported a restore without the previous binary" >&2
+  exit 1
+fi
+grep -Fq 'finish it with confirm' "$TMP_ROOT/phase-committed.err"
+grep -Fxq "CCCC_INSTALL_COMMITTED=$phase_new_version" "$TMP_ROOT/phase-committed.out"
+if grep -Fq CCCC_INSTALL_ABORTED "$TMP_ROOT/phase-committed.out"; then
+  echo "phased abort printed an aborted result without restoring" >&2
+  exit 1
+fi
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+test -d "$phase_install/.cccc-install.lock"
+run_phase confirm "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+grep -Fxq phase=applied "$phase_txn/installer.state"
+
+# A confirm interrupted after it released the lock leaves only an applied
+# state: abort still refuses, and confirm finishes it.
+phase_setup confirm-released
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+run_phase apply "$phase_txn" > /dev/null
+rm -rf "$phase_backup" "$phase_install/.cccc-install.lock"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-released.out" 2> "$TMP_ROOT/phase-released.err"; then
+  echo "phased abort reported a restore after the update was committed" >&2
+  exit 1
+fi
+grep -Fq 'finish it with confirm' "$TMP_ROOT/phase-released.err"
+grep -Fxq "CCCC_INSTALL_COMMITTED=$phase_new_version" "$TMP_ROOT/phase-released.out"
+grep -Fxq phase=applied "$phase_txn/installer.state"
+run_phase confirm "$phase_txn" > "$TMP_ROOT/phase-released.out"
+grep -Fxq "CCCC_INSTALL_CONFIRMED=$phase_new_version" "$TMP_ROOT/phase-released.out"
+[[ "$("$phase_install/cccc" --version)" == "cccc $phase_new_version" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+grep -Fxq phase=applied "$phase_txn/installer.state"
+run_phase confirm "$phase_txn" > "$TMP_ROOT/phase-released.out"
+grep -Fxq "CCCC_INSTALL_CONFIRMED=$phase_new_version" "$TMP_ROOT/phase-released.out"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# A prepare that failed before it took the lock holds nothing, so abort ends
+# it and changes nothing.
+phase_setup prepare-failed
+if run_phase prepare "$phase_txn" CCCC_VERSION="$bad_version" > /dev/null 2> "$TMP_ROOT/phase-unlocked.err"; then
+  echo "phased prepare accepted a bad checksum" >&2
+  exit 1
+fi
+grep -Fq 'checksum mismatch' "$TMP_ROOT/phase-unlocked.err"
+run_phase abort "$phase_txn" > "$TMP_ROOT/phase-unlocked.out"
+grep -Fxq "CCCC_INSTALL_ABORTED=$phase_id" "$TMP_ROOT/phase-unlocked.out"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+run_phase abort "$phase_txn" > "$TMP_ROOT/phase-unlocked.out"
+grep -Fxq "CCCC_INSTALL_ABORTED=$phase_id" "$TMP_ROOT/phase-unlocked.out"
+
+# Files staged by a transaction whose lock is gone are never discarded: abort
+# refuses instead of guessing who owns them.
+phase_setup lock-lost
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+rm -rf "$phase_install/.cccc-install.lock"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-lost.out" 2> "$TMP_ROOT/phase-lost.err"; then
+  echo "phased abort discarded staged files without holding the install lock" >&2
+  exit 1
+fi
+grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-lost.err"
+if grep -Fq CCCC_INSTALL_ABORTED "$TMP_ROOT/phase-lost.out"; then
+  echo "phased abort reported an ended transaction while its files remain" >&2
+  exit 1
+fi
+test -f "$phase_staged"
+grep -Fxq phase=prepared "$phase_txn/installer.state"
+[[ "$(checksum "$phase_install/cccc")" == "$phase_old_hash" ]]
+phase_setup lock-lost-applied
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+run_phase apply "$phase_txn" > /dev/null
+rm -rf "$phase_install/.cccc-install.lock"
+if run_phase abort "$phase_txn" > "$TMP_ROOT/phase-lost.out" 2> "$TMP_ROOT/phase-lost.err"; then
+  echo "phased abort ended a transaction whose backup remains without holding the lock" >&2
+  exit 1
+fi
+grep -Fq 'does not hold the install lock' "$TMP_ROOT/phase-lost.err"
+if grep -Fq CCCC_INSTALL_ "$TMP_ROOT/phase-lost.out"; then
+  echo "phased abort printed a result while the backup remains" >&2
+  exit 1
+fi
+[[ "$(checksum "$phase_backup/cccc")" == "$phase_old_hash" ]]
+
+# prepare needs an explicit version, an existing standalone installation and a
+# fresh transaction.
+phase_setup preconditions
+if run_phase prepare "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-pre.err"; then
+  echo "phased prepare ran without an explicit version" >&2
+  exit 1
+fi
+grep -Fq 'CCCC_VERSION is required' "$TMP_ROOT/phase-pre.err"
+rm "$phase_install/.cccc-standalone"
+if run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null 2> "$TMP_ROOT/phase-pre.err"; then
+  echo "phased prepare accepted an installation without the standalone marker" >&2
+  exit 1
+fi
+grep -Fq 'needs an existing standalone CCCC installation' "$TMP_ROOT/phase-pre.err"
+[[ "$(phase_listing)" == cccc ]]
+test ! -e "$phase_txn/installer.state"
+printf 'standalone-v1\n' > "$phase_install/.cccc-standalone"
+run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null
+if run_phase prepare "$phase_txn" CCCC_VERSION="$phase_new_version" > /dev/null 2> "$TMP_ROOT/phase-pre.err"; then
+  echo "phased prepare ran twice for one transaction" >&2
+  exit 1
+fi
+grep -Fq 'already prepared' "$TMP_ROOT/phase-pre.err"
+test -f "$phase_staged"
+run_phase abort "$phase_txn" > /dev/null
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
+
+# Transaction directories must be absolute, real and plainly named.
+phase_setup invalid
+mkdir -p "$phase_root/invalid/update/.hidden" "$phase_root/invalid/update/has space"
+ln -s "$phase_txn" "$phase_root/invalid/update/linked"
+for bad_txn in "" relative/update/x "$phase_root/invalid/update/missing" \
+  "$phase_root/invalid/update/.hidden" "$phase_root/invalid/update/has space" \
+  "$phase_root/invalid/update/linked"; do
+  if env HOME="$phase_root/home" \
+    CCCC_INSTALL_PHASE=prepare \
+    CCCC_INSTALL_TXN="$bad_txn" \
+    CCCC_INSTALL_DIR="$phase_install" \
+    CCCC_VERSION="$phase_new_version" \
+    CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+    CCCC_NO_MODIFY_PATH=1 \
+    sh "$ROOT_DIR/scripts/install.sh" > /dev/null 2>&1; then
+    echo "phased prepare accepted transaction directory '$bad_txn'" >&2
+    exit 1
+  fi
+done
+if run_phase commit "$phase_txn" > /dev/null 2> "$TMP_ROOT/phase-invalid.err"; then
+  echo "installer accepted an unknown phase" >&2
+  exit 1
+fi
+grep -Fq 'unknown CCCC_INSTALL_PHASE: commit' "$TMP_ROOT/phase-invalid.err"
+[[ "$(phase_listing)" == $'.cccc-standalone\ncccc' ]]
 
 echo "OK: Unix installer"

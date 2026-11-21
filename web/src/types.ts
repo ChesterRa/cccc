@@ -6,9 +6,12 @@ export type TextScale = 70 | 90 | 100 | 125;
 
 export type GroupRuntimeStatus = {
   lifecycle_state: "active" | "idle" | "paused" | "stopped" | string;
-  runtime_running: boolean;
-  running_actor_count: number;
-  has_running_foreman: boolean;
+  /** False when the daemon could not observe some managed member. The observation fields
+   * below are then omitted: whether anything runs is not known. */
+  available?: boolean;
+  runtime_running?: boolean;
+  running_actor_count?: number;
+  has_running_foreman?: boolean;
 };
 
 export type GroupMeta = {
@@ -355,6 +358,8 @@ export type Actor = {
   effective_working_reason?: string;
   effective_working_updated_at?: string | null;
   effective_active_task_id?: string | null;
+  /** Set when the daemon could not observe this agent ("unknown" working state, no `running`). */
+  runtime_observation_error?: string;
   command?: string[];
   env?: Record<string, string>;
   capability_autoload?: string[];
@@ -372,11 +377,16 @@ export type Actor = {
   runtime_session_last_resume_error?: string | null;
   runtime_session_replaced_at?: string | null;
   runtime_session_replaced_reasons?: string[] | null;
-  /** The original PTY is waiting for the user before managed runtime admission. */
+  /** The member's terminal is waiting for the user before managed runtime admission: Claude's
+   *  confirmation or Hermes's first setup. */
   runtime_confirmation_required?: boolean;
-  /** That confirmation ended before admission: automatic retries are paused in the current
-   *  daemon process, and an explicit retry can clear it. Absent when the daemon cannot observe it. */
+  /** That confirmation or setup ended before admission, or an ordinary terminal closed before
+   *  its startup input: automatic retries are paused in the current daemon process, and an
+   *  explicit retry can clear it. Absent when the daemon cannot observe it. */
   runtime_confirmation_paused?: boolean;
+  /** An ordinary terminal's first automatic input waits for its chat input region; present
+   *  only while it waits. `generation` names that terminal process for an explicit release. */
+  runtime_startup_input?: { generation: string } | null;
   submit?: "enter" | "newline" | "none";
   profile_id?: string;
   profile_scope?: "global" | "user";
@@ -445,9 +455,81 @@ export type CapabilityReadinessPreview = {
   policy_mode?: string;
 };
 
+/** One area a release recommendation is listed under, and why. */
+export type CapabilityRecommendationEntry = {
+  domain_id: string;
+  role: "primary" | "alternative";
+  reason?: string;
+};
+
+/** One observation of how far a recommendation was checked, on which build. */
+export type CapabilityVerification = {
+  level: "listed" | "install_checked" | "tool_call_checked" | "task_checked";
+  outcome: "passed" | "failed";
+  build?: string;
+  path?: string;
+  result?: string;
+  observed_at?: string;
+};
+
+export type CapabilitySupport = {
+  auth?: "none" | "bearer" | "api_key" | "oauth" | "account";
+  prerequisites?: string[];
+  limitations?: string[];
+  form?: string;
+  runs_on?: string;
+};
+
+/** Whether one member can use a capability, as the daemon projects it. */
+export type CapabilityForYou = {
+  availability: "compatible" | "needs_setup" | "unknown" | "unsupported";
+  enabled: boolean;
+  blocked: boolean;
+  reason_codes: string[];
+  /** The member setting a token is read from, when one is missing. */
+  credential_env?: string;
+  /** Where that setting lives: the member's own private environment or its linked Profile. */
+  credential_source?: "actor" | "profile";
+  /** Enabled with a token, but not yet checked with the current token and recipe. */
+  activation_pending?: boolean;
+};
+
+/** Whether the one global installation of an MCP can be replaced by the current recipe. */
+export type CapabilityUpdateInfo = {
+  available: boolean;
+  scope: "global";
+  enabled_group_count: number;
+  recipe_fingerprint: string | null;
+  installed_recipe_fingerprint: string | null;
+  reason: "not_installed" | "recipe_unknown" | "recipe_changed" | "current";
+  unavailable_reason?: "delivery_form_not_supported" | "credential_route_not_supported" | null;
+};
+
+export type CapabilityBindingScopeName = "session" | "actor" | "group";
+
+export type CapabilityMemberProjection = CapabilityForYou & {
+  actor_id: string;
+  enabled_scope: CapabilityBindingScopeName | null;
+  enabled_scopes: CapabilityBindingScopeName[];
+  last_call: { at: string; ok: boolean } | null;
+};
+
+export type CapabilityDomain = { domain_id: string; name: string };
+
 export type CapabilityOverviewItem = {
   capability_id: string;
   kind?: string;
+  content_origin?: "release_recommendation" | "builtin" | "user_catalog";
+  read_only?: boolean;
+  recommendation?: CapabilityRecommendationEntry[];
+  requirements_summary?: string;
+  verification?: CapabilityVerification[];
+  support?: CapabilitySupport;
+  for_you?: CapabilityForYou;
+  group_enabled?: boolean;
+  members?: CapabilityMemberProjection[];
+  blocked_group?: boolean;
+  update?: CapabilityUpdateInfo;
   name?: string;
   description_short?: string;
   use_when?: string[];
@@ -1678,7 +1760,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   codex: { label: "Codex CLI", desc: "" },
   deepseek: {
     label: "DeepSeek Harness",
-    desc: "Experimental ACP runtime; CCCC installs its pinned composition on first start",
+    desc: "Experimental ACP runtime. Install with cccc setup --runtime deepseek.",
   },
   copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot's native terminal with CCCC MCP" },
   cursor: {

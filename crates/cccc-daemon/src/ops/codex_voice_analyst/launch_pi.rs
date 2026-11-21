@@ -64,7 +64,7 @@ impl AnalystSession {
         environment.insert("PI_SKIP_VERSION_CHECK".into(), "1".into());
         environment.insert("PI_TELEMETRY".into(), "0".into());
         command = cccc_runtime::resolve_command_executable(&command, &environment);
-        let mut version = std::process::Command::new(&command[0]);
+        let mut version = cccc_runtime::background_command(&command[0]);
         version
             .arg("--version")
             .current_dir(&binding.root)

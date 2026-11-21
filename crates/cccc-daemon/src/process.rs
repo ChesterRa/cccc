@@ -22,6 +22,7 @@ const DETACHED_CREATION_FLAGS: u32 = 0x0000_0200 | 0x0000_0008;
 pub struct DetachedDaemon {
     executable: PathBuf,
     run_args: Vec<OsString>,
+    update_resume: Option<PathBuf>,
 }
 
 impl DetachedDaemon {
@@ -33,7 +34,15 @@ impl DetachedDaemon {
         Self {
             executable: executable.into(),
             run_args: run_args.into_iter().map(Into::into).collect(),
+            update_resume: None,
         }
+    }
+
+    /// An explicit permit for the daemon started by an update's replacement
+    /// host. Ordinary callers must not adopt an in-progress update's daemon.
+    pub fn with_update_resume(mut self, transaction_dir: PathBuf) -> Self {
+        self.update_resume = Some(transaction_dir);
+        self
     }
 
     pub async fn start(&self, home: &HomeLayout) -> Result<StartOutcome> {
@@ -67,6 +76,11 @@ impl DetachedDaemon {
         supervised: bool,
     ) -> Result<Option<(Child, Option<cccc_runtime::OwnedProcessTree>)>> {
         home.initialize()?;
+        cccc_core::attended_update::check_start(
+            home,
+            self.update_resume.as_deref(),
+            &cccc_core::attended_update::BuildIdentity::current(),
+        )?;
         if ping(home).await {
             return Ok(None);
         }
@@ -76,6 +90,7 @@ impl DetachedDaemon {
             .create(true)
             .append(true)
             .open(&paths.log)?;
+        let log_start = log.metadata()?.len();
         let error_log = log.try_clone()?;
         let mut command = self.command(home);
         command
@@ -114,8 +129,11 @@ impl DetachedDaemon {
             }
             .context("poll Rust daemon process")?;
             if let Some(status) = status {
+                let recovery = session_recovery_hint(&paths.log, log_start)
+                    .map(|hint| format!("; {hint}"))
+                    .unwrap_or_default();
                 anyhow::bail!(
-                    "Rust daemon exited before becoming ready with {status}; see {}",
+                    "Rust daemon exited before becoming ready with {status}{recovery}; see {}",
                     paths.log.display()
                 );
             }
@@ -139,8 +157,39 @@ impl DetachedDaemon {
     fn command(&self, home: &HomeLayout) -> Command {
         let mut command = detached_command(&self.executable);
         command.args(&self.run_args).env("CCCC_HOME", home.root());
+        if let Some(transaction) = &self.update_resume {
+            command.arg("--update-resume").arg(transaction);
+        }
         command
     }
+}
+
+/// Surface only the fixed recovery command, never arbitrary provider error
+/// text from the shared log, which may contain private environment values.
+fn session_recovery_hint(log: &Path, start: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(log).ok()?;
+    let end = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(start.max(end.saturating_sub(64 * 1024))))
+        .ok()?;
+    let mut bytes = Vec::new();
+    file.take(64 * 1024).read_to_end(&mut bytes).ok()?;
+    let text = String::from_utf8_lossy(&bytes);
+    let prefix = "cccc daemon process-recovery --owner session --owner-id ";
+    for part in text.rsplit(prefix).take(text.matches(prefix).count()) {
+        let Some((id, suffix)) = part.split_once(' ') else {
+            continue;
+        };
+        let Ok(parsed) = uuid::Uuid::parse_str(id) else {
+            continue;
+        };
+        if id == parsed.simple().to_string() && suffix.starts_with("list") {
+            return Some(format!(
+                "session ownership needs review; run `{prefix}{id} list`"
+            ));
+        }
+    }
+    None
 }
 
 async fn ping(home: &HomeLayout) -> bool {
@@ -156,6 +205,10 @@ async fn ping(home: &HomeLayout) -> bool {
 }
 
 #[cfg(unix)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "The daemon has its own detached startup policy"
+)]
 fn detached_command(executable: &Path) -> Command {
     use std::os::unix::process::CommandExt;
     let mut command = Command::new("nohup");
@@ -165,6 +218,10 @@ fn detached_command(executable: &Path) -> Command {
 }
 
 #[cfg(windows)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "The daemon uses explicit detached flags, not the background default"
+)]
 fn detached_command(executable: &Path) -> Command {
     use std::os::windows::process::CommandExt;
     let mut command = Command::new(executable);

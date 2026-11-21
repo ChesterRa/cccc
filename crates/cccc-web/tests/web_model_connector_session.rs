@@ -976,3 +976,5 @@ async fn connector_list_reports_the_public_base_before_any_connector_exists() {
         "https://cccc.example.test"
     );
 }
+
+cccc_daemon::session_owner_test_entry!();

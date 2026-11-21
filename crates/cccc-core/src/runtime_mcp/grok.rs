@@ -4,7 +4,6 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
 
 const MCP_COMMAND: &str = "${CCCC_CLI:-cccc}";
@@ -28,7 +27,7 @@ pub fn ensure(
         super::resolve_program_in(grok, environment.get("PATH").map(std::ffi::OsStr::new), cwd);
     ensure_entry(&config, executable, |args| {
         let output = cccc_runtime::capture_command_blocking(
-            Command::new(&grok)
+            cccc_runtime::background_command(&grok)
                 .args(args)
                 .current_dir(cwd)
                 .envs(&environment),

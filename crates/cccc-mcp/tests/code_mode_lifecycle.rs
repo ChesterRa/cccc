@@ -203,3 +203,5 @@ async fn nested_commands_survive_poll_deadlines_and_cancel_only_with_the_cell() 
     daemon.abort();
     let _ = daemon.await;
 }
+
+cccc_daemon::session_owner_test_entry!();

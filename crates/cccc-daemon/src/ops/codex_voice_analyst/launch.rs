@@ -67,6 +67,7 @@ impl AnalystSession {
                     config.resume_thread_id,
                     SessionPurpose::VoiceAnalyst,
                     None,
+                    false,
                 )
                 .await
             }
@@ -158,15 +159,29 @@ impl AnalystSession {
         Ok(session)
     }
 
+    #[cfg(test)]
     pub(crate) async fn launch_actor(
         home: &HomeLayout,
         config: ActorLaunchConfig,
+    ) -> io::Result<Self> {
+        let diagnostic_values = nonempty_environment_values(&config.environment);
+        Self::launch_actor_with_diagnostics(home, config, &diagnostic_values).await
+    }
+
+    pub(crate) async fn launch_actor_with_diagnostics(
+        home: &HomeLayout,
+        config: ActorLaunchConfig,
+        diagnostic_values: &[String],
     ) -> io::Result<Self> {
         let binding = bind_workspace(&config.workdir)?;
         config
             .runtime_mode
             .validate(config.runtime)
             .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+        let acp_actor = AcpActorLaunch {
+            ids: (&config.group_id, &config.actor_id),
+            diagnostic_values,
+        };
         if config.runtime == ActorRuntime::Antigravity && config.runtime_mode == RuntimeMode::Acp {
             return Self::launch_antigravity(
                 home,
@@ -175,11 +190,15 @@ impl AnalystSession {
                 config.environment,
                 None,
                 SessionPurpose::Actor,
-                Some((&config.group_id, &config.actor_id)),
+                Some(acp_actor),
             )
             .await;
         }
-        if config.runtime.is_headless_acp(config.runtime_mode) {
+        // Hermes's default mode keeps its native terminal as a viewer of the
+        // member's ACP session; CCCC still delivers only through ACP.
+        let hermes_viewer =
+            config.runtime == ActorRuntime::Hermes && config.runtime_mode == RuntimeMode::Default;
+        if config.runtime.is_headless_acp(config.runtime_mode) || hermes_viewer {
             return Self::launch_native_acp(
                 home,
                 binding,
@@ -188,7 +207,8 @@ impl AnalystSession {
                 config.environment,
                 None,
                 SessionPurpose::Actor,
-                Some((&config.group_id, &config.actor_id)),
+                Some(acp_actor),
+                hermes_viewer,
             )
             .await;
         }
@@ -224,7 +244,7 @@ impl AnalystSession {
                 config.environment,
                 None,
                 SessionPurpose::Actor,
-                Some((&config.group_id, &config.actor_id)),
+                Some(acp_actor),
             )
             .await;
         }
@@ -353,11 +373,11 @@ impl AnalystSession {
     }
 
     pub(crate) fn tui_command(&self) -> Vec<String> {
-        if self.structured_only() {
-            return Vec::new();
-        }
         if let Some(command) = &self.native_tui_command {
             return command.clone();
+        }
+        if self.structured_only() {
+            return Vec::new();
         }
         let mut command = self.remote_tui_prefix.clone();
         command.extend([
@@ -378,22 +398,10 @@ impl AnalystSession {
         self.environment.clone()
     }
 
-    pub(crate) fn safe_diagnostic(&self, error: &io::Error) -> String {
-        let mut message = error.to_string();
-        let mut values = self
-            .environment
-            .values()
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        values.sort_unstable_by_key(|value| std::cmp::Reverse(value.len()));
-        for value in values {
-            message = message.replace(value, "[redacted]");
-        }
-        message.chars().take(1600).collect()
-    }
-
+    /// Whether this session has a native terminal to show. A structured
+    /// session has one only when its provider supplies a viewer (Hermes).
     pub(crate) fn tui_ready(&self) -> bool {
-        !self.structured_only()
+        !self.structured_only() || self.native_tui_command.is_some()
     }
 
     pub(crate) fn structured_only(&self) -> bool {
@@ -413,7 +421,7 @@ impl AnalystSession {
     }
 
     pub(crate) fn runtime_mode(&self) -> RuntimeMode {
-        if self.runtime.supports_acp_mode() {
+        if self.runtime.supports_acp_mode() && !self.tui_ready() {
             RuntimeMode::Acp
         } else {
             RuntimeMode::Default

@@ -1,5 +1,6 @@
 //! Native interaction with the resident Secretary. The daemon owns its lifetime.
 use super::*;
+use crate::session_owner::runtime as cccc_runtime;
 use cccc_contracts::voice_secretary::SecretaryTaskExecution;
 use cccc_runtime::{LaunchSpec, TerminalAttachMode, TerminalAttachment};
 

@@ -137,3 +137,5 @@ fn voice_input_event_count(harness: &Harness) -> usize {
         .filter(|event| event.kind == "assistant.voice.input")
         .count()
 }
+
+cccc_daemon::session_owner_test_entry!();

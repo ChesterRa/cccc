@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { getGroupStatus, getGroupStatusFromSource } from "../../src/utils/groupStatus";
+import {
+  getGroupRuntimeStatus,
+  getGroupStatus,
+  getGroupStatusFromSource,
+} from "../../src/utils/groupStatus";
 import {
   QUIET_RUN_INDICATOR_DOT_CLASS,
   STOPPED_INDICATOR_DOT_CLASS,
@@ -65,4 +69,26 @@ describe("getGroupStatusFromSource", () => {
     expect(getGroupStatusFromSource({ running: true, state: "idle" }).key).toBe("idle");
     expect(getGroupStatusFromSource(null).key).toBe("offline");
   });
+
+  it.each([
+    ["active", "unknown"],
+    ["idle", "unknown"],
+    ["paused", "paused"],
+    ["stopped", "stop"],
+  ] as const)(
+    "shows a Group the daemon could not observe in lifecycle %s as %s",
+    (lifecycle, key) => {
+      const source = {
+        running: true,
+        state: "active" as const,
+        runtime_status: { lifecycle_state: lifecycle, available: false },
+      };
+      expect(getGroupStatusFromSource(source).key).toBe(key);
+      // Only the recorded lifecycle survives; no running state is made up.
+      expect(getGroupRuntimeStatus(source)).toEqual({
+        lifecycle_state: lifecycle,
+        available: false,
+      });
+    },
+  );
 });

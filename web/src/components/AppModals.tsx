@@ -62,6 +62,11 @@ const PresentationViewerModal = lazy(() =>
     default: module.PresentationViewerModal,
   })),
 );
+const CapabilityCenterWorkspace = lazy(() =>
+  import("./capabilities/CapabilityCenterWorkspace").then((module) => ({
+    default: module.CapabilityCenterWorkspace,
+  })),
+);
 
 interface AppModalsProps {
   codexVoice: import("../features/codexVoice/useCodexVoiceShell").CodexVoiceShellState;
@@ -241,6 +246,17 @@ export function AppModals({
   const editingActorSection = useModalStore((state) => state.editingActorSection);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const contextTaskId = useModalStore((state) => state.contextTaskId);
+  const capabilityCenterGroupId = useModalStore((state) => state.capabilityCenterGroupId);
+  const setCapabilityCenter = useModalStore((state) => state.setCapabilityCenter);
+  // The capability center acts on the Group it opened for; another Group closes it.
+  useEffect(() => {
+    if (
+      capabilityCenterGroupId !== null &&
+      capabilityCenterGroupId !== String(selectedGroupId || "").trim()
+    ) {
+      setCapabilityCenter(null);
+    }
+  }, [capabilityCenterGroupId, selectedGroupId, setCapabilityCenter]);
 
   const { inboxTarget, inboxMessages, setInboxMessages, clearInbox } = useInboxStore(
     useShallow((s) => ({
@@ -548,9 +564,10 @@ export function AppModals({
   }, [groupPresentation, presentationViewer, presentationViewerCacheByGroup, selectedGroupId]);
 
   // Computed
-  const selectedGroupRunning = useGroupStore(
-    (s) => s.groups.find((g) => String(g.group_id || "") === s.selectedGroupId)?.running ?? false,
-  );
+  const selectedGroupRunning = useGroupStore((s) => {
+    const group = s.groups.find((g) => String(g.group_id || "") === s.selectedGroupId);
+    return group?.runtime_status?.available === false ? null : (group?.running ?? false);
+  });
   const hasForeman = actors.some((a) => a.role === "foreman");
 
   // Compute messageMeta for RecipientsModal (moved from App.tsx)
@@ -1457,6 +1474,20 @@ export function AppModals({
               groupId={selectedGroupId}
               groupDoc={groupDoc}
               notificationsAllowed={notificationsAllowed === true}
+            />
+          </Suspense>
+        </ErrorBoundary>
+      ) : null}
+
+      {/* Opens over the panel it came from; closing it returns there. */}
+      {capabilityCenterGroupId !== null ? (
+        <ErrorBoundary overlay>
+          <Suspense fallback={<LazyModalFallback />}>
+            <CapabilityCenterWorkspace
+              isOpen
+              onClose={() => setCapabilityCenter(null)}
+              groupId={capabilityCenterGroupId}
+              isDark={isDark}
             />
           </Suspense>
         </ErrorBoundary>

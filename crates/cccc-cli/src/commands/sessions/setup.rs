@@ -1,7 +1,6 @@
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use cccc_core::{fs, local_sessions::powershell_quote};
-use std::process::Command;
 
 #[path = "setup_opencode.rs"]
 mod opencode;
@@ -11,7 +10,7 @@ mod inspection;
 pub(crate) use inspection::{SetupInspection, inspect};
 
 const MARKER: &str = "CCCC local session connection";
-const PLUGIN: &str = "cccc-local-sessions@cccc-local";
+const PLUGIN: &str = cccc_core::local_sessions::CLAUDE_PLUGIN_ID;
 
 const RESTART_REQUIRED: &str = "This running CCCC executable was replaced or removed. Restart CCCC before running setup again. No provider configuration was changed";
 
@@ -182,7 +181,7 @@ async fn invoke(program: &str, args: &[String]) -> Result<cccc_runtime::Captured
         cccc_runtime::resolve_executable_in_path(program, std::env::var("PATH").ok().as_deref())
             .context("Native CLI is unavailable")?;
     cccc_runtime::capture_command(
-        Command::new(program).args(args),
+        cccc_runtime::background_command(program).args(args),
         None,
         Duration::from_secs(30),
         32_768,

@@ -6,6 +6,192 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.58]
+
+### Added
+
+- Markdown attachments, and Markdown links opened in the page, switch between the rendered
+  view and the unchanged source without downloading again, with the **View source** /
+  **Preview** control that workspace files already have. The control sits in the title bar
+  of the resource panel, of each side of a split view and of the preview dialog, so a
+  document gets no extra toolbar row.
+- HTML attachments, Group HTML files and HTML from `raw.githubusercontent.com` or
+  `gist.githubusercontent.com` open as a static document preview. Scripts do not run, form
+  controls are disabled and external resources are not loaded; inline styles and embedded
+  images are supported, and the page follows only web, mail and in-page links. An
+  attachment has no directory, so its relative images, stylesheets and sibling files are
+  not resolved. HTML up to 20 MiB previews in full, embedded images included, and
+  **Files** previews HTML over its 1 MiB editing limit the same way, read-only.
+  **View source** shows the first 1 MiB. Larger HTML shows only that source, with a
+  notice, instead of a broken page. Wide slides stacked in a centered column start at the
+  left and scroll sideways; pages keep their own size and are not scaled to fit. Panel tabs restored
+  after a reload keep the HTML kind.
+
+### Fixed
+
+- The keys in an attachment's title bar share one size with the **Files** toolbar, and the
+  download key no longer sticks out of the bar.
+- On a phone, the empty composer at rest keeps attach, the template button, the input and
+  voice on one row; the template button no longer drops to a second line. **Send** returns
+  with the full layout when the input is focused. A send in flight keeps the full layout,
+  so its progress and **Stop waiting for upload** stay visible if focus leaves the
+  composer during an upload.
+
+## [0.4.57]
+
+### Added
+
+- Quick replies of your own, in one list. Settings › Quick Replies keeps up to 24 replies in
+  your order, the four default ones included, each with a name and a text sent exactly as
+  written; add, reword, reorder or delete any of them. A default reply's unchanged name or
+  text follows the interface language, a changed one stays as written, **Restore default**
+  puts it back, and a deleted default can be brought back at the end of the list. A
+  message's quick reply menu sends one at once; the composer's template button opens the
+  list above the input, near where you are typing, and inserts one at the cursor to edit
+  before sending. The daemon keeps one list per signed-in user, so other browsers and phones
+  signed in as that user see the same replies; a browser on this computer that is not
+  signed in has its own.
+- The operations guide lists what a daemon restart keeps and what it does not, with a
+  FAQ entry pointing to it.
+- `cccc_bootstrap` recovery includes the Group brief's last update time
+  (`coordination_brief.updated_at`), so an agent resuming work can see that a brief is
+  old. It is omitted when the brief has no recorded update time.
+
+### Changed
+
+- Reading a parent task through MCP keeps the parent's full details and returns its
+  subtasks as summary rows. Read a subtask by its own ID for its notes and checklist.
+
+### Fixed
+
+- Enabling a capability or calling an external tool no longer holds up other operations
+  while it waits for the external service. Superseded preparation cannot reverse a later
+  disable, and an old call cannot restore a changed binding or installation. Already
+  admitted external calls are never automatically replayed.
+- A cron automation rule that already owes a run, for example one enabled again after
+  missing its time, reports that run as its next fire time instead of the following
+  occurrence, as interval and one-time rules already did. The Web labels that time as
+  pending. The missed run still fires once.
+- The capability page's Enabled count covers all matches of the current search, like the
+  Skills, MCP and Packs counts, instead of only the page on screen. `capability_overview`
+  returns `enabled_count`; the standard now also documents `kind_counts`.
+- MCP recipes that declare `command` as a string or argv array, or a fallback command
+  without a package identifier, install as the published contract describes. A string
+  names one executable and is never split by a shell; arguments need an argv array.
+  Malformed command fields are rejected before the catalog changes.
+- ChatGPT Web members treat `local-chatgpt:` conversation URLs as provisional, like
+  `WEB:` ones, and a conversation moved into a Project keeps its binding and delivery
+  receipts (#226, #227).
+- On Windows, background process constructors now share a no-console-window
+  default, covering the Codex app-server and delivery helper reported in #228,
+  managed Claude launchers, Reach helpers and process checks, Git scope detection,
+  and runtime preparation. Standard streams, timeouts and ownership are unchanged;
+  interactive terminals, foreground maintenance and detached daemon startup retain
+  their policies. Production Clippy and entry-point checks catch bypasses, with
+  explicit reasons for exceptions. The runtime library and its Windows tests
+  were checked for a Windows target on Linux; Windows-only daemon and CLI
+  branches will first be compiled in Windows CI. This release has not been run
+  locally on Windows; the reporter's Codex/Windows Terminal check remains needed.
+- Chet on OpenCode: a message or member result sent while Chet is busy waits for the
+  current turn and goes to Chet's own session as its own turn, instead of being typed
+  into Chet's terminal, where after `/new` it reached another session and held up later
+  Group messages to Chet (#229). Voice delegations during a call are unchanged.
+- The documentation home page's getting-started button links to the page's own address,
+  so opening the link directly no longer returns 404.
+- Web slash commands for capability tools pass their arguments to the tool. They were sent
+  under a field the daemon does not read, so the tool ran without them.
+- The chat composer keeps the highlight of a later @mention when Undo restores a
+  replaced or deleted selection. Who receives the message was not affected.
+
+## [0.4.56]
+
+### Added
+
+- CCCC ships a short recommendation list: 10 skills and MCP servers in four work
+  groups, each listed only where we produced a representative result with it. Each
+  has its reason (what that result showed and its limits), notes on when not to use
+  it, verification records (level, outcome, date, build and path, failed checks
+  included) and, for MCP servers, where it runs, how it signs in and what it needs.
+  Release-owned entries are read-only, change with CCCC versions and are never
+  installed or enabled automatically. An entry is a primary only where a trial
+  showed a gain; this release has one, Exa.
+- The capability page has a Recommended view by work group. Each entry shows a status
+  for the Group's members, and its details show the reason, each member's status and
+  why, verification, where it runs, sign-in and requirements. Enable for Group is
+  offered when some member can use the entry, or might; the MCP and Skills lists show
+  the same status and action for recommended entries.
+- `capability_overview` and `capability_state` project each member's availability
+  (`compatible`, `needs_setup`, `unsupported`, `unknown`), enabled scopes, blocks and
+  pending preparation, with localized names and reasons; `capability_search` adds a
+  `for_you` summary for the calling member.
+- Managed members can use remote MCP servers that need a Bearer token from their own
+  private settings or linked Profile. Recipes reference the environment key, never
+  the value; enabling for a Group records intent only and uses no member's token.
+  Native sessions and Web model members have no member-token route.
+- An administrator can update an installed MCP server's recipe for all Groups from
+  CCCC Web, after previewing it and confirming the scope. A failed update keeps the
+  previous installation; agents cannot update recipes.
+- Recommended entries carry CCCC's notes (`avoid_when`, `gotchas`,
+  `requirements_summary`) alongside skill text, MCP preparation results and
+  structured external tool results, including results with `isError: true`; a
+  transport error carries none.
+- `cccc_bootstrap` lists the recommended entries an agent might use, one line each
+  with its role, exact ID and first use case, marked when applicable `enabled`,
+  `discovery pending`, `check requirements` or `setup required` (with the
+  requirements summary); blocked and `unsupported` entries are left out. The section
+  stays within 24 entries and 3,072 bytes of compact JSON and counts the entries it
+  leaves out.
+- When a client connects, CCCC's MCP server returns a short fixed note: CCCC offers optional skills
+  and MCP servers for named kinds of work, and an agent can browse the recommended ones or search
+  with `cccc_capability_search` and should read an entry's limits before enabling it. The MCP
+  `initialize` result and the Web model connector's `server/discover` result carry it; Voice
+  secretary task sessions, which cannot see those tools, do not. Clients decide whether to show it
+  to the model.
+- `cccc_capability_search(recommended=true)` lists the recommended entries for the calling agent, at
+  most ten, without guessing a word: blocked entries and entries it cannot use are left out, entries
+  that need setup stay with their requirements, and a query narrows them. Without the argument,
+  search is unchanged.
+
+### Changed
+
+- `capability_search` returns summaries without skill text or full tool schemas;
+  `cccc_capability_use` returns a skill's full text. `capability_overview` returns
+  skill text only for the self-proposed skill editor.
+- Help points agents to browsing the recommended entries with
+  `cccc_capability_search(recommended=true)`, or to `recommended` in bootstrap, when a capability
+  could fill a gap or improve quality or efficiency, and to keep their own tools when the added
+  option does not help. Help and the `cccc_capability_search` description say to search by a name or
+  one short word, since every space-separated term must appear in an entry; the description also
+  names the kinds of work the recommended entries serve. The `cccc_capability_use` description says
+  what a capability is and that it takes an exact ID or an unambiguous tool name.
+- Remote and local MCP servers use the official Rust MCP SDK 3.9.0. HTTP servers may
+  answer with JSON or SSE; an expired session is not reinitialized and a call is not
+  replayed. A local server's handshake and call share one deadline, and errors keep
+  up to the last 8 KiB of its stderr with known credentials and declared
+  environment values redacted.
+- A tool result with `isError: true` no longer marks a binding verified.
+- HTTP(S) source links are projected without user information, query or fragment.
+- Claude Code sessions that CCCC starts turn off CCCC's own Claude Code plugin in
+  their session settings; user and project plugin settings are unchanged.
+- **Open Capability Center**, in Settings → **Capability Governance** and on a Group's
+  **Skills** tab in **Project Context**, opens the Capability Center over the current page
+  instead of in a new browser tab. Closing it, with its close button or Esc, returns to that
+  page, which then reloads its list. The `/ui/capabilities` address opens the main page.
+
+### Fixed
+
+- CCCC closed a local MCP server's input right after sending its requests, so a call
+  could end before the server answered; input now stays open until the answer or the
+  time limit. Errors also left out the server's error output.
+- Remote MCP servers that answer with SSE, or require clients to accept it, could not
+  be used.
+- Importing a skill kept only the first 2,400 characters of its text; imported skills
+  now keep their full text up to 2 MiB.
+- The capability page filtered the daemon's search results again with a narrower
+  rule, treating the whole query as one string over fewer fields, so some matched
+  entries disappeared, such as those matching several words in different fields; it
+  now keeps the daemon's matches for the same query.
+
 ## [0.4.55]
 
 ### Added

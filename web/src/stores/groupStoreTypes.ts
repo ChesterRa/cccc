@@ -112,7 +112,8 @@ export interface GroupState {
     updates: Array<{
       id: string;
       idle_seconds?: number | null;
-      running: boolean;
+      /** Omitted when the daemon could not observe the agent. */
+      running?: boolean;
       effective_working_state?: string;
       effective_working_reason?: string;
       effective_working_updated_at?: string | null;
@@ -120,6 +121,7 @@ export interface GroupState {
       runtime_session_status?: string | null;
       runtime_session_resume_eligible?: boolean | null;
       runtime_session_last_resume_error?: string | null;
+      runtime_observation_error?: string;
     }>,
     groupId: string,
   ) => void;

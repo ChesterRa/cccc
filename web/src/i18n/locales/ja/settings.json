@@ -5,6 +5,31 @@
   },
   "title": "設定",
   "closeAriaLabel": "設定を閉じる",
+  "quickReplies": {
+    "title": "クイック返信",
+    "description": "メッセージのクイック返信メニューでは選ぶとすぐ送信され、入力欄のテンプレートボタンからは入力欄に挿入されるので、編集してから送信できます。既定の4件も、追加したものと同じように変更・並べ替え・削除できます。変更していない名前や本文は表示言語に合わせて切り替わります。",
+    "restore": "既定に戻す",
+    "count": "{{used}} / {{limit}}",
+    "add": "テンプレートを追加",
+    "bringBack": "既定の返信を戻す：",
+    "full": "既定の返信を含めて {{limit}} 件まで保存できます。",
+    "empty": "一覧は空です。テンプレートを追加するか既定の返信を戻すと、クイック返信メニューと入力欄のテンプレート一覧に表示されます。",
+    "name": "名前",
+    "text": "本文",
+    "moveUp": "上へ移動",
+    "moveDown": "下へ移動",
+    "unsaved": "未保存の変更があります",
+    "conflict": "テンプレートは別のウィンドウまたは端末で保存されています。再読み込みしてから続けてください。ここでの未保存の変更は置き換えられます。",
+    "reload": "再読み込み",
+    "loadFailed": "テンプレートを読み込めませんでした：{{error}}",
+    "saveFailed": "テンプレートを保存できませんでした：{{error}}",
+    "problem": {
+      "name": "テンプレートに名前を付けてください。",
+      "nameTooLong": "名前は1行、40文字以内にしてください。",
+      "text": "送信する本文を入力してください。",
+      "textTooLong": "本文は10000文字以内にしてください。"
+    }
+  },
   "tabs": {
     "guidance": "ガイダンス",
     "assistants": "音声",
@@ -19,11 +44,13 @@
     "actorProfiles": "エージェントプロファイル",
     "myProfiles": "自分のプロファイル",
     "notifications": "通知",
+    "quickReplies": "クイック返信",
     "branding": "ブランド",
     "account": "アカウント",
     "developer": "開発者",
     "webAccess": "Web アクセス",
     "webModels": "Web モデル",
+    "update": "アップデート",
     "voice": "音声"
   },
   "notifications": {
@@ -264,7 +291,8 @@
     "manageName": "名前",
     "manageDescription": "説明",
     "manageCapsule": "Capsule 本文",
-    "manageCapsuleLimit": "{{count}} / {{max}} 文字",
+    "manageCapsuleCount_one": "{{count}} 文字",
+    "manageCapsuleCount_other": "{{count}} 文字",
     "manageSave": "Skill を保存",
     "manageSaved": "Skill レコードを保存しました。",
     "manageSaveFailed": "Skill レコードの保存に失敗しました。",
@@ -352,11 +380,11 @@
   },
   "capabilityCenter": {
     "title": "Capability Center",
-    "subtitle": "Skills、MCP、Packs",
+    "subtitle": "おすすめ、Skills、MCP、Sources",
     "headerHint": "グローバル capability を一覧、絞り込み、管理するワークスペースです。",
+    "scopeGroup": "対象グループ：{{name}}",
     "refresh": "更新",
     "close": "閉じる",
-    "backToApp": "アプリに戻る",
     "builtin": {
       "groupRuntime": "エージェントが権限の範囲でグループを管理できます。メンバーの追加・削除・起動・停止、ランタイムの一覧、エージェントノートの編集。",
       "imBind": "エージェントがバインドキーで IM チャットをこのグループにバインドできます。",
@@ -375,6 +403,7 @@
     "failedSlashVisibility": "スラッシュコマンドの表示状態を更新できませんでした。",
     "sectionNavigation": "Capability セクション",
     "sections": {
+      "recommended": { "label": "おすすめ", "hint": "メンバーの作業ごとに分類" },
       "library": { "label": "ライブラリ", "hint": "すべての capability" },
       "skill": { "label": "Skills", "hint": "手順型 capability" },
       "mcp": { "label": "MCP", "hint": "Tool servers" },
@@ -449,14 +478,16 @@
     },
     "controls": {
       "title": "操作",
-      "skillHint": "現在のグループでの有効化、/ 表示、ブロック、除去を管理します。",
-      "mcpHint": "現在のグループでの有効化、ブロック、runtime install binding、アンインストールを管理します。",
       "enabledMeta": "現在のグループで有効",
       "disabledMeta": "現在のグループでは無効",
       "slashVisibleMeta": "/ コマンドに表示",
       "slashHiddenMeta": "/ コマンドから非表示",
       "blockMeta": "Policy で有効化と使用をブロック",
       "blockedMeta": "解除するまで policy でブロック",
+      "enableForGroup": "このグループで有効化",
+      "disableForGroup": "このグループで無効化",
+      "blockEverywhere": "全体でブロック",
+      "unblockGroupTitle": "このグループでのブロックを解除",
       "openGroup": "これらの操作にはグループを開いてください。"
     },
     "remove": {
@@ -493,7 +524,7 @@
       "confirmBlock": "{{name}} をブロックしますか？\n\n解除するまでエージェントは {{id}} を使用できません。",
       "confirmUnblock": "{{name}} のブロックを解除しますか？\n\n{{id}} が有効で policy で許可されていれば、エージェントが再び使用できます。",
       "confirmBlockTitle": "{{name}} をブロックしますか？",
-      "confirmBlockDescription": "{{id}} に policy block を追加します。解除するまで有効化も使用もできません。",
+      "confirmBlockDescription": "すべてのグループで {{id}} をブロックします。解除するまで有効化も使用もできません。",
       "confirmUnblockTitle": "{{name}} のブロックを解除しますか？",
       "confirmUnblockDescription": "{{id}} の policy block を削除します。有効化済みで policy が許可していればエージェントが再び使用できます。"
     },
@@ -506,10 +537,138 @@
       "confirmDisableTitle": "このグループで {{name}} を無効化しますか？",
       "confirmDisableDescription": "{{id}} を現在のグループで無効化します。このグループでのあなた自身の使用も止まり、各エージェント自身の使用はそのままです。あとで再び有効化できます。",
       "partlyFailed": "一部だけ無効化されました：{{message}}",
-      "stillEnabled": "{{name}} はまだ有効です。処理中に状態が変わった可能性があります。再試行してください。"
+      "stillEnabled": "{{name}} はまだ有効です。処理中に状態が変わった可能性があります。再試行してください。",
+      "conflict": "準備中に設定が変わりました。現在の状態を確認してから再度有効にしてください。"
     },
     "confirm": { "cancel": "キャンセル", "confirm": "確認" },
-    "showSystem": "システム"
+    "showSystem": "システム",
+    "update": {
+      "changed": "新しいおすすめ版があります（アドレスかパッケージのバージョンが変わりました）。",
+      "unknown": "バージョンが記録されていません。",
+      "update": "全体で更新",
+      "verify": "確認して更新",
+      "badge": "更新あり",
+      "confirmTitle": "{{name}} を更新しますか？",
+      "confirmDescription": "更新は、すべてのグループでのこの MCP の以後の呼び出しに適用されます。現在 {{groups}} 個のグループで有効です。",
+      "confirmDescriptionBearer": "更新は、すべてのグループでのこの MCP の以後の呼び出しに適用されます。現在 {{groups}} 個のグループで有効です。トークンが必要な MCP は今は確認せず、メンバーが次回の使用時に自身のトークンで確認します。",
+      "failed": "更新に失敗しました。",
+      "unavailable": {
+        "delivery_form_not_supported": "この版では、この提供形態をここから更新できません。",
+        "credential_route_not_supported": "このインストールのトークン設定方法は、この版ではここから更新できません。"
+      },
+      "outcome": {
+        "configured": "レシピを更新しました。メンバーは次回の使用時に自身のトークンで確認します。",
+        "ready": "新しいおすすめ版に更新しました。",
+        "unchanged": "すでにおすすめ版です。"
+      },
+      "error": {
+        "capability_not_installed": "まだインストールされていません。一度有効化してから更新してください。",
+        "capability_recipe_conflict": "確認する前におすすめ版が変わりました。再読み込みして見直してください。",
+        "capability_update_unsupported": "この版では、この MCP をここから更新できません。"
+      }
+    },
+    "recommended": {
+      "intro": "この版の CCCC に同梱されています。メンバーは必要なときに自分で有効化できます。このグループで先に有効化しておくこともできます。",
+      "domain": "作業",
+      "mcp": "MCP",
+      "skill": "Skill",
+      "primary": "第一候補",
+      "alternative": "代替",
+      "emptyCell": "この版ではおすすめなし",
+      "empty": "この版にはおすすめがありません。",
+      "summary": "おすすめ {{total}} 件 · {{domains}} グループ",
+      "legend": "凡例",
+      "kicker": "{{type}} · CCCC のおすすめ",
+      "backToList": "一覧に戻る",
+      "badge": "おすすめ",
+      "badgeHint": "この版の CCCC に同梱のおすすめ",
+      "binding": { "group": "このグループで有効", "member": "有効化したメンバーあり" },
+      "dot": {
+        "group": "このグループで有効",
+        "member": "メンバーが自分で有効化",
+        "available": "使えるメンバーはいるが、まだ誰も有効化していない",
+        "setup": "先に設定が必要",
+        "pending": "設定済み。次回の使用時に確認",
+        "unknown": "メンバー自身のツール次第で、CCCC では判断できない",
+        "uncertain": "使えるかどうかまだ分からない",
+        "unsupported": "このグループに使えるメンバーがいない",
+        "blocked": "ブロック中",
+        "none": "このグループにはまだメンバーがいない"
+      },
+      "verification": {
+        "none": "未検証",
+        "listedHint": "出所・ライセンス・提供形態を確認済み（インストールはしていない）",
+        "passed": {
+          "listed": "掲載のみ",
+          "install_checked": "導入済み",
+          "text_checked": "本文確認済み",
+          "tool_call_checked": "呼び出し済み",
+          "task_checked": "タスク確認済み"
+        },
+        "failed": {
+          "listed": "確認失敗",
+          "install_checked": "導入失敗",
+          "text_checked": "本文の確認失敗",
+          "tool_call_checked": "呼び出し失敗",
+          "task_checked": "タスク失敗"
+        }
+      },
+      "sections": {
+        "why": "おすすめの理由",
+        "useWhen": "使う場面",
+        "avoidWhen": "使わない場面",
+        "gotchas": "注意点",
+        "requirements": "前提と実行場所",
+        "members": "このグループのメンバー",
+        "verification": "検証",
+        "source": "出所とライセンス"
+      },
+      "runsOn": {
+        "daemon_host": "CCCC を動かしているマシンで実行",
+        "actor_tools": "各メンバー自身の環境で実行",
+        "reference": "この版では掲載のみで、CCCC から有効化できない"
+      },
+      "auth": {
+        "none": "キー不要",
+        "bearer": "トークンが必要",
+        "api_key": "API キーが必要",
+        "oauth": "OAuth ログインが必要",
+        "account": "アカウントが必要"
+      },
+      "member": {
+        "compatible": "利用可",
+        "pending": "次回の使用時に自身のトークンで確認",
+        "needs_setup": "先に設定が必要",
+        "unknown": "未確認",
+        "unsupported": "利用不可",
+        "blocked": "ブロック中",
+        "session": "このセッションで有効",
+        "actor": "本人が有効化",
+        "group": "このグループで有効",
+        "lastCallOk": "前回の呼び出し成功 {{time}}",
+        "lastCallFailed": "前回の呼び出し失敗 {{time}}",
+        "none": "このグループにはまだメンバーがいません。"
+      },
+      "credential": {
+        "actor": "{{env}} が未設定：このメンバーの非公開環境変数で設定",
+        "profile": "{{env}} が未設定：リンク先の Profile で設定"
+      },
+      "reason": {
+        "actor_tool_prerequisites_unknown": "メンバー自身のツール次第で、CCCC では判断できない",
+        "blocked_by_global_policy": "全体でブロック中",
+        "blocked_by_group_policy": "このグループでブロック中",
+        "credential_permission_denied": "トークンの権限が足りない",
+        "credential_rejected": "トークンが拒否された（未設定か期限切れ）",
+        "credential_route_not_supported": "このメンバーにトークンを渡す経路がまだない",
+        "delivery_form_not_supported": "この版はこの提供形態に未対応",
+        "delivery_form_unknown": "インストール形態が未確認",
+        "external_mcp_not_supported_by_actor": "Web モデルのメンバーは外部 MCP を使えない",
+        "missing_daemon_environment": "CCCC の起動時に必要な環境変数が設定されていない",
+        "missing_daemon_executable": "CCCC を動かしているマシンに必要なコマンドがない",
+        "missing_member_credential": "{{env}} が未設定（メンバーの非公開環境変数かリンク先の Profile で設定）",
+        "unverified_remote_search": "未確認の旧検索結果"
+      }
+    }
   },
   "assistants": {
     "openFromGroup": "このタブはグループから開いてください。",
@@ -927,6 +1086,7 @@
     "runNowHint": "このルールの通知を今すぐ送ります。受信者が動き出し、モデルの利用枠を消費する場合があります。実行回数の上限には数えず、スケジュールも変わりません。",
     "lastRunManual": "{{time}}（手動）",
     "idleStandup": "待機中のグループでは実行しません",
+    "pending": "実行待ち（予定 {{time}}）",
     "completedLabel": "完了",
     "runProgress": "実行 {{done}} / {{max}} 回",
     "completedLimitHint": "上限を増やすか削除すると、このルールを有効にできます。"
@@ -1196,6 +1356,88 @@
     "working": "処理中…",
     "pickFileFirst": "最初にプレビューするファイルを選択してください",
     "reconnectGrok": "インポート後、各 Grok エージェントの Bot URL と Webhook Routine の認証情報を再設定してください。"
+  },
+  "update": {
+    "title": "アップデート",
+    "description": "ここで動いている CCCC のバージョンを確認し、最新リリースに更新します。",
+    "versionTitle": "バージョン",
+    "installed": "現在のバージョン",
+    "latest": "最新バージョン",
+    "localBuild": "ローカルの新しいビルド",
+    "localIncompatible": "実行中のバージョンから CCCC {{version}} への再起動には対応していません。",
+    "builtAt": "{{time}} にビルド",
+    "localUnreadable": "プログラムを読み取れませんでした（{{reason}}）。",
+    "restart": "CCCC を再起動",
+    "confirmCurrent": "現在のプログラムで CCCC {{version}} を再起動します。このページは同じアドレスに再接続し、結果を表示します。",
+    "confirmLocal": "CCCC を停止し、ディスク上の新しいビルド（{{version}}、{{time}} にビルド）で同じアドレスに再起動します。CCCC が戻るまでこのページの接続は切れ、戻ったらここに結果が表示されます。",
+    "keepAgents": "エージェントを維持",
+    "restartAgents": "エージェントを再起動",
+    "keepUnavailable": "今回はエージェントを維持できません：",
+    "keepReasonFor": "{{name}}：{{reason}}",
+    "keepReason": {
+      "keep_not_supported": "今回の再起動ではエージェントをまだ維持できません。",
+      "owner_unreachable": "エージェントのセッションプロセスが応答しないため、維持できるか確認できません。",
+      "owner_contract_mismatch": "エージェントのセッションプロセスが新しいビルドと互換性がありません。",
+      "mcp_registration_mismatch": "エージェントの CCCC ツールの接続方式が新しいビルドと互換性がありません。",
+      "member_state_unconfirmed": "エージェントの状態を確認できません。起動中か停止中の可能性があります。落ち着いてから再試行するか、「エージェントを再起動」を選んでください。",
+      "mcp_source_unconfirmed": "エージェントの CCCC ツールが今回の起動によるものか確認できません。先に CCCC から再起動してください。それでも変わらない場合は、そのエージェントに設定された CCCC ツールのパスを確認してください。",
+      "mcp_not_observed": "エージェントの CCCC ツールがまだ接続されていません。接続後に再試行するか、先に CCCC から再起動してください。",
+      "mcp_identity_unconfirmed": "エージェントの CCCC ツールのプロセスが動いているか確認できません。先に CCCC から再起動してください。",
+      "mcp_contract_mismatch": "エージェントが使用中の CCCC ツールが新しいビルドと互換性がありません。",
+      "preflight_timeout": "エージェントの確認がタイムアウトしました。しばらくしてから再試行してください。",
+      "runtime_not_covered": "このエージェントの現在の起動方法は、再起動中の維持にまだ対応していません。「エージェントを再起動」を選んでください。",
+      "remote_resource_unconfirmed": "保存済みのリモート接続またはその未完了の作業を確認できません。現在の状態を確認してから再試行してください。"
+    },
+    "preparingLocal": "プログラムを確認しています。その間も CCCC は動き続けます。",
+    "restartingLocal": "CCCC {{version}} を再起動しています。再接続後にここに結果が表示されます。",
+    "lostLocal": "CCCC から応答がありませんでした。再起動が始まっていれば、CCCC が戻ったときにここに結果が表示されます。",
+    "noResultLocal": "CCCC には接続できますが、今回の再起動の結果は記録されていません。上の現在のバージョンを確認してください。何が起きたかは、CCCC が動いているマシンのログに記録されています。",
+    "rejectedLocal": "再起動は開始されませんでした（{{reason}}）。CCCC は再起動せず、エージェントも停止していません。",
+    "check": "アップデートを確認",
+    "checking": "確認中…",
+    "checkFailed": "確認できませんでした：{{reason}}",
+    "upToDate": "CCCC は最新です。",
+    "installedNewer": "この CCCC は最新リリースより新しいバージョンです。",
+    "noPackage": "このプラットフォーム向けの CCCC パッケージは公開されていません。",
+    "nothingToUpdate": "更新するものはありません。",
+    "releaseNotes": "リリースノート",
+    "updateAndRestart": "更新してエージェントを再起動",
+    "confirmText": "CCCC を停止して {{version}} をインストールし、同じアドレスで再起動します。実行中のエージェントも再起動されます。CCCC が戻るまでこのページの接続は切れ、戻ったらここに結果が表示されます。",
+    "confirmKeep": "CCCC を停止して {{version}} をインストールし、同じアドレスで再起動します。「エージェントを維持」を選ぶと、先にダウンロードしてエージェントを維持できるか確認します。維持できなければ CCCC もエージェントも止めません。「エージェントを再起動」を選ぶと、実行中のエージェントも再起動されます。CCCC が戻るまでこのページの接続は切れ、戻ったらここに結果が表示されます。",
+    "updateNow": "今すぐ更新",
+    "preparing": "{{version}} を準備しています（ダウンロードと検証）。その間も CCCC は動き続けます。",
+    "updating": "{{version}} に更新しています。CCCC が戻るとここに結果が表示されます。",
+    "lost": "CCCC から応答がありませんでした。{{version}} へのアップデートが始まっていれば、CCCC が戻ったときにここに結果が表示されます。",
+    "notBack": "CCCC がまだ戻っていません。続く場合は、CCCC が動いているマシンでログを確認してください。",
+    "noResult": "CCCC には接続できますが、{{version}} へのアップデートの結果は記録されていません。上の現在のバージョンを確認してください。何が起きたかは、CCCC が動いているマシンのログに記録されています。",
+    "rejected": "アップデートは開始されませんでした（{{reason}}）。CCCC は更新されず、エージェントも停止していません。",
+    "byHand": "次のコマンドでこのインストールを更新してください：",
+    "byPip": "この CCCC は pip でインストールされています。CCCC を停止してから、インストールした Python 環境で次を実行してください：",
+    "unmanaged": "この CCCC は CCCC のインストーラーや pip でインストールされていません。インストールした方法で更新してください。",
+    "unavailable": "この CCCC プロセスはアップデートを確認できません。CCCC が動いているマシンで `cccc update --check` を実行してください。",
+    "lastTitle": "前回のアップデート・再起動",
+    "last": {
+      "installed": "{{from}} から {{to}} に更新しました。",
+      "abandoned": "{{to}} には更新されませんでした（{{reason}}）。{{from}} を再起動しました。",
+      "abandonedLocal": "CCCC {{to}} への再起動は中断され、復旧コマンドで後始末しました。プログラムファイルはそのままです。",
+      "notStarted": "{{to}} へのアップデートは開始されませんでした（{{reason}}）。CCCC は更新されず、エージェントも停止していません。",
+      "notStartedLocal": "CCCC {{to}} への再起動は開始されませんでした（{{reason}}）。CCCC は再起動されず、エージェントも停止していません。",
+      "unconfirmed": "{{to}} は実行中ですが、アップデートの完了を確認できませんでした。以前のバージョンのバックアップが残っている場合、復旧するとそのバージョンに戻ります。復旧するには CCCC を停止してから、CCCC のログにあるコマンドを実行してください。",
+      "unconfirmedLocal": "CCCC {{to}} は実行中ですが、再起動の完了を確認できませんでした。再起動の記録を消去するには CCCC を停止してから、CCCC のログにあるコマンドを実行してください。プログラムファイルはそのまま残ります。",
+      "undone": "{{to}} へのアップデートは取り消されました。",
+      "kept": "{{to}} へのアップデートは保持されました。",
+      "restarted": "CCCC {{to}} を再起動しました。",
+      "other": "{{to}} へのアップデート：{{result}}。"
+    },
+    "agents": {
+      "notObserved": "エージェントが維持されたかは確認していません。",
+      "observing": "エージェントを確認しています…",
+      "reattached": "維持：{{names}}",
+      "restarted": "再起動：{{names}}",
+      "notBack": "動いていない：{{names}}",
+      "unconfirmed": "確認できない：{{names}}",
+      "separator": "、"
+    }
   },
   "developer": {
     "title": "開発者モード (グローバル)",

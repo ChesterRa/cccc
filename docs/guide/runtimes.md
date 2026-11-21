@@ -11,20 +11,20 @@ Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can al
 | Runtime | Runtime id | Entrypoint / surface | MCP setup |
 |---------|------------|----------------------|-----------|
 | Claude Code | `claude` | CCCC-managed Agent View session + native TUI | Injected into each managed session |
-| Cline CLI | `cline` | `cline` | Auto |
+| Cline CLI | `cline` | `cline` | Native registration |
 | Codex CLI | `codex` | CCCC-managed app-server + native TUI | Agent-scoped MCP injected into the managed session |
-| DeepSeek Harness | `deepseek` | CCCC-managed `dsh-acp-demo` (structured ACP, no native terminal) | Automatic on first start; explicit setup remains available |
-| GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Auto for TUI; injected per ACP session |
-| Cursor CLI | `cursor` | Native `cursor-agent` TUI or official ACP | Prompt-assisted for TUI; injected per ACP session |
-| Devin CLI | `devin` | Native `devin` TUI or official ACP | Auto for TUI; injected per ACP session |
+| DeepSeek Harness | `deepseek` | CCCC-managed `dsh --profile acp` (structured ACP, no native terminal) | Injected per ACP session; install once with `cccc setup --runtime deepseek` |
+| GitHub Copilot CLI | `copilot` | Native `copilot` TUI or official ACP | Native registration for TUI; injected per ACP session |
+| Cursor CLI | `cursor` | Native `cursor-agent` TUI or official ACP | Native registration for TUI; injected per ACP session |
+| Devin CLI | `devin` | Native `devin` TUI or official ACP | Native registration for TUI; injected per ACP session |
 | Kiro CLI | `kiro` | Native TUI or official V3 ACP | Native registration for TUI; injected per ACP session |
 | Kilo Code CLI | `kilo` | CCCC-managed ACP + authenticated native TUI attach | Injected into each managed session |
 | Antigravity CLI | `antigravity` | Native `agy` TUI or official ACP | Native registration for TUI; injected into each ACP session |
 | Droid CLI | `droid` | Native TUI or official ACP | Native registration for TUI; injected per ACP session |
-| Amp | `amp` | `amp` | Auto |
+| Amp | `amp` | `amp` | Native registration |
 | Auggie (Augment) | `auggie` | Native TUI or official ACP | Native registration for TUI; injected per ACP session |
-| Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Automatic native MCP registration; identity inherited per session |
-| Hermes Agent | `hermes` | Native TUI or official ACP | Native user profile for TUI; injected per ACP session |
+| Grok Build | `grok` | CCCC-managed Grok leader + ACP + native TUI | Native registration; identity inherited per session |
+| Hermes Agent | `hermes` | CCCC-managed ACP + native TUI on the same session, or official ACP only | Injected per ACP session |
 | Kimi Code | `kimi` | Native TUI or official ACP | Native registration for TUI; injected per ACP session |
 | OpenCode | `opencode` | CCCC-managed V2 HTTP/SSE + authenticated native TUI | Injected into each managed session |
 | Pi | `pi` | Official RPC (headless; no native terminal attachment) | Injected per managed session |
@@ -33,6 +33,8 @@ Independently started Codex, Claude Code, Pi and OpenCode V2 CLI sessions can al
 | Grok Bot Web Model | `grok_web_model` | Dedicated Grok Bot URL | Native Webhook Routine + task-scoped remote MCP connector |
 
 `custom` is also supported as a manual fallback for any command-line agent that can be launched by CCCC.
+
+Native registration means that before each start CCCC checks the runtime's own MCP configuration and adds or repairs its `cccc` entry there; see [Verification and Troubleshooting](#verification-and-troubleshooting).
 
 Codex sessions use the CLI's documented [app-server interface](https://learn.chatgpt.com/docs/app-server). ChatGPT Web combines browser message delivery with remote MCP tool access; Dots uses [MCP Events](https://developers.openai.com/plugins/build/mcp-events) instead of browser delivery. These are distinct integration paths with their own setup requirements and provider dependencies.
 
@@ -45,7 +47,7 @@ CCCC applies runtime-specific launch defaults for agents it starts. These defaul
 | `claude` | `claude --dangerously-skip-permissions` | Skips Claude Code permission prompts. |
 | `cline` | `cline --tui --auto-approve true` | Opens Cline's interactive TUI and enables tool auto-approval. |
 | `codex` | `codex -c check_for_update_on_startup=false -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search` | Bypasses Codex approvals/sandbox and preserves agent environment inheritance for MCP subprocesses. |
-| `deepseek` | CCCC-managed `dsh-acp-demo --config …/cordis.yml` | Official ACP app composition; provider permission requests are rejected rather than implicitly approved. |
+| `deepseek` | CCCC-managed `dsh --profile acp` | The official ACP profile; provider permission requests are rejected rather than implicitly approved. |
 | `copilot` | `copilot --allow-all` | Allows Copilot CLI tool execution without per-action approval. |
 | `cursor` | `cursor-agent --yolo --approve-mcps` | Uses Cursor YOLO mode and approves MCP usage. |
 | `devin` | `devin --permission-mode dangerous` | Uses Devin's dangerous permission mode. |
@@ -53,7 +55,7 @@ CCCC applies runtime-specific launch defaults for agents it starts. These defaul
 | `antigravity` | `agy --dangerously-skip-permissions` | Skips Antigravity tool permission prompts. |
 | `droid` | `droid --auto high` | Starts Droid in high-autonomy mode. |
 | `grok` | `grok --always-approve` | Starts Grok Build with approval prompts bypassed. |
-| `hermes` | `hermes --tui --yolo` | Starts Hermes in TUI YOLO mode. |
+| `hermes` | `hermes --tui --yolo` | Opens Hermes's TUI in YOLO mode on the agent's ACP session; CCCC answers each ACP permission request with a one-time approval. |
 | `kimi` | `kimi --yolo` | Ask When Needed: routine actions are automatic; risky actions and questions can still ask. Use an explicit `kimi --auto` command for Never Ask mode. |
 | `pi` | `pi` | Uses official RPC; project trust and native-tool permissions remain Pi's responsibility. Extension decisions remain explicit user interactions. |
 | `opencode` | `opencode --auto` | CCCC owns the V2 permission boundary and selects only request-scoped one-time approval; it never writes a persistent provider approval. |
@@ -82,6 +84,7 @@ cccc setup --runtime cline
 cccc setup --runtime codex
 cccc setup --runtime deepseek
 cccc setup --runtime copilot
+cccc setup --runtime cursor
 cccc setup --runtime devin
 cccc setup --runtime kiro
 cccc setup --runtime droid
@@ -96,15 +99,11 @@ cccc setup --runtime kilo
 cccc setup --runtime antigravity
 ```
 
-DeepSeek Harness is an upstream developer preview, so CCCC owns and isolates the tested ACP composition. On first use, it installs only the four required packages (`dsh-acp`, `dsh-mcp-client`, `dsh-acp-demo`, and `dsh-llm-deepseek`) under `CCCC_HOME/runtimes/deepseek/<release>`. Exact direct versions plus an npm release cutoff keep every transitive `@deepseek-ai/dsh*` package on the same validated preview release. The managed LLM adapter caps output at 65,536 tokens so prompt and MCP tool context retain headroom inside the model window. Setup also prunes the obsolete direct `dsh` bundle and its managed profile patch from earlier preview installs. CCCC does not modify `~/.dsh` or a project `package.json`; the legacy one-shot `dsh --profile cccc-acp` path and its unused bundle profile are not used. Concurrent starts share one setup lock, and a failed installation remains retryable. Running `cccc setup --runtime deepseek` performs the same idempotent setup eagerly. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
+DeepSeek Harness is an upstream developer preview, so CCCC pins the release it has verified. Run `cccc setup --runtime deepseek` once before starting the first DeepSeek Agent: it installs the official `@deepseek-ai/dsh` launcher at that release under `CCCC_HOME/runtimes/deepseek/<release>`, and Agents then start with the launcher's built-in ACP profile (`dsh --profile acp`). Starting an Agent never installs anything, so a download never holds up the Group; without a complete installation the start reports `setup_required` with that command. The exact launcher version plus an npm release cutoff keep every `@deepseek-ai/dsh*` package on that release and its other dependencies on the verified versions. npm runs no dependency install scripts; in this release they only check prebuilt native modules or print notices. DeepSeek Harness needs Node 24.9 or later. The first installation downloads about 300 MB and uses about 1.3 GB of disk (measured on Linux x64). An installation still running after 15 minutes is stopped and can be retried; npm's output from the latest attempt is kept in `npm-install.log` in that directory. Concurrent setups share one lock, and running setup again repairs an incomplete installation. CCCC caps output at 65,536 tokens so prompt and MCP tool context retain headroom inside the model window. CCCC does not modify `~/.dsh` or a project `package.json`, and setup does nothing when the installation is already complete. Once every DeepSeek Agent has restarted on the current release, the directories of earlier releases under `CCCC_HOME/runtimes/deepseek` can be deleted. Provider credentials such as `DEEPSEEK_API_KEY` remain deployment inputs and are never generated or persisted by setup.
 
-DeepSeek's connection form writes `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and `DEEPSEEK_MODEL` to the Agent's existing private environment, and Runtime Profiles can carry the same variables. A saved value wins; without one, the Agent uses `DEEPSEEK_BASE_URL` or `DEEPSEEK_MODEL` from the environment it starts with (its own environment settings first, then the daemon's), and otherwise `https://api.deepseek.com` and `deepseek-flash`, the name DeepSeek's API documentation gives for its current Flash model; custom model IDs are passed unchanged after trimming surrounding whitespace. The shared managed ACP config reads the model from each launched process's environment, so changing one Agent does not change other Agents. Save and restart the Agent to apply connection changes. Custom gateways must support DeepSeek streaming Chat Completions and tool calls; an OpenAI-compatible label alone does not establish that compatibility. A missing API key, or an authentication failure CCCC recognizes (such as DeepSeek rejecting the key), stops the current DeepSeek process and pauses automatic delivery; correct the saved connection settings and explicitly launch or restart the Agent to retry its pending messages. Editing a draft or using a separate inspector restart does not save it.
+Updating CCCC from a release that used an earlier DeepSeek Harness takes two steps. First run `cccc setup --runtime deepseek` once on the CCCC host. A DeepSeek Agent kept running through the update (**Keep agents running**) continues its current conversation with the tools of the process it started with; then restart it to use the current release's tools. Every DeepSeek launch starts a new Harness session: sessions from earlier releases stay in `CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/sessions`, and CCCC's Group messages and tasks are unaffected. Until setup completes, **Restart** and **New session** report `setup_required` without stopping the running Agent, and an Agent that is not running reports the same when it starts, including after **Restart agents**; start it again once setup completes.
 
-Prompt-assisted runtimes print an idempotent setup prompt or contract that you run inside that runtime:
-
-```bash
-cccc setup --runtime cursor
-```
+DeepSeek's connection form writes `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, and `DEEPSEEK_MODEL` to the Agent's existing private environment, and Runtime Profiles can carry the same variables. A saved value wins; without one, the Agent uses `DEEPSEEK_BASE_URL` or `DEEPSEEK_MODEL` from the environment it starts with (its own environment settings first, then the daemon's), and otherwise `https://api.deepseek.com` and `deepseek-flash`, the name DeepSeek's API documentation gives for its current Flash model; custom model IDs are passed unchanged after trimming surrounding whitespace. Each Agent's profile layer reads the model from that Agent's own process environment, so changing one Agent does not change other Agents. Save and restart the Agent to apply connection changes. Custom gateways must support DeepSeek streaming Chat Completions and tool calls; an OpenAI-compatible label alone does not establish that compatibility. A missing API key, or an authentication failure CCCC recognizes (such as DeepSeek rejecting the key), stops the current DeepSeek process and pauses automatic delivery; correct the saved connection settings and explicitly launch or restart the Agent to retry its pending messages. Editing a draft or using a separate inspector restart does not save it.
 
 For a custom runtime, provide the command when creating or editing the agent:
 
@@ -116,14 +115,16 @@ cccc actor add worker --runtime custom --command "my-agent --with-flags"
 
 Users choose a Runtime, not an arbitrary runner. Antigravity, Auggie, Copilot, Devin, Cursor, Kimi Code, Kiro, Hermes and Droid offer an explicit official ACP mode without a terminal. Pi uses its official RPC surface by default and has no same-session native terminal attachment. Other CLI runtimes expose their native terminal so the user can inspect and operate the agent. Codex, Claude Code, Grok Build, OpenCode, and Kilo additionally run a structured background protocol against the same provider session; CCCC uses that protocol for identity, lifecycle, progress, completion, and cancellation.
 
-Agent messages still enter those managed Runtimes through their native terminal. CCCC does not decide whether a message steers an active turn or waits behind it; the receiving Runtime applies its own configuration. DeepSeek Harness has only a structured ACP surface, while ChatGPT Web Model uses browser delivery plus a remote MCP connector. These are Runtime capabilities, not user-selectable modes.
+Agent messages still enter those managed Runtimes through their native terminal. Hermes differs: CCCC runs it on an ACP session, opens Hermes's TUI on that session in the default mode, and sends messages through ACP. CCCC does not decide whether a message steers an active turn or waits behind it; the receiving Runtime applies its own configuration. CCCC runs DeepSeek Harness only through its structured ACP surface, while ChatGPT Web Model uses browser delivery plus a remote MCP connector. These are Runtime capabilities, not user-selectable modes.
 
 Cline currently opens a fresh native terminal on each start. CCCC does not persist or reuse Cline's `--id` session identifier.
 
-#### Admission evidence (2026-09-05)
+In terminal mode, Amp, Auggie, Cline, Copilot, Cursor, Devin, Droid, Kimi Code and Kiro can open with a trust, privacy or welcome screen. CCCC types nothing into such a terminal until it shows its chat input box: answer the screen in the terminal yourself, and the waiting messages are then sent without duplicates. Only if the chat input box shows and nothing is sent, for example because a runtime update changed its screen, choose **Done, send now** above the terminal. Choosing it while a prompt is still open would let CCCC's text reach that prompt. If the terminal closes before CCCC has confirmed that it can deliver, CCCC stops retrying and messages wait until you start the agent again.
 
-Kilo 7.5.14 was checked with the installed native CLI, isolated provider homes,
-and a loopback test model. The shared agent/Chet probe covers idle startup,
+#### Native session validation
+
+On 2026-11-18, Kilo 7.8.27 was checked on Linux with the native CLI, isolated
+provider homes and a loopback test model. The shared agent/Chet probe covers idle startup,
 empty and populated session resume, consecutive results, native TUI cancellation,
 and a busy-state follow-up exceeding 16,000 characters. A second probe checks
 that a submitted native model/variant selection reaches ACP. These probes do not
@@ -153,9 +154,9 @@ additional Hub/session lifecycle work, not simply the existing ACP adapter.
 CCCC keeps its current terminal agent support instead of creating a synthetic
 startup prompt or a second Chet-only session path.
 
-The Linux CI runs the real Codex/Claude empty-session probes and both Kilo probes
-against pinned CLI versions. To repeat the Kilo checks locally after building
-the current `cccc` binary:
+Linux CI checks empty-session recovery with Codex 0.170.0 and Claude Code
+2.1.327. It also runs both native Kilo probes with version 7.8.27. To repeat
+the Kilo checks locally after building the current `cccc` binary:
 
 ```bash
 CCCC_LAUNCHER_PATH="$PWD/target/debug/cccc" \
@@ -186,12 +187,11 @@ removed `kimi mcp add` command. A project-level `.kimi-code/mcp.json` takes
 precedence: a conflicting `cccc` entry must be corrected or removed by the
 operator, and is not silently overwritten or reported as ready.
 
-On first use, complete Kimi's workspace trust and login/model setup in its native
-terminal **before sending CCCC messages**. Enabling bracketed paste does not prove
-that Kimi has left those dialogs. CCCC does not pre-approve trust or detect
-completion of these dialogs; input sent too early may be consumed by a dialog. An
-initialized Kimi Code 2.1.1 TUI accepts the normal single Enter submit, including
-multiline input. CCCC does not add a second Enter based on older client behavior.
+On first use, answer Kimi's trust and setup questions in its terminal. You can
+send a message while a question is open. CCCC holds it until it recognizes
+Kimi's chat input box. If you can see the empty input box and the message is
+still waiting, choose **Done, send now** above the terminal. CCCC submits
+the message with one Enter.
 
 To resume a specific Kimi session, use `kimi --session <id> --yolo` in the agent's
 native-mode custom command or Runtime Profile. In native TUI mode, CCCC preserves that command but does not capture Kimi session IDs or automatically resume them. ACP uses the separate verified receipt described below. Avoid adding `--continue`
@@ -362,9 +362,17 @@ submit one message after changing the native TUI model, or set
 `--model provider/model` in the launch command. Existing terminal-only receipts
 are not adopted; subsequent managed stop/start preserves the new session.
 
+When a Kilo terminal opens or reopens, CCCC waits for its empty chat input before
+sending the first queued message. If it stays queued, open the member's terminal,
+return to its session, close any menu, and finish or clear your draft. Leave the
+cursor in the empty chat input. CCCC retries the queued message automatically.
+This input check has been verified with Kilo 7.8.27.
+CCCC marks the first delivery accepted when that session records the message.
+If delivery is uncertain, check Kilo's history before choosing **Retry**.
+
 Codex, Claude, Grok, OpenCode, and Kilo always pair their native terminal with the
 managed background session described above. DeepSeek uses ACP NDJSON through
-CCCC's fixed composition and has no terminal surface. Provider health determines
+the official ACP profile and has no terminal surface. Provider health determines
 the agent's `running` value, and stopping the agent or Group closes the owned
 provider session. Internal `headless.*` event names remain a wire-format detail;
 they are not a selectable agent mode.
@@ -374,10 +382,13 @@ projected to `headless.message.delta` and `headless.message.completed`; turn
 boundaries use `headless.turn.started` plus `headless.turn.completed` or
 `headless.turn.failed`. This is the same durable event contract used by Web SSE
 and reconnect snapshots. The daemon inherits its process environment, then
-overlays actor/profile values, but forces the managed `DSH_HOME` into CCCC's
-versioned runtime directory. ACP session data is isolated per agent at
-`CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/sessions`, never in the
-attached project. Installation and provider turns each have a 300-second bound.
+overlays actor/profile values. For the managed launcher it sets `DSH_HOME` to
+the agent's own `CCCC_HOME/groups/<group_id>/state/deepseek/<actor_id>/harness`
+directory, so ACP session data stays per agent in `harness/sessions` there,
+never in the attached project. A custom launcher command keeps the sibling
+`<actor_id>/sessions` directory, where sessions from earlier preview releases
+also remain. Installation stops after 15 minutes, and a provider turn fails
+after 300 seconds without provider output.
 A timed-out turn is cancelled and recorded as failed only after its terminal
 response; if confirmation cannot be obtained, the supervisor is stopped before
 the source message remains eligible for retry. Missing credentials and
@@ -467,7 +478,7 @@ conversation arguments remain the user's responsibility.
 
 ## Native TUI or official ACP
 
-Copilot, Devin, Cursor, Kimi Code, Auggie, Kiro, Hermes and Droid keep their native **TUI** as the default. Choose **ACP** in agent or Runtime Profile settings, or pass `--runtime-mode acp` to the agent CLI, for a CCCC-managed structured workspace with no native terminal. This is distinct from the existing same-session terminal integration for Codex, Claude, OpenCode, Grok and Kilo. A changed mode/command applies on next start, or immediately with **Save and restart**.
+Copilot, Devin, Cursor, Kimi Code, Auggie, Kiro and Droid keep their native **TUI** as the default; Hermes's default opens its TUI on the agent's ACP session (see [Kiro, Hermes and Droid details](#kiro-hermes-and-droid-details)). Choose **ACP** in agent or Runtime Profile settings, or pass `--runtime-mode acp` to the agent CLI, for a CCCC-managed structured workspace with no native terminal. This is distinct from the existing same-session terminal integration for Codex, Claude, OpenCode, Grok and Kilo. A changed mode/command applies on next start, or immediately with **Save and restart**.
 
 Saving without restarting keeps messages flowing through the current session: a native terminal remains native, and a running ACP session remains ACP. **Start** is idempotent while that session runs; use **Restart** to apply the saved mode.
 
@@ -482,7 +493,7 @@ cccc actor add hermes-worker --runtime hermes --runtime-mode acp
 cccc actor add droid-worker --runtime droid --runtime-mode acp
 ```
 
-Install the current official CLI and log in with its native command (`copilot login`, `devin auth login`, or `agent login`). CCCC does not copy credentials or change global MCP files. Each agent gets a separate provider session and explicit CCCC MCP identity. Copilot uses process-local MCP configuration; Devin, Cursor, Kimi Code, Auggie, Kiro, Hermes and Droid accept session-injected MCP. The adapter disables Copilot and Auggie executable auto-updaters inside managed launches. Read-only installation detection does not certify login or successful tasks.
+Install the current official CLI and log in with its native command (`copilot login`, `devin auth login`, or `agent login`). CCCC does not copy credentials or change global MCP files, apart from removing the Hermes `cccc` entry earlier CCCC versions saved (see below). Each agent gets a separate provider session and explicit CCCC MCP identity. Copilot uses process-local MCP configuration; Devin, Cursor, Kimi Code, Auggie, Kiro, Hermes and Droid accept session-injected MCP. The adapter disables Copilot and Auggie executable auto-updaters inside managed launches. Read-only installation detection does not certify login or successful tasks.
 
 The same ACP adapters are available in **Chet** and **Voice Secretary** settings. Only ACP Profiles for these Runtimes are eligible; a native TUI Profile is not a Chet adapter. Realtime Voice credentials remain independent. Chet input is serialized and its queue, progress, pending decisions and cancel action remain visible.
 
@@ -498,15 +509,29 @@ The adapter targets current official ACP interfaces: [Copilot](https://docs.gith
 
 The Kimi adapter targets the current TypeScript [Kimi Code](https://github.com/MoonshotAI/kimi-code), not the separate Python `kimi-cli`. The default `kimi --yolo` maps to ACP mode `auto` (safe operations automatic); `kimi --auto` maps to ACP mode `yolo` (all operations automatic), and `--plan` keeps planning mode. Explicit models are selected through the advertised model configuration after both new and loaded sessions.
 
+If you use several CCCC data directories, Kimi Code 2.6.3 also loads its
+user-level MCP configuration when starting an ACP session. A `cccc` entry
+that points to a stopped daemon in another directory can delay the first
+reply or leave the agent without CCCC tools. To share the entry between
+instances, remove only `mcpServers.cccc.env.CCCC_HOME` from
+`$KIMI_CODE_HOME/mcp.json` (normally `~/.kimi-code/mcp.json`), then restart
+the affected agent. The entry inherits the launching process's directory.
+When starting Kimi outside CCCC, set `CCCC_HOME` in its environment if you
+want it to use a custom data directory.
+
 Auggie uses [official ACP](https://docs.augmentcode.com/cli/acp/agent). Workspace indexing consent can arrive during startup: CCCC does not grant upload permission automatically; a request without an active task is cancelled, and Auggie continues with indexing denied. If it arrives during a task, it remains an explicit user permission request; the Secretary reports that decision as needing user input rather than blocking its queue. Existing provider settings remain provider-owned. Runtime-specific model and mode choices are reapplied from the server catalog. Both adapters retain interactive approvals unless the configured command explicitly chooses unrestricted policy. Native tools retain the provider's filesystem/network permissions; session-injected CCCC tools are not a sandbox or a guarantee that user-configured MCP services are excluded.
 
 ### Kiro, Hermes and Droid details
 
 Kiro uses only the official **V3** ACP engine (`kiro-cli acp --agent-engine=v3 --auth-method cli`). The explicit authentication method keeps login with Kiro rather than delegating token requests to CCCC. Native `--model`, `--agent` and `--effort` intent is applied through the advertised session configuration after new/load. `--trust-all-tools` permits one-time host approval; it does not write permanent consent. Upgrade to a CLI that supports V3 and finish its normal login before selecting ACP. See [Kiro's ACP migration guide](https://kiro.dev/docs/cli/v3/acp-migration/).
 
-Hermes uses `hermes acp` with an ACP-capable installation. CCCC skips early configured-MCP discovery and injects its session MCP server. Hermes can still load user-configured MCP servers when constructing the agent; this is not strict MCP or filesystem isolation. Native `--tui` intent is removed and explicit `--yolo` permits one-time approval. Before restoring attempted work, CCCC verifies the exact session ID and workspace through `session/list`; an unknown or unverifiable session fails rather than using Hermes's fresh-session fallback. Confirmed cancellation retires the process so Hermes cannot append the interrupted input to the next task. Agents and Chet keep their saved identities for exact-ID recovery. Secretary cancellation follows its existing task cleanup; subsequent accepted work starts a new resident conversation while source and task records remain. This requires the installed server's load/list capabilities, not merely a matching version string. See [Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/).
+Hermes agents run on `hermes acp` (an ACP-capable installation). In the default mode CCCC also opens Hermes's own TUI on the agent's session: CCCC's turns appear there, and you can type your own turns and session commands such as `/model`. Text typed there is Hermes's own input, and by default Hermes interrupts a running turn for it (`busy_input_mode`; `/busy queue` makes it wait). CCCC sends messages, approvals and cancellation through ACP; the only thing it types into the terminal is Ctrl+C when it stops the agent. ACP mode has no terminal. A `-p`/`--profile` choice in the agent command applies to both. Without one, the agent uses the profile Hermes selects when it starts and keeps it until it restarts, also when you reopen its terminal after `hermes profile use`; after a restart in another profile it begins a new conversation. Explicit `--yolo` permits one-time approval. Agents use Hermes's ACP tool set (`platform_toolsets.acp` in the profile config); the TUI's `/tools` cannot change it on Hermes's shared gateway.
 
-Hermes native setup uses the official MCP add flow and checks that its saved CCCC entry is enabled, points to the current executable and retains actor-time identity placeholders. ACP errors identify the failed request, such as `session/new`, and include safe, bounded Hermes details when available. Entering the standalone TUI does not verify ACP agent creation or provider authentication; use the specific error to check Hermes's normal provider setup.
+On the first start after upgrading from CCCC 0.4.58, a default-mode Hermes agent starts a new conversation. An agent already using explicit ACP mode also starts a new conversation once because its launch configuration changed. Later starts can resume that conversation.
+
+Each agent gets its own CCCC MCP server inside its session, so its CCCC identity is its own. Hermes gives every enabled `mcp_servers` entry of a profile to every session in that profile, so do not add a `cccc` server to the profile. Before an agent starts, CCCC removes the entry earlier CCCC versions saved in the profile's config file. It refuses to start while Hermes reads any other `cccc` entry for the profile, enabled or not, and says where to remove it; for an entry in the config file, that is `hermes --profile NAME config unset mcp_servers.cccc`. `cccc runtime hermes prepare` does the same removal on demand, and `cccc runtime hermes status` reports what the profile holds. Your other MCP servers stay available to the agent; this is not strict MCP or filesystem isolation.
+
+Before restoring attempted work, CCCC verifies the exact session ID and workspace through `session/list`; an unknown or unverifiable session fails rather than using Hermes's fresh-session fallback. This requires the installed server's load/list capabilities, not merely a matching version string. A cancelled turn leaves the session usable, and its input is not replayed. Hermes runs turns in a shared gateway that can serve multiple profiles. When you stop an agent, CCCC requests cancellation of any prompt it sent and records whether Hermes confirms that prompt has ended. If the agent has a terminal, CCCC also sends Ctrl+C and records whether the write succeeded. The gateway stays available to other sessions. ACP errors identify the failed request, such as `session/new`, and include safe, bounded Hermes details when available. A profile with no provider yet cannot start a session, and Hermes then offers its own provider and model setup. An agent with a terminal runs that setup there, and CCCC connects once it exits; messages wait until then. Launching the agent again or starting the Group leaves an open setup as it is, with what you have typed, and so does a daemon restart that keeps agents. If the setup ends without a provider, the agent waits until you launch it again, which opens the setup again. In ACP mode the agent does not start, and the error names the command to run in a terminal. See [Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp/).
 
 Droid uses its official `droid exec --output-format acp` entry. Native `--auto low/medium/high` selects the corresponding advertised ACP autonomy mode; high autonomy is not an extra host bypass. Explicit model and reasoning effort are reapplied after new/load. CCCC does not add a parallel raw JSON-RPC adapter. See [Droid IDE integrations](https://docs.factory.com/ide-integrations).
 
@@ -815,12 +840,12 @@ Common checks:
 | Symptom | Check |
 |---------|-------|
 | Runtime is listed but unavailable | Install the CLI and make sure the command is on `PATH`. |
-| MCP tools are missing in the runtime | Run `cccc setup --runtime <id>` or follow the prompt-assisted setup instructions. |
+| MCP tools are missing in the runtime | Run `cccc setup --runtime <id>`; for `custom`, add the configuration it prints. |
 | Custom agent will not start | Ensure `--command` is set; CCCC cannot infer a command for `custom`. |
 | Existing agent does not pick up setup changes | Restart the agent after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
 
-Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, Kilo, and Pi receive an agent-scoped server inside their managed session. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the agent process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Native Cursor TUI retains its prompt-assisted startup setup contract; the prompt checks the registered executable and arguments as well as tool availability, because a legacy MCP can expose the same bootstrap name. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, Kilo and Pi reports session ownership. Optional ACP setup reports session injection without modifying global MCP files; it does not certify provider login. For Grok it prepares and verifies the same native registration used during agent and Chet startup.
+Before the Rust daemon creates a Runtime session, it establishes the Runtime's CCCC MCP path. Codex, Claude Code, OpenCode, Kilo, and Pi receive an agent-scoped server inside their managed session. Grok shares one native user-level entry between its managed session and terminal, with identity inherited from the launching process. Other automatically configured runtimes are checked against the active public CCCC executable: missing entries are installed, safely replaceable stale user/global entries are replaced, and the result is verified before the agent process starts. A failed check, repair, or verification prevents launch, including daemon restart recovery. A stale entry from a more specific project or non-user scope fails with an actionable error instead of being silently overwritten. Cursor starts MCP servers without the CCCC variables of the agent's environment, so its user entry in `~/.cursor/mcp.json` maps `CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` with Cursor's `${env:NAME}` interpolation; an entry with fixed values, other CCCC variables or another executable is replaced. Cursor CLI 2026.11.11 reads project servers only from `.cursor/mcp.json` at the top of the enclosing Git work tree, or in the working directory outside one; a `cccc` entry there takes precedence, so CCCC checks that file. Outside CCCC, Cursor fills these placeholders from the environment of the session that starts it; CCCC treats a placeholder Cursor could not fill as unset, so such a session uses the default CCCC home with no agent identity. Auggie 1.2.1 likewise passes an MCP server only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` and the variables its entry names. CCCC's user entry in `~/.augment/settings.json` therefore maps each of the three to `${NAME:-$NAME}`, and sets `useShellInterpolation: false` so that Auggie starts the CCCC executable directly rather than through a shell; an entry without these values, or with other fixed CCCC variables, is replaced. A `cccc` entry in `.augment/settings.local.json` or `.augment/settings.json` at the top of the enclosing Git work tree, or in the working directory outside one, takes precedence over the user entry, so a different one there stops the agent from starting with an error. Outside CCCC, Auggie expands an unset variable to the exact text `$NAME`, which CCCC treats as unset in the same way. Indirect custom provider commands remain responsible for their own MCP configuration. `cccc setup` for Claude, OpenCode, Kilo and Pi reports session ownership. Optional ACP setup reports session injection without modifying global MCP files; it does not certify provider login. For Grok it prepares and verifies the same native registration used during agent and Chet startup.
 
 This preflight runs before the provider discovers its tools. It therefore repairs Python-to-Rust executable path changes without requiring a second restart. Sessions that were already running when an external MCP configuration changed still need to be restarted because provider tool catalogs are session-scoped.
 
@@ -865,9 +890,8 @@ include only a conditional reminder to call `cccc_bootstrap` if this conversatio
 has not initialized. The reminder does not replay an earlier task or prove its
 receipt. Merely starting an idle agent does not submit a model prompt.
 
-Native Cursor TUI receives MCP setup instructions with its first task; ACP injects the agent MCP directly. Cursor CLI
-2026.10.01-e373342 exposes `mcp list`, `list-tools`, `login`, `enable`, and `disable`,
-but no `mcp add`; it uses `.cursor/mcp.json` or `~/.cursor/mcp.json`.
+Native Cursor TUI uses the `cccc` entry described above in `~/.cursor/mcp.json`.
+In ACP mode, CCCC supplies the agent's MCP server when it opens the session.
 
 Antigravity uses the normal automatic PTY delivery path. Opening its Web
 terminal or confirming each new process is not required. Terminal footer text
@@ -881,10 +905,7 @@ For a failed or uncertain delivery, check the terminal before using the existing
 retry action; an uncertain handoff requires explicit retry confirmation.
 
 The agent environment exposes the owning CCCC launcher as `CCCC_CLI` and places
-its directory on PATH, including extracted installations. Prompt-assisted MCP
-configuration must inherit `CCCC_HOME`, `CCCC_GROUP_ID` and `CCCC_ACTOR_ID` from
-the agent process, rather than pinning one instance in a shared MCP registration.
-Managed runtime sessions continue to use their protocol/session injection path.
+its directory on PATH, including extracted installations.
 Native PTY submission proves bytes were written, not that a provider completed
 bootstrap or accepted a task; this change does not add a provider acknowledgement
 protocol to PTY runtimes.

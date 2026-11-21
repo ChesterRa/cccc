@@ -294,6 +294,12 @@ CCCC supports snapshot/compaction. Large blobs are stored separately in the `blo
 
 ## Troubleshooting
 
+### What does a daemon restart keep?
+
+Groups, messages and tasks are kept. Agents that CCCC started stop with the daemon, and CCCC tries
+to start a running Group's agents again, but a turn that was running does not continue. Sessions you
+started yourself keep running. See [What a daemon restart keeps](operations.md#what-a-daemon-restart-keeps).
+
 ### Why do git worktrees remain after an agent stops? {#why-do-git-worktrees-remain-after-an-actor-stops}
 
 CCCC does not manage worktree cleanup. Agents or custom native launch commands can create worktrees, and stopping an agent does not guarantee the runtime's cleanup flow. See [Git worktrees and long-lived agents](runtimes.md#git-worktrees-and-long-lived-actors) for ownership and manual cleanup steps.

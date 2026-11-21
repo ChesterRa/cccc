@@ -15,6 +15,7 @@ windows-sys = { workspace = true, features = ["Win32_System_Console"] }
 name = "cccc_windows_console"
 
 [lints.clippy]
+disallowed_methods = "allow"
 dbg_macro = "deny"
 todo = "deny"
 unwrap_used = "deny"

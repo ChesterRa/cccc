@@ -1,5 +1,7 @@
 use super::{receipt, render};
-use crate::host_state::{DaemonState, HostPhase, ShutdownReport, StopResult, WebState};
+use crate::host_state::{
+    AgentsResult, DaemonState, HostPhase, ShutdownReport, StopResult, WebState,
+};
 use crate::tui::app::{App, Notice, Screen};
 use crate::tui::groups::{GroupList, GroupStatus, GroupSummary};
 use crate::tui::test_support::{context, running, source};
@@ -25,7 +27,7 @@ fn group(group_id: &str, title: &str, status: GroupStatus, running: u64) -> Grou
         title: title.into(),
         status,
         state: "active".into(),
-        running_actors: running,
+        running_actors: Some(running),
     }
 }
 
@@ -431,6 +433,10 @@ fn help_lists_commands_and_scrolls_to_the_headless_exit() {
     let rows = screen_rows(&draw(&app, 60, 16, now));
     assert!(row_with(&rows, "/groups").contains("Open the selected group"));
     assert!(row_with(&rows, "/sessions").contains("Browse native sessions"));
+    assert!(!rows.iter().any(|row| row.contains("/restart")));
+    app.context.local_restart = true;
+    let with_restart = screen_rows(&draw(&app, 60, 16, now));
+    assert!(row_with(&with_restart, "/restart").contains("Restart CCCC"));
     assert_eq!(rows[15], " Up/Down scroll   Esc back");
     app.handle(press(KeyCode::End));
     let rows = screen_rows(&draw(&app, 60, 16, now));
@@ -484,14 +490,97 @@ fn the_receipt_reports_what_actually_stopped() {
         receipt(&ShutdownReport {
             web: StopResult::Stopped,
             daemon: StopResult::Stopped,
+            agents: AgentsResult::Confirmed {
+                stopped: 3,
+                kept: 0,
+                uncertain: 0,
+                review_owners: vec![]
+            },
+            log_path: log.clone(),
+        }),
+        "CCCC stopped.\n  Web     stopped\n  Daemon  stopped\n  Agents  stopped 3"
+    );
+    assert_eq!(
+        receipt(&ShutdownReport {
+            web: StopResult::Stopped,
+            daemon: StopResult::Stopped,
+            agents: AgentsResult::Confirmed {
+                stopped: 0,
+                kept: 2,
+                uncertain: 0,
+                review_owners: vec![]
+            },
+            log_path: log.clone(),
+        }),
+        "CCCC stopped.\n  Web     stopped\n  Daemon  stopped\n  Agents  kept 2 running; start CCCC again to reattach them"
+    );
+    assert_eq!(
+        receipt(&ShutdownReport {
+            web: StopResult::Stopped,
+            daemon: StopResult::Stopped,
+            agents: AgentsResult::Confirmed {
+                stopped: 0,
+                kept: 0,
+                uncertain: 0,
+                review_owners: vec![]
+            },
             log_path: log.clone(),
         }),
         "CCCC stopped.\n  Web     stopped\n  Daemon  stopped"
+    );
+    // Uncertain agents are a problem worth the log path, and are never counted as stopped.
+    assert_eq!(
+        receipt(&ShutdownReport {
+            web: StopResult::Stopped,
+            daemon: StopResult::Stopped,
+            agents: AgentsResult::Confirmed {
+                stopped: 1,
+                kept: 0,
+                uncertain: 2,
+                review_owners: vec![]
+            },
+            log_path: log.clone(),
+        }),
+        format!(
+            "CCCC stopped with problems.\n  Web     stopped\n  Daemon  stopped\n  Agents  stopped 1; 2 may still be running; run `cccc daemon stop` to stop them\n  Log     {}",
+            std::path::Path::new("/home/me/.cccc/daemon/ccccd.log").display()
+        )
+    );
+    // An owner kept for review is named with its command; another stop would not settle it.
+    assert_eq!(
+        receipt(&ShutdownReport {
+            web: StopResult::Stopped,
+            daemon: StopResult::Stopped,
+            agents: AgentsResult::Confirmed {
+                stopped: 1,
+                kept: 0,
+                uncertain: 1,
+                review_owners: vec!["2cabc7edcb3940eaa8e2c06dd258b4a1".into()]
+            },
+            log_path: log.clone(),
+        }),
+        format!(
+            "CCCC stopped with problems.\n  Web     stopped\n  Daemon  stopped\n  Agents  stopped 1; 1 may still be running; to review, run `cccc daemon process-recovery --owner session --owner-id 2cabc7edcb3940eaa8e2c06dd258b4a1 list`\n  Log     {}",
+            std::path::Path::new("/home/me/.cccc/daemon/ccccd.log").display()
+        )
+    );
+    assert_eq!(
+        receipt(&ShutdownReport {
+            web: StopResult::Stopped,
+            daemon: StopResult::Stopped,
+            agents: AgentsResult::Unconfirmed,
+            log_path: log.clone(),
+        }),
+        format!(
+            "CCCC stopped with problems.\n  Web     stopped\n  Daemon  stopped\n  Agents  not confirmed; some may still be running; run `cccc daemon stop` to stop them\n  Log     {}",
+            std::path::Path::new("/home/me/.cccc/daemon/ccccd.log").display()
+        )
     );
     assert_eq!(
         receipt(&ShutdownReport {
             web: StopResult::Stopped,
             daemon: StopResult::KeptExternal { pid: Some(7) },
+            agents: AgentsResult::NotOwned,
             log_path: log.clone(),
         }),
         "CCCC stopped.\n  Web     stopped\n  Daemon  kept running (external, pid 7)"
@@ -502,6 +591,7 @@ fn the_receipt_reports_what_actually_stopped() {
             daemon: StopResult::Failed {
                 message: "did not stop\nin time".into(),
             },
+            agents: AgentsResult::NotOwned,
             log_path: log,
         }),
         format!(

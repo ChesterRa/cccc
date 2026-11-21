@@ -188,9 +188,10 @@ cccc ledger search --by assistant # 按发送者搜索事件
 ### daemon 控制
 
 ```bash
-cccc daemon status # 检查状态
-cccc daemon start  # 启动 daemon
-cccc daemon stop   # 停止 daemon 及其管理的各组进程
+cccc daemon status              # 检查状态
+cccc daemon start               # 启动 daemon
+cccc daemon stop                # 停止 daemon 及其管理的各组进程
+cccc daemon stop --keep-agents  # Linux 和原生 arm64 版 macOS：只停 daemon，智能体继续运行
 ```
 
 ## 启动 Web UI（可选） {#启动-web-ui-可选}

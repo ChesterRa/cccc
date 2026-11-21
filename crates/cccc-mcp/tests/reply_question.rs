@@ -155,3 +155,5 @@ async fn an_actor_asks_the_user_a_question_through_the_send_tool() {
     daemon.abort();
     let _ = daemon.await;
 }
+
+cccc_daemon::session_owner_test_entry!();

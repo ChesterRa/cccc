@@ -9,8 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::AppState;
 use crate::api::ApiError;
 use crate::browser_surface::{
-    BOUND_CONVERSATION_ERROR_MARKER, PromptSubmissionOutcome, conversation_url_for_target,
-    is_chatgpt_url,
+    BOUND_CONVERSATION_ERROR_MARKER, PromptSubmissionOutcome, is_chatgpt_url,
 };
 
 use super::web_model_browser::key;
@@ -172,6 +171,27 @@ fn spawn_worker(state: AppState, group_id: String, actor_id: String) {
         // Work that arrived during the last attempt found this worker running.
         spawn_worker(state, group_id, actor_id);
     });
+}
+
+/// Waits until no delivery or browser control in this process holds an
+/// Actor's browser work, or `timeout` passes. Returns whether all had ended.
+pub(crate) async fn wait_for_browser_work(timeout: std::time::Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let idle = IN_FLIGHT.get().is_none_or(|sessions| {
+            sessions
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .is_empty()
+        });
+        if idle {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
 }
 
 pub(super) async fn deliver_pending(
@@ -475,6 +495,10 @@ async fn deliver_once(
         )?;
         record_connector(state, group_id, actor_id, "failed", "", &message)?;
         return Ok(DeliveryOutcome::Stopped);
+    }
+    // A stopping Web claims nothing more; what it holds finishes first.
+    if state.browser_surfaces.stopping() {
+        return Ok(DeliveryOutcome::Idle);
     }
     let mut wait_args = browser_wait_args(group_id, actor_id);
     if target["last_delivery_status"] == "deferred" {
@@ -1011,8 +1035,6 @@ async fn recover_verified_ambiguous_submission(
     );
     let recovered = daemon_call(state, "web_model_runtime_recover_turn", recover_args).await?;
     let turn = &recovered["turn"];
-    let observed_url = submission["observed"]["url"].as_str().unwrap_or("");
-    let conversation_url = conversation_url_for_target(target_url, observed_url);
     let (_, bootstrap_seed) = build_browser_prompt(
         turn,
         target,
@@ -1043,13 +1065,8 @@ async fn recover_verified_ambiguous_submission(
     )
     .await?;
     if let Some(seed) = &bootstrap_seed {
-        mark_bootstrap_seed_delivered(
-            state,
-            group_id,
-            actor_id,
-            conversation_url.as_deref().unwrap_or(target_url),
-            seed,
-        )?;
+        // The receipt proved the bound conversation, even when its Project route changed.
+        mark_bootstrap_seed_delivered(state, group_id, actor_id, target_url, seed)?;
     }
     let mut recovered_submission = submission.clone();
     if let Some(object) = recovered_submission.as_object_mut() {
@@ -1074,7 +1091,6 @@ async fn recover_verified_ambiguous_submission(
         actor_id,
         turn_id,
         submission_evidence,
-        conversation_bound = conversation_url.is_some(),
         "Recovered a browser submission from direct delivery evidence"
     );
     Ok(true)

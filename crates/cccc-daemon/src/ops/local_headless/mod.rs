@@ -6,6 +6,7 @@ mod events;
 mod events_migration;
 #[cfg(test)]
 mod events_migration_tests;
+mod hermes_setup;
 mod managed_reader;
 mod notice_gate;
 mod output;
@@ -24,10 +25,13 @@ pub(crate) use events::{
     append as append_event, append_with_dedupe as append_event_with_dedupe,
     contains_dedupe as contains_event_dedupe,
 };
+pub(crate) use supervisor::submit_prepared;
 pub(crate) use supervisor::{
     cancel_turn, respond_interaction, respond_permission, structured_state,
 };
-pub(crate) use supervisor::{registered_generation, registered_running, registered_workspace};
+pub(crate) use supervisor::{
+    pauses_after_confirmation, registered_generation, registered_running, registered_workspace,
+};
 
 use cccc_core::HomeLayout;
 use serde::Serialize;
@@ -47,14 +51,26 @@ pub(super) fn uses_managed_session(actor: &cccc_contracts::Actor) -> bool {
 }
 
 pub(crate) fn waiting_for_workspace_trust(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    if let Some(snapshot) = crate::session_owner::snapshot(group_id, actor_id)? {
+        return Ok(snapshot.waiting_for_workspace_trust);
+    }
     workspace_trust_recovery::registered(&(group_id.to_owned(), actor_id.to_owned()))
 }
 
 pub(crate) fn confirmation_terminal_owns(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    if let Some(snapshot) = crate::session_owner::snapshot(group_id, actor_id)? {
+        return Ok(snapshot.confirmation_terminal);
+    }
     confirmation_terminal::owns(group_id, actor_id)
 }
 
 pub(crate) fn confirmation_pending_active(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    if let Some(snapshot) = crate::session_owner::snapshot(group_id, actor_id)? {
+        return Ok(snapshot.confirmation_pending);
+    }
     workspace_trust_recovery::active(&(group_id.to_owned(), actor_id.to_owned()))
 }
 
@@ -65,15 +81,35 @@ pub(super) fn orphaned_confirmation(group_id: &str, actor_id: &str) -> std::io::
 }
 
 pub(crate) fn pause_confirmation(group_id: &str, actor_id: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if crate::session_owner::control(
+        group_id,
+        actor_id,
+        None,
+        crate::session_owner::Control::PauseConfirmation,
+    )?
+    .is_some()
+    {
+        return Ok(());
+    }
     confirmation_pause::pause((group_id.to_owned(), actor_id.to_owned()))
 }
 
 pub(crate) fn confirmation_paused(group_id: &str, actor_id: &str) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    if let Some(snapshot) = crate::session_owner::snapshot(group_id, actor_id)? {
+        return Ok(snapshot.confirmation_paused);
+    }
     confirmation_pause::is_paused(&(group_id.to_owned(), actor_id.to_owned()))
 }
 
+/// Read where the pause lives: a session owner keeps its members' pauses, and
+/// a start must be refused there before it retires the owner's registration.
 pub(super) fn ensure_confirmation_allowed(group_id: &str, actor_id: &str) -> std::io::Result<()> {
-    confirmation_pause::ensure_allowed(&(group_id.to_owned(), actor_id.to_owned()))
+    if confirmation_paused(group_id, actor_id)? {
+        return Err(confirmation_pause::paused_error());
+    }
+    Ok(())
 }
 
 pub(super) fn is_confirmation_paused_error(error: &std::io::Error) -> bool {
@@ -81,6 +117,28 @@ pub(super) fn is_confirmation_paused_error(error: &std::io::Error) -> bool {
 }
 
 pub(crate) fn retry_confirmation(group_id: &str, actor_id: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    if crate::session_owner::control(
+        group_id,
+        actor_id,
+        None,
+        crate::session_owner::Control::RetryConfirmation,
+    )?
+    .is_some()
+    {
+        return Ok(());
+    }
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    workspace_trust_recovery::cancel(&key)?;
+    cccc_runtime::reset_exited_startup_input(group_id, actor_id)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    confirmation_pause::retry(&key)
+}
+
+/// A session owner retiring a member's registration: nothing outside the owner
+/// could observe or clear its confirmation state afterwards. Cancelling first
+/// keeps a late exit of the retired setup or prompt from pausing again.
+pub(crate) fn forget_confirmation(group_id: &str, actor_id: &str) -> std::io::Result<()> {
     let key = (group_id.to_owned(), actor_id.to_owned());
     workspace_trust_recovery::cancel(&key)?;
     confirmation_pause::retry(&key)
@@ -108,7 +166,7 @@ pub(super) fn uses_managed_provider_cli(actor: &cccc_contracts::Actor) -> bool {
     provider_cli::uses_managed_provider_cli(actor)
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct HeadlessStatus {
     pub status: String,
     pub task_id: Option<String>,
@@ -120,7 +178,7 @@ pub struct HeadlessStatus {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum BatchSubmission {
     Deferred,
     Accepted,
@@ -144,6 +202,8 @@ struct ViewerLaunch {
     env: std::collections::BTreeMap<String, String>,
     cwd: std::path::PathBuf,
     submit: cccc_contracts::ActorSubmit,
+    /// The last Kilo viewer whose first input the bound session recorded.
+    confirmed_input: Option<(u32, String)>,
 }
 
 struct Session {
@@ -161,6 +221,10 @@ struct Session {
     stop_lock: Mutex<()>,
     startup_prompt: Mutex<Option<String>>,
     active_turn: Mutex<Option<ActiveTurn>>,
+    /// Values the activity journal redacts. They come from the environment this
+    /// launch delivered, so a later settings change cannot unmask what the
+    /// running provider still holds.
+    journal_private: Vec<String>,
 }
 
 fn poisoned() -> std::io::Error {
@@ -185,7 +249,7 @@ where
     })?
 }
 
-fn block_on_managed<F>(future: F) -> F::Output
+pub(super) fn block_on_managed<F>(future: F) -> F::Output
 where
     F: Future + Send,
     F::Output: Send,

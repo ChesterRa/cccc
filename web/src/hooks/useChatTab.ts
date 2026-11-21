@@ -83,7 +83,7 @@ import { useTaskReferenceIndex } from "./chat/useTaskReferenceIndex";
 import { useShallow } from "zustand/react/shallow";
 interface UseChatTabOptions {
   selectedGroupId: string;
-  selectedGroupRunning: boolean;
+  selectedGroupRunning: boolean | null;
   actors: Actor[];
   recipientActors: Actor[];
   showMentionMenu?: boolean;

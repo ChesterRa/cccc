@@ -83,4 +83,23 @@ describe("actor refresh stability", () => {
       deriveRuntimeStatusFromActors(actors, { lifecycle_state: "stopped" }).lifecycle_state,
     ).toBe("stopped");
   });
+
+  it("does not count running agents while one of them cannot be observed", () => {
+    const actors: Actor[] = [
+      { id: "t1", runtime: "custom", runner: "pty", running: true },
+      {
+        id: "c1",
+        runtime: "claude",
+        runner: "headless",
+        effective_working_state: "unknown",
+        effective_working_reason: "runtime_owner_unavailable",
+        runtime_observation_error: "session owner could not confirm this member",
+      },
+    ];
+
+    expect(deriveRuntimeStatusFromActors(actors, { lifecycle_state: "active" })).toEqual({
+      lifecycle_state: "active",
+      available: false,
+    });
+  });
 });

@@ -1,0 +1,274 @@
+{
+  "result": "snapshot",
+  "actors": [
+    {
+      "actor": {
+        "group_id": "g_b2f072eca5b4",
+        "actor_id": "controlled",
+        "actor_created_at": "2026-11-19T01:02:39.167488Z",
+        "generation": "ea1fe877c1b941ad972ff58322f29e1a"
+      },
+      "mcp": {
+        "binding": {
+          "owner_id": "4d8cc8d0304f44d9957810e233e26a30",
+          "instance": "98ab8ea9bc2e46cc8a5c592dc6ef5ef9",
+          "launch_id": "e4c458fc9b1f478586e431ee87a0e5e9"
+        },
+        "initialized": true,
+        "source_controlled": true,
+        "processes": [
+          {
+            "native": {
+              "pid": 360,
+              "started": "76863655",
+              "boot": "00000000-0000-0000-0000-000000000000"
+            },
+            "report": {
+              "registration": 1,
+              "instance": "98ab8ea9bc2e46cc8a5c592dc6ef5ef9",
+              "launch_id": "e4c458fc9b1f478586e431ee87a0e5e9",
+              "version": "0.4.58",
+              "source_id": "fdd20fd457936c9d47d6327694e0e91463de5a1fe5e02161857c1544e1e58a96",
+              "mcp_contract": 1
+            },
+            "observable": true
+          }
+        ]
+      },
+      "owner": {
+        "identity": {
+          "Managed": {
+            "generation": "ea1fe877c1b941ad972ff58322f29e1a"
+          }
+        },
+        "state": "Running"
+      },
+      "terminal": {
+        "group_id": "g_b2f072eca5b4",
+        "actor_id": "controlled",
+        "runner": "pty",
+        "running": true,
+        "pid": 381,
+        "cwd": "/tmp/fixture/project",
+        "started_at": "2026-11-19T01:02:39.539746Z",
+        "exit_code": null,
+        "startup_input_pending": false
+      },
+      "terminal_launch": null,
+      "managed_status": {
+        "status": "idle",
+        "task_id": null,
+        "updated_at": "2026-11-19T01:02:39.539759Z",
+        "pid": 381,
+        "reason": null
+      },
+      "provider_exited": false,
+      "workspace": {
+        "scope_key": "s_97a58a4a8f94",
+        "cwd": "/tmp/fixture/project",
+        "actor_generation": "e9eb2f2a-f04e-46d2-bab5-cd59e7bc6bce"
+      },
+      "structured": {
+        "generation": "ea1fe877c1b941ad972ff58322f29e1a",
+        "permissions": [],
+        "runner": "pty",
+        "running": true,
+        "runtime": "codex",
+        "runtime_mode": "default",
+        "working": false
+      },
+      "ready_for_mail_notice": true,
+      "waiting_for_workspace_trust": false,
+      "confirmation_terminal": false,
+      "confirmation_pending": false,
+      "confirmation_paused": false
+    },
+    {
+      "actor": {
+        "group_id": "g_b2f072eca5b4",
+        "actor_id": "structured",
+        "actor_created_at": "2026-11-19T01:02:39.054329Z",
+        "generation": "21c580298b36426e961b483a076eb778"
+      },
+      "mcp": {
+        "binding": {
+          "owner_id": "4d8cc8d0304f44d9957810e233e26a30",
+          "instance": "98ab8ea9bc2e46cc8a5c592dc6ef5ef9",
+          "launch_id": "b29c80c214a74550b46c3e57fb4cbbcd"
+        },
+        "initialized": false,
+        "source_controlled": false,
+        "processes": []
+      },
+      "owner": {
+        "identity": {
+          "Managed": {
+            "generation": "21c580298b36426e961b483a076eb778"
+          }
+        },
+        "state": "Running"
+      },
+      "terminal": null,
+      "terminal_launch": null,
+      "managed_status": {
+        "status": "idle",
+        "task_id": null,
+        "updated_at": "2026-11-19T01:02:39.119894Z",
+        "pid": 203,
+        "reason": null
+      },
+      "provider_exited": false,
+      "workspace": {
+        "scope_key": "s_97a58a4a8f94",
+        "cwd": "/tmp/fixture/project",
+        "actor_generation": "dd52fdfe-701b-420b-bffd-df3a3cbde766"
+      },
+      "structured": {
+        "generation": "21c580298b36426e961b483a076eb778",
+        "permissions": [],
+        "runner": "headless",
+        "running": true,
+        "runtime": "kimi",
+        "runtime_mode": "acp",
+        "working": false
+      },
+      "ready_for_mail_notice": true,
+      "waiting_for_workspace_trust": false,
+      "confirmation_terminal": false,
+      "confirmation_pending": false,
+      "confirmation_paused": false
+    },
+    {
+      "actor": {
+        "group_id": "g_b2f072eca5b4",
+        "actor_id": "terminal",
+        "actor_created_at": "2026-11-19T01:02:38.953557Z",
+        "generation": "2026-11-19T01:02:39.011764Z"
+      },
+      "owner": {
+        "identity": {
+          "Pty": {
+            "pid": 142,
+            "started_at": "2026-11-19T01:02:39.011764Z",
+            "launch": {
+              "runtime": "custom",
+              "submit": "enter"
+            }
+          }
+        },
+        "state": "Running"
+      },
+      "terminal": {
+        "group_id": "g_b2f072eca5b4",
+        "actor_id": "terminal",
+        "runner": "pty",
+        "running": true,
+        "pid": 142,
+        "cwd": "/tmp/fixture/project",
+        "scope_key": "s_97a58a4a8f94",
+        "actor_generation": "1ca408ec-38e8-4e5e-8fbc-0a65aaff820e",
+        "started_at": "2026-11-19T01:02:39.011764Z",
+        "exit_code": null,
+        "startup_input_pending": false
+      },
+      "terminal_launch": {
+        "runtime": "custom",
+        "submit": "enter"
+      },
+      "managed_status": null,
+      "provider_exited": false,
+      "workspace": null,
+      "structured": null,
+      "ready_for_mail_notice": false,
+      "waiting_for_workspace_trust": false,
+      "confirmation_terminal": false,
+      "confirmation_pending": false,
+      "confirmation_paused": false
+    }
+  ],
+  "browsers": [
+    {
+      "resource": {
+        "resource_id": "b1c67e1f4b454168b8a0a5426747a277",
+        "owner_id": "4d8cc8d0304f44d9957810e233e26a30",
+        "instance": "98ab8ea9bc2e46cc8a5c592dc6ef5ef9",
+        "profile": "/tmp/fixture/cccc/state/web_model_browser/_shared/chatgpt_web/chrome_profile",
+        "mode": {
+          "kind": "system",
+          "background": false
+        },
+        "width": 1366,
+        "height": 900,
+        "proxy": null,
+        "websocket_url": "ws://127.0.0.1:9222/devtools/browser/fixture",
+        "display": ":99",
+        "vnc_port": 46189,
+        "strategy": "system_browser_cdp:chrome_xvfb",
+        "metadata": {
+          "browser_binary": "/usr/bin/google-chrome",
+          "cdp_port": 34055,
+          "channel": "chrome",
+          "display": ":99",
+          "display_owned": true,
+          "display_owner": "cccc_xvfb",
+          "pid": 465,
+          "profile_dir": "/tmp/fixture/cccc/state/web_model_browser/_shared/chatgpt_web/chrome_profile",
+          "visibility": "background"
+        },
+        "viewer": {
+          "kind": "vnc",
+          "vnc": {
+            "available": true,
+            "display": ":99",
+            "pid": 452,
+            "port": 46189,
+            "started_at": "2026-11-19T01:02:39.782157Z"
+          }
+        },
+        "state": "ready",
+        "error": null,
+        "sessions": [
+          {
+            "key": "web-model-login",
+            "actor": null,
+            "target_id": "152F1B8943A5367159E4E7A9E02BF90B",
+            "state": {
+              "height": 812,
+              "initial_url": null,
+              "is_system_browser": true,
+              "metadata": {
+                "browser_binary": "/usr/bin/google-chrome",
+                "cdp_port": 34055,
+                "channel": "chrome",
+                "display": ":99",
+                "display_owned": true,
+                "display_owner": "cccc_xvfb",
+                "pid": 465,
+                "profile_dir": "/tmp/fixture/cccc/state/web_model_browser/_shared/chatgpt_web/chrome_profile",
+                "shared_browser": true,
+                "visibility": "background"
+              },
+              "recover_closed_page": false,
+              "shared_browser": true,
+              "started_at": "2026-11-19T01:02:41.049428Z",
+              "strategy": "system_browser_cdp:chrome_xvfb",
+              "url": "https://chatgpt.com/",
+              "viewer": {
+                "kind": "vnc",
+                "vnc": {
+                  "available": true,
+                  "display": ":99",
+                  "pid": 452,
+                  "port": 46189,
+                  "started_at": "2026-11-19T01:02:39.782157Z"
+                }
+              },
+              "width": 1365
+            }
+          }
+        ]
+      },
+      "reattached": true
+    }
+  ]
+}

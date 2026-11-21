@@ -1,7 +1,9 @@
 import type { MouseEvent, SyntheticEvent } from "react";
 
 /** Ctrl, Cmd, Shift, Alt and non-primary clicks stay the browser's own. */
-export function isModifiedClick(event: MouseEvent) {
+export function isModifiedClick(
+  event: Pick<MouseEvent, "button" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey">,
+) {
   return event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey;
 }
 

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::dispatch::OpError;
 
 /// Kept inside the existing runtime owner, not in Group/Actor persistence.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LaunchWorkspace {
     pub scope_key: String,
     pub cwd: PathBuf,
@@ -38,6 +38,15 @@ impl LaunchWorkspace {
 }
 
 pub(crate) fn effective_scope(group: &GroupDoc, actor: Option<&Actor>) -> Option<EffectiveScope> {
+    #[cfg(unix)]
+    if let Some(actor) = actor
+        && actor.external_session_id.is_empty()
+        && crate::session_owner::snapshot(&group.group_id, &actor.id).is_err()
+    {
+        // An unavailable live workspace cannot authorize falling back to the
+        // saved next-launch directory for file or context operations.
+        return None;
+    }
     // With no managed owner, including Native sessions, this is only the CCCC
     // tool configuration. It does not observe or control the original app's cwd
     // or lifetime; an explicit same-key attachment rebind changes that config.

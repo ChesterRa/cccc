@@ -8,6 +8,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_production_roots_enforce_audited_process_constructors() -> None:
+    roots = sorted(ROOT.glob("crates/*/src/lib.rs")) + sorted(ROOT.glob("crates/*/src/main.rs"))
+    assert roots
+    for root in roots:
+        assert "#![cfg_attr(not(test), deny(clippy::disallowed_methods))]" in root.read_text(), root
+
+
 def _rust_precommit_plan(*changed_files: str) -> dict[str, str]:
     env = os.environ.copy()
     env.pop("CCCC_GROUP_ID", None)

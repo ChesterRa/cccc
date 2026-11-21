@@ -80,6 +80,24 @@ pub(crate) fn summary_row(task: &Map<String, Value>) -> Value {
     Value::Object(row)
 }
 
+/// Keep the selected task complete while projecting its children as list rows.
+pub(crate) fn summarize_children(result: &mut Map<String, Value>) {
+    let Some(children) = result
+        .get_mut("task")
+        .and_then(|task| task.get_mut("children"))
+        .and_then(Value::as_array_mut)
+        .filter(|children| !children.is_empty())
+    else {
+        return;
+    };
+    for child in children {
+        if let Some(task) = child.as_object() {
+            *child = summary_row(task);
+        }
+    }
+    result.insert("note".into(), json!(NOTE));
+}
+
 /// Replace the daemon's full task list with one page of summary rows.
 ///
 /// Without `status`, the page shows planned and active tasks; with `query`, also done ones, so

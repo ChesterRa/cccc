@@ -47,18 +47,14 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.55
+## What's new in 0.4.58
 
-- **A backlog next to your tasks.** A Markdown file in your project, such as `BACKLOG.md`, holds long-lived topics and ideas. Tasks shows its entries under a **Tasks | Backlog** switch, edits them in place and links each entry to the tasks made from it; agents use the new `cccc_backlog` tool. The file stays the only copy.
-- **Fewer new conversations after a `PATH` change.** When only the launch `PATH` changed, eligible managed agents can resume their saved conversation; the release notes give the conditions.
-- **Group rules only when due.** When a native session reads one message by its ID, the full Group rules come with it only when they are due, not every time.
-- **Coordination notes removed.** The Coordination log tab, the note actions of `cccc_coordination` and the note lists of the recovery pack are gone. Notes saved earlier stay in the Group's stored context.
-- **Fixes.** A task no longer stays blocked after the tasks it waited for are done (#201). Interrupting a managed Claude Code agent sends the request fields that Claude Code 2.1.317 requires; that version refused the previous request. A delivery that used up its retries no longer runs them again after every restart. Configuring a Web model connector no longer replaces its credential unless you ask to rotate it (#216).
-- **Two contributed commands.** `cccc ledger search` (#217) and `cccc actor new-session` (#207).
+- **Read documents in the page.** Markdown attachments switch between the rendered view and their unchanged source without downloading again. HTML attachments, Group HTML files and HTML from the raw GitHub and gist hosts open as a static preview: scripts do not run, forms are disabled and external resources are not loaded. HTML up to 20 MiB previews in full, embedded images included.
+- **One row for the phone composer.** At rest, the empty composer keeps attach, the template button, the input and voice on one row, so the template button no longer drops to a second line. A send in flight keeps its progress and **Stop waiting for upload** in view.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Check whether a message already arrived before sending it again. Then restart the daemon and Web and reload open pages: a page opened before the upgrade sends a removed field with some replies across Groups, and those replies are refused until it is reloaded. A native session keeps the MCP server it started with, and that server's previous tools, until the server is started again, for example by restarting the session. Coordination notes are no longer shown: to keep a copy that is easy to read, copy their text from the Coordination log tab before upgrading.
+**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Then restart the daemon and Web and reload open pages. A daemon restart still stops the agents that CCCC started.
 
-Details: [0.4.55 release notes](https://chesterra.github.io/cccc/release/v0.4.55_release_notes).
+Details: [0.4.58 release notes](https://chesterra.github.io/cccc/release/v0.4.58_release_notes).
 
 ## Quick start
 
@@ -201,8 +197,8 @@ Each agent can use a different runtime:
 
 | How CCCC runs it | Runtimes (`--runtime` id) |
 |---|---|
-| Native terminal plus a CCCC-managed session | Claude Code (`claude`), Codex CLI (`codex`), Grok Build (`grok`), OpenCode V2 2.1.4+ (`opencode`), Kilo Code (`kilo`) |
-| Native terminal or official ACP | GitHub Copilot (`copilot`), Cursor (`cursor`), Devin (`devin`), Kiro (`kiro`), Antigravity (`antigravity`), Droid (`droid`), Auggie (`auggie`), Hermes (`hermes`), Kimi Code (`kimi`) |
+| Native terminal plus a CCCC-managed session | Claude Code (`claude`), Codex CLI (`codex`), Grok Build (`grok`), OpenCode V2 2.1.4+ (`opencode`), Kilo Code (`kilo`), Hermes (`hermes`, or ACP only) |
+| Native terminal or official ACP | GitHub Copilot (`copilot`), Cursor (`cursor`), Devin (`devin`), Kiro (`kiro`), Antigravity (`antigravity`), Droid (`droid`), Auggie (`auggie`), Kimi Code (`kimi`) |
 | Native terminal | Cline (`cline`), Amp (`amp`) |
 | Structured, no terminal | Pi 1.1.0+ (`pi`), DeepSeek Harness (`deepseek`, developer preview) |
 | Web models | ChatGPT Web (`web_model`), ChatGPT Dots (`chatgpt_dots`), Grok Bot Web Model (`grok_web_model`) |

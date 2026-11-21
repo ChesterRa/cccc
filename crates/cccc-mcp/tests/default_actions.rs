@@ -167,3 +167,5 @@ async fn workspace_defaults_inspect_and_edit_the_active_scope() {
             .contains("note.txt")
     );
 }
+
+cccc_daemon::session_owner_test_entry!();

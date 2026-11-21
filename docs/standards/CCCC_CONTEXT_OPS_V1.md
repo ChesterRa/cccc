@@ -101,6 +101,14 @@ Permission: `foreman` or `user`.
 Notes:
 - Partial patch: only provided fields are updated. A provided `constraints` replaces the whole list.
 - Daemon sets `updated_by` and `updated_at` automatically.
+- `project_brief_stale` is a manual marker that only the foreman or user sets.
+  It refers to `project_brief` and defaults to false; false does not show that
+  the brief is current.
+- MCP `cccc_bootstrap` recovery returns the brief's own `updated_at` as
+  `coordination_brief.updated_at` when it exists, and omits it otherwise. It is
+  the time of the last brief update, whichever fields that update provided,
+  including `constraints` alone; it is not a check that the content is current.
+  Other Context writes do not change it.
 
 Coordination notes (`coordination.note.add`, stored as `recent_decisions` and
 `recent_handoffs`) were removed; the op is rejected as unknown. Notes an older

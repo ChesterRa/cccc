@@ -337,11 +337,14 @@ describe("CapabilityCenter model", () => {
     expect(capabilityCenterSourcesGridClass()).toContain("grid-cols-[minmax(0,1fr)_auto]");
   });
 
-  it("keeps the page shell viewport-bound so only the center content scrolls", () => {
-    expect(capabilityCenterRootClass("page")).toContain("h-dvh");
-    expect(capabilityCenterRootClass("page")).toContain("overflow-hidden");
-    expect(capabilityCenterFrameClass("page")).toContain("h-dvh");
-    expect(capabilityCenterFrameClass("page")).not.toContain("min-h-dvh");
+  it("covers the panel it opened from, clear of the phone's notch and home bar, and scrolls only inside", () => {
+    const root = capabilityCenterRootClass();
+    expect(root).toContain("fixed inset-0");
+    expect(root).toContain("overflow-hidden");
+    for (const side of ["top", "right", "bottom", "left"]) {
+      expect(root).toContain(`env(safe-area-inset-${side},0px)`);
+    }
+    expect(capabilityCenterFrameClass()).toContain("min-h-0");
   });
 
   it("hides readonly builtin system rows by default but preserves search discoverability", () => {

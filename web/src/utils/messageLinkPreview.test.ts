@@ -61,6 +61,14 @@ it("opens only the Group's files from this site", () => {
   expect(kindOf(`${ORIGIN}/ui/assets/logo.png`)).toBeNull();
 });
 
+it("reads HTML files only from the Group or an allowed raw-text host", () => {
+  expect(kindOf(`${ORIGIN}/api/v1/groups/g1/blobs/hash?filename=report.html`)).toBe("html");
+  expect(kindOf(`${ORIGIN}/api/v1/groups/g1/workspace/content?path=docs/report.htm`)).toBe("html");
+  expect(kindOf("https://raw.githubusercontent.com/owner/repo/main/report.html")).toBe("html");
+  expect(kindOf("https://example.test/report.html")).toBeNull();
+  expect(kindOf(`${ORIGIN}/api/v1/groups/g1/settings?filename=report.html`)).toBeNull();
+});
+
 it("does not take a file name from another site's parameters", () => {
   expect(kindOf("https://example.test/download?filename=photo.png")).toBeNull();
 });

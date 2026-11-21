@@ -35,9 +35,20 @@ impl DaemonLifecycle {
             return Ok(Vec::new());
         }
         self.active = false;
-        let result = stop_every_runtime(&self.paths.home);
+        let intent = crate::session_owner::shutdown_request(&self.paths.home);
+        let result = stop_local_runtimes(&self.paths.home);
+        let remote = crate::session_owner::finish(&self.paths.home, intent.mode, intent.request_id);
+        let receipt = match &remote {
+            Ok(report) if result.is_ok() => {
+                crate::session_owner::receipt::write_shutdown_report(&self.paths.home, report)
+            }
+            Ok(_) => Ok(()), // Missing is safer than a false complete receipt.
+            Err(_) => Ok(()),
+        };
         cleanup_stale(&self.paths);
         self.lock.take();
+        remote?;
+        receipt?;
         result
     }
 }
@@ -47,6 +58,19 @@ impl DaemonLifecycle {
 /// in its process before cccc_runtime::force_terminate_owned: this normal path
 /// may wait for protocol closure, session locks and output draining.
 pub fn stop_every_runtime(home: &HomeLayout) -> Result<Vec<cccc_runtime::SessionStatus>> {
+    let result = stop_local_runtimes(home);
+    let report = crate::session_owner::finish(
+        home,
+        crate::session_owner::ShutdownMode::Stop,
+        uuid::Uuid::new_v4().to_string(),
+    )?;
+    if !report.unconfirmed.is_empty() {
+        return Err(anyhow::anyhow!("some agent stops could not be confirmed"));
+    }
+    result
+}
+
+fn stop_local_runtimes(home: &HomeLayout) -> Result<Vec<cccc_runtime::SessionStatus>> {
     let _ = crate::runtime_start_gate::prevent(home);
     let secretary = crate::ops::voice_secretary::stop(home);
     crate::ops::actor_delivery::shutdown_all();

@@ -169,3 +169,5 @@ async fn message_pins_are_shared_by_authorized_web_users_and_denied_to_others() 
         .expect("daemon task")
         .expect("daemon result");
 }
+
+cccc_daemon::session_owner_test_entry!();

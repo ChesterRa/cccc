@@ -28,7 +28,8 @@ auth = pathlib.Path(os.environ['GROK_AUTH_PATH'])
 audit = auth.with_suffix('.audit')
 record = {'args': sys.argv[1:], 'home': os.environ['HOME'], 'methods': [],
           'api_disabled': os.environ.get('GROK_DISABLE_API_KEY_AUTH'),
-          'isolated': os.environ['HOME'] == os.environ['GROK_HOME'] == os.getcwd(),
+          'isolated': os.path.samefile(os.environ['HOME'], os.environ['GROK_HOME'])
+                      and os.path.samefile(os.environ['HOME'], os.getcwd()),
           'has_api_key': any(os.environ.get(k) for k in ['XAI_API_KEY','GROK_API_KEY'])}
 audit.write_text(json.dumps(record))
 for line in sys.stdin:

@@ -3,10 +3,41 @@
 import json
 import os
 import sys
+import time
 import uuid
 from pathlib import Path
 
 root = Path.cwd()
+if "--tui" in sys.argv[1:]:
+    # Hermes's own terminal viewing the member's session. It reads no keys, so
+    # a test can fill its input; raw mode keeps Ctrl+C an ordinary key.
+    import tty
+    tty.setraw(sys.stdin.fileno())
+    (root / "v3_viewer_process.json").write_text(
+        json.dumps({"pid": os.getpid(), "argv": sys.argv})
+    )
+    (root / "v3_viewer_ready").touch()
+    while True:
+        time.sleep(60)
+if "--setup" in sys.argv[1:]:
+    # Hermes's own provider setup, run in the member's terminal. It ends when
+    # the test says so; with v3_setup_quit the user left without a provider.
+    with (root / "v3_setup_runs.jsonl").open("a") as log:
+        log.write(json.dumps(sys.argv[1:]) + "\n")
+    finish = root / "v3_setup_finish"
+    while not finish.exists():
+        time.sleep(0.02)
+    finish.unlink()
+    if not (root / "v3_setup_quit").exists():
+        (root / "v3_setup_needed").unlink(missing_ok=True)
+    sys.exit(0)
+# A provider that stops reading after session/new blocks the client's large
+# write. Shrink the pipe on systems that offer pipe sizing.
+stall_stdin = (root / "v3_stall_stdin").exists()
+if stall_stdin:
+    import fcntl
+    if hasattr(fcntl, "F_SETPIPE_SZ"):
+        fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETPIPE_SZ, 4096)
 home = Path(os.environ["HOME"])
 home.mkdir(parents=True, exist_ok=True)
 saved = home / "v3_sessions.json"
@@ -14,11 +45,27 @@ sessions = json.loads(saved.read_text()) if saved.exists() else {}
 vendor = Path(sys.argv[0]).name
 sid = ""
 active = None
+active_text = ""
 permission = None
 
 
 def emit(**frame):
     print(json.dumps({"jsonrpc": "2.0", **frame}), flush=True)
+
+
+def type_in_terminal():
+    # A turn the user typed in the provider's own terminal, once the test says
+    # CCCC is listening.
+    signal = root / "v3_type_in_terminal"
+    while not signal.exists():
+        time.sleep(0.02)
+    emit(method="session/update", params={"sessionId": sid, "update": {
+        "sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": "typed in the terminal"}}})
+
+
+if (root / "v3_terminal_turns").exists():
+    import threading
+    threading.Thread(target=type_in_terminal, daemon=True).start()
 
 
 def finish(reason="end_turn"):
@@ -60,9 +107,15 @@ for line in sys.stdin:
                 "sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "consent:" + json.dumps(request["result"])}}})
             finish()
         continue
+    setup_needed = vendor == "hermes" and (root / "v3_setup_needed").exists()
     if method == "initialize":
         result = {"protocolVersion": 99 if (root / "v3_bad_protocol").exists() else 1,
                   "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"list": {}}}}
+        if vendor == "hermes":
+            # Hermes always offers its setup, and its provider once one resolves.
+            setup = {"id": "hermes-setup", "name": "Configure Hermes provider", "type": "terminal", "args": ["--setup"]}
+            provider = {"id": "fixture-provider", "name": "fixture-provider runtime credentials"}
+            result["authMethods"] = [setup] if setup_needed else [provider, setup]
     elif method == "session/list":
         if (root / "v3_list_endless").exists():
             result = {"sessions": [], "nextCursor": "new-cursor-" + str(request["id"])}
@@ -76,11 +129,11 @@ for line in sys.stdin:
             result = {"sessions": [{"sessionId": key, "cwd": str(root / "wrong") if (root / "v3_list_wrong_cwd").exists() else cwd}
                                    for key, cwd in sessions.items()]}
     elif method == "session/new":
+        if setup_needed:
+            emit(id=request["id"], error={"code": -32603, "message": "storage_unavailable"})
+            continue
         sid = "v3-" + str(uuid.uuid4())
         result = session_result(new=True)
-        with (root / "v3_bindings.jsonl").open("a") as log:
-            log.write(json.dumps({"vendor": vendor, "cwd": params["cwd"], "mcp": params["mcpServers"],
-                                 "skip_configured_mcp": os.environ.get("HERMES_ACP_SKIP_CONFIGURED_MCP")}) + "\n")
     elif method == "session/load":
         sid = params["sessionId"]
         if sid not in sessions:
@@ -91,9 +144,6 @@ for line in sys.stdin:
                 continue
         else:
             result = session_result()
-        with (root / "v3_bindings.jsonl").open("a") as log:
-            log.write(json.dumps({"vendor": vendor, "cwd": params["cwd"], "mcp": params["mcpServers"],
-                                 "skip_configured_mcp": os.environ.get("HERMES_ACP_SKIP_CONFIGURED_MCP")}) + "\n")
     elif method in ("session/set_config_option", "session/set_model", "session/set_mode"):
         if params.get("value", params.get("modelId", params.get("modeId"))) == "unavailable":
             emit(id=request["id"], error={"code": -32602, "message": "Unavailable selection"})
@@ -103,7 +153,7 @@ for line in sys.stdin:
         active = request["id"]
         sessions[sid] = str(root)
         saved.write_text(json.dumps(sessions))
-        text = params["prompt"][0]["text"]
+        text = active_text = params["prompt"][0]["text"]
         if "REJECT_BEFORE_RECEIPT" in text:
             emit(id=active, error={"code": -32001,
                 "message": "Synthetic admission failure: " + os.environ.get("CCCC_TEST_ADMISSION_SECRET", "") + "界" * 1700,
@@ -120,13 +170,29 @@ for line in sys.stdin:
         else:
             emit(method="session/update", params={"sessionId": sid, "update": {
                 "sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "live:" + text}}})
-            if text != "HOLD":
+            if text != "HOLD" and "KEEP_OPEN" not in text:
                 finish()
         continue
     elif method == "session/cancel":
-        finish("cancelled")
+        if "UNKNOWN_AFTER_CANCEL" in active_text and active is not None:
+            # Hermes's gateway lost the turn: its outcome is unknown.
+            emit(id=active, error={"code": -32603,
+                "message": "unknown_execution: fixture turn outcome is unknown"})
+            active = permission = None
+        elif "END_AFTER_CANCEL" in active_text:
+            # The turn finished before the cancel reached it.
+            finish()
+        elif "EMPTY_AFTER_CANCEL" in active_text and active is not None:
+            # A non-conforming answer without any stop reason.
+            emit(id=active, result={})
+            active = permission = None
+        elif "IGNORE_CANCEL" not in active_text:
+            finish("cancelled")
         continue
     else:
         result = {}
     if "id" in request:
         emit(id=request["id"], result=result)
+    if stall_stdin and method == "session/new":
+        while True:
+            time.sleep(60)

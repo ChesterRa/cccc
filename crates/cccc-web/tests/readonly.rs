@@ -293,3 +293,5 @@ fn home() -> (tempfile::TempDir, HomeLayout) {
     home.initialize().expect("initialize");
     (temp, home)
 }
+
+cccc_daemon::session_owner_test_entry!();

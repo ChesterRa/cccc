@@ -43,6 +43,8 @@ interface AutomationRuleEditorModalProps {
   isDark: boolean;
   ruleDraft: AutomationRule | null;
   ruleStatus: AutomationRuleStatus;
+  /** The daemon's clock when `ruleStatus` was computed. */
+  serverNow?: string;
   isNewRule: boolean;
   errorMessage: string;
   saveBusy: boolean;
@@ -68,6 +70,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
     isDark,
     ruleDraft,
     ruleStatus,
+    serverNow,
     isNewRule,
     errorMessage,
     saveBusy,
@@ -227,7 +230,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             {!isNewRule ? (
               <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
                 {lastRun ? `${t("ruleEditor.last")} ${lastRun} • ` : ""}
-                {t("ruleEditor.next")} {formatAutomationNext(status, t)}{" "}
+                {t("ruleEditor.next")} {formatAutomationNext(status, t, serverNow)}{" "}
                 {completed ? `• ${t("ruleList.completedLabel")}` : ""}{" "}
                 {status.last_error
                   ? `• ${t("ruleEditor.error")} ${formatAutomationTime(status.last_error_at)}`

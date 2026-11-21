@@ -66,6 +66,84 @@ fn drain(receiver: &mut broadcast::Receiver<AnalystEvent>) -> Vec<AnalystEvent> 
     std::iter::from_fn(|| receiver.try_recv().ok()).collect()
 }
 
+#[tokio::test]
+async fn opencode_chet_queue_policy_keeps_the_native_terminal_and_voice_admission() {
+    use crate::ops::codex_voice_analyst::{AnalystSession, WorkspaceBinding};
+    use crate::ops::codex_voice_lifecycle::{
+        AnalystLifecycle, AnalystLifecycleEvent, VoiceDelegationAdmission,
+    };
+    let (inner, _) = inner();
+    let (stop, _) = watch::channel(false);
+    let session = Arc::new(AnalystSession {
+        binding: WorkspaceBinding {
+            root: "/tmp".into(),
+        },
+        generation: inner.generation.clone(),
+        runtime: crate::ops::codex_voice_analyst::ActorRuntime::Opencode,
+        endpoint: inner.endpoint.clone(),
+        thread_id: inner.session_id.clone(),
+        remote_tui_prefix: Vec::new(),
+        environment: BTreeMap::new(),
+        protocol: ManagedProtocol::OpenCode(OpenCodeClient {
+            inner: Arc::new(inner),
+            stop,
+            lease: None,
+        }),
+        process: None,
+        auxiliary_processes: Vec::new(),
+        native_tui_command: Some(vec!["offline-terminal".into()]),
+        cleanup_paths: Vec::new(),
+        thread_resumed: false,
+        delegations: Mutex::new(std::collections::HashMap::new()),
+    });
+    assert!(!session.structured_only());
+    assert!(session.tui_ready());
+    assert_eq!(session.tui_command(), ["offline-terminal"]);
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    session.publish_event_for_test(json!({"method":"turn/started",
+        "params":{"threadId":"ses_fixture","turn":{"id":"busy"}}}));
+    assert!(matches!(
+        events.recv().await.expect("active"),
+        AnalystLifecycleEvent::Started { .. }
+    ));
+    // Real-time Voice still offers its native handoff while Chet text waits.
+    assert!(
+        matches!(lifecycle.admit_voice("voice", "spoken request").await.expect("Voice admission"),
+        VoiceDelegationAdmission::NativeInput { delegation_id, .. } if delegation_id == "voice")
+    );
+    assert!(matches!(
+        lifecycle
+            .admit_terminal("text", "typed request")
+            .await
+            .expect("Chet input"),
+        VoiceDelegationAdmission::Queued { .. }
+    ));
+    assert!(matches!(
+        lifecycle
+            .begin_actor_result("result", "worker result", false)
+            .await
+            .expect("notification"),
+        VoiceDelegationAdmission::Queued { .. }
+    ));
+    session.publish_event_for_test(json!({
+        "method":crate::ops::codex_voice_analyst::MANAGED_AGENT_DISCONNECTED_METHOD,
+        "params":{"threadId":"ses_fixture","reason":"offline fixture cleanup"}
+    }));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !matches!(
+            events.recv().await.expect("cleanup event"),
+            AnalystLifecycleEvent::Disconnected
+        ) {}
+    })
+    .await
+    .expect("fixture disconnected");
+    session
+        .stop(session.generation())
+        .await
+        .expect("stop fixture");
+}
+
 #[test]
 fn v2_queued_inputs_have_separate_turns_and_do_not_settle_on_an_rpc_receipt() {
     let (inner, mut receiver) = inner();

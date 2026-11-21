@@ -22,11 +22,14 @@ import type { Actor, HeadlessStreamEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { hasManagedRuntimeOutput } from "../../utils/headlessRuntimeSupport";
 import { nativeSessionStatusKey } from "../../utils/nativeSessionStatus";
+import { runtimeConfirmationKeys } from "../../utils/runtimeConfirmationKeys";
+import { UNOBSERVABLE_WORKING_STATE } from "../../utils/terminalWorkingState";
 import type { LiveWorkCard } from "./liveWorkCards";
 import { RuntimeDockTicker } from "./RuntimeDockTicker";
 import { buildRuntimeDockTickerEntries } from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
+import { useStartupInputWaiting } from "../../hooks/useStartupInputWaiting";
 import { useUiStylePrefs, type LcdMotion } from "../../utils/uiStyle";
 
 function lcdRingDelay(): number {
@@ -154,6 +157,8 @@ function getRuntimeStatusLabel(
   workingState: string,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
+  if (workingState === UNOBSERVABLE_WORKING_STATE)
+    return t("statusUnknown", { defaultValue: "Unknown" });
   if (!isRunning) return t("stopped", { defaultValue: "Stopped" });
   if (workingState === "working") return t("working", { defaultValue: "Working" });
   if (workingState === "waiting") return t("waiting", { defaultValue: "Waiting" });
@@ -225,7 +230,8 @@ function RuntimeDockActorButtonView({
   const groupState = useGroupStore((state) =>
     state.groupDoc?.group_id === groupId ? state.groupDoc.state : undefined,
   );
-  const ringTone = getRuntimeRingTone(item, isRunning, workingState);
+  const startupWaiting = useStartupInputWaiting(groupId, item.actor);
+  const ringTone = getRuntimeRingTone(item, isRunning, workingState, startupWaiting);
   // The existing active tone also covers queued tasks. A moving ring must
   // describe work actually in progress, not merely a pending item.
   const working =
@@ -251,23 +257,31 @@ function RuntimeDockActorButtonView({
     onToneChange?.(item.actorId, ringTone);
   }, [item.actorId, onToneChange, ringTone]);
   useLayoutEffect(() => () => onToneChange?.(item.actorId, null), [item.actorId, onToneChange]);
-  const useRuntimeStatus = hasManagedRuntimeOutput(item.actor) || workingState === "error";
+  const useRuntimeStatus =
+    hasManagedRuntimeOutput(item.actor) ||
+    workingState === "error" ||
+    workingState === UNOBSERVABLE_WORKING_STATE;
   // A native session runs outside CCCC: name whether it can receive, as the
   // Actor tab does, never "Stopped".
   const nativeStatusKey = item.actor.external_session_id
     ? nativeSessionStatusKey(item.actor, groupState)
     : null;
+  const confirmationKeys = runtimeConfirmationKeys(item.actor.runtime);
   const statusLabel = item.actor.runtime_confirmation_required
-    ? t("actors:runtimeConfirmationPending")
-    : item.actor.runtime_confirmation_paused === true
-      ? t("actors:runtimeConfirmationPaused")
-      : nativeStatusKey
-        ? t(nativeStatusKey.includes(":") ? nativeStatusKey : `actors:${nativeStatusKey}`)
-        : item.liveWorkCard && !useRuntimeStatus
-          ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
-          : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
-              t(key === "error" ? "common:error" : `actors:${key}`, options),
-            );
+    ? t(`actors:${confirmationKeys.pending}`)
+    : startupWaiting
+      ? t("actors:runtimeStartupInputPending")
+      : item.actor.runtime_confirmation_paused === true
+        ? t(`actors:${confirmationKeys.paused}`)
+        : nativeStatusKey
+          ? t(nativeStatusKey.includes(":") ? nativeStatusKey : `actors:${nativeStatusKey}`)
+          : item.liveWorkCard && !useRuntimeStatus
+            ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
+            : getRuntimeStatusLabel(isRunning, workingState, (key, options) =>
+                t(key === "error" ? "common:error" : `actors:${key}`, options),
+              );
+  // When the daemon could not observe the agent, its diagnostic names the next step.
+  const observationError = String(item.actor.runtime_observation_error || "").trim();
   const queuedCount = Math.max(0, Number(item.webModelQueuedCount || 0));
   const queuedLabel =
     queuedCount > 0
@@ -309,7 +323,7 @@ function RuntimeDockActorButtonView({
   if (variant === "chip") {
     // The tile itself shows the state (dimmed when stopped, its line for busy, idle
     // or needing attention); words live in the tooltip and names.
-    const tooltip = [item.actorLabel, statusLabel, queuedLabel, mailLabel]
+    const tooltip = [item.actorLabel, statusLabel, queuedLabel, mailLabel, observationError]
       .filter(Boolean)
       .join(" \u00B7 ");
     const description = [item.actorLabel, item.runtime, statusLabel, queuedLabel, mailLabel]
@@ -434,7 +448,9 @@ function RuntimeDockActorButtonView({
               })
         }
         aria-describedby={`runtime-dock-status-${item.actorId}`}
-        title={[item.actorLabel, statusLabel, mailLabel, queuedLabel].filter(Boolean).join("\n")}
+        title={[item.actorLabel, statusLabel, mailLabel, queuedLabel, observationError]
+          .filter(Boolean)
+          .join("\n")}
       >
         <span className="lcd-member-tile">
           {dockAvatar}

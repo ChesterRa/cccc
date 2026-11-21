@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { useChatOutboxStore } from "../../stores/chatOutboxStore";
+import { useAttachmentPreviewStore } from "../../stores/useAttachmentPreviewStore";
 import { useResourcePanelStore } from "../../stores/useResourcePanelStore";
 import type { LedgerEvent, MessageAttachment } from "../../types";
 import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
@@ -22,12 +23,15 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
+  // The panel is on screen beside the messages, so an attachment opens there.
+  useResourcePanelStore.setState({ shownGroupId: "g1" });
 });
 afterEach(() => {
   act(() => root.unmount());
   host.remove();
   useChatOutboxStore.getState().clearAll();
-  useResourcePanelStore.setState({ groups: {} });
+  useResourcePanelStore.setState({ groups: {}, shownGroupId: "" });
+  useAttachmentPreviewStore.setState({ sets: {}, viewing: null });
   vi.useRealTimers();
   vi.restoreAllMocks();
 });

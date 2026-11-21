@@ -7,9 +7,9 @@ import { useTranslation } from "react-i18next";
 
 import type { CapabilityOverviewItem } from "../../types";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 import {
   capabilityCenterDisplayName,
-  capabilityCenterType,
   type CapabilityCenterRemovalAction,
 } from "./capabilityCenterModel";
 
@@ -18,6 +18,10 @@ interface CapabilityControlsPanelProps {
   enabled: boolean;
   hidden: boolean;
   blocked: boolean;
+  /** False hides enabling when no member of the Group could use it; disabling stays. */
+  canEnable?: boolean;
+  /** Where the block to lift was set: a Group block is lifted in that Group only. */
+  blockScope?: "global" | "group";
   canShowSlashToggle: boolean;
   removalAction: CapabilityCenterRemovalAction;
   busyKey: string;
@@ -31,11 +35,14 @@ interface CapabilityControlsPanelProps {
   ) => void;
 }
 
+/** The actions under a capability's name; each label says where it applies. */
 export function CapabilityControlsPanel({
   row,
   enabled,
   hidden,
   blocked,
+  canEnable = true,
+  blockScope = "global",
   canShowSlashToggle,
   removalAction,
   busyKey,
@@ -47,35 +54,31 @@ export function CapabilityControlsPanel({
 }: CapabilityControlsPanelProps) {
   const { t } = useTranslation("settings");
   const capId = String(row.capability_id || "").trim();
-  const type = capabilityCenterType(row);
   const disabled = !String(groupId || "").trim();
   const canRemove = removalAction !== "none";
 
   return (
-    <section className="mt-5 min-w-0 border-t border-[var(--glass-border-subtle)] pt-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-        {t("capabilityCenter.controls.title")}
-      </div>
-      <div className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-        {type === "mcp"
-          ? t("capabilityCenter.controls.mcpHint")
-          : t("capabilityCenter.controls.skillHint")}
-      </div>
-      <div className="mt-3 grid gap-2">
-        <ControlButton
-          icon={enabled ? PowerOff : Power}
-          glyph={enabled ? "power-off" : "power"}
-          label={
-            enabled ? t("capabilityCenter.enable.disable") : t("capabilityCenter.enable.enable")
-          }
-          meta={
-            enabled
-              ? t("capabilityCenter.controls.enabledMeta")
-              : t("capabilityCenter.controls.disabledMeta")
-          }
-          busy={busyKey === `enable:${capId}` || disabled}
-          onClick={() => onToggleEnable(row)}
-        />
+    <section className="mt-3 min-w-0" aria-label={t("capabilityCenter.controls.title")}>
+      <div className="flex flex-wrap gap-2">
+        {enabled || canEnable ? (
+          <ControlButton
+            icon={enabled ? PowerOff : Power}
+            glyph={enabled ? "power-off" : "power"}
+            label={
+              enabled
+                ? t("capabilityCenter.controls.disableForGroup")
+                : t("capabilityCenter.controls.enableForGroup")
+            }
+            meta={
+              enabled
+                ? t("capabilityCenter.enable.disableTitle")
+                : t("capabilityCenter.enable.enableTitle")
+            }
+            tone={enabled ? "neutral" : "primary"}
+            busy={busyKey === `enable:${capId}` || disabled}
+            onClick={() => onToggleEnable(row)}
+          />
+        ) : null}
         {canShowSlashToggle ? (
           <ControlButton
             icon={hidden ? Eye : EyeOff}
@@ -97,11 +100,17 @@ export function CapabilityControlsPanel({
         <ControlButton
           icon={Shield}
           glyph="shield"
-          label={blocked ? t("capabilityCenter.block.unblock") : t("capabilityCenter.block.block")}
+          label={
+            blocked
+              ? t("capabilityCenter.block.unblock")
+              : t("capabilityCenter.controls.blockEverywhere")
+          }
           meta={
             blocked
-              ? t("capabilityCenter.controls.blockedMeta")
-              : t("capabilityCenter.controls.blockMeta")
+              ? blockScope === "group"
+                ? t("capabilityCenter.controls.unblockGroupTitle")
+                : t("capabilityCenter.block.unblockTitle")
+              : t("capabilityCenter.block.blockTitle")
           }
           tone={blocked ? "neutral" : "warn"}
           busy={busyKey === `block:${capId}` || disabled}
@@ -143,20 +152,21 @@ function ControlButton({
   glyph: LcdGlyphName;
   label: string;
   meta: string;
-  tone?: "neutral" | "warn" | "danger";
+  tone?: "primary" | "neutral" | "warn" | "danger";
   busy: boolean;
   onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      size="sm"
+      variant={tone === "primary" ? "default" : tone === "danger" ? "destructive" : "outline"}
       className={cn(
-        "grid min-h-[44px] grid-cols-[32px_minmax(0,1fr)] items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60",
-        tone === "danger"
-          ? "border-rose-500/25 bg-rose-500/10 text-rose-700 hover:bg-rose-500/15 dark:text-rose-300"
-          : tone === "warn"
-            ? "border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300"
-            : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-primary)] hover:bg-[var(--glass-bg-hover)]",
+        "text-sm",
+        tone === "neutral" ? "text-[var(--color-text-primary)]" : "",
+        tone === "warn"
+          ? "border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+          : "",
       )}
       disabled={busy}
       title={meta}
@@ -164,16 +174,8 @@ function ControlButton({
       data-status-tone={tone === "danger" ? "error" : tone === "warn" ? "warning" : undefined}
       data-lcd-key={tone === "neutral" ? "" : undefined}
     >
-      <span
-        className="flex h-8 w-8 items-center justify-center rounded-md bg-black/5 dark:bg-white/8"
-        data-control-icon
-      >
-        <LcdIcon icon={Icon} glyph={glyph} size={15} aria-hidden="true" />
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-medium">{label}</span>
-        <span className="block truncate text-[11px] text-[var(--color-text-muted)]">{meta}</span>
-      </span>
-    </button>
+      <LcdIcon icon={Icon} glyph={glyph} size={14} aria-hidden="true" />
+      <span>{label}</span>
+    </Button>
   );
 }

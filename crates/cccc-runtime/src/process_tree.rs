@@ -1,4 +1,6 @@
 //! Process resources reachable independently of session/protocol shutdown locks.
+#[cfg(target_os = "macos")]
+mod darwin_identity;
 #[cfg(unix)]
 pub(crate) mod guard;
 #[cfg(unix)]
@@ -12,6 +14,75 @@ use std::collections::HashMap;
 use std::io;
 use std::process::{Child, Command};
 use std::sync::{Mutex, MutexGuard, OnceLock};
+
+/// Handle the native watchdog before constructing Tokio, runtime state or
+/// command-line services. Ordinary invocations return None.
+pub fn run_process_watchdog_from_args() -> Option<io::Result<()>> {
+    #[cfg(target_os = "macos")]
+    return guard::run_native_watchdog_from_args();
+    #[cfg(not(target_os = "macos"))]
+    None
+}
+
+#[doc(hidden)]
+#[cfg(all(target_os = "macos", debug_assertions))]
+pub fn run_process_watchdog_test_child() {
+    guard::run_native_watchdog_test_child();
+}
+
+/// Register the native helper in libtest executables, whose main belongs to
+/// the test harness rather than the product entry point.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! process_watchdog_test_entry {
+    () => {
+        #[cfg(all(target_os = "macos", debug_assertions))]
+        #[test]
+        #[ignore = "internal process-watchdog subprocess entry"]
+        fn __cccc_process_watchdog_child() {
+            $crate::run_process_watchdog_test_child();
+        }
+    };
+}
+
+// These children communicate through redirected streams, not a console. Keep
+// this separate from explicit flags used for detached daemons and ConPTY.
+pub(crate) const BACKGROUND_CREATION_FLAGS: u32 = if cfg!(windows) { 0x0800_0000 } else { 0 };
+
+/// Build a background command that does not allocate a Windows console.
+/// Interactive commands belong in a terminal session instead.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "This constructor owns the background process default"
+)]
+pub fn background_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let command = Command::new(program);
+    #[cfg(windows)]
+    let command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = command;
+        command.creation_flags(BACKGROUND_CREATION_FLAGS);
+        command
+    };
+    command
+}
+
+/// Build a background Tokio command with the same Windows policy.
+/// Standard streams and process lifetime remain the caller's responsibility.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "This constructor owns the background process default"
+)]
+pub fn background_tokio_command(program: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    let command = tokio::process::Command::new(program);
+    #[cfg(windows)]
+    let command = {
+        let mut command = command;
+        command.creation_flags(BACKGROUND_CREATION_FLAGS);
+        command
+    };
+    command
+}
 
 /// Evidence from the actual process-creation boundary, not from an error kind.
 /// `Started` does not assert submission: child code may have run, so callers
@@ -73,8 +144,11 @@ pub struct OwnedProcessTree {
 }
 
 impl OwnedProcessTree {
+    /// Start a background child. Callers redirect its standard streams; on
+    /// Windows it has no console. Use a terminal session for interactive work.
     pub fn spawn(command: &mut Command) -> io::Result<(Child, Self)> {
-        Self::spawn_registered(command, 0).map_err(CommandError::into_io_error)
+        Self::spawn_registered(command, BACKGROUND_CREATION_FLAGS)
+            .map_err(CommandError::into_io_error)
     }
 
     /// Supply Windows flags explicitly because std::Command has no flag getter.
@@ -369,6 +443,62 @@ pub fn protect_owned_process_groups(ledger: &std::path::Path) -> io::Result<()> 
         registry.publish();
     }
     Ok(())
+}
+
+/// A provider job that can outlive its launcher must remain explicit recovery
+/// evidence. No command, input, environment or provider credential is stored.
+#[cfg(unix)]
+pub struct DetachedWork {
+    intent: Option<guard::PreparedIntent>,
+}
+
+#[cfg(unix)]
+impl DetachedWork {
+    pub fn recovery_id(&self) -> Option<String> {
+        self.intent
+            .as_ref()
+            .map(|intent| intent.entry.id.to_string())
+    }
+
+    /// Expose an uncertain launch through the existing explicit-risk review.
+    pub fn mark_uncertain(&self) -> io::Result<()> {
+        if let Some(intent) = &self.intent {
+            guard::retain_uncertain_intent(intent.entry.id)?;
+        }
+        Ok(())
+    }
+
+    /// Clear only after the existing native Stop confirms job removal.
+    pub fn confirm_stopped(&mut self) -> io::Result<()> {
+        if let Some(intent) = &self.intent {
+            guard::confirm_detached_work_stopped(intent.entry.id)?;
+            self.intent.take();
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+pub fn protect_detached_work() -> io::Result<DetachedWork> {
+    // Keep the established registry -> guard lock order.
+    let _registry = registry();
+    let intent = guard::begin_intent()?
+        .ok_or_else(|| io::Error::other("detached work requires an active ownership guard"))?;
+    Ok(DetachedWork {
+        intent: Some(intent),
+    })
+}
+
+/// Reconcile another, inactive owner's ledger without changing this process's
+/// live guard. The caller must hold that owner's exclusive instance lock.
+#[cfg(unix)]
+pub fn recover_inactive_owned_process_groups(ledger: &std::path::Path) -> io::Result<()> {
+    if guard::active_for(ledger) {
+        return Err(io::Error::other(
+            "cannot reconcile a live owner as inactive",
+        ));
+    }
+    guard::recover_ledger(ledger)
 }
 
 /// Recover an old Web owner's separate ledger, optionally enabling protection

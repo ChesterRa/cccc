@@ -102,8 +102,10 @@ fn combined_web_bind_failure_stops_its_owned_daemon() {
     );
 
     assert!(
-        !output.status.success(),
-        "combined CCCC unexpectedly served an occupied port: {}",
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr)
+                .contains(&format!("Web port {port} on 127.0.0.1 is already in use")),
+        "expected combined CCCC to report the occupied Web port: {}",
         detail(&output)
     );
     wait_for_daemon_exit(&home);

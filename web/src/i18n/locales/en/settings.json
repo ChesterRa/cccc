@@ -5,6 +5,31 @@
   },
   "title": "Settings",
   "closeAriaLabel": "Close settings",
+  "quickReplies": {
+    "title": "Quick Replies",
+    "description": "In a message's quick reply menu, choosing a reply sends it at once; from the composer's template button, it is inserted so you can edit it first. The four default replies work like the ones you add: reword, reorder or delete them. A name or text you leave unchanged follows the interface language.",
+    "restore": "Restore default",
+    "count": "{{used}} of {{limit}}",
+    "add": "Add template",
+    "bringBack": "Bring back a default reply:",
+    "full": "You can keep up to {{limit}} replies, the default ones included.",
+    "empty": "The list is empty. Add a template or bring back a default reply to see it in the quick reply menu and the composer.",
+    "name": "Name",
+    "text": "Text",
+    "moveUp": "Move up",
+    "moveDown": "Move down",
+    "unsaved": "Unsaved changes",
+    "conflict": "These templates were saved from another window or device. Reload to continue; your unsaved edits here will be replaced.",
+    "reload": "Reload",
+    "loadFailed": "Could not load templates: {{error}}",
+    "saveFailed": "Could not save templates: {{error}}",
+    "problem": {
+      "name": "Give this template a name.",
+      "nameTooLong": "Keep the name to one line of at most 40 characters.",
+      "text": "Write the text to send.",
+      "textTooLong": "The text can be at most 10,000 characters."
+    }
+  },
   "tabs": {
     "guidance": "Guidance",
     "assistants": "Voice",
@@ -19,11 +44,13 @@
     "actorProfiles": "Agent Profiles",
     "myProfiles": "My Profiles",
     "notifications": "Notifications",
+    "quickReplies": "Quick Replies",
     "branding": "Branding",
     "account": "Account",
     "developer": "Developer",
     "webAccess": "Web Access",
     "webModels": "Web Models",
+    "update": "Update",
     "voice": "Voice"
   },
   "notifications": {
@@ -267,7 +294,8 @@
     "manageName": "Name",
     "manageDescription": "Description",
     "manageCapsule": "Capsule text",
-    "manageCapsuleLimit": "{{count}} / {{max}} characters",
+    "manageCapsuleCount_one": "{{count}} character",
+    "manageCapsuleCount_other": "{{count}} characters",
     "manageSave": "Save skill",
     "manageSaved": "Skill record saved.",
     "manageSaveFailed": "Failed to save skill record.",
@@ -352,11 +380,11 @@
   },
   "capabilityCenter": {
     "title": "Capability Center",
-    "subtitle": "Skills, MCP, and packs",
+    "subtitle": "Recommended, skills, MCP, and sources",
     "headerHint": "Global workspace for browsing, filtering, and managing capabilities.",
+    "scopeGroup": "Applies to group: {{name}}",
     "refresh": "Refresh",
     "close": "Close",
-    "backToApp": "Back to app",
     "builtin": {
       "groupRuntime": "Lets agents, within their permissions, manage the Group: add, remove, start and stop members, list runtimes, and edit agent notes.",
       "imBind": "Lets agents bind an IM chat to this Group with a bind key.",
@@ -375,6 +403,7 @@
     "failedSlashVisibility": "Failed to update slash command visibility.",
     "sectionNavigation": "Capability sections",
     "sections": {
+      "recommended": { "label": "Recommended", "hint": "Grouped by the work members do" },
       "library": { "label": "Library", "hint": "All capabilities" },
       "skill": { "label": "Skills", "hint": "Procedural skills" },
       "mcp": { "label": "MCP", "hint": "Tool servers" },
@@ -449,14 +478,16 @@
     },
     "controls": {
       "title": "Controls",
-      "skillHint": "Group use, slash visibility, block state, and removal.",
-      "mcpHint": "Group use, block state, runtime install binding, and removal.",
       "enabledMeta": "Currently active in this group",
       "disabledMeta": "Not active in this group",
       "slashVisibleMeta": "Shown in / commands",
       "slashHiddenMeta": "Hidden from / commands",
       "blockMeta": "Policy-block enablement and use",
       "blockedMeta": "Policy-blocked until unblocked",
+      "enableForGroup": "Enable for this group",
+      "disableForGroup": "Disable in this group",
+      "blockEverywhere": "Block everywhere",
+      "unblockGroupTitle": "Lift this group's block",
       "openGroup": "Open a group to use these controls."
     },
     "remove": {
@@ -493,7 +524,7 @@
       "confirmBlock": "Block {{name}}?\n\nAgents cannot use {{id}} until it is unblocked.",
       "confirmUnblock": "Unblock {{name}}?\n\nAgents can use {{id}} again if it is enabled and allowed by policy.",
       "confirmBlockTitle": "Block {{name}}?",
-      "confirmBlockDescription": "This adds a policy block for {{id}}. It cannot be enabled or used until the block is removed.",
+      "confirmBlockDescription": "This blocks {{id}} in every group. It cannot be enabled or used until the block is removed.",
       "confirmUnblockTitle": "Unblock {{name}}?",
       "confirmUnblockDescription": "This removes the policy block for {{id}}. Agents can use it again if it is enabled and allowed by policy."
     },
@@ -506,10 +537,138 @@
       "confirmDisableTitle": "Disable {{name}} for this group?",
       "confirmDisableDescription": "This turns off {{id}} in the current group, including your own use of it here. Agents keep their own use of it. It does not block future enablement.",
       "partlyFailed": "Only part of it was turned off: {{message}}",
-      "stillEnabled": "{{name}} is still enabled. Its state may have changed in the meantime; try again."
+      "stillEnabled": "{{name}} is still enabled. Its state may have changed in the meantime; try again.",
+      "conflict": "Settings changed while this capability was being prepared. Review its current state before enabling it again."
     },
     "confirm": { "cancel": "Cancel", "confirm": "Confirm" },
-    "showSystem": "System"
+    "showSystem": "System",
+    "update": {
+      "changed": "A newer recommended version is available (its address or package version changed).",
+      "unknown": "Version not recorded.",
+      "update": "Update everywhere",
+      "verify": "Check and update",
+      "badge": "Update available",
+      "confirmTitle": "Update {{name}}?",
+      "confirmDescription": "The update applies to every later call of this MCP in all groups. Groups with it enabled now: {{groups}}.",
+      "confirmDescriptionBearer": "The update applies to every later call of this MCP in all groups. Groups with it enabled now: {{groups}}. An MCP that needs a token isn't checked now; members check it with their own token on next use.",
+      "failed": "The update failed.",
+      "unavailable": {
+        "delivery_form_not_supported": "This version can't update this delivery form here.",
+        "credential_route_not_supported": "This installation's token setup can't be updated here in this version."
+      },
+      "outcome": {
+        "configured": "Recipe updated. Members check it with their own token on next use.",
+        "ready": "Updated to the new recommended version.",
+        "unchanged": "Already on the recommended version."
+      },
+      "error": {
+        "capability_not_installed": "It isn't installed yet. Enable it once, then update.",
+        "capability_recipe_conflict": "The recommended version changed before you confirmed. Refresh and review it again.",
+        "capability_update_unsupported": "This version can't update this MCP here."
+      }
+    },
+    "recommended": {
+      "intro": "Ships with this version of CCCC. Members can enable these themselves when they need them; you can also enable them for this group in advance.",
+      "domain": "Work",
+      "mcp": "MCP",
+      "skill": "Skill",
+      "primary": "First pick",
+      "alternative": "Alternative",
+      "emptyCell": "No recommendation in this version",
+      "empty": "This version has no recommendations.",
+      "summary": "Recommended: {{total}} · Groups: {{domains}}",
+      "legend": "Legend",
+      "kicker": "{{type}} · Recommended by CCCC",
+      "backToList": "Back to list",
+      "badge": "Recommended",
+      "badgeHint": "Recommended with this version of CCCC",
+      "binding": { "group": "Enabled for this group", "member": "Enabled by a member" },
+      "dot": {
+        "group": "Enabled for this group",
+        "member": "A member enabled it",
+        "available": "A member can use it; nobody has enabled it yet",
+        "setup": "Needs setup first",
+        "pending": "Set up; checked on next use",
+        "unknown": "Depends on the member's own tools; CCCC can't tell",
+        "uncertain": "Not yet known whether it works",
+        "unsupported": "No member of this group can use it",
+        "blocked": "Blocked",
+        "none": "This group has no members yet"
+      },
+      "verification": {
+        "none": "Not verified",
+        "listedHint": "Source, license and delivery checked; not installed",
+        "passed": {
+          "listed": "Listed",
+          "install_checked": "Install verified",
+          "text_checked": "Text verified",
+          "tool_call_checked": "Call verified",
+          "task_checked": "Task verified"
+        },
+        "failed": {
+          "listed": "Check failed",
+          "install_checked": "Install failed",
+          "text_checked": "Text check failed",
+          "tool_call_checked": "Call failed",
+          "task_checked": "Task failed"
+        }
+      },
+      "sections": {
+        "why": "Why it's recommended",
+        "useWhen": "Use when",
+        "avoidWhen": "Avoid when",
+        "gotchas": "Watch out",
+        "requirements": "Needs and where it runs",
+        "members": "Members of this group",
+        "verification": "Verification",
+        "source": "Source and license"
+      },
+      "runsOn": {
+        "daemon_host": "Runs on the machine running CCCC",
+        "actor_tools": "Runs in each member's own environment",
+        "reference": "Listed only; this version can't enable it from CCCC"
+      },
+      "auth": {
+        "none": "No key needed",
+        "bearer": "Needs a token",
+        "api_key": "Needs an API key",
+        "oauth": "Needs an OAuth sign-in",
+        "account": "Needs an account"
+      },
+      "member": {
+        "compatible": "Can use",
+        "pending": "Checked with its own token on next use",
+        "needs_setup": "Needs setup",
+        "unknown": "To be confirmed",
+        "unsupported": "Can't use",
+        "blocked": "Blocked",
+        "session": "Enabled for this session",
+        "actor": "Enabled by this member",
+        "group": "Enabled for this group",
+        "lastCallOk": "Last call succeeded {{time}}",
+        "lastCallFailed": "Last call failed {{time}}",
+        "none": "This group has no members yet."
+      },
+      "credential": {
+        "actor": "Missing {{env}}: set it in this member's private environment variables",
+        "profile": "Missing {{env}}: set it in the member's linked Profile"
+      },
+      "reason": {
+        "actor_tool_prerequisites_unknown": "Depends on the member's own tools; CCCC can't tell",
+        "blocked_by_global_policy": "Blocked everywhere",
+        "blocked_by_group_policy": "Blocked in this group",
+        "credential_permission_denied": "The token lacks permission",
+        "credential_rejected": "The token was rejected (missing or expired)",
+        "credential_route_not_supported": "No way to give this member a token yet",
+        "delivery_form_not_supported": "This version doesn't support this delivery form",
+        "delivery_form_unknown": "Delivery form not confirmed",
+        "external_mcp_not_supported_by_actor": "Web model members can't use external MCP",
+        "missing_daemon_environment": "A required environment variable was not set when CCCC started",
+        "missing_daemon_executable": "A required command is missing on the machine running CCCC",
+        "missing_member_credential": "Missing {{env}} (set it in the member's private environment variables or linked Profile)",
+        "unverified_remote_search": "Unverified old search result"
+      }
+    }
   },
   "assistants": {
     "openFromGroup": "Open this tab from a group.",
@@ -927,6 +1086,7 @@
     "runNowHint": "Send this rule's notification now. It may wake the recipients and use model credits. It does not count toward the run limit or change the schedule.",
     "lastRunManual": "{{time}} (manual)",
     "idleStandup": "Not while the Group is idle",
+    "pending": "Pending (scheduled {{time}})",
     "completedLabel": "Completed",
     "runProgress": "{{done}} / {{max}} runs",
     "completedLimitHint": "Increase or remove the limit to enable this rule."
@@ -1196,6 +1356,88 @@
     "working": "Working…",
     "pickFileFirst": "Pick a file to preview first",
     "reconnectGrok": "After import, save each Grok agent’s Bot URL and configure its Webhook Routine credentials again."
+  },
+  "update": {
+    "title": "Update",
+    "description": "See which CCCC version runs here and update it to the latest release.",
+    "versionTitle": "Version",
+    "installed": "Installed",
+    "latest": "Latest",
+    "localBuild": "Local build",
+    "localIncompatible": "CCCC {{version}} cannot complete a restart from the running version.",
+    "builtAt": "built {{time}}",
+    "localUnreadable": "Could not read the program ({{reason}}).",
+    "restart": "Restart CCCC",
+    "confirmCurrent": "CCCC {{version}} will restart using the current program. This page reconnects at the same address and shows the result.",
+    "confirmLocal": "CCCC stops and starts again at the same address from the rebuilt program on disk ({{version}}, built {{time}}). This page loses its connection until CCCC is back, then shows the result here.",
+    "keepAgents": "Keep agents running",
+    "restartAgents": "Restart agents",
+    "keepUnavailable": "Agents cannot keep running this time:",
+    "keepReasonFor": "{{name}}: {{reason}}",
+    "keepReason": {
+      "keep_not_supported": "Agents cannot be kept running through this restart yet.",
+      "owner_unreachable": "The agent's session process did not answer, so CCCC cannot tell whether it can be kept.",
+      "owner_contract_mismatch": "The agent's session process does not work with the rebuilt program.",
+      "mcp_registration_mismatch": "The way the agent's CCCC tools connect does not work with the rebuilt program.",
+      "member_state_unconfirmed": "The agent's state cannot be confirmed; it may be starting or stopping. Try again once it settles, or choose Restart agents.",
+      "mcp_source_unconfirmed": "CCCC cannot confirm that the agent's CCCC tools come from its current start. Restart it through CCCC first; if this stays, check the CCCC tool path configured for that agent.",
+      "mcp_not_observed": "The agent's CCCC tools have not connected yet. Try again once they do, or restart it through CCCC first.",
+      "mcp_identity_unconfirmed": "CCCC cannot tell whether the agent's CCCC tools are still running. Restart it through CCCC first.",
+      "mcp_contract_mismatch": "The CCCC tools the agent is using do not work with the rebuilt program.",
+      "preflight_timeout": "Checking the agents took too long. Try again shortly.",
+      "runtime_not_covered": "This agent's current launch method cannot be kept running through a restart yet; choose Restart agents.",
+      "remote_resource_unconfirmed": "Saved remote connections or their unfinished work cannot be confirmed. Check their current state before trying again."
+    },
+    "preparingLocal": "Checking the program. CCCC keeps running during the check.",
+    "restartingLocal": "Restarting CCCC {{version}}. The result appears here when CCCC is back.",
+    "lostLocal": "No answer came back from CCCC. If the restart started, its result appears here when CCCC is back.",
+    "noResultLocal": "CCCC answers, but has recorded no result for the restart. Check the installed version above; the CCCC log on the machine it runs on says what happened.",
+    "rejectedLocal": "The restart did not start ({{reason}}). CCCC did not restart and no agent was stopped.",
+    "check": "Check for updates",
+    "checking": "Checking…",
+    "checkFailed": "Check failed: {{reason}}",
+    "upToDate": "CCCC is up to date.",
+    "installedNewer": "This CCCC is newer than the latest release.",
+    "noPackage": "No CCCC package is published for this platform.",
+    "nothingToUpdate": "There is nothing to update.",
+    "releaseNotes": "Release notes",
+    "updateAndRestart": "Update and restart agents",
+    "confirmText": "CCCC stops, installs {{version}} and starts again at the same address. Running agents restart with it. This page loses its connection until CCCC is back, then shows the result here.",
+    "confirmKeep": "CCCC stops, installs {{version}} and starts again at the same address. With Keep agents running, CCCC first downloads the release and checks that the agents can be kept; if they cannot, CCCC and its agents keep running. With Restart agents, running agents restart with it. This page loses its connection until CCCC is back, then shows the result here.",
+    "updateNow": "Update now",
+    "preparing": "Preparing {{version}}: downloading and checking it. CCCC keeps running meanwhile.",
+    "updating": "Updating to {{version}}. The result appears here when CCCC is back.",
+    "lost": "No answer came back from CCCC. If the update to {{version}} started, its result appears here when CCCC is back.",
+    "notBack": "CCCC has not come back yet. If this lasts, check the CCCC log on the machine it runs on.",
+    "noResult": "CCCC answers, but has recorded no result for the update to {{version}}. Check the installed version above; the CCCC log on the machine it runs on says what happened.",
+    "rejected": "The update did not start ({{reason}}). CCCC was not updated and no agent was stopped.",
+    "byHand": "Update this installation with:",
+    "byPip": "This CCCC was installed with pip. Stop CCCC, then run this in the Python environment that installed it:",
+    "unmanaged": "This CCCC was not installed by the CCCC installer or pip. Update it the way it was installed.",
+    "unavailable": "This CCCC process cannot check for updates. Run `cccc update --check` on the machine it runs on.",
+    "lastTitle": "Last update or restart",
+    "last": {
+      "installed": "Updated {{from}} to {{to}}.",
+      "abandoned": "Not updated to {{to}} ({{reason}}). {{from}} started again.",
+      "abandonedLocal": "The restart of CCCC {{to}} was interrupted and finished by the recovery command. CCCC changed no program files.",
+      "notStarted": "The update to {{to}} did not start ({{reason}}). CCCC was not updated and no agent was stopped.",
+      "notStartedLocal": "The restart of CCCC {{to}} did not start ({{reason}}). CCCC did not restart and no agent was stopped.",
+      "unconfirmed": "{{to}} is running, but the update could not be confirmed. Recovery restores the previous version if its backup is available. To recover, stop CCCC, then run the command in the CCCC log.",
+      "unconfirmedLocal": "CCCC {{to}} is running, but the restart could not be confirmed. To clear the restart record, stop CCCC, then run the command in the CCCC log. The program files stay in place.",
+      "undone": "The update to {{to}} was undone.",
+      "kept": "The update to {{to}} was kept.",
+      "restarted": "Restarted CCCC {{to}}.",
+      "other": "Update to {{to}}: {{result}}."
+    },
+    "agents": {
+      "notObserved": "Whether the agents kept running was not checked.",
+      "observing": "Checking the agents…",
+      "reattached": "Kept running: {{names}}",
+      "restarted": "Restarted: {{names}}",
+      "notBack": "Not running: {{names}}",
+      "unconfirmed": "Could not be confirmed: {{names}}",
+      "separator": ", "
+    }
   },
   "developer": {
     "title": "Developer Mode (Global)",

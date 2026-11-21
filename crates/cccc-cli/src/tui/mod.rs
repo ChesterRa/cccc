@@ -24,6 +24,8 @@ mod terminal;
 #[cfg(test)]
 mod test_support;
 mod text;
+mod update;
+mod update_view;
 mod view;
 
 use crate::host_state::{HostIntent, HostPhase, HostState};
@@ -41,14 +43,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
+use update::{UpdateCommand, UpdateProgress};
 
 pub(crate) use terminal::restore as restore_terminal;
 
 const THREAD_NAME: &str = "cccc-tui";
 // Input wait per loop; also the longest a host change waits to be drawn.
 const TICK: Duration = Duration::from_millis(100);
-// Entering the interface is a few mode changes and one write; only a console
-// that has stopped accepting output takes longer.
+// Entering the interface and drawing its first frame are a few mode changes
+// and two writes; only a console that has stopped accepting output takes longer.
 const START_TIMEOUT: Duration = Duration::from_secs(5);
 // Interrupting an install drops its provider command, whose process tree the
 // runtime capture ends; the bound only covers a task that fails to notice.
@@ -70,16 +73,21 @@ pub(crate) struct Session {
     setup: Option<JoinHandle<()>>,
     act: Option<JoinHandle<()>>,
     reply: Option<JoinHandle<()>>,
+    update: Option<JoinHandle<()>>,
 }
 
 /// Take over the terminal and show the interface. `host` carries this
-/// process's lifecycle; `intents` carries the user's stop requests back. An
-/// error means the terminal is back in its own modes, or will be as soon as
-/// a stalled console lets the interface thread continue.
+/// process's lifecycle; `host_stop` takes the user's stop requests, and learns
+/// directly from the interface thread when the interface is lost. This returns
+/// once the first frame is drawn or the interface is lost, so the host starts
+/// its Web knowing which. An error means the terminal is back in its own
+/// modes, or will be as soon as a stalled console lets the interface thread
+/// continue.
 pub(crate) async fn start(
     home: HomeLayout,
     host: watch::Receiver<HostState>,
-    intents: mpsc::UnboundedSender<HostIntent>,
+    host_stop: crate::shutdown::Controller,
+    update: Option<crate::update_checker::UpdateEntry>,
 ) -> Result<Session> {
     let (sessions_tx, sessions) = watch::channel(SessionList::default());
     let (groups_tx, groups) = watch::channel(GroupList::default());
@@ -94,15 +102,31 @@ pub(crate) async fn start(
     let (action_tx, action) = watch::channel(ActionProgress::default());
     let (reply_commands, reply_commands_rx) = mpsc::unbounded_channel();
     let (reply_progress_tx, reply_progress) = watch::channel(pending::Progress::default());
+    let (update_commands, update_commands_rx) = mpsc::unbounded_channel();
+    let (update_progress_tx, update_progress) = watch::channel(UpdateProgress::default());
+    let offer = match &update {
+        None => app::UpdateOffer::Unavailable,
+        Some(entry) if entry.in_place() => app::UpdateOffer::InPlace,
+        Some(_) => app::UpdateOffer::CheckOnly,
+    };
+    let local_restart = update
+        .as_ref()
+        .is_some_and(crate::update_checker::UpdateEntry::local_restart);
+    let release_keep = update
+        .as_ref()
+        .is_some_and(crate::update_checker::UpdateEntry::release_keep);
     let (stop, stop_rx) = watch::channel(false);
     let finish = Arc::new(AtomicBool::new(false));
     let (entered_tx, entered) = oneshot::channel();
     let (done_tx, done) = oneshot::channel();
     let initial = host.borrow().clone();
     let ui = Ui {
-        app: App::new(Context::new(&home), initial),
+        app: App::new(
+            Context::new(&home, offer, local_restart, release_keep),
+            initial,
+        ),
         host,
-        intents,
+        host_stop,
         sessions,
         groups,
         members,
@@ -116,16 +140,15 @@ pub(crate) async fn start(
         action,
         reply_commands,
         reply_progress,
+        update_commands,
+        update_progress,
         finish: Arc::clone(&finish),
     };
     std::thread::Builder::new()
         .name(THREAD_NAME.into())
         .spawn(move || {
             match terminal::enter() {
-                Ok(screen) => {
-                    let _ = entered_tx.send(Ok(()));
-                    ui.run(screen);
-                }
+                Ok(screen) => ui.run(screen, entered_tx),
                 Err(error) => {
                     let _ = entered_tx.send(Err(error));
                 }
@@ -172,6 +195,14 @@ pub(crate) async fn start(
         reply_commands_rx,
         reply_progress_tx,
     ));
+    let update = update.map(|entry| {
+        tokio::spawn(update::run(
+            entry,
+            update_commands_rx,
+            update_progress_tx,
+            stop_rx.clone(),
+        ))
+    });
     let setup = tokio::spawn(setup::run(home, setup_commands_rx, progress_tx, stop_rx));
     Ok(Session {
         finish,
@@ -181,6 +212,7 @@ pub(crate) async fn start(
         setup: Some(setup),
         act: Some(act),
         reply: Some(reply),
+        update,
     })
 }
 
@@ -192,10 +224,17 @@ impl Session {
     pub(crate) async fn stop_work(&mut self) {
         let _ = self.stop.send(true);
         // Reads have nothing to finish, and a group action only stops being
-        // waited for: a request already sent is the daemon's to complete.
-        for task in [self.refresh.take(), self.act.take(), self.reply.take()]
-            .into_iter()
-            .flatten()
+        // waited for: a request already sent is the daemon's to complete. An
+        // update still being prepared is given up; one handed over is the
+        // host's.
+        for task in [
+            self.refresh.take(),
+            self.act.take(),
+            self.reply.take(),
+            self.update.take(),
+        ]
+        .into_iter()
+        .flatten()
         {
             task.abort();
             let _ = task.await;
@@ -245,6 +284,7 @@ impl Drop for Session {
             self.setup.take(),
             self.act.take(),
             self.reply.take(),
+            self.update.take(),
         ]
         .into_iter()
         .flatten()
@@ -260,7 +300,7 @@ impl Drop for Session {
 struct Ui {
     app: App,
     host: watch::Receiver<HostState>,
-    intents: mpsc::UnboundedSender<HostIntent>,
+    host_stop: crate::shutdown::Controller,
     sessions: watch::Receiver<SessionList>,
     groups: watch::Receiver<GroupList>,
     members: watch::Receiver<MemberList>,
@@ -274,19 +314,24 @@ struct Ui {
     action: watch::Receiver<ActionProgress>,
     reply_commands: mpsc::UnboundedSender<pending::Command>,
     reply_progress: watch::Receiver<pending::Progress>,
+    update_commands: mpsc::UnboundedSender<UpdateCommand>,
+    update_progress: watch::Receiver<UpdateProgress>,
     finish: Arc<AtomicBool>,
 }
 
 impl Ui {
-    fn run(mut self, mut screen: terminal::Screen) {
-        let _stop_host = StopHostOnPanic(self.intents.clone());
+    /// `opened` hears once the first frame is drawn or the interface is lost.
+    fn run(mut self, mut screen: terminal::Screen, opened: oneshot::Sender<std::io::Result<()>>) {
+        let mut opened = Some(opened);
+        let _stop_host = StopHostOnPanic(self.host_stop.clone());
         let mut usable = true;
         let mut dirty = true;
         let mut last_draw = Instant::now();
         loop {
             match self.host.has_changed() {
                 Ok(true) => {
-                    self.app.host = self.host.borrow_and_update().clone();
+                    let host = self.host.borrow_and_update().clone();
+                    self.app.set_host(host);
                     dirty = true;
                 }
                 Ok(false) => {}
@@ -298,7 +343,10 @@ impl Ui {
                 self.app.host = self.host.borrow().clone();
                 break;
             }
-            if matches!(self.app.host.phase, HostPhase::Stopped { .. }) {
+            if matches!(
+                self.app.host.phase,
+                HostPhase::Stopped { .. } | HostPhase::Replaced { .. }
+            ) {
                 break;
             }
             let wanted = self.app.want();
@@ -317,6 +365,9 @@ impl Ui {
                     usable = false;
                     self.lose_terminal();
                 }
+            }
+            if let Some(opened) = opened.take() {
+                let _ = opened.send(Ok(()));
             }
             if !usable {
                 std::thread::sleep(TICK);
@@ -381,6 +432,10 @@ impl Ui {
             self.app.set_action(progress);
             changed = true;
         }
+        if self.update_progress.has_changed().unwrap_or(false) {
+            self.app.update = self.update_progress.borrow_and_update().clone();
+            changed = true;
+        }
         changed
     }
 
@@ -417,14 +472,16 @@ impl Ui {
             let was_answering =
                 self.app.screen == app::Screen::Pending && self.app.pending_view.detail.is_some();
             match allowed.then(|| self.app.handle(input)).flatten() {
-                Some(Effect::Host(intent)) => {
-                    let _ = self.intents.send(intent);
-                }
+                Some(Effect::Host(HostIntent::Quit)) => self.host_stop.request(),
+                Some(Effect::Host(HostIntent::Interrupt)) => self.host_stop.interrupt(),
                 Some(Effect::Setup(command)) => {
                     let _ = self.setup_commands.send(command);
                 }
                 Some(Effect::Group(command)) => {
                     let _ = self.group_commands.send(command);
+                }
+                Some(Effect::Update(command)) => {
+                    let _ = self.update_commands.send(command);
                 }
                 Some(Effect::Reply(command)) => {
                     let command = *command;
@@ -449,16 +506,23 @@ impl Ui {
         }
     }
 
-    // Without a terminal there is no way left to quit, so losing it is an
-    // ordinary stop request; the loop keeps waiting for the host's report.
+    // Without a terminal there is no way left to quit, so the host stops; the
+    // loop keeps waiting for its report. Losing the interface is no request
+    // from the user, and the controller orders it against the Web's listener.
     fn lose_terminal(&self) {
-        let _ = self.intents.send(HostIntent::Quit);
+        self.host_stop.lose();
     }
 
     fn print_receipt(&self, restored: std::io::Result<()>) {
         let mut out = std::io::stdout().lock();
-        if let HostPhase::Stopped { report } = &self.app.host.phase {
-            let _ = writeln!(out, "{}", view::receipt(report));
+        match &self.app.host.phase {
+            HostPhase::Stopped { report } => {
+                let _ = writeln!(out, "{}", view::receipt(report));
+            }
+            HostPhase::Replaced { message } if !message.is_empty() => {
+                let _ = writeln!(out, "{message}");
+            }
+            _ => {}
         }
         if let Some(interrupted) = setup_view::interrupted_receipt(&self.app) {
             let _ = writeln!(out, "{interrupted}");
@@ -502,13 +566,14 @@ fn repaint(screen: &mut terminal::Screen) -> std::io::Result<()> {
 }
 
 /// The interface thread is the only way to quit from the keyboard, so its
-/// panic asks the host to stop rather than leaving CCCC running unseen.
-struct StopHostOnPanic(mpsc::UnboundedSender<HostIntent>);
+/// panic loses the interface and the host stops rather than leaving CCCC
+/// running unseen.
+struct StopHostOnPanic(crate::shutdown::Controller);
 
 impl Drop for StopHostOnPanic {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            let _ = self.0.send(HostIntent::Quit);
+            self.0.lose();
         }
     }
 }

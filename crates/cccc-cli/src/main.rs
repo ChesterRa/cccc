@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 mod args;
 mod commands;
 mod confirm;
@@ -11,6 +12,8 @@ mod host_state;
 mod process_recovery;
 mod shutdown;
 mod tui;
+mod update_checker;
+mod update_host;
 mod web_endpoint;
 mod web_host;
 mod web_instance;
@@ -29,8 +32,17 @@ use std::io::IsTerminal;
 
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+fn main() -> Result<()> {
+    // The process watchdog blocks terminal signals on its own thread, so it
+    // runs before the async runtime starts any other thread.
+    if let Some(result) = cccc_runtime::run_process_watchdog_from_args() {
+        return Ok(result?);
+    }
+    run()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run() -> Result<()> {
     cccc_core::build_info::initialize(env!("CCCC_SOURCE_ID"));
     #[cfg(windows)]
     let _console_encoding = console_encoding::use_utf8();
@@ -45,6 +57,11 @@ async fn main() -> Result<()> {
     if cli.headless && cli.command.is_some() {
         bail!("--headless is a launch option; use cccc --headless without a subcommand");
     }
+    // Answered before anything else, so checking a staged program never
+    // touches a CCCC home.
+    if matches!(&cli.command, Some(CommandKind::Update(args)) if args.self_check) {
+        return update_host::print_self_check();
+    }
     let home = HomeLayout::resolve()?;
     let client = DaemonClient::new(home.clone());
     match cli.command {
@@ -54,7 +71,8 @@ async fn main() -> Result<()> {
                 std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
                 cccc_web::WebMode::from_env(),
             );
-            web_host::launch(home, cli.host, cli.port, None, terminal).await
+            let exit = web_host::launch(home, cli.host, cli.port, None, terminal).await?;
+            web_host::finish_launch(exit).await
         }
         Some(CommandKind::Web(args)) => {
             if args.reload {
@@ -75,7 +93,8 @@ async fn main() -> Result<()> {
                     WebModeArg::Exhibit => cccc_web::WebMode::Exhibit,
                 })
             };
-            web_host::launch(home, cli.host, cli.port, mode, false).await
+            let exit = web_host::launch(home, cli.host, cli.port, mode, false).await?;
+            web_host::finish_launch(exit).await
         }
         Some(CommandKind::Mcp {
             local_session_runtime,
@@ -164,18 +183,58 @@ async fn main() -> Result<()> {
             // Setup owns synchronous provider commands and the explicit ACP login runtime.
             tokio::task::spawn_blocking(move || commands::setup::run(&home, args)).await?
         }
-        Some(CommandKind::Update(args)) => commands::update::run(args).await,
+        Some(CommandKind::Update(args)) => {
+            if args.installer_check {
+                // Read by the installer, which shows this line when it refuses.
+                if let Err(reason) = cccc_daemon::session_owner::installer_check(&home).await {
+                    eprintln!("{reason}");
+                    std::process::exit(1);
+                }
+                Ok(())
+            } else if let Some(transaction) = args.resume {
+                let exit = update_host::resume(home, transaction).await?;
+                web_host::finish_launch(exit).await
+            } else if let Some(transaction) = args.recover {
+                update_host::recover(&home, &transaction).await
+            } else {
+                commands::update::run(args).await
+            }
+        }
     }
 }
 
 async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -> Result<()> {
     match action {
-        DaemonAction::ProcessRecovery { owner, action } => {
-            process_recovery::run(home, client, owner, action).await
+        DaemonAction::ProcessRecovery {
+            owner,
+            owner_id,
+            action,
+        } => process_recovery::run(home, client, owner, owner_id, action).await,
+        DaemonAction::Run { update_resume } => match update_resume {
+            Some(transaction) => {
+                cccc_daemon::run_with_diagnostics_resuming(home, &transaction).await
+            }
+            None => {
+                let _ = update_host::recover_local_before_start(&home)?;
+                cccc_daemon::run_with_diagnostics(home).await
+            }
+        },
+        DaemonAction::SessionOwner { owner_id } => {
+            cccc_daemon::session_owner::run_with_browser_launcher(
+                home,
+                &owner_id,
+                cccc_web::browser_launcher(),
+            )
+            .await
         }
-        DaemonAction::Run => cccc_daemon::run_with_diagnostics(home).await,
-        DaemonAction::Stop => {
-            let response = daemon_lifecycle::stop(client, &home).await?;
+        DaemonAction::Stop { keep_agents } => {
+            let intent = if keep_agents {
+                daemon_lifecycle::StopIntent::KeepAgents
+            } else {
+                daemon_lifecycle::StopIntent::StopAgents
+            };
+            let (mut response, receipt) =
+                daemon_lifecycle::stop_for_user(client, &home, intent).await?;
             if response.ok {
                 // A combined `cccc` process owns both Web and daemon. Do not
                 // report process-wide shutdown while that executable is still
@@ -184,6 +243,24 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
                     web_instance::wait_until_free(&home, daemon_lifecycle::DAEMON_SHUTDOWN_TIMEOUT)
                         .await?,
                 );
+                if let Some(line) = daemon_lifecycle::receipt_line(&home, intent, &receipt) {
+                    cccc_runtime::diagnostic(format_args!("{line}"));
+                }
+                // Scripts read the same facts from stdout; an old daemon's reply is unchanged.
+                match &receipt {
+                    daemon_lifecycle::Receipt::NotSupported => {}
+                    daemon_lifecycle::Receipt::Missing => {
+                        response
+                            .result
+                            .insert("receipt".into(), serde_json::Value::Null);
+                    }
+                    daemon_lifecycle::Receipt::Confirmed(report)
+                    | daemon_lifecycle::Receipt::WithoutDaemon(report) => {
+                        response
+                            .result
+                            .insert("receipt".into(), serde_json::to_value(report)?);
+                    }
+                }
             }
             print(response)
         }
@@ -196,6 +273,14 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
             }
         }
         DaemonAction::Start => {
+            let _ = update_host::recover_local_before_start(&home)?;
+            // Before anything that could stop, replace or adopt a daemon: while
+            // an update holds this home, only its own relay may start one.
+            cccc_core::attended_update::check_start(
+                &home,
+                None,
+                &cccc_core::attended_update::BuildIdentity::current(),
+            )?;
             daemon_lifecycle::replace_incompatible(&home, client).await?;
             if daemon_lifecycle::ping(client).await {
                 println!("CCCC daemon: already running");
@@ -207,7 +292,12 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
                 .await?
             {
                 StartOutcome::AlreadyRunning => println!("CCCC daemon: already running"),
-                StartOutcome::Started(pid) => println!("CCCC daemon: started pid={pid}"),
+                StartOutcome::Started(pid) => {
+                    println!("CCCC daemon: started pid={pid}");
+                    if let Some(line) = daemon_lifecycle::retained_line(client, &home).await {
+                        cccc_runtime::diagnostic(format_args!("{line}"));
+                    }
+                }
             }
             Ok(())
         }
@@ -239,18 +329,8 @@ async fn runtime(client: &DaemonClient, action: RuntimeAction) -> Result<()> {
         RuntimeAction::Hermes { action } => {
             let (op, args) = match action {
                 HermesAction::Status => ("runtime_hermes_status", json!({})),
-                HermesAction::Prepare { cwd, yes, force } => (
-                    "runtime_hermes_prepare",
-                    json!({"cwd":cwd,"yes":yes,"force":force}),
-                ),
-                HermesAction::McpTest {
-                    cwd,
-                    group_id,
-                    actor_id,
-                } => (
-                    "runtime_hermes_mcp_test",
-                    json!({"cwd":cwd,"group_id":group_id,"actor_id":actor_id}),
-                ),
+                HermesAction::Prepare { cwd } => ("runtime_hermes_prepare", json!({"cwd":cwd})),
+                HermesAction::McpTest => ("runtime_hermes_mcp_test", json!({})),
             };
             print(call(client, op, args).await?)?;
         }
@@ -281,3 +361,6 @@ mod tests {
         assert!(select_active_group(&home, "g_missing").is_err());
     }
 }
+
+#[cfg(test)]
+cccc_daemon::session_owner_test_entry!();

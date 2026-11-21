@@ -8,12 +8,15 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 
 mod acp;
+pub(crate) use acp::{sanitize_diagnostic, sanitize_multiline as sanitize_multiline_diagnostic};
 mod antigravity;
 mod claude;
+pub(crate) use claude::capture_host_environment as claude_host_environment;
 mod control;
 mod grok;
 mod grok_voice_auth;
 pub(crate) use grok_voice_auth::{grok_voice_bearer, grok_voice_credentials_available};
+mod kilo_input;
 mod launch;
 pub(crate) use launch::ANALYST_INSTRUCTIONS;
 pub(crate) use launch_secretary::{
@@ -21,7 +24,9 @@ pub(crate) use launch_secretary::{
 };
 mod launch_antigravity;
 mod native_acp;
-pub(crate) use native_acp::{name as native_acp_name, valid_id as valid_native_acp_id};
+pub(crate) use native_acp::{
+    hermes_profile, hermes_setup, name as native_acp_name, valid_id as valid_native_acp_id,
+};
 mod launch_claude;
 mod launch_codex;
 mod launch_command;
@@ -51,6 +56,9 @@ pub(crate) fn managed_runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
+            // Unoptimized Claude launch/resume paths exceed the default 2 MiB.
+            // Reserve bounded headroom for this runtime's worker/pool threads.
+            .thread_stack_size(4 * 1024 * 1024)
             .thread_name("cccc-managed-agent")
             .enable_all()
             .build()
@@ -113,6 +121,19 @@ pub(crate) struct ActorLaunchConfig {
     pub(crate) runtime_mode: RuntimeMode,
     pub(crate) command: Vec<String>,
     pub(crate) environment: BTreeMap<String, String>,
+}
+
+struct AcpActorLaunch<'a> {
+    ids: (&'a str, &'a str),
+    diagnostic_values: &'a [String],
+}
+
+fn nonempty_environment_values(environment: &BTreeMap<String, String>) -> Vec<String> {
+    environment
+        .values()
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .collect()
 }
 
 impl LaunchConfig {
@@ -344,7 +365,9 @@ impl ManagedProtocol {
                 Ok(())
             }
             Self::Acp(protocol) => {
-                protocol.close().await;
+                if !protocol.close().await {
+                    tracing::warn!("managed ACP client did not close in time and was aborted");
+                }
                 Ok(())
             }
             Self::Claude(protocol) => protocol.close().await,

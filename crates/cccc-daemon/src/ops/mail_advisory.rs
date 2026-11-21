@@ -28,7 +28,10 @@ pub(super) fn advisories(home: &HomeLayout, group: &GroupDoc, mail: &Event) -> V
         if reasons.is_empty()
             && actor.external_session_id.is_empty()
             && !actor.runtime.is_web_model()
-            && !super::actor_runtime_status::resolve(home, group, actor).running
+            && {
+                let status = super::actor_runtime_status::resolve(home, group, actor);
+                status.available && !status.running
+            }
         {
             reasons.push("not_running");
         }

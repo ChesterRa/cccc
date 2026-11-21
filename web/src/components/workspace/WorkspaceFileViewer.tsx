@@ -1,4 +1,4 @@
-import { buttonVariants } from "../ui/button-variants";
+import { toolbarIconKey } from "../ui/toolbarKey";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Code, Download, Eye, ExternalLink, Paperclip, RotateCcw, Save, X } from "lucide-react";
@@ -97,7 +97,7 @@ function FileViewer({
     else onReload();
   };
 
-  const fileActionClass = `${buttonVariants({ variant: "ghost", size: "iconSm" })} max-sm:h-11 max-sm:w-11 max-sm:pointer-coarse:h-[44px] max-sm:pointer-coarse:w-[44px]`;
+  const fileActionClass = toolbarIconKey;
 
   return (
     <div className="flex h-full min-h-0 flex-col">

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { chatSetupRequirements } from "../../src/hooks/chat/chatSetupRequirements";
 import { computeSelectedGroupRuntime } from "../../src/hooks/useSelectedGroupRuntime";
 import { computeGroupRuntimePatch } from "../../src/utils/groupRuntimeProjection";
 
@@ -40,6 +41,42 @@ describe("useSelectedGroupRuntime", () => {
       running_actor_count: 0,
       has_running_foreman: false,
     });
+  });
+
+  it("keeps an unobserved remote-only Group unknown without prompting to start or attach", () => {
+    const actors = [{ id: "a1", running: true, external_session_id: "remote:fixture" }];
+    const result = computeSelectedGroupRuntime({
+      groups: [
+        {
+          group_id: "g1",
+          state: "active",
+          runtime_status: { lifecycle_state: "active", available: false },
+        },
+      ],
+      selectedGroupId: "g1",
+      groupDoc: {
+        group_id: "g1",
+        running: true,
+        state: "active",
+        runtime_status: {
+          lifecycle_state: "active",
+          runtime_running: true,
+          running_actor_count: 2,
+          has_running_foreman: true,
+        },
+      },
+      actors,
+    });
+
+    expect(result.selectedGroupRunning).toBeNull();
+    expect(result.selectedGroupRuntimeStatus).toEqual({
+      lifecycle_state: "active",
+      available: false,
+    });
+    expect(result.orderedSelectedGroupPatch?.running).toBeUndefined();
+    expect(chatSetupRequirements("g1", "", actors, result.selectedGroupRunning).showSetupCard).toBe(
+      false,
+    );
   });
 
   it("produces a sidebar patch for the selected group", () => {

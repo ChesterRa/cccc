@@ -113,6 +113,7 @@ pub(super) async fn ensure_open_for_actor(
             &open_url,
             (width, height),
             &generation,
+            &actor.created_at,
         )
         .await
         .map_err(|error| ApiError::bad(format!("{error:#}")))?;

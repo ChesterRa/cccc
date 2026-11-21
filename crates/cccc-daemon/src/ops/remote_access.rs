@@ -116,7 +116,7 @@ fn set_running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpR
     if provider == "tailscale" {
         let command = if running { "up" } else { "down" };
         run_tailscale(
-            Command::new("tailscale").arg(command),
+            cccc_runtime::background_command("tailscale").arg(command),
             running,
             std::time::Duration::from_secs(30),
         )?;

@@ -41,9 +41,12 @@ mod nomcp_send;
 mod presentation;
 mod presentation_browser;
 pub(crate) mod process_recovery;
+mod quick_reply_templates;
 mod realtime;
 mod remote_access;
 mod remote_access_projection;
+#[cfg(test)]
+mod remote_maintenance_test_daemon;
 mod session_nodes;
 mod settings;
 mod streams;
@@ -57,6 +60,7 @@ mod terminal_ws;
 mod terminal_ws_bootstrap;
 mod terminal_ws_flow;
 mod terminal_ws_protocol;
+pub(crate) mod update;
 mod voice_secretary;
 mod voice_secretary_terminal;
 mod web_model_browser;
@@ -110,6 +114,7 @@ pub fn router() -> Router<AppState> {
         .merge(im::routes())
         .merge(messaging::routes())
         .merge(message_pins::routes())
+        .merge(quick_reply_templates::routes())
         .merge(messaging_cross_group::routes())
         .merge(presentation::routes())
         .merge(presentation_browser::routes())
@@ -128,6 +133,7 @@ pub fn router() -> Router<AppState> {
         .merge(membership::routes())
         .merge(connect::routes())
         .merge(remote_access::routes())
+        .merge(update::routes())
         .merge(settings::routes())
         .merge(capabilities::routes())
         .merge(chet::routes())
@@ -138,5 +144,6 @@ pub fn router() -> Router<AppState> {
 
 pub(crate) use assistants::spawn_voice_model_cleanup;
 pub(crate) use grok_webhook::spawn as spawn_grok_webhooks;
+pub(crate) use web_model_delivery::wait_for_browser_work;
 pub(crate) use web_model_dots::spawn as spawn_dots_events;
 pub(crate) use web_model_supervisor::spawn as spawn_web_model_supervisor;

@@ -250,3 +250,5 @@ async fn high_volume_initial_replay_does_not_starve_control_input() {
     server.abort();
     assert!(stopped, "Ctrl-C was starved by the initial replay loop");
 }
+
+cccc_daemon::session_owner_test_entry!();

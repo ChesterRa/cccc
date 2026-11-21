@@ -34,6 +34,7 @@ fn session(temp: &std::path::Path) -> (Session, super::control_fixture::ControlD
         stop_lock: Mutex::new(()),
         startup_prompt: Mutex::new(None),
         active_turn: Mutex::new(None),
+        journal_private: Vec::new(),
     };
     (session, directory)
 }

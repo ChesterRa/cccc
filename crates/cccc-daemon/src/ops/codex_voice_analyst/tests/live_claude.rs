@@ -1,21 +1,6 @@
 use super::super::*;
 use cccc_core::HomeLayout;
-use std::path::Path;
 use std::time::Duration;
-
-fn configure_isolated_claude(config_dir: &Path) {
-    std::fs::create_dir_all(config_dir).expect("isolated Claude config");
-    cccc_core::fs::write_json(
-        &config_dir.join(".claude.json"),
-        &serde_json::json!({"bypassPermissionsModeAccepted":true,"hasCompletedOnboarding":true}),
-    )
-    .expect("isolated CLI onboarding");
-    cccc_core::fs::write_json(
-        &config_dir.join("settings.json"),
-        &serde_json::json!({"skipDangerousModePermissionPrompt":true}),
-    )
-    .expect("isolated CLI settings");
-}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn live_claude_empty_session_resumes_without_a_prompt() {
@@ -27,8 +12,7 @@ async fn live_claude_empty_session_resumes_without_a_prompt() {
     home.initialize().expect("initialize home");
     let root = temp.path().join("project");
     std::fs::create_dir_all(&root).expect("project");
-    let config_dir = temp.path().join("claude");
-    configure_isolated_claude(&config_dir);
+    let config_dir = super::configure_isolated_claude_project(&temp);
     let mut thread_id = None;
     let group_id = uuid::Uuid::new_v4().simple().to_string();
     for _ in 0..3 {

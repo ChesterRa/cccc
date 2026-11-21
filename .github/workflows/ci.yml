@@ -136,8 +136,13 @@ jobs:
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@1.91.0
+        with:
+          components: clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Check Windows process policy
+        run: cargo clippy --workspace --locked -- -D unfulfilled_lint_expectations
 
       - name: Verify Windows PTY UTF-8 message delivery
         timeout-minutes: 10
@@ -220,6 +225,12 @@ jobs:
       - name: Verify TUI rendering and input
         run: >-
           cargo test --package cccc --bin cccc --locked tui::
+      - name: Verify macOS update capabilities and running image
+        run: >-
+          cargo test --package cccc --bin cccc --locked --
+          self_check_reports_this_programs_constants
+          keeping_agents_through_a_release_is_offered_only_where_this_build_takes_them_over
+          the_running_program_is_its_own_launch_program_until_it_is_replaced
       - name: Verify Group copy path checks on macOS
         run: >-
           cargo test --package cccc-pair-core --lib --locked group_copy
@@ -270,7 +281,7 @@ jobs:
         with:
           node-version: "24.19.0"
       - name: Install verified native CLI versions
-        run: npm install --global @openai/codex@0.153.2 @anthropic-ai/claude-code@2.1.261 @kilocode/cli@7.5.14
+        run: npm install --global @openai/codex@0.170.0 @anthropic-ai/claude-code@2.1.327 @kilocode/cli@7.8.27
       - name: Verify native sessions without external model access
         timeout-minutes: 5
         env:

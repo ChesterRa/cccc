@@ -105,15 +105,20 @@ fn update<T>(home: &HomeLayout, change: impl FnOnce(&mut Value) -> io::Result<T>
 }
 
 pub fn load(home: &HomeLayout) -> io::Result<Vec<Value>> {
-    fs::with_exclusive_lock(&lock_path(home), || {
-        let root = read(home)?;
-        Ok(root["connectors"]
-            .as_object()
-            .expect("validated store")
-            .values()
-            .cloned()
-            .collect())
-    })
+    fs::with_exclusive_lock(&lock_path(home), || snapshot(home))
+}
+
+/// Read one published connector document without creating or waiting for its
+/// write lock. Writers publish atomically; this is an observation, not a fence
+/// for a later mutation or an authorization decision.
+pub fn snapshot(home: &HomeLayout) -> io::Result<Vec<Value>> {
+    let root = read(home)?;
+    Ok(root["connectors"]
+        .as_object()
+        .expect("validated store")
+        .values()
+        .cloned()
+        .collect())
 }
 
 pub fn requires_reconfiguration(home: &HomeLayout) -> io::Result<bool> {

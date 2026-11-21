@@ -3,6 +3,7 @@ use cccc_core::GroupDoc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct RuntimeStatus {
+    pub available: bool,
     pub running: bool,
     pub pid: Option<u32>,
 }
@@ -12,22 +13,42 @@ pub(super) fn resolve(
     group: &GroupDoc,
     actor: &Actor,
 ) -> RuntimeStatus {
+    crate::session_owner::read_scope(|| resolve_observed(home, group, actor))
+}
+
+fn resolve_observed(
+    home: &cccc_core::HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> RuntimeStatus {
     if !actor.external_session_id.is_empty() {
         return RuntimeStatus {
+            available: true,
             running: actor.enabled
                 && !matches!(group.state, GroupState::Stopped | GroupState::Paused)
                 && super::local_sessions::connected(home, &actor.external_session_id),
             pid: None,
         };
     }
+    if crate::session_owner::require_available(home, Some(&group.group_id), Some(&actor.id))
+        .is_err()
+    {
+        return RuntimeStatus {
+            available: false,
+            running: false,
+            pid: None,
+        };
+    }
     if super::deepseek_runtime::running(&group.group_id, &actor.id) {
         return RuntimeStatus {
+            available: true,
             running: true,
             pid: None,
         };
     }
     if let Some(status) = super::local_headless::status(&group.group_id, &actor.id) {
         return RuntimeStatus {
+            available: true,
             running: true,
             pid: status.pid,
         };
@@ -37,23 +58,27 @@ pub(super) fn resolve(
         && status.running
     {
         return RuntimeStatus {
+            available: true,
             running: true,
             pid: status.pid,
         };
     }
     if actor.runtime == ActorRuntime::Deepseek || super::local_headless::supports(actor) {
         return RuntimeStatus {
+            available: true,
             running: false,
             pid: None,
         };
     }
     if super::actor_runtime::is_structured(actor) {
         return RuntimeStatus {
+            available: true,
             running: actor.enabled && group.running && group.state != GroupState::Stopped,
             pid: None,
         };
     }
     RuntimeStatus {
+        available: true,
         running: session.as_ref().is_some_and(|item| item.running),
         pid: session.and_then(|item| item.pid),
     }

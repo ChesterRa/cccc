@@ -20,6 +20,7 @@ export function SplitPaneHeader({
   style,
   onFocus,
   onPick,
+  actions,
 }: {
   side: SplitSide;
   /** On a phone the two sides are stacked: the first is on top. */
@@ -34,6 +35,7 @@ export function SplitPaneHeader({
   style: CSSProperties;
   onFocus: () => void;
   onPick: (tab: ResourceTab) => void;
+  actions?: ReactNode;
 }) {
   const { t } = useTranslation("chat");
   const button = useRef<HTMLButtonElement>(null);
@@ -83,6 +85,7 @@ export function SplitPaneHeader({
         ) : null}
         <LcdIcon icon={ChevronDown} glyph="chevron-down" className="h-3.5 w-3.5 shrink-0" />
       </button>
+      {actions}
       {menu && button.current ? (
         <WorkspaceEntryMenu
           x={menu.x}

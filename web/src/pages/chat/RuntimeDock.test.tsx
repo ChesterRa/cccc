@@ -120,6 +120,11 @@ it("shows confirmation from refreshed Actors and keeps the existing terminal ent
   expect(mocks.open).toHaveBeenCalledExactlyOnceWith("alpha");
   await render({ runtime_confirmation_required: false });
   expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
+  // Hermes runs its first setup where Claude asks for a confirmation.
+  await render({ runtime: "hermes", runtime_confirmation_required: true });
+  expect(host.textContent).toContain("actors:runtimeSetupPending");
+  expect(host.textContent).not.toContain("actors:runtimeConfirmationPending");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
 });
 
 it("names a native session by whether it can receive, never as stopped", async () => {
@@ -145,14 +150,24 @@ it("names a native session by whether it can receive, never as stopped", async (
 });
 
 it("names a closed confirmation only when the daemon reports the pause", async () => {
-  await render({ running: false, runtime_confirmation_paused: true });
+  await render({ runtime: "claude", running: false, runtime_confirmation_paused: true });
   expect(host.textContent).toContain("actors:runtimeConfirmationPaused");
   expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
   for (const paused of [false, undefined]) {
-    await render({ running: false, runtime_confirmation_paused: paused });
+    await render({ runtime: "claude", running: false, runtime_confirmation_paused: paused });
     expect(host.textContent).not.toContain("actors:runtimeConfirmationPaused");
     expect(host.querySelector('button[data-tone="attention"]')).toBeNull();
   }
+  // Another terminal runtime paused because it closed before its startup input.
+  await render({ runtime: "kiro", running: false, runtime_confirmation_paused: true });
+  expect(host.textContent).toContain("actors:runtimeStartupInputPaused");
+  expect(host.textContent).not.toContain("actors:runtimeConfirmationPaused");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
+  // Hermes paused because its first setup ended before CCCC connected.
+  await render({ runtime: "hermes", running: false, runtime_confirmation_paused: true });
+  expect(host.textContent).toContain("actors:runtimeSetupPaused");
+  expect(host.textContent).not.toContain("actors:runtimeStartupInputPaused");
+  expect(host.querySelector('button[data-tone="attention"]')).not.toBeNull();
 });
 
 it("moves the ring only while work is in progress", async () => {
@@ -241,6 +256,49 @@ it.each(["headless", "pty"] as const)(
     );
     await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
     expect(mocks.open).toHaveBeenCalledWith(actor.id);
+  },
+);
+
+it.each(["headless", "pty"] as const)(
+  "shows a %s agent the daemon could not observe as unknown, with its diagnostic",
+  async (runner) => {
+    const diagnostic =
+      "session owner 2cabc7ed (PID 147) could not confirm this member; run `cccc daemon stop --keep-agents`, then review it";
+    const unknown = {
+      runner,
+      runner_effective: runner,
+      running: undefined,
+      effective_working_state: "unknown",
+      effective_working_reason: "runtime_owner_unavailable",
+      runtime_observation_error: diagnostic,
+    };
+    mocks.workingState = "unobservable";
+    await render(unknown);
+    const title = host.querySelector("button")?.title || "";
+    expect(title).toContain("Unknown");
+    expect(title).toContain(diagnostic);
+    expect(title).not.toContain("Running");
+    expect(title).not.toContain("Stopped");
+    expect(
+      getRuntimeRingTone(
+        { actor: { ...actor, ...unknown }, runner, liveWorkCard: null },
+        true,
+        "unobservable",
+      ),
+    ).toBe("attention");
+    expect(
+      getRuntimeRingTone(
+        { actor: { ...actor, ...unknown }, runner, liveWorkCard: null },
+        false,
+        "unobservable",
+      ),
+    ).toBe("attention");
+    // The daemon's "unknown" turn state of a running agent is not a call for attention.
+    expect(getRuntimeRingTone({ actor, runner, liveWorkCard: null }, true, "unknown")).toBe("idle");
+    // A terminal still waiting for its startup input past the shown delay needs the user.
+    expect(getRuntimeRingTone({ actor, runner, liveWorkCard: null }, true, "idle", true)).toBe(
+      "attention",
+    );
   },
 );
 

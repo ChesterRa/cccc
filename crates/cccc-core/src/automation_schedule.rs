@@ -24,7 +24,7 @@ pub fn is_due(trigger: Option<&Map<String, Value>>, last: Option<i64>, now: Date
                 .and_then(|value| DateTime::parse_from_rfc3339(value).ok());
             last.is_none() && at.is_some_and(|at| at.with_timezone(&Utc) <= now)
         }
-        "cron" => cron_due(trigger, last, now),
+        "cron" => cron_due_at(trigger, last, now).is_some(),
         _ => false,
     }
 }
@@ -56,38 +56,14 @@ pub(crate) fn next_fire_at(
             .and_then(Value::as_str)
             .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
             .map(|value| value.with_timezone(&Utc)),
-        "cron" => cron_next(trigger, now),
+        // A due rule reports the occurrence it is about to fire for, at or before `now`,
+        // as interval and one-time rules already do, rather than the one after it.
+        "cron" => cron_due_at(trigger, last, now).or_else(|| cron_next(trigger, now)),
         _ => None,
     }
 }
 
-fn cron_due(trigger: Option<&Map<String, Value>>, last: Option<i64>, now: DateTime<Utc>) -> bool {
-    let raw = trigger
-        .and_then(|trigger| trigger.get("cron"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let Ok(schedule) = parse_cron_schedule(raw) else {
-        return false;
-    };
-    let Ok(timezone) = trigger
-        .and_then(|trigger| trigger.get("timezone"))
-        .and_then(Value::as_str)
-        .unwrap_or("UTC")
-        .parse::<Tz>()
-    else {
-        return false;
-    };
-    let base = last
-        .and_then(|timestamp| DateTime::from_timestamp(timestamp, 0))
-        .unwrap_or_else(|| now - TimeDelta::seconds(61))
-        .with_timezone(&timezone);
-    schedule
-        .after(&base)
-        .next()
-        .is_some_and(|next| next <= now.with_timezone(&timezone))
-}
-
-fn cron_next(trigger: Option<&Map<String, Value>>, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+fn cron_schedule(trigger: Option<&Map<String, Value>>) -> Option<(Schedule, Tz)> {
     let raw = trigger
         .and_then(|trigger| trigger.get("cron"))
         .and_then(Value::as_str)?;
@@ -98,6 +74,30 @@ fn cron_next(trigger: Option<&Map<String, Value>>, now: DateTime<Utc>) -> Option
         .unwrap_or("UTC")
         .parse::<Tz>()
         .ok()?;
+    Some((schedule, timezone))
+}
+
+/// The first occurrence after the rule's clock, if it is not later than `now`. Missed
+/// occurrences fire once, on the next tick; a rule without a clock looks back a minute.
+fn cron_due_at(
+    trigger: Option<&Map<String, Value>>,
+    last: Option<i64>,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    let (schedule, timezone) = cron_schedule(trigger)?;
+    let base = last
+        .and_then(|timestamp| DateTime::from_timestamp(timestamp, 0))
+        .unwrap_or_else(|| now - TimeDelta::seconds(61))
+        .with_timezone(&timezone);
+    schedule
+        .after(&base)
+        .next()
+        .map(|value| value.with_timezone(&Utc))
+        .filter(|value| *value <= now)
+}
+
+fn cron_next(trigger: Option<&Map<String, Value>>, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let (schedule, timezone) = cron_schedule(trigger)?;
     schedule
         .after(&now.with_timezone(&timezone))
         .next()
@@ -352,6 +352,31 @@ mod tests {
         assert_eq!(fire_weekdays("0 9 * * 7/2"), vec![Sun]);
         assert_eq!(fire_weekdays("0 9 * * 5/1"), vec![Sun, Fri, Sat]);
         assert_eq!(fire_weekdays("0 9 * * wed/2"), vec![Wed, Fri]);
+    }
+
+    #[test]
+    fn a_due_cron_rule_reports_the_occurrence_it_will_fire_for() {
+        // Daily at 21:00 in Tokyo (12:00 UTC); the clock was last set two days before.
+        let trigger = json!({"kind":"cron","cron":"0 21 * * *","timezone":"Asia/Tokyo"})
+            .as_object()
+            .cloned()
+            .expect("cron trigger is a JSON object");
+        let last = Utc.with_ymd_and_hms(2026, 11, 10, 16, 2, 59).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 11, 12, 13, 50, 42).unwrap();
+        let missed = Utc.with_ymd_and_hms(2026, 11, 11, 12, 0, 0).unwrap();
+        assert!(is_due(Some(&trigger), Some(last.timestamp()), now));
+        assert_eq!(
+            next_fire_at(Some(&trigger), Some(last.timestamp()), now),
+            Some(missed)
+        );
+
+        // Once it fires, the clock moves to that tick and the next occurrence is ahead.
+        let fired = now.timestamp();
+        assert!(!is_due(Some(&trigger), Some(fired), now));
+        assert_eq!(
+            next_fire_at(Some(&trigger), Some(fired), now),
+            Some(Utc.with_ymd_and_hms(2026, 11, 13, 12, 0, 0).unwrap())
+        );
     }
 
     #[test]

@@ -19,10 +19,12 @@ export type GlobalTabId =
   | "actorProfiles"
   | "myProfiles"
   | "notifications"
+  | "quickReplies"
   | "branding"
   | "webAccess"
   | "webModels"
   | "voice"
+  | "update"
   | "developer";
 
 // Settings share the same controls as the rest of the workbench.

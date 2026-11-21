@@ -1,18 +1,19 @@
-use crate::executable::{is_executable_file, resolve_executable_in_path};
+use crate::executable::resolve_executable_in_path;
 use cccc_contracts::ActorRuntime;
 pub use cccc_contracts::{
-    DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION, DEEPSEEK_ACP_PACKAGE,
-    DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_ACP_VERSION, DEEPSEEK_LLM_ADAPTER_PACKAGE,
-    DEEPSEEK_LLM_ADAPTER_VERSION, DEEPSEEK_MAX_OUTPUT_TOKENS, DEEPSEEK_MCP_CLIENT_PACKAGE,
-    DEEPSEEK_MCP_CLIENT_VERSION, DEEPSEEK_NODE_RANGE, DEEPSEEK_NPM_BEFORE,
-    DEEPSEEK_RELEASE_VERSION, DEEPSEEK_TURN_TIMEOUT_SECONDS,
+    DEEPSEEK_ACP_SDK_VERSION, DEEPSEEK_MAX_OUTPUT_TOKENS, DEEPSEEK_NODE_RANGE, DEEPSEEK_NPM_BEFORE,
+    DEEPSEEK_PACKAGE, DEEPSEEK_RELEASE_VERSION, DEEPSEEK_TURN_TIMEOUT_SECONDS,
 };
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+
+/// The bundle that provides `dsh --profile acp`, and the ACP bridge it starts.
+/// The launcher installs both at the release version.
+const DEEPSEEK_ACP_PROFILE_PACKAGE: &str = "@deepseek-ai/dsh-acp-app";
+const DEEPSEEK_ACP_BRIDGE_PACKAGE: &str = "@deepseek-ai/dsh-acp";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeProbe {
@@ -33,28 +34,34 @@ pub fn deepseek_preflight(
     deepseek_external_preflight(command, env)?;
     let dsh_home =
         deepseek_home(env).ok_or_else(|| "CCCC_HOME and HOME are not configured".to_owned())?;
-    for (package, version) in [
-        (DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION),
-        (DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION),
-        (DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION),
-        (DEEPSEEK_LLM_ADAPTER_PACKAGE, DEEPSEEK_LLM_ADAPTER_VERSION),
+    deepseek_installation_ready(&dsh_home)
+}
+
+/// Whether the pinned installation is complete: the launcher, the ACP profile
+/// bundle and the ACP bridge at the release version, the launcher's command,
+/// the canonical manifest, and a lockfile in which every DeepSeek Harness
+/// package has that version. Setup repairs whatever this rejects.
+pub fn deepseek_installation_ready(dsh_home: &Path) -> Result<(), String> {
+    for package in [
+        DEEPSEEK_PACKAGE,
+        DEEPSEEK_ACP_PROFILE_PACKAGE,
+        DEEPSEEK_ACP_BRIDGE_PACKAGE,
     ] {
-        let manifest = dsh_home
-            .join("node_modules")
-            .join(package)
-            .join("package.json");
-        let found = fs::read(&manifest)
-            .ok()
-            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
-            .and_then(|value| {
-                value
-                    .get("version")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            });
-        if found.as_deref() != Some(version) {
-            return Err(format!("{package}@{version} is required"));
+        let installed = installed_manifest(&dsh_home.join("node_modules").join(package));
+        if installed
+            .as_ref()
+            .and_then(|manifest| manifest.get("version"))
+            .and_then(Value::as_str)
+            != Some(DEEPSEEK_RELEASE_VERSION)
+        {
+            return Err(format!("{package}@{DEEPSEEK_RELEASE_VERSION} is required"));
         }
+    }
+    if !deepseek_acp_profile_complete(&deepseek_acp_profile(dsh_home)) {
+        return Err("the DeepSeek ACP profile bundle is incomplete".to_owned());
+    }
+    if deepseek_launcher(dsh_home).is_none() {
+        return Err("deepseek executable not found: dsh".to_owned());
     }
     let runtime_manifest: Value = serde_json::from_slice(
         &fs::read(dsh_home.join("package.json"))
@@ -64,26 +71,78 @@ pub fn deepseek_preflight(
     if !is_canonical_deepseek_runtime_manifest(&runtime_manifest) {
         return Err("DeepSeek managed runtime dependency set is not canonical".to_owned());
     }
-    if !deepseek_lockfile_is_pinned(&dsh_home) {
+    if !deepseek_lockfile_is_pinned(dsh_home) {
         return Err(format!(
             "DeepSeek dependency graph must be pinned to {DEEPSEEK_RELEASE_VERSION}"
         ));
     }
-    let profile = dsh_home.join("profiles").join("cccc-acp");
-    let manifest: Value = serde_json::from_slice(
-        &fs::read(profile.join("package.json"))
-            .map_err(|_| "deepseek cccc-acp profile is missing")?,
-    )
-    .map_err(|_| "deepseek cccc-acp profile manifest is invalid")?;
-    if !is_canonical_deepseek_profile_manifest(&manifest) {
-        return Err("deepseek cccc-acp profile is unmanaged".to_owned());
-    }
-    let config = fs::read_to_string(profile.join("cordis.yml"))
-        .map_err(|_| "deepseek cccc-acp profile config is missing")?;
-    if !is_canonical_deepseek_config(&config) {
-        return Err("deepseek cccc-acp profile config is invalid".to_owned());
-    }
     Ok(())
+}
+
+fn installed_manifest(package: &Path) -> Option<Value> {
+    serde_json::from_slice(&fs::read(package.join("package.json")).ok()?).ok()
+}
+
+/// The bundle names its patch layer; without it `dsh --profile acp` cannot
+/// start.
+fn deepseek_acp_profile_complete(profile: &Path) -> bool {
+    installed_manifest(profile)
+        .and_then(|manifest| {
+            manifest
+                .pointer("/dsh/bundle/patch")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .is_some_and(|patch| profile.join(patch).is_file())
+}
+
+/// Installed packages that npm would keep although they are incomplete. npm
+/// treats a package at the right version as installed whatever files it
+/// lacks, so setup removes these and lets npm unpack them again.
+#[must_use]
+pub fn deepseek_packages_to_reinstall(dsh_home: &Path) -> Vec<PathBuf> {
+    let profile = deepseek_acp_profile(dsh_home);
+    let at_release = installed_manifest(&profile)
+        .as_ref()
+        .and_then(|manifest| manifest.get("version"))
+        .and_then(Value::as_str)
+        == Some(DEEPSEEK_RELEASE_VERSION);
+    if at_release && !deepseek_acp_profile_complete(&profile) {
+        vec![profile]
+    } else {
+        Vec::new()
+    }
+}
+
+/// The installed bundle that provides `dsh --profile acp`.
+#[must_use]
+pub fn deepseek_acp_profile(dsh_home: &Path) -> PathBuf {
+    dsh_home
+        .join("node_modules")
+        .join(DEEPSEEK_ACP_PROFILE_PACKAGE)
+}
+
+/// Whether an agent command names the managed launcher. Agents saved before
+/// CCCC moved to the `dsh` launcher name the earlier `dsh-acp-demo` app.
+#[must_use]
+pub fn deepseek_managed_command(command: &[String]) -> bool {
+    command
+        .first()
+        .and_then(|value| Path::new(value).file_stem())
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "dsh" | "dsh-acp-demo"))
+}
+
+/// The managed launcher inside the pinned installation, never a `dsh` found
+/// elsewhere on PATH.
+#[must_use]
+pub fn deepseek_executable(env: &BTreeMap<String, String>) -> Option<PathBuf> {
+    deepseek_launcher(&deepseek_home(env)?)
+}
+
+fn deepseek_launcher(dsh_home: &Path) -> Option<PathBuf> {
+    let launcher = dsh_home.join("node_modules").join(".bin").join("dsh");
+    resolve_executable_in_path(launcher.to_str()?, None)
 }
 
 pub fn deepseek_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
@@ -104,15 +163,22 @@ pub fn deepseek_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     )
 }
 
+/// What the managed installation cannot provide: a supported Node and, for a
+/// custom command, its executable on PATH. Setup checks this before it
+/// downloads the installation, which provides the managed launcher.
 pub fn deepseek_external_preflight(
     command: &[String],
     env: &BTreeMap<String, String>,
 ) -> Result<(), String> {
+    deepseek_node_preflight(env)?;
+    if deepseek_managed_command(command) {
+        return Ok(());
+    }
     let executable = command.first().map(String::as_str).unwrap_or("dsh");
     if resolve_executable_in_path(executable, env.get("PATH").map(String::as_str)).is_none() {
         return Err(format!("deepseek executable not found: {executable}"));
     }
-    deepseek_node_preflight(env)
+    Ok(())
 }
 
 pub fn deepseek_bootstrap_preflight(env: &BTreeMap<String, String>) -> Result<(), String> {
@@ -124,7 +190,7 @@ pub fn deepseek_bootstrap_preflight(env: &BTreeMap<String, String>) -> Result<()
 }
 
 fn deepseek_node_preflight(env: &BTreeMap<String, String>) -> Result<(), String> {
-    let mut node_command = Command::new("node");
+    let mut node_command = crate::background_command("node");
     for (key, value) in env {
         if key != "CCCC_NODE_VERSION" {
             node_command.env(key, value);
@@ -151,7 +217,7 @@ fn deepseek_node_preflight(env: &BTreeMap<String, String>) -> Result<(), String>
     Ok(())
 }
 
-pub fn deepseek_lockfile_is_pinned(dsh_home: &std::path::Path) -> bool {
+pub fn deepseek_lockfile_is_pinned(dsh_home: &Path) -> bool {
     let Ok(raw) = fs::read(dsh_home.join("package-lock.json")) else {
         return false;
     };
@@ -169,21 +235,26 @@ pub fn deepseek_lockfile_is_pinned(dsh_home: &std::path::Path) -> bool {
     {
         return false;
     }
-    let mut matched = false;
-    for (lock_path, entry) in packages {
+    let pinned = |entry: &Value| {
+        entry.get("version").and_then(Value::as_str) == Some(DEEPSEEK_RELEASE_VERSION)
+    };
+    [
+        DEEPSEEK_PACKAGE,
+        DEEPSEEK_ACP_PROFILE_PACKAGE,
+        DEEPSEEK_ACP_BRIDGE_PACKAGE,
+    ]
+    .iter()
+    .all(|package| {
+        packages
+            .get(&format!("node_modules/{package}"))
+            .is_some_and(pinned)
+    }) && packages.iter().all(|(lock_path, entry)| {
         let name = lock_path
             .rsplit("node_modules/")
             .next()
             .unwrap_or(lock_path);
-        if name != "@deepseek-ai/dsh" && !name.starts_with("@deepseek-ai/dsh-") {
-            continue;
-        }
-        matched = true;
-        if entry.get("version").and_then(Value::as_str) != Some(DEEPSEEK_RELEASE_VERSION) {
-            return false;
-        }
-    }
-    matched
+        (name != DEEPSEEK_PACKAGE && !name.starts_with("@deepseek-ai/dsh-")) || pinned(entry)
+    })
 }
 
 pub fn canonical_deepseek_runtime_manifest() -> Value {
@@ -212,70 +283,13 @@ fn deepseek_dependencies_are_exact(value: &Value) -> bool {
 }
 
 fn deepseek_dependency_map() -> serde_json::Map<String, Value> {
-    [
-        (DEEPSEEK_ACP_PACKAGE, DEEPSEEK_ACP_VERSION),
-        (DEEPSEEK_MCP_CLIENT_PACKAGE, DEEPSEEK_MCP_CLIENT_VERSION),
-        (DEEPSEEK_ACP_APP_PACKAGE, DEEPSEEK_ACP_APP_VERSION),
-        (DEEPSEEK_LLM_ADAPTER_PACKAGE, DEEPSEEK_LLM_ADAPTER_VERSION),
-    ]
-    .into_iter()
-    .map(|(package, version)| (package.to_owned(), Value::String(version.to_owned())))
-    .collect()
+    serde_json::Map::from_iter([(
+        DEEPSEEK_PACKAGE.to_owned(),
+        Value::String(DEEPSEEK_RELEASE_VERSION.to_owned()),
+    )])
 }
 
-/// Validate the dedicated ACP app composition. The old `dsh --profile
-/// cccc-acp` command booted the one-shot headless bundle and exited before ACP
-/// could accept initialize; the app composition is intentionally small and
-/// must not contain the headless CLI runner.
-pub fn is_canonical_deepseek_config(config: &str) -> bool {
-    let lines = config.lines().collect::<Vec<_>>();
-    let max_tokens = format!("    maxTokens: {DEEPSEEK_MAX_OUTPUT_TOKENS}");
-    let expected = [
-        Some("- id: llm-deepseek"),
-        Some("  name: '@deepseek-ai/dsh-llm-deepseek'"),
-        Some("  config:"),
-        Some(max_tokens.as_str()),
-        Some("- id: acp-demo"),
-        Some("  name: '@deepseek-ai/dsh-acp-demo'"),
-        Some("  config:"),
-        Some("    provider: deepseek-official"),
-        Some("    model: !!js process.env.DEEPSEEK_MODEL"),
-        Some("    workspaceContext: false"),
-        Some("    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT"),
-        Some("- id: cccc-mcp"),
-        Some("  name: '@deepseek-ai/dsh-mcp-client'"),
-        Some("  config:"),
-        Some("    transport: stdio"),
-        Some("    serverName: cccc"),
-        None,
-        Some("    args: [mcp]"),
-        Some("    env:"),
-        Some("      CCCC_HOME: !!js process.env.CCCC_HOME"),
-        Some("      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID"),
-        Some("      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID"),
-        Some("    failOnStartupError: true"),
-    ];
-    if lines.len() != expected.len()
-        || lines
-            .iter()
-            .zip(expected)
-            .any(|(actual, wanted)| wanted.is_some_and(|wanted| actual != &wanted))
-    {
-        return false;
-    }
-    let Some(command_index) = expected.iter().position(Option::is_none) else {
-        return false;
-    };
-    let Some(path) = lines[command_index]
-        .strip_prefix("    command: '")
-        .and_then(|value| value.strip_suffix('\''))
-    else {
-        return false;
-    };
-    let path = path.replace("''", "'");
-    is_executable_file(std::path::Path::new(&path))
-}
-
+/// Matches `DEEPSEEK_NODE_RANGE`.
 fn node_supported(raw: &str) -> bool {
     let numbers: Vec<u32> = raw
         .trim_start_matches('v')
@@ -283,7 +297,7 @@ fn node_supported(raw: &str) -> bool {
         .take(3)
         .filter_map(|part| part.parse().ok())
         .collect();
-    numbers.len() >= 2 && (numbers[0] >= 24 || (numbers[0] == 22 && numbers[1] >= 19))
+    numbers.len() >= 2 && (numbers[0] > 24 || (numbers[0] == 24 && numbers[1] >= 9))
 }
 
 #[must_use]
@@ -297,7 +311,7 @@ pub fn default_command(runtime: ActorRuntime) -> Vec<String> {
         ActorRuntime::Codex => {
             "codex -c check_for_update_on_startup=false -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search"
         }
-        ActorRuntime::Deepseek => "dsh-acp-demo",
+        ActorRuntime::Deepseek => "dsh --profile acp",
         ActorRuntime::Copilot => "copilot --allow-all",
         ActorRuntime::Cursor => "cursor-agent --yolo --approve-mcps",
         ActorRuntime::Devin => "devin --permission-mode dangerous",
@@ -348,28 +362,26 @@ pub fn detect_runtimes() -> Vec<RuntimeProbe> {
     .map(|runtime| {
         let recommended = default_command(runtime);
         let command = recommended.first().cloned().unwrap_or_default();
-        let mut discovery_env = std::env::vars().collect::<BTreeMap<_, _>>();
-        if runtime == ActorRuntime::Deepseek {
-            prepend_deepseek_bin(&mut discovery_env);
-        }
-        let path =
-            resolve_executable_in_path(&command, discovery_env.get("PATH").map(String::as_str));
-        let name = runtime.wire_name().to_owned();
+        let discovery_env = std::env::vars().collect::<BTreeMap<_, _>>();
+        let (available, path) = if runtime == ActorRuntime::Deepseek {
+            deepseek_catalog_entry(&discovery_env)
+        } else {
+            let path =
+                resolve_executable_in_path(&command, discovery_env.get("PATH").map(String::as_str));
+            let available = matches!(
+                runtime,
+                ActorRuntime::WebModel
+                    | ActorRuntime::ChatgptDots
+                    | ActorRuntime::GrokWebModel
+                    | ActorRuntime::Custom
+            ) || path.is_some();
+            (available, path)
+        };
         RuntimeProbe {
             display_name: display_name(runtime).to_owned(),
             recommended_command: recommended.join(" "),
-            name,
-            available: if runtime == ActorRuntime::Deepseek {
-                deepseek_catalog_available(&recommended, &discovery_env)
-            } else {
-                matches!(
-                    runtime,
-                    ActorRuntime::WebModel
-                        | ActorRuntime::ChatgptDots
-                        | ActorRuntime::GrokWebModel
-                        | ActorRuntime::Custom
-                ) || path.is_some()
-            },
+            name: runtime.wire_name().to_owned(),
+            available,
             command,
             path,
         }
@@ -377,22 +389,15 @@ pub fn detect_runtimes() -> Vec<RuntimeProbe> {
     .collect()
 }
 
-fn deepseek_catalog_available(command: &[String], env: &BTreeMap<String, String>) -> bool {
-    deepseek_preflight(command, env).is_ok() || deepseek_bootstrap_preflight(env).is_ok()
-}
-
-fn prepend_deepseek_bin(env: &mut BTreeMap<String, String>) {
-    let Some(home) = deepseek_home(env) else {
-        return;
-    };
-    let local_bin = home.join("node_modules").join(".bin");
-    let mut paths = vec![local_bin.clone()];
-    if let Some(existing) = env.get("PATH") {
-        paths.extend(std::env::split_paths(existing).filter(|path| path != &local_bin));
-    }
-    if let Ok(path) = std::env::join_paths(paths) {
-        env.insert("PATH".into(), path.to_string_lossy().into_owned());
-    }
+/// DeepSeek can be chosen once Node and npm allow setup to install it. Its
+/// path is the managed launcher, reported only for a complete installation
+/// with a supported Node; a `dsh` elsewhere on PATH is never used.
+fn deepseek_catalog_entry(env: &BTreeMap<String, String>) -> (bool, Option<PathBuf>) {
+    let launcher = deepseek_preflight(&default_command(ActorRuntime::Deepseek), env)
+        .ok()
+        .and_then(|()| deepseek_executable(env));
+    let available = launcher.is_some() || deepseek_bootstrap_preflight(env).is_ok();
+    (available, launcher)
 }
 
 const fn display_name(runtime: ActorRuntime) -> &'static str {
@@ -422,33 +427,6 @@ const fn display_name(runtime: ActorRuntime) -> &'static str {
     }
 }
 
-pub fn is_canonical_deepseek_profile_manifest(manifest: &Value) -> bool {
-    let Some(object) = manifest.as_object() else {
-        return false;
-    };
-    if object.get("name") != Some(&Value::String("dsh-profile-cccc-acp".to_owned()))
-        || object.get("private") != Some(&Value::Bool(true))
-        || object.get("ccccManaged") != Some(&Value::Bool(true))
-    {
-        return false;
-    }
-    let Some(dependencies) = object.get("dependencies").and_then(Value::as_object) else {
-        return false;
-    };
-    if dependencies.get(DEEPSEEK_ACP_PACKAGE)
-        != Some(&Value::String(DEEPSEEK_ACP_VERSION.to_owned()))
-        || dependencies.get(DEEPSEEK_MCP_CLIENT_PACKAGE)
-            != Some(&Value::String(DEEPSEEK_MCP_CLIENT_VERSION.to_owned()))
-        || dependencies.get(DEEPSEEK_ACP_APP_PACKAGE)
-            != Some(&Value::String(DEEPSEEK_ACP_APP_VERSION.to_owned()))
-        || dependencies.get(DEEPSEEK_LLM_ADAPTER_PACKAGE)
-            != Some(&Value::String(DEEPSEEK_LLM_ADAPTER_VERSION.to_owned()))
-    {
-        return false;
-    }
-    dependencies.len() == 4
-}
-
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
@@ -474,7 +452,8 @@ mod tests {
 
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("node");
-        std::fs::write(&path, "#!/bin/sh\n/bin/sleep 6\nprintf 'v24.0.0\\n'\n").expect("fixture");
+        // A supported version, so only the bounded wait can make this fail.
+        std::fs::write(&path, "#!/bin/sh\n/bin/sleep 6\nprintf 'v24.9.0\\n'\n").expect("fixture");
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
             .expect("permissions");
         let env = BTreeMap::from([("PATH".into(), temp.path().display().to_string())]);
@@ -512,7 +491,41 @@ mod tests {
             default_command(ActorRuntime::Cline),
             ["cline", "--tui", "--auto-approve", "true"]
         );
-        assert_eq!(default_command(ActorRuntime::Deepseek), ["dsh-acp-demo"]);
+        assert_eq!(
+            default_command(ActorRuntime::Deepseek),
+            ["dsh", "--profile", "acp"]
+        );
+    }
+
+    #[test]
+    fn deepseek_node_range_starts_at_24_9() {
+        for (version, supported) in [
+            ("v22.19.0", false),
+            ("v24.8.9", false),
+            ("v24.9.0", true),
+            ("v24.19.0", true),
+            ("v25.0.0", true),
+            ("", false),
+        ] {
+            assert_eq!(super::node_supported(version), supported, "{version}");
+        }
+    }
+
+    #[test]
+    fn saved_launcher_commands_are_managed_and_custom_commands_are_not() {
+        let managed = |command: &[&str]| {
+            super::deepseek_managed_command(
+                &command
+                    .iter()
+                    .map(|part| (*part).to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert!(managed(&["dsh", "--profile", "acp"]));
+        assert!(managed(&["dsh-acp-demo"]));
+        assert!(managed(&["/opt/node/bin/DSH"]));
+        assert!(!managed(&["my-dsh"]));
+        assert!(!managed(&[]));
     }
 
     #[test]
@@ -520,9 +533,10 @@ mod tests {
         let env = BTreeMap::from([("HOME".into(), "/users/test".into())]);
         assert_eq!(
             deepseek_home(&env),
-            Some(std::path::PathBuf::from(
-                "/users/test/.cccc/runtimes/deepseek/0.1.0-rc.6"
-            ))
+            Some(std::path::PathBuf::from(format!(
+                "/users/test/.cccc/runtimes/deepseek/{}",
+                super::DEEPSEEK_RELEASE_VERSION
+            )))
         );
         let env = BTreeMap::from([
             ("HOME".into(), "/users/test".into()),
@@ -530,9 +544,10 @@ mod tests {
         ]);
         assert_eq!(
             deepseek_home(&env),
-            Some(std::path::PathBuf::from(
-                "/custom/cccc/runtimes/deepseek/0.1.0-rc.6"
-            ))
+            Some(std::path::PathBuf::from(format!(
+                "/custom/cccc/runtimes/deepseek/{}",
+                super::DEEPSEEK_RELEASE_VERSION
+            )))
         );
     }
 
@@ -561,7 +576,7 @@ mod tests {
 
         let temp = tempfile::tempdir().expect("tempdir");
         for (name, body) in [
-            ("node", "#!/bin/sh\nprintf 'v24.0.0\\n'\n"),
+            ("node", "#!/bin/sh\nprintf 'v24.9.0\\n'\n"),
             ("npm", "#!/bin/sh\nexit 0\n"),
         ] {
             let path = temp.path().join(name);
@@ -569,23 +584,30 @@ mod tests {
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
                 .expect("permissions");
         }
-        let env = BTreeMap::from([("PATH".into(), temp.path().display().to_string())]);
+        let env = BTreeMap::from([
+            ("PATH".into(), temp.path().display().to_string()),
+            (
+                "CCCC_HOME".into(),
+                temp.path().join("cccc-home").display().to_string(),
+            ),
+        ]);
+        let command = default_command(ActorRuntime::Deepseek);
         assert!(super::deepseek_bootstrap_preflight(&env).is_ok());
-        assert!(super::deepseek_external_preflight(&["dsh-acp-demo".into()], &env).is_err());
-        assert!(super::deepseek_catalog_available(
-            &["dsh-acp-demo".into()],
-            &env
-        ));
+        assert!(super::deepseek_external_preflight(&command, &env).is_ok());
+        assert!(deepseek_preflight(&command, &env).is_err());
+        // Choosable, so setup can install it, but not detected.
+        assert_eq!(super::deepseek_catalog_entry(&env), (true, None));
     }
 
     #[cfg(unix)]
     #[test]
-    fn deepseek_catalog_rejects_an_unmanaged_app_without_npm() {
+    fn deepseek_catalog_ignores_launchers_on_path_without_npm() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().expect("tempdir");
         for (name, body) in [
-            ("node", "#!/bin/sh\nprintf 'v24.0.0\\n'\n"),
+            ("node", "#!/bin/sh\nprintf 'v24.9.0\\n'\n"),
+            ("dsh", "#!/bin/sh\nexit 0\n"),
             ("dsh-acp-demo", "#!/bin/sh\nexit 0\n"),
         ] {
             let path = temp.path().join(name);
@@ -600,159 +622,261 @@ mod tests {
                 temp.path().join("cccc-home").display().to_string(),
             ),
         ]);
-        assert!(!super::deepseek_catalog_available(
-            &["dsh-acp-demo".into()],
-            &env
-        ));
+        assert_eq!(super::deepseek_catalog_entry(&env), (false, None));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deepseek_catalog_detects_only_a_complete_installation_with_a_supported_node() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let env = installed_fixture(temp.path());
+        let home = deepseek_home(&env).expect("installation root");
+        assert_eq!(
+            super::deepseek_catalog_entry(&env),
+            (true, Some(home.join("node_modules/.bin/dsh")))
+        );
+
+        // An incomplete installation is not detected, even with a `dsh` on
+        // PATH; npm keeps it choosable so setup can repair it.
+        for name in ["dsh", "npm"] {
+            let path = temp.path().join("bin").join(name);
+            std::fs::write(&path, "#!/bin/sh\nexit 0\n").expect("fixture executable");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("permissions");
+        }
+        std::fs::remove_file(home.join("node_modules/.bin/dsh")).expect("remove launcher");
+        assert_eq!(super::deepseek_catalog_entry(&env), (true, None));
+
+        std::fs::write(home.join("node_modules/.bin/dsh"), "#!/bin/sh\nexit 0\n")
+            .expect("restore launcher");
+        std::fs::set_permissions(
+            home.join("node_modules/.bin/dsh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .expect("launcher mode");
+        let node = temp.path().join("bin/node");
+        std::fs::write(&node, "#!/bin/sh\nprintf 'v22.19.0\\n'\n").expect("old node");
+        assert_eq!(super::deepseek_catalog_entry(&env), (false, None));
     }
 
     #[test]
     fn deepseek_lockfile_rejects_a_mixed_transitive_preview_release() {
         let temp = tempfile::tempdir().expect("tempdir");
+        let write = |packages: &serde_json::Value| {
+            std::fs::write(
+                temp.path().join("package-lock.json"),
+                serde_json::to_vec(&serde_json::json!({"packages": packages})).expect("json"),
+            )
+            .expect("lockfile");
+        };
         let mut packages = serde_json::json!({
             "": {"dependencies": super::deepseek_dependency_map()},
-            "node_modules/@deepseek-ai/dsh-acp": {"version": "0.1.0-rc.6"}
+            "node_modules/@deepseek-ai/dsh": {"version": super::DEEPSEEK_RELEASE_VERSION},
+            "node_modules/@deepseek-ai/dsh-acp-app": {"version": super::DEEPSEEK_RELEASE_VERSION},
+            "node_modules/@deepseek-ai/dsh-acp": {"version": super::DEEPSEEK_RELEASE_VERSION}
         });
-        std::fs::write(
-            temp.path().join("package-lock.json"),
-            serde_json::to_vec(&serde_json::json!({"packages": packages.clone()})).expect("json"),
-        )
-        .expect("lockfile");
+        write(&packages);
         assert!(super::deepseek_lockfile_is_pinned(temp.path()));
+        // Pinned companions do not stand in for the launcher itself.
+        let launcher = packages["node_modules/@deepseek-ai/dsh"].take();
+        packages
+            .as_object_mut()
+            .expect("packages")
+            .remove("node_modules/@deepseek-ai/dsh");
+        write(&packages);
+        assert!(!super::deepseek_lockfile_is_pinned(temp.path()));
+        packages["node_modules/@deepseek-ai/dsh"] = launcher;
         packages["node_modules/@deepseek-ai/dsh-transitive"] =
-            serde_json::json!({"version": "0.1.0-rc.7"});
-        std::fs::write(
-            temp.path().join("package-lock.json"),
-            serde_json::to_vec(&serde_json::json!({"packages": packages})).expect("json"),
-        )
-        .expect("lockfile");
+            serde_json::json!({"version": "0.2.2-rc.4"});
+        write(&packages);
+        assert!(!super::deepseek_lockfile_is_pinned(temp.path()));
+        packages["node_modules/@deepseek-ai/dsh-transitive"] =
+            serde_json::json!({"version": super::DEEPSEEK_RELEASE_VERSION});
+        packages[""] =
+            serde_json::json!({"dependencies": {"@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6"}});
+        write(&packages);
         assert!(!super::deepseek_lockfile_is_pinned(temp.path()));
     }
 
     #[test]
-    fn shared_manifest_vectors_close_the_bundle_value_domain() {
+    fn shared_manifest_vectors_close_the_runtime_value_domain() {
         let vectors: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../tests/fixtures/deepseek_manifest_vectors.json"
         )))
         .expect("manifest vectors");
-        assert!(super::is_canonical_deepseek_profile_manifest(
+        assert_eq!(
+            vectors["valid"],
+            super::canonical_deepseek_runtime_manifest()
+        );
+        assert!(super::is_canonical_deepseek_runtime_manifest(
             &vectors["valid"]
         ));
         for name in [
             "empty_shell",
+            "unmanaged",
             "extra_dependency",
             "wrong_version",
-            "missing_app",
-            "missing_adapter",
-            "adapter_version_mismatch",
+            "previous_release",
             "truncated",
         ] {
             assert!(
-                !super::is_canonical_deepseek_profile_manifest(&vectors[name]),
+                !super::is_canonical_deepseek_runtime_manifest(&vectors[name]),
                 "{name} must fail closed"
             );
         }
     }
 
+    /// A complete pinned installation as the launcher leaves it, with a
+    /// supported Node on PATH. Returns the environment that finds both.
     #[cfg(unix)]
-    #[test]
-    fn deepseek_preflight_uses_real_node_and_manifests_not_env_version() {
+    fn installed_fixture(root: &std::path::Path) -> BTreeMap<String, String> {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp = tempfile::tempdir().expect("tempdir");
-        let dsh = temp.path().join("dsh");
-        let app = temp.path().join("dsh-acp-demo");
-        let node = temp.path().join("node");
-        std::fs::write(&dsh, "#!/bin/sh\nexit 0\n").expect("dsh");
-        std::fs::write(&app, "#!/bin/sh\nexit 0\n").expect("app");
-        std::fs::write(&node, "#!/bin/sh\nprintf 'v24.0.0\\n'\n").expect("node");
-        for path in [&dsh, &app, &node] {
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-                .expect("executable");
-        }
-        let cccc_home = temp.path().join("cccc-home");
-        let home = cccc_home
-            .join("runtimes/deepseek")
-            .join(super::DEEPSEEK_RELEASE_VERSION);
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        let node = bin.join("node");
+        std::fs::write(&node, "#!/bin/sh\nprintf 'v24.9.0\\n'\n").expect("node");
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).expect("node mode");
+        let env = BTreeMap::from([
+            ("PATH".into(), bin.display().to_string()),
+            (
+                "CCCC_HOME".into(),
+                root.join("cccc-home").display().to_string(),
+            ),
+            // Readiness comes from the real `node --version`, never this.
+            ("CCCC_NODE_VERSION".into(), "0.0.0".into()),
+        ]);
+        let home = deepseek_home(&env).expect("installation root");
+        let mut packages = serde_json::Map::from_iter([(
+            String::new(),
+            serde_json::json!({"dependencies": super::deepseek_dependency_map()}),
+        )]);
         for package in [
-            super::DEEPSEEK_ACP_PACKAGE,
-            super::DEEPSEEK_MCP_CLIENT_PACKAGE,
-            super::DEEPSEEK_ACP_APP_PACKAGE,
-            super::DEEPSEEK_LLM_ADAPTER_PACKAGE,
+            super::DEEPSEEK_PACKAGE,
+            super::DEEPSEEK_ACP_PROFILE_PACKAGE,
+            super::DEEPSEEK_ACP_BRIDGE_PACKAGE,
         ] {
-            let package_dir = home.join("node_modules").join(package);
-            std::fs::create_dir_all(&package_dir).expect("package");
+            let dir = home.join("node_modules").join(package);
+            std::fs::create_dir_all(&dir).expect("package");
+            let mut manifest = serde_json::json!({"version": super::DEEPSEEK_RELEASE_VERSION});
+            if package == super::DEEPSEEK_ACP_PROFILE_PACKAGE {
+                manifest["dsh"] = serde_json::json!({"bundle": {"patch": "./cordis.patch.yml"}});
+                std::fs::write(dir.join("cordis.patch.yml"), "[]\n").expect("bundle patch");
+            }
             std::fs::write(
-                package_dir.join("package.json"),
-                format!("{{\"version\":\"{}\"}}\n", super::DEEPSEEK_RELEASE_VERSION),
+                dir.join("package.json"),
+                serde_json::to_vec(&manifest).expect("json"),
             )
             .expect("manifest");
-        }
-        let mut packages = [
-            super::DEEPSEEK_ACP_PACKAGE,
-            super::DEEPSEEK_MCP_CLIENT_PACKAGE,
-            super::DEEPSEEK_ACP_APP_PACKAGE,
-            super::DEEPSEEK_LLM_ADAPTER_PACKAGE,
-        ]
-        .into_iter()
-        .map(|package| {
-            (
+            packages.insert(
                 format!("node_modules/{package}"),
                 serde_json::json!({"version": super::DEEPSEEK_RELEASE_VERSION}),
-            )
-        })
-        .collect::<serde_json::Map<_, _>>();
-        packages.insert(
-            "".into(),
-            serde_json::json!({"dependencies": super::deepseek_dependency_map()}),
-        );
+            );
+        }
+        let launcher = home.join("node_modules/.bin/dsh");
+        std::fs::create_dir_all(launcher.parent().expect("launcher dir")).expect(".bin");
+        std::fs::write(&launcher, "#!/bin/sh\nexit 0\n").expect("launcher");
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755))
+            .expect("launcher mode");
         std::fs::write(
             home.join("package.json"),
-            serde_json::to_vec(&super::canonical_deepseek_runtime_manifest())
-                .expect("runtime manifest"),
+            serde_json::to_vec(&super::canonical_deepseek_runtime_manifest()).expect("json"),
         )
         .expect("runtime manifest");
         std::fs::write(
             home.join("package-lock.json"),
-            serde_json::to_vec(&serde_json::json!({"lockfileVersion":3,"packages":packages}))
-                .expect("lock json"),
+            serde_json::to_vec(&serde_json::json!({"lockfileVersion": 3, "packages": packages}))
+                .expect("json"),
         )
         .expect("lockfile");
-        let profile = home.join("profiles/cccc-acp");
-        std::fs::create_dir_all(&profile).expect("profile");
-        std::fs::write(
-            profile.join("package.json"),
-            "{\"name\":\"dsh-profile-cccc-acp\",\"private\":true,\"ccccManaged\":true,\"dependencies\":{\"@deepseek-ai/dsh-acp\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-mcp-client\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-acp-demo\":\"0.1.0-rc.6\",\"@deepseek-ai/dsh-llm-deepseek\":\"0.1.0-rc.6\"}}\n",
-        )
-            .expect("profile manifest");
-        std::fs::write(
-            profile.join("cordis.yml"),
-            format!(
-                "- id: llm-deepseek\n  name: '@deepseek-ai/dsh-llm-deepseek'\n  config:\n    maxTokens: {}\n- id: acp-demo\n  name: '@deepseek-ai/dsh-acp-demo'\n  config:\n    provider: deepseek-official\n    model: !!js process.env.DEEPSEEK_MODEL\n    workspaceContext: false\n    persistenceRoot: !!js process.env.CCCC_DEEPSEEK_SESSION_ROOT\n- id: cccc-mcp\n  name: '@deepseek-ai/dsh-mcp-client'\n  config:\n    transport: stdio\n    serverName: cccc\n    command: '{}'\n    args: [mcp]\n    env:\n      CCCC_HOME: !!js process.env.CCCC_HOME\n      CCCC_GROUP_ID: !!js process.env.CCCC_GROUP_ID\n      CCCC_ACTOR_ID: !!js process.env.CCCC_ACTOR_ID\n    failOnStartupError: true\n",
-                super::DEEPSEEK_MAX_OUTPUT_TOKENS,
-                dsh.display()
-            ),
-        )
-        .expect("profile config");
-        let mut env = BTreeMap::new();
-        env.insert("PATH".into(), temp.path().display().to_string());
-        env.insert("CCCC_HOME".into(), cccc_home.display().to_string());
-        env.insert("CCCC_NODE_VERSION".into(), "0.0.0".into());
-        deepseek_preflight(&["dsh-acp-demo".into()], &env).expect("canonical DeepSeek fixture");
-        let adapter_manifest = home
+        env
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deepseek_preflight_checks_the_pinned_installation_not_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let env = installed_fixture(temp.path());
+        let home = deepseek_home(&env).expect("installation root");
+        let command = default_command(ActorRuntime::Deepseek);
+        for saved in [command.clone(), vec!["dsh-acp-demo".into()]] {
+            deepseek_preflight(&saved, &env).expect("complete installation");
+        }
+        assert_eq!(
+            super::deepseek_executable(&env),
+            Some(home.join("node_modules/.bin/dsh"))
+        );
+
+        let bridge = home
             .join("node_modules")
-            .join(super::DEEPSEEK_LLM_ADAPTER_PACKAGE)
+            .join(super::DEEPSEEK_ACP_BRIDGE_PACKAGE)
             .join("package.json");
-        std::fs::write(&adapter_manifest, "{\"version\":\"0.1.0-rc.7\"}\n")
-            .expect("adapter mismatch");
-        let mismatch = deepseek_preflight(&["dsh-acp-demo".into()], &env)
-            .expect_err("mixed preview tuple must fail closed");
-        assert!(mismatch.contains("@deepseek-ai/dsh-llm-deepseek@0.1.0-rc.6"));
-        std::fs::remove_file(adapter_manifest).expect("remove adapter manifest");
-        assert!(deepseek_preflight(&["dsh-acp-demo".into()], &env).is_err());
-        std::fs::remove_dir_all(profile).expect("remove profile");
-        assert!(super::deepseek_external_preflight(&["dsh-acp-demo".into()], &env,).is_ok());
-        assert!(deepseek_preflight(&["dsh-acp-demo".into()], &env).is_err());
+        std::fs::write(&bridge, "{\"version\":\"0.2.2-rc.4\"}\n").expect("bridge mismatch");
+        let error = deepseek_preflight(&command, &env).expect_err("mixed release");
+        assert!(
+            error.contains(&format!(
+                "@deepseek-ai/dsh-acp@{}",
+                super::DEEPSEEK_RELEASE_VERSION
+            )),
+            "{error}"
+        );
+        std::fs::write(
+            &bridge,
+            format!("{{\"version\":\"{}\"}}\n", super::DEEPSEEK_RELEASE_VERSION),
+        )
+        .expect("restore bridge");
+
+        assert!(super::deepseek_packages_to_reinstall(&home).is_empty());
+        let profile = super::deepseek_acp_profile(&home);
+        let patch = profile.join("cordis.patch.yml");
+        std::fs::remove_file(&patch).expect("remove bundle patch");
+        let error = deepseek_preflight(&command, &env).expect_err("incomplete profile bundle");
+        assert!(error.contains("ACP profile bundle"), "{error}");
+        // npm would keep this package as it is, so setup unpacks it again.
+        assert_eq!(
+            super::deepseek_packages_to_reinstall(&home),
+            [profile.clone()]
+        );
+        std::fs::write(&patch, "[]\n").expect("restore bundle patch");
+        deepseek_preflight(&command, &env).expect("restored installation");
+        assert!(super::deepseek_packages_to_reinstall(&home).is_empty());
+
+        // Without the managed launcher, a dsh elsewhere on PATH does not count.
+        let path_dsh = temp.path().join("bin/dsh");
+        std::fs::write(&path_dsh, "#!/bin/sh\nexit 0\n").expect("dsh on PATH");
+        std::fs::set_permissions(&path_dsh, std::fs::Permissions::from_mode(0o755))
+            .expect("dsh mode");
+        std::fs::remove_file(home.join("node_modules/.bin/dsh")).expect("remove launcher");
+        let error = deepseek_preflight(&command, &env).expect_err("managed launcher missing");
+        assert_eq!(error, "deepseek executable not found: dsh");
+        // The installation check reaches the same verdict, so setup repairs it.
+        assert_eq!(super::deepseek_installation_ready(&home), Err(error));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deepseek_preflight_reports_an_unsupported_node_before_the_installation() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let env = installed_fixture(temp.path());
+        let node = temp.path().join("bin/node");
+        std::fs::write(&node, "#!/bin/sh\nprintf 'v22.19.0\\n'\n").expect("old node");
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).expect("node mode");
+        let command = default_command(ActorRuntime::Deepseek);
+        let error = deepseek_preflight(&command, &env).expect_err("old node");
+        assert!(
+            error.contains(">=24.9.0") && error.contains("v22.19.0"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(deepseek_home(&env).expect("installation root"))
+            .expect("uninstall");
+        let error = super::deepseek_external_preflight(&command, &env).expect_err("old node");
+        assert!(error.contains(">=24.9.0"), "{error}");
     }
 }

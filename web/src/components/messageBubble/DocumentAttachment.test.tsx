@@ -6,8 +6,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DocumentAttachment } from "./DocumentAttachment";
-import { DOCUMENT_PREVIEW_BYTES } from "./documentText";
+import { DOCUMENT_PREVIEW_BYTES, HTML_PREVIEW_BYTES } from "./documentText";
 import { AttachmentResourceView } from "../resourcePanel/views/AttachmentResourceView";
+import { MessageLinkPreview } from "./MessageLinkPreview";
 import { useResourcePanelStore } from "../../stores/useResourcePanelStore";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -31,7 +32,7 @@ let root: Root | null = null;
 
 const PREVIEW = "/api/v1/groups/g1/blobs/hash?filename=notes";
 
-async function open(kind: "markdown" | "text" | "pdf", href = PREVIEW) {
+async function open(kind: "markdown" | "html" | "text" | "pdf", href = PREVIEW) {
   const host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -93,6 +94,7 @@ describe("DocumentAttachment", () => {
             eventId: "event",
             index: 0,
             blobPath: "state/blobs/notes",
+            siblings: [],
           }}
           kind="markdown"
           downloadHref="/download"
@@ -119,6 +121,188 @@ describe("DocumentAttachment", () => {
       PREVIEW,
       expect.objectContaining({ credentials: "same-origin" }),
     );
+  });
+
+  it("switches between Markdown and its unchanged source without loading it again", async () => {
+    const original = "# Title\n\n[Link](https://example.test)\n\n```js\n  keepIndent();\n```\n";
+    respondWith(original);
+    await open("markdown");
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="workspaceViewSource"]')!.click(),
+    );
+    expect(document.querySelector("[data-rendered-markdown]")).toBeNull();
+    expect(document.querySelector("[data-document-preview] pre")?.textContent).toBe(original);
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="workspacePreview"]')!.click(),
+    );
+    expect(document.querySelector("[data-rendered-markdown]")).not.toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not carry source mode or old content to a different document", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (href: string) => new Response(href)),
+    );
+    await open("markdown");
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="workspaceViewSource"]')!.click(),
+    );
+    await act(async () =>
+      root!.render(
+        <AttachmentResourceView
+          media="markdown"
+          href="/second.md"
+          title="second"
+          isSvg={false}
+          isDark={false}
+          active
+          resourceKey="second"
+        />,
+      ),
+    );
+    expect(document.querySelector("[data-rendered-markdown]")?.textContent).toContain("/second.md");
+    expect(document.querySelector('[aria-label="workspaceViewSource"]')).not.toBeNull();
+    expect(document.querySelector("[data-document-preview] pre")).toBeNull();
+  });
+
+  it("keeps each pane's source switch in its own header and removes a hidden tab's switch", async () => {
+    respondWith("# Shared document");
+    const host = document.createElement("div");
+    const left = document.createElement("header");
+    const right = document.createElement("header");
+    document.body.append(left, right, host);
+    root = createRoot(host);
+    const render = (leftTarget: HTMLElement | null) => (
+      <>
+        <AttachmentResourceView
+          media="markdown"
+          href={PREVIEW}
+          title="left"
+          isSvg={false}
+          isDark={false}
+          active
+          resourceKey="left"
+          actionsTarget={leftTarget}
+        />
+        <AttachmentResourceView
+          media="markdown"
+          href={PREVIEW}
+          title="right"
+          isSvg={false}
+          isDark={false}
+          active
+          resourceKey="right"
+          actionsTarget={right}
+        />
+      </>
+    );
+    await act(async () => root!.render(render(left)));
+    expect(host.querySelector("button")).toBeNull();
+    expect(left.querySelector("button")).not.toBeNull();
+    expect(right.querySelector("button")).not.toBeNull();
+    await act(async () => left.querySelector("button")!.click());
+    expect(host.querySelectorAll("pre")).toHaveLength(1);
+    expect(host.querySelectorAll("[data-rendered-markdown]")).toHaveLength(1);
+    await act(async () => root!.render(render(null)));
+    expect(left.querySelector("button")).toBeNull();
+    expect(right.querySelector("button")).not.toBeNull();
+    expect(host.querySelectorAll("pre")).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await act(async () => root!.render(null));
+    expect(right.querySelector("button")).toBeNull();
+  });
+
+  it("puts a link preview's switch beside its download without another toolbar", async () => {
+    respondWith("# Linked document");
+    const host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () =>
+      root!.render(
+        <MessageLinkPreview
+          preview={{
+            kind: "markdown",
+            href: PREVIEW,
+            label: "notes.md",
+            downloadHref: "/download/notes.md",
+          }}
+          isDark={false}
+          onClose={() => {}}
+        />,
+      ),
+    );
+    const header = document.querySelector("[data-media-header]")!;
+    const toggle = header.querySelector<HTMLButtonElement>('[aria-label="workspaceViewSource"]');
+    expect(toggle).not.toBeNull();
+    expect(header.querySelector('a[download="notes.md"]')).not.toBeNull();
+    expect(document.querySelector("[data-document-preview] button")).toBeNull();
+    await act(async () => toggle!.click());
+    expect(document.querySelector("[data-document-preview] pre")?.textContent).toBe(
+      "# Linked document",
+    );
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("previews HTML only through the static sandbox and keeps the original as source", async () => {
+    const original =
+      '<style>h1{color:red}</style><h1 onclick="alert(1)">Report</h1><script>parent.compromised=true</script><img src="https://outside.test/a.png"><img src="data:image/png;base64,AA=="><a href="javascript:alert(1)">Bad</a>';
+    respondWith(original);
+    await open("html");
+    const frame = document.querySelector("iframe")!;
+    expect(frame.getAttribute("src")).toBeNull();
+    expect(frame.getAttribute("sandbox")).toBe("allow-same-origin");
+    const template = document.createElement("template");
+    template.innerHTML = frame.srcdoc;
+    expect(template.content.querySelector("h1")?.textContent).toBe("Report");
+    expect(template.content.querySelector("script, [onclick]")).toBeNull();
+    expect(template.content.querySelector("img")?.getAttribute("src")).toBeNull();
+    expect(template.content.querySelectorAll("img")[1].getAttribute("src")).toContain(
+      "data:image/png",
+    );
+    expect(template.content.querySelector("a")?.getAttribute("href")).toBeNull();
+    const policy = template.content.querySelector("meta")?.getAttribute("content");
+    expect(policy).toContain("img-src data:");
+    expect(policy).toContain("media-src 'none'");
+    expect(policy).not.toContain("https://outside.test");
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="workspaceViewSource"]')!.click(),
+    );
+    expect(document.querySelector("iframe")).toBeNull();
+    expect(document.querySelector("[data-document-preview] pre")?.textContent).toBe(original);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows truncated HTML as source only instead of rendering a broken page", async () => {
+    respondWith("<h1>Too long</h1>" + "x".repeat(HTML_PREVIEW_BYTES));
+    await open("html");
+    expect(document.querySelector("iframe")).toBeNull();
+    expect(document.querySelector('[role="status"]')?.textContent).toBe("documentHtmlTruncated");
+    expect(document.querySelector("[data-document-preview] pre")?.textContent).toHaveLength(
+      DOCUMENT_PREVIEW_BYTES,
+    );
+    expect(document.querySelector('[aria-label="workspacePreview"]')).toBeNull();
+    expect(document.querySelector('[aria-label="workspaceViewSource"]')).toBeNull();
+  });
+
+  it("renders complete HTML above the text limit and bounds its read-only source view", async () => {
+    const original =
+      "<h1>Large slide deck</h1><!--" +
+      "x".repeat(2 * DOCUMENT_PREVIEW_BYTES) +
+      "--><h2>Tail marker</h2>";
+    respondWith(original);
+    await open("html");
+    expect(document.querySelector("iframe")?.srcdoc).toContain("Large slide deck");
+    expect(document.querySelector("iframe")?.srcdoc).toContain("Tail marker");
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('[aria-label="workspaceViewSource"]')!.click(),
+    );
+    expect(document.querySelector("[data-document-preview] pre")?.textContent).toBe(
+      original.slice(0, DOCUMENT_PREVIEW_BYTES),
+    );
+    expect(document.querySelector('[role="status"]')?.textContent).toBe("documentPreviewTruncated");
+    expect(fetch).toHaveBeenCalledOnce();
   });
 
   it("opens outside links in a new tab and never navigates the page for a relative one", async () => {

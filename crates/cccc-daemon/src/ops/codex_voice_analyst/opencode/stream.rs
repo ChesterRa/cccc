@@ -2,16 +2,19 @@
 //! ACP is still the control port; its separate subscriber/RPC responses cannot
 //! order a queued native answer relative to the preceding controlled prompt.
 use super::super::acp::AcpLifecycleControl;
+use super::super::{AcpClient, kilo_input::KiloUserMessages};
 use super::lifecycle::{ObservedUserMessage, observed_user_text};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
+use std::sync::Arc;
 
 const MAX_PENDING_USERS: usize = 256;
 const MAX_TRACKED_PARTS: usize = 4096;
 
 #[derive(Default)]
 pub(in super::super) struct SessionStream {
+    kilo_messages: Arc<KiloUserMessages>,
     current_user: Option<ObservedUserMessage>,
     observed_user_part: Option<String>,
     pending_users: VecDeque<(String, String)>,
@@ -22,6 +25,15 @@ pub(in super::super) struct SessionStream {
 }
 
 impl SessionStream {
+    pub(in super::super) fn attach(protocol: &AcpClient) -> io::Result<Self> {
+        let stream = Self::default();
+        protocol
+            .kilo_input
+            .set(Arc::downgrade(&stream.kilo_messages))
+            .map_err(|_| io::Error::other("Kilo input observer is already attached"))?;
+        Ok(stream)
+    }
+
     pub(in super::super) async fn observe(
         &mut self,
         payload: &Value,
@@ -36,6 +48,9 @@ impl SessionStream {
                 let native = control.observe_user_text(session_id, &text, false).await?;
                 let user = self.current_user.as_ref().expect("observed user text");
                 if native {
+                    if part["ignored"] != true && part["synthetic"] != true {
+                        self.kilo_messages.observe(&text);
+                    }
                     if self.pending_users.len() >= MAX_PENDING_USERS {
                         return Err(io::Error::other(
                             "OpenCode pending user-message limit exceeded",

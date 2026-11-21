@@ -124,18 +124,15 @@ export function TaskBoardGrid({
     };
     return { announcements, screenReaderInstructions };
   }, [taskMap, tr]);
-  // Phone widths stack the columns, where Active would sit below every planned
-  // task. It comes first there, in the DOM, so focus and screen readers follow
-  // the order that is shown. The store's small screen is the grid's md break.
-  // Columns are keyed, so a flip moves them whole; React refocuses a moved
-  // control that had the focus.
+  // On phones Active comes first, in the DOM, so focus follows the visual order.
+  // Columns are keyed so a change of order keeps each column and its controls.
   const smallScreen = useUIStore((state) => state.isSmallScreen);
   const statuses: BoardStatus[] = smallScreen
     ? ["active", "planned", "done"]
     : ["planned", "active", "done"];
   if (archivedExpanded) statuses.push("archived");
   return (
-    <div className="min-w-0">
+    <div className="@container/task-board min-w-0">
       <DndContext
         sensors={sensors}
         accessibility={accessibility}
@@ -145,8 +142,8 @@ export function TaskBoardGrid({
       >
         <div
           className={classNames(
-            "grid gap-3 md:grid-cols-2",
-            archivedExpanded ? "xl:grid-cols-4" : "xl:grid-cols-3",
+            "grid gap-3 @min-[540px]/task-board:grid-cols-2 @min-[1040px]/task-board:grid-cols-3",
+            archivedExpanded && "@min-[1420px]/task-board:grid-cols-4",
           )}
         >
           {statuses.map((status) => (

@@ -10,7 +10,7 @@ MCP availability is determined by the selected ChatGPT model and account, not by
 
 There are two delivery transports behind the same agent identity:
 
-1. **Browser delivery**: CCCC claims a pending Send or Send + Reply batch and injects it into a bound ChatGPT web chat through the Web-owned shared browser with an agent-specific Page target. It waits while ChatGPT is responding and preserves unrelated unsent drafts. It never treats the visible Stop control or a similarly named control elsewhere on the page as a send target. A confirmed injection records `runtime.delivery=accepted`; an indeterminate post-click result records `ambiguous`, and neither is automatically submitted again. A definite pre-submit failure records `failed` and remains eligible for a later delivery attempt.
+1. **Browser delivery**: CCCC claims a pending Send or Send + Reply batch and injects it into a bound ChatGPT web chat through the shared browser with an agent-specific Page target. It waits while ChatGPT is responding and preserves unrelated unsent drafts. It never treats the visible Stop control or a similarly named control elsewhere on the page as a send target. A confirmed injection records `runtime.delivery=accepted`; an indeterminate post-click result records `ambiguous`, and neither is automatically submitted again. A definite pre-submit failure records `failed` and remains eligible for a later delivery attempt.
 2. **Remote-MCP pull**: ChatGPT calls `cccc_runtime_wait_next_turn` through MCP. Returning a turn records that the pull transport accepted it; `cccc_runtime_complete_turn` closes that exact active runtime turn after processing.
 
 Browser confirmation requires the current batch's complete marker in a user
@@ -223,7 +223,7 @@ For remote-MCP pull mode, prompt the model to use CCCC explicitly:
 
 ### ChatGPT Browser Delivery
 
-Browser delivery is the proactive path for ChatGPT web. CCCC uses one Web-owned Chrome/Edge browser process with a shared login and separate agent windows for settings, runtime inspection, optional manual reload, optional auto-reload recovery, and message delivery. Delivery submits CCCC message batches into the explicitly bound chat; the web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If the selected model cannot see MCP tools, switch to an MCP-capable GPT-5.x chat before assigning local work.
+Browser delivery is the proactive path for ChatGPT web. CCCC uses one shared Chrome/Edge browser process with a shared login and separate agent windows for settings, runtime inspection, optional manual reload, optional auto-reload recovery, and message delivery. Delivery submits CCCC message batches into the explicitly bound chat; the web model still uses the CCCC MCP connector for all visible replies and local work. Choose a GPT-5.x model/session that can see and use the CCCC connector for local execution. If the selected model cannot see MCP tools, switch to an MCP-capable GPT-5.x chat before assigning local work.
 
 The agent runtime panel provides two durable delivery modes:
 
@@ -240,7 +240,7 @@ A submission has no single overall time limit: page loads, composer waits, safe 
 
 Agent panels use **Page** view bound to their own target. Global login/maintenance additionally offers **Browser** view of the entire shared desktop on a CCCC-owned Xvfb display with `x11vnc` installed. That view can show other agent windows and is available only in global settings. Without VNC, the native browser and CDP page view remain available. The VNC server binds to localhost and remote access passes through the authenticated CCCC WebSocket bridge. `CCCC_PROJECTED_BROWSER_VNC=0` disables it.
 
-The shared process has one exclusive profile owner. Agent close/delete only closes its page; Web shutdown closes the owned process and display resources once. Other browser features keep their separate profile ownership. A browser crash affects all shared windows and recovery uses their explicit bindings; it never adopts an unrelated tab.
+The shared process has one exclusive profile owner. Agent close/delete only closes its page. On Linux and on Apple Silicon Macs running the native arm64 build, CCCC's session owner keeps the shared browser: restarting the Web, stopping the daemon with `cccc daemon stop --keep-agents`, or an update that keeps agents leaves the browser and its agent windows running, and the next Web reconnects to the same windows. On Linux the session owner also keeps the private virtual display; macOS uses none. When the Web loses its connection to the browser, the surface reports the lost connection and the browser keeps running; opening the window again reconnects. A normal `cccc daemon stop` closes the browser, and on Linux its display. With an Intel macOS build, Web shutdown closes the browser process and its resources. Other browser features keep their separate profile ownership. A browser crash affects all shared windows and recovery uses their explicit bindings; it never adopts an unrelated tab.
 
 The login and delivery paths share this profile:
 

@@ -1,5 +1,5 @@
 use super::super::{SessionPurpose, launch::ANALYST_INSTRUCTIONS, launch_command};
-use cccc_core::HomeLayout;
+use cccc_core::{HomeLayout, local_sessions};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -31,13 +31,39 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     purpose: SessionPurpose,
     mcp_server: Value,
 ) -> io::Result<PreparedClaude> {
+    prepare_with_host(
+        home,
+        configured,
+        environment,
+        cwd,
+        settings_owner,
+        purpose,
+        mcp_server,
+        &std::env::vars().collect(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::ops::codex_voice_analyst) fn prepare_with_host(
+    home: &HomeLayout,
+    configured: &[String],
+    environment: &BTreeMap<String, String>,
+    cwd: &Path,
+    settings_owner: &str,
+    purpose: SessionPurpose,
+    mcp_server: Value,
+    inherited: &BTreeMap<String, String>,
+) -> io::Result<PreparedClaude> {
     let default_command = ["claude".to_owned()];
     let configured = if configured.is_empty() {
         &default_command[..]
     } else {
         configured
     };
-    let executable = launch_command::resolve_runtime_executable(&configured[0], environment)?;
+    let mut command_environment = inherited.clone();
+    command_environment.extend(environment.clone());
+    let executable =
+        launch_command::resolve_runtime_executable(&configured[0], &command_environment)?;
     let filename = executable
         .file_name()
         .and_then(|value| value.to_str())
@@ -56,8 +82,9 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
     // Agent View forwards a selected environment, not arbitrary caller keys.
     // Task grants use its per-job private settings env, then expire with the job.
     merge_environment(&mut settings, environment)?;
-    network_environment::inherit(&mut settings, std::env::vars())?;
-    let mut launch_environment = launcher_environment(environment);
+    disable_native_integration(&mut settings)?;
+    network_environment::inherit(&mut settings, inherited.clone())?;
+    let mut launch_environment = launcher_environment(environment, inherited);
     let config_dir = config_dir(&launch_environment)?;
     let settings_root = home.daemon_dir().join("claude-managed");
     std::fs::create_dir_all(&settings_root)?;
@@ -177,7 +204,7 @@ pub(super) fn process_command(
             "Claude managed-session command is empty",
         )
     })?;
-    let mut process = tokio::process::Command::new(program);
+    let mut process = cccc_runtime::background_tokio_command(program);
     process.args(arguments);
     Ok(process)
 }
@@ -447,41 +474,105 @@ fn merge_environment(
     Ok(())
 }
 
-fn launcher_environment(environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-    const PRELAUNCH_KEYS: &[&str] = &[
-        "PATH",
-        "HOME",
-        "USERPROFILE",
-        "CLAUDE_CONFIG_DIR",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "LANG",
-        "LC_ALL",
-        "LC_CTYPE",
-        "SHELL",
-        "USER",
-        "LOGNAME",
-        "XDG_CONFIG_HOME",
-        "XDG_CACHE_HOME",
-        "XDG_DATA_HOME",
-        "SystemRoot",
-        "ComSpec",
-        "PATHEXT",
-        "APPDATA",
-        "LOCALAPPDATA",
-        "PROGRAMDATA",
-    ];
+/// The native integration plugin comes from the user's Claude configuration,
+/// which managed sessions share. In a CCCC-owned session its hooks and receive
+/// Monitor return at once, and Claude can report that Monitor exit to the model
+/// as a notification, costing a turn at startup. Only this session's settings
+/// disable it; native sessions never read this file.
+fn disable_native_integration(settings: &mut Map<String, Value>) -> io::Result<()> {
+    let value = settings
+        .entry("enabledPlugins")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if value.is_null() {
+        *value = Value::Object(Map::new());
+    }
+    let plugins = value.as_object_mut().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Claude settings enabledPlugins must be an object",
+        )
+    })?;
+    plugins.insert(
+        local_sessions::CLAUDE_PLUGIN_ID.to_owned(),
+        Value::Bool(false),
+    );
+    Ok(())
+}
+
+const PRELAUNCH_KEYS: &[&str] = &[
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "CLAUDE_CONFIG_DIR",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "SHELL",
+    "USER",
+    "LOGNAME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+    "SystemRoot",
+    "ComSpec",
+    "PATHEXT",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+];
+
+pub(crate) fn capture_host_environment(
+    inherited: impl IntoIterator<Item = (String, String)>,
+) -> BTreeMap<String, String> {
+    inherited
+        .into_iter()
+        .filter(|(key, _)| {
+            PRELAUNCH_KEYS.contains(&key.as_str()) || network_environment::is_inherited_key(key)
+        })
+        .collect()
+}
+
+fn launcher_environment(
+    environment: &BTreeMap<String, String>,
+    inherited: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
     PRELAUNCH_KEYS
         .iter()
         .filter_map(|key| {
             environment
                 .get(*key)
                 .cloned()
-                .or_else(|| std::env::var_os(key).map(|value| value.to_string_lossy().into_owned()))
+                .or_else(|| inherited.get(*key).cloned())
                 .map(|value| ((*key).to_owned(), value))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod inherited_environment_tests {
+    use super::*;
+
+    #[test]
+    fn controller_host_snapshot_keeps_launcher_and_network_keys_without_other_host_secrets() {
+        let host = capture_host_environment([
+            ("HOME".into(), "/current/controller/home".into()),
+            ("PATH".into(), "/current/controller/bin".into()),
+            ("https_proxy".into(), "http://127.0.0.1:1234".into()),
+            ("UNRELATED_SECRET".into(), "not-forwarded".into()),
+        ]);
+        assert!(!host.contains_key("UNRELATED_SECRET"));
+        assert_eq!(host["https_proxy"], "http://127.0.0.1:1234");
+        let launcher = launcher_environment(
+            &BTreeMap::from([("HOME".into(), "/explicit/actor/home".into())]),
+            &host,
+        );
+        assert_eq!(launcher["HOME"], "/explicit/actor/home");
+        assert_eq!(launcher["PATH"], "/current/controller/bin");
+        assert!(!launcher.contains_key("https_proxy")); // Applied through existing network settings separately.
+    }
 }
 
 fn config_dir(environment: &BTreeMap<String, String>) -> io::Result<PathBuf> {
@@ -689,6 +780,58 @@ mod tests {
         assert!(first.settings_path.is_file());
         remove_settings_owner(&home, "actor:g1:claude-1").expect("remove owner settings");
         assert!(!first.settings_path.exists());
+    }
+
+    #[test]
+    fn managed_settings_disable_only_the_native_integration_plugin() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let executable = temp.path().join(if cfg!(windows) {
+            "claude.exe"
+        } else {
+            "claude"
+        });
+        std::fs::write(&executable, "fixture").expect("fake Claude executable");
+        let executable = executable.to_string_lossy().into_owned();
+        let user_settings = json!({
+            "model": "sonnet",
+            "enabledPlugins": {"other@market": true, "cccc-local-sessions@cccc-local": true}
+        })
+        .to_string();
+        for (command, other_plugin, model) in [
+            (
+                vec![executable.clone(), "--settings".into(), user_settings],
+                Value::Bool(true),
+                json!("sonnet"),
+            ),
+            (vec![executable.clone()], Value::Null, Value::Null),
+        ] {
+            let prepared = prepare(
+                &home,
+                &command,
+                &BTreeMap::new(),
+                temp.path(),
+                "actor:g1:claude-1",
+                SessionPurpose::Actor,
+                json!({}),
+            )
+            .expect("managed settings");
+            let written: Value = serde_json::from_str(
+                &std::fs::read_to_string(&prepared.settings_path).expect("read settings"),
+            )
+            .expect("settings JSON");
+            assert_eq!(
+                written["enabledPlugins"]["cccc-local-sessions@cccc-local"],
+                false
+            );
+            assert_eq!(written["enabledPlugins"]["other@market"], other_plugin);
+            assert_eq!(written["model"], model);
+        }
+
+        let mut settings = Map::new();
+        settings.insert("enabledPlugins".into(), json!(["not", "an", "object"]));
+        assert!(disable_native_integration(&mut settings).is_err());
     }
 
     #[cfg(unix)]

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, Command};
+use tokio::process::{Child, ChildStdin};
 use tokio::sync::{Mutex, mpsc};
 
 use buffering::{
@@ -411,7 +411,7 @@ async fn spawn_cell(
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| "node".into());
-    let mut command = Command::new(node);
+    let mut command = cccc_runtime::background_tokio_command(node);
     command
         .arg("-e")
         .arg(NODE_RUNTIME)

@@ -151,7 +151,9 @@ async fn response_loss_does_not_replay_a_sent_request() {
             .await
             .is_ok()
     });
-    let client = DaemonClient::new(home).with_timeout(Duration::from_secs(2));
+    let client = DaemonClient::new(home)
+        .with_timeout(Duration::from_secs(2))
+        .with_connect_wait(Duration::from_secs(1));
 
     assert!(matches!(
         client.call(&request("non_idempotent_write")).await,
@@ -172,7 +174,9 @@ async fn timeout_after_send_reports_unknown_outcome() {
         assert!(!request.is_empty());
         tokio::time::sleep(Duration::from_secs(1)).await;
     });
-    let client = DaemonClient::new(home).with_timeout(Duration::from_millis(50));
+    let client = DaemonClient::new(home)
+        .with_timeout(Duration::from_millis(50))
+        .with_connect_wait(Duration::from_secs(1));
 
     assert!(matches!(
         client.call(&request("slow_write")).await,
@@ -240,4 +244,120 @@ async fn respond_once(stream: tokio::net::TcpStream) {
     payload.push(b'\n');
     stream.get_mut().write_all(&payload).await.expect("write");
     stream.get_mut().flush().await.expect("flush");
+}
+
+#[tokio::test]
+async fn connect_wait_sends_once_when_the_address_appears_after_maintenance() {
+    let (root, home, listener) = test_server("connect-wait-missing").await;
+    let path = super::address_path(&home);
+    let bytes = tokio::fs::read(&path).await.expect("saved address");
+    tokio::fs::remove_file(&path)
+        .await
+        .expect("maintenance gap");
+    assert!(matches!(
+        DaemonClient::new(home.clone()).call(&request("ping")).await,
+        Err(ClientError::AddressUnavailable(_))
+    ));
+    let server = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        tokio::fs::write(path, bytes).await.expect("daemon returns");
+        let (stream, _) = listener.accept().await.expect("one admitted request");
+        respond_once(stream).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+    });
+    let client = DaemonClient::new(home)
+        .with_timeout(Duration::from_secs(2))
+        .with_connect_wait(Duration::from_secs(1));
+    assert!(
+        client
+            .call(&request("non_idempotent_write"))
+            .await
+            .expect("wait for daemon")
+            .ok
+    );
+    server.await.expect("server");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[tokio::test]
+async fn connect_wait_rereads_a_stale_address_before_sending() {
+    let (root, home, old_listener) = test_server("connect-wait-replaced").await;
+    let path = super::address_path(&home);
+    let mut address: DaemonAddress =
+        serde_json::from_slice(&tokio::fs::read(&path).await.expect("old address"))
+            .expect("old daemon address");
+    // Prime the cache with a successful call, then replace the daemon endpoint.
+    let initial = tokio::spawn(async move {
+        let (stream, _) = old_listener.accept().await.expect("old daemon");
+        respond_once(stream).await;
+    });
+    let client = DaemonClient::new(home)
+        .with_timeout(Duration::from_secs(2))
+        .with_connect_wait(Duration::from_secs(1));
+    assert!(
+        client
+            .call(&request("ping"))
+            .await
+            .expect("old daemon call")
+            .ok
+    );
+    initial.await.expect("old endpoint closed");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("new endpoint");
+    address.port = listener.local_addr().expect("new address").port();
+    let server = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        tokio::fs::write(path, serde_json::to_vec(&address).expect("new address"))
+            .await
+            .expect("publish replacement");
+        let (stream, _) = listener.accept().await.expect("new daemon");
+        respond_once(stream).await;
+    });
+    assert!(
+        client
+            .call(&request("ping"))
+            .await
+            .expect("replacement call")
+            .ok
+    );
+    server.await.expect("new daemon server");
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[tokio::test]
+async fn connect_wait_is_bounded_without_creating_a_daemon_or_hiding_bad_state() {
+    let (root, home, listener) = test_server("connect-wait-bounded").await;
+    drop(listener);
+    std::fs::remove_dir_all(&root).expect("absent home fixture");
+    let client = DaemonClient::new(home.clone())
+        .with_timeout(Duration::from_millis(40))
+        .with_connect_wait(Duration::from_secs(1));
+    assert!(matches!(
+        client.call(&request("ping")).await,
+        Err(ClientError::Timeout)
+    ));
+    assert!(
+        !home.root().exists(),
+        "waiting must not initialize or start anything"
+    );
+    home.initialize().expect("prepare invalid address fixture");
+    tokio::fs::write(super::address_path(&home), b"not-json")
+        .await
+        .expect("damaged address");
+    assert!(matches!(
+        client.call(&request("ping")).await,
+        Err(ClientError::Protocol(_))
+    ));
+    assert!(!super::retryable_connect(&ClientError::Transport(
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "fixture access denied"
+        )
+    )));
+    std::fs::remove_dir_all(root).expect("cleanup");
 }

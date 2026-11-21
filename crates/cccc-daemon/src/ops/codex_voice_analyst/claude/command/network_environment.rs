@@ -10,6 +10,13 @@ const PROXIES: &[(&str, &str)] = &[
 ];
 const CERTIFICATES: &[&str] = &["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"];
 
+pub(super) fn is_inherited_key(key: &str) -> bool {
+    CERTIFICATES.contains(&key)
+        || PROXIES
+            .iter()
+            .any(|(upper, lower)| key == *upper || key == *lower)
+}
+
 pub(super) fn inherit(
     settings: &mut Map<String, Value>,
     inherited: impl IntoIterator<Item = (String, String)>,

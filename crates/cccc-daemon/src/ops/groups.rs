@@ -120,6 +120,10 @@ fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn list(home: &HomeLayout) -> OpResult {
+    crate::session_owner::read_scope(|| list_snapshot(home))
+}
+
+fn list_snapshot(home: &HomeLayout) -> OpResult {
     let store = store(home)?;
     let groups = store
         .list()
@@ -136,6 +140,10 @@ fn list(home: &HomeLayout) -> OpResult {
 }
 
 fn show(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    crate::session_owner::read_scope(|| show_snapshot(home, request))
+}
+
+fn show_snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     let scope = actor_runtime::caller_scope(&group, &by)?;
@@ -668,7 +676,9 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
         // confirmation pauses. User controls may retry an Active or Stopped Group.
         if actor_runtime::user_confirmation_retry(request) {
             for actor in group.actors.iter().filter(|actor| actor.enabled) {
-                if !actor_runtime::actor_is_running(&group, actor) {
+                if !actor_runtime::actor_is_running(&group, actor)
+                    && !actor_runtime::hermes_setup_open(home, &group.group_id, actor)?
+                {
                     super::local_headless::retry_confirmation(&group.group_id, &actor.id)
                         .map_err(OpError::io)?;
                 }

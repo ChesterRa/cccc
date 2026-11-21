@@ -1,0 +1,8 @@
+# Use the member's workspace for the native filesystem tools.
+- id: sandbox-policy
+  config:
+    mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+    workspaceRoot: !!js process.env.CCCC_DEEPSEEK_WORKSPACE
+- id: fs-sandbox
+  config:
+    cwd: !!js process.env.CCCC_DEEPSEEK_WORKSPACE

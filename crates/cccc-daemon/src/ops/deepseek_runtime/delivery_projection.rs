@@ -29,8 +29,12 @@ pub(super) fn normalize_turn_error(error: Value, private_values: &[String]) -> (
         .and_then(Value::as_str)
         .unwrap_or_default()
         .trim();
-    let gateway_unauthorized = message.eq_ignore_ascii_case("turn failed: unauthorized")
-        || message.eq_ignore_ascii_case("internal error: turn failed: unauthorized");
+    let lower = message.to_ascii_lowercase();
+    let gateway_unauthorized = lower
+        .strip_prefix("internal error: ")
+        .unwrap_or(&lower)
+        .strip_prefix("turn failed: ")
+        .is_some_and(|reason| reason == "unauthorized" || reason.starts_with("401:"));
     if gateway_unauthorized
         || [
             "invalid token",
@@ -138,6 +142,26 @@ pub(super) fn agent_message_text(update: &Value) -> Option<&str> {
         .then(|| update.pointer("/content/text").and_then(Value::as_str))
         .flatten()
         .filter(|text| !text.is_empty())
+}
+
+pub(super) fn activity_detail(update: &Value, private_values: &[String]) -> String {
+    // The native tools send file contents in arguments, diffs and results. The
+    // activity journal only needs the tool's identity and progress.
+    let detail = match update["sessionUpdate"].as_str() {
+        Some("tool_call" | "tool_call_update") => {
+            let fields = ["sessionUpdate", "toolCallId", "title", "kind", "status"]
+                .into_iter()
+                .filter_map(|key| Some((key.to_owned(), update.get(key)?.clone())))
+                .collect();
+            Value::Object(fields)
+        }
+        _ => update.clone(),
+    };
+    redact_private_values(detail, private_values)
+        .to_string()
+        .chars()
+        .take(4096)
+        .collect()
 }
 
 pub(super) fn persist_message_completed(projection: &TurnProjection<'_>) -> std::io::Result<()> {
@@ -285,8 +309,28 @@ pub(super) fn persist_terminal(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_turn_error;
+    use super::{activity_detail, normalize_turn_error};
     use serde_json::{Value, json};
+
+    #[test]
+    fn tool_activity_records_progress_without_file_contents() {
+        for kind in ["tool_call", "tool_call_update"] {
+            let update = json!({
+                "sessionUpdate":kind, "title":"Write fixture", "toolCallId":"one",
+                "status":"completed", "rawInput":{"content":"fixture body".repeat(8000)},
+                "content":[{"type":"diff","newText":"file contents"}], "rawOutput":"output"
+            });
+            let detail: Value =
+                serde_json::from_str(&activity_detail(&update, &["fixture".into()]))
+                    .expect("short activity detail");
+            assert_eq!(
+                detail,
+                json!({
+                    "sessionUpdate":kind, "title":"Write [redacted]", "toolCallId":"one", "status":"completed"
+                })
+            );
+        }
+    }
 
     #[test]
     fn error_redaction_keeps_structure_and_covers_nested_values() {

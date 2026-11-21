@@ -71,6 +71,14 @@ const WebModelConnectorsTab = lazy(() =>
 const DeveloperTab = lazy(() =>
   import("./modals/settings/DeveloperTab").then((module) => ({ default: module.DeveloperTab })),
 );
+const UpdateTab = lazy(() =>
+  import("./modals/settings/UpdateTab").then((module) => ({ default: module.UpdateTab })),
+);
+const QuickRepliesTab = lazy(() =>
+  import("./modals/settings/QuickRepliesTab").then((module) => ({
+    default: module.QuickRepliesTab,
+  })),
+);
 const NotificationsTab = lazy(() =>
   import("./modals/settings/NotificationsTab").then((module) => ({
     default: module.NotificationsTab,
@@ -452,6 +460,10 @@ export function SettingsModal({
       ...(notificationsAllowed && (globalSettingsEnabled || currentBrowserSignedIn)
         ? [{ id: "notifications" as const, label: t("tabs.notifications") }]
         : []),
+      // Each signed-in identity keeps its own reply templates, administrator or not.
+      ...(globalSettingsEnabled || currentBrowserSignedIn
+        ? [{ id: "quickReplies" as const, label: t("tabs.quickReplies") }]
+        : []),
       ...(globalSettingsEnabled
         ? [
             { id: "branding" as const, label: t("tabs.branding") },
@@ -460,6 +472,7 @@ export function SettingsModal({
               id: "webModels" as const,
               label: t("tabs.webModels", { defaultValue: "ChatGPT Web Model" }),
             },
+            { id: "update" as const, label: t("tabs.update") },
             { id: "developer" as const, label: t("tabs.developer") },
           ]
         : []),
@@ -844,6 +857,8 @@ export function SettingsModal({
 
                 {activeTab === "notifications" && notificationsAllowed && <NotificationsTab />}
 
+                {activeTab === "quickReplies" && <QuickRepliesTab />}
+
                 {activeTab === "branding" && (
                   <BrandingTab
                     isDark={isDark}
@@ -879,6 +894,10 @@ export function SettingsModal({
                     currentGroupId={groupId}
                     onOpenWebAccess={() => setGlobalTab("webAccess")}
                   />
+                )}
+
+                {activeTab === "update" && (
+                  <UpdateTab isActive={scope === "global" && activeTab === "update"} />
                 )}
 
                 {activeTab === "developer" && (

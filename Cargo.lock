@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "cccc"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -702,6 +702,7 @@ dependencies = [
  "rustix",
  "rustls 0.23.46",
  "semver",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "shell-words",
@@ -713,11 +714,11 @@ dependencies = [
 
 [[package]]
 name = "cccc-linux-memory"
-version = "0.4.55"
+version = "0.4.58"
 
 [[package]]
 name = "cccc-pair-client"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-pair-core",
@@ -729,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-contracts"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "chrono",
  "serde",
@@ -739,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-core"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
@@ -755,9 +756,7 @@ dependencies = [
  "fs_at",
  "hmac",
  "if-addrs",
- "libproc",
  "mime_guess",
- "nix 0.28.0",
  "renamore",
  "same-file",
  "serde",
@@ -778,7 +777,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-daemon"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "anyhow",
  "axum",
@@ -792,11 +791,14 @@ dependencies = [
  "chrono",
  "fs2",
  "futures-util",
+ "hmac",
  "mime_guess",
  "nix 0.28.0",
  "percent-encoding",
  "regex",
  "reqwest 0.12.28",
+ "reqwest 0.13.4",
+ "rmcp",
  "rustix",
  "rustls 0.23.46",
  "same-file",
@@ -815,13 +817,14 @@ dependencies = [
  "unicode-width",
  "url",
  "uuid",
+ "webpki-roots 1.0.11",
  "win32job",
  "zip",
 ]
 
 [[package]]
 name = "cccc-pair-mcp"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "anyhow",
  "axum",
@@ -848,7 +851,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-notebooklm"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "cookie",
  "mime_guess",
@@ -861,13 +864,14 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-runtime"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "cccc-pair-contracts",
  "cccc-windows-process",
  "dunce",
  "filedescriptor",
  "futures-util",
+ "libproc",
  "nix 0.28.0",
  "portable-pty",
  "retach",
@@ -904,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-web"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "aes",
  "anyhow",
@@ -965,14 +969,14 @@ dependencies = [
 
 [[package]]
 name = "cccc-windows-console"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "cccc-windows-process"
-version = "0.4.55"
+version = "0.4.58"
 dependencies = [
  "windows-sys 0.61.2",
 ]
@@ -4910,6 +4914,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmcp"
+version = "3.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d24a7e92f4bcaa36b97fa93c4fa7ca8f3e669eced949345b3462dba333c7f909"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "chrono",
+ "futures",
+ "http",
+ "indexmap 2.14.0",
+ "libc",
+ "pin-project-lite",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sse-stream",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5725,6 +5755,19 @@ checksum = "7ef958a98b9d5da290cfc78946e9f3e61e1e62a18db0d92cac0b83cc161491a9"
 dependencies = [
  "base64ct",
  "der 0.8.3",
+]
+
+[[package]]
+name = "sse-stream"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c25ac7aff0abd1dbc474536e40416e1102c7dd9bfba0b9861c6d357f835dcfb4"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http-body",
+ "http-body-util",
+ "pin-project-lite",
 ]
 
 [[package]]

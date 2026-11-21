@@ -237,3 +237,5 @@ async fn ledger_search_http_forwards_recorded_recipient_and_time_filters() {
         expected
     );
 }
+
+cccc_daemon::session_owner_test_entry!();

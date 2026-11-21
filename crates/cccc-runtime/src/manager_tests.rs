@@ -1,6 +1,7 @@
 use super::{
     commit_reaped, start, start_actor_with_history, start_with_history, status, stop, stop_all,
     stop_if_started_at, submit_interruptible, submit_sequence_interruptible, write,
+    write_to_session_within,
 };
 use crate::registry::lookup;
 use crate::test_support::{spec, test_guard};
@@ -56,6 +57,91 @@ fn stop_can_finish_while_terminal_input_is_backpressured() {
     stopped_without_release
         .expect("stop must not wait for the Actor to consume a blocked terminal write")
         .expect("stop");
+}
+
+fn wait_for_file(path: &std::path::Path) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !path.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    path.exists()
+}
+
+/// A bounded write gives up on a held input gate, on a terminal that stopped
+/// reading and on a replaced terminal, and its abandoned write cannot hold up
+/// the stop that follows.
+#[test]
+fn bounded_write_gives_up_without_holding_up_stop() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_bounded_terminal_input";
+    let actor = "viewer";
+    let viewer = start(spec(
+        &temp,
+        group,
+        actor,
+        "stty raw -echo; touch ready; i=0; while [ ! -f release ] && [ $i -lt 500 ]; do sleep 0.02; i=$((i + 1)); done",
+    ))
+    .expect("non-reading terminal");
+    assert!(wait_for_file(&temp.path().join("ready")), "terminal ready");
+    let bound = Duration::from_millis(200);
+
+    let session = lookup(group, actor).expect("registered terminal");
+    let gate = session.lock().expect("session").input_gate();
+    let held = gate.lock().expect("input gate");
+    let started = std::time::Instant::now();
+    assert!(!write_to_session_within(&viewer, b"\x03", bound).expect("held gate"));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "held gate is bounded"
+    );
+    drop(held);
+
+    let started = std::time::Instant::now();
+    let filled = write_to_session_within(&viewer, &vec![b'x'; 1024 * 1024], bound);
+    assert!(!filled.expect("full input queue"));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "full queue is bounded"
+    );
+
+    let mut replaced = viewer.clone();
+    replaced.started_at = "another start".into();
+    assert!(!write_to_session_within(&replaced, b"x", bound).expect("replaced terminal"));
+
+    let (stopped_tx, stopped_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = stopped_tx.send(stop(group, actor));
+    });
+    let stopped = stopped_rx.recv_timeout(Duration::from_secs(2));
+    std::fs::write(temp.path().join("release"), b"").expect("release fixture");
+    stopped
+        .expect("stop does not wait on the abandoned write")
+        .expect("stop");
+    assert!(!write_to_session_within(&viewer, b"x", bound).expect("stopped terminal"));
+}
+
+#[test]
+fn bounded_write_reaches_a_reading_terminal() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_bounded_terminal_reader";
+    let actor = "viewer";
+    let viewer = start(spec(
+        &temp,
+        group,
+        actor,
+        "stty raw -echo; touch ready; head -c 5 > got; touch done; sleep 5",
+    ))
+    .expect("reading terminal");
+    assert!(wait_for_file(&temp.path().join("ready")), "terminal ready");
+    assert!(write_to_session_within(&viewer, b"hello", Duration::from_secs(2)).expect("written"));
+    assert!(wait_for_file(&temp.path().join("done")), "terminal read it");
+    assert_eq!(
+        std::fs::read(temp.path().join("got")).expect("read bytes"),
+        b"hello"
+    );
+    stop(group, actor).expect("stop");
 }
 
 #[test]
@@ -343,6 +429,47 @@ fn stop_all_terminates_every_runtime() {
     assert_eq!(stop_all().expect("stop all").len(), 2);
     assert!(status("g_stop_all", "peer1").is_err());
     assert!(status("g_stop_all", "peer2").is_err());
+}
+
+#[test]
+fn a_stopping_terminal_remains_registered_until_its_process_is_reaped() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group = "g_stopping_terminal";
+    let actor = "peer";
+    let started = start(spec(&temp, group, actor, "sleep 30")).expect("start");
+    let current = lookup(group, actor).expect("registered terminal");
+    let session = current
+        .lock()
+        .expect("hold terminal before it can be stopped");
+    let stopping = std::thread::spawn(move || stop(group, actor));
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    // The stop thread either takes a reference alongside the registry, or
+    // removes the entry prematurely. Holding the mutex keeps the child alive.
+    let still_registered = loop {
+        if lookup(group, actor).is_err() {
+            break false;
+        }
+        if Arc::strong_count(&current) >= 3 {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    drop(session);
+    let stopped = stopping.join().expect("stop worker").expect("stop");
+    assert!(
+        still_registered,
+        "the live terminal disappeared during stop"
+    );
+    assert_eq!(started.started_at, stopped.started_at);
+    assert!(!stopped.running);
+    assert!(matches!(
+        lookup(group, actor),
+        Err(RuntimeError::NotFound(..))
+    ));
 }
 
 #[test]

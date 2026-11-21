@@ -597,6 +597,7 @@ fn excluded(relative: &str, _is_dir: bool) -> bool {
         "headless",
         "hermes",
         "kiro",
+        "mcp-bindings",
         "playwright",
         "projections",
         "pty",
@@ -1476,6 +1477,7 @@ mod tests {
             "state/message_pinſ/pins.json",
             "state/paẞword/note.txt",
             "state/KIRO/session.txt",
+            "state/MCP-BINDINGS/instance.json",
         ] {
             assert!(excluded(name, false), "private alias {name}");
         }

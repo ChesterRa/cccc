@@ -5,13 +5,13 @@ export function chatSetupRequirements(
   groupId: string,
   projectRoot: string,
   actors: Actor[],
-  running: boolean,
+  running: boolean | null,
 ) {
   const remoteOnly =
     actors.length > 0 && actors.every((actor) => actor.external_session_id?.startsWith("remote:"));
   const needsScope = !!groupId && !projectRoot && !remoteOnly;
   const needsActors = !!groupId && actors.length === 0;
-  const needsStart = !!groupId && actors.length > 0 && !running;
+  const needsStart = !!groupId && actors.length > 0 && running === false;
   return {
     needsScope,
     needsActors,

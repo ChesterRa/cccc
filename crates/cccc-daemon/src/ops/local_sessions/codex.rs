@@ -148,7 +148,7 @@ fn queue_command(
         check_windows_command_line(program.as_os_str().encode_wide().count(), &args, batch)
             .map_err(Rejected)?;
     }
-    let mut command = std::process::Command::new(program);
+    let mut command = cccc_runtime::background_command(program);
     command
         .args(args)
         .env("CODEX_HOME", codex_home)

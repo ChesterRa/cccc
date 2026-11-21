@@ -1,12 +1,14 @@
-/* The same controls stay mounted when the empty touch composer is compact. */
+/* The same controls stay mounted when the empty touch composer is compact.
+   Its one row holds attach, templates, the input and voice; Send returns with
+   the full layout, since an empty compact draft has nothing to send. */
 [data-composer-compact="true"] [data-composer-inner] {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px 44px;
+  grid-template-columns: 44px 44px minmax(0, 1fr) 44px;
   align-items: center;
 }
 [data-composer-compact="true"] [data-composer-recipient-row],
 [data-composer-compact="true"] [data-voice-mobile-status-slot]:empty,
-[data-composer-compact="true"] [data-composer-send-options],
+[data-composer-compact="true"] [data-composer-send-control],
 [data-composer-compact="true"] [data-composer-voice] .voice-mobile-only,
 [data-composer-compact="true"] [data-composer-voice] .voice-desktop-controls {
   display: none;
@@ -23,8 +25,12 @@
   grid-column: 1;
   grid-row: 1;
 }
-[data-composer-compact="true"] [data-composer-input] {
+[data-composer-compact="true"] [data-composer-templates] {
   grid-column: 2;
+  grid-row: 1;
+}
+[data-composer-compact="true"] [data-composer-input] {
+  grid-column: 3;
   grid-row: 1;
   display: flex;
   align-items: center;
@@ -34,7 +40,7 @@
   flex: 1;
 }
 [data-composer-compact="true"] [data-composer-voice] {
-  grid-column: 3;
+  grid-column: 4;
   grid-row: 1;
 }
 [data-composer-compact="true"] [data-voice-assistant-row-control] {
@@ -48,14 +54,6 @@
   height: 44px;
   overflow: hidden;
   font-size: 0;
-}
-[data-composer-compact="true"] [data-composer-send-control] {
-  grid-column: 4;
-  grid-row: 1;
-  margin-left: 0;
-}
-[data-composer-compact="true"] [data-composer-send-control] > button:first-child {
-  border-radius: 0.75rem;
 }
 .compact-composer-recipients {
   display: flex;

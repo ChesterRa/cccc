@@ -1,6 +1,6 @@
 import type { GroupDoc, GroupMeta, GroupRuntimeStatus } from "../types";
 
-export type GroupStatusKey = "run" | "paused" | "idle" | "offline" | "stop";
+export type GroupStatusKey = "run" | "paused" | "idle" | "offline" | "stop" | "unknown";
 
 /** Layout-namespace label of each status, shared by every surface that names it. */
 export const GROUP_STATUS_LABEL_KEYS: Record<GroupStatusKey, string> = {
@@ -9,6 +9,7 @@ export const GROUP_STATUS_LABEL_KEYS: Record<GroupStatusKey, string> = {
   idle: "statusIdle",
   offline: "statusOffline",
   stop: "statusStopped",
+  unknown: "statusUnknown",
 };
 
 export type GroupStatus = { key: GroupStatusKey };
@@ -32,8 +33,16 @@ export function getGroupStatus(running: boolean, state?: string): GroupStatus {
   return { key: "run" };
 }
 
+/** The runtime of a Group the daemon could not fully observe: its recorded lifecycle only. */
+export function unobservableGroupRuntime(lifecycleState?: string | null): GroupRuntimeStatus {
+  return { lifecycle_state: String(lifecycleState || "active"), available: false };
+}
+
 export function getGroupRuntimeStatus(source?: GroupStatusSource | null): GroupRuntimeStatus {
   const runtime = source?.runtime_status;
+  if (runtime?.available === false) {
+    return unobservableGroupRuntime(runtime.lifecycle_state || source?.state);
+  }
   return {
     lifecycle_state: String(runtime?.lifecycle_state || source?.state || "active"),
     runtime_running: Boolean(runtime?.runtime_running ?? source?.running ?? false),
@@ -46,5 +55,10 @@ export function getGroupRuntimeStatus(source?: GroupStatusSource | null): GroupR
 
 export function getGroupStatusFromSource(source?: GroupStatusSource | null): GroupStatus {
   const runtime = getGroupRuntimeStatus(source);
-  return getGroupStatus(runtime.runtime_running, runtime.lifecycle_state);
+  if (runtime.available === false) {
+    // A recorded pause or stop stays what it is; otherwise whether anything runs is unknown.
+    const recorded = getGroupStatus(false, runtime.lifecycle_state);
+    return recorded.key === "paused" || recorded.key === "stop" ? recorded : { key: "unknown" };
+  }
+  return getGroupStatus(Boolean(runtime.runtime_running), runtime.lifecycle_state);
 }

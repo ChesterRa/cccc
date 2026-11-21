@@ -32,6 +32,9 @@ pub fn pending_delivery_group_ids() -> Vec<String> {
 
 pub fn maintain_group(home: &HomeLayout, group_id: &str, exited: Vec<cccc_runtime::SessionStatus>) {
     actor_delivery::drain_group(home, group_id);
+    if let Err(error) = actor_runtime::reconcile_provider_exits(home, group_id) {
+        tracing::warn!(diagnostic_action = "managed_exit_reconcile", diagnostic_code = %error.code, %group_id, "managed provider exit reconciliation failed");
+    }
     if let Err(error) = actor_runtime::reconcile_exited(home, exited) {
         tracing::warn!(diagnostic_action = "runtime_reconcile", diagnostic_code = %error.code, message = %error.message, %group_id, "runtime reconciliation failed");
     }
@@ -248,9 +251,8 @@ fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
                 let mut succeeded = true;
                 if state == "active"
                     && store.load(&group_id).is_ok_and(|group| {
-                        !group_runtime::status(home, &group)["runtime_running"]
-                            .as_bool()
-                            .unwrap_or(false)
+                        group_runtime::status(home, &group)["runtime_running"].as_bool()
+                            == Some(false)
                     })
                 {
                     if cancelled.load(Ordering::Acquire) {

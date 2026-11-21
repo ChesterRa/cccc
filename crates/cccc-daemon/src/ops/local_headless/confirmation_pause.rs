@@ -34,7 +34,7 @@ struct ConfirmationPaused;
 
 impl fmt::Display for ConfirmationPaused {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Claude's confirmation ended before the managed session connected, so this daemon pauses automatic starts and starts requested by agents; ask the user to launch the agent again")
+        f.write_str("The confirmation or setup in the agent's terminal ended before the managed session connected, so this daemon pauses automatic starts and starts requested by agents; ask the user to launch the agent again")
     }
 }
 
@@ -53,12 +53,13 @@ pub(super) fn is_paused(key: &Key) -> io::Result<bool> {
         .contains(key))
 }
 
+pub(super) fn paused_error() -> io::Error {
+    io::Error::new(io::ErrorKind::WouldBlock, ConfirmationPaused)
+}
+
 pub(super) fn ensure_allowed(key: &Key) -> io::Result<()> {
     if is_paused(key)? {
-        return Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            ConfirmationPaused,
-        ));
+        return Err(paused_error());
     }
     Ok(())
 }

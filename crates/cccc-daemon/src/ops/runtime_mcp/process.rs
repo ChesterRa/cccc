@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::io;
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 #[derive(Debug)]
@@ -27,7 +26,7 @@ pub(super) fn run(
         .map(OsStr::new)
         .or(inherited_path.as_deref());
     let program = cccc_core::runtime_mcp::resolve_program_in(program, search_path, cwd);
-    let mut process = Command::new(program);
+    let mut process = cccc_runtime::background_command(program);
     process.args(args).current_dir(cwd).envs(env);
     let output = cccc_runtime::capture_command_blocking(&mut process, None, timeout, 2_000_000)?;
     if output.stdout_truncated || output.stderr_truncated {

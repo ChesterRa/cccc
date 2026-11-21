@@ -11,6 +11,7 @@ publish = false
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading"] }
 
 [lints.clippy]
+disallowed_methods = "allow"
 dbg_macro = "deny"
 todo = "deny"
 unwrap_used = "deny"

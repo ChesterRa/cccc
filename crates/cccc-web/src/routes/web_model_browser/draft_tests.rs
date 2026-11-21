@@ -69,6 +69,7 @@ async fn preview_and_saved_alignment_preserve_attachment_only_drafts() {
             &local,
             (800, 600),
             &crate::browser_surface::actor_identity(&group.actors[0]),
+            "",
         )
         .await
         .expect("open");

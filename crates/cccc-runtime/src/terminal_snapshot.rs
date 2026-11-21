@@ -141,6 +141,54 @@ impl TerminalStateMirror {
         (self.cols, self.rows)
     }
 
+    /// Kilo's native session composer has a padded edit row and shows the
+    /// agent and model below it only in chat mode. A modal can leave that row
+    /// visible, so check the actual terminal cursor as well.
+    pub(crate) fn kilo_composer_ready(&self) -> bool {
+        let (x, y) = self.screen.cursor_position();
+        if !self.emulator_enabled
+            || !self.screen.cursor_visible()
+            || x < 3
+            || y == 0
+            || y.saturating_add(3) >= self.screen.rows()
+        {
+            return false;
+        }
+        let left = usize::from(x - 3);
+        // Agent and model labels can wrap across several bordered rows.
+        let Some(bottom) = (y + 3..self.screen.rows())
+            .map(|row| self.screen.visible_row(row))
+            .find(|row| row.get(left).map(|cell| cell.c) != Some('┃'))
+        else {
+            return false;
+        };
+        if bottom.get(left).map(|cell| cell.c) != Some('╹') {
+            return false;
+        }
+        // The sidebar can occupy the rest of the same terminal rows.
+        let width = bottom[left + 1..]
+            .iter()
+            .take_while(|cell| cell.c == '▀')
+            .count();
+        let right = left + 1 + width;
+        if width < 3 {
+            return false;
+        }
+        let empty = (y - 1..=y + 1).all(|row| {
+            let row = self.screen.visible_row(row);
+            row[left].c == '┃' && row[left + 1..right].iter().all(|cell| cell.c == ' ')
+        });
+        let metadata = self.screen.visible_row(y + 2);
+        empty
+            && metadata[left].c == '┃'
+            && metadata[left + 1..right].iter().any(|cell| cell.c == '·')
+    }
+
+    pub(crate) fn visible_text(&self) -> Option<Vec<String>> {
+        self.emulator_enabled
+            .then(|| self.screen.visible_rows().map(|row| row.text()).collect())
+    }
+
     pub(crate) fn clear(&mut self) {
         *self = Self::new(self.cols, self.rows);
     }

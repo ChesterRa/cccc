@@ -265,7 +265,7 @@ async fn require_supported_version(
     cwd: &Path,
     environment: &BTreeMap<String, String>,
 ) -> io::Result<()> {
-    let mut command = tokio::process::Command::new(executable);
+    let mut command = cccc_runtime::background_tokio_command(executable);
     command
         .arg("--version")
         .current_dir(cwd)

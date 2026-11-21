@@ -49,6 +49,7 @@ async fn actor_window_remains_visible_and_closable_during_slow_navigation() {
                 &format!("{url}{path}"),
                 (800, 600),
                 "gen",
+                "",
             ),
         )
         .await;
@@ -127,6 +128,7 @@ async fn shared_login_window_is_available_before_document_readiness() {
             &format!("{url}/actor"),
             (800, 600),
             "gen",
+            "",
         )
         .await
         .expect("warm browser with unrelated Actor");
@@ -256,7 +258,7 @@ async fn shared_windows_submit_independent_batches_while_viewers_capture() {
     let keys = ["web-model::g_fixture::A", "web-model::g_fixture::B"];
     for key in keys {
         manager
-            .ensure_open_shared_actor(key, &profile, &url, (800, 600), key)
+            .ensure_open_shared_actor(key, &profile, &url, (800, 600), key, "")
             .await
             .expect("window");
         wait_for_fixture_document(&owned_page(&manager, key).await).await;
@@ -329,14 +331,16 @@ async fn shared_windows_keep_login_and_close_only_their_own_surface() {
             &profile,
             &a_url,
             (800, 600),
-            "gen-a"
+            "gen-a",
+            ""
         ),
         manager.ensure_open_shared_actor(
             "web-model::g_b::b",
             &profile,
             &b_url,
             (800, 600),
-            "gen-b"
+            "gen-b",
+            ""
         ),
     );
     assert_eq!(
@@ -416,14 +420,16 @@ async fn shared_windows_keep_login_and_close_only_their_own_surface() {
             &profile,
             &a_url,
             (800, 600),
-            "gen-a"
+            "gen-a",
+            ""
         ),
         manager.ensure_open_shared_actor(
             "web-model::g_a::a",
             &profile,
             &a_url,
             (800, 600),
-            "gen-a"
+            "gen-a",
+            ""
         ),
     );
     same_a.expect("reuse");
@@ -439,6 +445,7 @@ async fn shared_windows_keep_login_and_close_only_their_own_surface() {
             &a_url,
             (800, 600),
             "new-gen-a",
+            "",
         )
         .await
         .expect("new Actor generation");
@@ -479,7 +486,7 @@ async fn shared_windows_keep_login_and_close_only_their_own_surface() {
         "another Web owner must not attach to the profile"
     );
     manager
-        .ensure_open_shared_actor("web-model::g_a::a", &profile, &url, (800, 600), "gen-a")
+        .ensure_open_shared_actor("web-model::g_a::a", &profile, &url, (800, 600), "gen-a", "")
         .await
         .expect("reopen A");
     let reopened = owned_page(&manager, "web-model::g_a::a").await;
@@ -535,7 +542,7 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
     let manager = Arc::new(BrowserSurfaces::default());
     for key in ["web-model::g_fixture::A", "web-model::g_fixture::B"] {
         manager
-            .ensure_open_shared_actor(key, &profile, &url, (800, 600), key)
+            .ensure_open_shared_actor(key, &profile, &url, (800, 600), key, "")
             .await
             .expect("window");
         wait_for_fixture_document(&owned_page(&manager, key).await).await;
@@ -591,6 +598,7 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
             &url,
             (800, 600),
             "web-model::g_fixture::A",
+            "",
         )
         .await
         .expect("restore A");
@@ -609,7 +617,7 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
         let manager = Arc::clone(&manager);
         tokio::spawn(async move {
             manager
-                .ensure_open_shared_actor("C", &profile, &stalled_url, (800, 600), "C")
+                .ensure_open_shared_actor("C", &profile, &stalled_url, (800, 600), "C", "")
                 .await
         })
     };
@@ -619,7 +627,14 @@ async fn shared_page_commands_do_not_adopt_popups_or_block_other_surfaces() {
         .expect("signal");
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        manager.ensure_open_shared_actor("D", &temp.path().join("profile"), &url, (800, 600), "D"),
+        manager.ensure_open_shared_actor(
+            "D",
+            &temp.path().join("profile"),
+            &url,
+            (800, 600),
+            "D",
+            "",
+        ),
     )
     .await
     .expect("D registration must not wait for C navigation")
@@ -669,6 +684,7 @@ async fn shared_login_open_recovers_blank_without_replacing_actor_pages() {
             &format!("{url}#actor"),
             (1000, 700),
             "gen",
+            "",
         )
         .await
         .expect("actor");

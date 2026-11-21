@@ -60,9 +60,35 @@ import {
 } from "./groupStreamingReducers";
 import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
 import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
+import { unobservableGroupRuntime } from "../utils/groupStatus";
+import { isRuntimeUnobservable } from "../utils/terminalWorkingState";
 import { projectCrossGroupReceipts } from "../utils/mergeLedgerEvents";
 import { fetchLedgerStatuses, fetchRuntimes } from "../services/api";
 import { projectSenderHistory } from "./senderHistoryProjection";
+
+// What the daemon leaves out of an agent it cannot observe (actor_listing.rs): an older
+// observation must not outlive that. The next actor list brings these back.
+const RUNTIME_OBSERVATION_KEYS = [
+  "running",
+  "pid",
+  "runtime_state_source",
+  "runner_effective",
+  "effective_runtime",
+  "effective_runtime_mode",
+  "runtime_session_status",
+  "runtime_session_resume_eligible",
+  "runtime_session_last_resume_error",
+  "runtime_session_replaced_at",
+  "runtime_session_replaced_reasons",
+  "runtime_confirmation_required",
+  "runtime_confirmation_paused",
+] as const;
+
+function withoutRuntimeObservation<T extends object>(actor: T): T {
+  const next = { ...actor } as Record<string, unknown>;
+  for (const key of RUNTIME_OBSERVATION_KEYS) delete next[key];
+  return next as T;
+}
 
 // All mounted conversation projections consume the same daemon-owned receipts.
 function updateChatEventLists(
@@ -270,24 +296,26 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         currentGroup?.runtime_status ||
         (state.groupDoc?.group_id === gid ? state.groupDoc.runtime_status : null) ||
         null;
-      const nextRuntime: GroupRuntimeStatus = {
-        lifecycle_state: String(
-          patch.lifecycle_state ||
-            currentRuntime?.lifecycle_state ||
-            currentGroup?.state ||
-            "active",
-        ),
-        runtime_running:
-          patch.runtime_running ??
-          currentRuntime?.runtime_running ??
-          currentGroup?.running ??
-          false,
-        running_actor_count: Number.isFinite(Number(patch.running_actor_count))
-          ? Number(patch.running_actor_count)
-          : Number(currentRuntime?.running_actor_count || 0),
-        has_running_foreman:
-          patch.has_running_foreman ?? currentRuntime?.has_running_foreman ?? false,
-      };
+      const lifecycleState = String(
+        patch.lifecycle_state || currentRuntime?.lifecycle_state || currentGroup?.state || "active",
+      );
+      // An unobservable runtime replaces the old observation; it is not merged with it.
+      const nextRuntime: GroupRuntimeStatus =
+        patch.available === false
+          ? unobservableGroupRuntime(lifecycleState)
+          : {
+              lifecycle_state: lifecycleState,
+              runtime_running:
+                patch.runtime_running ??
+                currentRuntime?.runtime_running ??
+                currentGroup?.running ??
+                false,
+              running_actor_count: Number.isFinite(Number(patch.running_actor_count))
+                ? Number(patch.running_actor_count)
+                : Number(currentRuntime?.running_actor_count || 0),
+              has_running_foreman:
+                patch.has_running_foreman ?? currentRuntime?.has_running_foreman ?? false,
+            };
       const nextGroups = patchGroupRuntimeStatus(state.groups, gid, nextRuntime);
       const nextGroupDoc =
         state.groupDoc && String(state.groupDoc.group_id || "").trim() === gid
@@ -668,10 +696,11 @@ export const useGroupStore = create<GroupState>((set, get) => ({
                   (u.runtime_session_resume_eligible ?? null)) ||
               (hasRuntimeSessionLastResumeError &&
                 (a.runtime_session_last_resume_error ?? null) !==
-                  (u.runtime_session_last_resume_error ?? null)))
+                  (u.runtime_session_last_resume_error ?? null)) ||
+              a.runtime_observation_error !== u.runtime_observation_error)
           ) {
             changed = true;
-            return {
+            const merged = {
               ...a,
               idle_seconds: u.idle_seconds ?? null,
               running: u.running,
@@ -679,6 +708,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               effective_working_reason: u.effective_working_reason,
               effective_working_updated_at: u.effective_working_updated_at ?? null,
               effective_active_task_id: u.effective_active_task_id ?? null,
+              // Present only while the daemon cannot observe the agent; cleared otherwise.
+              runtime_observation_error: u.runtime_observation_error,
               ...(hasRuntimeSessionStatus
                 ? { runtime_session_status: u.runtime_session_status ?? null }
                 : {}),
@@ -696,6 +727,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
                   ? 0
                   : a.web_model_queued_count,
             };
+            return isRuntimeUnobservable(u) ? withoutRuntimeObservation(merged) : merged;
           }
           return a;
         });

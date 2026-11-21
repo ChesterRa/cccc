@@ -1,7 +1,7 @@
 // Selected Pixelarticons 2.4.2 paths, MIT, Copyright (c) 2019 Gerrit Halfmann.
-// See /ui/licenses/logos/Pixelarticons-MIT.txt. The maximize, minimize, pin and columns-2
-// glyphs, the upward arrow on archive-restore and the arrows on file-link and folder-link are
-// original.
+// See /ui/licenses/logos/Pixelarticons-MIT.txt. The maximize, minimize, pin, columns-2 and
+// list-checks glyphs, the upward arrow on archive-restore and the arrows on file-link and
+// folder-link are original.
 const paths = {
   search: [
     "M22 22h-2v-2h2v2Zm-2-2h-2v-2h2v2Zm-6-2H6v-2h8v2Zm4 0h-2v-2h2v2ZM6 16H4v-2h2v2Zm10 0h-2v-2h2v2ZM4 14H2V6h2v8Zm14 0h-2V6h2v8ZM6 6H4V4h2v2Zm10 0h-2V4h2v2Zm-2-2H6V2h8v2Z",
@@ -242,6 +242,9 @@ const paths = {
   // A push pin: cap, waist, flared base and needle.
   pin: [
     "M6 2h12v2H6zm0 2h2v2H6zm10 0h2v2h-2zM8 6h2v6H8zm6 0h2v6h-2zm-8 6h2v2H6zm10 0h2v2h-2zM4 14h2v2H4zm14 0h2v2h-2zM4 16h16v2H4zm7 2h2v4h-2z",
+  ],
+  "list-checks": [
+    "M2 6h2v2H2zm2 2h2v2H4zm2-2h2v2H6zm2-2h2v2H8zm4 2h10v2H12zM2 16h2v2H2zm2 2h2v2H4zm2-2h2v2H6zm2-2h2v2H8zm4 2h10v2H12z",
   ],
 } as const;
 

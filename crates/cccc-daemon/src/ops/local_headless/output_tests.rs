@@ -24,6 +24,13 @@ impl Fixture {
         let group = store
             .create("output outcome fixture", "")
             .expect("fixture group");
+        // A private member setting, as the launch snapshot delivers it.
+        let snapshot = std::collections::BTreeMap::from([(
+            "OUTPUT_FIXTURE_PRIVATE".to_owned(),
+            private.to_owned(),
+        )]);
+        let journal_private =
+            journal_private_values(&snapshot, &BTreeMap::new(), std::iter::empty());
         let session = Session {
             home,
             group_id: group.group_id,
@@ -45,6 +52,7 @@ impl Fixture {
             stop_lock: Mutex::new(()),
             startup_prompt: Mutex::new(None),
             active_turn: Mutex::new(None),
+            journal_private,
         };
         Self {
             session,
@@ -96,6 +104,81 @@ impl Fixture {
             })
             .collect()
     }
+}
+
+#[tokio::test]
+async fn managed_failure_keeps_ordinary_inherited_values_and_redacts_credentials() {
+    const MEMBER: &str = "member-pin-4821";
+    const TOKEN: &str = "inherited-opaque-value";
+    const AUTH_PROXY: &str = "http://probe-user:probe-password@proxy.example.test:8080";
+    const AUTH_AUTHORITY: &str = "probe-user:probe-password@bare.example.test:8080";
+    const PUBLIC_PROXY: &str = "https://proxy.example.test:443";
+    const INHERITED_URI: &str = "redis://fixture:fixture-redis-password@cache.example.test/0";
+    const CONFIGURED_PATH: &str = "/private/first:/bin/cccc:/private/last";
+    const LAUNCHED_PATH: &str = "/bin/cccc:/private/first:/private/last";
+    let extra_credentials = [
+        ("PGPASSWORD", "fixture-postgres-password"),
+        ("MYSQL_PWD", "fixture-mysql-password"),
+        ("npm_config__auth", "fixture-npm-basic-auth"),
+        (
+            "npm_config_//registry.example.test/:_auth",
+            "fixture-scoped-npm-auth",
+        ),
+        ("DOCKER_AUTH_CONFIG", "fixture-docker-auth-config"),
+        ("GIT_CONFIG_VALUE_0", "Authorization: Basic ZmljdHVyZQ=="),
+        ("VENDOR_ENDPOINT", INHERITED_URI),
+    ];
+    let ordinary = format!(
+        "attempt 1 of the dumb fixture {PUBLIC_PROXY} /workspace/fixture author@example.test /inherited/bin"
+    );
+    let mut f = Fixture::new(true, MEMBER);
+    let snapshot = BTreeMap::from([
+        ("DEPLOY_PIN".to_owned(), MEMBER.to_owned()),
+        ("PATH".to_owned(), CONFIGURED_PATH.to_owned()),
+    ]);
+    let launch_environment = BTreeMap::from([("PATH".to_owned(), LAUNCHED_PATH.to_owned())]);
+    let inherited = [
+        ("SHLVL", "1"),
+        ("TERM", "dumb"),
+        ("GH_TOKEN", TOKEN),
+        ("http_proxy", AUTH_PROXY),
+        ("HTTPS_PROXY", AUTH_AUTHORITY),
+        ("ALL_PROXY", PUBLIC_PROXY),
+        ("PWD", "/workspace/fixture"),
+        ("GIT_AUTHOR_EMAIL", "author@example.test"),
+        ("PATH", "/inherited/bin"),
+    ];
+    f.session.journal_private = journal_private_values(
+        &snapshot,
+        &launch_environment,
+        inherited
+            .into_iter()
+            .chain(extra_credentials)
+            .map(|(key, value)| (key.to_owned(), value.to_owned())),
+    );
+    f.start("turn-origin");
+    let credentials = [
+        MEMBER,
+        TOKEN,
+        AUTH_PROXY,
+        AUTH_AUTHORITY,
+        CONFIGURED_PATH,
+        LAUNCHED_PATH,
+    ]
+    .into_iter()
+    .chain(extra_credentials.map(|(_, value)| value))
+    .collect::<Vec<_>>();
+    let diagnostic = format!("{ordinary}\n{}", credentials.join(" "));
+    f.complete("turn-origin", "failed", json!({"message": diagnostic}));
+    let expected = format!(
+        "{ordinary}\n{}[redacted]",
+        "[redacted] ".repeat(credentials.len() - 1)
+    );
+    assert_eq!(f.terminals()[0]["data"]["error"], expected);
+    assert_eq!(
+        f.session.status.lock().expect("state").reason.as_deref(),
+        Some(expected.as_str())
+    );
 }
 
 #[tokio::test]
@@ -428,7 +511,7 @@ async fn named_tool_activity_finishes_without_journaling_transient_or_foreign_up
         activity[0]["data"]["activity_id"],
         activity[1]["data"]["activity_id"]
     );
-    assert_eq!(activity[1]["data"]["summary"], "bash failed");
+    assert_eq!(activity[1]["data"]["summary"], "Failed: bash");
     assert_eq!(activity[1]["data"]["command"], "cargo test [redacted]");
     assert_eq!(
         f.session.status.lock().expect("state").status,
@@ -437,4 +520,100 @@ async fn named_tool_activity_finishes_without_journaling_transient_or_foreign_up
     );
     f.complete("turn-1", "completed", Value::Null);
     assert_eq!(f.terminals().len(), 1);
+}
+
+#[tokio::test]
+async fn a_tool_title_is_redacted_before_it_is_shortened() {
+    let f = Fixture::new(true, "private-token");
+    f.start("turn-1");
+    // The 400-character cut falls inside the private value: shortening first
+    // would keep a prefix that redaction no longer recognizes.
+    let title = format!("{}private-token and the rest", "a".repeat(395));
+    handle_message(
+        &f.session,
+        json!({"method":"cccc/toolActivity", "params":{
+            "threadId":"abcdef01", "turnId":"turn-1", "title":title,
+            "itemId":"call-1", "phase":"completed"
+        }}),
+    );
+    let events = f.events();
+    let activity = events
+        .iter()
+        .filter(|event| {
+            event["type"]
+                .as_str()
+                .is_some_and(|kind| kind.starts_with("headless.activity."))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(activity.len(), 1, "a finish without a start is journaled");
+    assert_eq!(activity[0]["type"], "headless.activity.completed");
+    assert_eq!(activity[0]["data"]["activity_id"], "turn-1:call-1");
+    for field in ["summary", "tool_name"] {
+        let text = activity[0]["data"][field].as_str().expect("title field");
+        assert_eq!(text.chars().count(), 400, "{field}");
+        assert!(text.starts_with(&"a".repeat(395)), "{field}");
+        assert!(
+            !text.contains("priv"),
+            "{field} keeps part of the private value: {text}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_journal_redacts_values_by_origin_and_keeps_ordinary_text() {
+    let mut f = Fixture::new(true, "");
+    let pairs = |entries: &[(&str, &str)]| {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    // The launch snapshot: the member's settings, a private PATH among them,
+    // and the fields the launch overwrites.
+    let snapshot = pairs(&[
+        ("DEPLOY_PIN", "4821"),
+        ("NOTES_DIR", "/srv/private/notes"),
+        ("PATH", "/srv/private/bin"),
+        ("CCCC_HOME", "/home/u/.cccc"),
+        ("CCCC_GROUP_ID", "g_fixture"),
+        ("CCCC_ACTOR_ID", "fixture-actor"),
+        ("CCCC_CLI", "/opt/cccc/cccc"),
+        ("EMPTY", ""),
+    ]);
+    // Inherited values count only under a credential name.
+    let inherited = pairs(&[
+        ("SHLVL", "0"),
+        ("HOME", "/home/u"),
+        ("LANG", "C.UTF-8"),
+        ("PI_SKIP_VERSION_CHECK", "1"),
+        ("PI_TELEMETRY", "0"),
+        ("GH_TOKEN", "private-token"),
+    ]);
+    f.session.journal_private = journal_private_values(&snapshot, &BTreeMap::new(), inherited);
+    assert_eq!(
+        f.session.journal_private,
+        [
+            "/srv/private/bin",
+            "/srv/private/notes",
+            "4821",
+            "private-token"
+        ]
+    );
+
+    f.start("turn-1");
+    handle_message(
+        &f.session,
+        json!({"method":"cccc/toolActivity", "params":{
+            "threadId":"abcdef01", "turnId":"turn-1", "itemId":"call-1", "phase":"failed",
+            "title":"Read file1.txt --timeout 600 --pin 4821 --auth private-token /home/u/.cccc/groups/g_fixture/fixture-actor.md /srv/private/notes /srv/private/bin/deploy"
+        }}),
+    );
+    let events = f.events();
+    let finished = events
+        .iter()
+        .find(|event| event["type"] == "headless.activity.completed")
+        .expect("finished call");
+    let shown = "Read file1.txt --timeout 600 --pin [redacted] --auth [redacted] /home/u/.cccc/groups/g_fixture/fixture-actor.md [redacted] [redacted]/deploy";
+    assert_eq!(finished["data"]["tool_name"], shown);
+    assert_eq!(finished["data"]["summary"], format!("Failed: {shown}"));
 }

@@ -20,10 +20,12 @@ const globalTabIds = new Set<GlobalTabId>([
   "actorProfiles",
   "myProfiles",
   "notifications",
+  "quickReplies",
   "branding",
   "webAccess",
   "webModels",
   "voice",
+  "update",
   "developer",
 ]);
 

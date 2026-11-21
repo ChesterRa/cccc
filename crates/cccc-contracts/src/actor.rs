@@ -192,13 +192,18 @@ impl ActorRuntime {
     }
 
     /// Runtime state authority is derived from the Runtime adapter. It is not
-    /// a user-selectable execution mode.
+    /// a user-selectable execution mode. Hermes's terminal is a viewer of the
+    /// member's ACP session, which CCCC drives.
     #[must_use]
     pub const fn state_source(self) -> RuntimeStateSource {
         match self {
-            Self::Claude | Self::Codex | Self::Grok | Self::Opencode | Self::Kilo | Self::Pi => {
-                RuntimeStateSource::ManagedSession
-            }
+            Self::Claude
+            | Self::Codex
+            | Self::Grok
+            | Self::Opencode
+            | Self::Kilo
+            | Self::Pi
+            | Self::Hermes => RuntimeStateSource::ManagedSession,
             _ => RuntimeStateSource::Terminal,
         }
     }
@@ -498,7 +503,12 @@ mod tests {
             assert_eq!(runtime.runner_for(RuntimeMode::Default), RunnerKind::Pty);
             assert_eq!(
                 runtime.state_source_for(RuntimeMode::Default),
-                RuntimeStateSource::Terminal
+                if runtime == ActorRuntime::Hermes {
+                    // The terminal views the member's ACP session.
+                    RuntimeStateSource::ManagedSession
+                } else {
+                    RuntimeStateSource::Terminal
+                }
             );
             assert!(RuntimeMode::Acp.validate(runtime).is_ok());
             assert_eq!(runtime.runner_for(RuntimeMode::Acp), RunnerKind::Headless);

@@ -19,6 +19,9 @@ use tokio::sync::{mpsc, watch};
 pub(super) enum GroupStatus {
     Running,
     Idle,
+    /// The daemon could not observe some member, so whether anything runs is
+    /// not known.
+    Unknown,
     Paused,
     Offline,
     Stopped,
@@ -26,18 +29,16 @@ pub(super) enum GroupStatus {
 
 impl GroupStatus {
     /// Lifecycle intent precedes observation: no running actors does not
-    /// mean the user stopped the Group.
-    fn of(running: bool, state: &str) -> Self {
-        if state == "paused" {
-            Self::Paused
-        } else if state == "stopped" {
-            Self::Stopped
-        } else if !running {
-            Self::Offline
-        } else if state == "idle" {
-            Self::Idle
-        } else {
-            Self::Running
+    /// mean the user stopped the Group, and no observation (`None`) does not
+    /// mean nothing runs.
+    fn of(running: Option<bool>, state: &str) -> Self {
+        match (running, state) {
+            (_, "paused") => Self::Paused,
+            (_, "stopped") => Self::Stopped,
+            (None, _) => Self::Unknown,
+            (Some(false), _) => Self::Offline,
+            (Some(true), "idle") => Self::Idle,
+            (Some(true), _) => Self::Running,
         }
     }
 
@@ -48,6 +49,7 @@ impl GroupStatus {
             Self::Paused => "Paused",
             Self::Stopped => "Stopped",
             Self::Offline => "Offline",
+            Self::Unknown => "Unknown",
         }
     }
 }
@@ -61,9 +63,10 @@ pub(super) struct GroupSummary {
     /// It is not a running count: a new group and a started one with
     /// nothing running are both `active`.
     pub(super) state: String,
-    /// Actors the daemon counts as running. A native member counts while
-    /// this group may deliver to it, not while its model is busy.
-    pub(super) running_actors: u64,
+    /// Actors the daemon counts as running, or `None` when it could not
+    /// observe every member. A native member counts while this group may
+    /// deliver to it, not while its model is busy.
+    pub(super) running_actors: Option<u64>,
 }
 
 impl GroupSummary {
@@ -144,6 +147,9 @@ pub(super) enum MemberState {
     NotReceiving,
     /// A native or Web Model member whose CCCC access is paused.
     AccessPaused,
+    /// A managed member whose process the daemon could not observe: neither
+    /// running nor stopped.
+    Unknown,
 }
 
 impl MemberState {
@@ -158,6 +164,7 @@ impl MemberState {
             Self::Ready => "ready",
             Self::NotReceiving => "not receiving",
             Self::AccessPaused => "access paused",
+            Self::Unknown => "unknown",
         }
     }
 
@@ -236,10 +243,18 @@ fn summary(value: &Value) -> Option<GroupSummary> {
         .and_then(Value::as_str)
         .unwrap_or("active")
         .to_owned();
-    let running = value
-        .get("running")
+    // Without an observation the daemon marks the runtime unavailable and
+    // leaves out what it could not see; that is not read as stopped.
+    let observed = value
+        .pointer("/runtime_status/available")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        != Some(false);
+    let running = observed.then(|| {
+        value
+            .get("running")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    });
     Some(GroupSummary {
         status: GroupStatus::of(running, &state),
         title: value
@@ -247,10 +262,12 @@ fn summary(value: &Value) -> Option<GroupSummary> {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned(),
-        running_actors: value
-            .pointer("/runtime_status/running_actor_count")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
+        running_actors: observed.then(|| {
+            value
+                .pointer("/runtime_status/running_actor_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        }),
         group_id,
         state,
     })
@@ -279,10 +296,12 @@ fn member(value: &Value) -> Option<Member> {
     let running = flag("running").unwrap_or(false);
     let web_model = serde_json::from_value::<ActorRuntime>(Value::String(text("runtime").into()))
         .is_ok_and(ActorRuntime::is_web_model);
+    let unobservable = text("effective_working_reason") == "runtime_owner_unavailable";
     let state = match (native, enabled, running) {
         (true, false, _) => MemberState::AccessPaused,
         (true, true, true) => MemberState::Ready,
         (true, true, false) => MemberState::NotReceiving,
+        (false, _, _) if unobservable => MemberState::Unknown,
         (false, false, _) if web_model => MemberState::AccessPaused,
         (false, false, _) => MemberState::Off,
         (false, true, _) if flag("runtime_confirmation_required") == Some(true) => {

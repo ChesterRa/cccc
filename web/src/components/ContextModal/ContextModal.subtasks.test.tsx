@@ -512,8 +512,9 @@ it("keeps the draft of a task deleted elsewhere until it is let go", async () =>
   expect(editor().taskDraft?.title).toBe("Typed before it was deleted");
 });
 
-it("holds the draft still while saving and then shows what was saved", async () => {
+it("holds the open task while saving, then allows switching from the board", async () => {
   await openParent();
+  mocks.taskMap.set(first.id, first);
   await edit({ title: "Saved title" });
   let finish!: (value: { ok: true; result: unknown }) => void;
   vi.mocked(updateCoordinationTask).mockReturnValue(
@@ -532,6 +533,9 @@ it("holds the draft still while saving and then shows what was saved", async () 
     saving = Promise.resolve(editor().onSaveTask());
   });
   expect(editor().syncBusy).toBe(true);
+  await act(async () => mocks.board?.onSelectTask(first));
+  expect(editor().selectedTask?.id).toBe(parent.id);
+  expect(confirm).not.toHaveBeenCalled();
   await act(async () => {
     finish({ ok: true, result: {} });
     await saving;
@@ -541,6 +545,9 @@ it("holds the draft still while saving and then shows what was saved", async () 
   expect(editor().taskDraft?.title).toBe("Saved title");
   expect(editor().taskDraft?.base.rev).toBe(2);
   expect(editor().hasTaskUnsaved).toBe(false);
+  await act(async () => mocks.board?.onSelectTask(first));
+  expect(editor().selectedTask?.id).toBe(first.id);
+  expect(editor().taskDraft?.title).toBe(first.title);
 });
 
 it("does not let a late save answer into a drawer opened since", async () => {
@@ -645,7 +652,32 @@ it("deletes only what was confirmed, and says so when that changed", async () =>
   expect(editor().error).toContain("nothing was deleted");
 });
 
-const drawer = () => document.querySelector('[aria-labelledby="context-task-drawer-title"]');
+const drawer = () => document.querySelector("[data-task-detail]");
+
+it("closes the details first on Tasks and closes the context directly from another tab", async () => {
+  await openParent();
+  const escape = () =>
+    act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+  expect(drawer()).not.toBeNull();
+  await escape();
+  expect(drawer()).toBeNull();
+  expect(mocks.close).not.toHaveBeenCalled();
+  await escape();
+  expect(mocks.close).toHaveBeenCalledOnce();
+
+  await act(async () => mocks.board?.onSelectTask(parent));
+  const instructions = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+    (tab) => tab.textContent === "AGENTS.md",
+  );
+  expect(instructions).toBeDefined();
+  await act(async () => instructions?.click());
+  expect(drawer()).toBeNull();
+  await escape();
+  expect(mocks.close).toHaveBeenCalledTimes(2);
+});
+
 const lostAnswer = {
   ok: false as const,
   error: { code: "NETWORK_ERROR", message: "Failed to fetch" },

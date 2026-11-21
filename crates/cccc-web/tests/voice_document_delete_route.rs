@@ -139,3 +139,5 @@ async fn delete_route_reaches_daemon_and_removes_the_document_file() {
         .exists()
     );
 }
+
+cccc_daemon::session_owner_test_entry!();

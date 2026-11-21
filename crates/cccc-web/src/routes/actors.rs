@@ -38,6 +38,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/groups/{group_id}/actors/{actor_id}/new_session",
             post(new_session),
         )
+        .route(
+            "/api/v1/groups/{group_id}/actors/{actor_id}/terminal_ready",
+            post(terminal_ready),
+        )
         .merge(super::actor_assets::routes())
         .merge(super::actor_profiles::routes())
 }
@@ -130,6 +134,36 @@ async fn restart(
     lifecycle(&state, &group_id, &actor_id, "actor_restart").await
 }
 
+/// The user's explicit release of the exact terminal the page showed waiting.
+/// Only its generation comes from the body; the daemon presses no native key.
+async fn terminal_ready(
+    State(state): State<AppState>,
+    Path((group_id, actor_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let args = terminal_ready_args(group_id, actor_id, &body)?;
+    call(&state, "actor_terminal_ready", args).await
+}
+
+fn terminal_ready_args(
+    group_id: String,
+    actor_id: String,
+    body: &Value,
+) -> Result<Map<String, Value>, ApiError> {
+    let generation = body
+        .get("generation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|generation| !generation.is_empty())
+        .ok_or_else(|| ApiError::bad("generation is required"))?;
+    Ok(object(json!({
+        "group_id": group_id,
+        "actor_id": actor_id,
+        "by": "user",
+        "generation": generation,
+    })))
+}
+
 fn require_runtime_switch_admin(state: &AppState, principal: &Principal) -> Result<(), ApiError> {
     if state.web_mode.is_read_only() || !principal.current_admin(&state.home).unwrap_or(false) {
         return Err(ApiError::forbidden(
@@ -219,7 +253,7 @@ fn normalize_command(args: &mut Map<String, Value>) -> Result<(), crate::api::Ap
 
 #[cfg(test)]
 mod tests {
-    use super::runtime_switch_args;
+    use super::{runtime_switch_args, terminal_ready_args};
     use crate::auth::Principal;
     use serde_json::json;
 
@@ -259,5 +293,36 @@ mod tests {
             args["target"]["patch"]["command"],
             json!(["tool", "--model", "a b"])
         );
+    }
+
+    #[test]
+    fn terminal_ready_takes_only_the_generation_from_the_body() {
+        let args = terminal_ready_args(
+            "g_actual".into(),
+            "real-actor".into(),
+            &json!({
+                "generation": " 2026-11-18T00:00:00Z ",
+                "group_id": "g_other",
+                "actor_id": "other",
+                "by": "agent",
+            }),
+        )
+        .expect("generation");
+        assert_eq!(
+            serde_json::Value::Object(args),
+            json!({
+                "group_id": "g_actual",
+                "actor_id": "real-actor",
+                "by": "user",
+                "generation": "2026-11-18T00:00:00Z",
+            })
+        );
+        for body in [
+            json!({}),
+            json!({"generation": "  "}),
+            json!({"generation": 1}),
+        ] {
+            assert!(terminal_ready_args("g".into(), "a".into(), &body).is_err());
+        }
     }
 }

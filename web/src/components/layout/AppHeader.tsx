@@ -23,7 +23,7 @@ export interface AppHeaderProps {
   webReadOnly?: boolean;
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
-  selectedGroupRunning: boolean;
+  selectedGroupRunning: boolean | null;
   selectedGroupRuntimeStatus: GroupRuntimeStatus | null;
   sseStatus: "connected" | "connecting" | "disconnected";
   onOpenSidebar: () => void;
@@ -80,7 +80,7 @@ export function AppHeader({
   const canEditGroup = !!selectedGroupId && !webReadOnly && !!onOpenGroupEdit;
   const selectedStatus = selectedGroupId
     ? getGroupStatusFromSource({
-        running: selectedGroupRunning,
+        running: selectedGroupRunning ?? undefined,
         state:
           (selectedGroupRuntimeStatus?.lifecycle_state as GroupDoc["state"] | undefined) ||
           groupDoc?.state,

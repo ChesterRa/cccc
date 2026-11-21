@@ -13,9 +13,6 @@ vi.mock("./components/AuthGate", () => ({
 vi.mock("./features/connect/ConnectEmbeddedApp", () => ({
   ConnectEmbeddedApp: () => (shell.open ? <div data-app /> : <p data-reopen />),
 }));
-vi.mock("./components/capabilities/CapabilityCenterStandaloneApp", () => ({
-  CapabilityCenterStandaloneApp: () => null,
-}));
 
 import { WebRoot } from "./WebRoot";
 import { useComposerStore } from "./stores/useComposerStore";

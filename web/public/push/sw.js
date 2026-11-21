@@ -43,7 +43,7 @@ function targetUrl(target) {
 }
 
 // Pages under /ui/ that are not the workbench and cannot show a message.
-const OTHER_PAGES = ["/ui/push", "/ui/capabilities", "/ui/connect"];
+const OTHER_PAGES = ["/ui/push", "/ui/connect"];
 
 function canReceiveNavigation(client) {
   try {

@@ -7,13 +7,14 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::io;
 use std::path::Path;
-mod receive_diagnostic;
-pub use receive_diagnostic::native_codex_receive_state;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
+
+mod receive_diagnostic;
+pub use receive_diagnostic::native_codex_receive_state;
 
 pub struct NativeCodexSessionInfo {
     pub can_receive: bool,
@@ -191,7 +192,7 @@ impl NativeProxy {
         cwd: &Path,
         diagnostic: bool,
     ) -> io::Result<Self> {
-        let mut command = Command::new(program);
+        let mut command = crate::background_command(program);
         command
             .args(["app-server", "proxy"])
             .env("CODEX_HOME", codex_home)

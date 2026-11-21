@@ -12,6 +12,37 @@ function matches(tab: ResourceTab, needle: string, source: string) {
   return `${tab.title}\n${source}`.toLocaleLowerCase().includes(needle);
 }
 
+/** One recently closed entry; a close-all is one entry and comes back as a whole. */
+export function ClosedEntryRow({
+  entry,
+  onRestore,
+}: {
+  entry: ClosedEntry;
+  onRestore: (entry: ClosedEntry) => void;
+}) {
+  const { t } = useTranslation("chat");
+  return (
+    <button
+      type="button"
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-text-secondary)] outline-none hover:bg-[var(--glass-tab-bg)] focus:bg-[var(--glass-tab-bg)]"
+      onClick={() => onRestore(entry)}
+      title={t("resourcePanel.reopen")}
+      data-resource-row
+      data-resource-closed-entry
+    >
+      <LcdIcon icon={RotateCcw} glyph="undo" className="h-4 w-4 shrink-0" aria-hidden="true" />
+      <span className="truncate">
+        {entry.tabs.length > 1
+          ? t("resourcePanel.closedGroup", {
+              title: entry.tabs[0].title,
+              rest: entry.tabs.length - 1,
+            })
+          : entry.tabs[0]?.title}
+      </span>
+    </button>
+  );
+}
+
 /**
  * The "all tabs" list: every open resource in tab order, a filter, and what was closed recently.
  * It never reorders the tabs; picking a row selects that tab.
@@ -171,33 +202,14 @@ export function ResourceTabsList({
               {t("resourcePanel.recentlyClosed")}
             </p>
             {shownClosed.map((entry) => (
-              <button
+              <ClosedEntryRow
                 key={entry.id}
-                type="button"
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-[var(--color-text-secondary)] outline-none hover:bg-[var(--glass-tab-bg)] focus:bg-[var(--glass-tab-bg)]"
-                onClick={() => {
-                  onRestore(entry);
+                entry={entry}
+                onRestore={(choice) => {
+                  onRestore(choice);
                   onDone();
                 }}
-                title={t("resourcePanel.reopen")}
-                data-resource-row
-                data-resource-closed-entry
-              >
-                <LcdIcon
-                  icon={RotateCcw}
-                  glyph="undo"
-                  className="h-4 w-4 shrink-0"
-                  aria-hidden="true"
-                />
-                <span className="truncate">
-                  {entry.tabs.length > 1
-                    ? t("resourcePanel.closedGroup", {
-                        title: entry.tabs[0].title,
-                        rest: entry.tabs.length - 1,
-                      })
-                    : entry.tabs[0]?.title}
-                </span>
-              </button>
+              />
             ))}
           </>
         ) : null}

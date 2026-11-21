@@ -1,4 +1,8 @@
-import type { MessageAttachment } from "../../types";
+import { useEffect } from "react";
+import {
+  useAttachmentPreviewStore,
+  useAttachmentSetShown,
+} from "../../stores/useAttachmentPreviewStore";
 import { classNames } from "../../utils/classNames";
 import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
 import {
@@ -15,6 +19,7 @@ import { ImagePreview } from "./ImagePreview";
 import { VideoPreview } from "./VideoPreview";
 import { AuthenticatedDownloadLink } from "../AuthenticatedDownloadLink";
 import type { MessageAttachmentSource } from "../resourcePanel/openAttachmentResource";
+import { type PlacedAttachment, previewItems } from "./attachmentPreviewItems";
 
 export function MessageAttachments({
   attachments,
@@ -28,7 +33,7 @@ export function MessageAttachments({
   sourceEventId = "",
   downloadTitle,
 }: {
-  attachments: Array<MessageAttachment & { sourceIndex?: number }>;
+  attachments: PlacedAttachment[];
   blobGroupId: string;
   panelGroupId: string;
   sender?: string;
@@ -49,10 +54,7 @@ export function MessageAttachments({
       !isAudioAttachment(attachment),
   );
   const useImageGrid = imageAttachments.length > 1;
-  const sourceFor = (
-    attachment: MessageAttachment & { sourceIndex?: number },
-  ): MessageAttachmentSource => ({
-    panelGroupId,
+  const where = (attachment: PlacedAttachment) => ({
     blobGroupId,
     messageKey: attachmentKeyPrefix,
     sender,
@@ -62,6 +64,21 @@ export function MessageAttachments({
     blobPath: attachment.path || "",
     localPreviewUrl: attachment.path ? undefined : attachment.local_preview_url || undefined,
   });
+  // The attachments the page can show, in the message's own order rather than the order of the
+  // sections below; audio plays in place and other files download.
+  const siblings = previewItems(attachments, blobGroupId, where);
+  const sourceFor = (attachment: PlacedAttachment): MessageAttachmentSource => ({
+    panelGroupId,
+    ...where(attachment),
+    siblings,
+  });
+  // A preview or tab showing one of these attachments steps through the current list, such as
+  // the stored copies once an upload is confirmed.
+  const shown = useAttachmentSetShown(panelGroupId, attachmentKeyPrefix);
+  useEffect(() => {
+    if (shown && blobGroupId)
+      useAttachmentPreviewStore.getState().remember(panelGroupId, attachmentKeyPrefix, siblings);
+  }, [attachmentKeyPrefix, blobGroupId, panelGroupId, shown, siblings]);
 
   if (attachments.length <= 0 || !blobGroupId) return null;
 

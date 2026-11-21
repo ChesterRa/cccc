@@ -1,7 +1,7 @@
 use super::{running, start_with_private_values, stop};
 use crate::dispatch::OpError;
 use crate::ops::{actor_profile_runtime, actor_runtime, actor_secrets};
-use cccc_contracts::{Actor, ActorRuntime, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_MODEL_ENV};
+use cccc_contracts::{Actor, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_MODEL_ENV};
 use cccc_core::{GroupDoc, HomeLayout};
 use std::collections::BTreeMap;
 
@@ -24,21 +24,7 @@ pub fn apply(
 }
 
 fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
-    let (mut actor, private_env) = resolve_launch_actor(home, group, actor)?;
-    actor.normalize_runtime_constraints();
-    if actor.command.is_empty() {
-        actor.command = cccc_runtime::default_command(actor.runtime);
-    }
-    actor.env = launch_env(home, group, &actor);
-    let executable = crate::ops::codex_mcp::resolve_cccc_executable()
-        .ok_or_else(|| setup_required("CCCC executable is not available for DeepSeek setup"))?;
-    crate::deepseek_setup::ensure(home, &mut actor.env, &executable).map_err(setup_required)?;
-    let session_root = actor
-        .env
-        .get("CCCC_DEEPSEEK_SESSION_ROOT")
-        .ok_or_else(|| setup_required("DeepSeek session root is not configured"))?;
-    std::fs::create_dir_all(session_root).map_err(OpError::io)?;
-    preflight(&actor)?;
+    let (actor, private_env) = prepared_launch_actor(home, group, actor)?;
     let cwd = actor_runtime::working_directory(group, &actor)?;
     let private_values = private_env
         .values()
@@ -49,7 +35,36 @@ fn start_actor(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(),
                 .filter_map(|key| actor.env.get(key).cloned()),
         )
         .collect();
+    #[cfg(unix)]
+    if crate::session_owner::enabled(home) {
+        return crate::session_owner::launch_deepseek(home, group, &actor, &cwd, private_values)
+            .map_err(OpError::io);
+    }
     start_with_private_values(home, group, &actor, &cwd, private_values).map_err(OpError::io)
+}
+
+/// Check the replacement while the current member can still finish its work.
+pub(crate) fn check_replacement(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> Result<(), OpError> {
+    prepared_launch_actor(home, group, actor).map(|_| ())
+}
+
+fn prepared_launch_actor(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> Result<(Actor, BTreeMap<String, String>), OpError> {
+    let (mut actor, private) = resolve_launch_actor(home, group, actor)?;
+    if actor.command.is_empty() {
+        actor.command = cccc_runtime::default_command(actor.runtime);
+    }
+    actor.env = launch_env(home, group, &actor);
+    crate::deepseek_setup::prepare_for_start(home, &mut actor.env, &actor.command)
+        .map_err(setup_required)?;
+    Ok((actor, private))
 }
 
 fn resolve_launch_actor(
@@ -98,24 +113,7 @@ fn launch_env_from(
     );
     env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
     env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
-    env.insert(
-        "CCCC_DEEPSEEK_SESSION_ROOT".into(),
-        home.root()
-            .join("groups")
-            .join(&group.group_id)
-            .join("state")
-            .join("deepseek")
-            .join(&actor.id)
-            .join("sessions")
-            .to_string_lossy()
-            .into_owned(),
-    );
     env
-}
-
-fn preflight(actor: &Actor) -> Result<(), OpError> {
-    debug_assert_eq!(actor.runtime, ActorRuntime::Deepseek);
-    cccc_runtime::deepseek_preflight(&actor.command, &actor.env).map_err(setup_required)
 }
 
 fn setup_required(message: impl Into<String>) -> OpError {
@@ -191,17 +189,6 @@ mod tests {
         assert_eq!(
             env.get("CCCC_ACTOR_ID").map(String::as_str),
             Some("deepseek")
-        );
-        assert_eq!(
-            env.get("CCCC_DEEPSEEK_SESSION_ROOT").map(String::as_str),
-            Some(
-                home.root()
-                    .join("groups")
-                    .join(&group.group_id)
-                    .join("state/deepseek/deepseek/sessions")
-                    .to_string_lossy()
-                    .as_ref()
-            )
         );
     }
 

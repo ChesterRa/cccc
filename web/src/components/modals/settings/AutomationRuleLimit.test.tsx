@@ -6,8 +6,12 @@ import type { AutomationRule, AutomationRuleStatus } from "../../../types";
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string, values?: { done?: number; max?: number }) =>
-      key === "ruleList.runProgress" ? `${values?.done}/${values?.max}` : key,
+    t: (key: string, values?: { done?: number; max?: number; time?: string }) =>
+      key === "ruleList.runProgress"
+        ? `${values?.done}/${values?.max}`
+        : key === "ruleList.pending"
+          ? `${key}:${values?.time}`
+          : key,
   }),
 }));
 vi.mock("../../SelectCombobox", () => ({
@@ -73,6 +77,7 @@ async function renderEditor(
   rule: AutomationRule,
   status: AutomationRuleStatus,
   onChange: (rule: AutomationRule | null) => void,
+  serverNow?: string,
 ) {
   await act(async () => {
     root.render(
@@ -80,6 +85,7 @@ async function renderEditor(
         isDark={false}
         ruleDraft={rule}
         ruleStatus={status}
+        serverNow={serverNow}
         isNewRule={false}
         errorMessage=""
         saveBusy={false}
@@ -99,7 +105,12 @@ async function renderEditor(
   });
 }
 
-async function renderList(rule: AutomationRule, status: AutomationRuleStatus, groupState?: string) {
+async function renderList(
+  rule: AutomationRule,
+  status: AutomationRuleStatus,
+  groupState?: string,
+  serverNow?: string,
+) {
   await act(async () => {
     root.render(
       <AutomationRuleList
@@ -107,6 +118,7 @@ async function renderList(rule: AutomationRule, status: AutomationRuleStatus, gr
         groupState={groupState}
         visibleRules={[rule]}
         status={{ [rule.id]: status }}
+        serverNow={serverNow}
         rulesBusy={false}
         showCompletedRules
         completedRuleIds={status.completed ? [rule.id] : []}
@@ -191,6 +203,24 @@ it.each(["active", "idle", undefined])(
     expect(document.body.textContent).toContain(formattedNext);
   },
 );
+
+it("marks a rule whose run is already owed as pending, by the daemon's clock only", async () => {
+  const rule = intervalRule();
+  const owed = "2026-11-11T12:00:00Z";
+  const status = { next_fire_at: owed };
+  const formatted = new Date(owed).toLocaleString(undefined, AUTOMATION_TIME_FORMAT);
+
+  await renderList(rule, status, "active", "2026-11-12T13:50:42Z");
+  expect(host.textContent).toContain(`ruleList.nextShort: ruleList.pending:${formatted}`);
+  await renderEditor(rule, status, vi.fn(), "2026-11-12T13:50:42Z");
+  expect(document.body.textContent).toContain(`ruleList.pending:${formatted}`);
+
+  // The browser's clock is not used: without the daemon's, the time shows as given.
+  await renderList(rule, status, "active");
+  expect(host.textContent).toContain(`ruleList.nextShort: ${formatted}`);
+  await renderList(rule, status, "active", "2026-11-11T11:59:00Z");
+  expect(host.textContent).toContain(`ruleList.nextShort: ${formatted}`);
+});
 
 it("shows no next time for a rule without a plan", async () => {
   const rule = intervalRule();

@@ -24,7 +24,7 @@ export interface MobileMenuSheetProps {
   textScale: TextScale;
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
-  selectedGroupRunning: boolean;
+  selectedGroupRunning: boolean | null;
   onClose: () => void;
   onThemeChange: (theme: Theme) => void;
   onTextScaleChange: (scale: TextScale) => void;
@@ -68,7 +68,7 @@ export function MobileMenuSheet({
   const { t } = useTranslation("layout");
   const selectedStatus = selectedGroupId
     ? getGroupStatusFromSource({
-        running: selectedGroupRunning,
+        running: selectedGroupRunning ?? undefined,
         state: groupDoc?.state,
         runtime_status: groupDoc?.runtime_status,
       })

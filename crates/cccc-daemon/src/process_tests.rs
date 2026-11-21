@@ -5,6 +5,33 @@ use std::path::Path;
 use std::time::Duration;
 
 #[test]
+fn startup_recovery_hint_uses_only_this_start_and_never_echoes_log_secrets() {
+    let temp = tempfile::tempdir().expect("isolated test directory");
+    let log = temp.path().join("daemon.log");
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let old = format!(
+        "Error: run cccc daemon process-recovery --owner session --owner-id {id} list; private=DO_NOT_ECHO\n"
+    );
+    std::fs::write(&log, &old).expect("write fixture file");
+    assert!(super::session_recovery_hint(&log, old.len() as u64).is_none());
+    let hint = super::session_recovery_hint(&log, 0).expect("recovery command in log tail");
+    assert!(hint.contains(&format!("--owner-id {id} list")));
+    assert!(!hint.contains("DO_NOT_ECHO"));
+    std::fs::write(
+        &log,
+        format!("{old}cccc daemon process-recovery --owner session --owner-id incomplete"),
+    )
+    .expect("write fixture file");
+    assert!(
+        super::session_recovery_hint(&log, 0)
+            .expect("recovery command in log tail")
+            .contains(&id)
+    );
+    std::fs::write(&log, old.replace(&id, "invalid-owner")).expect("write fixture file");
+    assert!(super::session_recovery_hint(&log, 0).is_none());
+}
+
+#[test]
 fn builds_cli_self_launch_command() {
     let home = HomeLayout::from_path(Path::new("test-home").to_path_buf()).expect("home");
     let launch = DetachedDaemon::new("cccc", ["daemon", "run"]);
@@ -28,6 +55,62 @@ fn builds_cli_self_launch_command() {
     assert!(command.get_envs().any(|(key, value)| {
         key == OsStr::new("CCCC_HOME") && value == Some(home.root().as_os_str())
     }));
+}
+
+#[test]
+fn an_update_handoff_is_an_explicit_daemon_argument() {
+    let home = HomeLayout::from_path("test-home").expect("home");
+    let transaction = home.root().join("update/transaction");
+    let launch =
+        DetachedDaemon::new("cccc", ["daemon", "run"]).with_update_resume(transaction.clone());
+    let command = launch.command(&home);
+    let args = command.get_args().collect::<Vec<_>>();
+    assert_eq!(args[args.len() - 2], OsStr::new("--update-resume"));
+    assert_eq!(args[args.len() - 1], transaction.as_os_str());
+    assert!(!command.get_envs().any(|(key, _)| key == "CCCC_UPDATE_TXN"));
+}
+
+#[tokio::test]
+async fn an_active_update_blocks_start_before_ping_spawn_and_process_tree_cleanup() {
+    use cccc_core::attended_update::{BuildIdentity, Intent, arm};
+    let temp = tempfile::tempdir().expect("fixture directory");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize home");
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    std::fs::create_dir_all(home.root().join("update").join(&id)).expect("transaction");
+    let intent = Intent::new(
+        &home,
+        &id,
+        BuildIdentity {
+            version: "0.4.59".into(),
+            source_id: "1".repeat(64),
+        },
+        cccc_core::attended_update::Source::Release {
+            install_dir: temp.path().to_path_buf(),
+        },
+    )
+    .expect("intent");
+    arm(&home, &intent).expect("arm");
+    let error = DetachedDaemon::new("must-not-be-executed", ["daemon", "run"])
+        .start(&home)
+        .await
+        .expect_err("ordinary detached start blocked");
+    assert!(error.to_string().contains("update_in_progress"));
+    let paths = crate::DaemonPaths::new(home.clone());
+    assert!(
+        !paths.log.exists(),
+        "a rejected start must not even open its log"
+    );
+    let error = crate::server::claim_home(&paths).expect_err("direct server start blocked");
+    assert!(error.to_string().contains("update_in_progress"));
+    assert!(
+        !paths.lock.exists(),
+        "the first check precedes daemon locking"
+    );
+    assert_eq!(
+        cccc_core::attended_update::active(&home).expect("intent"),
+        Some(intent)
+    );
 }
 
 #[tokio::test]

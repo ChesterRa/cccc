@@ -1,11 +1,12 @@
 //! Read-only, bounded Git inspection for one Group workspace.
 use crate::{GroupDoc, workspace};
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use std::process::Command;
 use std::{
     collections::{HashMap, HashSet},
     io,
     path::Path,
-    process::Command,
     time::{Duration, Instant},
 };
 
@@ -53,7 +54,7 @@ fn run(
         .checked_duration_since(Instant::now())
         .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "Git inspection timed out"))?;
     cccc_runtime::capture_command_blocking(
-        Command::new("git")
+        cccc_runtime::background_command("git")
             .args([
                 "--no-pager",
                 "-c",

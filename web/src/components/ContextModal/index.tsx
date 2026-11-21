@@ -50,6 +50,7 @@ import { AgentsView } from "./agents/AgentsView";
 import { AgentsMdPanel } from "./coordination/AgentsMdPanel";
 import { WorkingSummaryPanel } from "./coordination/WorkingSummaryPanel";
 import { TaskBoard } from "./coordination/TaskBoard";
+import { TaskDetailLayout } from "./coordination/TaskDetailLayout";
 import { TaskEditorPanel, type TaskBacklogLink } from "./coordination/TaskEditorPanel";
 import { CapabilitiesTab } from "../modals/settings/CapabilitiesTab";
 import {
@@ -154,9 +155,9 @@ export function ContextModal({
   const taskDraftRef = useRef(taskDraft);
   taskDraftRef.current = taskDraft;
   const taskOpenSeqRef = useRef(0);
-  // Which drawer is open: it changes whenever the drawer closes or shows
-  // another task, so a save or delete answers only the drawer that made it.
+  // A save or delete answers only the editing session that made it.
   const editorSessionRef = useRef(0);
+  const savingTaskSession = useRef<number | null>(null);
   // The last failed try to create the task open in the drawer, by what it sent.
   const lastCreateRef = useRef<{
     session: number;
@@ -624,6 +625,11 @@ export function ContextModal({
     );
   }, [hasTaskUnsaved, tr]);
 
+  const canSwitchTask = useCallback(
+    () => savingTaskSession.current !== editorSessionRef.current && confirmDiscardTaskChanges(),
+    [confirmDiscardTaskChanges],
+  );
+
   const showTask = useCallback((task: Task) => {
     editorSessionRef.current += 1;
     setTaskStale("");
@@ -723,10 +729,10 @@ export function ContextModal({
   const selectTask = useCallback(
     (task: Task) => {
       if (selectedTaskId === task.id && taskEditorMode === "edit") return;
-      if (!confirmDiscardTaskChanges()) return;
+      if (!canSwitchTask()) return;
       showTask(task);
     },
-    [confirmDiscardTaskChanges, selectedTaskId, showTask, taskEditorMode],
+    [canSwitchTask, selectedTaskId, showTask, taskEditorMode],
   );
 
   // Read fresh full details before drafting, since cached subtasks may have changed elsewhere.
@@ -735,7 +741,7 @@ export function ContextModal({
   const openSubtask = useCallback(
     (taskId: string) => {
       const request = ++taskOpenSeqRef.current;
-      if (!confirmDiscardTaskChanges()) return;
+      if (!canSwitchTask()) return;
       const visit = modalVisitRef.current;
       const parentId = selectedTaskIdRef.current;
       const draft = taskDraftRef.current;
@@ -744,6 +750,7 @@ export function ContextModal({
           task &&
           taskOpenSeqRef.current === request &&
           modalVisitRef.current === visit &&
+          savingTaskSession.current !== editorSessionRef.current &&
           selectedTaskIdRef.current === parentId &&
           taskDraftRef.current === draft
         ) {
@@ -751,11 +758,11 @@ export function ContextModal({
         }
       });
     },
-    [confirmDiscardTaskChanges, loadTaskDetail, showTask],
+    [canSwitchTask, loadTaskDetail, showTask],
   );
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || savingTaskSession.current === editorSessionRef.current) return;
     const targetTaskId = String(initialTaskId || "").trim();
     if (!targetTaskId) return;
     if (selectedTaskId === targetTaskId && taskEditorMode === "edit") return;
@@ -765,7 +772,7 @@ export function ContextModal({
     let cancelled = false;
     void (async () => {
       const task = taskMap.get(targetTaskId) || (await loadTaskDetail(targetTaskId));
-      if (cancelled || !task) return;
+      if (cancelled || !task || savingTaskSession.current === editorSessionRef.current) return;
       if (taskStatus(task) === "archived") setArchivedExpanded(true);
       selectTask(task);
       onInitialTaskHandled?.();
@@ -780,6 +787,7 @@ export function ContextModal({
     onInitialTaskHandled,
     selectTask,
     selectedTaskId,
+    syncBusy,
     taskEditorMode,
     taskMap,
   ]);
@@ -1036,8 +1044,10 @@ export function ContextModal({
   // Escape during a keyboard drag cancels the drag alone. The board's drag
   // handling hears it after this modal does, whatever the modal does with it.
   const handleModalEscape = useCallback(() => {
-    if (!dragTaskId) handleModalClose();
-  }, [dragTaskId, handleModalClose]);
+    if (dragTaskId) return;
+    if (taskEditorVisible && activeView === "tasks") closeTaskEditor();
+    else handleModalClose();
+  }, [activeView, closeTaskEditor, dragTaskId, handleModalClose, taskEditorVisible]);
   const { modalRef } = useModalA11y(isOpen, handleModalEscape);
   useChatObscuringView(isOpen);
 
@@ -1056,11 +1066,6 @@ export function ContextModal({
   }, []);
   const closeAgentsMdExpanded = useCallback(() => setAgentsMdExpanded(false), []);
   const { modalRef: agentsMdExpandedRef } = useModalA11y(agentsMdExpanded, closeAgentsMdExpanded);
-  // The drawer is a dialog over the Context modal: Escape closes it alone, and
-  // focus returns to the card that opened it.
-  const { modalRef: taskDrawerRef } = useModalA11y(taskEditorVisible, closeTaskEditor, {
-    initialFocusRef: taskEditorMode === "create" ? taskTitleRef : undefined,
-  });
 
   const handleSaveBrief = useCallback(async () => {
     if (!groupId) return;
@@ -1103,6 +1108,7 @@ export function ContextModal({
 
     const visit = modalVisitRef.current;
     const session = editorSessionRef.current;
+    if (savingTaskSession.current === session) return;
     const isCurrent = () => modalVisitRef.current === visit;
     // The board is read again for any drawer; the draft, its errors and the
     // drawer itself only while it is the one that saved.
@@ -1163,6 +1169,7 @@ export function ContextModal({
     }
 
     // The editor holds still while saving, so the draft is what gets saved.
+    savingTaskSession.current = session;
     setSyncBusy(true);
     setSyncError("");
     try {
@@ -1283,6 +1290,7 @@ export function ContextModal({
       if (saved && isTaskRevision(saved.rev)) setTaskDraft(taskToDraft(saved));
       else setTaskStale("unconfirmed");
     } finally {
+      if (savingTaskSession.current === session) savingTaskSession.current = null;
       if (isCurrent()) setSyncBusy(false);
     }
   }, [
@@ -1417,7 +1425,7 @@ export function ContextModal({
 
   const handleOpenCreate = useCallback(
     (status: BoardStatus = "planned", parentId = "") => {
-      if (!confirmDiscardTaskChanges()) return;
+      if (!canSwitchTask()) return;
       editorSessionRef.current += 1;
       setTaskStale("");
       setTaskEditorMode("create");
@@ -1427,7 +1435,7 @@ export function ContextModal({
       setBoardError("");
       setActiveView("tasks");
     },
-    [confirmDiscardTaskChanges],
+    [canSwitchTask],
   );
 
   const handleEditAgentsMd = useCallback(async () => {
@@ -1547,6 +1555,49 @@ export function ContextModal({
 
   if (!isOpen) return null;
 
+  const renderTaskEditor = (singlePane: boolean) => (
+    <TaskEditorPanel
+      key={editorSessionRef.current}
+      closeLabel={singlePane ? tr("context.backToTasks", "Back to tasks") : undefined}
+      tr={tr}
+      ui={ui}
+      taskEditorMode={taskEditorMode}
+      taskDraft={taskDraft}
+      hasTaskUnsaved={hasTaskUnsaved}
+      syncBusy={syncBusy}
+      error={syncError}
+      taskGone={taskGone}
+      taskStale={
+        taskStale || (!syncBusy && hasTaskUnsaved && taskChangedElsewhere ? "changed" : "")
+      }
+      selectedTask={selectedTask}
+      subtasks={selectedSubtasks}
+      assigneeChoices={assigneeChoices}
+      parentChoices={activeTaskOptions}
+      selectedTaskDeleteInfo={selectedTaskDeleteInfo}
+      selectedTaskDeleteHint={selectedTaskDeleteHint}
+      taskWorkflowCoverage={taskWorkflowCoverage}
+      taskTypeId={taskDraft?.taskType || "standard"}
+      selectedTaskType={selectedTaskType}
+      titleRef={taskTitleRef}
+      setTaskDraft={setTaskDraft}
+      onTaskTypeChange={(nextTaskTypeId) =>
+        setTaskDraft((prev) => (prev ? { ...prev, taskType: nextTaskTypeId } : prev))
+      }
+      onResetTask={() => void handleResetTask()}
+      onClose={closeTaskEditor}
+      onDeleteSelectedTask={() => {
+        if (selectedTask) void handleDeleteTask(selectedTask);
+      }}
+      onSaveTask={() => void handleSaveTask()}
+      onOpenTask={openSubtask}
+      onAddSubtask={() => {
+        if (selectedTask) handleOpenCreate("planned", selectedTask.id);
+      }}
+      backlogLink={selectedTaskBacklogLink}
+    />
+  );
+
   const views: { value: ContextModalView; label: string }[] = [
     { value: "tasks", label: tr("context.tasks", "Tasks") },
     { value: "instructions", label: tr("context.agentsMd", "AGENTS.md") },
@@ -1625,11 +1676,16 @@ export function ContextModal({
             </button>
           ))}
         </div>
-        <div
-          ref={contentRef}
-          className="min-h-0 flex-1 overflow-y-auto bg-[var(--color-bg-primary)]"
-          // The task board's column jump scrolls this element, not the page behind.
-          data-context-scroll
+        <TaskDetailLayout
+          scrollRef={contentRef}
+          isDark={isDark}
+          detailLabel={
+            taskEditorMode === "create"
+              ? tr("context.newTask", "New task")
+              : tr("context.taskDetails", "Task editor")
+          }
+          resizeLabel={tr("context.resizeTaskDetail", "Resize task details")}
+          renderDetail={taskEditorVisible && activeView === "tasks" ? renderTaskEditor : undefined}
         >
           <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
             {[boardError, taskEditorVisible ? "" : syncError].map((message, index) =>
@@ -1772,80 +1828,8 @@ export function ContextModal({
               </div>
             ))}
           </div>
-        </div>
+        </TaskDetailLayout>
       </ModalFrame>
-
-      {taskEditorVisible && typeof document !== "undefined"
-        ? createPortal(
-            <div
-              ref={taskDrawerRef}
-              className="fixed inset-0 z-[65] animate-fade-in"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="context-task-drawer-title"
-            >
-              <div className="absolute inset-0 glass-overlay" onPointerDown={closeTaskEditor} />
-              <div className="absolute inset-y-0 right-0 flex w-full justify-end">
-                <div
-                  data-task-drawer-panel
-                  className="h-full w-full sm:w-[min(860px,calc(100vw-1.5rem))]"
-                >
-                  <div className="flex h-full flex-col border-l border-[var(--glass-border-subtle)] shadow-2xl glass-modal">
-                    <div className="sr-only" id="context-task-drawer-title">
-                      {taskEditorMode === "create"
-                        ? tr("context.newTask", "New task")
-                        : tr("context.taskDetails", "Task editor")}
-                    </div>
-                    <div className="min-h-0 flex-1 overflow-hidden">
-                      <TaskEditorPanel
-                        tr={tr}
-                        ui={ui}
-                        taskEditorMode={taskEditorMode}
-                        taskDraft={taskDraft}
-                        hasTaskUnsaved={hasTaskUnsaved}
-                        syncBusy={syncBusy}
-                        error={syncError}
-                        taskGone={taskGone}
-                        taskStale={
-                          taskStale ||
-                          (!syncBusy && hasTaskUnsaved && taskChangedElsewhere ? "changed" : "")
-                        }
-                        selectedTask={selectedTask}
-                        subtasks={selectedSubtasks}
-                        assigneeChoices={assigneeChoices}
-                        parentChoices={activeTaskOptions}
-                        selectedTaskDeleteInfo={selectedTaskDeleteInfo}
-                        selectedTaskDeleteHint={selectedTaskDeleteHint}
-                        taskWorkflowCoverage={taskWorkflowCoverage}
-                        taskTypeId={taskDraft?.taskType || "standard"}
-                        selectedTaskType={selectedTaskType}
-                        titleRef={taskTitleRef}
-                        setTaskDraft={setTaskDraft}
-                        onTaskTypeChange={(nextTaskTypeId) =>
-                          setTaskDraft((prev) =>
-                            prev ? { ...prev, taskType: nextTaskTypeId } : prev,
-                          )
-                        }
-                        onResetTask={() => void handleResetTask()}
-                        onClose={closeTaskEditor}
-                        onDeleteSelectedTask={() => {
-                          if (selectedTask) void handleDeleteTask(selectedTask);
-                        }}
-                        onSaveTask={() => void handleSaveTask()}
-                        onOpenTask={openSubtask}
-                        onAddSubtask={() => {
-                          if (selectedTask) handleOpenCreate("planned", selectedTask.id);
-                        }}
-                        backlogLink={selectedTaskBacklogLink}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
 
       {agentsMdExpanded && typeof document !== "undefined"
         ? createPortal(

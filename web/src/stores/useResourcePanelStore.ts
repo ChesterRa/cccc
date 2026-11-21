@@ -73,7 +73,8 @@ type ResourcePanelState = {
   activate: (groupId: string, key: string) => void;
   /**
    * Closes the given tabs as one step, so "close all" is restored as a whole. Returns the
-   * recently closed entry it made, or null when none of the tabs was open.
+   * recently closed entry it made, or null when none of the tabs was open. An open panel stays
+   * open after its last tab, empty and no longer split or maximized.
    */
   closeTabs: (groupId: string, keys: string[]) => number | null;
   /** Reopens a closed entry from its source; discarded edits do not come back with it. */
@@ -109,6 +110,12 @@ type ResourcePanelState = {
   setMaximized: (groupId: string, maximized: boolean) => void;
   setDock: (dock: ResourceDock) => void;
   setWidth: (width: number) => void;
+  /**
+   * The Group whose panel is on screen now, set by the page that lays it out; empty when no
+   * panel is. A message attachment opens in the panel only while it is. Not persisted.
+   */
+  shownGroupId: string;
+  setShown: (groupId: string) => void;
 };
 
 export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
@@ -183,7 +190,7 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
         return {
           tabs,
           activeKey,
-          open: panel.open && tabs.length > 0,
+          open: panel.open,
           maximized: panel.maximized && tabs.length > 0,
           closed: [{ id, tabs: closing }, ...panel.closed].slice(0, CLOSED_LIMIT),
           split: tabs.length ? panel.split : null,
@@ -276,10 +283,7 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
         false,
       ),
     setOpen: (groupId, open) =>
-      update(groupId, (panel) => {
-        const next = open && panel.tabs.length > 0;
-        return { ...panel, open: next, maximized: next && panel.maximized };
-      }),
+      update(groupId, (panel) => ({ ...panel, open, maximized: open && panel.maximized })),
     setMaximized: (groupId, maximized) =>
       update(groupId, (panel) => ({
         ...panel,
@@ -301,6 +305,10 @@ export const useResourcePanelStore = create<ResourcePanelState>((set, get) => {
         // The width still applies for this page when the browser refuses to store it.
       }
       set({ width: Math.round(width) });
+    },
+    shownGroupId: "",
+    setShown: (groupId) => {
+      if (get().shownGroupId !== groupId) set({ shownGroupId: groupId });
     },
   };
 });

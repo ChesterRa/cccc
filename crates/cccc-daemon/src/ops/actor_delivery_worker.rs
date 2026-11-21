@@ -1,3 +1,4 @@
+use crate::session_owner::runtime as cccc_runtime;
 use cccc_contracts::{Actor, ActorRuntime, GroupState};
 use cccc_core::GroupStore;
 use cccc_runtime::PtyHandoff;
@@ -50,7 +51,7 @@ fn terminal_reason(error: &crate::dispatch::OpError) -> Option<String> {
 /// Deliver `jobs`. Jobs settled here for good (stale Mail notices) are removed
 /// from `jobs`, so a caller that retries the batch never offers them again.
 #[cfg(test)]
-pub fn process_batch(
+pub(super) fn process_batch(
     jobs: &mut Vec<DeliveryJob>,
     preamble_session: &mut String,
     cancelled: &AtomicBool,
@@ -69,7 +70,7 @@ pub fn process_batch(
 /// request, or a managed session's input. A runtime replacement records work
 /// that stays unconfirmed as ambiguous instead of offering it again. `wakes`
 /// holds the automatic starts this batch has used, across retries.
-pub fn process_batch_tracked(
+pub(super) fn process_batch_tracked(
     jobs: &mut Vec<DeliveryJob>,
     preamble_session: &mut String,
     cancelled: &AtomicBool,
@@ -122,10 +123,9 @@ pub fn process_batch_tracked(
         }
         return BatchOutcome::Delivered;
     }
-    // Every attempt, including retries, re-checks Mail notices against their
-    // Mail: one read, answered, or delivered since is withdrawn, never sent, and
-    // leaves the batch for good.
-    withdraw_stale_mail_notices(jobs, &job.home, &current_group, &current_actor);
+    // A later Mail read cannot turn a DeepSeek attempt into "never sent";
+    // retain it for fact settlement before considering another submission.
+    withdraw_stale_mail_notices(jobs, &job.home, &current_group, &current_actor, attempted);
     if jobs.is_empty() {
         return BatchOutcome::Delivered;
     }
@@ -137,6 +137,12 @@ pub fn process_batch_tracked(
             preamble_session,
             cancelled,
         );
+    }
+    if job.transport == "deepseek"
+        && let Some(outcome) =
+            settle_deepseek_attempts(jobs, &job.home, &current_group, &current_actor, attempted)
+    {
+        return outcome;
     }
     // What runs now takes the work, whatever was saved for the next launch.
     let owner = match actor_runtime::delivery_owner(&current_group.group_id, &current_actor.id) {
@@ -162,6 +168,12 @@ pub fn process_batch_tracked(
     if jobs.iter().any(|job| job.transport != transport) {
         return_to_queue(jobs, attempted);
         super::actor_delivery::dispatch_unread(&job.home, &current_group, &current_actor.id);
+        return BatchOutcome::Delivered;
+    }
+    if !refresh_claims(jobs, &current_group, &current_actor) {
+        return BatchOutcome::Retry;
+    }
+    if jobs.is_empty() {
         return BatchOutcome::Delivered;
     }
     if transport == "deepseek" {
@@ -196,6 +208,18 @@ pub fn process_batch_tracked(
     let current_actor = status.launch.map_or(current_actor.clone(), |launch| {
         actor_runtime::as_launched(&current_actor, launch)
     });
+    #[cfg(unix)]
+    if crate::session_owner::enabled(&job.home) {
+        return process_owned_pty_batch(
+            jobs,
+            &job.home,
+            &current_group,
+            &current_actor,
+            &status,
+            cancelled,
+            attempted,
+        );
+    }
     let first_delivery = *preamble_session != status.started_at;
     if first_delivery {
         if current_actor.runtime != ActorRuntime::Custom
@@ -295,6 +319,79 @@ pub fn process_batch_tracked(
             let reason = format!("the terminal may hold part of this delivery: {reason}");
             for job in jobs.iter() {
                 finish_job(job, CompletedDelivery::Ambiguous(reason.clone()));
+                tell_sender(job, true);
+            }
+            BatchOutcome::Delivered
+        }
+    }
+}
+
+#[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
+fn process_owned_pty_batch(
+    jobs: &[DeliveryJob],
+    home: &cccc_core::HomeLayout,
+    group: &cccc_core::GroupDoc,
+    actor: &Actor,
+    status: &cccc_runtime::SessionStatus,
+    cancelled: &AtomicBool,
+    attempted: &mut HashSet<String>,
+) -> BatchOutcome {
+    let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
+    let Some(mut payload) = super::actor_delivery_render::render_batch_with_mail_context(
+        home, group, &actor.id, &events,
+    ) else {
+        return BatchOutcome::Retry;
+    };
+    let instructions = super::instruction_files::check(
+        home,
+        &group.group_id,
+        actor,
+        &actor_runtime::pty_instruction_session(status),
+        &status.cwd,
+    );
+    if let Some(notice) = &instructions {
+        payload.push_str(&format!("\n\n{}", notice.delivery_line()));
+    }
+    let started = AtomicBool::new(false);
+    let result =
+        crate::session_owner::submit(home, group, actor, &events, &payload, cancelled, &started);
+    if started.load(Ordering::Acquire) {
+        attempted.extend(events.iter().map(|event| event.id.clone()));
+    }
+    match result {
+        Ok(result)
+            if result.get("outcome").and_then(serde_json::Value::as_str) == Some("accepted") =>
+        {
+            if let Some(notice) = instructions {
+                notice.delivered();
+            }
+            finish_jobs(jobs);
+            BatchOutcome::Delivered
+        }
+        Ok(result)
+            if result.get("outcome").and_then(serde_json::Value::as_str) == Some("not_written") =>
+        {
+            for event in &events {
+                attempted.remove(&event.id);
+            }
+            BatchOutcome::Retry
+        }
+        Err(error)
+            if !started.load(Ordering::Acquire)
+                || (error.kind() == std::io::ErrorKind::Interrupted
+                    && crate::session_owner::maintenance_selected(home)) =>
+        {
+            BatchOutcome::Retry
+        }
+        _ => {
+            for job in jobs {
+                finish_job(
+                    job,
+                    CompletedDelivery::Ambiguous(
+                        "retained terminal input outcome is unconfirmed".into(),
+                    ),
+                );
                 tell_sender(job, true);
             }
             BatchOutcome::Delivered
@@ -538,8 +635,116 @@ fn defer_external_job(job: &mut DeliveryJob) -> BatchOutcome {
     BatchOutcome::Retry
 }
 
-/// Delivered jobs leave `jobs`, so a rejected batch always starts with the job
-/// whose turn failed.
+/// An in-memory job can outlive an Unsubmitted or Failed settlement. Reclaim
+/// before the next native attempt rather than trusting its old `claimed` flag.
+fn refresh_claims(jobs: &mut Vec<DeliveryJob>, group: &cccc_core::GroupDoc, actor: &Actor) -> bool {
+    let mut index = 0;
+    while index < jobs.len() {
+        let job = &mut jobs[index];
+        let state = match super::runtime_delivery::latest_state(
+            &job.home,
+            &group.group_id,
+            &actor.id,
+            &job.event.id,
+        ) {
+            Ok(state) => state,
+            Err(_) => return false,
+        };
+        if state.as_ref().is_some_and(|(state, _)| state == "claimed") && job.claimed {
+            index += 1;
+            continue;
+        }
+        job.claimed = false;
+        match super::runtime_delivery::claim(
+            &job.home,
+            group,
+            actor,
+            &job.event.id,
+            job.transport,
+            false,
+        ) {
+            Ok(super::runtime_delivery::ClaimResult::Claimed) => {
+                job.claimed = true;
+                index += 1;
+            }
+            Ok(super::runtime_delivery::ClaimResult::Terminal(_)) => {
+                super::actor_delivery::release_in_flight(job);
+                jobs.remove(index);
+            }
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+/// Unknown ownership cannot spend an automatic wake or be treated as stopped.
+fn push_owner_running(group: &str, actor: &str, deepseek: bool) -> std::io::Result<bool> {
+    use actor_runtime::{OwnerIdentity, OwnerState};
+    let Some(owner) = actor_runtime::registered_owner(group, actor)? else {
+        return Ok(false);
+    };
+    if !matches!(
+        (&owner.identity, deepseek),
+        (OwnerIdentity::DeepSeek { .. }, true) | (OwnerIdentity::Managed { .. }, false)
+    ) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            "delivery owner changed",
+        ));
+    }
+    Ok(owner.state == OwnerState::Running)
+}
+
+fn settle_deepseek_attempts(
+    jobs: &mut Vec<DeliveryJob>,
+    home: &cccc_core::HomeLayout,
+    group: &cccc_core::GroupDoc,
+    actor: &Actor,
+    attempted: &mut HashSet<String>,
+) -> Option<BatchOutcome> {
+    // A finished or disconnected native turn is not permission to wake a new
+    // generation and repeat its input. Observe the original source first,
+    // including when its holder is no longer running.
+    while let Some(job) = jobs.first()
+        && attempted.contains(&job.event.id)
+    {
+        use crate::session_owner::RetainedDelivery;
+        let fact = crate::session_owner::observe_delivery(
+            home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &job.event.id,
+        );
+        match fact {
+            Ok(RetainedDelivery::Pending) => return Some(BatchOutcome::Retry),
+            Ok(RetainedDelivery::Failed(reason)) => return Some(BatchOutcome::Rejected(reason)),
+            Ok(RetainedDelivery::Accepted) => complete_job(&jobs.remove(0)),
+            Ok(RetainedDelivery::Unsubmitted) => {
+                attempted.remove(&job.event.id);
+                return_to_queue(jobs, attempted);
+                super::actor_delivery::dispatch_unread(home, group, &actor.id);
+                return Some(BatchOutcome::Delivered);
+            }
+            _ => {
+                let job = jobs.remove(0);
+                attempted.remove(&job.event.id);
+                finish_job(
+                    &job,
+                    CompletedDelivery::Ambiguous(
+                        "native turn ended without a confirmed result after submission".into(),
+                    ),
+                );
+            }
+        }
+    }
+    if jobs.is_empty() {
+        return Some(BatchOutcome::Delivered);
+    }
+    None
+}
+
+/// Delivered jobs leave `jobs`, so a rejected batch starts with the failed turn.
 fn process_deepseek_batch(
     jobs: &mut Vec<DeliveryJob>,
     home: &cccc_core::HomeLayout,
@@ -549,7 +754,14 @@ fn process_deepseek_batch(
     attempted: &mut HashSet<String>,
     wakes: &mut WakeBudget,
 ) -> BatchOutcome {
-    if !crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) {
+    if let Some(outcome) = settle_deepseek_attempts(jobs, home, group, actor, attempted) {
+        return outcome;
+    }
+    let running = match push_owner_running(&group.group_id, &actor.id, true) {
+        Ok(running) => running,
+        Err(_) => return BatchOutcome::Retry,
+    };
+    if !running {
         if crate::ops::deepseek_runtime::manual_restart_required(home, group, actor) {
             return BatchOutcome::Retry;
         }
@@ -559,7 +771,11 @@ fn process_deepseek_batch(
             Err(reason) => return BatchOutcome::Terminal(reason),
         }
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
-            Ok(_) if crate::ops::deepseek_runtime::running(&group.group_id, &actor.id) => {}
+            Ok(_)
+                if matches!(
+                    push_owner_running(&group.group_id, &actor.id, true),
+                    Ok(true)
+                ) => {}
             Ok(_) => return BatchOutcome::Retry,
             Err(error) => {
                 return match terminal_reason(&error) {
@@ -598,7 +814,11 @@ fn process_managed_batch(
     attempted: &mut HashSet<String>,
     wakes: &mut WakeBudget,
 ) -> BatchOutcome {
-    if !crate::ops::local_headless::running(&group.group_id, &actor.id) {
+    let running = match push_owner_running(&group.group_id, &actor.id, false) {
+        Ok(running) => running,
+        Err(_) => return BatchOutcome::Retry,
+    };
+    if !running {
         // While the user answers a confirmation nothing is started, so nothing
         // is spent: the wait can outlast every start this batch has.
         if !actor_runtime::confirmation_required(&group.group_id, &actor.id) {
@@ -609,7 +829,11 @@ fn process_managed_batch(
             }
         }
         match actor_runtime::apply(home, group, &actor.id, "actor.start") {
-            Ok(None) if crate::ops::local_headless::running(&group.group_id, &actor.id) => {}
+            Ok(None)
+                if matches!(
+                    push_owner_running(&group.group_id, &actor.id, false),
+                    Ok(true)
+                ) => {}
             Ok(_) => return BatchOutcome::Retry,
             Err(error) => {
                 if let Some(reason) = terminal_reason(&error) {
@@ -653,16 +877,19 @@ fn process_managed_batch(
     settle_managed_batch(jobs, home, group, actor, outcome)
 }
 
-/// Withdraw Mail notices none of whose Mail still awaits the actor and remove
-/// them from `jobs`; the remaining jobs are left to deliver.
+/// Withdraw stale notices, preserving attempted DeepSeek input for settlement.
 fn withdraw_stale_mail_notices(
     jobs: &mut Vec<DeliveryJob>,
     home: &cccc_core::HomeLayout,
     group: &cccc_core::GroupDoc,
     actor: &Actor,
+    attempted: &HashSet<String>,
 ) {
     let (stale, live): (Vec<_>, Vec<_>) = std::mem::take(jobs).into_iter().partition(|job| {
-        crate::ops::runtime_delivery::is_stale_mail_notice(home, group, &actor.id, &job.event)
+        !(job.transport == "deepseek" && attempted.contains(&job.event.id))
+            && crate::ops::runtime_delivery::is_stale_mail_notice(
+                home, group, &actor.id, &job.event,
+            )
     });
     *jobs = live;
     if !stale.is_empty() {
@@ -692,8 +919,7 @@ fn settle_managed_batch(
             );
         }
         crate::ops::local_headless::BatchSubmission::Unconfirmed => {
-            let reason =
-                "ACP prompt receipt was not confirmed; inspect the Actor before an explicit retry";
+            let reason = "Managed input receipt was not confirmed; inspect the Actor before an explicit retry";
             for job in jobs {
                 if let Err(error) = crate::ops::runtime_delivery::append_state(
                     home,
@@ -706,7 +932,7 @@ fn settle_managed_batch(
                 ) {
                     // The original durable claim remains unretryable and is
                     // reconciled as ambiguous on daemon restart.
-                    tracing::error!(message=%error.message, event_id=%job.event.id, "failed to persist unconfirmed ACP delivery");
+                    tracing::error!(message=%error.message, event_id=%job.event.id, "failed to persist unconfirmed managed delivery");
                 }
                 super::actor_delivery::release_in_flight(job);
                 tell_sender(job, true);
@@ -789,6 +1015,9 @@ fn ensure_running(
     actor: &Actor,
     wakes: &mut WakeBudget,
 ) -> Result<Option<cccc_runtime::SessionStatus>, String> {
+    if actor_runtime::confirmation_pause_applies(home, &group.group_id, actor).unwrap_or(true) {
+        return Ok(None);
+    }
     if let Ok(status) = cccc_runtime::status(&group.group_id, &actor.id)
         && status.running
     {
@@ -841,7 +1070,7 @@ fn submit_sequence(actor: &Actor) -> &'static [&'static [u8]] {
     super::actor_delivery::terminal_submit_sequence(actor)
 }
 
-fn wait_for_input_mode(group_id: &str, actor_id: &str, cancelled: &AtomicBool) -> bool {
+pub(crate) fn wait_for_input_mode(group_id: &str, actor_id: &str, cancelled: &AtomicBool) -> bool {
     let deadline = std::time::Instant::now() + INPUT_MODE_TIMEOUT;
     while std::time::Instant::now() < deadline {
         if cccc_runtime::bracketed_paste_enabled(group_id, actor_id).unwrap_or(false) {
@@ -857,7 +1086,7 @@ fn wait_for_input_mode(group_id: &str, actor_id: &str, cancelled: &AtomicBool) -
     !cancelled.load(Ordering::Acquire)
 }
 
-pub(super) fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) -> bool {
+pub(crate) fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) -> bool {
     let deadline = std::time::Instant::now().checked_add(duration);
     while !cancelled.load(Ordering::Acquire) {
         let remaining = deadline.map_or(Duration::from_millis(50), |deadline| {
@@ -983,7 +1212,7 @@ mod tests {
 
         // The first attempt was deferred; the Mail is still unread, so it stays.
         let mut live = vec![job.clone()];
-        withdraw_stale_mail_notices(&mut live, &home, &group, &actor);
+        withdraw_stale_mail_notices(&mut live, &home, &group, &actor, &HashSet::new());
         assert_eq!(live.len(), 1);
         assert_eq!(state().as_deref(), Some("claimed"));
 
@@ -1046,7 +1275,7 @@ mod tests {
         };
         let mut batch = vec![job(&notice), job(&send)];
 
-        withdraw_stale_mail_notices(&mut batch, &home, &group, &actor);
+        withdraw_stale_mail_notices(&mut batch, &home, &group, &actor, &HashSet::new());
         assert_eq!(
             batch
                 .iter()
@@ -1063,10 +1292,91 @@ mod tests {
             .permissions();
         std::fs::set_permissions(&ledger_path, std::fs::Permissions::from_mode(0o000))
             .expect("unreadable ledger");
-        withdraw_stale_mail_notices(&mut batch, &home, &group, &actor);
+        withdraw_stale_mail_notices(&mut batch, &home, &group, &actor, &HashSet::new());
         std::fs::set_permissions(&ledger_path, readable).expect("restore ledger");
         assert_eq!(batch.len(), 1);
         assert_eq!(batch[0].event.id, send.id);
+    }
+
+    #[test]
+    fn an_attempted_stale_deepseek_notice_is_settled_instead_of_withdrawn() {
+        let temp = tempfile::tempdir().expect("isolated test directory");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home"))
+            .expect("resolve isolated home");
+        let store = GroupStore::new(home.clone()).expect("open isolated group store");
+        let mut group = store
+            .create("attempted notice", "")
+            .expect("create fixture group");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Deepseek;
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save fixture group");
+        let ledger_path = store
+            .ledger_path(&group.group_id)
+            .expect("resolve group ledger");
+        let mut mail = Event::new("chat.message", &group.group_id);
+        mail.by = "user".into();
+        mail.data = serde_json::json!({"to":["peer1"],"text":"review","message_mode":"mail"})
+            .as_object()
+            .expect("object result")
+            .clone();
+        cccc_core::ledger::append(&ledger_path, &mail).expect("append fixture event");
+        let mut notice = Event::new("system.notify", &group.group_id);
+        notice.data = serde_json::json!({"kind":"mail_notice","target_actor_id":"peer1",
+            "context":{"source_event_ids":[mail.id]}})
+        .as_object()
+        .expect("object result")
+        .clone();
+        cccc_core::ledger::append(&ledger_path, &notice).expect("append fixture event");
+        crate::ops::runtime_delivery::claim(&home, &group, &actor, &notice.id, "deepseek", false)
+            .expect("claim fixture delivery");
+        cccc_core::inbox::consume_unread(&home, &group, &actor.id, &actor.id, 50)
+            .expect("consume notice before retry");
+        let mut jobs = vec![DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: notice.clone(),
+            claimed: true,
+            transport: "deepseek",
+        }];
+        let mut attempted = HashSet::from([notice.id.clone()]);
+        let mut wakes = WakeBudget::default();
+        assert_eq!(
+            process_batch_tracked(
+                &mut jobs,
+                &mut String::new(),
+                &AtomicBool::new(false),
+                &mut attempted,
+                &mut wakes
+            ),
+            BatchOutcome::Delivered
+        );
+        assert!(jobs.is_empty());
+        assert!(attempted.is_empty());
+        assert_eq!(
+            wakes.spent, 0,
+            "an unknown attempted notice must not wake a new generation"
+        );
+        let states = cccc_core::ledger::read_all(&ledger_path)
+            .expect("read resulting ledger")
+            .into_iter()
+            .filter(|event| {
+                event.kind == "runtime.delivery"
+                    && event
+                        .data
+                        .get("source_event_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(notice.id.as_str())
+            })
+            .map(|event| {
+                event.data["state"]
+                    .as_str()
+                    .expect("string result")
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(states, ["claimed", "ambiguous"]);
     }
 
     #[test]

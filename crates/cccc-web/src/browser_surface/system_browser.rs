@@ -1,6 +1,5 @@
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use anyhow::bail;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use cccc_daemon::session_owner::browser::{BrowserMode, BrowserPrograms};
 #[cfg(not(target_os = "macos"))]
 use chromiumoxide::BrowserConfig;
 #[cfg(not(target_os = "macos"))]
@@ -25,14 +24,14 @@ const XVFB_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5
 const VNC_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[cfg(target_os = "macos")]
-use super::profile_owner::{browser_pid_from_singleton, terminate_browser_for_profile};
+use super::profile_owner::{browser_pid_from_singleton, process_identity, stop_opened_browser};
 
 #[cfg(target_os = "macos")]
 const CDP_START_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub(super) struct SystemBrowserLaunch {
     executable: PathBuf,
-    channel: &'static str,
+    channel: String,
     cdp_port: u16,
     background: bool,
     width: u32,
@@ -42,20 +41,41 @@ pub(super) struct SystemBrowserLaunch {
     vnc: Option<ProjectedVncServer>,
     vnc_error: String,
     #[cfg(target_os = "macos")]
-    managed_profile: Option<PathBuf>,
+    opened: Option<OpenedBrowser>,
+}
+
+/// A browser macOS opened for a profile that no stop has yet confirmed ended.
+/// It is not this process's child, so only its native identity proves that.
+#[cfg(target_os = "macos")]
+pub(super) struct OpenedBrowser {
+    pub profile: PathBuf,
+    /// The browser process and its native identity, once CDP has reported it.
+    pub process: Option<(u32, String)>,
 }
 
 impl SystemBrowserLaunch {
-    pub(super) async fn prepare(width: u32, height: u32, background: bool) -> Result<Self> {
-        let (executable, channel) = find_system_browser().ok_or_else(|| {
+    pub(super) async fn prepare(
+        width: u32,
+        height: u32,
+        background: bool,
+        programs: BrowserPrograms,
+    ) -> Result<Self> {
+        let (executable, channel) = programs.browser.zip(programs.channel).ok_or_else(|| {
             anyhow::anyhow!(
                 "Chrome, Microsoft Edge, or Chromium is required for projected browser authentication"
             )
         })?;
-        let display = VirtualDisplay::start(width, height).await?;
+        let display = VirtualDisplay::start(width, height, programs.xvfb.as_deref()).await?;
         #[cfg(target_os = "linux")]
         let (vnc, vnc_error) = match &display {
-            Some(display) => ProjectedVncServer::start(display.name()).await,
+            Some(display) => {
+                ProjectedVncServer::start(
+                    display.name(),
+                    programs.desktop_view,
+                    programs.x11vnc.as_deref(),
+                )
+                .await
+            }
             None => (None, "missing_display".to_owned()),
         };
         #[cfg(not(target_os = "linux"))]
@@ -73,8 +93,14 @@ impl SystemBrowserLaunch {
             vnc,
             vnc_error,
             #[cfg(target_os = "macos")]
-            managed_profile: None,
+            opened: None,
         })
+    }
+
+    /// The browser this launch opened that is not yet confirmed ended.
+    #[cfg(target_os = "macos")]
+    pub(super) fn opened(&self) -> Option<&OpenedBrowser> {
+        self.opened.as_ref()
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -143,33 +169,87 @@ impl SystemBrowserLaunch {
     ) -> Result<(Browser, Handler, u32)> {
         let app =
             macos_app_bundle(&self.executable).context("system browser app bundle not found")?;
-        let browser_args = self.browser_args(profile, extra_args);
-        let mut command = tokio::process::Command::new("/usr/bin/open");
+        // The profile lease compares this path to Chrome's command line when
+        // recovering a launch, including profiles reached through a symlink.
+        let profile = profile
+            .canonicalize()
+            .context("resolve the system browser profile")?;
+        let browser_args = self.browser_args(&profile, extra_args);
+        let mut command = cccc_runtime::background_command("/usr/bin/open");
         command.args(macos_open_args(app));
         command.args(&browser_args);
-        let output = command
-            .output()
+        self.launch_with_macos_open(&profile, &mut command, CDP_START_TIMEOUT)
             .await
-            .context("launch system browser in background")?;
-        if !output.status.success() {
-            bail!(
-                "background system browser launch failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
+    }
 
-        match self.connect_background_macos(profile).await {
-            Ok(connected) => {
-                self.managed_profile = Some(profile.to_owned());
-                Ok(connected)
+    #[cfg(target_os = "macos")]
+    async fn launch_with_macos_open(
+        &mut self,
+        profile: &Path,
+        command: &mut std::process::Command,
+        timeout: Duration,
+    ) -> Result<(Browser, Handler, u32)> {
+        let request =
+            match cccc_runtime::capture_command_with_start_evidence(command, None, timeout, 4096)
+                .await
+            {
+                Ok(output) if output.status.success() => Ok(()),
+                Ok(output) => bail!(
+                    "background system browser launch failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+                Err(cccc_runtime::CommandError::NotStarted(error)) => {
+                    return Err(error).context("start the macOS browser launcher");
+                }
+                Err(cccc_runtime::CommandError::Started(error)) => {
+                    let context = if error.kind() == std::io::ErrorKind::TimedOut {
+                        "macOS did not respond to the background browser launch request in time"
+                    } else {
+                        "could not confirm the background browser launch request on macOS"
+                    };
+                    Err(error).context(context)
+                }
+            };
+        // LaunchServices may have accepted the request even if open timed out.
+        // Cleanup can identify only the browser using this launch's profile.
+        self.opened = Some(OpenedBrowser {
+            profile: profile.to_owned(),
+            process: None,
+        });
+        let connected: Result<_> = async {
+            request?;
+            let (browser, handler, pid) = self.connect_background_macos(profile).await?;
+            let identity = process_identity(pid)?.with_context(|| {
+                format!("system browser process {pid} ended right after it started")
+            })?;
+            Ok((browser, handler, pid, identity))
+        }
+        .await;
+        match connected {
+            Ok((browser, handler, pid, identity)) => {
+                if let Some(opened) = &mut self.opened {
+                    opened.process = Some((pid, identity));
+                }
+                Ok((browser, handler, pid))
             }
             Err(error) => {
-                if let Err(cleanup_error) = terminate_browser_for_profile(profile).await {
+                if let Err(cleanup_error) = self.stop_opened().await {
                     tracing::warn!(%cleanup_error, "failed to clean up background system browser launch");
                 }
                 Err(error)
             }
         }
+    }
+
+    /// Stops the browser this launch opened. It stays recorded until its
+    /// end is confirmed, so a later stop or the profile lease can finish.
+    #[cfg(target_os = "macos")]
+    async fn stop_opened(&mut self) -> Result<()> {
+        if let Some(opened) = &self.opened {
+            stop_opened_browser(&opened.profile, opened.process.as_ref()).await?;
+        }
+        self.opened = None;
+        Ok(())
     }
 
     #[cfg(target_os = "macos")]
@@ -222,9 +302,9 @@ impl SystemBrowserLaunch {
         json!({
             "pid":pid,
             "cdp_port":self.cdp_port,
-            "browser_binary":self.executable,
+            "browser_binary":self.executable.to_string_lossy(),
             "channel":self.channel,
-            "profile_dir":profile,
+            "profile_dir":profile.to_string_lossy(),
             "visibility":if self.background||self.display.is_some(){"background"}else{"visible"},
             "display":self.display.as_ref().map_or("", VirtualDisplay::name),
             "display_owned":self.display.is_some(),
@@ -252,6 +332,12 @@ impl SystemBrowserLaunch {
         })
     }
 
+    pub(super) fn display_name(&self) -> Option<String> {
+        self.display
+            .as_ref()
+            .map(|display| display.name().to_owned())
+    }
+
     pub(super) fn vnc_port(&self) -> Option<u16> {
         #[cfg(target_os = "linux")]
         {
@@ -261,19 +347,29 @@ impl SystemBrowserLaunch {
         None
     }
 
-    pub(super) async fn stop(&mut self) {
+    /// Stops what this launch started around the browser. Whatever failed to
+    /// stop stays recorded, so a later call stops it then.
+    pub(super) async fn stop(&mut self) -> Result<()> {
+        let mut failures = Vec::new();
         #[cfg(target_os = "macos")]
-        if let Some(profile) = self.managed_profile.take()
-            && let Err(error) = terminate_browser_for_profile(&profile).await
-        {
-            tracing::warn!(%error, "failed to stop managed system browser process");
+        if let Err(error) = self.stop_opened().await {
+            failures.push(format!("stop the system browser: {error:#}"));
         }
         #[cfg(target_os = "linux")]
-        if let Some(vnc) = &mut self.vnc {
-            vnc.stop().await;
+        if let Some(vnc) = &mut self.vnc
+            && let Err(error) = vnc.stop().await
+        {
+            failures.push(format!("stop the VNC viewer: {error:#}"));
         }
-        if let Some(display) = &mut self.display {
-            display.stop().await;
+        if let Some(display) = &mut self.display
+            && let Err(error) = display.stop().await
+        {
+            failures.push(format!("stop the virtual display: {error:#}"));
+        }
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            bail!("{}", failures.join("; "))
         }
     }
 }
@@ -350,6 +446,48 @@ fn window_position(background: bool) -> &'static str {
         "--window-position=-32000,-32000"
     } else {
         "--window-position=0,0"
+    }
+}
+
+/// Resolve each program in the Web's environment while preserving Chromium's
+/// own headless search order. Keep symlink names (including macOS app paths).
+pub(super) fn programs(mode: BrowserMode) -> BrowserPrograms {
+    let desktop_view = vnc_viewer_enabled();
+    let (browser, channel) = match mode {
+        BrowserMode::System { .. } => find_system_browser().unzip(),
+        BrowserMode::Headless => (
+            chromiumoxide::detection::default_executable(Default::default())
+                .ok()
+                .or_else(|| find_system_browser().map(|(path, _)| path)),
+            None,
+        ),
+    };
+    #[cfg(target_os = "linux")]
+    let (xvfb, x11vnc) = if matches!(mode, BrowserMode::System { .. }) {
+        (
+            find_executable("Xvfb"),
+            desktop_view.then(|| find_executable("x11vnc")).flatten(),
+        )
+    } else {
+        (None, None)
+    };
+    #[cfg(not(target_os = "linux"))]
+    let (xvfb, x11vnc) = (None, None);
+    let absolute = |path: PathBuf| std::path::absolute(path).ok();
+    BrowserPrograms {
+        browser: browser.and_then(absolute),
+        channel: channel.map(str::to_owned),
+        xvfb: xvfb.and_then(absolute),
+        x11vnc: x11vnc.and_then(absolute),
+        desktop_view,
+    }
+}
+
+pub(super) fn web_viewer(viewer: &Value, enabled: bool) -> Value {
+    if !enabled && viewer["vnc"]["available"] == true {
+        json!({"kind":"screencast","vnc":{"available":false,"error":"disabled"}})
+    } else {
+        viewer.clone()
     }
 }
 
@@ -441,13 +579,13 @@ struct VirtualDisplay {
 
 impl VirtualDisplay {
     #[cfg(not(target_os = "linux"))]
-    async fn start(_width: u32, _height: u32) -> Result<Option<Self>> {
+    async fn start(_width: u32, _height: u32, _binary: Option<&Path>) -> Result<Option<Self>> {
         Ok(None)
     }
 
     #[cfg(target_os = "linux")]
-    async fn start(width: u32, height: u32) -> Result<Option<Self>> {
-        let Some(binary) = find_executable("Xvfb") else {
+    async fn start(width: u32, height: u32, binary: Option<&Path>) -> Result<Option<Self>> {
+        let Some(binary) = binary else {
             bail!(
                 "Xvfb is required for projected browser authentication on Linux; install the xvfb package and retry"
             );
@@ -457,7 +595,7 @@ impl VirtualDisplay {
             if xvfb_display_in_use(number) {
                 continue;
             }
-            if let Some(display) = start_xvfb_candidate(&binary, number, width, height).await? {
+            if let Some(display) = start_xvfb_candidate(binary, number, width, height).await? {
                 return Ok(Some(display));
             }
         }
@@ -468,9 +606,11 @@ impl VirtualDisplay {
         &self.name
     }
 
-    async fn stop(&mut self) {
+    async fn stop(&mut self) -> Result<()> {
         #[cfg(target_os = "linux")]
-        stop_process_child(&mut self.child).await;
+        return stop_process_child(&mut self.child).await;
+        #[cfg(not(target_os = "linux"))]
+        Ok(())
     }
 }
 
@@ -484,14 +624,14 @@ struct ProjectedVncServer {
 
 #[cfg(target_os = "linux")]
 impl ProjectedVncServer {
-    async fn start(display: &str) -> (Option<Self>, String) {
-        if !vnc_viewer_enabled() {
+    async fn start(display: &str, enabled: bool, binary: Option<&Path>) -> (Option<Self>, String) {
+        if !enabled {
             return (None, "disabled".to_owned());
         }
-        let Some(binary) = find_executable("x11vnc") else {
+        let Some(binary) = binary else {
             return (None, "x11vnc_not_found".to_owned());
         };
-        match start_x11vnc(&binary, display).await {
+        match start_x11vnc(binary, display).await {
             Ok(server) => (Some(server), String::new()),
             Err(error) => (None, x11vnc_start_error(&error.to_string())),
         }
@@ -501,13 +641,18 @@ impl ProjectedVncServer {
         self.child.id().unwrap_or_default()
     }
 
-    async fn stop(&mut self) {
-        stop_process_child(&mut self.child).await;
+    async fn stop(&mut self) -> Result<()> {
+        stop_process_child(&mut self.child).await
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+pub(super) fn vnc_viewer_enabled() -> bool {
+    false
+}
+
 #[cfg(target_os = "linux")]
-fn vnc_viewer_enabled() -> bool {
+pub(super) fn vnc_viewer_enabled() -> bool {
     !matches!(
         std::env::var("CCCC_PROJECTED_BROWSER_VNC")
             .unwrap_or_else(|_| "1".to_owned())
@@ -535,14 +680,12 @@ fn x11vnc_args(display: &str, port: u16) -> Vec<String> {
 
 #[cfg(target_os = "linux")]
 async fn start_x11vnc(binary: &Path, display: &str) -> Result<ProjectedVncServer> {
-    use tokio::process::Command;
-
     let port = reserve_cdp_port()?;
     let mut stderr_log = tempfile::tempfile().context("create x11vnc diagnostic buffer")?;
     let stderr_target = stderr_log
         .try_clone()
         .context("clone x11vnc diagnostic buffer")?;
-    let mut child = Command::new(binary)
+    let mut child = cccc_runtime::background_tokio_command(binary)
         .args(x11vnc_args(display, port))
         .env("DISPLAY", display)
         .env("XDG_SESSION_TYPE", "x11")
@@ -571,7 +714,9 @@ async fn start_x11vnc(binary: &Path, display: &str) -> Result<ProjectedVncServer
             });
         }
         if std::time::Instant::now() >= deadline {
-            stop_process_child(&mut child).await;
+            if let Err(error) = stop_process_child(&mut child).await {
+                tracing::warn!(error = %format!("{error:#}"), "x11vnc did not stop after failing to start");
+            }
             let detail = read_process_stderr(&mut stderr_log);
             bail!("x11vnc endpoint did not become ready; {detail}");
         }
@@ -617,13 +762,12 @@ async fn start_xvfb_candidate(
     height: u32,
 ) -> Result<Option<VirtualDisplay>> {
     use tokio::io::{AsyncBufReadExt, BufReader};
-    use tokio::process::Command;
 
     let mut stderr_log = tempfile::tempfile().context("create Xvfb diagnostic buffer")?;
     let stderr_target = stderr_log
         .try_clone()
         .context("clone Xvfb diagnostic buffer")?;
-    let mut child = Command::new(binary)
+    let mut child = cccc_runtime::background_tokio_command(binary)
         .args(xvfb_args(number, width, height))
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::from(stderr_target))
@@ -658,7 +802,9 @@ async fn start_xvfb_candidate(
         _ => None,
     };
     let status = child.try_wait()?;
-    stop_process_child(&mut child).await;
+    if let Err(error) = stop_process_child(&mut child).await {
+        tracing::warn!(error = %format!("{error:#}"), "Xvfb did not stop after failing to start");
+    }
     let detail = read_process_stderr(&mut stderr_log);
     if xvfb_display_in_use(number) || xvfb_display_conflict(&detail) {
         return Ok(None);
@@ -680,10 +826,11 @@ async fn start_xvfb_candidate(
     bail!("Xvfb display :{number} did not report a usable display{detail}")
 }
 
+/// Ok once the child has exited; an error leaves it to a later attempt.
 #[cfg(target_os = "linux")]
-async fn stop_process_child(child: &mut tokio::process::Child) {
-    if child.try_wait().ok().flatten().is_some() {
-        return;
+async fn stop_process_child(child: &mut tokio::process::Child) -> Result<()> {
+    if child.try_wait().context("check the process")?.is_some() {
+        return Ok(());
     }
     // x11vnc removes its SysV shared-memory segments in its signal handler.
     // SIGKILL skips that cleanup and can exhaust the host's segment limit after
@@ -691,7 +838,7 @@ async fn stop_process_child(child: &mut tokio::process::Child) {
     if let Some(pid) = child.id() {
         let _ = tokio::time::timeout(
             std::time::Duration::from_secs(1),
-            tokio::process::Command::new("kill")
+            cccc_runtime::background_tokio_command("kill")
                 .args(["-TERM", &pid.to_string()])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -703,11 +850,15 @@ async fn stop_process_child(child: &mut tokio::process::Child) {
             tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await,
             Ok(Ok(_))
         ) {
-            return;
+            return Ok(());
         }
     }
-    let _ = child.start_kill();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await;
+    child.start_kill().context("kill the process")?;
+    match tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(error).context("wait for the killed process"),
+        Err(_) => bail!("the process did not exit after it was killed"),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -761,9 +912,52 @@ fn find_executable(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
+#[cfg(all(test, target_os = "macos"))]
+mod macos_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn metadata_displays_native_browser_paths_with_non_utf8_bytes() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let launch = SystemBrowserLaunch {
+            executable: PathBuf::from(OsStr::from_bytes(b"/tools/\xff/chrome")),
+            channel: "chrome".to_owned(),
+            cdp_port: 1234,
+            background: true,
+            width: 800,
+            height: 600,
+            display: None,
+            #[cfg(target_os = "linux")]
+            vnc: None,
+            vnc_error: String::new(),
+            #[cfg(target_os = "macos")]
+            opened: None,
+        };
+        let profile = Path::new(OsStr::from_bytes(b"/profiles/\xfe"));
+        let metadata = launch.metadata(123, profile);
+        assert_eq!(metadata["browser_binary"], "/tools/\u{fffd}/chrome");
+        assert_eq!(metadata["profile_dir"], "/profiles/\u{fffd}");
+    }
+
+    #[test]
+    fn a_web_that_disables_vnc_hides_a_retained_desktop_without_changing_it() {
+        let held = json!({"kind":"vnc","vnc":{"available":true,"port":5903}});
+        assert_eq!(
+            web_viewer(&held, false),
+            json!({
+                "kind":"screencast","vnc":{"available":false,"error":"disabled"}
+            })
+        );
+        assert_eq!(web_viewer(&held, true), held);
+        let page = json!({"kind":"screencast","vnc":{"available":false,"error":"actor_page_only"}});
+        assert_eq!(web_viewer(&page, false), page);
+    }
 
     #[test]
     fn xvfb_keeps_local_unix_transport_enabled() {
@@ -812,7 +1006,7 @@ mod tests {
             return;
         };
         assert!(xvfb.is_file());
-        let mut display = VirtualDisplay::start(1024, 768)
+        let mut display = VirtualDisplay::start(1024, 768, Some(&xvfb))
             .await
             .expect("Xvfb start")
             .expect("virtual display");
@@ -827,8 +1021,8 @@ mod tests {
                 .is_ok()
         );
         let pid = vnc.pid().to_string();
-        vnc.stop().await;
-        display.stop().await;
+        vnc.stop().await.expect("stop VNC");
+        display.stop().await.expect("stop display");
         let segments = std::fs::read_to_string("/proc/sysvipc/shm").expect("SysV memory table");
         assert!(
             segments
@@ -842,12 +1036,12 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn concurrent_xvfb_sessions_choose_distinct_high_displays() {
-        if find_executable("Xvfb").is_none() {
+        let Some(xvfb) = find_executable("Xvfb") else {
             return;
-        }
+        };
         let (first, second) = tokio::join!(
-            VirtualDisplay::start(1024, 768),
-            VirtualDisplay::start(1024, 768)
+            VirtualDisplay::start(1024, 768, Some(&xvfb)),
+            VirtualDisplay::start(1024, 768, Some(&xvfb))
         );
         let mut first = first.expect("first Xvfb start").expect("first display");
         let mut second = second.expect("second Xvfb start").expect("second display");
@@ -859,8 +1053,8 @@ mod tests {
                 .expect("number");
             assert!(number >= XVFB_FIRST_DISPLAY);
         }
-        first.stop().await;
-        second.stop().await;
+        first.stop().await.expect("stop first display");
+        second.stop().await.expect("stop second display");
     }
 
     #[cfg(target_os = "linux")]
@@ -932,7 +1126,7 @@ mod tests {
     fn system_browser_state_describes_visible_persistent_profile() {
         let launch = SystemBrowserLaunch {
             executable: PathBuf::from("/Applications/Google Chrome"),
-            channel: "chrome",
+            channel: "chrome".to_owned(),
             cdp_port: 9222,
             background: false,
             width: 1366,
@@ -942,7 +1136,7 @@ mod tests {
             vnc: None,
             vnc_error: "unsupported_platform".to_owned(),
             #[cfg(target_os = "macos")]
-            managed_profile: None,
+            opened: None,
         };
         let profile = Path::new("/tmp/cccc-web-model-profile");
 
@@ -1013,7 +1207,7 @@ mod tests {
             executable: PathBuf::from(
                 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
             ),
-            channel: "chrome",
+            channel: "chrome".to_owned(),
             cdp_port: 9222,
             background: false,
             width: 1366,
@@ -1022,7 +1216,7 @@ mod tests {
             #[cfg(target_os = "linux")]
             vnc: None,
             vnc_error: "unsupported_platform".to_owned(),
-            managed_profile: None,
+            opened: None,
         };
         let args = launch.browser_args(Path::new("/tmp/profile"), Vec::new());
 

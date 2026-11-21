@@ -1,3 +1,4 @@
+use crate::session_owner::runtime as cccc_runtime;
 use cccc_contracts::Event;
 use cccc_core::ledger;
 use cccc_core::{GroupStore, HomeLayout};
@@ -7,9 +8,9 @@ use super::runtime_error;
 use crate::dispatch::OpError;
 
 pub fn reap_exited() -> Result<Vec<SessionStatus>, OpError> {
-    cccc_runtime::reap()
-        .map(reconciliable_exits)
-        .map_err(runtime_error)
+    let mut exited = cccc_runtime::reap().map_err(runtime_error)?;
+    exited.extend(crate::session_owner::exited_terminals().map_err(OpError::io)?);
+    Ok(reconciliable_exits(exited))
 }
 
 fn reconciliable_exits(exited: Vec<SessionStatus>) -> Vec<SessionStatus> {
@@ -27,6 +28,45 @@ pub fn reconcile_exited(home: &HomeLayout, exited: Vec<SessionStatus>) -> Result
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     for status in exited {
         reconcile_one(&store, status)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn reconcile_provider_exits(home: &HomeLayout, group_id: &str) -> Result<(), OpError> {
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let exits = crate::session_owner::provider_exits(home, group_id).map_err(OpError::io)?;
+    reconcile_provider_observations(&store, group_id, exits)
+}
+
+fn reconcile_provider_observations(
+    store: &GroupStore,
+    group_id: &str,
+    exits: Vec<crate::session_owner::AgentIdentity>,
+) -> Result<(), OpError> {
+    if exits.is_empty() {
+        return Ok(());
+    }
+    let group = store.load(group_id).map_err(OpError::io)?;
+    for actor in exits {
+        if actor.group_id != group_id
+            || !group.actors.iter().any(|current| {
+                current.id == actor.actor_id && current.created_at == actor.actor_created_at
+            })
+        {
+            continue;
+        }
+        let Some(generation) = actor.generation else {
+            continue;
+        };
+        append_exit_event(
+            store,
+            group_id,
+            &actor.actor_id,
+            None,
+            None,
+            "managed_reader",
+            Some(&format!("managed:{}:{generation}", actor.actor_created_at)),
+        )?;
     }
     Ok(())
 }
@@ -51,6 +91,7 @@ fn reconcile_one(store: &GroupStore, status: SessionStatus) -> Result<(), OpErro
     }
     // Preserve desired lifecycle after a provider exit. A later user-directed
     // message follows the same wake path whether the process exited or was stopped.
+    let remote_session = crate::session_owner::enabled(store.home());
     append_exit_event(
         store,
         &status.group_id,
@@ -58,6 +99,9 @@ fn reconcile_one(store: &GroupStore, status: SessionStatus) -> Result<(), OpErro
         status.exit_code,
         status.exit_detail.as_deref(),
         "runtime",
+        remote_session
+            .then(|| format!("{}:{}", status.actor_generation, status.started_at))
+            .as_deref(),
     )
 }
 
@@ -83,6 +127,7 @@ pub(crate) fn record_process_exit(
         exit_code,
         None,
         "managed_reader",
+        None,
     )
 }
 
@@ -93,8 +138,24 @@ fn append_exit_event(
     exit_code: Option<u32>,
     exit_detail: Option<&str>,
     source: &str,
+    session: Option<&str>,
 ) -> Result<(), OpError> {
     let mut event = Event::new("actor.stop", group_id);
+    let path = store.ledger_path(group_id).map_err(OpError::io)?;
+    if let Some(session) = session {
+        use sha2::{Digest, Sha256};
+        let seed = ["owned-pty-exit", group_id, actor_id, session].join("\0");
+        event.id = format!("{:x}", Sha256::digest(seed.as_bytes()))[..32].to_owned();
+        // The controller's existing serialized Group maintenance is the only
+        // producer. A retained terminal remains readable after exit, so its
+        // observation is deduplicated across ticks and controller replacement.
+        if ledger::find_event(&path, &event.id)
+            .map_err(OpError::io)?
+            .is_some()
+        {
+            return Ok(());
+        }
+    }
     event.by = "system".into();
     let mut data = serde_json::json!({
         "actor_id": actor_id,
@@ -109,11 +170,72 @@ fn append_exit_event(
         data.insert("exit_detail".into(), detail.into());
     }
     event.data = data;
-    ledger::append(&store.ledger_path(group_id).map_err(OpError::io)?, &event).map_err(OpError::io)
+    ledger::append(&path, &event).map_err(OpError::io)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn retained_provider_exit_is_recorded_once_and_cannot_stop_a_recreated_actor() {
+        let temp = tempfile::tempdir().expect("isolated test directory");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home"))
+            .expect("resolve isolated home");
+        let store = cccc_core::GroupStore::new(home).expect("open isolated group store");
+        let group = store
+            .create("provider exit", "")
+            .expect("create fixture group");
+        let actor = cccc_contracts::Actor::new("peer");
+        store
+            .mutate(&group.group_id, |group| {
+                group.actors.push(actor.clone());
+                Ok(())
+            })
+            .expect("submit owner mutation");
+        let exit = crate::session_owner::AgentIdentity {
+            group_id: group.group_id.clone(),
+            actor_id: actor.id.clone(),
+            actor_created_at: actor.created_at.clone(),
+            generation: Some("managed-generation".into()),
+            owner_id: None,
+        };
+        super::reconcile_provider_observations(&store, &group.group_id, vec![exit.clone()])
+            .expect("reconcile provider exit observations");
+        super::reconcile_provider_observations(&store, &group.group_id, vec![exit.clone()])
+            .expect("reconcile provider exit observations");
+        let path = store
+            .ledger_path(&group.group_id)
+            .expect("resolve group ledger");
+        let events = cccc_core::ledger::read_all(&path).expect("read resulting ledger");
+        let stops = events
+            .iter()
+            .filter(|event| event.kind == "actor.stop")
+            .collect::<Vec<_>>();
+        assert_eq!(stops.len(), 1);
+        assert_eq!(stops[0].data["source"], "managed_reader");
+        store
+            .mutate(&group.group_id, |group| {
+                group.actors[0].created_at = "replacement".into();
+                Ok(())
+            })
+            .expect("submit owner mutation");
+        super::reconcile_provider_observations(
+            &store,
+            &group.group_id,
+            vec![crate::session_owner::AgentIdentity {
+                generation: Some("another-old-generation".into()),
+                ..exit
+            }],
+        )
+        .expect("reconcile provider exit observations");
+        assert_eq!(
+            cccc_core::ledger::read_all(&path)
+                .expect("read resulting ledger")
+                .iter()
+                .filter(|event| event.kind == "actor.stop")
+                .count(),
+            1
+        );
+    }
     use cccc_contracts::{Actor, RunnerKind, RuntimeStateSource};
     use cccc_core::{GroupStore, HomeLayout, ledger};
     use cccc_runtime::{LaunchSpec, SessionStatus};
@@ -152,6 +274,7 @@ mod tests {
                 exit_code: Some(1),
                 exit_detail: Some("Terminated by Killed".into()),
                 launch: None,
+                startup_input_pending: false,
             }],
         );
         assert!(result.is_ok());
@@ -199,6 +322,7 @@ mod tests {
                 exit_code: Some(1),
                 exit_detail: None,
                 launch: None,
+                startup_input_pending: false,
             }],
         )
         .expect("reconcile terminal exit");
@@ -254,6 +378,7 @@ mod tests {
                 exit_code: Some(1),
                 exit_detail: None,
                 launch: None,
+                startup_input_pending: false,
             }],
         )
         .expect("reconcile stale exit");

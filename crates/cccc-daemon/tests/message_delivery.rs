@@ -3204,3 +3204,5 @@ fn scope_identity_keeps_existing_git_rewrite_attachment_addressable() {
         result.error
     );
 }
+
+cccc_daemon::session_owner_test_entry!();

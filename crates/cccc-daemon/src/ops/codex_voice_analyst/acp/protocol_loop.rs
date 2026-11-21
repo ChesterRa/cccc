@@ -7,13 +7,15 @@ use super::interactions;
 use super::pending::PendingKind;
 use super::permissions::{pending_request, permission_response};
 use super::{
-    AcpCommand, AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD, PermissionPolicy, PromptCompletion,
+    AcpCommand, AnalystEvent, MANAGED_AGENT_DISCONNECTED_METHOD, PermissionPolicy, PrivateValues,
+    PromptCompletion, TurnEnd,
 };
 use crate::ops::codex_voice_analyst::{MANAGED_AGENT_DELEGATION_ATTACHED_METHOD, native_input};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::process::ChildStdin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc};
@@ -24,11 +26,24 @@ const MAX_PENDING_NOTIFICATIONS: usize = 512;
 const POST_RESPONSE_QUIESCENCE: Duration = Duration::from_millis(150);
 const POST_RESPONSE_MAX_DRAIN: Duration = Duration::from_secs(2);
 
+pub(super) type SharedPromptReceipt =
+    Arc<Mutex<Option<crate::ops::runtime_session::native_acp::PromptReceipt>>>;
+
 struct DeferredSettlement {
     turn_id: String,
     status: &'static str,
     error: Option<String>,
     hard_deadline: Instant,
+}
+
+/// Clears the published open prompt however the loop ends, also when its task
+/// is aborted while blocked on a write and never reaches its own clean-up.
+struct OpenPromptGuard(Arc<AtomicBool>);
+
+impl Drop for OpenPromptGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -42,8 +57,12 @@ pub(super) async fn run(
     permission_policy: PermissionPolicy,
     prompt_completion: PromptCompletion,
     permissions: Arc<Mutex<std::collections::BTreeMap<String, Value>>>,
-    private_values: Vec<String>,
+    prompt_receipt: SharedPromptReceipt,
+    private_values: PrivateValues,
+    open_prompt: Arc<AtomicBool>,
 ) {
+    let _open_prompt_cleared = OpenPromptGuard(Arc::clone(&open_prompt));
+    let diagnostic_values = private_values.diagnostics();
     let mut next_id = 1_u64;
     let mut pending: HashMap<u64, PendingKind> = HashMap::new();
     let mut session_id = String::new();
@@ -53,12 +72,25 @@ pub(super) async fn run(
     // Cancellation can reach this serial command loop just before its pending
     // prompt. Retire exactly that input without sending it to the provider.
     let mut cancelled_pending_input: Option<String> = None;
+    // Set by stop's cancel; no prompt reaches the provider afterwards.
+    let mut admission_closed = false;
+    // The latest prompt of this client that answered with an explicit
+    // stopReason. Only that proves the provider ended it.
+    let mut stopped_turn: Option<String> = None;
     let mut tool_calls = HashMap::<String, ToolCall>::new();
     let mut native_inputs = VecDeque::new();
     let settle_timer = tokio::time::sleep(Duration::from_secs(24 * 60 * 60));
     tokio::pin!(settle_timer);
     let mut deferred_settlement: Option<DeferredSettlement> = None;
     let terminal_error = loop {
+        // Published before each wait: a prompt of this client counts from the
+        // completed write that made it active until it ends. A reader learns
+        // whether a cancel had a target when it read; the cancel itself acts on
+        // the turn current when this loop handles it.
+        open_prompt.store(
+            active.as_ref().is_some_and(|turn| !turn.external),
+            Ordering::Release,
+        );
         if active.is_none()
             && let Err(error) = expire_permissions(&stdin, &permissions, false).await
         {
@@ -113,6 +145,13 @@ pub(super) async fn run(
                     }
                 }
                 Some(AcpCommand::Prompt(request)) => {
+                    if admission_closed {
+                        let _ = request.response.send(Err(io::Error::new(
+                            io::ErrorKind::Interrupted,
+                            "managed Agent is stopping; the input was not sent",
+                        )));
+                        continue;
+                    }
                     if request.session_id != session_id || session_id.is_empty() {
                         let _ = request.response.send(Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -132,6 +171,17 @@ pub(super) async fn run(
                             io::ErrorKind::WouldBlock,
                             "managed Agent already has an active turn",
                         )));
+                        continue;
+                    }
+                    // Only a prompt about to be written marks its session as attempted.
+                    let attempted = prompt_receipt
+                        .lock()
+                        .map_err(|_| io::Error::other("ACP prompt receipt lock failed"))
+                        .and_then(|receipt| {
+                            receipt.as_ref().map_or(Ok(()), |receipt| receipt.mark_attempted())
+                        });
+                    if let Err(error) = attempted {
+                        let _ = request.response.send(Err(error));
                         continue;
                     }
                     let id = next_id;
@@ -171,39 +221,53 @@ pub(super) async fn run(
                         }
                     }
                 }
-                Some(AcpCommand::Cancel { session_id: requested, delegation_id, response }) => {
+                Some(AcpCommand::Cancel { session_id: requested, delegation_id, close_admission, response }) => {
+                    // A cancel that finds nothing, or names another session or input,
+                    // is answered and leaves the session usable. Only a failed write
+                    // to the provider ends this loop.
                     let active_turn_id = active.as_ref().map(|turn| turn.turn_id.clone());
-                    let result = if requested != session_id || session_id.is_empty() {
-                        Err(io::Error::new(io::ErrorKind::InvalidInput, "ACP cancel targets a different session"))
-                    } else if active.is_none() && delegation_id.is_some() {
-                        cancelled_pending_input = delegation_id;
-                        Ok(None)
-                    } else if active.is_none() {
-                        Err(io::Error::new(io::ErrorKind::NotFound, "managed Agent has no active turn"))
-                    } else if delegation_id.as_ref().is_some_and(|expected| {
+                    if requested != session_id || session_id.is_empty() {
+                        let _ = response.send(Err(io::Error::new(io::ErrorKind::InvalidInput, "ACP cancel targets a different session")));
+                        continue;
+                    }
+                    // Commands are served in order: a prompt queued before this
+                    // stop is the turn cancelled below; one queued after is refused.
+                    admission_closed |= close_admission;
+                    if active.is_none() {
+                        if delegation_id.is_some() {
+                            cancelled_pending_input = delegation_id;
+                        }
+                        let _ = response.send(Ok(None));
+                        continue;
+                    }
+                    // A turn typed in the provider's own terminal is not this
+                    // client's to cancel (Hermes cancels only its own prompts).
+                    if close_admission && active.as_ref().is_some_and(|turn| turn.external) {
+                        let _ = response.send(Ok(None));
+                        continue;
+                    }
+                    if delegation_id.as_ref().is_some_and(|expected| {
                         !pending.values().any(|kind| matches!(kind,
                             PendingKind::Prompt { turn_id, delegation_id, .. }
                             if Some(turn_id) == active_turn_id.as_ref() && delegation_id == expected))
                     }) {
-                        Err(io::Error::new(io::ErrorKind::InvalidInput, "ACP cancel targets a different pending input"))
-                    } else {
-                        if let Err(error) = expire_permissions(&stdin,&permissions,true).await {
-                            let _ = response.send(Err(error));
-                            break "ACP pending approvals could not be cancelled".into();
-                        }
-                        write_message(&stdin, json!({
-                            "jsonrpc":"2.0", "method":"session/cancel",
-                            "params":{"sessionId":session_id},
-                        })).await.map(|()| active_turn_id.clone())
-                    };
-                    if let Ok(Some(turn_id)) = &result {
-                        cancelling_turn_id = Some(turn_id.clone());
+                        let _ = response.send(Err(io::Error::new(io::ErrorKind::InvalidInput, "ACP cancel targets a different pending input")));
+                        continue;
                     }
-                    let failed = result.as_ref().err().map(ToString::to_string);
-                    let _ = response.send(result);
-                    if let Some(detail) = failed {
+                    if let Err(error) = expire_permissions(&stdin,&permissions,true).await {
+                        let _ = response.send(Err(error));
+                        break "ACP pending approvals could not be cancelled".into();
+                    }
+                    if let Err(error) = write_message(&stdin, json!({
+                        "jsonrpc":"2.0", "method":"session/cancel",
+                        "params":{"sessionId":session_id},
+                    })).await {
+                        let detail = error.to_string();
+                        let _ = response.send(Err(error));
                         break detail;
                     }
+                    cancelling_turn_id = active_turn_id.clone();
+                    let _ = response.send(Ok(active_turn_id));
                 }
                 Some(AcpCommand::Respond { id, result }) => {
                     if let Err(error) = write_message(&stdin, json!({"jsonrpc":"2.0","id":id,"result":result})).await {
@@ -288,7 +352,7 @@ pub(super) async fn run(
                         continue;
                     }
                     let message = json!({"method":"session/update", "params":{"sessionId":session_id, "update":update}});
-                    handle_notification("session/update", &message, &events, &generation, &session_id, &mut active, &mut tool_calls);
+                    handle_notification("session/update", &message, &events, &generation, &session_id, &mut active, &mut tool_calls, diagnostic_values);
                 }
                 Some(AcpCommand::ObservedUserText { session_id: observed, text, consumed, response }) => {
                     let result = if observed != session_id || session_id.is_empty() {
@@ -324,6 +388,7 @@ pub(super) async fn run(
                                 &session_id,
                                 &mut active,
                                 &mut tool_calls,
+                                diagnostic_values,
                             );
                         }
                         if !controlled_echo && consumed {
@@ -354,6 +419,16 @@ pub(super) async fn run(
                     let _ = response.send(());
                 }
                 Some(AcpCommand::ExternalDisconnected { reason }) => break reason,
+                Some(AcpCommand::TurnEnd { turn_id, response }) => {
+                    let end = if stopped_turn.as_deref() == Some(turn_id.as_str()) {
+                        TurnEnd::Stopped
+                    } else if active.as_ref().is_some_and(|turn| turn.turn_id == turn_id) {
+                        TurnEnd::Open
+                    } else {
+                        TurnEnd::Unknown
+                    };
+                    let _ = response.send(end);
+                }
                 Some(AcpCommand::Close) | None => break "managed ACP client closed".to_owned(),
             },
             frame = frames.recv() => {
@@ -459,6 +534,7 @@ pub(super) async fn run(
                                 &session_id,
                                 &mut active,
                                 &mut tool_calls,
+                                diagnostic_values,
                             );
                         }
                         if !controlled_echo {
@@ -485,6 +561,7 @@ pub(super) async fn run(
                             &session_id,
                             &mut active,
                             &mut tool_calls,
+                            diagnostic_values,
                         );
                         if active.is_none() {
                             deferred_settlement = None;
@@ -579,12 +656,17 @@ pub(super) async fn run(
                                 let _ = response
                                     .expect("guarded pending ACP response")
                                     .send(Err(error));
-                                if cancelled && runtime == "hermes" {
-                                    break "Hermes cancelled session was retired to prevent replaying its interrupted input; the saved conversation is retained".to_owned();
-                                }
                                 continue;
                             }
                             outcome => {
+                                if outcome.as_ref().is_ok_and(|result| {
+                                    result
+                                        .get("stopReason")
+                                        .and_then(Value::as_str)
+                                        .is_some_and(|reason| !reason.trim().is_empty())
+                                }) {
+                                    stopped_turn = Some(turn_id.clone());
+                                }
                                 if let Some(response) = response {
                                     mark_admitted(&mut active, &turn_id);
                                     publish_started(
@@ -601,20 +683,28 @@ pub(super) async fn run(
                                         &session_id,
                                         &mut active,
                                         &mut tool_calls,
+                                        diagnostic_values,
                                     );
                                     let _ = response.send(Ok(turn_id.clone()));
                                 }
                                 let cancellation_requested =
                                     cancelling_turn_id.as_deref() == Some(turn_id.as_str());
-                                let (status, error) = if cancellation_requested {
-                                    ("cancelled", None)
-                                } else {
-                                    match outcome {
-                                        Ok(result) => status_from_stop_reason(
-                                            result.get("stopReason").and_then(Value::as_str),
-                                        ),
-                                        Err(error) => ("failed", Some(error.to_string())),
-                                    }
+                                // Some agents answer a cancel with end_turn, and a turn
+                                // can end while the cancel is in flight, so a requested
+                                // cancel keeps a completed answer as cancelled. An error,
+                                // another stop reason or none at all is what the provider
+                                // reported, not a confirmed cancel.
+                                let (status, error) = match outcome {
+                                    Ok(result) => match status_from_stop_reason(
+                                        result.get("stopReason").and_then(Value::as_str),
+                                        diagnostic_values,
+                                    ) {
+                                        ("completed", _) if cancellation_requested => {
+                                            ("cancelled", None)
+                                        }
+                                        settled => settled,
+                                    },
+                                    Err(error) => ("failed", Some(error.to_string())),
                                 };
                                 if prompt_completion != PromptCompletion::BoundedPostResponseDrain {
                                     settle_turn(
@@ -628,13 +718,6 @@ pub(super) async fn run(
                                     );
                                     if cancellation_requested {
                                         cancelling_turn_id = None;
-                                    }
-                                    if runtime == "hermes" && status == "cancelled" {
-                                        // Hermes keeps the interrupted input in process memory
-                                        // and prepends it to the next prompt, even after load.
-                                        // Retire this process through its existing owner;
-                                        // restart can load the retained durable identity.
-                                        break "Hermes cancelled session was retired to prevent replaying its interrupted input; the saved conversation is retained".to_owned();
                                     }
                                 } else {
                                     if active.as_ref().is_none_or(|turn| turn.turn_id != turn_id) {
@@ -658,6 +741,7 @@ pub(super) async fn run(
             }
         }
     };
+    open_prompt.store(false, Ordering::Release);
     if let Ok(mut items) = permissions.lock() {
         items.clear();
     }
@@ -739,6 +823,7 @@ fn flush_buffered_notifications(
     session_id: &str,
     active: &mut Option<ActiveTurn>,
     tool_calls: &mut HashMap<String, ToolCall>,
+    private_values: &[String],
 ) {
     let buffered = pending.values_mut().find_map(|kind| match kind {
         PendingKind::Prompt {
@@ -753,7 +838,15 @@ fn flush_buffered_notifications(
         _ => None,
     });
     if let Some(buffered) = buffered {
-        flush_notifications(buffered, events, generation, session_id, active, tool_calls);
+        flush_notifications(
+            buffered,
+            events,
+            generation,
+            session_id,
+            active,
+            tool_calls,
+            private_values,
+        );
     }
 }
 
@@ -764,13 +857,21 @@ fn flush_notifications(
     session_id: &str,
     active: &mut Option<ActiveTurn>,
     tool_calls: &mut HashMap<String, ToolCall>,
+    private_values: &[String],
 ) {
     for message in notifications {
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             continue;
         };
         handle_notification(
-            method, &message, events, generation, session_id, active, tool_calls,
+            method,
+            &message,
+            events,
+            generation,
+            session_id,
+            active,
+            tool_calls,
+            private_values,
         );
     }
 }
@@ -1027,8 +1128,7 @@ fn clear_unadmitted_turn(active: &mut Option<ActiveTurn>, turn_id: &str) {
     }
 }
 
-fn prompt_admission_error(error: io::Error) -> io::Error {
-    let message = error.to_string();
+fn prompt_admission_kind(message: &str) -> io::ErrorKind {
     let normalized = message.to_ascii_lowercase();
     let provider_busy = [
         "busy",
@@ -1040,28 +1140,37 @@ fn prompt_admission_error(error: io::Error) -> io::Error {
     ]
     .iter()
     .any(|marker| normalized.contains(marker));
-    io::Error::new(
-        if provider_busy {
-            io::ErrorKind::WouldBlock
-        } else {
-            error.kind()
-        },
-        message,
-    )
+    if provider_busy {
+        io::ErrorKind::WouldBlock
+    } else {
+        io::ErrorKind::Other
+    }
 }
 
-fn rpc_error(runtime: &str, method: &str, error: &Value, private_values: &[String]) -> io::Error {
-    let message = super::diagnostic::sanitize(
-        error
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("Provider returned an error"),
-        private_values,
-    );
-    // Only the provider's original message establishes an explicit busy rejection.
-    // An explanatory details field cannot turn a failed prompt into deferred work.
+fn rpc_error(
+    runtime: &str,
+    method: &str,
+    error: &Value,
+    private_values: &PrivateValues,
+) -> io::Error {
+    let reported_message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Provider returned an error");
+    let diagnostic_values = private_values.diagnostics();
+    let message = super::diagnostic::sanitize(reported_message, diagnostic_values);
+    // Only error.message supplies evidence of a busy rejection. Use the
+    // admission policy selected by the adapter, regardless of the diagnostic.
     let kind = if method == "session/prompt" {
-        prompt_admission_error(io::Error::other(message.clone())).kind()
+        match private_values {
+            PrivateValues::DiagnosticsOnly(_) => {
+                prompt_admission_kind(&super::diagnostic::sanitize(reported_message, &[]))
+            }
+            PrivateValues::DiagnosticsAndAdmission(_) => prompt_admission_kind(&message),
+            PrivateValues::SeparateAdmission { admission, .. } => {
+                prompt_admission_kind(&super::diagnostic::sanitize(reported_message, admission))
+            }
+        }
     } else {
         io::ErrorKind::Other
     };
@@ -1072,7 +1181,7 @@ fn rpc_error(runtime: &str, method: &str, error: &Value, private_values: &[Strin
     let details = (runtime == "hermes")
         .then(|| error.pointer("/data/details").and_then(Value::as_str))
         .flatten()
-        .map(|value| super::diagnostic::sanitize(value, private_values))
+        .map(|value| super::diagnostic::sanitize(value, diagnostic_values))
         .filter(|value| !value.is_empty() && value != &message);
     let diagnostic = if let Some(details) = details {
         format!("{prefix}: {message}; {details}")
@@ -1091,8 +1200,8 @@ fn rpc_error(runtime: &str, method: &str, error: &Value, private_values: &[Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_PENDING_NOTIFICATION_BYTES, admit_matching_native_input, admit_matching_prompt,
-        buffer_unadmitted_notification, prompt_admission_error, rpc_error,
+        MAX_PENDING_NOTIFICATION_BYTES, PrivateValues, admit_matching_native_input,
+        admit_matching_prompt, buffer_unadmitted_notification, rpc_error,
     };
     use crate::ops::codex_voice_analyst::acp::events::ActiveTurn;
     use crate::ops::codex_voice_analyst::acp::pending::PendingKind;
@@ -1103,15 +1212,98 @@ mod tests {
 
     #[test]
     fn provider_busy_before_admission_is_retryable() {
-        let error = prompt_admission_error(io::Error::other(
-            r#"ACP request failed: {"code":-32603,"message":"session is busy"}"#,
-        ));
+        let private_values = PrivateValues::DiagnosticsAndAdmission(Vec::new());
+        let error = rpc_error(
+            "hermes",
+            "session/prompt",
+            &json!({"code":-32603,"message":"session is busy"}),
+            &private_values,
+        );
         assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
 
-        let error = prompt_admission_error(io::Error::other(
-            r#"ACP request failed: {"code":-32603,"message":"provider failed"}"#,
-        ));
+        let error = rpc_error(
+            "hermes",
+            "session/prompt",
+            &json!({"code":-32603,"message":"provider failed"}),
+            &private_values,
+        );
         assert_eq!(error.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    fn diagnostic_only_private_values_preserve_prompt_admission() {
+        let message = json!({"code":-32603,"message":"session is busy"});
+        for (private, diagnostic) in [
+            ("y", "session is bus[redacted]"),
+            ("busy", "session is [redacted]"),
+        ] {
+            let error = rpc_error(
+                "antigravity",
+                "session/prompt",
+                &message,
+                &PrivateValues::DiagnosticsOnly(vec![private.into()]),
+            );
+            assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+            assert!(error.to_string().ends_with(diagnostic));
+        }
+
+        let error = rpc_error(
+            "hermes",
+            "session/prompt",
+            &message,
+            &PrivateValues::DiagnosticsAndAdmission(vec!["y".into()]),
+        );
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert!(error.to_string().ends_with("session is bus[redacted]"));
+    }
+
+    #[test]
+    fn diagnostic_only_private_values_still_filter_credential_shapes_for_admission() {
+        let error = rpc_error(
+            "grok",
+            "session/prompt",
+            &json!({"code":-32603,"message":"Internal error: token=private-busy-value"}),
+            &PrivateValues::DiagnosticsOnly(vec!["y".into()]),
+        );
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert!(error.to_string().ends_with("Internal error: [redacted]"));
+    }
+
+    #[test]
+    fn managed_native_diagnostics_keep_the_original_prompt_admission() {
+        let admission = vec![
+            "y".into(),
+            "progress_store".into(),
+            "fixture-secret-value".into(),
+        ];
+        let baseline = PrivateValues::DiagnosticsAndAdmission(admission.clone());
+        let managed = PrivateValues::SeparateAdmission {
+            diagnostics: vec!["fixture-secret-value".into()],
+            admission,
+        };
+        for (reported, kind, visible) in [
+            ("active turn", io::ErrorKind::WouldBlock, "active turn"),
+            ("session is busy", io::ErrorKind::Other, "session is busy"),
+            (
+                "Internal error in progress_store: fixture-secret-value",
+                io::ErrorKind::Other,
+                "Internal error in progress_store: [redacted]",
+            ),
+            (
+                "Internal error: token=private-busy-value",
+                io::ErrorKind::Other,
+                "Internal error: [redacted]",
+            ),
+        ] {
+            let response = json!({"code":-32603,"message":reported});
+            assert_eq!(
+                rpc_error("hermes", "session/prompt", &response, &baseline).kind(),
+                kind
+            );
+            let error = rpc_error("hermes", "session/prompt", &response, &managed);
+            assert_eq!(error.kind(), kind);
+            assert!(error.to_string().ends_with(visible));
+        }
     }
 
     #[test]
@@ -1120,18 +1312,11 @@ mod tests {
             "hermes",
             "session/prompt",
             &json!({"code":-32603,"message":"Internal error: private-busy-value","data":{"details":"Refresh request denied because its service is busy"}}),
-            &["private-busy-value".into()],
+            &PrivateValues::DiagnosticsAndAdmission(vec!["private-busy-value".into()]),
         );
         assert_eq!(error.kind(), io::ErrorKind::Other);
         assert!(error.to_string().contains("service is busy"));
         assert!(!error.to_string().contains("private-busy-value"));
-        let busy = rpc_error(
-            "hermes",
-            "session/prompt",
-            &json!({"code":-32603,"message":"session is busy"}),
-            &[],
-        );
-        assert_eq!(busy.kind(), io::ErrorKind::WouldBlock);
     }
 
     #[test]
@@ -1454,6 +1639,7 @@ mod tests {
             "session-1",
             &mut active,
             &mut HashMap::new(),
+            &[],
         );
         let result = receiver.try_recv().expect("the following result must flow");
         assert_eq!(result.message["params"]["turnId"], turn_id);

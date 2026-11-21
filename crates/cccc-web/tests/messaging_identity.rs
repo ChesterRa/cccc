@@ -190,3 +190,5 @@ async fn group_scoped_web_messages_derive_the_user_and_limit_chet_admission() {
         .await;
     daemon.await.expect("daemon task").expect("daemon");
 }
+
+cccc_daemon::session_owner_test_entry!();

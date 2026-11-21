@@ -207,3 +207,5 @@ fn ok(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
     assert!(response.ok, "{op}: {:?}", response.error);
     response
 }
+
+cccc_daemon::session_owner_test_entry!();

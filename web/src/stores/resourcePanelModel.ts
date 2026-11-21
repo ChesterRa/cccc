@@ -1,4 +1,5 @@
 import type { PresentationMessageRef } from "../types";
+import type { DocumentPreviewKind } from "../utils/messageAttachments";
 
 /** Where the panel sits: over the messages, or in the right-hand column. */
 export type ResourceDock = "left" | "right";
@@ -26,7 +27,7 @@ export type AttachmentResource = {
   localPreviewUrl?: string;
   sender?: string;
   sentAt?: string;
-  media: "image" | "video" | "markdown" | "text" | "pdf";
+  media: "image" | "video" | DocumentPreviewKind;
   isSvg: boolean;
 };
 

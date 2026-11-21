@@ -96,6 +96,7 @@
   "statusIdle": "待機中",
   "statusOffline": "オフライン",
   "statusStopped": "停止済み",
+  "statusUnknown": "状態不明",
   "switchToTheme": "{{theme}} テーマに切り替え",
   "switchToLanguage": "{{language}} に切り替え",
   "currentLanguage": "現在の言語： {{language}}",

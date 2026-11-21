@@ -27,10 +27,8 @@ import { getDelegationDisplayText, isDelegationSourceOutbound } from "./messageB
 import { MessageActions } from "./messageBubble/MessageActions";
 import { MessagePathContext, messagePathTarget } from "./messageBubble/messagePathContext";
 import {
-  QUICK_REPLY_EMOJI,
-  QUICK_REPLY_KINDS,
   sendQuickReply,
-  type QuickReplyKind,
+  type QuickReplySource,
   type QuickReplyTarget,
 } from "./messageBubble/quickReplies";
 import { MessageFooter } from "./messageBubble/MessageBubbleChrome";
@@ -53,7 +51,13 @@ import { MessageRoutingMetadata } from "./messageBubble/MessageRoutingMetadata";
 import { PendingReplySlot } from "./messageBubble/PendingReplySlot";
 import { PendingReplyStoreContext } from "../features/pendingReplies/store";
 import { useMessagePinned } from "../features/pins/pinStore";
+import {
+  loadQuickReplyTemplates,
+  useQuickReplyTemplateStore,
+} from "../features/quickReplies/templateStore";
+import { effectiveReplyTemplates } from "../features/quickReplies/effective";
 import { PinIcon } from "./Icons";
+import { messageBlobAttachments } from "./messageBubble/attachmentPreviewItems";
 import { useGroupStore, useUIStore } from "../stores";
 import { CHET_NAME, CHET_PRINCIPAL, chetGeneration, isChetMessage } from "../utils/chetIdentity";
 import {
@@ -275,23 +279,7 @@ export const MessageBubble = memo(
       scopeKey: String(ev.scope_key || ""),
       foreign: !!srcGroupId || isRemoteSource,
     });
-    const blobAttachments = rawAttachments.flatMap((a, sourceIndex) => {
-      if (a == null || typeof a !== "object") return [];
-      const attachment = {
-        kind: String(a.kind || "file"),
-        path: String(a.path || ""),
-        title: String(a.title || ""),
-        bytes: Number(a.bytes || 0),
-        mime_type: String(a.mime_type || ""),
-        local_preview_url: "local_preview_url" in a ? String(a.local_preview_url || "") : "",
-        // Use the original message position even after unsupported entries are filtered out.
-        sourceIndex,
-      };
-      return attachment.path.startsWith("state/blobs/") ||
-        attachment.local_preview_url.startsWith("blob:")
-        ? [attachment]
-        : [];
-    });
+    const blobAttachments = messageBlobAttachments(rawAttachments);
     const displayMessageText = useMemo(() => {
       if (isRedundantWecomImagePlaceholder(messageText, blobAttachments, sourcePlatform)) {
         return "";
@@ -552,11 +540,29 @@ export const MessageBubble = memo(
       };
     }, [actors, ev, groupGeneration, groupId, isStreaming, msgData, senderActor, srcGroupId]);
     const showNotice = useUIStore((state) => state.showNotice);
+    const replyEntries = useQuickReplyTemplateStore((state) => state.replies);
+    const replyTemplatesLoaded = useQuickReplyTemplateStore((state) => state.loaded);
+    const replyTemplatesError = useQuickReplyTemplateStore((state) => state.loadError);
+    const onQuickReplyOpen = () => {
+      // Like the composer list, opening rereads saved changes; rendering a row never reads.
+      // A successful cache stays usable while the request is pending or if it fails.
+      if (quickReplyTarget) void loadQuickReplyTemplates();
+    };
     const quickReplies = useMemo(() => {
       if (!quickReplyTarget) return undefined;
-      const send = async (kind: QuickReplyKind) => {
-        const label = t(`quickReply.${kind}`);
-        const result = await sendQuickReply(quickReplyTarget, kind, t(`quickReply.${kind}Text`));
+      if (!replyTemplatesLoaded) {
+        return [
+          {
+            key: "quick-unavailable",
+            label: replyTemplatesError ? t("replyTemplates.unavailable") : t("common:loading"),
+            disabled: true,
+            run: (): void => undefined,
+          },
+        ];
+      }
+      // The text is fixed when the entry is clicked, so a retry sends what was first sent.
+      const send = async (kind: QuickReplySource, label: string, text: string) => {
+        const result = await sendQuickReply(quickReplyTarget, kind, text);
         if (result.status === "sent") {
           showNotice({ message: t("quickReply.sent", { name: senderDisplayName, label }) });
         } else if (result.status === "failed") {
@@ -567,17 +573,25 @@ export const MessageBubble = memo(
               ? t("quickReply.unknown")
               : t("quickReply.failed", { error: result.message }),
             actionLabel: t("quickReply.retry"),
-            onAction: () => void send(kind),
+            onAction: () => void send(kind, label, text),
           });
         }
       };
-      return QUICK_REPLY_KINDS.map((kind) => ({
-        key: `quick-${kind}`,
-        label: t(`quickReply.${kind}`),
-        emoji: QUICK_REPLY_EMOJI[kind],
-        run: () => void send(kind),
+      return effectiveReplyTemplates(t, replyEntries).map((template) => ({
+        key: `quick-${template.source}`,
+        label: template.name,
+        emoji: template.emoji,
+        run: () => void send(template.source, template.name, template.text),
       }));
-    }, [quickReplyTarget, senderDisplayName, showNotice, t]);
+    }, [
+      quickReplyTarget,
+      replyEntries,
+      replyTemplatesLoaded,
+      replyTemplatesError,
+      senderDisplayName,
+      showNotice,
+      t,
+    ]);
 
     const routingMetadata = (
       <MessageRoutingMetadata
@@ -695,6 +709,7 @@ export const MessageBubble = memo(
       eventId: typeof ev.id === "string" ? String(ev.id) : undefined,
       event: ev,
       quickReplies,
+      onQuickReplyOpen,
       pinned,
       onTogglePin: pinnableId && onTogglePin ? () => onTogglePin(pinnableId, !pinned) : undefined,
     };

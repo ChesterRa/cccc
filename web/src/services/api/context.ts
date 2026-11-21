@@ -3,6 +3,7 @@ import type {
   BacklogSource,
   AutomationRunResult,
   CapabilityBlockEntry,
+  CapabilityDomain,
   CapabilityImportRecord,
   CapabilityOverviewItem,
   CapabilitySourceState,
@@ -339,8 +340,11 @@ export async function fetchCapabilityOverview(opts?: {
   policy?: "all" | "actionable" | "blocked" | "indexed";
   sourceId?: string;
   groupId?: string;
+  /** The language the daemon localizes release recommendations into. */
+  locale?: string;
 }) {
   const params = new URLSearchParams();
+  if (String(opts?.locale || "").trim()) params.set("locale", String(opts?.locale || "").trim());
   if (String(opts?.query || "").trim()) params.set("query", String(opts?.query || "").trim());
   if (typeof opts?.limit === "number" && Number.isFinite(opts.limit)) {
     params.set("limit", String(Math.max(1, Math.trunc(opts.limit))));
@@ -373,9 +377,13 @@ export async function fetchCapabilityOverview(opts?: {
     has_more: boolean;
     query?: string;
     kind_counts?: { skill?: number; mcp?: number; pack?: number };
+    /** Matches of the query enabled for the user in the Group, across every page. */
+    enabled_count?: number;
     sources?: Record<string, CapabilitySourceState>;
     blocked_capabilities?: CapabilityBlockEntry[];
     allowlist_revision?: string;
+    /** The release's recommendation areas, in its order and in the requested language. */
+    domains?: CapabilityDomain[];
   }>(`/api/v1/capabilities/overview${suffix}`);
 }
 
@@ -394,11 +402,13 @@ export async function fetchCapabilityAllowlist() {
   }>(`/api/v1/capabilities/allowlist?by=user`);
 }
 
-export async function blockCapabilityGlobal(
+/** Blocks everywhere by default; a block an agent set for one Group is lifted with scope "group". */
+export async function setCapabilityBlocked(
   capabilityId: string,
   blocked: boolean,
   reason: string = "",
   groupId?: string,
+  scope: "global" | "group" = "global",
 ) {
   const body: Record<string, unknown> = {
     by: "user",
@@ -406,7 +416,7 @@ export async function blockCapabilityGlobal(
     capability_id: capabilityId,
     blocked,
     reason,
-    scope: "global",
+    scope,
   };
   if (String(groupId || "").trim()) body.group_id = String(groupId || "").trim();
   clearCapabilityStateRequests(groupId);
@@ -414,6 +424,33 @@ export async function blockCapabilityGlobal(
     return await apiJson<Record<string, unknown>>(`/api/v1/capabilities/block`, {
       method: "POST",
       body: JSON.stringify(body),
+    });
+  } finally {
+    clearCapabilityStateRequests(groupId);
+  }
+}
+
+/** Replaces the one global installation of an MCP; the fingerprint is the one the user reviewed. */
+export async function updateCapabilityInstallation(
+  capabilityId: string,
+  expectedRecipeFingerprint: string,
+  groupId?: string,
+) {
+  clearCapabilityStateRequests(groupId);
+  try {
+    return await apiJson<{
+      capability_id: string;
+      updated: boolean;
+      state: string;
+      enabled_group_count?: number;
+      refresh_required?: boolean;
+    }>(`/api/v1/capabilities/update`, {
+      method: "POST",
+      body: JSON.stringify({
+        by: "user",
+        capability_id: capabilityId,
+        expected_recipe_fingerprint: expectedRecipeFingerprint,
+      }),
     });
   } finally {
     clearCapabilityStateRequests(groupId);
@@ -536,7 +573,7 @@ export async function useGroupCapability(
     reason: args.reason || "",
   };
   if (String(args.toolName || "").trim()) body.tool_name = String(args.toolName || "").trim();
-  if (args.toolArguments) body.tool_arguments = args.toolArguments;
+  if (args.toolArguments) body.arguments = args.toolArguments;
   clearCapabilityStateRequests(groupId);
   try {
     return await apiJson<Record<string, unknown>>(

@@ -158,7 +158,7 @@ pub(super) async fn handle(state: &AppState, connector: &Value, request: &Value)
             capabilities["events"] = json!({});
         }
         return Some(
-            json!({"jsonrpc":"2.0","id":request["id"],"result":{"supportedVersions":[protocol::VERSION],"capabilities":capabilities}}),
+            json!({"jsonrpc":"2.0","id":request["id"],"result":{"supportedVersions":[protocol::VERSION],"capabilities":capabilities,"instructions":cccc_mcp::CAPABILITY_INSTRUCTIONS}}),
         );
     }
     if !method.starts_with("events/") {

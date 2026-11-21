@@ -16,6 +16,39 @@ export function getMentionMenuLeft({
   return Math.round(Math.min(Math.max(preferredLeft, MENU_GUTTER), maxLeft));
 }
 
+/**
+ * Where a composer list opens when it is not typed into the text, such as the quick
+ * reply list: above the input, like the mention menu. A wide (phone) list spans the
+ * input with the menu gutters; otherwise it starts where the mention menu would for
+ * the insertion point.
+ */
+export function getComposerMenuAnchorRect({
+  textarea,
+  wide,
+  menuWidth,
+}: {
+  textarea: HTMLTextAreaElement;
+  wide: boolean;
+  menuWidth: number;
+}): DOMRect {
+  const box = (textarea.closest("[data-composer-input]") ?? textarea).getBoundingClientRect();
+  if (wide) {
+    return new DOMRect(
+      box.left + MENU_GUTTER,
+      box.top,
+      Math.max(0, box.width - MENU_GUTTER * 2),
+      0,
+    );
+  }
+  const caret = textarea.selectionStart ?? textarea.value.length;
+  const left = getMentionMenuLeft({
+    triggerX: getMentionTriggerX(textarea, textarea.value.slice(0, caret)),
+    containerWidth: textarea.clientWidth,
+    menuWidth,
+  });
+  return new DOMRect(box.left + left, box.top, 0, 0);
+}
+
 export function getMentionTriggerX(textarea: HTMLTextAreaElement, text: string): number {
   const style = window.getComputedStyle(textarea);
   const font = [

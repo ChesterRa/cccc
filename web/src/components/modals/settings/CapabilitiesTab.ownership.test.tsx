@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { Actor, CapabilityOverviewItem } from "../../../types";
 import { CAPABILITY_CHANGED_EVENT } from "../../../utils/capabilityEvents";
 import { useSlashCommandState } from "../../../hooks/useSlashCommandState";
+import { useModalStore } from "../../../stores/useModalStore";
 
 const api = vi.hoisted(() => ({
   fetchCapabilityOverview: vi.fn(),
@@ -106,6 +107,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  useModalStore.setState({ capabilityCenterGroupId: null });
 });
 
 it.each(["save", "block", "unblock"] as const)(
@@ -208,6 +210,29 @@ it("preserves a successful block when assignment save is clicked before the bloc
   ]);
   expect(api.enableGroupCapability).not.toHaveBeenCalled();
   expect(button("capabilities.manageUnblockSkill")).toBeDefined();
+});
+
+it("edits and saves a self-proposed skill over 2400 characters exactly as stored", async () => {
+  const stored = `  ${[
+    "When to use: a procedure longer than the old editor limit.",
+    "Avoid when: a short note is enough.",
+    `Procedure: ${"Keep every step of the full procedure. ".repeat(70)}`,
+    "Pitfalls: do not trim or cut the saved text.",
+    "Verification: the saved text matches the draft exactly.",
+  ].join("\n")}\n`;
+  expect(stored.length).toBeGreaterThan(2400);
+  const record = { ...row, capsule_text: stored };
+  api.fetchCapabilityOverview.mockResolvedValue({ ok: true, result: { items: [record] } });
+  api.importCapability.mockResolvedValue({ ok: true, result: { record } });
+  await render();
+  await click("capabilities.selfProposedManage");
+  const textarea = () => document.querySelector<HTMLTextAreaElement>('[role="dialog"] textarea')!;
+  expect(textarea().value).toBe(stored);
+  expect(textarea().hasAttribute("maxlength")).toBe(false);
+  await click("capabilities.manageSave");
+  expect(api.importCapability).toHaveBeenCalledTimes(1);
+  expect(api.importCapability.mock.calls[0][1].capsule_text).toBe(stored);
+  expect(textarea().value).toBe(stored);
 });
 
 const managerWriteButtons = () =>
@@ -627,3 +652,21 @@ it("rolls back activation if startup persistence fails after the manager closes"
     }),
   );
 });
+
+it.each(["global", "selfEvolving"] as const)(
+  "opens the capability center for this Group over the %s page and reloads the page after it closes",
+  async (surface) => {
+    const open = vi.fn();
+    vi.stubGlobal("open", open);
+    await act(async () =>
+      root.render(<CapabilitiesTab isDark={false} isActive groupId="g1" surface={surface} />),
+    );
+    const loads = api.fetchCapabilityOverview.mock.calls.length;
+    await click("capabilities.openCenter");
+    expect(useModalStore.getState().capabilityCenterGroupId).toBe("g1");
+    expect(open).not.toHaveBeenCalled();
+    expect(api.fetchCapabilityOverview).toHaveBeenCalledTimes(loads);
+    await act(async () => useModalStore.getState().setCapabilityCenter(null));
+    expect(api.fetchCapabilityOverview).toHaveBeenCalledTimes(loads + 1);
+  },
+);

@@ -1,17 +1,9 @@
 import * as api from "../../services/api";
 import { newClientId } from "../../utils/clientId";
 
-/** The replies a person sends an agent most: go ahead, explain, rethink, or turn it into a choice. */
-export const QUICK_REPLY_KINDS = ["proceed", "why", "rethink", "choices"] as const;
-export type QuickReplyKind = (typeof QUICK_REPLY_KINDS)[number];
-
-/** Shown before each label so the replies read as quick responses; the label carries the meaning. */
-export const QUICK_REPLY_EMOJI: Record<QuickReplyKind, string> = {
-  proceed: "👍",
-  why: "🤔",
-  rethink: "🔄",
-  choices: "☑️",
-};
+import type { QuickReplySource } from "../../features/quickReplies/effective";
+export { QUICK_REPLY_KINDS, QUICK_REPLY_EMOJI } from "../../features/quickReplies/effective";
+export type { QuickReplyKind, QuickReplySource } from "../../features/quickReplies/effective";
 
 export type QuickReplyTarget = {
   groupId: string;
@@ -40,9 +32,11 @@ const UNKNOWN_RESULT_CODES = new Set([
   "daemon_unavailable",
 ]);
 
+/** Send `text` as a reply. A retry passes the same text it first sent, so it keeps the same
+ *  client ID even if the template or the interface language has changed since. */
 export async function sendQuickReply(
   target: QuickReplyTarget,
-  kind: QuickReplyKind,
+  kind: QuickReplySource,
   text: string,
 ): Promise<QuickReplyResult> {
   const key = [target.groupId, target.replyEventId, kind, text].join("\u0000");

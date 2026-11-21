@@ -200,3 +200,5 @@ async fn automation_permissions_follow_the_authenticated_actor() {
     );
     assert!(rule(&state, "lead-note").is_none());
 }
+
+cccc_daemon::session_owner_test_entry!();

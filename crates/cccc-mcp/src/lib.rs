@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::disallowed_methods))]
 mod actions;
 mod argument_normalization;
 mod backlog_projection;
@@ -13,6 +14,7 @@ mod local_sessions;
 mod local_tools;
 mod mapping;
 mod native_session;
+mod owned_registration;
 mod remote_native;
 mod repo;
 mod repo_inspect;
@@ -32,10 +34,14 @@ use cccc_client::DaemonClient;
 use cccc_core::{CORE_TOOL_NAMES, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::fmt;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 const SUPPORTED_LEGACY_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2024-11-05"];
 const DEFAULT_LEGACY_PROTOCOL_VERSION: &str = SUPPORTED_LEGACY_PROTOCOL_VERSIONS[0];
+
+/// General capability discovery guidance shared by MCP handshake transports.
+pub const CAPABILITY_INSTRUCTIONS: &str = "CCCC also offers optional skills and MCP servers for research with cited sources, current web facts, papers, reading office files, spreadsheets, data checks, contract redlines, public repository questions and code that must match a library's version. When a task would clearly gain from one, or your approach has a concrete gap, browse recommended ones or search by a word with cccc_capability_search; read an entry's limits before enabling it with cccc_capability_use. Keep your own tools when they are enough.";
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ToolCallError {
@@ -137,14 +143,20 @@ async fn run_stdio_loop(
     runtime: Option<&str>,
     host_pid: Option<u32>,
 ) -> Result<()> {
-    let client = DaemonClient::new(home.clone());
+    let client = DaemonClient::new(home.clone()).with_connect_wait(Duration::from_secs(30));
     let mut native = runtime
         .filter(|_| !cccc_core::local_sessions::cccc_owned_environment())
         .map(|runtime| native_session::Context::new(runtime, host_pid))
         .transpose()?;
-    let notice_runtime = runtime.filter(|_| native.is_some());
+    let notice_runtime = if cccc_core::local_sessions::cccc_owned_environment() {
+        Some("cccc_owned")
+    } else {
+        runtime.filter(|_| native.is_some())
+    };
     let mut notice = version_notice::VersionNotice::default();
     let mut codex_client = false;
+    let owned_binding = std::env::var_os(cccc_core::owned_mcp::BINDING_FILE_ENV);
+    let mut registration_attempted = owned_binding.is_none();
     let mut input = BufReader::new(tokio::io::stdin()).lines();
     let mut output = tokio::io::stdout();
     while let Some(line) = input.next_line().await? {
@@ -165,6 +177,14 @@ async fn run_stdio_loop(
         }
         if request.get("id").is_none() {
             continue;
+        }
+        if !registration_attempted {
+            if let Err(error) = owned_registration::register(home, owned_binding.as_deref()).await {
+                cccc_runtime::diagnostic(format_args!(
+                    "[cccc] tool-process observation unavailable: {error}"
+                ));
+            }
+            registration_attempted = true;
         }
         if request.get("method").and_then(Value::as_str) == Some("initialize") {
             codex_client = request
@@ -330,12 +350,18 @@ async fn handle(
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
     let result = match method {
-        "initialize" => json!({
-            "protocolVersion": negotiated_protocol_version(request),
-            "capabilities": {"tools": {"listChanged": false}},
-            "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
-            "_meta": {"cccc/build": cccc_core::build_info::current()},
-        }),
+        "initialize" => {
+            let mut result = json!({
+                "protocolVersion": negotiated_protocol_version(request),
+                "capabilities": {"tools": {"listChanged": false}},
+                "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
+                "_meta": {"cccc/build": cccc_core::build_info::current()},
+            });
+            if !secretary_task_mode() {
+                result["instructions"] = json!(CAPABILITY_INSTRUCTIONS);
+            }
+            result
+        }
         "ping" => json!({}),
         "tools/list" => {
             json!({"tools": visible_tools_with_context(home, client, context).await})
@@ -359,6 +385,9 @@ async fn handle(
                 }
             };
             if !tools::contains(name)
+                // External calls are authorized against the daemon's complete
+                // enabled collection, not the budgeted discovery projection.
+                && !name.starts_with("cccc_ext_")
                 && !visible_tools_with_context(home, client, context)
                     .await
                     .iter()
@@ -491,15 +520,12 @@ async fn visible_tools_with_context(
         return catalog;
     }
     let group_id = context.map(|value| value.group_id.to_owned()).or_else(|| {
-        std::env::var("CCCC_GROUP_ID")
-            .ok()
+        cccc_core::home::context_var("CCCC_GROUP_ID")
             .filter(|value| !value.trim().is_empty())
             .or_else(|| cccc_core::active::get(home).ok().flatten())
     });
     let actor_id = context.map(|value| value.actor_id.to_owned()).or_else(|| {
-        std::env::var("CCCC_ACTOR_ID")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
+        cccc_core::home::context_var("CCCC_ACTOR_ID").filter(|value| !value.trim().is_empty())
     });
     let (Some(group_id), Some(actor_id)) = (group_id, actor_id) else {
         return core_tools(catalog);
@@ -626,3 +652,6 @@ mod connect_tests;
 mod cross_group_file_tests;
 #[cfg(test)]
 mod file_send_tests;
+
+#[cfg(test)]
+cccc_daemon::session_owner_test_entry!();

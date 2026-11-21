@@ -11,14 +11,22 @@ use std::collections::BTreeSet;
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
 mod allowlist;
+mod credentials;
 mod effective_state;
 mod external_runtime;
 mod import;
 mod install_events;
+mod mcp_client;
+mod mcp_http;
+mod mcp_stdio;
 mod overview;
 mod package_install;
+mod projection;
+mod recipe;
+pub(crate) mod staged;
 mod target_install;
 mod uninstall;
+mod update;
 
 const FOREMAN_STARTUP_CAPABILITIES: &[&str] = &["pack:group-runtime", "pack:diagnostics"];
 
@@ -219,7 +227,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     Some(match request.op.as_str() {
         "capability_overview" => Operation::new(Read, overview::run),
         "capability_search" => Operation::new(Read, search),
-        "capability_enable" => Operation::new(GlobalWrite, enable),
+        "capability_enable" => Operation::new(GlobalWrite, staged::run_sync),
         "capability_visibility" => Operation::new(GlobalWrite, visibility),
         "capability_block" => Operation::new(GlobalWrite, block),
         // MCP discovery re-enters during Actor startup. The catalog owns its
@@ -233,10 +241,14 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
             state,
         ),
         "capability_import" => Operation::new(GlobalWrite, import::run),
+        "capability_update" => Operation::new(GlobalWrite, update::run),
         "capability_uninstall" => Operation::new(GlobalWrite, uninstall::run),
         "capability_install_target" => Operation::new(GlobalWrite, target_install::run),
         "capability_source_delete" => Operation::new(GlobalWrite, source_delete),
-        "capability_tool_call" => Operation::new(Write, use_capability),
+        "capability_tool_call" if staged::handles(request) => {
+            Operation::new(Write, staged::run_sync)
+        }
+        "capability_tool_call" => Operation::new(Write, read_capability),
         "capability_allowlist_get" => Operation::new(Read, |home, _request| allowlist::get(home)),
         "capability_allowlist_validate" => Operation::new(Read, allowlist::validate),
         "capability_allowlist_update" => Operation::new(GlobalWrite, allowlist::update),
@@ -245,30 +257,85 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
     })
 }
 
+fn read_capability(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let id = required_arg(request, "capability_id")?;
+    let capability = CapabilityStore::new(home.clone())
+        .require(&id)
+        .map_err(OpError::not_found)?;
+    object(json!({"capability": capability, "input": request.args.get("input"), "ready": true}))
+}
+
 fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let query = string_arg(request, "query").unwrap_or_default();
+    let recommended = match request.args.get("recommended") {
+        // Some clients send unused optional fields as null.
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => {
+            return Err(OpError::new(
+                "invalid_args",
+                "recommended must be a boolean",
+            ));
+        }
+    };
     let group_id = string_arg(request, "group_id").unwrap_or_default();
     let store = CapabilityStore::new(home.clone());
     let removed = store.removed_for_group(&group_id).map_err(OpError::io)?;
-    let capabilities = store
+    let group = if group_id.is_empty() {
+        None
+    } else {
+        cccc_core::GroupStore::new(home.clone())
+            .map_err(OpError::io)?
+            .load(&group_id)
+            .ok()
+    };
+    let projection = projection::Projection::new(home, &store, &group_id, group.as_ref())?;
+    let actor_id = string_arg(request, "by")
+        .or_else(|| string_arg(request, "actor_id"))
+        .unwrap_or_else(|| "user".into());
+    let mut capabilities = store
         .search(&query)
         .map_err(OpError::io)?
         .into_iter()
         .filter(|capability| {
-            !removed.contains(&capability.id) && !capability.is_unverified_remote_search()
+            !removed.contains(&capability.id)
+                && !capability.is_unverified_remote_search()
+                && (!recommended || capability.is_release_recommendation())
         })
+        .map(|capability| projection.summary(&capability, &actor_id, "en"))
         .collect::<Vec<_>>();
+    if recommended {
+        let order = recommendation_order()?;
+        capabilities.sort_by_key(|capability| {
+            order
+                .iter()
+                .position(|id| capability["id"].as_str() == Some(id))
+                .unwrap_or(usize::MAX)
+        });
+        capabilities = cccc_core::capability_recommendations::for_member(&capabilities)
+            .into_iter()
+            .take(cccc_core::capability_recommendations::MAX_BROWSE_ENTRIES)
+            .cloned()
+            .collect();
+    }
     object(json!({"capabilities":capabilities}))
 }
-fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+
+fn recommendation_order() -> Result<Vec<String>, OpError> {
+    Ok(cccc_core::capability_recommendations::records()
+        .map_err(OpError::io)?
+        .into_iter()
+        .filter_map(|record| record["capability_id"].as_str().map(str::to_owned))
+        .collect())
+}
+
+fn disable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let id = required_arg(request, "capability_id")?;
-    let enabled = bool_arg(request, "enabled", true);
     let access = authorize_scope_mutation(home, request, "session")?;
-    let store = CapabilityStore::new(home.clone());
-    let action_id = format!("cact_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
-    let mut result = if enabled {
-        target_install::enable(
-            home,
+    CapabilityStore::new(home.clone())
+        .set_enabled_for(
+            &id,
+            false,
             &access.actor.group_id,
             &access.actor.actor_id,
             &access.scope,
@@ -277,32 +344,30 @@ fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .get("ttl_seconds")
                 .and_then(Value::as_i64)
                 .unwrap_or(3600),
-            &id,
-        )?
-    } else {
-        store
-            .set_enabled_for(
-                &id,
-                false,
-                &access.actor.group_id,
-                &access.actor.actor_id,
-                &access.scope,
-                request
-                    .args
-                    .get("ttl_seconds")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(3600),
-            )
-            .map_err(OpError::invalid)?;
-        object(json!({
-            "capability_id":id,"enabled":false,"state":"disabled",
-            "scope":access.scope,"refresh_required":true
-        }))?
-    };
+        )
+        .map_err(OpError::invalid)?;
+    let result = object(
+        json!({"capability_id":id,"enabled":false,"state":"disabled",
+        "scope":access.scope,"refresh_required":true}),
+    )?;
+    let action_id = format!("cact_{}", &uuid::Uuid::new_v4().simple().to_string()[..16]);
+    finish_enable(result, &id, &access, &action_id, None)
+}
+
+fn finish_enable(
+    mut result: serde_json::Map<String, Value>,
+    id: &str,
+    access: &ScopeMutation,
+    action_id: &str,
+    member_tools: Option<Vec<Value>>,
+) -> OpResult {
     if result.get("state").and_then(Value::as_str) == Some("ready") {
         result.insert("state".into(), json!("activation_pending"));
     }
     result.insert("action_id".into(), json!(action_id));
+    if let Some(tools) = member_tools {
+        result.insert("dynamic_tools".into(), json!(tools));
+    }
     result.insert("group_id".into(), json!(access.actor.group_id));
     result.insert("actor_id".into(), json!(access.actor.actor_id));
     result.insert("capability_id".into(), json!(id));
@@ -457,11 +522,47 @@ pub(super) fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .collect::<Vec<_>>(),
     );
     let enabled_capabilities = enabled.difference(&blocked).cloned().collect::<Vec<_>>();
+    let catalog = store.catalog().map_err(OpError::io)?;
+    let projection = projection::Projection::new(home, &store, &group_id, group.as_ref())?;
     let enabled_rows = enabled_capabilities
         .iter()
-        .map(|id| json!({"capability_id":id,"scope":"group"}))
+        .map(|id| {
+            json!({
+                "capability_id":id,"scope":projection.enabled_scope(id, &actor_id)
+            })
+        })
         .collect::<Vec<_>>();
-    let catalog = store.catalog().map_err(OpError::io)?;
+    let locale = string_arg(request, "locale").unwrap_or_else(|| "en".into());
+    let removed = store.removed_for_group(&group_id).map_err(OpError::io)?;
+    // The catalog is keyed by ID; recommendations keep the manifest's order, which groups them by
+    // the work they serve.
+    let manifest_order = recommendation_order()?;
+    let mut recommended = catalog
+        .iter()
+        .filter(|capability| {
+            capability.is_release_recommendation() && !removed.contains(&capability.id)
+        })
+        .collect::<Vec<_>>();
+    recommended.sort_by_key(|capability| {
+        manifest_order
+            .iter()
+            .position(|id| *id == capability.id)
+            .unwrap_or(usize::MAX)
+    });
+    let recommended = recommended
+        .into_iter()
+        .map(|capability| {
+            let mut summary = projection.summary(capability, &actor_id, &locale);
+            summary["capability_id"] = summary["id"].take();
+            summary.as_object_mut().expect("summary").remove("id");
+            summary["description_short"] = summary["description"].take();
+            summary
+                .as_object_mut()
+                .expect("summary")
+                .remove("description");
+            summary
+        })
+        .collect::<Vec<_>>();
     let active_capsule_skills = catalog
         .iter()
         .filter(|capability| {
@@ -563,6 +664,8 @@ pub(super) fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "hidden_capabilities":hidden_capabilities,
         "is_foreman":is_foreman,
         "state":native,
+        "recommended":recommended,
+        "domains":cccc_core::capability_recommendations::domains(&locale).map_err(OpError::io)?,
     });
     if let Some(capability_usage) = capability_usage {
         result["capability_usage"] = capability_usage;
@@ -766,16 +869,6 @@ fn source_delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "removed_profile_autoload":cleanup.removed_profile_autoload,
         "deleted":true
     }))
-}
-fn use_capability(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    if let Some(tool_name) = string_arg(request, "tool_name").filter(|value| !value.is_empty()) {
-        return external_runtime::call(home, request, &tool_name);
-    }
-    let id = required_arg(request, "capability_id")?;
-    let capability = CapabilityStore::new(home.clone())
-        .require(&id)
-        .map_err(OpError::not_found)?;
-    object(json!({"capability": capability, "input": request.args.get("input"), "ready": true}))
 }
 
 const CAPABILITY_ADMIN_TOOLS: &[&str] = &[

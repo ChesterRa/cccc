@@ -6,6 +6,69 @@ use std::time::Instant;
 const T: u64 = 1_000_000;
 
 #[test]
+fn detached_work_is_retained_until_native_stop_is_confirmed() {
+    const MODE: &str = "CCCC_TEST_GUARD_DETACHED_WORK_CHILD";
+    if std::env::var_os(MODE).is_none() {
+        let output = Command::new(std::env::current_exe().expect("resolve test executable"))
+            .args(["--exact", "process_tree::guard::tests::detached_work_is_retained_until_native_stop_is_confirmed", "--nocapture"])
+            .env(MODE, "1").output().expect("run isolated test child");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().expect("isolated test directory");
+    let ledger = temp.path().join("owned.json");
+    enable(&ledger).expect("enable ownership ledger");
+    let mut work = crate::protect_detached_work().expect("register detached work");
+    let records = read_ledger_records(&ledger).expect("read ownership ledger");
+    assert!(matches!(records.as_slice(), [Record::LaunchIntent(_)]));
+    assert!(crate::recover_inactive_owned_process_groups(&ledger).is_err());
+    work.mark_uncertain()
+        .expect("retain uncertain detached work");
+    work.mark_uncertain()
+        .expect("retain uncertain detached work");
+    let listed = list_active(&ledger).expect("list active recovery records");
+    assert_eq!(
+        listed.records.len(),
+        1,
+        "an uncertain live launch must be reviewable"
+    );
+    assert_eq!(
+        Some(listed.records[0].id.as_str()),
+        work.recovery_id().as_deref()
+    );
+    work.confirm_stopped()
+        .expect("confirm detached work stopped");
+    work.confirm_stopped()
+        .expect("confirm detached work stopped");
+    assert!(
+        list_active(&ledger)
+            .expect("list active recovery records")
+            .records
+            .is_empty()
+    );
+    assert!(
+        read_ledger_records(&ledger)
+            .expect("read ownership ledger")
+            .is_empty()
+    );
+    drop(crate::protect_detached_work().expect("register detached work"));
+    assert!(
+        recovery_pending(),
+        "observer disappearance must retain unknown work"
+    );
+    assert!(matches!(
+        read_ledger_records(&ledger)
+            .expect("read ownership ledger")
+            .as_slice(),
+        [Record::LaunchIntent(_)]
+    ));
+}
+
+#[test]
 fn diagnostic_paths_stay_relative_and_reject_unexpected_names() {
     let ledger = std::path::Path::new("/private/home/daemon/owned-process-groups.json");
     assert_eq!(diagnostic_path(ledger, None).as_deref(), Some("daemon"));
@@ -92,6 +155,7 @@ fn empty_offline_ledger_is_legacy_readable_but_an_intent_is_not() {
     );
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn empty_watch_is_readable_by_the_previous_and_current_versions() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -111,6 +175,24 @@ fn empty_watch_is_readable_by_the_previous_and_current_versions() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn empty_darwin_watch_is_a_complete_native_record() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let watch = temp.path().join("empty.watchdog");
+    write_watch_list_at(&watch, &[], 123).expect("write native watch");
+    let text = std::fs::read_to_string(watch).expect("read native watch");
+    let watch: NativeWatch = serde_json::from_str(&text).expect("native envelope");
+    let (written_at, records) = watch.records().expect("complete native evidence");
+    assert_eq!(written_at, 123);
+    assert!(records.is_empty());
+    assert!(
+        parse_watch_text(&text, b"fixture")
+            .expect("read empty native watch")
+            .is_empty()
+    );
+}
+
 #[cfg(target_os = "linux")]
 fn captured_test_group(child: &Child, spawned_at: u64) -> OwnedGroup {
     let view = super::super::linux_identity::ProcView::open().expect("local procfs view");
@@ -124,6 +206,69 @@ fn captured_test_group(child: &Child, spawned_at: u64) -> OwnedGroup {
         origin: Some(identity.origin.clone()),
         evidence: GroupEvidence::Captured(identity),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn captured_test_group(child: &Child, spawned_at: u64) -> OwnedGroup {
+    let view = super::super::darwin_identity::ProcessView::open().expect("native process view");
+    let identity = view
+        .capture_child(child.id() as i32)
+        .expect("native child birth");
+    OwnedGroup {
+        pgid: child.id() as i32,
+        spawned_at,
+        id: uuid::Uuid::new_v4(),
+        origin: Some(identity.origin.clone()),
+        evidence: GroupEvidence::DarwinCaptured(identity),
+    }
+}
+
+#[test]
+fn darwin_watch_records_preserve_identity_and_reject_partial_or_mixed_evidence() {
+    use super::super::guard_record::DarwinIdentity;
+    let origin = Origin::Darwin {
+        boot_id: "5b79e44a-ea64-401e-976c-1a9df780651a".into(),
+    };
+    let record = Record::ProcessGroup(GroupRecord {
+        id: uuid::Uuid::new_v4(),
+        source_id: None,
+        pgid: 42,
+        spawned_at: 100,
+        observed_at: 120,
+        origin: Some(origin.clone()),
+        evidence: GroupEvidence::DarwinCaptured(DarwinIdentity {
+            origin,
+            pid: 42,
+            uid: 501,
+            started_seconds: 99,
+            started_microseconds: 123_456,
+        }),
+    });
+    let watch = NativeWatch::Darwin {
+        written_at: 120,
+        ledger: Ledger::new(vec![record.clone()]),
+    };
+    let text = format!(
+        "{}\n",
+        serde_json::to_string(&watch).expect("watch encoding")
+    );
+    assert_eq!(
+        parse_watch_text(&text, b"watch").expect("complete Darwin evidence"),
+        vec![record]
+    );
+    assert!(
+        parse_watch_text(text.trim_end(), b"watch").is_err(),
+        "truncated publication is not authority"
+    );
+    let mut value: serde_json::Value = serde_json::from_str(&text).expect("encoded watch");
+    value["platform"] = serde_json::json!("linux");
+    assert!(parse_watch_text(&format!("{value}\n"), b"watch").is_err());
+    value["platform"] = serde_json::json!("darwin");
+    value["written_at"] = serde_json::json!(121);
+    assert!(
+        parse_watch_text(&format!("{value}\n"), b"watch").is_err(),
+        "record observation must belong to this publication"
+    );
 }
 
 #[test]
@@ -320,11 +465,11 @@ fn without_identity_only_an_ended_leader_and_group_release_a_record() {
         None
     )));
 
-    let elsewhere = Origin {
+    let elsewhere = Origin::Linux(LinuxOrigin {
         boot_id: "00000000-0000-4000-8000-000000000000".into(),
         pid_namespace: 1,
         time_namespace: None,
-    };
+    });
     assert!(keep_without_identity(&unconfirmed_record(
         ended_pid,
         Some(elsewhere)
@@ -1614,10 +1759,21 @@ fn a_fresh_watch_list_does_not_authorize_a_recycled_group() {
         }
         group
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    let group = {
+        let mut group = captured_test_group(&unrelated, now() - 3_600);
+        if let GroupEvidence::DarwinCaptured(identity) = &mut group.evidence {
+            identity.started_microseconds = (identity.started_microseconds + 1) % 1_000_000;
+        }
+        group
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let group = test_owned_group(unrelated.id() as i32, now() - 3_600);
     write_watch_list(&list, &[group]).expect("fresh list containing an obsolete identity");
-    run_watchdog(&list);
+    assert!(
+        run_watchdog(&list).success(),
+        "valid watch with a wrong birth"
+    );
     let survived = unrelated.try_wait().expect("poll fixture").is_none();
     if survived {
         unrelated.kill().expect("fixture cleanup");
@@ -1647,9 +1803,9 @@ fn linux_watchdog_refuses_unconfirmed_or_foreign_origin_records() {
             panic!("fixture identity");
         };
         match which {
-            0 => identity.origin.boot_id = uuid::Uuid::new_v4().to_string(),
-            1 => identity.origin.pid_namespace += 1,
-            _ => identity.origin.time_namespace = Some(u64::MAX),
+            0 => identity.origin.linux_mut().boot_id = uuid::Uuid::new_v4().to_string(),
+            1 => identity.origin.linux_mut().pid_namespace += 1,
+            _ => identity.origin.linux_mut().time_namespace = Some(u64::MAX),
         }
         group.origin = Some(identity.origin.clone());
         cases.push(group);
@@ -1710,7 +1866,7 @@ fn recovery_retains_foreign_and_conflicting_evidence_without_signalling() {
     let GroupEvidence::Captured(identity) = &mut foreign_group.evidence else {
         unreachable!()
     };
-    identity.origin.pid_namespace += 1;
+    identity.origin.linux_mut().pid_namespace += 1;
     foreign_group.origin = Some(identity.origin.clone());
 
     let mut conflict = record_from_group(&group);
@@ -1831,7 +1987,7 @@ fn verified_previous_boot_clears_without_signalling_current_fixture() {
     let GroupEvidence::Captured(identity) = &mut group.evidence else {
         unreachable!()
     };
-    identity.origin.boot_id = uuid::Uuid::new_v4().to_string();
+    identity.origin.linux_mut().boot_id = uuid::Uuid::new_v4().to_string();
     group.origin = Some(identity.origin.clone());
     assert!(reconcile_records(vec![record]).is_empty());
     assert!(child.0.try_wait().expect("fixture still running").is_none());
@@ -1909,6 +2065,42 @@ fn exited_within(pid: i32, timeout: Duration) -> bool {
         std::thread::sleep(Duration::from_millis(20));
     }
     false
+}
+
+/// The watchdog is a shell on Linux and this harness's native image on Mac.
+/// Only a direct child of this helper is eligible; no global process search.
+fn fixture_watchdog_pid() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        let executable = std::fs::canonicalize(std::env::current_exe().expect("test image"))
+            .expect("canonical test image");
+        let children = crate::process_children::children_of(std::process::id())
+            .expect("owned helper children");
+        let watchdogs = children
+            .into_iter()
+            .filter(|pid| {
+                libproc::proc_pid::pidpath(*pid as i32)
+                    .ok()
+                    .and_then(|path| std::fs::canonicalize(path).ok())
+                    .is_some_and(|path| path == executable)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            watchdogs.len(),
+            1,
+            "one native watchdog child: {watchdogs:?}"
+        );
+        watchdogs[0].to_string()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let output = Command::new("pgrep")
+            .args(["-P", &std::process::id().to_string(), "-x", "sh"])
+            .output()
+            .expect("pgrep");
+        assert!(output.status.success(), "find the shell watchdog child");
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
 }
 
 const STALL_MODE: &str = "CCCC_GUARD_STALL_TEST";
@@ -1992,11 +2184,7 @@ fn stalled_watchdog_helper() {
     }
     let dir = std::path::PathBuf::from(std::env::var_os(STALL_DIR).expect("stall dir"));
     crate::protect_owned_process_groups(&dir.join("ledger.json")).expect("protect");
-    let output = Command::new("pgrep")
-        .args(["-P", &std::process::id().to_string(), "-x", "sh"])
-        .output()
-        .expect("pgrep");
-    let watchdog = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let watchdog = fixture_watchdog_pid();
     std::fs::write(dir.join("watchdog.pid"), format!("{watchdog}\n")).expect("publish watchdog");
     let mut proceed = [0_u8; 1];
     if std::io::stdin().read_exact(&mut proceed).is_err() || proceed != *b"P" {
@@ -2037,6 +2225,7 @@ fn stalled_watchdog_helper() {
 
 fn run_watchdog(watch_list: &Path) -> std::process::ExitStatus {
     watchdog_command(watch_list)
+        .expect("prepare watchdog")
         .stdin(Stdio::null())
         .status()
         .expect("run watchdog")
@@ -2047,9 +2236,9 @@ fn the_watchdog_terminates_groups_in_a_fresh_watch_list() {
     let temp = tempfile::tempdir().expect("tempdir");
     let list = temp.path().join("groups.watchdog");
     let mut leader = orphan_leader();
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     let group = captured_test_group(&leader, now());
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let group = test_owned_group(leader.id() as i32, now());
     write_watch_list(&list, &[group]).expect("watch list");
     assert!(run_watchdog(&list).success());
@@ -2071,8 +2260,16 @@ fn the_watchdog_leaves_a_stale_watch_list_to_verified_reconciliation() {
     let list = temp.path().join("groups.watchdog");
     let mut unrelated = orphan_leader();
     let written_long_ago = now() - WATCH_LIST_MAX_AGE.as_secs() - 60;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    write_watch_list_at(
+        &list,
+        &[captured_test_group(&unrelated, written_long_ago)],
+        written_long_ago,
+    )
+    .expect("valid stale native watch");
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     std::fs::write(&list, format!("{written_long_ago} {}\n", unrelated.id())).expect("list");
-    run_watchdog(&list);
+    assert!(run_watchdog(&list).success(), "stale watch is valid input");
     assert!(
         unrelated.try_wait().expect("poll").is_none(),
         "a stale watch list must not be trusted"
@@ -2082,6 +2279,63 @@ fn the_watchdog_leaves_a_stale_watch_list_to_verified_reconciliation() {
 }
 
 const LATEST_MODE: &str = "CCCC_GUARD_LATEST_TEST";
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn native_watchdog_inherits_its_signal_mask_and_restores_the_callers_mask() {
+    use nix::sys::signal::{SigSet, Signal};
+    const CHILD: &str = "CCCC_TEST_INHERITED_WATCHDOG_SIGNALS";
+    let original = SigSet::thread_get_mask().expect("read mask");
+    if let Some(marker) = std::env::var_os(CHILD) {
+        // This libtest worker inherited its mask from the new image's main thread.
+        for signal in [Signal::SIGHUP, Signal::SIGINT, Signal::SIGUSR1] {
+            assert!(original.contains(signal), "{signal} was not inherited");
+        }
+        std::fs::write(marker, b"verified").expect("report inherited mask");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let marker = tmp.path().join("mask");
+    let mut caller = original;
+    caller.remove(Signal::SIGHUP);
+    caller.remove(Signal::SIGINT);
+    caller.add(Signal::SIGUSR1);
+    caller.thread_set_mask().expect("prepare caller mask");
+    let mut command = Command::new(std::env::current_exe().expect("test executable"));
+    let test = "process_tree::guard::tests::native_watchdog_inherits_its_signal_mask_and_restores_the_callers_mask";
+    command
+        .args(["--exact", test])
+        .env(CHILD, &marker)
+        .stdout(Stdio::piped());
+    let child = spawn_native_watchdog(&mut command);
+    let after_success = SigSet::thread_get_mask().expect("mask after spawn");
+    let failure = spawn_native_watchdog(&mut Command::new(tmp.path().join("missing")));
+    let after_failure = SigSet::thread_get_mask().expect("mask after failed spawn");
+    original.thread_set_mask().expect("restore fixture mask");
+
+    assert_eq!(after_success, caller);
+    assert_eq!(after_failure, caller);
+    assert_eq!(
+        failure
+            .expect_err("missing executable must fail to spawn")
+            .kind(),
+        io::ErrorKind::NotFound
+    );
+    let output = child
+        .expect("spawn test child")
+        .wait_with_output()
+        .expect("reap test child");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        std::fs::read(marker).expect("child checked signals"),
+        b"verified"
+    );
+}
 
 #[test]
 fn a_group_published_while_the_watchdog_is_paused_still_ends_with_its_owner() {
@@ -2135,6 +2389,12 @@ fn a_group_published_while_the_watchdog_is_paused_still_ends_with_its_owner() {
     // The watchdog must act now, without a later owner start.
     let first_ended = exited_within(first, Duration::from_secs(10));
     let latest_ended = exited_within(latest, Duration::from_secs(10));
+    if !first_ended || !latest_ended {
+        eprintln!(
+            "owner exited: first_ended={first_ended}, latest_ended={latest_ended}, watchdog_running={}",
+            running(watchdog)
+        );
+    }
     // On platforms without pidfds, these self-created sleeps are bounded and
     // expire naturally on failure; do not signal a possibly recycled number.
     #[cfg(not(target_os = "linux"))]
@@ -2168,11 +2428,7 @@ fn latest_list_owner_helper() {
         .expect("spawn owned group")
     };
     let (first, _first_tree) = spawn();
-    let output = Command::new("pgrep")
-        .args(["-P", &std::process::id().to_string(), "-x", "sh"])
-        .output()
-        .expect("pgrep");
-    let watchdog = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let watchdog = fixture_watchdog_pid();
     assert!(
         Command::new("kill")
             .args(["-STOP", &watchdog])
@@ -2180,6 +2436,27 @@ fn latest_list_owner_helper() {
             .expect("stop watchdog")
             .success()
     );
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+        let child = Pid::from_raw(watchdog.parse().expect("watchdog pid")).expect("positive pid");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = waitid(
+                WaitId::Pid(child),
+                WaitIdOptions::STOPPED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT,
+            )
+            .expect("observe owned child");
+            if state.is_some_and(|status| status.stopped()) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "watchdog did not stop before publication"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
     let (latest, _latest_tree) = spawn();
     std::fs::write(
         dir.join("pids"),
@@ -2337,4 +2614,32 @@ impl Drop for KillOnDrop {
             let _ = self.0.wait();
         }
     }
+}
+#[cfg(target_os = "linux")]
+#[test]
+fn a_foreign_platform_is_not_evidence_of_a_previous_boot() {
+    super::super::linux_identity::ProcView::open()
+        .expect("checked Linux process view")
+        .origin()
+        .expect("checked current boot");
+    let origin = Origin::Darwin {
+        boot_id: uuid::Uuid::new_v4().to_string(),
+    };
+    let record = Record::ProcessGroup(GroupRecord {
+        id: uuid::Uuid::new_v4(),
+        source_id: None,
+        pgid: 42,
+        spawned_at: 123,
+        observed_at: 124,
+        origin: Some(origin.clone()),
+        evidence: GroupEvidence::DarwinCaptured(super::super::guard_record::DarwinIdentity {
+            origin,
+            pid: 42,
+            uid: 501,
+            started_seconds: 123,
+            started_microseconds: 0,
+        }),
+    });
+    assert!(record.valid());
+    assert_eq!(reconcile_records(vec![record.clone()]), vec![record]);
 }

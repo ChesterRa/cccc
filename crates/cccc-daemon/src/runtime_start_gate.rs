@@ -1,7 +1,7 @@
 use cccc_core::HomeLayout;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
 
 type Gates = HashMap<PathBuf, bool>;
 
@@ -12,6 +12,15 @@ fn gates() -> &'static Mutex<Gates> {
 
 pub struct StartPermit {
     _guard: MutexGuard<'static, Gates>,
+    home: PathBuf,
+}
+
+impl StartPermit {
+    /// Turn the same exclusive observation boundary into shutdown admission;
+    /// releasing and reacquiring the gate would let another launch slip in.
+    pub(crate) fn prevent(mut self) {
+        self._guard.insert(self.home, false);
+    }
 }
 
 pub fn allow(home: &HomeLayout) -> Result<(), &'static str> {
@@ -37,7 +46,28 @@ pub fn permit(home: &HomeLayout) -> Result<StartPermit, &'static str> {
     if !guard.get(home.root()).copied().unwrap_or(true) {
         return Err("runtime is shutting down");
     }
-    Ok(StartPermit { _guard: guard })
+    Ok(StartPermit {
+        _guard: guard,
+        home: home.root().to_path_buf(),
+    })
+}
+
+/// Dispatch phases must never wait for an existing runtime launch while holding
+/// their permits: that launch may need an MCP read to finish. A busy result lets
+/// the caller release its dispatch permit before waiting for the gate.
+pub(crate) fn try_permit(home: &HomeLayout) -> Result<Option<StartPermit>, &'static str> {
+    let guard = match gates().try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::WouldBlock) => return Ok(None),
+        Err(TryLockError::Poisoned(_)) => return Err("runtime start gate is poisoned"),
+    };
+    if !guard.get(home.root()).copied().unwrap_or(true) {
+        return Err("runtime is shutting down");
+    }
+    Ok(Some(StartPermit {
+        _guard: guard,
+        home: home.root().to_path_buf(),
+    }))
 }
 
 #[cfg(test)]
@@ -58,6 +88,20 @@ mod tests {
         assert!(permit(&first).is_err());
         assert!(permit(&second).is_ok());
         allow(&first).expect("restore first");
+    }
+
+    #[test]
+    fn the_checked_permit_closes_its_own_home_before_releasing_the_gate() {
+        let temp = tempfile::tempdir().expect("isolated home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        allow(&home).expect("allow");
+        let checked = try_permit(&home)
+            .expect("gate")
+            .expect("no launch in progress");
+        assert!(try_permit(&home).expect("busy gate").is_none());
+        checked.prevent();
+        assert!(permit(&home).is_err());
+        allow(&home).expect("restore fixture gate");
     }
 
     #[test]

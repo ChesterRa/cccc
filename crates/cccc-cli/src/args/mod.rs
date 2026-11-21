@@ -69,6 +69,19 @@ pub struct UpdateArgs {
     /// Show local installation details without requesting release metadata.
     #[arg(long, requires = "check")]
     pub offline: bool,
+    /// Internal: print this program's update constants as JSON and exit.
+    #[arg(long, hide = true, conflicts_with_all = ["check", "channel", "resume", "recover"])]
+    pub self_check: bool,
+    /// Internal: exit 0 when an installer may replace the program while no
+    /// daemon runs, otherwise print why and exit 1.
+    #[arg(long, hide = true, conflicts_with_all = ["check", "channel", "self_check", "resume", "recover"])]
+    pub installer_check: bool,
+    /// Internal: finish an attended update after the program was replaced.
+    #[arg(long, hide = true, value_name = "TRANSACTION", conflicts_with_all = ["check", "channel", "recover"])]
+    pub resume: Option<std::path::PathBuf>,
+    /// Undo an interrupted attended update and release this home's startup.
+    #[arg(long, hide = true, value_name = "TRANSACTION", conflicts_with_all = ["check", "channel"])]
+    pub recover: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -278,17 +291,37 @@ pub enum DirectAction {
 pub enum DaemonAction {
     /// Start the daemon in the background.
     Start,
-    /// Stop the daemon.
-    Stop,
+    /// Stop the daemon. Running agents stop too unless --keep-agents is given.
+    Stop {
+        /// Keep running agents for a maintenance restart: only the daemon exits, and the
+        /// next start reattaches the agents. A daemon that cannot keep them refuses, and
+        /// nothing is stopped.
+        #[arg(long)]
+        keep_agents: bool,
+    },
     /// Show whether the daemon is running.
     Status,
     /// Run only the daemon in the foreground (no Web server or terminal panel).
-    Run,
+    Run {
+        /// Internal: start as the relay of this home's prepared update.
+        #[arg(long, hide = true, value_name = "TRANSACTION")]
+        update_resume: Option<std::path::PathBuf>,
+    },
+    /// Internal: hold managed agent sessions independently of the daemon's lifetime.
+    #[command(hide = true)]
+    SessionOwner {
+        #[arg(long)]
+        owner_id: String,
+    },
     /// Review or resolve specific unconfirmed process-cleanup records.
     ProcessRecovery {
         /// Which process owner produced the evidence.
         #[arg(long, global = true, value_enum, default_value = "daemon")]
         owner: RecoveryOwner,
+        /// With `--owner session`: the session owner to review, as named by the error that
+        /// stopped CCCC from starting.
+        #[arg(long, global = true)]
+        owner_id: Option<String>,
         #[command(subcommand)]
         action: RecoveryAction,
     },
@@ -298,6 +331,8 @@ pub enum DaemonAction {
 pub enum RecoveryOwner {
     Daemon,
     Web,
+    /// A session owner that ended without confirming that its agents stopped.
+    Session,
 }
 
 #[derive(Debug, Subcommand)]
@@ -331,7 +366,7 @@ pub enum RuntimeAction {
         #[arg(long)]
         all: bool,
     },
-    /// Inspect and prepare the optional Hermes adapter.
+    /// Check Hermes setup for CCCC members.
     Hermes {
         #[command(subcommand)]
         action: HermesAction,
@@ -340,33 +375,18 @@ pub enum RuntimeAction {
 
 #[derive(Debug, Subcommand)]
 pub enum HermesAction {
-    /// Show the local Hermes installation and adapter state.
+    /// Show the Hermes installation and the profile's cccc MCP entry.
     Status,
-    /// Configure the cccc MCP server in the Hermes profile.
+    /// Remove the cccc MCP server earlier CCCC versions saved in the Hermes
+    /// profile; members get CCCC's server in their own sessions.
     Prepare {
-        /// Project directory used for runtime preparation.
+        /// Directory to run Hermes in.
         #[arg(long = "path", default_value = ".")]
         cwd: String,
-        /// Confirm Hermes MCP setup and enable the discovered CCCC tools (required).
-        #[arg(long)]
-        yes: bool,
-        /// Configure again even when the cccc MCP server is already ready.
-        #[arg(long)]
-        force: bool,
     },
-    /// Run Hermes' MCP test against CCCC with a probe agent.
+    /// Explain how to check a Hermes member's CCCC tools.
     #[command(name = "mcp-test")]
-    McpTest {
-        /// Project directory used for runtime preparation.
-        #[arg(long = "path", default_value = ".")]
-        cwd: String,
-        /// Target Group ID.
-        #[arg(long, default_value = "g_probe")]
-        group_id: String,
-        /// Agent ID within the Group.
-        #[arg(long, default_value = "hermes-probe")]
-        actor_id: String,
-    },
+    McpTest,
 }
 
 #[cfg(test)]
@@ -453,8 +473,33 @@ mod tests {
                 check: true,
                 channel: None,
                 offline: false,
+                self_check: false,
+                installer_check: false,
+                resume: None,
+                recover: None,
             }))
         ));
+    }
+
+    #[test]
+    fn the_installer_check_stands_alone() {
+        let cli =
+            Cli::try_parse_from(["cccc", "update", "--installer-check"]).expect("installer check");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Update(UpdateArgs {
+                installer_check: true,
+                check: false,
+                self_check: false,
+                ..
+            }))
+        ));
+        for other in ["--check", "--self-check"] {
+            assert!(
+                Cli::try_parse_from(["cccc", "update", "--installer-check", other]).is_err(),
+                "{other}"
+            );
+        }
     }
 
     #[test]
@@ -656,5 +701,51 @@ mod tests {
         ] {
             assert!(parse(rejected).is_err(), "{rejected:?}");
         }
+    }
+
+    #[test]
+    fn process_recovery_names_a_session_owner_by_id() {
+        let cli = Cli::try_parse_from([
+            "cccc",
+            "daemon",
+            "process-recovery",
+            "--owner",
+            "session",
+            "--owner-id",
+            "597d730d8e974b2eb9d7b670f994d0a1",
+            "list",
+        ])
+        .expect("session owner review");
+        let Some(CommandKind::Daemon {
+            action:
+                DaemonAction::ProcessRecovery {
+                    owner,
+                    owner_id,
+                    action,
+                },
+        }) = cli.command
+        else {
+            panic!("expected process recovery");
+        };
+        assert!(matches!(owner, RecoveryOwner::Session));
+        assert_eq!(
+            owner_id.as_deref(),
+            Some("597d730d8e974b2eb9d7b670f994d0a1")
+        );
+        assert!(matches!(action, RecoveryAction::List));
+
+        // The existing owners keep their default and need no id.
+        let cli = Cli::try_parse_from(["cccc", "daemon", "process-recovery", "list"])
+            .expect("daemon owner review");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Daemon {
+                action: DaemonAction::ProcessRecovery {
+                    owner: RecoveryOwner::Daemon,
+                    owner_id: None,
+                    ..
+                },
+            })
+        ));
     }
 }

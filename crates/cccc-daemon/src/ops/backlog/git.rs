@@ -2,12 +2,11 @@ use super::*;
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
     time::Duration,
 };
 
 fn run(root: &Path, args: &[&str]) -> Result<cccc_runtime::CapturedOutput, OpError> {
-    let mut command = Command::new("git");
+    let mut command = cccc_runtime::background_command("git");
     command
         .args(["-c", "core.fsmonitor=false"])
         .args(args)

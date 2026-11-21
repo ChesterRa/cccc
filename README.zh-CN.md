@@ -46,18 +46,14 @@
 - **CCCC Connect** 跨机器、跨团队连接工作组，各实例保留自己的状态。
 - **本地优先**：运行时状态保存在 `CCCC_HOME`（默认 `~/.cccc/`）中，不在你的代码仓库里。
 
-## 0.4.55 更新内容
+## 0.4.58 更新内容
 
-- **任务旁边多了 Backlog**：项目里的一个 Markdown 文件（比如 `BACKLOG.md`）记录长期的课题和想法。任务页用 **任务 | Backlog** 切换显示其中的条目，可以就地编辑，并把每个条目和由它建立的任务关联起来；智能体使用新的 `cccc_backlog` 工具。这个文件始终是唯一的一份。
-- **`PATH` 变了也更少另开新对话**：只有启动 `PATH` 变了时，符合条件的托管智能体可以接回保存的对话，条件见发布说明。
-- **工作组规则按需附带**：原生会话按 ID 读取一条消息时，只在需要时附带完整的工作组规则，不再每次都带。
-- **拿掉了协作记录**：“协作记录”页签、`cccc_coordination` 的记录动作和恢复包里的记录列表都已移除。此前保存的记录仍留在工作组存储的上下文里。
-- **修复**：所等的任务都完成后，任务不再一直显示为受阻（#201）。中断托管的 Claude Code 智能体时，会带上 Claude Code 2.1.317 要求的请求字段；该版本会拒收以前的请求。用完重试的投递，不会在每次重启后再重试一轮。配置 Web 模型连接器时，除非明确要求轮换，不再替换它的凭据（#216）。
-- **两条社区贡献的命令**：`cccc ledger search`（#217）和 `cccc actor new-session`（#207）。
+- **在页面里读文档。** Markdown 附件可以在渲染效果和原文之间切换，不用重新下载。HTML 附件、工作组里的 HTML 文件，以及 GitHub raw 和 gist 上的 HTML，以静态预览打开：脚本不执行，表单禁用，不加载外部资源。20 MiB 以内的 HTML 连同内嵌图片可以完整预览。
+- **手机输入区收成一行。** 输入区空着、没点进去时，附件、模板按钮、输入框和语音排在同一行，模板按钮不再掉到第二行。正在发送时，进度和“停止等待上传”按钮保持可见。
 
-**升级须知**：升级前，请等正在进行的发送和录音结束，先恢复或丢弃待恢复的发送，再把所有没发出的草稿发出或另存，并保存 **文件** 里未保存的编辑：这些都只保存在当前打开的页面里。重新发送前，先确认消息是否已经送达。然后重启 daemon 和 Web，并刷新已打开的页面：升级前打开的页面跨工作组回复时，有些回复会带上已移除的字段，在刷新之前这些回复会被拒绝。原生会话会一直使用它启动时的 MCP 服务器和其中的旧工具，直到这个服务器重新启动，比如重启该会话。协作记录不再显示：如果想留一份便于查看的副本，请在升级前从“协作记录”页签里复制文字。
+**升级须知。** 升级前，等发送和录音结束，恢复或丢弃待发送的消息，再把所有未发送的草稿发出或复制下来，并保存 **文件** 里未保存的编辑：这些都只存在于打开的页面里。然后重启 daemon 和 Web，刷新打开的页面。重启 daemon 仍会停掉由 CCCC 启动的智能体。
 
-详见 [0.4.55 发布说明](https://chesterra.github.io/cccc/release/v0.4.55_release_notes)。
+详见 [0.4.58 发布说明](https://chesterra.github.io/cccc/release/v0.4.58_release_notes)。
 
 ## 快速上手
 
@@ -200,8 +196,8 @@ Chet 是整个 CCCC 实例共用的一个助手，不在任何工作组的成员
 
 | CCCC 的运行方式 | 运行时（`--runtime` id） |
 |---|---|
-| 原生终端 + CCCC 管理的会话 | Claude Code（`claude`）、Codex CLI（`codex`）、Grok Build（`grok`）、OpenCode V2 2.1.4+（`opencode`）、Kilo Code（`kilo`） |
-| 原生终端或官方 ACP | GitHub Copilot（`copilot`）、Cursor（`cursor`）、Devin（`devin`）、Kiro（`kiro`）、Antigravity（`antigravity`）、Droid（`droid`）、Auggie（`auggie`）、Hermes（`hermes`）、Kimi Code（`kimi`） |
+| 原生终端 + CCCC 管理的会话 | Claude Code（`claude`）、Codex CLI（`codex`）、Grok Build（`grok`）、OpenCode V2 2.1.4+（`opencode`）、Kilo Code（`kilo`）、Hermes（`hermes`，也可只用 ACP） |
+| 原生终端或官方 ACP | GitHub Copilot（`copilot`）、Cursor（`cursor`）、Devin（`devin`）、Kiro（`kiro`）、Antigravity（`antigravity`）、Droid（`droid`）、Auggie（`auggie`）、Kimi Code（`kimi`） |
 | 原生终端 | Cline（`cline`）、Amp（`amp`） |
 | 结构化协议，无终端 | Pi 1.1.0+（`pi`）、DeepSeek Harness（`deepseek`，开发者预览） |
 | Web 模型 | ChatGPT Web（`web_model`）、ChatGPT Dots（`chatgpt_dots`）、Grok Bot Web Model（`grok_web_model`） |

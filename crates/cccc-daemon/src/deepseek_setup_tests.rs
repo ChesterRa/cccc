@@ -1,7 +1,11 @@
 use super::*;
+use serde_json::json;
 
 #[path = "deepseek_setup_tests/install_tests.rs"]
 mod install_tests;
+
+const ACP_PROFILE_PACKAGE: &str = "@deepseek-ai/dsh-acp-app";
+const ACP_BRIDGE_PACKAGE: &str = "@deepseek-ai/dsh-acp";
 
 fn test_env(root: &Path) -> BTreeMap<String, String> {
     BTreeMap::from([
@@ -10,155 +14,399 @@ fn test_env(root: &Path) -> BTreeMap<String, String> {
     ])
 }
 
-fn cccc_executable(root: &Path) -> PathBuf {
-    let path = root.join(if cfg!(windows) { "cccc.exe" } else { "cccc" });
-    fs::write(&path, b"cccc").expect("cccc executable");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("executable mode");
-    }
-    path
-}
-
 fn test_home(root: &Path) -> HomeLayout {
     HomeLayout::from_path(root.join("cccc-home")).expect("home")
 }
 
-fn install_fixture(dsh_home: &Path, _env: &BTreeMap<String, String>) -> Result<(), String> {
-    let mut lock_packages = serde_json::Map::new();
-    for (package, version) in required_packages() {
-        let manifest = dsh_home
-            .join("node_modules")
-            .join(package)
-            .join("package.json");
-        fs::create_dir_all(manifest.parent().expect("manifest parent"))
-            .map_err(|error| error.to_string())?;
-        fs::write(manifest, format!(r#"{{"version":"{version}"}}"#))
-            .map_err(|error| error.to_string())?;
-        lock_packages.insert(
-            format!("node_modules/{package}"),
-            json!({"version": version}),
-        );
-    }
-    let dependencies = required_packages().into_iter().collect::<BTreeMap<_, _>>();
-    lock_packages.insert("".into(), json!({"dependencies": dependencies}));
-    fs::write(
-        dsh_home.join("package.json"),
-        serde_json::to_vec(&cccc_runtime::canonical_deepseek_runtime_manifest())
-            .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    fs::write(
-        dsh_home.join("package-lock.json"),
-        serde_json::to_vec(&json!({"lockfileVersion": 3, "packages": lock_packages}))
-            .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
+fn node_supported(_command: &[String], _env: &BTreeMap<String, String>) -> Result<(), String> {
     Ok(())
 }
 
-fn fixture_ready(_command: &[String], env: &BTreeMap<String, String>) -> Result<(), String> {
-    let dsh_home = PathBuf::from(env.get("DSH_HOME").ok_or("missing DSH_HOME")?);
-    if !packages_ready(&dsh_home) {
-        return Err("packages missing".into());
+fn default_command() -> Vec<String> {
+    cccc_runtime::default_command(ActorRuntime::Deepseek)
+}
+
+/// What a successful `npm install` of the pinned launcher leaves behind.
+fn install_fixture(dsh_home: &Path, _env: &BTreeMap<String, String>) -> Result<(), String> {
+    write_installation(dsh_home).map_err(|error| error.to_string())
+}
+
+fn write_installation(dsh_home: &Path) -> std::io::Result<()> {
+    let mut lock = serde_json::Map::from_iter([(
+        String::new(),
+        json!({"dependencies": {DEEPSEEK_PACKAGE: DEEPSEEK_RELEASE_VERSION}}),
+    )]);
+    for package in [DEEPSEEK_PACKAGE, ACP_PROFILE_PACKAGE, ACP_BRIDGE_PACKAGE] {
+        let dir = dsh_home.join("node_modules").join(package);
+        fs::create_dir_all(&dir)?;
+        let mut manifest = json!({"version": DEEPSEEK_RELEASE_VERSION});
+        if package == ACP_PROFILE_PACKAGE {
+            manifest["dsh"] = json!({"bundle": {"patch": "./cordis.patch.yml"}});
+            fs::write(dir.join("cordis.patch.yml"), "[]\n")?;
+        }
+        fs::write(dir.join("package.json"), serde_json::to_vec(&manifest)?)?;
+        lock.insert(
+            format!("node_modules/{package}"),
+            json!({"version": DEEPSEEK_RELEASE_VERSION}),
+        );
     }
-    let profile = dsh_home.join("profiles/cccc-acp");
-    let manifest: Value = serde_json::from_slice(
-        &fs::read(profile.join("package.json")).map_err(|error| error.to_string())?,
+    write_launcher(dsh_home)?;
+    fs::write(
+        dsh_home.join("package.json"),
+        serde_json::to_vec(&cccc_runtime::canonical_deepseek_runtime_manifest())?,
+    )?;
+    fs::write(
+        dsh_home.join("package-lock.json"),
+        serde_json::to_vec(&json!({"lockfileVersion": 3, "packages": lock}))?,
     )
-    .map_err(|error| error.to_string())?;
-    if !cccc_runtime::is_canonical_deepseek_profile_manifest(&manifest) {
-        return Err("invalid profile".into());
-    }
-    let config =
-        fs::read_to_string(profile.join("cordis.yml")).map_err(|error| error.to_string())?;
-    if !cccc_runtime::is_canonical_deepseek_config(&config) {
-        return Err("invalid config".into());
+}
+
+fn write_launcher(dsh_home: &Path) -> std::io::Result<()> {
+    let bin = dsh_home.join("node_modules/.bin");
+    fs::create_dir_all(&bin)?;
+    #[cfg(windows)]
+    fs::write(bin.join("dsh.cmd"), "@exit /b 0\r\n")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let launcher = bin.join("dsh");
+        fs::write(&launcher, "#!/bin/sh\nexit 0\n")?;
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
     }
     Ok(())
+}
+
+fn remove_launcher(dsh_home: &Path) {
+    let bin = dsh_home.join("node_modules/.bin");
+    for name in ["dsh", "dsh.cmd"] {
+        match fs::remove_file(bin.join(name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("remove launcher: {error}"),
+        }
+    }
 }
 
 #[test]
-fn first_use_installs_packages_creates_profile_and_is_idempotent() {
+fn first_use_installs_once_and_leaves_the_agent_environment_to_the_launch() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = test_home(temp.path());
+    let previous = home.root().join("runtimes/deepseek/0.1.0-rc.6");
+    fs::create_dir_all(&previous).expect("previous installation");
+    fs::write(previous.join("package.json"), "{}").expect("previous manifest");
     let mut env = test_env(temp.path());
-    let executable = cccc_executable(temp.path());
+
     let first = ensure_with(
         &home,
         &mut env,
-        &executable,
         install_fixture,
-        |_command, _env| Ok(()),
-        fixture_ready,
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
     )
     .expect("first setup");
+    let dsh_home = home
+        .root()
+        .join("runtimes/deepseek")
+        .join(DEEPSEEK_RELEASE_VERSION);
     assert_eq!(
-        first.dsh_home,
-        home.root()
-            .join("runtimes/deepseek")
-            .join(DEEPSEEK_RELEASE_VERSION)
+        first,
+        DeepSeekSetupOutcome {
+            dsh_home: dsh_home.clone(),
+            profile: dsh_home.join("node_modules").join(ACP_PROFILE_PACKAGE),
+            packages_installed: true,
+            profile_created: false,
+        }
     );
-    assert!(first.packages_installed);
-    assert!(first.profile_created);
+    // Each agent's launch chooses its own DSH_HOME and starts the launcher by
+    // its path, so setup sets neither.
+    assert!(!env.contains_key("DSH_HOME"));
+    assert_eq!(env.get("PATH").map(String::as_str), Some("/test/bin"));
     assert_eq!(
-        env.get("DSH_HOME"),
-        Some(&first.dsh_home.to_string_lossy().into_owned())
-    );
-    assert_eq!(
-        std::env::split_paths(env.get("PATH").expect("path")).next(),
-        Some(first.dsh_home.join("node_modules/.bin"))
+        env.get("CCCC_HOME"),
+        Some(&home.root().to_string_lossy().into_owned())
     );
     assert_eq!(env.get("NODE_USE_ENV_PROXY").map(String::as_str), Some("1"));
-    let first_files = ["package.json", "cordis.yml"].map(|name| {
-        (
-            name,
-            fs::read(first.profile.join(name)).expect("first profile file"),
-        )
-    });
 
     let second = ensure_with(
         &home,
         &mut env,
-        &executable,
         |_home, _env| Err("installer must not run".into()),
-        |_command, _env| Ok(()),
-        fixture_ready,
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
     )
     .expect("idempotent setup");
     assert!(!second.packages_installed);
-    assert!(!second.profile_created);
-    for (name, expected) in first_files {
-        assert_eq!(
-            fs::read(second.profile.join(name)).expect("second profile file"),
-            expected
-        );
-    }
+    // Agents that still run from the previous release keep their files.
+    assert_eq!(
+        fs::read(previous.join("package.json")).expect("previous manifest"),
+        b"{}"
+    );
 }
 
-#[cfg(unix)]
 #[test]
-fn profile_paths_escape_yaml_apostrophes() {
-    use std::os::unix::fs::PermissionsExt;
-
+fn an_unsupported_node_stops_setup_before_any_download() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let executable = temp.path().join("acme's").join("cccc");
-    fs::create_dir_all(executable.parent().expect("executable parent")).expect("parent");
-    fs::write(&executable, b"cccc").expect("executable");
-    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).expect("permissions");
-    let profile = temp.path().join("profile");
+    let home = test_home(temp.path());
+    let mut env = test_env(temp.path());
+    let error = ensure_with(
+        &home,
+        &mut env,
+        |_home, _env| Err("installer must not run".into()),
+        |_command, _env| Err("DeepSeek Harness requires Node >=24.9.0 (found v22.19.0)".into()),
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect_err("old node");
+    assert!(error.contains(">=24.9.0"), "{error}");
+    assert!(!home.root().join("runtimes/deepseek").exists());
+}
 
-    write_profile_files(&profile, &executable).expect("profile");
+#[test]
+fn a_missing_launcher_is_repaired_by_installing_again() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = test_home(temp.path());
+    let dsh_home = home
+        .root()
+        .join("runtimes/deepseek")
+        .join(DEEPSEEK_RELEASE_VERSION);
+    write_installation(&dsh_home).expect("installation");
+    remove_launcher(&dsh_home);
+    let mut env = test_env(temp.path());
 
-    let escaped_path = executable.to_string_lossy().replace('\'', "''");
-    let config = fs::read_to_string(profile.join("cordis.yml")).expect("config");
-    assert!(config.contains(&format!("command: '{escaped_path}'")));
-    assert!(config.contains(&format!(
-        "maxTokens: {}",
-        cccc_contracts::DEEPSEEK_MAX_OUTPUT_TOKENS
-    )));
-    assert!(cccc_runtime::is_canonical_deepseek_config(&config));
+    // An installer that cannot restore the launcher leaves a clear error.
+    let error = ensure_with(
+        &home,
+        &mut env,
+        |_home, _env| Ok(()),
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect_err("launcher still missing");
+    assert!(
+        error.contains("still incomplete after installation")
+            && error.contains("deepseek executable not found: dsh"),
+        "{error}"
+    );
+
+    let installs = std::cell::Cell::new(0_u32);
+    let outcome = ensure_with(
+        &home,
+        &mut env,
+        |root, env| {
+            installs.set(installs.get() + 1);
+            install_fixture(root, env)
+        },
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect("repaired setup");
+    assert_eq!(installs.get(), 1);
+    assert!(outcome.packages_installed);
+    cccc_runtime::deepseek_installation_ready(&dsh_home).expect("ready after repair");
+}
+
+#[test]
+fn a_profile_bundle_without_its_patch_is_unpacked_again_alone() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = test_home(temp.path());
+    let dsh_home = home
+        .root()
+        .join("runtimes/deepseek")
+        .join(DEEPSEEK_RELEASE_VERSION);
+    write_installation(&dsh_home).expect("installation");
+    let profile = dsh_home.join("node_modules").join(ACP_PROFILE_PACKAGE);
+    fs::remove_file(profile.join("cordis.patch.yml")).expect("remove bundle patch");
+    let launcher_marker = dsh_home
+        .join("node_modules")
+        .join(DEEPSEEK_PACKAGE)
+        .join("marker");
+    fs::write(&launcher_marker, "kept").expect("marker");
+    let installs = std::cell::Cell::new(0_u32);
+    let mut env = test_env(temp.path());
+    let outcome = ensure_with(
+        &home,
+        &mut env,
+        |root, env| {
+            installs.set(installs.get() + 1);
+            // npm would keep a package directory at the right version as it
+            // is; setup must have removed the incomplete one.
+            assert!(!profile.exists(), "incomplete bundle still present");
+            install_fixture(root, env)
+        },
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect("repaired setup");
+    assert_eq!(installs.get(), 1);
+    assert!(outcome.packages_installed);
+    assert!(profile.join("cordis.patch.yml").is_file());
+    assert_eq!(fs::read(&launcher_marker).expect("marker"), b"kept");
+}
+
+#[test]
+fn a_changed_runtime_manifest_is_installed_again() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = test_home(temp.path());
+    let dsh_home = home
+        .root()
+        .join("runtimes/deepseek")
+        .join(DEEPSEEK_RELEASE_VERSION);
+    write_installation(&dsh_home).expect("installation");
+    fs::write(
+        dsh_home.join("package.json"),
+        serde_json::to_vec(&json!({
+            "name": "cccc-deepseek-runtime",
+            "private": true,
+            "ccccManaged": true,
+            "dependencies": {"@deepseek-ai/dsh-acp-demo": "0.1.0-rc.6"}
+        }))
+        .expect("json"),
+    )
+    .expect("changed manifest");
+    let installs = std::cell::Cell::new(0_u32);
+    let mut env = test_env(temp.path());
+    let outcome = ensure_with(
+        &home,
+        &mut env,
+        |root, env| {
+            installs.set(installs.get() + 1);
+            install_fixture(root, env)
+        },
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect("reinstalled setup");
+    assert_eq!(installs.get(), 1);
+    assert!(outcome.packages_installed);
+}
+
+#[test]
+fn a_failed_install_can_be_retried() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = test_home(temp.path());
+    let mut env = test_env(temp.path());
+    let error = ensure_with(
+        &home,
+        &mut env,
+        |_home, _env| Err("offline".into()),
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect_err("install failure");
+    assert!(error.contains("offline"), "{error}");
+    ensure_with(
+        &home,
+        &mut env,
+        install_fixture,
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect("retry setup");
+}
+
+#[test]
+fn a_start_never_installs_and_names_the_setup_command() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = test_home(temp.path());
+    let mut env = test_env(temp.path());
+    let error = prepare_for_start_with(
+        &home,
+        &mut env,
+        &default_command(),
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect_err("not installed");
+    assert!(
+        error.contains("cccc setup --runtime deepseek")
+            && error.contains(&format!("{DEEPSEEK_PACKAGE}@{DEEPSEEK_RELEASE_VERSION}")),
+        "{error}"
+    );
+    assert!(!home.root().join("runtimes/deepseek").exists());
+
+    let dsh_home = home
+        .root()
+        .join("runtimes/deepseek")
+        .join(DEEPSEEK_RELEASE_VERSION);
+    write_installation(&dsh_home).expect("installation");
+    remove_launcher(&dsh_home);
+    let error = prepare_for_start_with(
+        &home,
+        &mut env,
+        &default_command(),
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect_err("incomplete");
+    assert!(
+        error.contains("deepseek executable not found: dsh")
+            && error.contains("cccc setup --runtime deepseek"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_start_over_a_complete_installation_prepares_the_same_environment_as_setup() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = test_home(temp.path());
+    let dsh_home = home
+        .root()
+        .join("runtimes/deepseek")
+        .join(DEEPSEEK_RELEASE_VERSION);
+    write_installation(&dsh_home).expect("installation");
+    let mut env = test_env(temp.path());
+    env.insert(
+        "DEEPSEEK_BASE_URL".into(),
+        "http://127.0.0.2:8000/v1".into(),
+    );
+    // The member's own command is what gets checked, so a custom launcher
+    // keeps its executable check.
+    let custom = vec![
+        "custom-dsh".to_owned(),
+        "--profile".to_owned(),
+        "acp".to_owned(),
+    ];
+    let started = prepare_for_start_with(
+        &home,
+        &mut env,
+        &custom,
+        |command, _env| {
+            assert_eq!(command, custom.as_slice());
+            Ok(())
+        },
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect("start");
+    let mut setup_env = test_env(temp.path());
+    setup_env.insert(
+        "DEEPSEEK_BASE_URL".into(),
+        "http://127.0.0.2:8000/v1".into(),
+    );
+    let setup = ensure_with(
+        &home,
+        &mut setup_env,
+        |_home, _env| Err("installer must not run".into()),
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect("setup");
+    // A ready check reports what setup reports for an installation it keeps.
+    assert_eq!(started, setup);
+    assert!(!started.packages_installed);
+    assert_eq!(env, setup_env);
+    assert_eq!(env.get("NO_PROXY").map(String::as_str), Some("127.0.0.2"));
+
+    let error = prepare_for_start_with(
+        &home,
+        &mut env,
+        &default_command(),
+        |_command, _env| Err("DeepSeek Harness requires Node >=24.9.0 (found v22.19.0)".into()),
+        cccc_runtime::deepseek_installation_ready,
+    )
+    .expect_err("old node");
+    assert!(
+        error.starts_with("DeepSeek Harness requires Node"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -167,14 +415,12 @@ fn explicit_node_proxy_setting_is_preserved() {
     let home = test_home(temp.path());
     let mut env = test_env(temp.path());
     env.insert("NODE_USE_ENV_PROXY".into(), "0".into());
-    let executable = cccc_executable(temp.path());
     ensure_with(
         &home,
         &mut env,
-        &executable,
         install_fixture,
-        |_command, _env| Ok(()),
-        fixture_ready,
+        node_supported,
+        cccc_runtime::deepseek_installation_ready,
     )
     .expect("setup");
     assert_eq!(env.get("NODE_USE_ENV_PROXY").map(String::as_str), Some("0"));
@@ -251,16 +497,17 @@ fn setup_passes_the_loopback_exclusion_to_the_runtime() {
     ensure_with(
         &home,
         &mut env,
-        &cccc_executable(temp.path()),
         |_home, _env| Err("installer must not run".into()),
-        |_command, env| {
+        |command, env| {
+            // Setup has no member, so it checks the default launcher.
+            assert_eq!(command, default_command().as_slice());
             assert_eq!(
                 env.get("NO_PROXY").map(String::as_str),
                 Some("internal.example,127.0.0.2")
             );
             Ok(())
         },
-        |_command, _env| Ok(()),
+        |_dsh_home| Ok(()),
     )
     .expect("setup");
 }
@@ -284,172 +531,4 @@ fn remote_or_missing_base_does_not_change_proxy_exclusions() {
         bypass_proxy_for_loopback_base(&mut env);
         assert_eq!(env, before);
     }
-}
-
-#[test]
-fn upgrades_three_package_managed_profile_to_full_acp_composition() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = test_home(temp.path());
-    let dsh_home = home
-        .root()
-        .join("runtimes/deepseek")
-        .join(DEEPSEEK_RELEASE_VERSION);
-    for (package, version) in required_packages().into_iter().take(3) {
-        let manifest = dsh_home
-            .join("node_modules")
-            .join(package)
-            .join("package.json");
-        fs::create_dir_all(manifest.parent().expect("manifest parent")).expect("package dir");
-        fs::write(manifest, format!(r#"{{"version":"{version}"}}"#)).expect("manifest");
-    }
-    let profile = dsh_home.join("profiles/cccc-acp");
-    fs::create_dir_all(&profile).expect("profile dir");
-    fs::write(profile.join("package.json"), r#"{"ccccManaged":true}"#).expect("old manifest");
-    fs::write(profile.join("cordis.yml"), "[]\n").expect("old config");
-
-    let mut env = test_env(temp.path());
-    let outcome = ensure_with(
-        &home,
-        &mut env,
-        &cccc_executable(temp.path()),
-        install_fixture,
-        |_command, _env| Err("deepseek executable not found: dsh-acp-demo".into()),
-        fixture_ready,
-    )
-    .expect("upgrade setup");
-    assert!(outcome.packages_installed);
-    assert!(!outcome.profile_created);
-    assert!(packages_ready(&dsh_home));
-    assert!(cccc_runtime::is_canonical_deepseek_config(
-        &fs::read_to_string(profile.join("cordis.yml")).expect("canonical config")
-    ));
-    let first_files = ["package.json", "cordis.yml"].map(|name| {
-        (
-            name,
-            fs::read(profile.join(name)).expect("migrated profile file"),
-        )
-    });
-    let second = ensure_with(
-        &home,
-        &mut env,
-        &cccc_executable(temp.path()),
-        |_home, _env| Err("installer must not run".into()),
-        |_command, _env| Ok(()),
-        fixture_ready,
-    )
-    .expect("idempotent migrated setup");
-    assert!(!second.packages_installed);
-    assert!(!second.profile_created);
-    for (name, expected) in first_files {
-        assert_eq!(
-            fs::read(profile.join(name)).expect("stable migrated profile file"),
-            expected
-        );
-    }
-}
-
-#[test]
-fn failed_install_leaves_profile_absent_and_retryable() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = test_home(temp.path());
-    let mut env = test_env(temp.path());
-    let executable = cccc_executable(temp.path());
-    let error = ensure_with(
-        &home,
-        &mut env,
-        &executable,
-        |_home, _env| Err("offline".into()),
-        |_command, _env| Ok(()),
-        fixture_ready,
-    )
-    .expect_err("install failure");
-    assert!(error.contains("offline"));
-    assert!(
-        !home
-            .root()
-            .join("runtimes/deepseek")
-            .join(DEEPSEEK_RELEASE_VERSION)
-            .join("profiles/cccc-acp")
-            .exists()
-    );
-    ensure_with(
-        &home,
-        &mut env,
-        &executable,
-        install_fixture,
-        |_command, _env| Ok(()),
-        fixture_ready,
-    )
-    .expect("retry setup");
-}
-
-#[test]
-fn upgrades_legacy_bundle_root_and_removes_obsolete_profile_patch() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = test_home(temp.path());
-    let dsh_home = home
-        .root()
-        .join("runtimes/deepseek")
-        .join(DEEPSEEK_RELEASE_VERSION);
-    install_fixture(&dsh_home, &BTreeMap::new()).expect("installed package fixture");
-    fs::write(
-        dsh_home.join("package.json"),
-        serde_json::to_vec(&json!({
-            "name": "legacy-deepseek-runtime",
-            "private": true,
-            "dependencies": {
-                "@deepseek-ai/dsh": DEEPSEEK_RELEASE_VERSION,
-                DEEPSEEK_ACP_PACKAGE: DEEPSEEK_ACP_VERSION,
-                DEEPSEEK_MCP_CLIENT_PACKAGE: DEEPSEEK_MCP_CLIENT_VERSION,
-                DEEPSEEK_ACP_APP_PACKAGE: DEEPSEEK_ACP_APP_VERSION,
-                DEEPSEEK_LLM_ADAPTER_PACKAGE: DEEPSEEK_LLM_ADAPTER_VERSION,
-            }
-        }))
-        .expect("legacy root manifest"),
-    )
-    .expect("write legacy root manifest");
-    let profile = dsh_home.join("profiles/cccc-acp");
-    write_profile_files(&profile, &cccc_executable(temp.path())).expect("managed profile");
-    fs::write(profile.join("cordis.patch.yml"), "- insert: []\n").expect("legacy patch");
-
-    let installs = std::cell::Cell::new(0_u32);
-    let ready = |_command: &[String], env: &BTreeMap<String, String>| {
-        let root = PathBuf::from(env.get("DSH_HOME").ok_or("missing DSH_HOME")?);
-        let manifest: Value = serde_json::from_slice(
-            &fs::read(root.join("package.json")).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        let dependencies = manifest
-            .get("dependencies")
-            .and_then(Value::as_object)
-            .ok_or("missing root dependencies")?;
-        if dependencies.len() != required_packages().len()
-            || required_packages().iter().any(|(package, version)| {
-                dependencies.get(*package).and_then(Value::as_str) != Some(*version)
-            })
-        {
-            return Err("legacy root dependency set".into());
-        }
-        if profile.join("cordis.patch.yml").exists() {
-            return Err("obsolete profile patch remains".into());
-        }
-        fixture_ready(_command, env)
-    };
-    let mut env = test_env(temp.path());
-    ensure_with(
-        &home,
-        &mut env,
-        &cccc_executable(temp.path()),
-        |root, env| {
-            installs.set(installs.get() + 1);
-            install_fixture(root, env)?;
-            Ok(())
-        },
-        |_command, _env| Ok(()),
-        ready,
-    )
-    .expect("legacy runtime migration");
-
-    assert_eq!(installs.get(), 1);
-    assert!(!profile.join("cordis.patch.yml").exists());
 }

@@ -12,14 +12,17 @@
   color: var(--lcd-sel-fg);
 }
 
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-composer-attach] {
+:root[data-ui-style="lcd"] [data-lcd-scope] :is([data-composer-attach], [data-composer-templates]) {
   border: 1px solid var(--lcd-rule-strong);
 }
 
 /* The composer keys follow the header keys: 1rem drawings in 2rem keys, scaling
    with the text size. Touch keys are 44px, so there the drawing is 1.5rem, the
    pixel set's own 24px at the default size. */
-:root[data-ui-style="lcd"] [data-lcd-scope] [data-composer-attach] > svg,
+:root[data-ui-style="lcd"]
+  [data-lcd-scope]
+  :is([data-composer-attach], [data-composer-templates])
+  > svg,
 :root[data-ui-style="lcd"]
   [data-lcd-scope]
   [data-voice-assistant-row-control]
@@ -31,7 +34,10 @@
 }
 
 @media (pointer: coarse) {
-  :root[data-ui-style="lcd"] [data-lcd-scope] [data-composer-attach] > svg,
+  :root[data-ui-style="lcd"]
+    [data-lcd-scope]
+    :is([data-composer-attach], [data-composer-templates])
+    > svg,
   :root[data-ui-style="lcd"]
     [data-lcd-scope]
     [data-voice-assistant-row-control]

@@ -2,6 +2,10 @@
 set -eu
 
 DEFAULT_VERSION="@CCCC_VERSION@"
+# The phased update contract this script implements (see CCCC_INSTALL_PHASE
+# below). A running CCCC reads this line before it runs a downloaded installer,
+# so an installer that predates phases is never run in one go by mistake.
+# CCCC_INSTALL_PHASE_API=1
 RELEASE_TAG_PREFIX="${CCCC_RELEASE_TAG_PREFIX:-@CCCC_RELEASE_TAG_PREFIX@}"
 REPOSITORY="${CCCC_GITHUB_REPOSITORY:-ChesterRa/cccc}"
 RELEASE_BASE_URL="${CCCC_RELEASE_BASE_URL:-https://github.com/$REPOSITORY/releases}"
@@ -14,6 +18,9 @@ BINARIES="cccc"
 INSTALL_MARKER=".cccc-standalone"
 INSTALL_MARKER_VERSION="standalone-v1"
 PIP_INSTALL_MARKER_VERSION="pip-v1"
+PHASE="${CCCC_INSTALL_PHASE:-}"
+TXN_DIR="${CCCC_INSTALL_TXN:-}"
+SEMVER_PATTERN='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'
 
 case "$RELEASE_TAG_PREFIX" in
   @*) RELEASE_TAG_PREFIX=v ;;
@@ -85,6 +92,54 @@ download() {
   esac
 }
 
+# Whether the reply of `cccc daemon stop` confirms that the agents stopped. A
+# CCCC whose agents can outlive its daemon adds the daemon's exit receipt to the
+# reply, or null when it has none, and its agents count as stopped only when the
+# receipt leaves none retained or unconfirmed. Earlier releases, whose agents
+# stop with their daemon, print exactly their daemon's acceptance; an earlier
+# CLI that stopped a newer daemon prints more keys and no receipt, which
+# confirms nothing. Whitespace is removed first; string values cannot forge
+# these keys because JSON escapes their quotes.
+stop_confirmed() {
+  stop_compact=$(printf '%s' "$1" | tr -d '[:space:]')
+  case "$stop_compact" in
+    *'"receipt":'*) ;;
+    '{"shutting_down":true}') return 0 ;;
+    *) return 1 ;;
+  esac
+  case "$stop_compact" in
+    *'"receipt":{'*) ;;
+    *) return 1 ;;
+  esac
+  case "$stop_compact" in
+    *'"retained":[]'*) ;;
+    *) return 1 ;;
+  esac
+  case "$stop_compact" in
+    *'"unconfirmed":[]'*) ;;
+    *) return 1 ;;
+  esac
+}
+
+# Without a running daemon, agents can still run under their session owners.
+# The new program decides whether it can take them over, and prints why not.
+# A release from before this check rejects the option with exactly this error
+# and cannot verify them, so CCCC has to stop them first, which the installer
+# does itself when the daemon runs.
+takeover_confirmed() {
+  takeover_status=0
+  takeover_output=$("$INSTALL_DIR/cccc$stage_suffix" update --installer-check 2>&1) ||
+    takeover_status=$?
+  [ "$takeover_status" -ne 0 ] || return 0
+  if [ "$takeover_status" -eq 2 ] &&
+    [ "$(printf '%s\n' "$takeover_output" | sed -n 1p)" = "error: unexpected argument '--installer-check' found" ]; then
+    printf '%s\n' "The release being installed cannot check for CCCC agents left running without a daemon. Start the daemon with 'cccc daemon start' from the CCCC installation that last ran it, so that the installer stops it and checks that every agent stopped." >&2
+    return 1
+  fi
+  [ -z "$takeover_output" ] || printf '%s\n' "$takeover_output" >&2
+  return 1
+}
+
 os=$(uname -s)
 arch=$(uname -m)
 case "$os:$arch" in
@@ -103,6 +158,386 @@ case "$os:$arch" in
     ;;
   Darwin:arm64|Darwin:aarch64) target=aarch64-apple-darwin ;;
   *) fail "unsupported platform: $os $arch" ;;
+esac
+
+stage_suffix=".cccc-install.$$"
+backup_dir="$INSTALL_DIR/.cccc-backup.$$"
+install_lock="$INSTALL_DIR/.cccc-install.lock"
+marker_path="$INSTALL_DIR/$INSTALL_MARKER"
+tmp_dir=
+originals=
+txn_id=
+txn_path=
+state_file=
+lock_acquired=0
+staged_owned=0
+transaction_started=0
+transaction_committed=0
+transaction_kept=0
+daemon_was_running=0
+marker_touched=0
+marker_original=0
+rollback_failed=0
+
+# Phased mode lets a running CCCC update its own standalone installation in
+# steps. prepare downloads, verifies and stages the release and takes the
+# install lock; apply moves the staged binary into place while the daemon is
+# stopped and keeps the previous one; confirm deletes that backup and releases
+# the lock; abort restores the backup when there is one and releases the lock.
+# Both also finish a transaction that no longer holds the lock once none of its
+# files remain, so they can be repeated after an interruption.
+# CCCC_INSTALL_TXN is a private directory for one update, where this script
+# keeps its state between phases. confirm leaves the applied state there, so
+# that a later abort still reports the update as committed; the caller removes
+# the directory once it is done. An older CCCC drives these phases with the
+# script of the release it updates to, so keep the variables, the output lines
+# and their meaning compatible. Without CCCC_INSTALL_PHASE, every step runs in
+# one go.
+case "$PHASE" in
+  '') ;;
+  prepare|apply|confirm|abort)
+    case "$TXN_DIR" in
+      /*) ;;
+      *) fail "CCCC_INSTALL_TXN must be an absolute directory path" ;;
+    esac
+    TXN_DIR=${TXN_DIR%/}
+    [ -d "$TXN_DIR" ] && [ ! -L "$TXN_DIR" ] ||
+      fail "update transaction directory not found: $TXN_DIR"
+    txn_id=${TXN_DIR##*/}
+    case "$txn_id" in
+      ''|.*|*[!A-Za-z0-9._-]*) fail "update transaction directory has an unsupported name: $TXN_DIR" ;;
+    esac
+    # The lock names the whole transaction directory, so a transaction with the
+    # same name under another CCCC_HOME never passes as its holder.
+    txn_path=$(CDPATH= cd -P "$TXN_DIR" && pwd -P) ||
+      fail "could not resolve update transaction directory: $TXN_DIR"
+    stage_suffix=".cccc-install.$txn_id"
+    backup_dir="$INSTALL_DIR/.cccc-backup.$txn_id"
+    state_file="$TXN_DIR/installer.state"
+    if [ "$PHASE" = prepare ]; then
+      [ -n "$VERSION" ] || fail "CCCC_VERSION is required to prepare an update"
+      [ ! -e "$state_file" ] && [ ! -L "$state_file" ] ||
+        fail "update transaction $txn_id is already prepared"
+    fi
+    ;;
+  *) fail "unknown CCCC_INSTALL_PHASE: $PHASE" ;;
+esac
+
+rollback_install() {
+  [ "$transaction_started" -eq 1 ] || return 0
+  for binary in $BINARIES; do
+    destination="$INSTALL_DIR/$binary"
+    if grep -Fqx "$binary" "$originals"; then
+      if [ -f "$backup_dir/$binary" ]; then
+        if ! rm -f "$destination" || ! mv "$backup_dir/$binary" "$destination"; then
+          rollback_failed=1
+          printf 'CCCC installer: rollback failed to restore %s\n' "$destination" >&2
+        fi
+      fi
+    elif ! rm -f "$destination"; then
+      rollback_failed=1
+      printf 'CCCC installer: rollback failed to remove %s\n' "$destination" >&2
+    fi
+  done
+  if [ "$marker_touched" -eq 1 ]; then
+    if ! rm -f "$marker_path"; then
+      rollback_failed=1
+      printf 'CCCC installer: rollback failed to remove %s\n' "$marker_path" >&2
+    fi
+    if [ "$marker_original" -eq 1 ] &&
+      ! mv "$backup_dir/$INSTALL_MARKER" "$marker_path"; then
+      rollback_failed=1
+      printf 'CCCC installer: rollback failed to restore %s\n' "$marker_path" >&2
+    fi
+  fi
+  # The daemon's own error stays visible: it names the recovery command.
+  if [ "$daemon_was_running" -eq 1 ] && [ -x "$INSTALL_DIR/cccc" ]; then
+    if ! "$INSTALL_DIR/cccc" daemon start >/dev/null; then
+      printf 'CCCC installer: rollback restored the previous binary but failed to restart its daemon\n' >&2
+    fi
+  fi
+}
+
+cleanup() {
+  if [ "$transaction_kept" -eq 1 ]; then
+    rm -rf "$tmp_dir"
+    return
+  fi
+  if [ "$transaction_committed" -eq 0 ]; then
+    rollback_install
+  fi
+  rm -rf "$tmp_dir"
+  # A phased apply whose restore failed keeps its lock and backup, so that
+  # abort can finish the restore.
+  if [ "$PHASE" = apply ] && [ "$rollback_failed" -eq 1 ]; then
+    return
+  fi
+  if [ "$staged_owned" -eq 1 ]; then
+    for binary in $BINARIES; do
+      rm -f "$INSTALL_DIR/$binary$stage_suffix"
+    done
+  fi
+  if [ "$marker_touched" -eq 1 ]; then
+    rm -f "$INSTALL_DIR/$INSTALL_MARKER$stage_suffix"
+  fi
+  if [ "$transaction_committed" -eq 1 ]; then
+    rm -rf "$backup_dir"
+  elif [ "$transaction_started" -eq 1 ]; then
+    rmdir "$backup_dir" 2>/dev/null || :
+  fi
+  if [ "$lock_acquired" -eq 1 ]; then
+    if [ -n "$state_file" ]; then
+      rm -f "$state_file" "$state_file.tmp"
+    fi
+    rm -rf "$install_lock"
+    if [ "$PHASE" = apply ]; then
+      printf 'CCCC_INSTALL_ROLLED_BACK=%s\n' "$txn_id"
+    fi
+  fi
+}
+
+install_traps() {
+  trap cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+replace_binaries() {
+  for binary in $BINARIES; do
+    if grep -Fqx "$binary" "$originals"; then
+      mv "$INSTALL_DIR/$binary" "$backup_dir/$binary"
+    fi
+  done
+  for binary in $BINARIES; do
+    mv "$INSTALL_DIR/$binary$stage_suffix" "$INSTALL_DIR/$binary"
+  done
+
+  installed_version=$("$INSTALL_DIR/cccc" --version) || fail "installed cccc failed its version check"
+  [ "$installed_version" = "cccc $VERSION" ] ||
+    fail "installed version mismatch: expected cccc $VERSION, got $installed_version"
+  if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
+    mv "$marker_path" "$backup_dir/$INSTALL_MARKER"
+    marker_original=1
+  fi
+  marker_touched=1
+  marker_stage="$INSTALL_DIR/$INSTALL_MARKER$stage_suffix"
+  printf '%s\n' "$INSTALL_MARKER_VERSION" > "$marker_stage"
+  mv "$marker_stage" "$marker_path"
+}
+
+write_state() {
+  printf 'phase=%s\nversion=%s\n' "$1" "$VERSION" > "$state_file.tmp"
+  mv "$state_file.tmp" "$state_file"
+}
+
+# The state file is data, never shell code: only these two keys are accepted,
+# and no path is ever taken from it.
+read_state() {
+  state_phase=
+  state_version=
+  [ -f "$state_file" ] && [ ! -L "$state_file" ] ||
+    fail "update transaction $txn_id has no installer state"
+  while IFS= read -r state_line || [ -n "$state_line" ]; do
+    case "$state_line" in
+      phase=prepared|phase=applied)
+        [ -z "$state_phase" ] || fail "update transaction $txn_id has an invalid installer state"
+        state_phase=${state_line#phase=}
+        ;;
+      version=*)
+        [ -z "$state_version" ] || fail "update transaction $txn_id has an invalid installer state"
+        state_version=${state_line#version=}
+        ;;
+      *) fail "update transaction $txn_id has an invalid installer state" ;;
+    esac
+  done < "$state_file"
+  [ -n "$state_phase" ] && printf '%s\n' "$state_version" | grep -Eq "$SEMVER_PATTERN" ||
+    fail "update transaction $txn_id has an invalid installer state"
+}
+
+holds_transaction_lock() {
+  lock_txn=
+  if [ -d "$install_lock" ] && [ ! -L "$install_lock" ] &&
+    [ -f "$install_lock/txn" ] && [ ! -L "$install_lock/txn" ]; then
+    lock_txn=$(cat "$install_lock/txn") || lock_txn=
+  fi
+  [ "$lock_txn" = "$txn_path" ]
+}
+
+require_transaction_lock() {
+  holds_transaction_lock ||
+    fail "update transaction $txn_path does not hold the install lock $install_lock"
+}
+
+transaction_left_files() {
+  if [ -e "$backup_dir" ] || [ -L "$backup_dir" ] ||
+    [ -e "$INSTALL_DIR/$INSTALL_MARKER$stage_suffix" ] ||
+    [ -L "$INSTALL_DIR/$INSTALL_MARKER$stage_suffix" ]; then
+    return 0
+  fi
+  for binary in $BINARIES; do
+    if [ -e "$INSTALL_DIR/$binary$stage_suffix" ] || [ -L "$INSTALL_DIR/$binary$stage_suffix" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# abort never reports an applied update as undone once its previous binary is
+# gone. It says so on its own result line instead, so the caller can finish the
+# update with confirm.
+refuse_committed_abort() {
+  printf 'CCCC_INSTALL_COMMITTED=%s\n' "$state_version"
+  fail "update transaction $txn_id is applied and its previous binary is gone; finish it with confirm"
+}
+
+# A transaction without the install lock can still have left its state: a
+# prepare that failed before taking the lock or after its own cleanup, or a
+# confirm interrupted after it released the lock. Once none of its files remain
+# in the installation, only that state is left to remove. An applied state
+# there is such an interrupted confirm, which only confirm finishes.
+finish_released_transaction() {
+  if transaction_left_files; then
+    fail "update transaction $txn_path does not hold the install lock $install_lock"
+  fi
+  state_phase=
+  state_version=
+  if [ -e "$state_file" ] || [ -L "$state_file" ]; then
+    read_state
+  fi
+  case "$1:$state_phase" in
+    confirm:applied | abort:prepared | abort:) ;;
+    confirm:*) fail "update transaction $txn_id has not been applied" ;;
+    abort:*) refuse_committed_abort ;;
+  esac
+  rm -f "$state_file.tmp"
+  if [ "$1" = confirm ]; then
+    # The applied state stays, as after any confirm.
+    printf 'CCCC_INSTALL_CONFIRMED=%s\n' "$state_version"
+  else
+    rm -f "$state_file"
+    printf 'CCCC_INSTALL_ABORTED=%s\n' "$txn_id"
+  fi
+}
+
+take_install_lock() {
+  if ! mkdir "$install_lock" 2>/dev/null; then
+    # Shown only to say who holds the lock; nothing is ever moved or removed
+    # based on these values.
+    holder_txn=$(sed -n 1p "$install_lock/txn" 2>/dev/null) || holder_txn=
+    holder_home=$(sed -n 1p "$install_lock/home" 2>/dev/null) || holder_home=
+    holder=
+    if [ -n "$holder_txn" ]; then
+      holder="; held by CCCC update $holder_txn${holder_home:+ for CCCC_HOME=$holder_home}"
+    fi
+    fail "another installation is using $INSTALL_DIR (lock: $install_lock)$holder"
+  fi
+  lock_acquired=1
+  printf '%s\n' "$$" > "$install_lock/pid"
+  if [ -n "$txn_path" ]; then
+    printf '%s\n' "$txn_path" > "$install_lock/txn"
+    if [ -n "${CCCC_HOME:-}" ]; then
+      printf '%s\n' "$CCCC_HOME" > "$install_lock/home"
+    fi
+  fi
+}
+
+apply_transaction() {
+  require_transaction_lock
+  read_state
+  [ "$state_phase" = prepared ] || fail "update transaction $txn_id is not waiting to be applied"
+  VERSION=$state_version
+  [ ! -e "$backup_dir" ] && [ ! -L "$backup_dir" ] ||
+    fail "update transaction $txn_id was interrupted while applying; abort it"
+  for binary in $BINARIES; do
+    [ -f "$INSTALL_DIR/$binary$stage_suffix" ] && [ ! -L "$INSTALL_DIR/$binary$stage_suffix" ] ||
+      fail "update transaction $txn_id is missing its staged $binary"
+  done
+  if [ -x "$INSTALL_DIR/cccc" ] && "$INSTALL_DIR/cccc" daemon status >/dev/null 2>&1; then
+    fail "the CCCC daemon is still running; stop it before applying update transaction $txn_id"
+  fi
+  tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cccc-install.XXXXXX")
+  originals="$tmp_dir/originals"
+  : > "$originals"
+  # From here a failure restores the previous files and ends the transaction.
+  lock_acquired=1
+  staged_owned=1
+  install_traps
+  for binary in $BINARIES; do
+    if [ -e "$INSTALL_DIR/$binary" ]; then
+      printf '%s\n' "$binary" >> "$originals"
+    fi
+  done
+  mkdir "$backup_dir"
+  transaction_started=1
+  replace_binaries
+  write_state applied
+  transaction_kept=1
+  printf 'CCCC_INSTALL_APPLIED=%s\n' "$VERSION"
+}
+
+confirm_transaction() {
+  if ! holds_transaction_lock; then
+    finish_released_transaction confirm
+    return
+  fi
+  read_state
+  [ "$state_phase" = applied ] || fail "update transaction $txn_id has not been applied"
+  # The applied state stays: without its backup it marks the update as
+  # committed, so an abort at any point after this never reads it as one that
+  # never ran. The caller removes the transaction directory when it is done.
+  rm -rf "$backup_dir"
+  rm -rf "$install_lock"
+  printf 'CCCC_INSTALL_CONFIRMED=%s\n' "$state_version"
+}
+
+# abort restores whatever the backup directory holds, so it also cleans up
+# after an apply that was killed halfway. It refuses to swap files back under a
+# running daemon, and it never reports an applied update as undone when the
+# previous binary is gone.
+abort_transaction() {
+  if ! holds_transaction_lock; then
+    finish_released_transaction abort
+    return
+  fi
+  state_phase=
+  state_version=
+  if [ -e "$state_file" ] || [ -L "$state_file" ]; then
+    read_state
+  fi
+  if [ "$state_phase" = applied ] && [ ! -f "$backup_dir/cccc" ]; then
+    refuse_committed_abort
+  fi
+  if [ -e "$backup_dir" ] || [ -L "$backup_dir" ]; then
+    [ -d "$backup_dir" ] && [ ! -L "$backup_dir" ] ||
+      fail "update backup is not a directory: $backup_dir"
+    status_cli="$INSTALL_DIR/cccc"
+    [ ! -f "$backup_dir/cccc" ] || status_cli="$backup_dir/cccc"
+    if [ -x "$status_cli" ] && "$status_cli" daemon status >/dev/null 2>&1; then
+      fail "a CCCC daemon is running; stop it before rolling back update transaction $txn_id"
+    fi
+    for binary in $BINARIES; do
+      if [ -f "$backup_dir/$binary" ]; then
+        mv -f "$backup_dir/$binary" "$INSTALL_DIR/$binary"
+      fi
+    done
+    if [ -f "$backup_dir/$INSTALL_MARKER" ]; then
+      mv -f "$backup_dir/$INSTALL_MARKER" "$marker_path"
+    fi
+    rm -rf "$backup_dir"
+  fi
+  for binary in $BINARIES; do
+    rm -f "$INSTALL_DIR/$binary$stage_suffix"
+  done
+  rm -f "$INSTALL_DIR/$INSTALL_MARKER$stage_suffix" "$state_file" "$state_file.tmp"
+  rm -rf "$install_lock"
+  printf 'CCCC_INSTALL_ABORTED=%s\n' "$txn_id"
+}
+
+case "$PHASE" in
+  apply) apply_transaction; exit 0 ;;
+  confirm) confirm_transaction; exit 0 ;;
+  abort) abort_transaction; exit 0 ;;
 esac
 
 RELEASE_BASE_URL=${RELEASE_BASE_URL%/}
@@ -128,7 +563,7 @@ else
   VERSION=${VERSION#v}
 fi
 
-if ! printf '%s\n' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$'; then
+if ! printf '%s\n' "$VERSION" | grep -Eq "$SEMVER_PATTERN"; then
   fail "invalid semantic version: $VERSION"
 fi
 
@@ -141,66 +576,9 @@ wheel_version=$(printf '%s\n' "$VERSION" | sed \
   -e 's/-//g')
 download_url="$RELEASE_BASE_URL/download/${RELEASE_TAG_PREFIX}${VERSION}"
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cccc-install.XXXXXX")
-stage_suffix=".cccc-install.$$"
-backup_dir="$INSTALL_DIR/.cccc-backup.$$"
-install_lock="$INSTALL_DIR/.cccc-install.lock"
 originals="$tmp_dir/originals"
-lock_acquired=0
-transaction_started=0
-transaction_committed=0
-daemon_was_running=0
-marker_touched=0
-marker_original=0
 : > "$originals"
-
-rollback_install() {
-  [ "$transaction_started" -eq 1 ] || return 0
-  for binary in $BINARIES; do
-    destination="$INSTALL_DIR/$binary"
-    if grep -Fqx "$binary" "$originals"; then
-      if [ -f "$backup_dir/$binary" ]; then
-        if ! rm -f "$destination" || ! mv "$backup_dir/$binary" "$destination"; then
-          printf 'CCCC installer: rollback failed to restore %s\n' "$destination" >&2
-        fi
-      fi
-    else
-      rm -f "$destination" || printf 'CCCC installer: rollback failed to remove %s\n' "$destination" >&2
-    fi
-  done
-  if [ "$marker_touched" -eq 1 ]; then
-    rm -f "$marker_path" || printf 'CCCC installer: rollback failed to remove %s\n' "$marker_path" >&2
-    if [ "$marker_original" -eq 1 ] &&
-      ! mv "$backup_dir/$INSTALL_MARKER" "$marker_path"; then
-      printf 'CCCC installer: rollback failed to restore %s\n' "$marker_path" >&2
-    fi
-  fi
-  if [ "$daemon_was_running" -eq 1 ] && [ -x "$INSTALL_DIR/cccc" ]; then
-    if ! "$INSTALL_DIR/cccc" daemon start >/dev/null 2>&1; then
-      printf 'CCCC installer: rollback restored the previous binary but failed to restart its daemon\n' >&2
-    fi
-  fi
-}
-
-cleanup() {
-  if [ "$transaction_committed" -eq 0 ]; then
-    rollback_install
-  fi
-  rm -rf "$tmp_dir"
-  for binary in $BINARIES; do
-    rm -f "$INSTALL_DIR/$binary$stage_suffix"
-  done
-  rm -f "$INSTALL_DIR/$INSTALL_MARKER$stage_suffix"
-  if [ "$transaction_committed" -eq 1 ]; then
-    rm -rf "$backup_dir"
-  fi
-  if [ "$lock_acquired" -eq 1 ]; then
-    rm -rf "$install_lock"
-  fi
-}
-trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+install_traps
 
 printf 'Downloading CCCC v%s for %s...\n' "$VERSION" "$target"
 download "$download_url/SHA256SUMS" "$tmp_dir/SHA256SUMS"
@@ -272,6 +650,12 @@ tar -xzf "$tmp_dir/$archive" -C "$tmp_dir"
 package_dir="$tmp_dir/$package"
 [ -d "$package_dir" ] && [ ! -L "$package_dir" ] || fail "archive is missing its package directory"
 mkdir -p "$INSTALL_DIR"
+# A phased update holds the lock before it writes into the install directory,
+# so a refused transaction never touches files another one has staged.
+if [ "$PHASE" = prepare ]; then
+  take_install_lock
+fi
+staged_owned=1
 for binary in $BINARIES; do
   source_path="$package_dir/$binary"
   [ -f "$source_path" ] && [ ! -L "$source_path" ] || fail "archive is missing $binary"
@@ -279,15 +663,12 @@ for binary in $BINARIES; do
   chmod 755 "$INSTALL_DIR/$binary$stage_suffix"
 done
 
-if ! mkdir "$install_lock" 2>/dev/null; then
-  fail "another installation is using $INSTALL_DIR (lock: $install_lock)"
+if [ "$PHASE" != prepare ]; then
+  take_install_lock
 fi
-lock_acquired=1
-printf '%s\n' "$$" > "$install_lock/pid"
 existing_cli="$INSTALL_DIR/cccc"
 marker_owned=0
 marker_present=0
-marker_path="$INSTALL_DIR/$INSTALL_MARKER"
 if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
   marker_present=1
   [ -f "$marker_path" ] && [ ! -L "$marker_path" ] ||
@@ -299,6 +680,10 @@ if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
   elif [ "$marker_value" = "$PIP_INSTALL_MARKER_VERSION" ]; then
     fail "existing $existing_cli is managed by pip; run python -m pip uninstall cccc-pair before installing the standalone release"
   fi
+fi
+if [ "$PHASE" = prepare ] &&
+  { [ "$marker_owned" -ne 1 ] || [ ! -f "$existing_cli" ] || [ -L "$existing_cli" ]; }; then
+  fail "an update needs an existing standalone CCCC installation at $existing_cli"
 fi
 trusted_existing=0
 if [ "$marker_present" -eq 0 ] && [ -n "$TRUSTED_EXISTING_CLI" ] &&
@@ -320,39 +705,36 @@ for binary in $BINARIES; do
     printf '%s\n' "$binary" >> "$originals"
   fi
 done
+if [ "$PHASE" = prepare ]; then
+  write_state prepared
+  transaction_kept=1
+  printf 'CCCC_INSTALL_STAGED=%s\n' "$INSTALL_DIR/cccc$stage_suffix"
+  exit 0
+fi
 mkdir "$backup_dir"
 transaction_started=1
 if [ -x "$INSTALL_DIR/cccc" ] && "$INSTALL_DIR/cccc" daemon status >/dev/null 2>&1; then
-  daemon_was_running=1
-  "$INSTALL_DIR/cccc" daemon stop >/dev/null || fail "could not stop the running CCCC daemon"
+  stop_reply=$("$INSTALL_DIR/cccc" daemon stop) || fail "could not stop the running CCCC daemon"
   attempts=0
   while "$INSTALL_DIR/cccc" daemon status >/dev/null 2>&1; do
     attempts=$((attempts + 1))
     [ "$attempts" -lt 40 ] || fail "the running CCCC daemon did not stop in time"
     sleep 0.25
   done
+  # Unconfirmed agents may belong to a daemon newer than this CLI, which would
+  # not see them if it started its own daemon, so CCCC stays stopped. Running
+  # the installer again then has the staged program check them.
+  stop_confirmed "$stop_reply" ||
+    fail "CCCC stopped, but it could not confirm that every agent stopped, so the update was not installed, the previous version is kept and CCCC stays stopped. Finish stopping CCCC with 'cccc daemon stop' from the CCCC installation that last ran the daemon, following what it reports, then run the installer again"
+  # Only after a confirmed stop does a failure below start the previous daemon
+  # again, and a successful update start the new one.
+  daemon_was_running=1
+elif [ -x "$INSTALL_DIR/cccc" ]; then
+  takeover_confirmed ||
+    fail "the update was not installed and the previous version is kept. Follow the message above, then run the installer again"
 fi
 
-for binary in $BINARIES; do
-  if grep -Fqx "$binary" "$originals"; then
-    mv "$INSTALL_DIR/$binary" "$backup_dir/$binary"
-  fi
-done
-for binary in $BINARIES; do
-  mv "$INSTALL_DIR/$binary$stage_suffix" "$INSTALL_DIR/$binary"
-done
-
-installed_version=$("$INSTALL_DIR/cccc" --version) || fail "installed cccc failed its version check"
-[ "$installed_version" = "cccc $VERSION" ] ||
-  fail "installed version mismatch: expected cccc $VERSION, got $installed_version"
-if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
-  mv "$marker_path" "$backup_dir/$INSTALL_MARKER"
-  marker_original=1
-fi
-marker_touched=1
-marker_stage="$INSTALL_DIR/$INSTALL_MARKER$stage_suffix"
-printf '%s\n' "$INSTALL_MARKER_VERSION" > "$marker_stage"
-mv "$marker_stage" "$marker_path"
+replace_binaries
 if [ "$daemon_was_running" -eq 1 ]; then
   "$INSTALL_DIR/cccc" daemon start >/dev/null || fail "the updated CCCC daemon could not restart"
 fi

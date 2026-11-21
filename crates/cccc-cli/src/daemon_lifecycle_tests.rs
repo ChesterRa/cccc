@@ -375,3 +375,476 @@ fn daemon_fixtures_do_not_break_a_later_process_launch() {
             .expect("daemon fixtures must not poison later launches");
     assert!(output.status.success());
 }
+
+/// A stand-in daemon on the address file: answers each op from `reply` and records what it
+/// was asked, so a test can prove which requests a command did or did not send.
+#[cfg(unix)]
+fn fake_daemon(
+    home: &HomeLayout,
+    reply: fn(&str, &serde_json::Map<String, serde_json::Value>) -> DaemonResponse,
+) -> std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>> {
+    let socket = home.daemon_dir().join("fake.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).expect("bind fake daemon");
+    let address = json!({
+        "v": 1, "transport": "unix", "path": socket, "pid": 4242,
+        "version": PRODUCT_VERSION, "ts": "2026-11-17T00:00:00Z",
+    });
+    std::fs::write(
+        cccc_client::address_path(home),
+        serde_json::to_vec(&address).expect("address json"),
+    )
+    .expect("write fake address");
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let record = seen.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let record = record.clone();
+            tokio::spawn(async move {
+                let mut stream = BufReader::new(stream);
+                let mut line = String::new();
+                while stream.read_line(&mut line).await.unwrap_or(0) > 0 {
+                    let request: cccc_contracts::DaemonRequest =
+                        serde_json::from_str(&line).expect("request");
+                    record.lock().expect("record").push((
+                        request.op.clone(),
+                        serde_json::Value::Object(request.args.clone()),
+                    ));
+                    let mut bytes =
+                        serde_json::to_vec(&reply(&request.op, &request.args)).expect("reply");
+                    bytes.push(b'\n');
+                    if stream.get_mut().write_all(&bytes).await.is_err() {
+                        return;
+                    }
+                    line.clear();
+                }
+            });
+        }
+    });
+    seen
+}
+
+#[cfg(unix)]
+fn compatible_ping(extra: serde_json::Value) -> DaemonResponse {
+    let mut result = json!({
+        "implementation": "rust",
+        "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY,
+        "pid": 4242,
+        "version": PRODUCT_VERSION,
+    });
+    if let (Some(result), Some(extra)) = (result.as_object_mut(), extra.as_object()) {
+        result.extend(extra.clone());
+    }
+    serde_json::from_value(json!({"v":1,"ok":true,"result":result})).expect("ping")
+}
+
+#[cfg(unix)]
+fn old_daemon(op: &str, _args: &serde_json::Map<String, serde_json::Value>) -> DaemonResponse {
+    match op {
+        "ping" => compatible_ping(json!({})),
+        "shutdown" => {
+            serde_json::from_value(json!({"v":1,"ok":true,"result":{"shutting_down":true}}))
+                .expect("shutdown")
+        }
+        _ => serde_json::from_value(json!({"v":1,"ok":false,"error":{
+            "code":"unknown_op","message":format!("unknown operation: {op}"),"details":{}}}))
+        .expect("unknown op"),
+    }
+}
+
+/// The first migration: a new CLI meets the old daemon. Asking to keep agents must not
+/// turn into the plain stop the old daemon understands, which would end every agent.
+#[cfg(unix)]
+#[tokio::test]
+async fn keeping_agents_on_an_old_daemon_is_refused_and_stops_nothing() {
+    let (_temp, home) = home();
+    let seen = fake_daemon(&home, old_daemon);
+    let client = DaemonClient::new(home.clone());
+
+    let error = super::stop_for_user(&client, &home, super::StopIntent::KeepAgents)
+        .await
+        .expect_err("an old daemon cannot keep agents");
+
+    let detail = format!("{error:#}");
+    assert!(detail.contains("nothing was stopped"), "{detail}");
+    assert!(detail.contains("cccc daemon stop"), "{detail}");
+    let ops: Vec<String> = seen
+        .lock()
+        .expect("seen")
+        .iter()
+        .map(|(op, _)| op.clone())
+        .collect();
+    assert!(
+        ops.contains(&"shutdown_preserving_agents".to_owned()),
+        "{ops:?}"
+    );
+    assert!(
+        !ops.contains(&"shutdown".to_owned()),
+        "no fallback stop: {ops:?}"
+    );
+}
+
+/// An old daemon ignores the request ID on a plain stop and writes no receipt; the reply
+/// and the absence of a summary line stay what they were.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_plain_stop_on_an_old_daemon_reports_only_its_own_reply() {
+    let (_temp, home) = home();
+    let seen = fake_daemon(&home, old_daemon);
+    let client = DaemonClient::new(home.clone());
+
+    let (response, receipt) = super::stop_for_user(&client, &home, super::StopIntent::StopAgents)
+        .await
+        .expect("plain stop");
+
+    assert!(response.ok);
+    assert!(
+        matches!(receipt, super::Receipt::NotSupported),
+        "{receipt:?}"
+    );
+    assert!(super::receipt_line(&home, super::StopIntent::StopAgents, &receipt).is_none());
+    let shutdown = seen
+        .lock()
+        .expect("seen")
+        .iter()
+        .find(|(op, _)| op == "shutdown")
+        .map(|(_, args)| args.clone())
+        .expect("plain shutdown sent");
+    assert!(
+        shutdown
+            .get("request_id")
+            .and_then(|id| id.as_str())
+            .is_some()
+    );
+    assert!(
+        shutdown.get("expected_pid").is_none(),
+        "a plain stop is not narrowed to one pid"
+    );
+}
+
+fn agent(group_id: &str, actor_id: &str) -> cccc_daemon::session_owner::AgentIdentity {
+    cccc_daemon::session_owner::AgentIdentity {
+        group_id: group_id.into(),
+        actor_id: actor_id.into(),
+        actor_created_at: "2026-11-17T00:00:00Z".into(),
+        generation: None,
+        owner_id: None,
+    }
+}
+
+/// An unconfirmed agent as the receipt names it: with the session owner kept for review.
+fn held(
+    group_id: &str,
+    actor_id: &str,
+    owner_id: &str,
+) -> cccc_daemon::session_owner::AgentIdentity {
+    cccc_daemon::session_owner::AgentIdentity {
+        owner_id: Some(owner_id.into()),
+        ..agent(group_id, actor_id)
+    }
+}
+
+fn report(
+    mode: cccc_daemon::session_owner::ShutdownMode,
+    confirmed_stopped: Vec<cccc_daemon::session_owner::AgentIdentity>,
+    retained: Vec<cccc_daemon::session_owner::AgentIdentity>,
+    unconfirmed: Vec<cccc_daemon::session_owner::AgentIdentity>,
+) -> super::Receipt {
+    super::Receipt::Confirmed(cccc_daemon::session_owner::ShutdownReport {
+        v: 1,
+        daemon_pid: 4242,
+        request_id: "request".into(),
+        mode,
+        confirmed_stopped,
+        retained,
+        unconfirmed,
+    })
+}
+
+#[test]
+fn receipt_lines_count_only_confirmed_agents_and_name_the_rest_as_possibly_running() {
+    use cccc_daemon::session_owner::ShutdownMode;
+    let (_temp, home) = home();
+    let group = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .create("Night shift", "")
+        .expect("group");
+    let keep = super::StopIntent::KeepAgents;
+    let stop = super::StopIntent::StopAgents;
+
+    let kept = super::receipt_line(
+        &home,
+        keep,
+        &report(
+            ShutdownMode::PreserveAgents,
+            vec![],
+            vec![agent(&group.group_id, "a1"), agent(&group.group_id, "b2")],
+            vec![],
+        ),
+    )
+    .expect("kept agents are reported");
+    assert!(
+        kept.contains("kept 2 agents running (a1, b2 in Night shift)"),
+        "{kept}"
+    );
+    assert!(kept.contains("start CCCC again to reattach them"), "{kept}");
+
+    let partly = super::receipt_line(
+        &home,
+        stop,
+        &report(
+            ShutdownMode::Stop,
+            vec![agent(&group.group_id, "a1")],
+            vec![],
+            vec![agent("g_missing", "c3")],
+        ),
+    )
+    .expect("a partial stop is reported");
+    assert!(
+        partly.contains("stopped 1 agent (a1 in Night shift)"),
+        "{partly}"
+    );
+    assert!(
+        partly.contains("could not confirm 1 agent (c3 in g_missing)"),
+        "{partly}"
+    );
+    assert!(partly.contains("cccc daemon stop"), "{partly}");
+
+    // A plain stop never keeps agents on purpose: a retained one is uncertain, not kept.
+    let leftover = super::receipt_line(
+        &home,
+        stop,
+        &report(
+            ShutdownMode::Stop,
+            vec![],
+            vec![agent(&group.group_id, "d4")],
+            vec![],
+        ),
+    )
+    .expect("a leftover is reported");
+    assert!(
+        leftover.contains("could not confirm 1 agent (d4 in Night shift)"),
+        "{leftover}"
+    );
+    assert!(!leftover.contains("kept"), "{leftover}");
+
+    assert!(
+        super::receipt_line(
+            &home,
+            stop,
+            &report(ShutdownMode::Stop, vec![], vec![], vec![])
+        )
+        .is_none()
+    );
+    let none_running = super::receipt_line(
+        &home,
+        keep,
+        &report(ShutdownMode::PreserveAgents, vec![], vec![], vec![]),
+    )
+    .expect("an empty maintenance stop says so");
+    assert!(
+        none_running.contains("no agents were running"),
+        "{none_running}"
+    );
+    let only_uncertain = super::receipt_line(
+        &home,
+        keep,
+        &report(
+            ShutdownMode::PreserveAgents,
+            vec![],
+            vec![],
+            vec![agent(&group.group_id, "e5")],
+        ),
+    )
+    .expect("an unconfirmed agent is reported");
+    assert!(
+        only_uncertain.contains("could not confirm 1 agent (e5 in Night shift)"),
+        "{only_uncertain}"
+    );
+    assert!(
+        !only_uncertain.contains("no agents were running"),
+        "{only_uncertain}"
+    );
+    // A maintenance stop that stopped an agent it could not keep says so, beside any kept.
+    let only_stopped = super::receipt_line(
+        &home,
+        keep,
+        &report(
+            ShutdownMode::PreserveAgents,
+            vec![agent(&group.group_id, "f6")],
+            vec![],
+            vec![],
+        ),
+    )
+    .expect("a stopped agent is reported");
+    assert!(
+        only_stopped.contains("stopped 1 agent (f6 in Night shift)"),
+        "{only_stopped}"
+    );
+    assert!(
+        !only_stopped.contains("no agents were running"),
+        "{only_stopped}"
+    );
+    let mixed = super::receipt_line(
+        &home,
+        keep,
+        &report(
+            ShutdownMode::PreserveAgents,
+            vec![agent(&group.group_id, "f6")],
+            vec![agent(&group.group_id, "a1")],
+            vec![],
+        ),
+    )
+    .expect("a mixed maintenance stop is reported");
+    assert!(
+        mixed.contains("kept 1 agent running (a1 in Night shift)"),
+        "{mixed}"
+    );
+    assert!(
+        mixed.contains("stopped 1 agent (f6 in Night shift)"),
+        "{mixed}"
+    );
+
+    // Only a stop the daemon confirmed, naming no owner, suggests stopping again.
+    assert!(
+        partly.contains("run `cccc daemon stop` again to retry"),
+        "{partly}"
+    );
+    assert!(
+        !only_uncertain.contains("daemon stop"),
+        "a maintenance stop must not suggest stopping the agents it kept: {only_uncertain}"
+    );
+    let offline = super::receipt_line(
+        &home,
+        stop,
+        &super::Receipt::WithoutDaemon(cccc_daemon::session_owner::ShutdownReport {
+            v: 1,
+            daemon_pid: 4242,
+            request_id: "request".into(),
+            mode: ShutdownMode::Stop,
+            confirmed_stopped: vec![],
+            retained: vec![],
+            unconfirmed: vec![agent(&group.group_id, "c3")],
+        }),
+    )
+    .expect("an offline stop is reported");
+    assert!(
+        offline.contains("could not confirm 1 agent (c3 in Night shift)")
+            && !offline.contains("again"),
+        "an offline stop already was the retry: {offline}"
+    );
+
+    // An owner kept for review is named with its command, in either mode, once per owner.
+    let owner = "2cabc7ed-cb39-40ea-a8e2-c06dd258b4a1";
+    let review = "`cccc daemon process-recovery --owner session --owner-id 2cabc7edcb3940eaa8e2c06dd258b4a1 list`";
+    for (intent, mode) in [
+        (stop, ShutdownMode::Stop),
+        (keep, ShutdownMode::PreserveAgents),
+    ] {
+        let line = super::receipt_line(
+            &home,
+            intent,
+            &report(
+                mode,
+                vec![],
+                vec![],
+                vec![
+                    held(&group.group_id, "c1", owner),
+                    held(&group.group_id, "c2", owner),
+                ],
+            ),
+        )
+        .expect("an owner-held agent is reported");
+        assert!(
+            line.contains("could not confirm 2 agents (c1, c2 in Night shift), which may still be running; to review, run ")
+                && line.contains(review)
+                && line.matches("process-recovery").count() == 1
+                && !line.contains("daemon stop"),
+            "{line}"
+        );
+    }
+    let two = super::receipt_line(
+        &home,
+        stop,
+        &report(
+            ShutdownMode::Stop,
+            vec![],
+            vec![],
+            vec![
+                held(&group.group_id, "c1", owner),
+                held(&group.group_id, "c2", "9f0e8d7c6b5a49388271605f4e3d2c1b"),
+            ],
+        ),
+    )
+    .expect("two owners are reported");
+    assert!(
+        two.contains(
+            "to review, run `cccc daemon process-recovery --owner session --owner-id 2cabc7edcb3940eaa8e2c06dd258b4a1 list` and `cccc daemon process-recovery --owner session --owner-id 9f0e8d7c6b5a49388271605f4e3d2c1b list`"
+        ),
+        "{two}"
+    );
+    // Only a value that parses as a UUID goes into a command.
+    let odd = super::receipt_line(
+        &home,
+        stop,
+        &report(
+            ShutdownMode::Stop,
+            vec![],
+            vec![],
+            vec![held(&group.group_id, "c1", "x; rm -rf ~")],
+        ),
+    )
+    .expect("an unparsable owner is reported");
+    assert!(
+        !odd.contains("rm -rf") && !odd.contains("process-recovery"),
+        "{odd}"
+    );
+
+    let missing_keep =
+        super::receipt_line(&home, keep, &super::Receipt::Missing).expect("missing receipt");
+    assert!(
+        missing_keep.contains("could not confirm which agents kept running"),
+        "{missing_keep}"
+    );
+    let missing_stop =
+        super::receipt_line(&home, stop, &super::Receipt::Missing).expect("missing receipt");
+    assert!(
+        missing_stop.contains("some may still be running"),
+        "{missing_stop}"
+    );
+}
+
+#[cfg(unix)]
+fn daemon_with_retained_agents(
+    op: &str,
+    _args: &serde_json::Map<String, serde_json::Value>,
+) -> DaemonResponse {
+    assert_eq!(op, "ping");
+    compatible_ping(json!({"retained_agents":[
+        {"group_id":"g_x","actor_id":"k1","actor_created_at":"2026-11-17T00:00:00Z","generation":null}
+    ]}))
+}
+
+#[cfg(unix)]
+fn quiet_daemon(op: &str, _args: &serde_json::Map<String, serde_json::Value>) -> DaemonResponse {
+    assert_eq!(op, "ping");
+    compatible_ping(json!({}))
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn startup_names_retained_agents_without_claiming_web_has_reconnected() {
+    let (_temp, home) = home();
+    fake_daemon(&home, daemon_with_retained_agents);
+    let line = super::retained_line(&DaemonClient::new(home.clone()), &home)
+        .await
+        .expect("retained agents are reported");
+    assert_eq!(line, "[cccc] Found 1 agent that kept running (k1 in g_x).");
+
+    let (_temp, quiet) = self::home();
+    fake_daemon(&quiet, quiet_daemon);
+    assert!(
+        super::retained_line(&DaemonClient::new(quiet.clone()), &quiet)
+            .await
+            .is_none()
+    );
+}

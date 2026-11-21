@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 
 pub(crate) const DEFAULT_CAPACITY: usize = 2_000_000;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct HistoryPage {
     pub data: String,
     pub start_cursor: u64,

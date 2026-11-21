@@ -1392,14 +1392,14 @@ fn stop_worker_for_a_restart(fixture: &Fixture) {
 }
 
 #[test]
-fn a_deepseek_turn_cut_off_by_a_restart_stays_undelivered() {
+fn a_deepseek_turn_cut_off_by_a_restart_is_ambiguous_and_not_replayed() {
     let fixture = Fixture::new();
     let cut = deepseek_with_an_open_turn(&fixture);
 
     stop_worker_for_a_restart(&fixture);
 
-    assert_ne!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
-    assert!(fixture.pending().contains(&cut.id));
+    assert_eq!(fixture.delivery_state(&cut).as_deref(), Some("ambiguous"));
+    assert!(!fixture.pending().contains(&cut.id));
 }
 
 #[test]

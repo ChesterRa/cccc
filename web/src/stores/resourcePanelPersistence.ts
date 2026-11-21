@@ -1,6 +1,7 @@
 import { clampRatio, resumeSplit } from "../components/resourcePanel/splitLayout";
 import {
   resourceKey,
+  type AttachmentResource,
   type GroupPanel,
   type ResourceDescriptor,
   type ResourceTab,
@@ -43,7 +44,7 @@ function projectTab(value: unknown): ResourceTab | null {
       ![tab.messageKey, tab.eventId, tab.blobGroupId, tab.blobPath].every(nonempty) ||
       !Number.isSafeInteger(tab.index) ||
       Number(tab.index) < 0 ||
-      !["image", "video", "markdown", "text", "pdf"].includes(String(tab.media)) ||
+      !["image", "video", "markdown", "html", "text", "pdf"].includes(String(tab.media)) ||
       typeof tab.isSvg !== "boolean"
     )
       return null;
@@ -54,7 +55,7 @@ function projectTab(value: unknown): ResourceTab | null {
       index: tab.index as number,
       blobGroupId: tab.blobGroupId as string,
       blobPath: tab.blobPath as string,
-      media: tab.media as "image" | "video" | "markdown" | "text" | "pdf",
+      media: tab.media as AttachmentResource["media"],
       isSvg: tab.isSvg,
       ...(typeof tab.sender === "string" ? { sender: tab.sender } : {}),
       ...(typeof tab.sentAt === "string" ? { sentAt: tab.sentAt } : {}),
@@ -131,7 +132,8 @@ function projectPanels(value: unknown): Panels {
     panels[groupId] = {
       tabs,
       activeKey,
-      open: panel.open && !!tabs.length,
+      // An empty panel stays open after a reload, as it stays after its last tab closes.
+      open: panel.open,
       maximized: panel.open && panel.maximized && !!tabs.length,
       closed: [],
       split,

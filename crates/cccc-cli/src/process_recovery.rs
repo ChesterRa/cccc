@@ -12,6 +12,7 @@ pub(crate) async fn run(
     home: HomeLayout,
     client: &DaemonClient,
     owner: RecoveryOwner,
+    owner_id: Option<String>,
     action: RecoveryAction,
 ) -> Result<()> {
     if matches!(
@@ -22,6 +23,18 @@ pub(crate) async fn run(
         }
     ) {
         bail!("accepting a record requires --accept-risk; old work may still be running");
+    }
+    if matches!(owner, RecoveryOwner::Session) {
+        let owner_id = owner_id.context(
+            "`--owner session` needs `--owner-id`: use the id named by the error that stopped CCCC from starting",
+        )?;
+        let value =
+            tokio::task::spawn_blocking(move || session_owner(&home, &owner_id, action)).await??;
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+    if owner_id.is_some() {
+        bail!("`--owner-id` applies only to `--owner session`");
     }
     let lock_home = home.clone();
     let lock = tokio::task::spawn_blocking(move || try_owner_lock(&lock_home, owner)).await??;
@@ -66,6 +79,21 @@ pub(crate) async fn run(
     crate::commands::common::print(response)
 }
 
+/// The session owner is gone, so review runs here under its lock, never
+/// through a daemon: none may start while its evidence is unresolved.
+fn session_owner(home: &HomeLayout, owner_id: &str, action: RecoveryAction) -> Result<Value> {
+    use cccc_daemon::session_owner::RecoveryAction as Owner;
+    if !cccc_daemon::session_owner::platform_supported() {
+        bail!("session owners do not run on this platform, so it has none to review");
+    }
+    let action = match action {
+        RecoveryAction::List => Owner::List,
+        RecoveryAction::Retry { id, version } => Owner::Retry { id, version },
+        RecoveryAction::Accept { id, version, .. } => Owner::Accept { id, version },
+    };
+    cccc_daemon::session_owner::recover(home, owner_id, action)
+}
+
 fn web_running_message(binding: Option<(String, u16)>) -> String {
     let local_address = binding.map_or_else(String::new, |(host, port)| {
         format!(
@@ -83,6 +111,7 @@ pub(crate) fn try_owner_lock(home: &HomeLayout, owner: RecoveryOwner) -> Result<
     let path = match owner {
         RecoveryOwner::Daemon => cccc_daemon::DaemonPaths::new(home.clone()).lock,
         RecoveryOwner::Web => home.daemon_dir().join("cccc-web.lock"),
+        RecoveryOwner::Session => bail!("session owner evidence is reviewed with `--owner-id`"),
     };
     let file = OpenOptions::new()
         .create(true)
@@ -119,6 +148,7 @@ pub(crate) fn offline(
                 .join("web-processes")
                 .join("owned-process-groups.json"),
         ),
+        RecoveryOwner::Session => bail!("session owner evidence is reviewed with `--owner-id`"),
     };
     match action {
         RecoveryAction::List => {
@@ -177,6 +207,35 @@ mod tests {
             drop(held);
             assert!(reclaim(|| try_owner_lock(&home, owner).expect("reclaim")).is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn owner_id_goes_with_the_session_owner_and_only_with_it() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let client = DaemonClient::new(home.clone());
+        // Both mistakes are refused before any lock, ledger or daemon is touched.
+        let missing = run(
+            home.clone(),
+            &client,
+            RecoveryOwner::Session,
+            None,
+            RecoveryAction::List,
+        )
+        .await
+        .expect_err("a session owner needs its id");
+        assert!(missing.to_string().contains("--owner-id"), "{missing}");
+        let stray = run(
+            home.clone(),
+            &client,
+            RecoveryOwner::Web,
+            Some("597d730d8e974b2eb9d7b670f994d0a1".into()),
+            RecoveryAction::List,
+        )
+        .await
+        .expect_err("an id names only a session owner");
+        assert!(stray.to_string().contains("--owner session"), "{stray}");
+        assert!(!home.daemon_dir().exists());
     }
 
     #[test]

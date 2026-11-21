@@ -19,12 +19,25 @@ type AttachmentResourceViewProps = {
   visible?: boolean;
   /** Stable across an optimistic upload being replaced by its stored URL. */
   resourceKey: string;
+  /** The host header for this visible copy, or null for an inactive tab. */
+  actionsTarget?: HTMLElement | null;
+  /** A click beside an image, for a host that closes on it. */
+  onBlankClick?: () => void;
+  /** A document's source switch in the host bar's own key and icon sizes. */
+  toggleButtonClassName?: string;
+  toggleIconClassName?: string;
 };
 
 type SvgSource = { href: string; src: string; isSvg: boolean } | { href: string; error: true };
 
 /** Own an SVG's image URL independently of its virtualized source message. */
-function ResourceImage({ href, title, isSvg, resourceKey }: AttachmentResourceViewProps) {
+function ResourceImage({
+  href,
+  title,
+  isSvg,
+  resourceKey,
+  onBlankClick,
+}: AttachmentResourceViewProps) {
   const { t } = useTranslation("chat");
   const [svg, setSvg] = useState<SvgSource | null>(null);
 
@@ -79,9 +92,19 @@ function ResourceImage({ href, title, isSvg, resourceKey }: AttachmentResourceVi
         </p>
       );
     }
-    return <GraphicViewer src={svg.src} alt={title} isSvg={svg.isSvg} resourceKey={resourceKey} />;
+    return (
+      <GraphicViewer
+        src={svg.src}
+        alt={title}
+        isSvg={svg.isSvg}
+        resourceKey={resourceKey}
+        onBlankClick={onBlankClick}
+      />
+    );
   }
-  return <GraphicViewer src={href} alt={title} resourceKey={resourceKey} />;
+  return (
+    <GraphicViewer src={href} alt={title} resourceKey={resourceKey} onBlankClick={onBlankClick} />
+  );
 }
 
 /** A hidden video keeps its playback position, but does not continue playing out of sight. */
@@ -128,6 +151,9 @@ export function AttachmentResourceView(props: AttachmentResourceViewProps) {
       title={props.title}
       isDark={props.isDark}
       failedText={t("documentPreviewFailed")}
+      actionsTarget={props.actionsTarget}
+      toggleButtonClassName={props.toggleButtonClassName}
+      toggleIconClassName={props.toggleIconClassName}
     />
   );
 }

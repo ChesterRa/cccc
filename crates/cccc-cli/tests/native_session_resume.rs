@@ -310,3 +310,5 @@ async fn an_idle_claude_receiver_waits_longer_after_each_empty_answer() {
         );
     }
 }
+
+cccc_daemon::session_owner_test_entry!();

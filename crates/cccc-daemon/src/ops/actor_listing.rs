@@ -1,3 +1,4 @@
+use crate::session_owner::runtime as cccc_runtime;
 use cccc_contracts::{Actor, DaemonRequest};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, actors, inbox, ledger};
 use serde_json::{Map, Value, json};
@@ -8,6 +9,14 @@ use crate::dispatch::OpError;
 use super::{actor_runtime_status, runtime_session};
 
 pub(super) fn list(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    request: &DaemonRequest,
+) -> Result<Vec<Value>, OpError> {
+    crate::session_owner::read_scope(|| list_snapshot(home, group, request))
+}
+
+fn list_snapshot(
     home: &HomeLayout,
     group: &GroupDoc,
     request: &DaemonRequest,
@@ -36,34 +45,40 @@ pub(super) fn list(
             let status = actor_runtime_status::resolve(home, group, &actor);
             let mut value = super::actor_runtime::actor_response(home, &group.group_id, &actor);
             if let Some(object) = value.as_object_mut() {
-                object.extend(runtime_session::actor_fields(
-                    home,
-                    &group.group_id,
-                    &actor.id,
-                ));
-                object.insert("running".into(), Value::Bool(status.running));
-                let actual = super::local_headless::structured_state(&group.group_id, &actor.id);
-                let retained_pty = cccc_runtime::status(&group.group_id, &actor.id)
-                    .is_ok_and(|status| status.running);
-                if let Some(actual) = actual {
-                    object.insert("runtime_state_source".into(), json!("managed_session"));
-                    object.insert("runner_effective".into(), actual["runner"].clone());
+                if status.available {
+                    object.extend(runtime_session::actor_fields(
+                        home,
+                        &group.group_id,
+                        &actor.id,
+                    ));
+                    object.insert("running".into(), Value::Bool(status.running));
+                    let actual =
+                        super::local_headless::structured_state(&group.group_id, &actor.id);
+                    let retained_pty = cccc_runtime::status(&group.group_id, &actor.id)
+                        .is_ok_and(|status| status.running);
+                    if let Some(actual) = actual {
+                        object.insert("runtime_state_source".into(), json!("managed_session"));
+                        object.insert("runner_effective".into(), actual["runner"].clone());
+                        object.insert(
+                            "effective_runtime_mode".into(),
+                            actual["runtime_mode"].clone(),
+                        );
+                        object.insert("effective_runtime".into(), actual["runtime"].clone());
+                    } else if retained_pty {
+                        object.insert("runtime_state_source".into(), json!("terminal"));
+                        object.insert("runner_effective".into(), json!("pty"));
+                        object.insert("effective_runtime_mode".into(), json!("default"));
+                    }
                     object.insert(
-                        "effective_runtime_mode".into(),
-                        actual["runtime_mode"].clone(),
+                        "pid".into(),
+                        status
+                            .pid
+                            .map_or(Value::Null, |pid| Value::from(u64::from(pid))),
                     );
-                    object.insert("effective_runtime".into(), actual["runtime"].clone());
-                } else if retained_pty {
-                    object.insert("runtime_state_source".into(), json!("terminal"));
-                    object.insert("runner_effective".into(), json!("pty"));
-                    object.insert("effective_runtime_mode".into(), json!("default"));
+                } else {
+                    object.remove("runtime_confirmation_required");
+                    object.remove("runtime_confirmation_paused");
                 }
-                object.insert(
-                    "pid".into(),
-                    status
-                        .pid
-                        .map_or(Value::Null, |pid| Value::from(u64::from(pid))),
-                );
                 // Observation only: tools keep resolving the authenticated caller's scope.
                 object.insert(
                     "effective_scope".into(),

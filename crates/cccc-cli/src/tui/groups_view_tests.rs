@@ -36,7 +36,7 @@ fn group(
         title: title.into(),
         status,
         state: state.into(),
-        running_actors: running,
+        running_actors: Some(running),
     }
 }
 

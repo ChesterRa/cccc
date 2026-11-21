@@ -64,7 +64,7 @@ fn main_group_paging_uses_the_number_of_rows_drawn() {
             title: format!("Group {index}"),
             status: GroupStatus::Running,
             state: "active".into(),
-            running_actors: 1,
+            running_actors: Some(1),
         })
         .collect();
     app.groups.record(Ok(groups), Instant::now());
@@ -206,7 +206,7 @@ fn the_main_menu_opens_and_navigates_without_typing_commands() {
     let mut app = app();
     app.handle(press(KeyCode::Tab));
     assert_eq!(app.input, "/");
-    assert_eq!(app.candidates().len(), super::COMMANDS.len());
+    assert_eq!(app.candidates().len(), super::COMMANDS.len() - 1);
     app.handle(press(KeyCode::Esc));
     assert_eq!(app.input, "");
     assert!(app.candidates().is_empty());
@@ -224,6 +224,18 @@ fn the_main_menu_opens_and_navigates_without_typing_commands() {
         app.handle(press(KeyCode::Enter)),
         Some(Effect::Setup(SetupCommand::Check { .. }))
     ));
+}
+
+#[test]
+fn restart_is_suggested_only_when_the_host_can_restart() {
+    let mut app = app();
+    type_text(&mut app, "/res");
+    assert!(app.candidates().is_empty());
+
+    app.context.local_restart = true;
+    let candidates = app.candidates();
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(super::COMMANDS[candidates[0]].0, "/restart");
 }
 
 #[test]
@@ -490,7 +502,7 @@ mod groups {
             title: title.into(),
             status,
             state: state.into(),
-            running_actors: 0,
+            running_actors: Some(0),
         }
     }
 
@@ -672,7 +684,7 @@ mod groups {
     fn a_stopped_group_with_running_actors_can_still_be_stopped() {
         let mut app = app();
         let mut group = group("g_stopped", "stopped", GroupStatus::Stopped, "stopped");
-        group.running_actors = 1;
+        group.running_actors = Some(1);
         with_groups(&mut app, vec![group.clone()]);
         open(&mut app);
         assert_eq!(
@@ -690,7 +702,7 @@ mod groups {
             Some(GroupAction::Stop)
         );
         app.handle(press(KeyCode::Esc));
-        group.running_actors = 0;
+        group.running_actors = Some(0);
         with_groups(&mut app, vec![group]);
         assert_eq!(
             app.group_choices(),
@@ -699,6 +711,23 @@ mod groups {
         assert_eq!(app.groups_view.choice, GroupChoice::Tasks);
         assert_eq!(app.handle(press(KeyCode::Enter)), None);
         assert_eq!(app.screen, Screen::Tasks);
+    }
+
+    #[test]
+    fn a_group_whose_agents_cannot_be_observed_keeps_stop() {
+        let mut unknown = group("g_unknown", "unknown", GroupStatus::Unknown, "active");
+        unknown.running_actors = None;
+        let mut stopped = group("g_stopped", "stopped", GroupStatus::Stopped, "stopped");
+        stopped.running_actors = None;
+        for summary in [unknown, stopped] {
+            let mut app = app();
+            with_groups(&mut app, vec![summary]);
+            open(&mut app);
+            assert_eq!(
+                app.group_choices(),
+                [GroupChoice::Tasks, GroupChoice::Start, GroupChoice::Stop]
+            );
+        }
     }
 
     #[test]
@@ -997,7 +1026,7 @@ fn pending_app() -> App {
             title: "Group one".into(),
             status: GroupStatus::Running,
             state: "active".into(),
-            running_actors: 1,
+            running_actors: Some(1),
         }]),
         Instant::now(),
     );

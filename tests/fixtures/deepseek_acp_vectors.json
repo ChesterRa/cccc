@@ -1,6 +1,6 @@
 {
   "protocol_version": 1,
-  "acp_sdk_version": "0.25.1",
+  "acp_sdk_version": "1.4.0",
   "initialize": {
     "jsonrpc": "2.0",
     "id": 1,
@@ -15,7 +15,7 @@
     "jsonrpc": "2.0",
     "id": 2,
     "method": "session/new",
-    "params": {"cwd": "/tmp/cccc", "mcpServers": [], "additionalDirectories": []}
+    "params": {"cwd": "/tmp/cccc", "mcpServers": [{"name": "cccc", "command": "/opt/cccc", "args": ["mcp"], "env": [{"name": "CCCC_HOME", "value": "/tmp/cccc-home"}, {"name": "CCCC_GROUP_ID", "value": "g_example"}, {"name": "CCCC_ACTOR_ID", "value": "member"}]}], "additionalDirectories": []}
   },
   "cancelled_terminal": {
     "frame": {"jsonrpc": "2.0", "id": 3, "result": {"stopReason": "cancelled"}},

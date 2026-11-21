@@ -159,3 +159,5 @@ async fn post_apply(port: u16, token: Option<&str>) -> String {
     .expect("read response");
     String::from_utf8(bytes).expect("utf8 response")
 }
+
+cccc_daemon::session_owner_test_entry!();

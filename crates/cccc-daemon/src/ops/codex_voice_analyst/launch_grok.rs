@@ -10,9 +10,14 @@ impl AnalystSession {
         mut env: BTreeMap<String, String>,
         requested_session_id: Option<String>,
         purpose: SessionPurpose,
-        actor: Option<(&str, &str)>,
+        actor: Option<AcpActorLaunch<'_>>,
     ) -> io::Result<Self> {
         let generation = uuid::Uuid::new_v4().simple().to_string();
+        let private_values = actor.as_ref().map_or_else(
+            || nonempty_environment_values(&env),
+            |actor| actor.diagnostic_values.to_vec(),
+        );
+        let actor = actor.map(|actor| actor.ids);
         let cccc = super::super::codex_mcp::configure_actor_cli(&mut env).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -56,6 +61,7 @@ impl AnalystSession {
             prepared,
             &binding.root,
             &env,
+            &private_values,
             &generation,
             purpose,
             resume_session_id.as_deref(),

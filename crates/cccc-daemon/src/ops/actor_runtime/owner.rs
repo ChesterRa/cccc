@@ -1,6 +1,7 @@
 //! What runs for an Actor now. Saved settings describe the next launch; a
 //! delivery or a pull that follows them could reach the wrong session.
 
+use crate::session_owner::runtime as cccc_runtime;
 use cccc_contracts::Actor;
 use cccc_core::{GroupDoc, HomeLayout};
 use cccc_runtime::{ActorLaunch, RuntimeError, SessionStatus};
@@ -9,7 +10,7 @@ use std::io;
 use crate::dispatch::OpError;
 use crate::ops::{deepseek_runtime, local_headless};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum OwnerState {
     Running,
     /// Failed or in trust recovery: not taking work, and not gone either.
@@ -18,7 +19,7 @@ pub(crate) enum OwnerState {
     Exited,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum OwnerIdentity {
     DeepSeek {
         generation: String,
@@ -34,7 +35,7 @@ pub(crate) enum OwnerIdentity {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RegisteredOwner {
     pub(crate) identity: OwnerIdentity,
     pub(crate) state: OwnerState,
@@ -69,6 +70,10 @@ pub(crate) fn registered_owner(
     group_id: &str,
     actor_id: &str,
 ) -> io::Result<Option<RegisteredOwner>> {
+    #[cfg(unix)]
+    if let Some(snapshot) = crate::session_owner::snapshot(group_id, actor_id)? {
+        return Ok(snapshot.owner);
+    }
     // Every stop removes or refuses a DeepSeek entry before another owner starts,
     // so a registered one is the only owner.
     if let Some((generation, running)) = deepseek_runtime::registered_generation(group_id, actor_id)
@@ -157,8 +162,8 @@ pub(crate) fn as_launched(actor: &Actor, launch: ActorLaunch) -> Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::cccc_runtime::LaunchSpec;
     use cccc_contracts::{ActorRuntime, ActorSubmit, RunnerKind};
-    use cccc_runtime::LaunchSpec;
 
     fn spec(group_id: &str, actor_id: &str, cwd: &std::path::Path) -> LaunchSpec {
         LaunchSpec {

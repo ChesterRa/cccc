@@ -317,6 +317,13 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         && final_preview.enabled
         && !final_preview.external_session_id.is_empty();
     let was_running = actor_process_running(&group, &original_actor);
+    // Saving only Enabled leaves Hermes's open setup, and the user's input, alone.
+    let setup_open = patch.len() == 1
+        && patch.get("enabled").and_then(Value::as_bool) == Some(true)
+        && profile_id.is_empty()
+        && profile_action.is_empty()
+        && !was_running
+        && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
     let actor = store(home)?
         .mutate(&group_id, |doc| {
             let patched = actors::update(doc, &actor_id, &patch)?;
@@ -389,6 +396,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if enabled_patched
         && actor.enabled
         && !was_running
+        && !setup_open
         && actor_runtime::user_confirmation_retry(request)
     {
         super::local_headless::retry_confirmation(&group_id, &actor_id).map_err(OpError::io)?;
@@ -439,7 +447,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 error,
             ));
         }
-        if !was_running {
+        if !was_running && !setup_open {
             effect = ActorUpdateEffect::Started;
         }
     }
@@ -721,6 +729,14 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if let Err(error) = remove_persisted_headless_state(home, &group_id, &actor_id) {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit headless state cleanup failed");
     }
+    if let Err(error) = cccc_core::owned_mcp::remove_binding_file(
+        home,
+        &group,
+        &actor_id,
+        &group.actors[index].created_at,
+    ) {
+        tracing::warn!(%error, %group_id, %actor_id, "post-commit MCP binding cleanup failed");
+    }
     if let Err(error) = runtime_session::remove(home, &group_id, &actor_id) {
         tracing::warn!(%error, %group_id, %actor_id, "post-commit runtime session cleanup failed");
     }
@@ -974,15 +990,24 @@ pub(super) fn lifecycle_leading(
         && original_actor.external_session_id.is_empty()
         && super::local_headless::orphaned_confirmation(&group_id, &actor_id)
             .map_err(OpError::io)?;
+    // Start leaves Hermes's open setup, and what the user has typed into it, alone.
+    let setup_open = kind == "actor.start"
+        && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
     let runtime_was_running =
-        actor_process_running(&group, &original_actor) && !orphaned_confirmation;
-    let retry_runtime = if original_actor.external_session_id.is_empty()
-        && matches!(kind, "actor.start" | "actor.restart")
+        (actor_process_running(&group, &original_actor) && !orphaned_confirmation) || setup_open;
+    let replacing_running =
+        runtime_was_running && matches!(kind, "actor.restart" | "actor.new_session");
+    let effective_runtime = if original_actor.external_session_id.is_empty()
+        && (matches!(kind, "actor.start" | "actor.restart") || replacing_running)
     {
         Some(actor_profile_runtime::resolve(home, &original_actor)?.runtime)
     } else {
         None
     };
+    if replacing_running && effective_runtime == Some(cccc_contracts::ActorRuntime::Deepseek) {
+        super::deepseek_runtime::check_replacement(home, &group, &original_actor)?;
+    }
+    let retry_runtime = effective_runtime.filter(|_| kind != "actor.new_session");
     let retry_claude_trust = retry_runtime == Some(cccc_contracts::ActorRuntime::Claude)
         && !super::local_headless::running(&group_id, &actor_id)
         && super::local_headless::waiting_for_workspace_trust(&group_id, &actor_id)
@@ -1138,6 +1163,11 @@ pub(super) fn delivery_shutdown_reason(
     actor: &Actor,
     kind: &str,
 ) -> Result<actor_delivery::ShutdownReason, OpError> {
+    if kind == "actor.start" && actor_runtime::startup_input_paused(group_id, &actor.id) {
+        // This Start replaces the terminal that closed before receiving input.
+        // Keep a claimed Mail retryable when the old worker proved no submission.
+        return Ok(actor_delivery::ShutdownReason::Replace);
+    }
     if !matches!(kind, "actor.restart" | "actor.new_session") {
         return Ok(actor_delivery::ShutdownReason::Stop);
     }

@@ -1,6 +1,7 @@
 import { NativeSessionPanel } from "../features/localSessions/NativeSessionPanel";
 import { RuntimeSwitchPendingNotice } from "../features/runtimeSwitch/RuntimeSwitchPendingNotice";
 import { ActorRuntimeConfirmationNotice } from "./agentTerminal/ActorRuntimeConfirmationNotice";
+import { useStartupInputWaiting } from "../hooks/useStartupInputWaiting";
 import { isWebModelRuntime } from "../types";
 import { useTerminalTitlePaging } from "./agentTerminal/useTerminalTitlePaging";
 import {
@@ -56,7 +57,9 @@ import { ActorQuickControls } from "./agentTerminal/ActorQuickControls";
 import { SessionReplacedMark } from "./agentTerminal/SessionReplacedMark";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
+import { UNOBSERVABLE_WORKING_STATE } from "../utils/terminalWorkingState";
 import { NATIVE_SESSION_AVAILABLE, nativeSessionStatusKey } from "../utils/nativeSessionStatus";
+import { runtimeConfirmationKeys } from "../utils/runtimeConfirmationKeys";
 import {
   getEffectiveActorRunner,
   hasManagedRuntimeControls,
@@ -173,6 +176,7 @@ export function AgentTab({
     actor,
     actorStatusProvisional,
   });
+  const startupWaiting = useStartupInputWaiting(groupId, actor);
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const isWebModel = isWebModelRuntime(actor.runtime);
@@ -430,8 +434,11 @@ export function AgentTab({
         : workingState,
   });
   const runtimeStatusText = (() => {
-    if (actor.runtime_confirmation_required) return t("runtimeConfirmationPending");
-    if (actor.runtime_confirmation_paused === true) return t("runtimeConfirmationPaused");
+    if (actor.runtime_confirmation_required)
+      return t(runtimeConfirmationKeys(actor.runtime).pending);
+    if (startupWaiting) return t("runtimeStartupInputPending");
+    if (actor.runtime_confirmation_paused === true)
+      return t(runtimeConfirmationKeys(actor.runtime).paused);
     if (isNativeSession) return t(nativeStatusKey);
     if (isEventActor)
       return t(
@@ -448,6 +455,7 @@ export function AgentTab({
               : "common:loading",
       );
     if (isWebModel) return t(actor.enabled ? "webAccessEnabled" : "webAccessPaused");
+    if (workingState === UNOBSERVABLE_WORKING_STATE) return t("statusUnknown");
     if (!isRunning) return t("stopped");
     if (workingState === "error") return t("common:error");
     if (workingState === "working" || workingState === "waiting" || workingState === "stuck")
@@ -464,7 +472,20 @@ export function AgentTab({
         : runtimeIndicator.tone === "error"
           ? undefined
           : "idle";
-  const lcdStatusText = runtimeIndicator.tone === "error" ? "×" : "";
+  const lcdStatusText =
+    runtimeIndicator.tone !== "error"
+      ? ""
+      : workingState === UNOBSERVABLE_WORKING_STATE
+        ? "?"
+        : "×";
+  // Why the status is what it is; the daemon's diagnostic names the next step when it
+  // could not observe the agent.
+  const runtimeStatusDetail = [
+    !isEventActor && actor.effective_working_reason,
+    !isEventActor && actor.runtime_observation_error,
+  ]
+    .filter(Boolean)
+    .join("\n");
   const handleNewSession = () => {
     if (!window.confirm(t("newSessionConfirm"))) return;
     onNewSession();
@@ -758,9 +779,9 @@ export function AgentTab({
   const titlePaging = useTerminalTitlePaging(isVisible && compact ? onPage : undefined);
 
   const compactStatusText =
-    actor.runtime_confirmation_required || isNativeSession || isEventActor
+    actor.runtime_confirmation_required || startupWaiting || isNativeSession || isEventActor
       ? runtimeStatusText
-      : !isRunning
+      : !isRunning || workingState === UNOBSERVABLE_WORKING_STATE
         ? runtimeStatusText
         : !isHeadless && connectionStatus !== "connected"
           ? t(connectionStatus === "disconnected" ? "connectionLost" : "chat:workView.connecting")
@@ -815,9 +836,7 @@ export function AgentTab({
               data-lcd-shape={lcdStatusShape}
               role="img"
               aria-label={runtimeStatusText}
-              title={[runtimeStatusText, !isEventActor && actor.effective_working_reason]
-                .filter(Boolean)
-                .join("\n")}
+              title={[runtimeStatusText, runtimeStatusDetail].filter(Boolean).join("\n")}
             >
               {lcdStatusText}
             </span>
@@ -831,9 +850,7 @@ export function AgentTab({
             {compactStatusText ? (
               <span
                 className="max-w-[40%] shrink-0 truncate text-[var(--color-text-secondary)]"
-                title={[compactStatusText, !isEventActor && actor.effective_working_reason]
-                  .filter(Boolean)
-                  .join("\n")}
+                title={[compactStatusText, runtimeStatusDetail].filter(Boolean).join("\n")}
               >
                 {compactStatusText}
               </span>
@@ -913,7 +930,10 @@ export function AgentTab({
                 </div>
                 {/* Only the text is cut short: the mark beside it keeps the area a finger hits. */}
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-[var(--color-text-tertiary)]">
-                  <span className="min-w-0 truncate">
+                  <span
+                    className="min-w-0 truncate"
+                    title={(!isEventActor && actor.runtime_observation_error) || undefined}
+                  >
                     {rtInfo?.label || t("custom")} •{" "}
                     <span
                       className="lcd-group-symbol"
@@ -1022,7 +1042,7 @@ export function AgentTab({
         </div>
       </div>
 
-      <ActorRuntimeConfirmationNotice actor={actor} readOnly={readOnly} />
+      <ActorRuntimeConfirmationNotice actor={actor} groupId={groupId} readOnly={readOnly} />
       <RuntimeSwitchPendingNotice actor={actor} groupId={groupId} />
 
       {/* Terminal or Status Area */}

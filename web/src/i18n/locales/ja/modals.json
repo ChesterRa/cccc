@@ -435,6 +435,8 @@
     "subtasksDone": "{{done}}/{{total}} 完了",
     "subtasksHint": "直下のサブタスクのみを数え、アーカイブ済みは除外します。サブタスクの状態によってこのタスクが自動で完了することはありません。",
     "taskDetails": "タスク編集",
+    "backToTasks": "タスク一覧に戻る",
+    "resizeTaskDetail": "タスク詳細の幅を調整",
     "taskType": "タスクタイプ",
     "taskWorkflow": "タスクタイプ",
     "taskTypeDescFree": "軽量なまま扱います。構造を足しても制御力が増えないなら、儀式を増やさないでください。",

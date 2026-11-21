@@ -1,5 +1,7 @@
 use super::{ActiveTurn, Session, events};
+use crate::ops::codex_voice_analyst::sanitize_multiline_diagnostic;
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 
 pub(super) fn handle_message(session: &Session, message: Value) {
     if message.get("id").is_some() {
@@ -56,18 +58,24 @@ fn tool_activity(
 ) -> Option<(&'static str, Map<String, Value>)> {
     let item_id = params["itemId"].as_str().filter(|id| !id.is_empty())?;
     let phase = params["phase"].as_str()?;
-    let tool = params["title"].as_str().unwrap_or_default();
+    // Redact before shortening, so the cut cannot split a private value.
+    let redact = |field: &str| {
+        crate::ops::codex_voice_analyst::sanitize_diagnostic(
+            params[field].as_str().unwrap_or_default(),
+            &session.journal_private,
+        )
+    };
+    let tool = redact("title").chars().take(400).collect::<String>();
     let item_type = params["itemType"].as_str().unwrap_or("toolCall");
-    let detail = session.managed.safe_diagnostic(&std::io::Error::other(
-        params["detail"].as_str().unwrap_or_default(),
-    ));
+    let detail = redact("detail");
     let (kind, status, summary) = match phase {
-        "started" => ("headless.activity.started", "started", tool.to_owned()),
-        "completed" => ("headless.activity.completed", "completed", tool.to_owned()),
+        "started" => ("headless.activity.started", "started", tool.clone()),
+        "completed" => ("headless.activity.completed", "completed", tool.clone()),
+        // The outcome leads, so a narrow trace that cuts the summary still shows it.
         "failed" => (
             "headless.activity.completed",
             "completed",
-            format!("{tool} failed"),
+            format!("Failed: {tool}"),
         ),
         _ => return None,
     };
@@ -88,6 +96,82 @@ fn tool_activity(
         activity.insert(field.into(), json!(detail));
     }
     Some((kind, activity))
+}
+
+/// Fields the launch overwrites: CCCC's location and identity, and its CLI.
+/// PATH is not one of them: the launch only prepends the CLI's directory to a
+/// value the member may have set privately.
+const WRITTEN_AT_LAUNCH: [&str; 4] = ["CCCC_HOME", "CCCC_GROUP_ID", "CCCC_ACTOR_ID", "CCCC_CLI"];
+
+/// Private values for managed diagnostics and the activity journal. Every
+/// value of the member's explicit launch environment is private, except the
+/// fields the launch overwrites. Inherited values count under credential names
+/// or when they carry authorization headers or URLs with user information.
+pub(super) fn journal_private_values(
+    snapshot: &BTreeMap<String, String>,
+    launch_environment: &BTreeMap<String, String>,
+    process_environment: impl IntoIterator<Item = (String, String)>,
+) -> Vec<String> {
+    let launched_path = snapshot
+        .get("PATH")
+        .filter(|value| !value.is_empty())
+        .and_then(|_| launch_environment.get("PATH"));
+    let mut values = snapshot
+        .iter()
+        .filter(|(key, _)| !WRITTEN_AT_LAUNCH.contains(&key.as_str()))
+        .map(|(_, value)| value)
+        .chain(launched_path)
+        .chain(
+            launch_environment
+                .iter()
+                .filter(|(key, value)| inherited_private_value(key, value))
+                .map(|(_, value)| value),
+        )
+        .cloned()
+        .chain(
+            process_environment
+                .into_iter()
+                .filter(|(key, value)| inherited_private_value(key, value))
+                .map(|(_, value)| value),
+        )
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort_unstable();
+    values.dedup();
+    values
+}
+
+fn inherited_private_value(key: &str, value: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    crate::ops::actor_secrets::sensitive_key(key)
+        || matches!(
+            normalized.as_str(),
+            "pgpassword" | "mysql_pwd" | "docker_auth_config" | "npm_config__auth"
+        )
+        || (normalized.starts_with("npm_config_//") && normalized.ends_with(":_auth"))
+        || value.split_once(':').is_some_and(|(header, credentials)| {
+            let header = header.trim();
+            (header.eq_ignore_ascii_case("authorization")
+                || header.eq_ignore_ascii_case("proxy-authorization"))
+                && !credentials.trim().is_empty()
+        })
+        || address_has_user_information(&normalized, value)
+}
+
+fn address_has_user_information(key: &str, value: &str) -> bool {
+    let value = value.trim();
+    if !value.contains('@') {
+        return false;
+    }
+    // The HTTP client also accepts a proxy authority without a scheme.
+    let parsed = if value.contains("://") {
+        url::Url::parse(value)
+    } else if matches!(key, "http_proxy" | "https_proxy" | "all_proxy") {
+        url::Url::parse(&format!("http://{value}"))
+    } else {
+        return false;
+    };
+    parsed.is_ok_and(|url| !url.username().is_empty() || url.password().is_some())
 }
 
 fn respond_unsupported_server_request(session: &Session, message: &Value) {
@@ -262,10 +346,11 @@ fn complete_turn(session: &Session, message: &Value) {
     // errored assistant message), and reporting "idle" for a rejected turn hid
     // a broken lane behind a healthy one. Classify before settling.
     //
-    // Cancellation is deliberately NOT a failure. It is usually an operator
-    // interrupt, a cccc cancel_turn, or the owner's Esc, and marking a
-    // deliberate stop as an error would train every reader to ignore the
-    // error state. It stays visible in history without claiming breakage.
+    // A confirmed cancellation is deliberately NOT a failure. It is usually
+    // an operator interrupt, a cccc cancel_turn, or the owner's Esc, and
+    // marking a deliberate stop as an error would train every reader to
+    // ignore the error state. It stays visible in history without claiming
+    // breakage.
     let mut data = Map::from_iter([
         ("turn_id".into(), json!(turn_id)),
         (
@@ -279,9 +364,7 @@ fn complete_turn(session: &Session, message: &Value) {
     data.insert("status".into(), json!(settled.status));
     let kind = match settled.outcome {
         TurnSettle::Failed(reason) => {
-            let reason = session
-                .managed
-                .safe_diagnostic(&std::io::Error::other(reason));
+            let reason = sanitize_multiline_diagnostic(&reason, &session.journal_private);
             data.insert("error".into(), json!(reason));
             session.set_status_with_reason("error", None, Some(reason));
             "headless.turn.failed"

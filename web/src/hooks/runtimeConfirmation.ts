@@ -2,6 +2,7 @@ import i18n from "../i18n";
 import { useGroupStore, useUIStore } from "../stores";
 import { requestWorkspaceNavigation } from "../stores/workspaceNavigation";
 import type { Actor } from "../types";
+import { runtimeConfirmationKeys } from "../utils/runtimeConfirmationKeys";
 
 export const RUNTIME_CONFIRMATION_REFRESH_EVENTS = new Set([
   "headless.session.started",
@@ -37,8 +38,8 @@ export function runtimeConfirmationRequired(result: unknown, actor?: Actor): boo
 }
 
 /**
- * After the user's own start, show the Actor whose Claude prompt waits for them, without
- * answering it. Where the user still is where they acted, open its terminal, whose notice
+ * After the user's own start, show the Actor whose Claude prompt or Hermes setup waits for
+ * them, without answering it. Where the user still is where they acted, open its terminal, whose notice
  * says what to do; where they have moved on in the same Group, say so with a way there;
  * in another Group, only say so. Returns whether the Actor awaits confirmation.
  */
@@ -55,6 +56,9 @@ export function revealRuntimeConfirmation(
       ? state.actors.find((item) => item.id === actorId)
       : undefined;
   if (!runtimeConfirmationRequired(result, actor)) return false;
+  const keys = runtimeConfirmationKeys(
+    (result as { actor?: Actor } | null | undefined)?.actor?.runtime ?? actor?.runtime,
+  );
   const ui = useUIStore.getState();
   const sameGroup = () => useGroupStore.getState().selectedGroupId === groupId;
   const openTerminal = () =>
@@ -75,11 +79,11 @@ export function revealRuntimeConfirmation(
     ? actor?.title || actorId
     : `${state.groups.find((group) => group.group_id === groupId)?.title || groupId} / ${actor?.title || actorId}`;
   const notice = {
-    message: [options.noticePrefix, i18n.t("actors:runtimeConfirmationRequired", { label })]
+    message: [options.noticePrefix, i18n.t(`actors:${keys.required}`, { label })]
       .filter(Boolean)
       .join("\n"),
     ...(sameGroup()
-      ? { actionLabel: i18n.t("actors:runtimeConfirmationOpenTerminal"), onAction: openTerminal }
+      ? { actionLabel: i18n.t(`actors:${keys.openTerminal}`), onAction: openTerminal }
       : {}),
   };
   ui.showNotice(notice);

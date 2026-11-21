@@ -1,5 +1,5 @@
 import type { Actor, GroupDoc, GroupMeta } from "../types";
-import { getGroupRuntimeStatus } from "./groupStatus";
+import { getGroupRuntimeStatus, unobservableGroupRuntime } from "./groupStatus";
 
 type GroupRuntimePatchArgs = {
   group: Pick<GroupMeta, "running" | "state" | "runtime_status">;
@@ -20,6 +20,16 @@ export function computeGroupRuntimePatch({
       typeof groupDoc.running === "boolean"),
   );
   const docRuntime = hasDocRuntime ? getGroupRuntimeStatus(groupDoc) : null;
+  if (metaRuntime.available === false || docRuntime?.available === false) {
+    const runtimeStatus = unobservableGroupRuntime(
+      docRuntime?.lifecycle_state || metaRuntime.lifecycle_state,
+    );
+    return {
+      running: undefined,
+      state: runtimeStatus.lifecycle_state as GroupMeta["state"],
+      runtime_status: runtimeStatus,
+    };
+  }
   const runtimeRunning =
     Boolean(docRuntime?.runtime_running) ||
     metaRuntime.runtime_running ||

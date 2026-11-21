@@ -1,5 +1,37 @@
 use super::*;
 
+#[test]
+fn a_connector_snapshot_does_not_wait_for_or_change_the_write_lock() {
+    let (_temp, home, _) = fixture();
+    let path = store_path(&home);
+    let before = std::fs::read(&path).expect("published connector state");
+    let (locked, entered) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let locked_home = home.clone();
+    let writer = std::thread::spawn(move || {
+        fs::with_exclusive_lock(&lock_path(&locked_home), || {
+            locked.send(()).expect("lock acquired");
+            released.recv().expect("release lock");
+            Ok(())
+        })
+        .expect("writer lock");
+    });
+    entered.recv().expect("writer ready");
+    let (finished, observed) = std::sync::mpsc::channel();
+    let observed_home = home.clone();
+    let reader = std::thread::spawn(move || {
+        finished
+            .send(snapshot(&observed_home).map(|items| items.len()))
+            .expect("snapshot result");
+    });
+    let read_while_locked = observed.recv_timeout(std::time::Duration::from_secs(2));
+    release.send(()).expect("release writer");
+    writer.join().expect("writer stopped");
+    reader.join().expect("reader stopped");
+    assert!(matches!(read_while_locked, Ok(Ok(1))));
+    assert!(before == std::fs::read(path).expect("unchanged connector state"));
+}
+
 fn fixture() -> (tempfile::TempDir, HomeLayout, Value) {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

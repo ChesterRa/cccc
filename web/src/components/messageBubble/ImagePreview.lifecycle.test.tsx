@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { ImagePreview } from "./ImagePreview";
+import { useAttachmentPreviewStore } from "../../stores/useAttachmentPreviewStore";
 import { useResourcePanelStore } from "../../stores/useResourcePanelStore";
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
@@ -20,13 +21,16 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
+  // The panel is on screen beside the messages, so an attachment opens there.
+  useResourcePanelStore.setState({ shownGroupId: "g" });
 });
 afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  useResourcePanelStore.setState({ groups: {} });
+  useResourcePanelStore.setState({ groups: {}, shownGroupId: "" });
+  useAttachmentPreviewStore.setState({ sets: {}, viewing: null });
 });
 
 it("keeps an opened resource independent of the message thumbnail's failure", async () => {
@@ -41,6 +45,7 @@ it("keeps an opened resource independent of the message thumbnail's failure", as
             eventId: "event",
             index: 0,
             blobPath: "state/blobs/image",
+            siblings: [],
           }}
           href={href}
           downloadHref={href}

@@ -16,12 +16,13 @@ struct SessionHistoryState {
     accepting_output: bool,
     terminal: TerminalStateMirror,
     last_output: Option<(Instant, SystemTime)>,
+    startup_mirror_warning: bool,
 }
 
 /// When a live terminal session's process last wrote output. This is an
 /// observation only: output neither proves nor disproves that the process is
 /// working.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OutputObservation {
     /// Wall-clock time of the last output, for display.
     pub last_output_at: SystemTime,
@@ -91,6 +92,7 @@ impl SessionHistory {
                 accepting_output: true,
                 terminal: TerminalStateMirror::new(cols, rows),
                 last_output: None,
+                startup_mirror_warning: false,
             })),
             changes,
         })
@@ -296,12 +298,65 @@ impl SessionHistory {
             .map_err(|_| RuntimeError::Poisoned)
             .map(|state| state.output.bracketed_paste_enabled())
     }
+
+    pub(crate) fn kilo_composer_ready(&self) -> Result<bool, RuntimeError> {
+        match self.state.try_lock() {
+            Ok(state) => {
+                Ok(state.output.bracketed_paste_enabled() && state.terminal.kilo_composer_ready())
+            }
+            Err(TryLockError::WouldBlock) => Ok(false),
+            Err(TryLockError::Poisoned(_)) => Err(RuntimeError::Poisoned),
+        }
+    }
+
+    pub(crate) fn startup_input_ready(
+        &self,
+        runtime: cccc_contracts::ActorRuntime,
+    ) -> Result<bool, RuntimeError> {
+        let mut state = match self.state.try_lock() {
+            Ok(state) => state,
+            Err(TryLockError::WouldBlock) => return Ok(false),
+            Err(TryLockError::Poisoned(_)) => return Err(RuntimeError::Poisoned),
+        };
+        match state.terminal.visible_text() {
+            Some(rows) => Ok(crate::startup_input::ready(runtime, &rows)),
+            None => {
+                if !state.startup_mirror_warning {
+                    state.startup_mirror_warning = true;
+                    crate::diagnostic(format_args!(
+                        "CCCC startup input held: terminal text mirror unavailable ({runtime:?}); inspect its startup UI before releasing input"
+                    ));
+                }
+                Ok(false)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod observation_tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn a_capability_query_does_not_disable_live_startup_input_recognition() {
+        let history = SessionHistory::new(None).expect("history");
+        history
+            .push("\x1bP+q544e\x1b\\\x1b[2J\x1b[H──────────\r\n❯\r\n──────────".as_bytes())
+            .expect("query and input");
+        {
+            let state = history.state.lock().expect("state");
+            assert!(
+                state.terminal.snapshot(1).is_none(),
+                "unsupported query disables faithful replay"
+            );
+        }
+        assert!(
+            history
+                .startup_input_ready(cccc_contracts::ActorRuntime::Copilot)
+                .expect("live recognition")
+        );
+    }
 
     #[test]
     fn busy_transcript_does_not_block_output_observations() {

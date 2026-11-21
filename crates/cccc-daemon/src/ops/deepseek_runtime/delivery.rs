@@ -1,4 +1,6 @@
-use super::delivery_projection::{TurnProjection, agent_message_text, persist_terminal};
+use super::delivery_projection::{
+    TurnProjection, activity_detail, agent_message_text, persist_terminal,
+};
 use super::turn_failure::fail_sent_request;
 use super::turn_timeout::settle_timed_out_request;
 use super::{cancellation_requested, sessions};
@@ -9,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// What became of one delivery attempt.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum TurnDelivery {
     /// The turn completed, now or in an earlier attempt.
     Completed,
@@ -52,6 +54,42 @@ pub fn deliver_marked(
     cancelled: &AtomicBool,
     started: &AtomicBool,
 ) -> TurnDelivery {
+    #[cfg(unix)]
+    if crate::session_owner::enabled(home) {
+        let Some(text) = crate::ops::actor_delivery_render::render_batch_with_mail_context(
+            home,
+            group,
+            &actor.id,
+            std::slice::from_ref(event),
+        ) else {
+            return TurnDelivery::Incomplete;
+        };
+        return match crate::session_owner::submit(
+            home,
+            group,
+            actor,
+            std::slice::from_ref(event),
+            &text,
+            cancelled,
+            started,
+        ) {
+            Ok(result) => {
+                started.store(
+                    result
+                        .get("started")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
+                    Ordering::Release,
+                );
+                result
+                    .get("outcome")
+                    .cloned()
+                    .and_then(|value| serde_json::from_value(value).ok())
+                    .unwrap_or(TurnDelivery::Incomplete)
+            }
+            Err(_) => TurnDelivery::Incomplete,
+        };
+    }
     deliver_with_timeout_marked(
         home,
         group,
@@ -92,6 +130,59 @@ fn deliver_with_timeout_marked(
     turn_timeout: Duration,
     started: &AtomicBool,
 ) -> TurnDelivery {
+    let Some(payload) = crate::ops::actor_delivery_render::render_batch_with_mail_context(
+        home,
+        group,
+        &actor.id,
+        std::slice::from_ref(event),
+    ) else {
+        return TurnDelivery::Incomplete;
+    };
+    deliver_prepared_with_timeout(
+        home,
+        group,
+        actor,
+        event,
+        &payload,
+        cancelled,
+        turn_timeout,
+        started,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn deliver_prepared(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+    payload: &str,
+    cancelled: &AtomicBool,
+    started: &AtomicBool,
+) -> TurnDelivery {
+    deliver_prepared_with_timeout(
+        home,
+        group,
+        actor,
+        event,
+        payload,
+        cancelled,
+        Duration::from_secs(cccc_contracts::DEEPSEEK_TURN_TIMEOUT_SECONDS),
+        started,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn deliver_prepared_with_timeout(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+    payload: &str,
+    cancelled: &AtomicBool,
+    turn_timeout: Duration,
+    started: &AtomicBool,
+) -> TurnDelivery {
     if cancelled.load(Ordering::Acquire) {
         return TurnDelivery::Incomplete;
     }
@@ -106,15 +197,7 @@ fn deliver_with_timeout_marked(
     if super::recovery::has_completed_event(home, group, actor, &event.id) {
         return TurnDelivery::Completed;
     }
-    let payload = crate::ops::actor_delivery_render::render_batch_with_mail_context(
-        home,
-        group,
-        &actor.id,
-        std::slice::from_ref(event),
-    );
-    let Some(mut payload) = payload else {
-        return TurnDelivery::Incomplete;
-    };
+    let mut payload = payload.to_owned();
     if event.kind == "chat.message" {
         payload.push_str("\n\n[cccc] ");
         payload.push_str(cccc_core::system_prompt::NEW_MESSAGE_MODE_GUIDANCE);
@@ -241,11 +324,11 @@ fn deliver_with_timeout_marked(
             if cccc_runtime::deepseek_acp::validate_session_update(&frame, &session_id).is_err() {
                 fail!(false);
             }
-            let update = params.get("update").cloned().unwrap_or(Value::Null);
+            let update = &params["update"];
             let ordinal = update_ordinal;
             update_ordinal = update_ordinal.saturating_add(1);
             let update_key = format!("deepseek.update:{}:{attempt_id}:{ordinal}", event.id);
-            let (kind, data) = if let Some(delta) = agent_message_text(&update) {
+            let (kind, data) = if let Some(delta) = agent_message_text(update) {
                 message_text.push_str(delta);
                 (
                     "headless.message.delta",
@@ -273,7 +356,10 @@ fn deliver_with_timeout_marked(
                         ("kind".into(), json!("thinking")),
                         ("status".into(), json!("updated")),
                         ("summary".into(), json!(update_kind)),
-                        ("detail".into(), json!(update.to_string())),
+                        (
+                            "detail".into(),
+                            json!(activity_detail(update, &holder.private_values)),
+                        ),
                         ("raw_item_type".into(), json!(update_kind)),
                     ]),
                 )
