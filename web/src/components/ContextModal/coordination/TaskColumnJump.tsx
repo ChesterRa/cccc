@@ -2,20 +2,18 @@ import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
 import { taskStatusLabel, type BoardStatus, type ContextTranslator } from "../model";
 
-const PRIMARY_COLUMNS: BoardStatus[] = ["active", "planned", "done"];
-
 export function TaskColumnJump({
   boardRef,
   columnPages,
-  archivedExpanded,
+  columns,
   tr,
 }: {
   boardRef: RefObject<HTMLElement | null>;
   columnPages: TaskColumnPages;
-  archivedExpanded: boolean;
+  /** The board's column order, from useBoardColumnOrder. */
+  columns: BoardStatus[];
   tr: ContextTranslator;
 }) {
-  const columns = archivedExpanded ? [...PRIMARY_COLUMNS, "archived" as const] : PRIMARY_COLUMNS;
   const navRef = useRef<HTMLElement>(null);
   const [moreRight, setMoreRight] = useState(false);
 
@@ -32,7 +30,7 @@ export function TaskColumnJump({
     observer.observe(nav);
     for (const child of nav.children) observer.observe(child);
     return () => observer.disconnect();
-  }, [archivedExpanded, columnPages, tr]);
+  }, [columns, columnPages, tr]);
 
   function jumpTo(column: BoardStatus) {
     const board = boardRef.current;

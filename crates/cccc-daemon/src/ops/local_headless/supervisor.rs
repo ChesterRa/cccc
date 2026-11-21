@@ -168,9 +168,11 @@ pub(super) fn launch_managed(
 
 fn managed_private_values(actor: &Actor, environment: &BTreeMap<String, String>) -> Vec<String> {
     // The provider inherits this process's environment besides the one it was given.
-    let process_environment = std::env::vars_os()
-        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)));
-    super::output::journal_private_values(&actor.env, environment, process_environment)
+    super::output::journal_private_values(
+        &actor.env,
+        environment,
+        cccc_runtime::unicode_environment(),
+    )
 }
 
 pub(super) fn attach_managed(

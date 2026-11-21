@@ -79,7 +79,7 @@ fn resolve_launch_actor(
 }
 
 fn launch_env(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> BTreeMap<String, String> {
-    launch_env_from(std::env::vars(), home, group, actor)
+    launch_env_from(cccc_runtime::unicode_environment(), home, group, actor)
 }
 
 fn launch_env_from(

@@ -14,7 +14,7 @@ pub fn ensure(
 ) -> io::Result<PathBuf> {
     // Actor launch carries only overrides; native child processes also
     // inherit the daemon environment. Resolve exactly that effective home.
-    let effective: BTreeMap<String, String> = std::env::vars()
+    let effective: BTreeMap<String, String> = cccc_runtime::unicode_environment()
         .chain(
             environment
                 .iter()

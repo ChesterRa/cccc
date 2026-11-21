@@ -331,8 +331,15 @@ pub fn default_command(runtime: ActorRuntime) -> Vec<String> {
     command.split_whitespace().map(str::to_owned).collect()
 }
 
+/// Environment entries that can be represented in string-based launch and configuration maps.
+pub fn unicode_environment() -> impl Iterator<Item = (String, String)> {
+    std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+}
+
 #[must_use]
 pub fn detect_runtimes() -> Vec<RuntimeProbe> {
+    let discovery_env = unicode_environment().collect::<BTreeMap<_, _>>();
     serde_json::from_value::<Vec<ActorRuntime>>(serde_json::json!([
         "claude",
         "cline",
@@ -362,7 +369,6 @@ pub fn detect_runtimes() -> Vec<RuntimeProbe> {
     .map(|runtime| {
         let recommended = default_command(runtime);
         let command = recommended.first().cloned().unwrap_or_default();
-        let discovery_env = std::env::vars().collect::<BTreeMap<_, _>>();
         let (available, path) = if runtime == ActorRuntime::Deepseek {
             deepseek_catalog_entry(&discovery_env)
         } else {

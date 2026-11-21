@@ -5,6 +5,29 @@ use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+#[test]
+fn long_unix_socket_path_reports_the_short_home_alias_workaround() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = temp.path().join("x".repeat(120));
+    let output = Command::new(env!("CARGO_BIN_EXE_cccc"))
+        .args(["daemon", "start"])
+        .env("CCCC_HOME", &home)
+        .env("CCCC_DAEMON_TRANSPORT", "unix")
+        .output()
+        .expect("start daemon with long home");
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains(home.join("daemon/ccccd.sock").to_string_lossy().as_ref()),
+        "{error}"
+    );
+    assert!(
+        error.contains("Set CCCC_HOME") && error.contains("symlink"),
+        "{error}"
+    );
+}
+
 #[test]
 fn installed_cli_starts_daemon_without_a_sibling_daemon_binary() {
     let temp = tempfile::tempdir().expect("tempdir");

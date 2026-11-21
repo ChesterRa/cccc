@@ -67,6 +67,8 @@ async fn run_with_restore_resuming(
         Some(transaction) => claim_home_resuming(&paths, Some(transaction))?,
         None => claim_home(&paths)?,
     };
+    #[cfg(unix)]
+    validate_endpoint_path(&paths)?;
     let owner_home = paths.home.clone();
     let retained =
         tokio::task::spawn_blocking(move || crate::session_owner::initialize(&owner_home))
@@ -370,6 +372,19 @@ async fn shutdown_signal() -> Result<()> {
 
 fn use_tcp() -> bool {
     cfg!(not(unix)) || std::env::var("CCCC_DAEMON_TRANSPORT").is_ok_and(|value| value == "tcp")
+}
+
+#[cfg(unix)]
+pub(super) fn validate_endpoint_path(paths: &DaemonPaths) -> Result<()> {
+    if !use_tcp() {
+        std::os::unix::net::SocketAddr::from_pathname(&paths.socket).with_context(|| {
+            format!(
+                "The daemon's Unix socket path is too long: {}. Set CCCC_HOME to a shorter path, such as a symlink in a directory you control pointing to the same CCCC home.",
+                paths.socket.display()
+            )
+        })?;
+    }
+    Ok(())
 }
 
 fn begin_runtime_shutdown(home: &HomeLayout) {

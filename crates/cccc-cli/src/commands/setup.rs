@@ -141,7 +141,7 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
 }
 
 fn setup_deepseek(home: &HomeLayout, install: bool) -> serde_json::Value {
-    let mut env = std::env::vars().collect();
+    let mut env = cccc_runtime::unicode_environment().collect();
     let result = if install {
         cccc_daemon::deepseek_setup::ensure(home, &mut env)
     } else {
@@ -247,7 +247,7 @@ fn setup_one(
         }));
     }
     if runtime == "antigravity" {
-        let environment = std::env::vars().collect();
+        let environment = cccc_runtime::unicode_environment().collect();
         let cwd = absolute(&args.path)?;
         let command = add_command(runtime, executable)?;
         let path = cccc_core::runtime_mcp::ensure_antigravity(&cwd, &environment, || {
@@ -278,7 +278,7 @@ fn setup_one(
         );
     }
     if runtime == "grok" {
-        let environment = std::env::vars().collect();
+        let environment = cccc_runtime::unicode_environment().collect();
         let path = cccc_core::runtime_mcp::ensure_grok(
             &absolute(&args.path)?,
             &environment,
@@ -301,7 +301,8 @@ fn setup_one(
         }));
     }
     if runtime == "kimi" {
-        let mut environment = std::env::vars().collect::<std::collections::BTreeMap<_, _>>();
+        let mut environment =
+            cccc_runtime::unicode_environment().collect::<std::collections::BTreeMap<_, _>>();
         environment.insert(
             "CCCC_HOME".into(),
             home.root().to_string_lossy().into_owned(),

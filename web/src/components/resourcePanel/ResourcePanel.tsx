@@ -156,18 +156,12 @@ function TabIcon({ tab }: { tab: ResourceTab }) {
         data-resource-tab-thumbnail
       />
     );
+  // An attached SVG keeps the image glyph; other attached files, such as a PDF, get the file one.
+  const image = tab.kind === "attachment" && tab.media === "image";
   return (
     <LcdIcon
-      icon={
-        tab.kind === "workspace"
-          ? FileText
-          : tab.kind === "presentation"
-            ? Presentation
-            : ImageGlyph
-      }
-      glyph={
-        tab.kind === "workspace" ? "file-text" : tab.kind === "presentation" ? "monitor" : "image"
-      }
+      icon={tab.kind === "presentation" ? Presentation : image ? ImageGlyph : FileText}
+      glyph={tab.kind === "presentation" ? "monitor" : image ? "image" : "file-text"}
       className="h-4 w-4 shrink-0"
       aria-hidden="true"
     />

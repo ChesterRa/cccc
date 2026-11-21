@@ -63,9 +63,9 @@ pub(crate) fn launch_managed(
     actor: &cccc_contracts::Actor,
 ) -> io::Result<()> {
     let host_environment = if actor.runtime == cccc_contracts::ActorRuntime::Claude {
-        crate::ops::codex_voice_analyst::claude_host_environment(std::env::vars())
+        crate::ops::codex_voice_analyst::claude_host_environment(cccc_runtime::unicode_environment())
     } else {
-        std::env::vars().collect()
+        cccc_runtime::unicode_environment().collect()
     };
     super::controller::start(
         home,
@@ -88,7 +88,8 @@ pub(crate) fn launch_pty(
     history: cccc_runtime::HistoryConfig,
     launch: cccc_runtime::ActorLaunch,
 ) -> io::Result<cccc_runtime::SessionStatus> {
-    let mut environment = std::env::vars().collect::<std::collections::BTreeMap<_, _>>();
+    let mut environment =
+        cccc_runtime::unicode_environment().collect::<std::collections::BTreeMap<_, _>>();
     environment.extend(spec.env);
     spec.env = environment;
     let actor = super::protocol::ActorRef {

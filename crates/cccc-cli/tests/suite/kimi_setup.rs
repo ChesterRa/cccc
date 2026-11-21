@@ -15,7 +15,16 @@ fn kimi_setup_updates_the_code_home_without_a_kimi_mcp_subcommand() {
     )
     .expect("existing unrelated MCP entry");
     let setup = || {
-        Command::new(env!("CARGO_BIN_EXE_cccc"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_cccc"));
+        #[cfg(unix)]
+        {
+            use std::ffi::OsStr;
+            use std::os::unix::ffi::OsStrExt;
+            command
+                .env(OsStr::from_bytes(b"KIMI_TEST_\xff"), "ignored")
+                .env("KIMI_TEST_VALUE", OsStr::from_bytes(b"\xff"));
+        }
+        command
             .args(["setup", "--runtime", "kimi", "--path"])
             .arg(&project)
             .env("CCCC_HOME", root.join("cccc"))

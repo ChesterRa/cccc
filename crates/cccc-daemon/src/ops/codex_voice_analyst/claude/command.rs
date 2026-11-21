@@ -39,7 +39,7 @@ pub(in crate::ops::codex_voice_analyst) fn prepare(
         settings_owner,
         purpose,
         mcp_server,
-        &std::env::vars().collect(),
+        &cccc_runtime::unicode_environment().collect(),
     )
 }
 

@@ -438,7 +438,7 @@ fn resolve_declared_command(spec: &Map<String, Value>) -> Result<Vec<String>, Op
 
 fn expand_environment(value: &str) -> String {
     let mut output = value.to_owned();
-    for (key, current) in std::env::vars() {
+    for (key, current) in cccc_runtime::unicode_environment() {
         output = output.replace(&format!("{{{key}}}"), &current);
     }
     output
