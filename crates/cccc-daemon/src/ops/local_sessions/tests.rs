@@ -489,7 +489,10 @@ fn native_rejection_and_uncertain_delivery_reach_the_original_agent_sender() {
         );
         let event_id = sent["event"]["id"].as_str().expect("event id").to_owned();
         let handoff = offered(&fixture.home, &receiver);
-        assert_eq!(handoff.event_ids, [event_id.clone()]);
+        assert_eq!(
+            handoff.event_ids.as_slice(),
+            std::slice::from_ref(&event_id)
+        );
         transport::acknowledge(&fixture.home, &receiver, &handoff.handoff_id, outcome)
             .expect("native acknowledgement");
         fixture.wait_state(&group, &event_id, state);

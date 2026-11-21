@@ -58,12 +58,12 @@ async fn endpoint(
     if method == "tools/call" && expire_call {
         return StatusCode::NOT_FOUND.into_response();
     }
-    if method == "tools/call" {
-        if let Some(message) = &rpc_error {
-            return Json(json!({"jsonrpc":"2.0","id":request["id"],
-                "error":{"code":-32603,"message":message}}))
-            .into_response();
-        }
+    if method == "tools/call"
+        && let Some(message) = &rpc_error
+    {
+        return Json(json!({"jsonrpc":"2.0","id":request["id"],
+            "error":{"code":-32603,"message":message}}))
+        .into_response();
     }
     let result = match method {
         "initialize" => json!({"protocolVersion":request["params"]["protocolVersion"],
