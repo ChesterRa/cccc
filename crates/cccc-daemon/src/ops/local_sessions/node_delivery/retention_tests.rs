@@ -78,6 +78,7 @@ fi
         session_nodes::set_client(
             &home,
             &session_nodes::ClientDescriptor {
+                join_binding: None,
                 endpoint: SessionNodeEndpoint {
                     endpoint_id: membership.hub_id.clone(),
                     addresses: vec!["127.0.0.1:12345".into()],

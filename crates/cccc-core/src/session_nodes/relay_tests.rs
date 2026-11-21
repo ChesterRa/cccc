@@ -1,6 +1,6 @@
 use super::*;
 
-fn configured() -> Fixture {
+pub(super) fn configured() -> Fixture {
     let f = Fixture::new();
     crate::settings::update(&f.home, |settings| {
         settings.remote_access.extend(

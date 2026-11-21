@@ -5,13 +5,20 @@ use super::{
 use anyhow::Result;
 use cccc_contracts::session_node::SESSION_NODE_PROTOCOL;
 use cccc_core::session_nodes;
-use iroh::endpoint::Connection;
+use iroh::endpoint::{Connection, SendStream};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 use tokio::{
     sync::{Mutex, Semaphore},
     task::JoinSet,
 };
+
+async fn reject_hello(send: &mut SendStream, reason: &str) -> Result<()> {
+    protocol::write(send, &json!({"error": reason})).await?;
+    // finish() queues the reply. Give QUIC time to acknowledge it before the connection closes.
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), send.stopped()).await;
+    Ok(())
+}
 
 impl Hub {
     pub(super) async fn accept(self: Arc<Self>) {
@@ -63,7 +70,7 @@ impl Hub {
             anyhow::bail!("Pairing is required first");
         };
         if version != SESSION_NODE_PROTOCOL {
-            protocol::write(&mut send, &json!({"error":"unsupported_protocol"})).await?;
+            reject_hello(&mut send, "unsupported_protocol").await?;
             anyhow::bail!("Unsupported session-node protocol");
         }
         let epoch = uuid::Uuid::new_v4().to_string();
@@ -78,7 +85,7 @@ impl Hub {
             Ok(peer) => peer,
             Err(_) => {
                 drop(connections);
-                protocol::write(&mut send, &json!({"error":"pairing_rejected"})).await?;
+                reject_hello(&mut send, "pairing_rejected").await?;
                 anyhow::bail!("Session-node pairing rejected");
             }
         };

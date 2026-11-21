@@ -78,6 +78,7 @@ fn state_with(
         connect_http: crate::connect_frames::HttpClients::new().map_err(|error| error.to_string()),
         codex_voice: Arc::new(crate::codex_voice::CodexVoiceSessions::default()),
         notebooklm_auth: Arc::new(crate::notebooklm_auth::AuthFlowManager::default()),
+        session_node_join: Default::default(),
         ledger_events: ledger_events.clone(),
         im_workers: Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events)),
         shutdown,

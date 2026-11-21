@@ -222,3 +222,6 @@ mod relay_tests;
 
 #[path = "grants_tests.rs"]
 mod grants_tests;
+
+#[path = "join_tests.rs"]
+mod join_tests;

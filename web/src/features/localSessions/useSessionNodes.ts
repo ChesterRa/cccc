@@ -1,14 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { useSessionNodeTicket } from "./useSessionNodeTicket";
 import {
+  fetchPendingSessionNodeJoins,
   fetchSessionNodes,
   revokeSessionNode,
   type SessionNodeDevice,
+  type SessionNodeJoinRequest,
 } from "../../services/api/sessionNodes";
+
+export interface SessionNodeJoinDirectory {
+  url: string | null;
+  pending: Pick<SessionNodeJoinRequest, "request_id" | "name" | "user_code">[] | null;
+  error: "forbidden" | "failed" | null;
+}
 
 export function useSessionNodes() {
   const [devices, setDevices] = useState<SessionNodeDevice[]>([]);
   const [supported, setSupported] = useState<boolean | null>(null);
+  const [join, setJoin] = useState<SessionNodeJoinDirectory | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -18,17 +27,51 @@ export function useSessionNodes() {
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const load = async () => {
       try {
-        const response = await fetchSessionNodes();
+        const response = await fetchSessionNodes(controller.signal);
         if (cancelled) return;
         if (response.ok) {
           setLoadError("");
           setSupported(response.result.supported);
           setDevices(response.result.devices);
-        } else if (response.error.httpStatus === 404) setSupported(false);
-        else setLoadError(response.error.message);
+          if (response.result.join_supported === true && response.result.supported) {
+            const url = response.result.join_url ?? null;
+            setJoin((previous) =>
+              previous?.url === url ? previous : { url, pending: null, error: null },
+            );
+            const pending = await fetchPendingSessionNodeJoins(controller.signal).catch(() => null);
+            if (cancelled) return;
+            setJoin(
+              pending?.ok && Array.isArray(pending.result.requests)
+                ? {
+                    url,
+                    pending: pending.result.requests.map(({ request_id, name, user_code }) => ({
+                      request_id,
+                      name,
+                      user_code,
+                    })),
+                    error: null,
+                  }
+                : {
+                    url,
+                    pending: null,
+                    error:
+                      pending &&
+                      !pending.ok &&
+                      (pending.error.httpStatus === 403 || pending.error.httpStatus === 401)
+                        ? "forbidden"
+                        : "failed",
+                  },
+            );
+          } else setJoin(null);
+        } else {
+          setJoin(null);
+          if (response.error.httpStatus === 404) setSupported(false);
+          else setLoadError(response.error.message);
+        }
       } catch (error) {
         if (!cancelled) setLoadError(String(error));
       }
@@ -38,6 +81,7 @@ export function useSessionNodes() {
     return () => {
       cancelled = true;
       alive.current = false;
+      controller.abort();
       clearTimeout(timer);
     };
   }, []);
@@ -66,6 +110,7 @@ export function useSessionNodes() {
     ...invitation,
     devices,
     supported,
+    join,
     error: error || loadError,
     busy: busy || invitation.creating || invitation.copying,
     revokeId,

@@ -13,6 +13,43 @@ tokio::task_local! {
     pub(super) static BEFORE_WRITE: std::cell::RefCell<Option<WriteFault>>;
 }
 
+fn connector_lock(home: &HomeLayout) -> std::path::PathBuf {
+    home.root().join("state/session_nodes/connector.lock")
+}
+
+pub(super) fn reserve(home: &HomeLayout) -> Result<std::fs::File> {
+    fs::try_exclusive_lock(&connector_lock(home))?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "A native session-node connector is already connecting or running for this Home"
+        )
+    })
+}
+
+pub(in crate::session_node) fn ensure_idle(home: &HomeLayout) -> Result<()> {
+    if connector_lock(home).try_exists()? {
+        drop(reserve(home)?);
+    }
+    Ok(())
+}
+
+pub(in crate::session_node) fn ensure_current(
+    home: &HomeLayout,
+    expected: Option<&ClientDescriptor>,
+) -> Result<()> {
+    compare(home, &serde_json::to_value(expected)?)?;
+    Ok(())
+}
+
+fn compare(home: &HomeLayout, expected: &serde_json::Value) -> std::io::Result<()> {
+    let current = serde_json::to_value(session_nodes::saved_client(home)?)?;
+    if &current != expected {
+        return Err(std::io::Error::other(
+            "Reconnect state changed during pairing; retry with the current configuration",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn commit(
     home: &HomeLayout,
     expected: Option<&ClientDescriptor>,
@@ -24,12 +61,7 @@ pub(super) fn commit(
     // Share the lock used by set_client/update_memberships/clear_client. Calling
     // those APIs inside this closure would reacquire the same lock.
     fs::with_exclusive_lock(&directory.join("state.lock"), || {
-        let current = serde_json::to_value(session_nodes::saved_client(home)?)?;
-        if current != expected {
-            return Err(std::io::Error::other(
-                "Reconnect state changed during pairing; retry with the current configuration",
-            ));
-        }
+        compare(home, &expected)?;
         // atomic_write creates a private temporary file and renames it. Readback
         // resolves a post-rename sync error without rolling back a committed Hello.
         #[cfg(test)]

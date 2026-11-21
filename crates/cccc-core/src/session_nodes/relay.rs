@@ -64,7 +64,9 @@ pub fn register(home: &HomeLayout, gateway: &str, address: SocketAddr) -> io::Re
     }
     store::update(home, |state| {
         store::check_gateway(state, gateway)?;
-        state.hub.as_mut().ok_or_else(store::denied)?.relay_address = Some(address);
+        let hub = state.hub.as_mut().ok_or_else(store::denied)?;
+        hub.relay_address = Some(address);
+        hub.bound_invites = true;
         Ok(())
     })
 }
@@ -119,8 +121,16 @@ pub fn authorize(
     store::update(home, |state| {
         store::check_gateway(state, gateway)?;
         let pending = state.invites.get_mut(id).ok_or_else(store::denied)?;
-        if pending.relay_secret_hash.as_deref() != Some(store::hash(secret).as_str())
+        if pending.relay_secret_hash.as_deref()
+            != Some(
+                store::invitation_hash(pending.expected_node_id.as_deref(), "relay", secret)
+                    .as_str(),
+            )
             || !valid_deadline(&pending.expires_at)
+            || pending
+                .expected_node_id
+                .as_deref()
+                .is_some_and(|expected| expected != node_id)
             || pending
                 .relay_node_id
                 .as_deref()

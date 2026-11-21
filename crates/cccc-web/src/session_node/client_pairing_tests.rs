@@ -75,6 +75,10 @@ impl Fixture {
         child.kill().expect("kill");
         child.wait().expect("reap");
         let old = ClientDescriptor {
+            join_binding: Some(session_nodes::JoinBinding {
+                origin: "https://previous-hub.example/".into(),
+                hub_id: "old-hub".into(),
+            }),
             endpoint: SessionNodeEndpoint {
                 endpoint_id: "old-hub".into(),
                 addresses: vec!["127.0.0.1:1".into()],
@@ -139,15 +143,8 @@ impl Fixture {
     ) {
         self.hello_with_write_fault(None).await
     }
-    async fn hello_with_write_fault(
-        &self,
-        fault: Option<pairing_state::WriteFault>,
-    ) -> (
-        AbortTask<Result<()>>,
-        iroh::endpoint::Connection,
-        iroh::endpoint::SendStream,
-    ) {
-        let ticket = SessionNodeTicket {
+    fn ticket(&self) -> SessionNodeTicket {
+        SessionNodeTicket {
             v: SESSION_NODE_PROTOCOL,
             endpoint_id: self.hub.id().to_string(),
             addresses: network::address(&self.hub).expect("route").addresses,
@@ -156,7 +153,18 @@ impl Fixture {
             invite_id: "test-invite".into(),
             secret: "test-secret".into(),
             expires_at: "future".into(),
-        };
+        }
+    }
+
+    async fn hello_with_write_fault(
+        &self,
+        fault: Option<pairing_state::WriteFault>,
+    ) -> (
+        AbortTask<Result<()>>,
+        iroh::endpoint::Connection,
+        iroh::endpoint::SendStream,
+    ) {
+        let ticket = self.ticket();
         let home = self.home.clone();
         let task = AbortTask(tokio::spawn(
             pairing_state::BEFORE_WRITE.scope(std::cell::RefCell::new(fault), async move {
@@ -243,6 +251,39 @@ async fn cancelled_hello_preserves_old_reconnect_state() {
 }
 
 #[tokio::test]
+async fn concurrent_connect_does_not_displace_a_pending_hello() {
+    let f = Fixture::new().await;
+    let (task, connection, mut reply) = f.hello().await;
+    let joining = crate::session_node::JoinTarget::prepare(&f.home, "https://hub.example/")
+        .map(|_| ())
+        .expect_err("a live connector does not need a fresh approval");
+    assert!(
+        joining
+            .to_string()
+            .contains("already connecting or running")
+    );
+
+    let error = tokio::time::timeout(
+        Duration::from_secs(2),
+        connect(&f.home, Some(f.ticket()), "contender"),
+    )
+    .await
+    .expect("another connector must not dial")
+    .expect_err("the first connector owns this Home");
+    assert!(error.to_string().contains("already connecting or running"));
+    assert_eq!(f.saved(), f.old);
+    f.accept(&connection, &mut reply).await;
+    deadline(async {
+        while f.saved()["grant_id"] != "new-grant" {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    task.abort();
+    let _ = task.await;
+}
+
+#[tokio::test]
 async fn successful_hello_commits_route_grant_and_memberships_together() {
     let f = Fixture::new().await;
     let (task, connection, mut send) = f.hello().await;
@@ -260,6 +301,10 @@ async fn successful_hello_commits_route_grant_and_memberships_together() {
     .expect("commit");
     let saved = f.saved();
     assert_eq!(saved["endpoint"]["endpoint_id"], f.hub.id().to_string());
+    assert!(
+        saved.get("join_binding").is_none(),
+        "a different ticket-paired hub must lose the old approval origin"
+    );
     assert_eq!(
         saved["memberships"],
         json!([membership(&f.hub.id().to_string())])

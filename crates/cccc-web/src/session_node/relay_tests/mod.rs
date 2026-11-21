@@ -1,5 +1,7 @@
 mod access;
 mod fixture;
+mod join;
+mod join_support;
 mod proxy;
 mod proxy_connector;
 mod proxy_contract;

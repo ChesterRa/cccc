@@ -5,6 +5,8 @@ use std::{collections::BTreeMap, io, path::PathBuf};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Hub {
+    #[serde(default)]
+    pub bound_invites: bool,
     pub endpoint: SessionNodeEndpoint,
     pub owner: NativeHost,
     pub token_hash: String,
@@ -14,6 +16,8 @@ pub(super) struct Hub {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Invitation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_node_id: Option<String>,
     pub secret_hash: String,
     pub expires_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -29,6 +33,7 @@ pub(super) struct State {
     pub hub: Option<Hub>,
     pub saved_endpoint: Option<SessionNodeEndpoint>,
     pub invites: BTreeMap<String, Invitation>,
+    pub revocations: BTreeMap<String, super::join_authority::Revocation>,
     pub peers: BTreeMap<String, SessionNodePeer>,
     pub sources: BTreeMap<String, RemoteSessionSource>,
 }
@@ -131,6 +136,7 @@ pub fn register_endpoint(
         }
         state.saved_endpoint = Some(endpoint.clone());
         state.hub = Some(Hub {
+            bound_invites: true,
             endpoint,
             owner,
             token_hash: hash(token),
@@ -170,4 +176,21 @@ pub fn peers(home: &HomeLayout) -> io::Result<Vec<SessionNodePeer>> {
             peer
         })
         .collect())
+}
+
+pub fn bound_invites_supported(home: &HomeLayout) -> io::Result<bool> {
+    Ok(read(home)?
+        .hub
+        .is_some_and(|hub| hub.owner.alive() && hub.bound_invites))
+}
+
+pub(super) fn invitation_hash(expected: Option<&str>, purpose: &str, secret: &str) -> String {
+    expected.map_or_else(
+        || hash(secret),
+        |node| {
+            hash(&format!(
+                "cccc/session-node/bound/{purpose}\0{node}\0{secret}"
+            ))
+        },
+    )
 }

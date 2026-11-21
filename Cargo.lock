@@ -679,6 +679,7 @@ name = "cccc"
 version = "0.4.58"
 dependencies = [
  "anyhow",
+ "axum",
  "base64 0.22.1",
  "cccc-pair-client",
  "cccc-pair-contracts",
@@ -689,10 +690,12 @@ dependencies = [
  "cccc-pair-web",
  "cccc-windows-console",
  "cccc-windows-process",
+ "chrono",
  "clap",
  "crossterm",
  "crossterm_winapi",
  "fs2",
+ "getrandom 0.3.4",
  "nix 0.28.0",
  "openssl-sys",
  "portable-pty",

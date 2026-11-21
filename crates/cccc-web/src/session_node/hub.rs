@@ -26,13 +26,31 @@ pub(super) fn hubs() -> &'static Mutex<HashMap<PathBuf, Arc<Hub>>> {
 }
 
 pub async fn create_invitation(home: &HomeLayout, port: u16) -> Result<SessionNodeTicket> {
+    prepare_invitation(home, port).await?;
+    Ok(session_nodes::create_invite(home)?)
+}
+
+pub async fn create_bound_invitation(
+    home: &HomeLayout,
+    node: &str,
+    expires_at: &str,
+    generation: &str,
+) -> Result<SessionNodeTicket> {
+    super::capabilities::verify_join(home).await?;
+    prepare_invitation(home, 0).await?;
+    Ok(session_nodes::create_bound_invite(
+        home, node, expires_at, generation,
+    )?)
+}
+
+async fn prepare_invitation(home: &HomeLayout, port: u16) -> Result<()> {
     ensure_gateway(home, port).await?;
     ensure!(
         session_nodes::relay_public_url(home)?.is_none()
             || session_nodes::relay_address(home)?.is_some(),
         "The running device gateway has no relay support; update/restart that gateway explicitly before public pairing"
     );
-    Ok(session_nodes::create_invite(home)?)
+    Ok(())
 }
 
 pub async fn restore(home: &HomeLayout) -> Result<()> {

@@ -342,7 +342,21 @@ Receiver presence is ephemeral and reconnects after a daemon restart. Current na
 
 The LAN connector supports existing **Codex and Claude Code** sessions. Both computers need a CCCC build with session-node protocol 1 (Rust 1.91); Pi/OpenCode remain local-only. The **Connect sessions** entry opens a **Sessions** overview grouped by device. An empty directory uses a compact, content-sized window with **Set up this computer** and **Add device** action cards; there is no zero-selection action bar. Once sessions are available, device sections become bordered groups and the window grows only up to the viewport limit. It shows session names, applications, directories and receive status with normal-size text. **Set up this computer** and **Add device** open separate views in the same window; configuration instructions do not sit above the directory. Returning restores the overview scroll position and selections. Select sessions first, then choose **Add to Group** to select an existing Group or create a new one. Foreman and directory settings appear only in the new-Group confirmation. Selecting sources does not admit them: the final confirmation still waits for verified Group membership and rejects unavailable sources. Pairing alone creates no Group membership.
 
-1. On the hub Web, open **Connect sessions** and choose **Add device**. First install the same CCCC build on the other computer, then copy the connection command shown on the hub and run it interactively under that computer's normal OS user and `CCCC_HOME`:
+### Connect computers with the same command
+
+On the hub, open **Connect sessions → Add device** and copy the shared command. Run it on each computer using a CCCC build that supports `join`. The command contains only the hub's shareable HTTPS address, as in this example.
+
+```sh
+cccc sessions node join https://hub.example
+```
+
+For each first connection, keep the terminal open. It shows the device name, a short verification code and a link for the hub administrator. The device name defaults to the computer's hostname. Sign in to the hub as an administrator and open that link, or find its name and verification code under **Devices awaiting approval**. The code distinguishes computers that share a name. Compare the device name and code with that computer's terminal before choosing **Allow device**. Choose **Deny device** if they differ. Opening the link only displays the request. After approval the connector still has to establish its connection. **Add device** shows its actual connection status, and registered sessions can then be selected in **Connect sessions**.
+
+The command uses existing native integrations. To enable an integration during setup, append `--runtime codex` or `--runtime claude` and complete its hook review as described above. On an already authorized computer, the same command reconnects to its trusted hub. After a revocation or hub replacement, run `cccc sessions node join https://hub.example --reauthorize` to request approval again. Use **Pair with a one-time ticket** when the hub has no shareable HTTPS address or the installed versions only support tickets.
+
+### Pair one computer with a ticket
+
+1. On the hub Web, open **Connect sessions → Add device**. On newer hubs, expand **Pair with a one-time ticket**. First install the same CCCC build on the other computer, then copy the ticket-based connection command shown on the hub and run it interactively under that computer's normal OS user and `CCCC_HOME`:
 
    ```sh
    cccc sessions node connect --runtime codex --ticket-stdin --name laptop
@@ -399,9 +413,9 @@ A network drop reconnects with the stored node identity and backs off to fifteen
 
 **Revoke device** asks for confirmation and closes that computer's CCCC access to all admitted Groups. The CLI equivalent is `cccc sessions node revoke --node-id <endpoint-id>`. Native processes keep running, and work already offered at the handoff boundary may continue. Pairing the same computer again requires a new ticket and grant; its old Group memberships do not automatically revive. Pausing one member instead affects only that Group's access.
 
-The hub allows up to **32 active device grants**. Disconnected devices still count; revoking a device immediately frees its slot. Revoked history is separate: the hub retains at most 32 revoked devices, ordered by their original grant time, and removes older records and their cached sources during pairing or revocation. Removing history never restores access: a retained or forgotten device still needs a fresh ticket and a new grant, and old tickets and Group bindings remain invalid.
+The hub allows up to **32 active device grants**. Disconnected devices still count; revoking a device immediately frees its slot. Revoked history is separate: the hub retains at most 32 revoked devices, ordered by their original grant time, and removes older records and their cached sources during pairing or revocation. A retained or forgotten device can regain access through fresh administrator approval or a new one-time ticket. Either path creates a new grant. Old tickets and Group bindings remain invalid.
 
-The directory and pairing endpoints remain administrator-only, including when the Web is viewed remotely. Exhibit, Group-scoped users and remote model connectors do not receive the device directory or pairing tickets. An older backend shows an explicit unsupported message.
+The device directory, ticket issuance, request review, approval, denial and revocation are restricted to hub administrators. A joining device can submit a public request and use its private polling credential to claim only its own approved enrollment. The administrator link contains a request ID. It carries no polling credential or pairing ticket. Exhibit, Group-scoped users and remote model connectors have no device-management access. Older hubs continue to display the ticket flow they support.
 
 ## Disconnect the integration
 

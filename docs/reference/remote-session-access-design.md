@@ -234,14 +234,15 @@ cccc sessions node connect --server https://cccc.example.com
 ```
 
 - Rust 工具链固定 `1.91.0`，新网关使用 `iroh 1.4.1` 的 Minimal 配置与 AWS-LC；不连接默认公共 Relay、不做全网地址发布或广播发现。启用公网 Web 地址时，仅使用本实例穿透入口后的原生 Relay；保持同一协作账本。
-- 管理员在“会话总览 → 添加设备”生成十分钟、一次性设备配对票据。它独立于工作组邀请；首次配对由票据授权，后续重连用持久化节点密钥。设备配对不直接获得组成员资格。网关保存已分配的 UDP 端口，普通 Web 重启时恢复已配对网关；节点沿用原密钥与成员绑定重连。
-- 远端运行 `cccc sessions node connect --ticket-stdin --name laptop`。票据走 stdin，避免写入进程参数和 shell 历史。桥接进程保持前台，Ctrl-C 只断开桥接。节点仅导出该用户、该 `CCCC_HOME` 已登记的 Codex/Claude 来源，不转发其他远端来源。
+- 多台电脑可以运行同一条 `cccc sessions node join <主机地址>`。命令只含主机地址。每台新电脑显示自己的校验码，管理员在确认页核对设备名称和校验码后批准。设备用本次申请的临时凭证领取绑定其公钥的短期票据，完成原生握手后取得自己的设备授权。无浏览器的电脑会显示可在另一台设备打开的确认链接。
+- 同一 `CCCC_HOME` 再次接入同一地址时，连接器沿用首次握手确认的主机身份和设备授权。网关保存已分配的 UDP 端口，普通 Web 重启时恢复已配对网关。需要重新申请时可使用 `--reauthorize`。
+- 缺少可用的 HTTPS 管理入口时，管理员可以在“会话总览 → 添加设备”生成十分钟有效的一次性设备票据，远端运行 `cccc sessions node connect --ticket-stdin --name laptop` 并在提示处粘贴。两种接入方式都使用前台桥接。Ctrl-C 只断开桥接。节点仅导出该用户、该 `CCCC_HOME` 已登记的 Codex/Claude 来源，不转发其他远端来源。
 - 中心仍由管理员从现有会话列表选择来源并加入组。来源使用节点公钥、授权代次与原生来源摘要组成命名空间；远端 PID 不作为中心机器上的进程验证，远端 cwd 不登记为中心物理工作区。
 - 中心复用现有接收租约、逐条投递、账本 claim/accepted/ambiguous 处理；节点在原生提交前持久化交接屏障。未知结果和重用同一交接 ID 的不同负载均不自动重放。活跃账本与完成回执的保留策略见下文。
 - Codex 使用原生 queue/steer，Claude 使用原有 Monitor。模型调用先在来源机器验证实际原生来源，再经私有 loopback broker 和加密通道返回中心；中心重查来源版本、组成员代次与角色，复用现有 MCP/Daemon 授权路径。
 - 支持消息收发/回复/精确读取、Inbox、bootstrap/help、任务和上下文等明确列出的协作工具。文件、执行、能力安装及 code-mode 入口不通过该通道开放；原应用自己的工具继续在原机器执行。消息附件在原生交接前明确失败，暂不跨机传输。
 - 设备撤销使新投递和工具调用失效；重新配对生成新授权与来源标识，旧组成员不会自动恢复。已跨过交接边界的原生工作可能继续执行，撤销不终止原应用。
-- 管理接口：管理员专用 `/api/v1/session_nodes`、`/api/v1/session_nodes/invitations`、`/api/v1/session_nodes/{node_id}/revoke`。旧后台返回不支持，不静默切换到本机路径。桥接只在空闲 Home 启动 daemon，遇到旧 daemon 明确退出，不替换在线服务。
+- 设备目录、签发票据、查看和处理待确认申请、撤销设备均须主机管理员权限。公开的 `POST /api/v1/session_nodes/join/requests` 和 `POST /api/v1/session_nodes/join/poll` 仅供设备发起和领取自己的申请。临时领取凭证保存在设备进程内，不进入确认链接。桥接只在空闲 Home 启动 daemon，遇到旧 daemon 明确退出，不替换在线服务。
 
 ### 投递记录保留策略
 

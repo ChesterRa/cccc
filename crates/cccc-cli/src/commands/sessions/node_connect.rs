@@ -23,21 +23,40 @@ pub(super) async fn run(
             "A native session-node connector already runs for this Home; no native configuration was changed"
         );
         ensure_daemon(home).await?;
-        if ticket
-            .as_ref()
-            .is_some_and(|ticket| ticket.relay_url.is_some())
-        {
-            cccc_web::session_node::verify_daemon(home, true).await?;
-        }
-        setup::enable(home, runtime)
-            .await
-            .context("Native setup failed; device pairing was not attempted. Inspect native configuration before retrying")?
-            .print()?;
-        eprintln!(
-            "Native {runtime} integration enabled; device connection has not completed yet. Native hooks still require your review; no native session was started."
-        );
+        enable_integration(
+            home,
+            runtime,
+            ticket
+                .as_ref()
+                .is_some_and(|ticket| ticket.relay_url.is_some()),
+        )
+        .await?;
     }
-    let result = cccc_web::session_node::connect(home, ticket, name).await;
+    result_after_setup(
+        cccc_web::session_node::connect(home, ticket, name).await,
+        runtime,
+    )
+}
+
+pub(super) async fn enable_integration(
+    home: &HomeLayout,
+    runtime: &str,
+    needs_relay: bool,
+) -> Result<()> {
+    if needs_relay {
+        cccc_web::session_node::verify_daemon(home, true).await?;
+    }
+    setup::enable(home, runtime)
+        .await
+        .context("Native setup failed; device pairing was not attempted. Inspect native configuration before retrying")?
+        .print()?;
+    eprintln!(
+        "Native {runtime} integration enabled; device connection has not completed yet. Native hooks still require your review; no native session was started."
+    );
+    Ok(())
+}
+
+pub(super) fn result_after_setup(result: Result<()>, runtime: Option<&str>) -> Result<()> {
     if let Some(runtime) = runtime {
         result.with_context(|| format!(
             "Native {runtime} integration remains enabled; device connection did not complete. No automatic disable was performed. Resolve the connection error before retrying"

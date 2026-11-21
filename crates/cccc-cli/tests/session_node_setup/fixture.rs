@@ -1,3 +1,5 @@
+#[path = "../session_node_support/daemon.rs"]
+mod daemon;
 use cccc_contracts::{DaemonRequest, session_node::SessionNodeEndpoint};
 use cccc_core::{HomeLayout, local_sessions::NativeHost, session_nodes::ClientDescriptor};
 use std::{
@@ -59,29 +61,7 @@ impl Fixture {
     }
 
     pub async fn start_home(&mut self, home: HomeLayout) {
-        home.initialize().expect("initialize");
-        let daemon_home = home.clone();
-        self.daemons.push(tokio::spawn(
-            async move { cccc_daemon::run(daemon_home).await },
-        ));
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                if cccc_client::DaemonClient::new(home.clone())
-                    .call(&DaemonRequest {
-                        v: 1,
-                        op: "ping".into(),
-                        args: Default::default(),
-                    })
-                    .await
-                    .is_ok()
-                {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("isolated daemon ready");
+        daemon::start(home, &mut self.daemons).await;
     }
 
     pub fn spawn(&mut self, task: JoinHandle<anyhow::Result<()>>) {
@@ -101,6 +81,7 @@ impl Fixture {
             owner.started.push_str("-old-process");
         }
         ClientDescriptor {
+            join_binding: None,
             endpoint: SessionNodeEndpoint {
                 endpoint_id: "previous-hub".into(),
                 addresses: vec!["127.0.0.1:12345".into()],

@@ -1,5 +1,5 @@
 #[path = "client_pairing_state.rs"]
-mod pairing_state;
+pub(super) mod pairing_state;
 
 use super::{
     broker,
@@ -15,6 +15,7 @@ use cccc_core::{
     local_sessions::NativeHost,
     session_nodes::{self, ClientDescriptor},
 };
+use iroh::SecretKey;
 use std::{sync::Arc, time::Duration};
 use tokio::{net::TcpListener, sync::RwLock};
 
@@ -23,11 +24,27 @@ pub async fn connect(
     ticket: Option<SessionNodeTicket>,
     name: &str,
 ) -> Result<()> {
+    let saved = available_client(home)?;
+    connect_observed(home, ticket, name, saved, None).await
+}
+
+pub(super) fn available_client(home: &HomeLayout) -> Result<Option<ClientDescriptor>> {
     let saved = session_nodes::saved_client(home)?;
     ensure!(
         !saved.as_ref().is_some_and(|client| client.owner.alive()),
         "A native session-node connector already runs for this Home"
     );
+    pairing_state::ensure_idle(home)?;
+    Ok(saved)
+}
+
+pub(super) async fn connect_observed(
+    home: &HomeLayout,
+    ticket: Option<SessionNodeTicket>,
+    name: &str,
+    saved: Option<ClientDescriptor>,
+    join: Option<(String, SecretKey)>,
+) -> Result<()> {
     let endpoint_address = match &ticket {
         Some(ticket) => SessionNodeEndpoint {
             endpoint_id: ticket.endpoint_id.clone(),
@@ -43,6 +60,9 @@ pub async fn connect(
     super::capabilities::verify(home, endpoint_address.relay_url.is_some()).await?;
     // Preserve route validation before creating or updating the local identity.
     network::destination(&endpoint_address)?;
+    // Reserve before opening a second Hello: the hub replaces an older connection for the same key.
+    let _owner_lock = pairing_state::reserve(home)?;
+    pairing_state::ensure_current(home, saved.as_ref())?;
     let relay_token = ticket.as_ref().and_then(|ticket| {
         ticket.relay_token.as_ref().map(|token| {
             format!(
@@ -53,15 +73,17 @@ pub async fn connect(
             )
         })
     });
-    let (builder, destination) = network::connect_builder(
-        network::key(home, "client")?,
-        &endpoint_address,
-        relay_token.as_deref(),
-    )?;
+    let (join_origin, key) = match join {
+        Some((origin, key)) => (Some(origin), key),
+        None => (None, network::key(home, "client")?),
+    };
+    let (builder, destination) =
+        network::connect_builder(key, &endpoint_address, relay_token.as_deref())?;
     let endpoint = builder.bind().await?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
     let descriptor = ClientDescriptor {
         endpoint: endpoint_address,
+        join_binding: None,
         node_id: endpoint.id().to_string(),
         grant_id: String::new(),
         owner: NativeHost::capture(std::process::id())?,
@@ -114,6 +136,12 @@ pub async fn connect(
                         "Paired node identity mismatch"
                     );
                     let mut current = descriptor.clone();
+                    current.join_binding = super::client_join::confirmed_binding(
+                        join_origin.as_deref(),
+                        &connection.remote_id().to_string(),
+                        &current.node_id,
+                        expected.as_ref(),
+                    );
                     current.grant_id = peer.grant_id;
                     current.connected = true;
                     current.memberships = serde_json::from_value(hello["memberships"].clone())?;

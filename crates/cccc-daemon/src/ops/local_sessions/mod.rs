@@ -33,7 +33,7 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "session_node_capabilities" => Operation::new(Read, |_, request| {
             local(request)?;
             object(
-                json!({"protocol":cccc_contracts::session_node::SESSION_NODE_PROTOCOL,"relay_ticket_version":cccc_contracts::session_node::SESSION_NODE_RELAY_TICKET,"runtimes":["codex","claude"]}),
+                json!({"protocol":cccc_contracts::session_node::SESSION_NODE_PROTOCOL,"relay_ticket_version":cccc_contracts::session_node::SESSION_NODE_RELAY_TICKET,"join_identity_binding":true,"runtimes":["codex","claude"]}),
             )
         }),
         "local_session_recovery" => Operation::new(Read, recovery),
