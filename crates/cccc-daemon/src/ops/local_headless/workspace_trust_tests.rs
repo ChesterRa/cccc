@@ -154,9 +154,11 @@ fn trust_prompt_runs_the_configured_command_in_the_actor_terminal() {
     std::fs::create_dir(&workspace).expect("workspace");
     let marker = temp.path().join("started-in");
     let executable = temp.path().join("claude");
+    // Publish the marker by rename: the test waits for it to exist and then
+    // reads it, and a redirection creates the file before writing to it.
     std::fs::write(
         &executable,
-        "#!/bin/sh\npwd -P > \"$TRUST_PROMPT_MARKER\"\nexec sleep 30\n",
+        "#!/bin/sh\npwd -P > \"$TRUST_PROMPT_MARKER.tmp\"\nmv \"$TRUST_PROMPT_MARKER.tmp\" \"$TRUST_PROMPT_MARKER\"\nexec sleep 30\n",
     )
     .expect("fake Claude");
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
