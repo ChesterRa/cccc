@@ -327,7 +327,7 @@ mod structured_admission {
     }
 
     #[test]
-    fn opencode_actor_delivery_still_uses_its_owned_http_queue() {
+    fn opencode_actor_delivery_uses_ordinary_input_on_its_bound_session() {
         if std::env::var_os("OPENCODE_ACTOR_FIXTURE_CHILD").is_none() {
             let temp = tempfile::tempdir().expect("isolated Actor launcher");
             let launcher = temp.path().join("cccc");
@@ -335,7 +335,7 @@ mod structured_admission {
             std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700))
                 .expect("launcher executable");
             let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
-                .args(["--exact", "ops::local_headless::supervisor_managed_tests::structured_admission::opencode_actor_delivery_still_uses_its_owned_http_queue", "--nocapture"])
+                .args(["--exact", "ops::local_headless::supervisor_managed_tests::structured_admission::opencode_actor_delivery_uses_ordinary_input_on_its_bound_session", "--nocapture"])
                 .env("OPENCODE_ACTOR_FIXTURE_CHILD", "1")
                 .env("CCCC_LAUNCHER_PATH", launcher)
                 .env("HOME", temp.path().join("home"))
@@ -364,7 +364,7 @@ mod structured_admission {
             .collect::<Vec<_>>();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0]["sessionID"], "ses_chet_fixture");
-        assert_eq!(requests[0]["delivery"], "queue");
+        assert!(requests[0].get("delivery").is_none());
         assert!(
             requests[0]["text"]
                 .as_str()

@@ -672,6 +672,12 @@ conversation is checked again just before it is handed to Chet: if its sender ha
 or been replaced, or the Group was removed or re-created, the entry says it was not handed to
 Chet.
 
+When Chet runs on OpenCode, a Group message cannot be handed over while your own conversation
+with Chet still has messages in OpenCode's inbox. It waits up to ten minutes from when it was
+sent. If it is still held back then, it is not sent: the message in the Group says it was not
+sent to Chet and did not run, and can be sent again; a member who sent it also gets a notice.
+Your conversation with Chet carries on, and neither notice includes its text or status.
+
 Group messages enter Chet's usual session, which can also hold your own conversation with Chet
 and other Groups' content. Chet is instructed not to carry that into a Group and to pass requests
 for work outside a Group on to you rather than do them. These are instructions to the model, not

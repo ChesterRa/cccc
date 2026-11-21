@@ -658,6 +658,7 @@
   "noMoreMessages": "没有更多消息了",
   "loadingHistory": "正在加载…",
   "deliveryFailedFor": "投递失败：{{names}}",
+  "chetRequestNotSent": "这次请求没有发给 Chet，也没有执行。如仍需要，可以重发。",
   "showRecipientStatus": "查看收件人状态",
   "read": "已读",
   "pending": "待读",

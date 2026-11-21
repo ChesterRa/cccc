@@ -961,7 +961,7 @@
       "ended": "已结束",
       "notStarted": "未交给 Chet。",
       "notStartedUnavailable": "这条消息没有交给 Chet；请检查 Chet 的运行环境设置后再发送。",
-      "notStartedCancelled": "已取消，未发送。",
+      "notStartedCancelled": "已取消，未执行。",
       "notStartedSourceUnavailable": "这条工作组消息的发送者或来源已失效，没有交给 Chet。",
       "received_unconfirmed": "Chet 已接收，结果未确认；不会自动重发。",
       "unconfirmed": "结果未确认：可能已交给 Chet，也可能没有；不会自动重发，以免重复执行。",

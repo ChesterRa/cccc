@@ -128,7 +128,10 @@ fn tell_senders(home: &HomeLayout, group_id: &str) {
     }
 }
 
-fn notify_sender(home: &HomeLayout, notice: &SenderNotice) -> Result<(), crate::dispatch::OpError> {
+pub(super) fn notify_sender(
+    home: &HomeLayout,
+    notice: &SenderNotice,
+) -> Result<(), crate::dispatch::OpError> {
     use crate::dispatch::OpError;
     use crate::ops::messaging_status::{Requester, requester_for_event};
     let (group_id, recipient) = (&notice.group_id, &notice.recipient);
@@ -147,23 +150,22 @@ fn notify_sender(home: &HomeLayout, notice: &SenderNotice) -> Result<(), crate::
     {
         return Ok(());
     }
-    // A notice can arrive late, and a daemon restart can pick failed work up
-    // again, so this says what happened, not what holds now. The reason stays
-    // out: it can hold another runtime's own text.
-    let (title, state, advice) = if notice.uncertain {
+    let client_id = |state: &str| format!("delivery:{state}:{}", notice.delivery_id);
+    // The host proved this one was never sent, so it is final and says so.
+    let (title, state, message) = if recipient == cccc_core::actors::CHET_SERVICE_PRINCIPAL {
         (
-            format!("Delivery to {recipient} was uncertain"),
-            "ambiguous",
-            "It may have reached the agent. Check before sending it again.",
+            "Your request to Chet was not sent".to_owned(),
+            "failed",
+            format!(
+                "Chet could not take it up in time, so it was not sent to Chet and did not \
+                 run. Send it again if you still need it. Source event: {}.",
+                source.id
+            ),
         )
     } else {
-        (
-            format!("Delivery to {recipient} failed"),
-            "failed",
-            "Check before you wait for a reply.",
-        )
+        sender_attempt_notice(recipient, notice.uncertain, &source.id)
     };
-    let client_id = format!("delivery:{state}:{}", notice.delivery_id);
+    let client_id = client_id(state);
     if ledger::find_idempotent(&path, "system.notify", "system", &client_id)
         .map_err(OpError::io)?
         .is_some()
@@ -176,11 +178,7 @@ fn notify_sender(home: &HomeLayout, notice: &SenderNotice) -> Result<(), crate::
         args: json!({
             "group_id":group_id,"by":"system","client_id":client_id,"kind":"error",
             "title":title,
-            "message":format!(
-                "This attempt has stopped, and the result may have changed since. {advice} \
-                 Source event: {}.",
-                source.id
-            ),
+            "message":message,
             "to":[source.by],"target_actor_id":source.by,"im_visibility":"internal",
             "related_event_id":source.id,
             "context":{"delivery_id":notice.delivery_id,"state":state,"actor_id":recipient},
@@ -190,6 +188,37 @@ fn notify_sender(home: &HomeLayout, notice: &SenderNotice) -> Result<(), crate::
         .expect("sender notice"),
     };
     crate::ops::messaging::send(home, &request, "system.notify").map(|_| ())
+}
+
+/// A notice can arrive late, and a daemon restart can pick failed work up
+/// again, so this says what happened, not what holds now. The reason stays
+/// out: it can hold another runtime's own text.
+fn sender_attempt_notice(
+    recipient: &str,
+    uncertain: bool,
+    source_id: &str,
+) -> (String, &'static str, String) {
+    let (title, state, advice) = if uncertain {
+        (
+            format!("Delivery to {recipient} was uncertain"),
+            "ambiguous",
+            "It may have reached the agent. Check before sending it again.",
+        )
+    } else {
+        (
+            format!("Delivery to {recipient} failed"),
+            "failed",
+            "Check before you wait for a reply.",
+        )
+    };
+    (
+        title,
+        state,
+        format!(
+            "This attempt has stopped, and the result may have changed since. {advice} \
+             Source event: {source_id}."
+        ),
+    )
 }
 
 fn take_group_completions(group_id: &str) -> Vec<DeliveryCompletion> {

@@ -961,7 +961,7 @@
       "ended": "Ended",
       "notStarted": "Not handed to Chet.",
       "notStartedUnavailable": "This message wasn't handed to Chet. Check Chet's runtime settings, then send it again.",
-      "notStartedCancelled": "Cancelled before it was sent.",
+      "notStartedCancelled": "Cancelled; it did not run.",
       "notStartedSourceUnavailable": "This Group message no longer has a valid sender or source, so it was not handed to Chet.",
       "received_unconfirmed": "Chet received it; the result is unconfirmed. It won't be resent automatically.",
       "unconfirmed": "Unconfirmed: it may or may not have reached Chet. It won't be resent automatically, to avoid running it twice.",

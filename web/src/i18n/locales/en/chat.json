@@ -658,6 +658,7 @@
   "noMoreMessages": "No more messages",
   "loadingHistory": "Loading…",
   "deliveryFailedFor": "Delivery failed for {{names}}",
+  "chetRequestNotSent": "This request was not sent to Chet and did not run. Send it again if you still need it.",
   "showRecipientStatus": "Show recipient status",
   "read": "read",
   "pending": "pending",

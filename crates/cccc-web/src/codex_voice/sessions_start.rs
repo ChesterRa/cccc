@@ -236,15 +236,82 @@ impl CodexVoiceSessions {
             .await
     }
 
+    /// `wait` ends the wait of a Group input the host could not yet hand
+    /// over; see [`Self::chet_group_wait_expired`].
     pub(crate) async fn submit_chet_group_input(
         &self,
         home: &HomeLayout,
         id: uuid::Uuid,
         source: &cccc_contracts::chet::GroupInput,
         request: &cccc_core::chet_history::TextRequest,
+        wait: &cccc_daemon::experimental_codex_voice::GroupWaitDeadline,
     ) -> std::result::Result<(), ChetSubmitError> {
-        self.submit_chet_input_with_origin(home, id, request, Some(source))
+        self.submit_chet_input_with_origin(home, id, request, Some((source, wait)))
             .await
+    }
+
+    /// Lets a running Chet note whether this Group message's wait runs out
+    /// while a private input holds its inbox. Never starts Chet. It waits for
+    /// a busy owner: a missed registration cannot be made up later.
+    pub(crate) async fn observe_chet_group_wait(
+        &self,
+        wait: &cccc_daemon::experimental_codex_voice::GroupWaitDeadline,
+    ) {
+        let analyst = self.state.lock().await.analyst.clone();
+        if let Some(analyst) = analyst {
+            analyst.analyst.observe_group_wait(wait).await;
+        }
+    }
+
+    /// Whether the running Chet holds this Group input unsent past its
+    /// deadline. It stays queued, and is never sent, until the expiry is
+    /// recorded and confirmed. A busy owner reads as not yet expired.
+    pub(crate) async fn chet_group_wait_expired(&self, id: uuid::Uuid) -> bool {
+        let Some(analyst) = self.current_analyst() else {
+            return false;
+        };
+        analyst
+            .analyst
+            .group_wait_expired(&format!("chet-group:{id}"))
+            .await
+    }
+
+    /// Call only once the daemon has recorded the expiry. Returns false when
+    /// the owner is busy, so the caller tries again.
+    pub(crate) async fn confirm_chet_group_wait_expiry(&self, id: uuid::Uuid) -> bool {
+        let Ok(state) = self.state.try_lock() else {
+            return false;
+        };
+        let analyst = state.analyst.clone();
+        drop(state);
+        if let Some(analyst) = analyst {
+            analyst
+                .analyst
+                .confirm_group_wait_expiry(&format!("chet-group:{id}"))
+                .await;
+        }
+        true
+    }
+
+    /// Lets go of an expired Group input whose history already holds another
+    /// outcome. Returns false when the owner is busy, so the caller tries again.
+    pub(crate) async fn release_chet_group_wait_unconfirmed(&self, id: uuid::Uuid) -> bool {
+        let Ok(state) = self.state.try_lock() else {
+            return false;
+        };
+        let analyst = state.analyst.clone();
+        drop(state);
+        if let Some(analyst) = analyst {
+            analyst
+                .analyst
+                .release_group_wait_unconfirmed(&format!("chet-group:{id}"))
+                .await;
+        }
+        true
+    }
+
+    fn current_analyst(&self) -> Option<Arc<AnalystRuntime>> {
+        self.state.try_lock().ok()?.analyst.clone()
     }
 
     async fn submit_chet_input_with_origin(
@@ -252,15 +319,25 @@ impl CodexVoiceSessions {
         home: &HomeLayout,
         id: uuid::Uuid,
         request: &cccc_core::chet_history::TextRequest,
-        group_input: Option<&cccc_contracts::chet::GroupInput>,
+        group: Option<(
+            &cccc_contracts::chet::GroupInput,
+            &cccc_daemon::experimental_codex_voice::GroupWaitDeadline,
+        )>,
     ) -> std::result::Result<(), ChetSubmitError> {
+        let group_input = group.map(|(source, _)| source);
         use cccc_daemon::experimental_codex_voice::VoiceDelegationAdmission;
 
         self.ensure_open()
             .map_err(|_| ChetSubmitError::NotStarted)?;
+        let epoch = self.chet_admission_epoch.load(Ordering::Acquire);
         let state = Arc::clone(&self.state).lock_owned().await;
         self.ensure_open()
             .map_err(|_| ChetSubmitError::NotStarted)?;
+        // An admission ahead of this one ended in doubt while this input
+        // waited. It belongs to that batch and is not handed to a new Chet.
+        if self.chet_admission_epoch.load(Ordering::Acquire) != epoch {
+            return Err(ChetSubmitError::NotStarted);
+        }
         let (state, analyst) = self.prepare_chet_locked(home, state).await?;
         self.ensure_open()
             .map_err(|_| ChetSubmitError::NotStarted)?;
@@ -307,15 +384,26 @@ impl CodexVoiceSessions {
         } else {
             format!("chet-input:{id}")
         };
-        let admission = if group_input.is_some() {
+        let admission = if let Some((_, wait)) = group {
             analyst
                 .analyst
-                .submit_group_input(&correlation_id, &input)
+                .submit_group_input_until(&correlation_id, &input, wait)
                 .await
         } else {
-            analyst.analyst.submit_input(&correlation_id, &input).await
-        }
-        .map_err(|_| ChetSubmitError::Unconfirmed)?;
+            analyst
+                .analyst
+                .submit_chet_text(&correlation_id, &input)
+                .await
+        };
+        let Ok(admission) = admission else {
+            // Only an OpenCode admission that lost its connection leaves the
+            // waiting inputs in doubt; a local refusal does not. Advanced
+            // before the owner is released, so no waiting input can pass.
+            if analyst.analyst.opencode_connection_lost() {
+                self.chet_admission_epoch.fetch_add(1, Ordering::AcqRel);
+            }
+            return Err(ChetSubmitError::Unconfirmed);
+        };
         drop(state);
         if let VoiceDelegationAdmission::NativeInput {
             delegation_id,

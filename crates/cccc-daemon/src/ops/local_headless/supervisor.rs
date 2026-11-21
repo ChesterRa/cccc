@@ -750,8 +750,8 @@ fn submit_prepared_admitted(
         delivery.push_str("\n\n");
         delivery.push_str(&notice.delivery_line());
     }
-    // OpenCode V2's terminal is a view of the owned HTTP session. Admit CCCC
-    // input through that session's durable queue, including during TUI startup.
+    // OpenCode V2's terminal is a view of the owned HTTP session. Submit plain
+    // input to that session and let OpenCode choose its delivery mode.
     // Writing the terminal can be acknowledged before its composer is ready.
     if item.managed.structured_only()
         || item.managed.runtime() == cccc_contracts::ActorRuntime::Opencode
@@ -773,7 +773,13 @@ fn submit_prepared_admitted(
             match super::block_on_managed(async {
                 tokio::select! {
                     biased;
-                    result = item.managed.start_turn(item.managed.generation(), &id, prepared) => result,
+                    result = async {
+                        if item.managed.runtime() == cccc_contracts::ActorRuntime::Opencode {
+                            item.managed.submit_bound_opencode(item.managed.generation(), &id, prepared).await
+                        } else {
+                            item.managed.start_turn(item.managed.generation(), &id, prepared).await.map(drop)
+                        }
+                    } => result,
                     _ = async {
                         while !cancelled.load(Ordering::Acquire) {
                             tokio::time::sleep(std::time::Duration::from_millis(20)).await;

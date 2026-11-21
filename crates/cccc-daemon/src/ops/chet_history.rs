@@ -55,7 +55,7 @@ fn value<T: DeserializeOwned>(request: &DaemonRequest, key: &str) -> Result<T, O
     serde_json::from_value(value.clone()).map_err(OpError::invalid)
 }
 
-fn map_error(error: chet_history::Error) -> OpError {
+pub(super) fn map_error(error: chet_history::Error) -> OpError {
     let code = match &error {
         chet_history::Error::Invalid(_) => "invalid_args",
         chet_history::Error::IdConflict => "chet_history_id_conflict",
@@ -69,7 +69,7 @@ fn map_error(error: chet_history::Error) -> OpError {
     OpError::new(code, error.to_string())
 }
 
-fn registration(value: Registration) -> &'static str {
+pub(super) fn registration(value: Registration) -> &'static str {
     match value {
         Registration::Inserted => "inserted",
         Registration::Existing => "existing",

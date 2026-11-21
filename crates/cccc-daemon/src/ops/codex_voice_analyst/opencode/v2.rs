@@ -35,6 +35,7 @@ struct Inner {
     events: broadcast::Sender<AnalystEvent>,
     state: Mutex<events::State>,
     running: AtomicBool,
+    resumed_inbox: AtomicBool,
 }
 
 // A cancelled HTTP future can already have admitted input. Release the owner,
@@ -114,6 +115,9 @@ impl OpenCodeClient {
     ) -> broadcast::Receiver<AnalystEvent> {
         self.inner.events.subscribe()
     }
+    pub(in crate::ops::codex_voice_analyst) fn has_resumed_inbox(&self) -> bool {
+        self.inner.resumed_inbox.load(Ordering::Acquire)
+    }
     pub(in crate::ops::codex_voice_analyst) fn running(&self) -> bool {
         self.inner.running.load(Ordering::Acquire)
     }
@@ -144,6 +148,15 @@ impl OpenCodeClient {
         delegation: &str,
         text: &str,
     ) -> io::Result<String> {
+        self.post_input(delegation, text, false).await
+    }
+
+    pub(in crate::ops::codex_voice_analyst) async fn post_input(
+        &self,
+        delegation: &str,
+        text: &str,
+        ordinary: bool,
+    ) -> io::Result<String> {
         // Let OpenCode generate its ordered message ID. A UUID with a msg_
         // prefix is not an OpenCode ID and can sort behind existing history.
         // Keep observation serialized until the durable admission identifies
@@ -155,13 +168,29 @@ impl OpenCodeClient {
                 "OpenCode V2 lifecycle is unavailable",
             ));
         }
-        if state.active.is_some() || state.controlled.is_some() {
+        if state.controlled.is_some()
+            || (!ordinary
+                && (state.active.is_some()
+                    || !state.inbox_delegations.is_empty()
+                    || self.has_resumed_inbox()))
+        {
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 "OpenCode is processing an existing turn",
             ));
         }
-        state.controlled = Some((String::new(), delegation.into()));
+        if ordinary && state.inbox_delegations.len() >= 32 {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "OpenCode inbox admission limit reached",
+            ));
+        }
+        let body = if ordinary {
+            json!({"text":text})
+        } else {
+            json!({"text":text,"delivery":"queue"})
+        };
+
         let mut admission = PendingAdmission {
             client: self,
             confirmed: false,
@@ -171,7 +200,7 @@ impl OpenCodeClient {
             .json(
                 reqwest::Method::POST,
                 &format!("/api/session/{}/prompt", self.inner.session_id),
-                Some(&json!({"text":text,"delivery":"queue"})),
+                Some(&body),
             )
             .await?;
         let id = response["data"]["id"]
@@ -185,14 +214,28 @@ impl OpenCodeClient {
             })?
             .to_owned();
         if response["data"]["sessionID"] != self.inner.session_id
-            || response["data"]["delivery"] != "queue"
+            || !matches!(
+                response["data"]["delivery"].as_str(),
+                Some("steer" | "queue")
+            )
+            || (!ordinary && response["data"]["delivery"] != "queue")
         {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "OpenCode V2 did not acknowledge the queued input",
+                "OpenCode V2 acknowledged an unexpected session or delivery mode",
             ));
         }
-        state.controlled = Some((id.clone(), delegation.into()));
+        if ordinary {
+            if state
+                .inbox_delegations
+                .insert(id.clone(), delegation.to_owned())
+                .is_some()
+            {
+                return Err(io::Error::other("OpenCode reused a pending inbox ID"));
+            }
+        } else {
+            state.controlled = Some((id.clone(), delegation.into()));
+        }
         admission.confirmed = true;
         Ok(id)
     }
@@ -327,6 +370,7 @@ pub(super) async fn launch(
             events,
             state: Mutex::new(events::State::default()),
             running: AtomicBool::new(true),
+            resumed_inbox: AtomicBool::new(false),
         };
         let info = inner.json(reqwest::Method::GET, "/api/info", None).await?;
         if info["pid"].as_u64() != owner.id().map(u64::from) {
@@ -454,6 +498,14 @@ pub(super) async fn launch(
                 "OpenCode V2 event listener did not become ready",
             )
         })??;
+        if resume.is_some() && purpose == SessionPurpose::VoiceAnalyst {
+            // The provider persists its inbox across restarts. Seed it after
+            // subscribing so a concurrent cancellation or delivery is observable.
+            let inbox = inner.json(reqwest::Method::GET, &format!("/api/session/{id}/inbox"), None).await?;
+            let mut state = inner.state.lock().await;
+            state.restore_inbox(&id, &inbox)?;
+            inner.resumed_inbox.store(!state.inherited.is_empty(), Ordering::Release);
+        }
         let mut tui = prepared.launch_prefix;
         tui.extend([
             "--server".into(),

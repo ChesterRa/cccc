@@ -5,7 +5,7 @@ use cccc_daemon::experimental_codex_voice::{
     RealtimeCallConfig, create_grok_connection, create_realtime_answer,
 };
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -159,6 +159,10 @@ pub(crate) struct CodexVoiceSessions {
     cleanup_gate: Arc<Mutex<()>>,
     chet_preparing: Arc<StdMutex<std::collections::HashSet<uuid::Uuid>>>,
     chet_history_write_failed: Arc<AtomicBool>,
+    /// Advances when Chet's admission of an input ends without confirmation.
+    /// Inputs already waiting for Chet are then not started, rather than
+    /// handed to the Chet that replaces the one in doubt.
+    chet_admission_epoch: Arc<AtomicU64>,
     /// A recognized reason the last Chet start failed, shown until Chet runs.
     chet_start_problem: Arc<StdMutex<Option<serde_json::Value>>>,
     process_recovery: Option<crate::VoiceProcessRecovery>,

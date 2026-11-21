@@ -263,6 +263,7 @@ impl Default for CodexVoiceSessions {
             cleanup_gate: Arc::new(Mutex::new(())),
             chet_preparing: Arc::new(StdMutex::new(std::collections::HashSet::new())),
             chet_history_write_failed: Arc::new(AtomicBool::new(false)),
+            chet_admission_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             chet_start_problem: Arc::new(StdMutex::new(None)),
             process_recovery: None,
         }

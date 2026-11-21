@@ -176,6 +176,48 @@ describe("message chrome", () => {
     expect(replied?.getAttribute("data-status-tone")).toBe("ok");
   });
 
+  it("says in full that a request to Chet was not sent, and only for Chet", () => {
+    const props = {
+      actorById: new Map(),
+      actors: [],
+      displayNameMap: new Map([["svc:chet", "Chet"]]),
+      agentState: null,
+      taskById: new Map(),
+      isDark: false,
+      groupId: "g",
+      groupLabelById: {},
+      onReply: vi.fn(),
+      onShowRecipients: vi.fn(),
+    };
+    const failed = (recipient: string) => ({
+      id: "event-1",
+      kind: "chat.message",
+      by: "worker",
+      data: { text: "Please review", to: [recipient], message_mode: "send" },
+      _obligation_status: {
+        [recipient]: {
+          reply_requested: false,
+          replied: false,
+          cancelled: false,
+          delivery_state: "failed",
+          delivery_reason: "chet_wait_expired",
+        },
+      },
+    });
+    const host = document.createElement("div");
+
+    host.innerHTML = renderToStaticMarkup(<MessageBubble {...props} event={failed("svc:chet")} />);
+    const chet = host.querySelector('[data-status-tone="error"]');
+    expect(chet?.textContent).toBe("chetRequestNotSent");
+    expect(chet?.hasAttribute("title")).toBe(false);
+
+    // The same text from a member's runtime makes no promise about Chet.
+    host.innerHTML = renderToStaticMarkup(<MessageBubble {...props} event={failed("worker")} />);
+    const member = host.querySelector('[data-status-tone="error"]');
+    expect(member?.textContent).toBe("deliveryFailedFor");
+    expect(member?.getAttribute("title")).toBe("chet_wait_expired");
+  });
+
   it("keeps Mail, recipients and failure evidence readable in a read-only grouped row", () => {
     const markup = renderToStaticMarkup(
       <MessageBubble

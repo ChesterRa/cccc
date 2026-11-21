@@ -1,4 +1,5 @@
 use super::*;
+use crate::ops::codex_voice_lifecycle::{AnalystCompletionSource, GroupWaitDeadline};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 
@@ -86,6 +87,49 @@ impl CodexVoiceAnalyst {
         text: &str,
     ) -> Result<VoiceDelegationAdmission> {
         self.lifecycle.admit_group(id, text).await
+    }
+
+    pub async fn submit_chet_text(&self, id: &str, text: &str) -> Result<VoiceDelegationAdmission> {
+        self.lifecycle.admit_chet_text(id, text).await
+    }
+
+    /// An uncertain HTTP admission closes this bound OpenCode connection before
+    /// returning to the caller. Local queue or validation errors leave it live.
+    pub fn opencode_connection_lost(&self) -> bool {
+        self.session.runtime() == cccc_contracts::ActorRuntime::Opencode
+            && !self.session.process_running()
+    }
+
+    pub async fn observe_group_wait(&self, deadline: &GroupWaitDeadline) {
+        self.lifecycle.observe_group_wait(deadline).await;
+    }
+
+    pub async fn submit_group_input_until(
+        &self,
+        id: &str,
+        text: &str,
+        deadline: &GroupWaitDeadline,
+    ) -> Result<VoiceDelegationAdmission> {
+        self.lifecycle.admit_group_until(id, text, deadline).await
+    }
+
+    pub async fn group_wait_expired(&self, id: &str) -> bool {
+        self.lifecycle.group_wait_expired(id).await
+    }
+
+    /// Call only after the daemon confirms the Group request's durable expiry.
+    pub async fn confirm_group_wait_expiry(&self, id: &str) {
+        self.lifecycle
+            .settle_group_wait(id, AnalystCompletionSource::HostGroupWaitExpired)
+            .await;
+    }
+
+    /// A different durable outcome already exists. Release the reservation without
+    /// sending the Group request or replacing its existing history.
+    pub async fn release_group_wait_unconfirmed(&self, id: &str) {
+        self.lifecycle
+            .settle_group_wait(id, AnalystCompletionSource::HostUnconfirmed)
+            .await;
     }
 
     /// A retired console row must not turn a previously accepted input into new work.

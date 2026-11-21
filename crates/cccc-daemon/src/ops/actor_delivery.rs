@@ -402,6 +402,27 @@ pub(super) fn tell_sender(job: &DeliveryJob, uncertain: bool) {
     }
 }
 
+/// Tells the member who asked Chet in a Group, once, that the host never sent
+/// the request. The caller holds the Group's write permit, so the notice is
+/// written before it reports success and a retry cannot repeat it.
+pub(super) fn tell_sender_not_sent_to_chet(
+    home: &HomeLayout,
+    group_id: &str,
+    event_id: &str,
+    delivery_id: &str,
+) -> Result<(), crate::dispatch::OpError> {
+    drain::notify_sender(
+        home,
+        &SenderNotice {
+            group_id: group_id.to_owned(),
+            event_id: event_id.to_owned(),
+            recipient: cccc_core::actors::CHET_SERVICE_PRINCIPAL.to_owned(),
+            delivery_id: delivery_id.to_owned(),
+            uncertain: false,
+        },
+    )
+}
+
 pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchReport {
     if !matches!(event.kind.as_str(), "chat.message" | "system.notify")
         || matches!(group.state, GroupState::Paused | GroupState::Stopped)

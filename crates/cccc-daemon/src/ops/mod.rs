@@ -22,6 +22,7 @@ mod automation_rule_access;
 pub(crate) mod automation_runtime;
 mod backlog;
 pub(crate) mod capabilities;
+mod chet_group_wait;
 mod chet_history;
 mod codex_mcp;
 pub(crate) mod codex_voice_analyst;
@@ -118,6 +119,7 @@ pub(crate) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         automation_config::resolve_operation,
         assistants::resolve_operation,
         capabilities::resolve_operation,
+        chet_group_wait::resolve_operation,
         chet_history::resolve_operation,
         messaging::resolve_operation,
         message_pins::resolve_operation,

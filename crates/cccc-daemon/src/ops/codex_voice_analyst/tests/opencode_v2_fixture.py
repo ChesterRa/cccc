@@ -44,6 +44,9 @@ authorization = "Basic " + base64.b64encode(
 events = []
 event_lock = threading.Condition()
 request_lock = threading.Lock()
+# This fixture runs inbox items one at a time, in the order it accepted them.
+inbox = []
+inbox_turn = threading.Condition()
 requests = 0
 
 
@@ -61,9 +64,19 @@ def wait_for(name):
         time.sleep(0.01)
 
 
-def finish(text, message):
+def finish(text, message, delivery):
     emit("session.inbox.enqueued", {"inboxID": message,
-         "item": {"type": "user", "payload": {"text": text}, "delivery": "queue"}})
+         "item": {"type": "user", "payload": {"text": text}, "delivery": delivery}})
+    with inbox_turn:
+        while inbox[0] != message:
+            inbox_turn.wait()
+    run(text, message)
+    with inbox_turn:
+        inbox.pop(0)
+        inbox_turn.notify_all()
+
+
+def run(text, message):
     emit("session.inbox.delivered", {"inboxID": message})
     assistant = "assistant-" + message
     emit("session.step.started", {"assistantMessageID": assistant})
@@ -126,7 +139,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"data": {"id": session, "location": {"directory": str(Path.cwd())}}})
             return
         assert self.path == f"/api/session/{session}/prompt", self.path
-        assert body["delivery"] == "queue" and "id" not in body
+        # This fixture queues plain prompts as well as explicitly queued ones.
+        assert body.get("delivery", "queue") == "queue" and "id" not in body
+        delivery = body.get("delivery", "queue")
         with request_lock:
             requests += 1
             message = f"msg_fixture_{requests}"
@@ -137,8 +152,11 @@ class Handler(BaseHTTPRequestHandler):
         if "DISCONNECT_ADMISSION" in body["text"]:
             self.close_connection = True
             return
-        self.reply({"data": {"id": message, "sessionID": session, "delivery": "queue"}})
-        threading.Thread(target=finish, args=(body["text"], message), daemon=True).start()
+        with inbox_turn:
+            inbox.append(message)
+        self.reply({"data": {"id": message, "sessionID": session, "delivery": delivery}})
+        threading.Thread(target=finish, args=(body["text"], message, delivery),
+                         daemon=True).start()
 
 
 server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

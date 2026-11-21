@@ -121,6 +121,55 @@ pub fn append_state(
     Ok(event)
 }
 
+/// Records that the host never handed a source to a service principal. There
+/// was no external I/O to claim, so this one `failed` fact is the whole
+/// delivery. A fact already recorded for this source is kept. Returns the
+/// delivery ID and whether this call appended it.
+pub(super) fn record_unsent_service_delivery(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    principal: &str,
+    principal_generation: &str,
+    source_event_id: &str,
+    transport: &str,
+    reason: &str,
+) -> Result<(String, bool), OpError> {
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
+    let delivery_id = delivery_id(
+        &group.group_id,
+        principal,
+        principal_generation,
+        source_event_id,
+    );
+    let appended = with_exclusive_lock(&delivery_lock_path(&ledger_path), || {
+        let principals = [principal.to_owned()];
+        if inbox::delivery_states(home, group, &principals, source_event_id)?
+            .contains_key(principal)
+        {
+            return Ok(false);
+        }
+        let mut event = Event::new("runtime.delivery", &group.group_id);
+        event.by = "system".into();
+        event.data = json!({
+            "actor_id":principal,
+            "source_event_id":source_event_id,
+            "delivery_id":delivery_id,
+            "state":"failed",
+            "transport":transport,
+            "reason":reason,
+            "retryable":false,
+        })
+        .as_object()
+        .cloned()
+        .expect("runtime delivery data");
+        ledger::append(&ledger_path, &event)?;
+        Ok(true)
+    })
+    .map_err(OpError::io)?;
+    Ok((delivery_id, appended))
+}
+
 pub fn latest_state(
     home: &HomeLayout,
     group_id: &str,

@@ -209,7 +209,13 @@ fn operations(
             result,
             ..
         } => {
-            if *source == AnalystCompletionSource::HostUnconfirmed {
+            // The Group owner records an expiry before the Runtime lets go of
+            // the input, so there is nothing left to write.
+            if matches!(
+                source,
+                AnalystCompletionSource::HostUnconfirmed
+                    | AnalystCompletionSource::HostGroupWaitExpired
+            ) {
                 return Vec::new();
             }
             let mut seen = HashSet::new();
@@ -218,7 +224,13 @@ fn operations(
                 .filter_map(|key| resolve(key))
                 .filter(|id| seen.insert(*id))
                 .map(|input| {
-                    if *source == AnalystCompletionSource::HostNotStarted {
+                    // The host never handed it over, or the Runtime withdrew that
+                    // exact input before running it.
+                    if matches!(
+                        source,
+                        AnalystCompletionSource::HostNotStarted
+                            | AnalystCompletionSource::RuntimeNotStarted
+                    ) {
                         (
                             "chet_history_not_started",
                             json!({"by":"user",

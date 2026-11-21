@@ -6,6 +6,7 @@ use tokio::task::JoinHandle;
 
 mod events;
 mod queue;
+pub use queue::GroupWaitDeadline;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -19,6 +20,8 @@ const EVENT_CAPACITY: usize = 1024;
 pub enum AnalystTurnOrigin {
     Voice,
     Terminal,
+    /// Plain text from the private Chet Chat, on the bound OpenCode backend.
+    ChetText,
     /// A durable Group input is admitted between user text and Voice turns.
     Group,
     ActorResult {
@@ -41,7 +44,9 @@ impl AnalystTurnOrigin {
             (Self::ActorResult { speakable: a }, Self::ActorResult { speakable: b }) => {
                 Self::ActorResult { speakable: a || b }
             }
-            (Self::Terminal, origin)
+            (Self::ChetText, origin)
+            | (origin, Self::ChetText)
+            | (Self::Terminal, origin)
             | (origin, Self::Terminal)
             | (Self::Group, origin)
             | (origin, Self::Group) => origin,
@@ -89,6 +94,9 @@ pub enum AnalystLifecycleEvent {
 pub enum AnalystCompletionSource {
     Runtime,
     HostNotStarted,
+    RuntimeNotStarted,
+    /// The Group owner has already persisted expiry of this unsubmitted input.
+    HostGroupWaitExpired,
     HostUnconfirmed,
 }
 
@@ -131,6 +139,8 @@ struct LifecycleState {
     pending: Option<PendingStart>,
     settled_pending: Option<TurnReceipt>,
     native_pending: VecDeque<PendingStart>,
+    resumed_inbox_pending: bool,
+    source_waits: Vec<Weak<queue::ObservedDeadline>>,
     delegations: HashMap<String, TurnReceipt>,
     invalidated: bool,
     queue: VecDeque<queue::QueuedInput>,
@@ -151,9 +161,14 @@ pub(crate) struct AnalystLifecycle {
 impl AnalystLifecycle {
     pub(crate) fn start(session: Arc<AnalystSession>) -> Arc<Self> {
         let (events, _) = broadcast::channel(EVENT_CAPACITY);
+        let mut source = session.subscribe();
+        let resumed_inbox_pending = session.has_resumed_inbox();
         let lifecycle = Arc::new(Self {
             session,
-            state: AsyncMutex::new(LifecycleState::default()),
+            state: AsyncMutex::new(LifecycleState {
+                resumed_inbox_pending,
+                ..Default::default()
+            }),
             events,
             monitor: Mutex::new(None),
             queue_task: Mutex::new(None),
@@ -161,7 +176,6 @@ impl AnalystLifecycle {
             queue_len: std::sync::atomic::AtomicUsize::new(0),
         });
         let weak = Arc::downgrade(&lifecycle);
-        let mut source = lifecycle.session.subscribe();
         let task = tokio::spawn(async move {
             loop {
                 match source.recv().await {
@@ -241,13 +255,21 @@ impl AnalystLifecycle {
 
     async fn invalidate(&self) {
         let mut state = self.state.lock().await;
+        self.invalidate_locked(&mut state);
+    }
+
+    fn invalidate_locked(&self, state: &mut LifecycleState) {
+        queue::update_group_waits(state, tokio::time::Instant::now());
+        state.source_waits.clear();
         state.active = None;
         state.pending = None;
         state.settled_pending = None;
         state.native_pending.clear();
         // Queued inputs never reached the Runtime: say so, as a cancel does.
-        let queued = state.queue.drain(..).collect::<Vec<_>>();
-        for input in queued {
+        state.queue.retain(|input| {
+            if input.wait_expired() {
+                return true;
+            }
             self.complete_unadmitted_input(
                 &input.delegation_id,
                 input.origin,
@@ -255,9 +277,10 @@ impl AnalystLifecycle {
                 "",
                 AnalystCompletionSource::HostNotStarted,
             );
-        }
+            false
+        });
         self.queue_len
-            .store(0, std::sync::atomic::Ordering::Release);
+            .store(state.queue.len(), std::sync::atomic::Ordering::Release);
         state.invalidated = true;
         let _ = self.events.send(AnalystLifecycleEvent::Disconnected);
     }
