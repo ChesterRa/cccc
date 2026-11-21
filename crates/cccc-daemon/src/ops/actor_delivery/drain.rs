@@ -24,6 +24,7 @@ pub(crate) fn pending_group_ids() -> Vec<String> {
                 .map(|((group_id, _), _)| group_id.clone()),
         );
     }
+    gaps::collect_groups(&mut groups);
     groups.extend(crate::session_owner::recovery_groups());
     groups.into_iter().collect()
 }
@@ -63,6 +64,8 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
         completions.extend(deferred);
     }
     tell_senders(home, group_id);
+
+    gaps::recover_group(home, group_id);
 
     let actors = workers()
         .lock()

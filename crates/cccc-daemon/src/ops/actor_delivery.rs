@@ -9,11 +9,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 use crate::ops::actor_delivery_worker;
 
 mod drain;
+mod gaps;
+pub(super) use gaps::set_group_paused;
 mod lifecycle;
 mod terminal;
 pub(crate) use drain::{drain_group, pending_group_ids};
 pub use lifecycle::{
-    ShutdownReason, shutdown_actor, shutdown_actor_for, shutdown_all, shutdown_group,
+    ShutdownReason, pause_group, shutdown_actor, shutdown_actor_for, shutdown_all, shutdown_group,
 };
 pub(super) use terminal::submit_terminal_text;
 pub(crate) use terminal::{submit_terminal_text_for_session, submit_viewer_text};
@@ -440,29 +442,54 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
         return mail_report();
     }
 
-    let targets: Vec<_> = group
+    let targets = group
         .actors
         .iter()
-        .filter(|actor| event_targets_actor(group, event, &actor.id) && receives_push(group, actor))
+        .filter(|actor| event_targets_actor(group, event, &actor.id))
+        .filter(|actor| {
+            if configured_for_push(actor) {
+                return true;
+            }
+            match running_push_owner(group, actor) {
+                Ok(running) => running,
+                Err(_) => {
+                    if actor.enabled && !held_for_switch(group, actor) {
+                        gaps::record(group, actor, Some(event));
+                    }
+                    false
+                }
+            }
+        })
         .cloned()
-        .collect();
-    dispatch_to(home, group, event, &targets, false)
+        .collect::<Vec<_>>();
+    dispatch_to_inner(
+        home,
+        group,
+        event,
+        &targets,
+        false,
+        None,
+        DispatchSource::New,
+    )
 }
 
 /// Whether work reaches this Actor by push rather than by its own pull. What
 /// runs now decides; saved settings apply when nothing does.
 pub(super) fn receives_push(group: &GroupDoc, actor: &Actor) -> bool {
+    configured_for_push(actor) || running_push_owner(group, actor).unwrap_or(false)
+}
+
+fn configured_for_push(actor: &Actor) -> bool {
     !actor.external_session_id.is_empty()
         || !crate::ops::actor_runtime::is_structured(actor)
         || crate::ops::local_headless::supports(actor)
         || actor.runtime == ActorRuntime::Deepseek
-        || owner_running(group, actor)
 }
 
-fn owner_running(group: &GroupDoc, actor: &Actor) -> bool {
+fn running_push_owner(group: &GroupDoc, actor: &Actor) -> std::io::Result<bool> {
     use crate::ops::actor_runtime::{OwnerState, delivery_owner};
-    delivery_owner(&group.group_id, &actor.id)
-        .is_ok_and(|owner| owner.is_some_and(|owner| owner.state == OwnerState::Running))
+    Ok(delivery_owner(&group.group_id, &actor.id)?
+        .is_some_and(|owner| owner.state == OwnerState::Running))
 }
 
 pub(super) fn event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
@@ -488,7 +515,15 @@ pub fn dispatch_to(
     targets: &[Actor],
     force_ambiguous: bool,
 ) -> DispatchReport {
-    dispatch_to_inner(home, group, event, targets, force_ambiguous, None)
+    dispatch_to_inner(
+        home,
+        group,
+        event,
+        targets,
+        force_ambiguous,
+        None,
+        DispatchSource::Directed,
+    )
 }
 
 /// Offer work its caller already claimed, each on the channel that claimed it.
@@ -502,7 +537,31 @@ pub fn dispatch_preclaimed(
         .iter()
         .map(|(actor, _)| (*actor).clone())
         .collect::<Vec<_>>();
-    dispatch_to_inner(home, group, event, &targets, false, Some(claims))
+    dispatch_to_inner(
+        home,
+        group,
+        event,
+        &targets,
+        false,
+        Some(claims),
+        DispatchSource::Directed,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum DispatchSource {
+    New,
+    Unread(&'static str),
+    Directed,
+}
+impl DispatchSource {
+    fn missed(self, group: &GroupDoc, actor: &Actor, event: &Event) {
+        match self {
+            Self::New => gaps::record(group, actor, Some(event)),
+            Self::Unread(_) => gaps::record(group, actor, None),
+            Self::Directed => {}
+        }
+    }
 }
 
 fn dispatch_to_inner(
@@ -512,6 +571,7 @@ fn dispatch_to_inner(
     targets: &[Actor],
     force_ambiguous: bool,
     claims: Option<&[(&Actor, &'static str)]>,
+    source: DispatchSource,
 ) -> DispatchReport {
     if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
         return report(targets.len(), 0, 0);
@@ -531,10 +591,16 @@ fn dispatch_to_inner(
         {
             continue;
         }
-        let actor_online = if !actor.external_session_id.is_empty() {
+        if matches!(source, DispatchSource::New) && gaps::extend(group, actor, event) {
+            continue;
+        }
+        let actor_online = if matches!(source, DispatchSource::Unread(_)) {
+            // The catch-up caller uses only the queued count.
+            false
+        } else if !actor.external_session_id.is_empty() {
             super::local_sessions::connected(home, &actor.external_session_id)
         } else {
-            owner_running(group, actor)
+            running_push_owner(group, actor).unwrap_or(false)
         };
         if actor_online {
             online += 1;
@@ -545,20 +611,24 @@ fn dispatch_to_inner(
                 .find(|(claimed, _)| claimed.id == actor.id)
                 .map(|(_, transport)| *transport)
         });
-        let transport = match claimed_on.map_or_else(|| delivery_transport(home, group, actor), Ok)
-        {
-            Ok(transport) => transport,
-            // The message stays pending for the next dispatch.
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    group_id = %group.group_id,
-                    actor_id = %actor.id,
-                    "failed to read the Actor's runtime owner"
-                );
-                continue;
-            }
+        let known_transport = match source {
+            DispatchSource::Unread(transport) => Some(transport),
+            _ => claimed_on,
         };
+        let transport =
+            match known_transport.map_or_else(|| delivery_transport(home, group, actor), Ok) {
+                Ok(transport) => transport,
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        group_id = %group.group_id,
+                        actor_id = %actor.id,
+                        "failed to read the Actor's runtime owner"
+                    );
+                    source.missed(group, actor, event);
+                    continue;
+                }
+            };
         if preclaimed && transport.starts_with("web_model") {
             // Structured Web Model consumers take the durable claim through
             // runtime_wait_next_turn. Do not enqueue the actor on the PTY lane.
@@ -585,44 +655,57 @@ fn dispatch_to_inner(
                         message = %error.message,
                         "failed to claim runtime delivery"
                     );
+                    source.missed(group, actor, event);
                     continue;
                 }
             }
         }
-        let offered = enqueue(DeliveryJob {
-            home: home.clone(),
-            group: group.clone(),
-            actor: actor.clone(),
-            event: event.clone(),
-            claimed,
-            transport,
-        });
-        if offered == Offer::Queued {
+        if offer_delivery(home, group, actor, event, transport, claimed) {
             queued += 1;
-        } else if offered == Offer::Refused
-            && claimed
-            && let Err(error) = crate::ops::runtime_delivery::append_state(
-                home,
-                &group.group_id,
-                &actor.id,
-                &actor.created_at,
-                &event.id,
-                transport,
-                if actor.external_session_id.is_empty() {
-                    crate::ops::runtime_delivery::DeliveryOutcome::Failed(
-                        "daemon delivery queue did not accept the event",
-                    )
-                } else {
-                    crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
-                        "daemon delivery queue did not accept the event",
-                    )
-                },
-            )
-        {
-            tracing::warn!(message = %error.message, "failed to record rejected runtime delivery");
         }
     }
     report(targets.len(), online, queued)
+}
+
+fn offer_delivery(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    event: &Event,
+    transport: &'static str,
+    claimed: bool,
+) -> bool {
+    let offered = enqueue(DeliveryJob {
+        home: home.clone(),
+        group: group.clone(),
+        actor: actor.clone(),
+        event: event.clone(),
+        claimed,
+        transport,
+    });
+    if offered == Offer::Refused
+        && claimed
+        && let Err(error) = crate::ops::runtime_delivery::append_state(
+            home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &event.id,
+            transport,
+            if actor.external_session_id.is_empty() {
+                crate::ops::runtime_delivery::DeliveryOutcome::Failed(
+                    "daemon delivery queue did not accept the event",
+                )
+            } else {
+                crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
+                    "daemon delivery queue did not accept the event",
+                )
+            },
+        )
+    {
+        tracing::warn!(message = %error.message, "failed to record rejected runtime delivery");
+    }
+    offered == Offer::Queued
 }
 
 pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usize {
@@ -632,7 +715,20 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
     let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
         return 0;
     };
-    if !actor.enabled || held_for_switch(group, actor) || !receives_push(group, actor) {
+    if !actor.enabled || held_for_switch(group, actor) {
+        return 0;
+    }
+    let gap = gaps::resume_member(&group.group_id, actor_id);
+    // Pull members need no pending-page read unless a running push owner takes their work.
+    let saved_push = configured_for_push(actor);
+    let observed =
+        (!saved_push).then(|| crate::ops::actor_runtime::delivery_owner(&group.group_id, actor_id));
+    if let Some(Ok(owner)) = &observed
+        && !owner
+            .as_ref()
+            .is_some_and(|o| o.state == crate::ops::actor_runtime::OwnerState::Running)
+    {
+        gaps::complete(&group.group_id, actor_id, gap.as_ref());
         return 0;
     }
     let events = match crate::ops::runtime_delivery::pending_sources(
@@ -659,16 +755,52 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
         ));
     }
     let native = !actor.external_session_id.is_empty();
+
     let full_page = events.len() == QUEUE_CAPACITY;
     if native {
         // Only a successful read consumes the previous refill request. A full
         // enqueue below can request another pass even for a partial page.
         set_refill(&group.group_id, actor_id, false);
     }
+    if events.is_empty() {
+        gaps::complete(&group.group_id, actor_id, gap.as_ref());
+        return 0;
+    }
+    let transport = if native {
+        "local_session"
+    } else {
+        let owner = observed.unwrap_or_else(|| {
+            crate::ops::actor_runtime::delivery_owner(&group.group_id, actor_id)
+        });
+        let owner = match owner {
+            Ok(owner) => owner,
+            Err(error) => {
+                tracing::warn!(%error, group_id = %group.group_id, %actor_id,
+                    "failed to read the runtime owner for pending deliveries");
+                gaps::record(group, actor, None);
+                return 0;
+            }
+        };
+        owner_transport(home, group, actor, owner.as_ref())
+    };
     let queued = events
         .into_iter()
-        .map(|event| dispatch_to(home, group, &event, std::slice::from_ref(actor), false).queued)
+        .map(|event| {
+            dispatch_to_inner(
+                home,
+                group,
+                &event,
+                std::slice::from_ref(actor),
+                false,
+                None,
+                DispatchSource::Unread(transport),
+            )
+            .queued
+        })
         .sum();
+    if !full_page {
+        gaps::complete(&group.group_id, actor_id, gap.as_ref());
+    }
     if native && full_page {
         // The whole page may already be in flight. Its tail still needs a
         // later ledger read after those deliveries settle.

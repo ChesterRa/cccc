@@ -497,10 +497,45 @@ pub(super) fn pending_deliveries(
     group: &GroupDoc,
     actor: &str,
     limit: usize,
+    only_unclaimed: bool,
+    bounds: Option<(&str, &str)>,
 ) -> io::Result<Vec<Event>> {
     let state = load(home, &group.group_id)?;
     with_projection(home, group, &[], &state, |projection, snapshot| {
-        snapshot.events(&projection.deliveries.pending(group, actor, limit))
+        let deliveries = &projection.deliveries;
+        let mut range = 0..=usize::MAX;
+        if let Some((first, last)) = bounds {
+            let mut start = deliveries.source_position(first);
+            let mut end = deliveries.source_position(last);
+            // A change of roles can remove an endpoint from the audience projection.
+            // Its position in the ledger still bounds the other messages in this gap.
+            if start.is_none() || end.is_none() {
+                let mut position = 0;
+                snapshot.visit(&[], |event, _| {
+                    if event.id == first {
+                        start = Some(position);
+                    }
+                    if event.id == last {
+                        end = Some(position);
+                    }
+                    position += 1;
+                    if start.is_some() && end.is_some() {
+                        ControlFlow::Break(())
+                    } else {
+                        ControlFlow::Continue(())
+                    }
+                })?;
+            }
+            range = match (start, end) {
+                (Some(start), Some(end)) if start <= end => start..=end,
+                _ => {
+                    tracing::warn!(group_id = %group.group_id, %actor, %first, %last,
+                        "delivery range unavailable; checking all unclaimed sources for this member");
+                    0..=usize::MAX
+                }
+            };
+        }
+        snapshot.events(&deliveries.pending(group, actor, limit, only_unclaimed, range))
     })
 }
 pub(super) fn delivery_retry_closed(

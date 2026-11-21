@@ -641,7 +641,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             )
             .map_err(OpError::io)?;
         }
-        actor_delivery::shutdown_group(&group.group_id);
+        actor_delivery::pause_group(&group.group_id);
         super::local_headless::stop_group(&group.group_id).map_err(OpError::io)?;
         super::deepseek_runtime::stop_group(&group.group_id);
     }

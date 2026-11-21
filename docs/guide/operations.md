@@ -209,6 +209,14 @@ other agents and the lists keep working.
    kept running and, in a running Group, starts that agent again: if the cause is still there,
    the agent is Unknown again.
 
+A plain `cccc daemon stop` can also fail to confirm a running agent, for example when its
+terminal does not answer in time. It then says to run `cccc daemon stop` again: with CCCC
+stopped, that run reaches the agent's session owner directly and stops the agent once it
+answers. The review command comes second: `list` shows the owner's retained recovery
+records, and an agent the owner still runs may not appear there. After
+`cccc daemon stop --keep-agents`, use only the review command, because a plain stop would
+also stop the agents it kept.
+
 ## 5) Secure Remote Access
 
 Required baseline:

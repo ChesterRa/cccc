@@ -79,7 +79,7 @@ pub(super) fn activate_message_targets(
         cccc_core::automation::reset_rule_timers_on_resume(home, &group.group_id)
             .map_err(OpError::io)?;
     }
-    store(home)?
+    let updated = store(home)?
         .mutate(&group.group_id, |current| {
             current.state = GroupState::Active;
             current.running = true;
@@ -90,7 +90,11 @@ pub(super) fn activate_message_targets(
             }
             Ok(current.clone())
         })
-        .map_err(OpError::io)
+        .map_err(OpError::io)?;
+    if group.state == GroupState::Paused {
+        crate::ops::actor_delivery::set_group_paused(&group.group_id, false);
+    }
+    Ok(updated)
 }
 
 fn store(home: &HomeLayout) -> Result<GroupStore, OpError> {

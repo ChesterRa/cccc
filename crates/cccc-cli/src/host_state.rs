@@ -30,8 +30,11 @@ pub(crate) enum AgentsResult {
     /// The daemon is not this launch's, so neither are its agents.
     NotOwned,
     /// Counts from the receipt; `uncertain` agents may still be running. `review_owners`
-    /// are the session owners kept for review because they could not confirm one.
+    /// are the session owners kept for review because they could not confirm one. `plain`
+    /// is a stop that kept nothing on purpose, so running it again is a retry; after a
+    /// kept stop, from this launch or another terminal, it would also stop the kept agents.
     Confirmed {
+        plain: bool,
         stopped: usize,
         kept: usize,
         uncertain: usize,

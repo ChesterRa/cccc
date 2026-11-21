@@ -65,7 +65,19 @@ pub fn pending_deliveries(
     actor: &str,
     limit: usize,
 ) -> io::Result<Vec<Event>> {
-    projection::pending_deliveries(home, group, actor, limit)
+    projection::pending_deliveries(home, group, actor, limit, false, None)
+}
+
+/// Sources with no delivery record, in ledger order. A lifecycle catch-up can
+/// request the whole eligible history instead of a range of newly recorded sends.
+pub fn unclaimed_deliveries(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    range: Option<(&str, &str)>,
+    limit: usize,
+) -> io::Result<Vec<Event>> {
+    projection::pending_deliveries(home, group, actor, limit, true, range)
 }
 
 /// Whether the actor's delivery of this source failed after using up its

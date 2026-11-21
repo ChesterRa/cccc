@@ -185,6 +185,32 @@ pub fn latest_state(
     )
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClaimPolicy {
+    Automatic,
+    Explicit,
+    FirstAttempt,
+}
+
+/// Used only to recover a source that could not be routed before its first claim.
+pub(super) fn claim_first_attempt(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    source_event_id: &str,
+    transport: &str,
+) -> Result<bool, OpError> {
+    claim_with(
+        home,
+        group,
+        &[(actor, transport)],
+        source_event_id,
+        false,
+        ClaimPolicy::FirstAttempt,
+    )
+    .map(|(claimed, _)| claimed)
+}
+
 /// Claims a delivery for automatic dispatch, which never restarts one whose
 /// automatic retries are used up.
 pub fn claim(
@@ -202,7 +228,7 @@ pub fn claim(
         &deliveries,
         source_event_id,
         force_ambiguous,
-        true,
+        ClaimPolicy::Automatic,
     )?;
     if claimed {
         Ok(ClaimResult::Claimed)
@@ -228,7 +254,7 @@ pub fn claim_deliveries(
         deliveries,
         source_event_id,
         force_ambiguous,
-        false,
+        ClaimPolicy::Explicit,
     )
 }
 
@@ -238,7 +264,7 @@ fn claim_with(
     deliveries: &[(&Actor, &str)],
     source_event_id: &str,
     force_ambiguous: bool,
-    automatic: bool,
+    policy: ClaimPolicy,
 ) -> Result<(bool, HashMap<String, String>), OpError> {
     if std::env::var_os("CCCC_DELIVERY_QUERY_PROBE").is_some_and(|value| value == "1") {
         cccc_runtime::diagnostic(format_args!(
@@ -266,9 +292,10 @@ fn claim_with(
                 states.insert(actor.id.clone(), state.clone());
                 // Checked under the claim lock: a worker may have used up the
                 // retries after the caller read its pending snapshot.
-                if matches!(state.as_str(), "claimed" | "accepted" | "withdrawn")
+                if (policy == ClaimPolicy::FirstAttempt && latest.contains_key(&actor.id))
+                    || matches!(state.as_str(), "claimed" | "accepted" | "withdrawn")
                     || (state == "ambiguous" && !force_ambiguous)
-                    || (automatic
+                    || (policy == ClaimPolicy::Automatic
                         && state == "failed"
                         && inbox::delivery_retry_closed(home, group, &actor.id, source_event_id)?)
                 {
