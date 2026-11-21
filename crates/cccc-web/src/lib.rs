@@ -17,7 +17,6 @@ mod request_origin;
 mod routes;
 mod security_headers;
 pub mod session_node;
-mod session_node_join;
 mod shutdown;
 mod update_hook;
 mod web_banner;
@@ -153,7 +152,6 @@ pub(crate) struct AppState {
     browser_surfaces: Arc<browser_surface::BrowserSurfaces>,
     codex_voice: Arc<codex_voice::CodexVoiceSessions>,
     notebooklm_auth: Arc<notebooklm_auth::AuthFlowManager>,
-    session_node_join: Arc<tokio::sync::Mutex<session_node_join::Queue>>,
     ledger_events: ledger_event_hub::LedgerEventHub,
     im_workers: Arc<im_runtime::ImWorkerRegistry>,
     shutdown: broadcast::Sender<()>,
@@ -358,7 +356,6 @@ fn app_with_shutdown_and_recovery(
         browser_surfaces: Arc::clone(&browser_surfaces),
         codex_voice,
         notebooklm_auth,
-        session_node_join: Arc::default(),
         ledger_events,
         im_workers: Arc::clone(&im_workers),
         shutdown,

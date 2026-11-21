@@ -9,66 +9,38 @@ import enCommon from "../../i18n/locales/en/common.json";
 import { setAuthToken } from "../../services/api/base";
 import { SessionNodesPanel } from "./SessionNodesPanel";
 import { WebRoot } from "../../WebRoot";
-import { ModalFrame } from "../../components/modals/ModalFrame";
-import type { SessionNodeDevice } from "../../services/api/sessionNodes";
 
-vi.mock("../../App", async () => {
-  const { LocalSessionsButton } = await import("./LocalSessionsButton");
-  return {
-    default: () => (
-      <div>
-        Fixture workbench
-        <LocalSessionsButton collapsed={false} isDark onSelectGroup={vi.fn()} />
-      </div>
-    ),
-  };
-});
+vi.mock("../../App", () => ({ default: () => <div>Fixture workbench</div> }));
 vi.mock("../../components/auth/AuthTokenLoginForm", () => ({
-  AuthTokenLoginForm: ({ onSubmit }: { onSubmit: (token: string) => void }) => (
-    <button onClick={() => onSubmit("test-admin")}>Fixture administrator sign-in</button>
-  ),
+  AuthTokenLoginForm: () => <div>Fixture sign-in</div>,
 }));
 
 const i18n = createInstance();
 const labels = enLayout.sessionNodes;
-let host: HTMLDivElement;
-let root: Root;
-let originalClipboard: PropertyDescriptor | undefined;
-const copied = vi.fn(async (_text: string) => {});
 const apiRoot = "/api/v1/session_nodes";
-const single = apiRoot + "/join/requests/";
-const pending = apiRoot + "/join/pending";
 const ok = (result: unknown) => Response.json({ ok: true, result });
-const request = (id: string, name: string, code: string) => ({
-  request_id: id,
-  name,
-  node_id: `node-${id}`,
-  user_code: code,
-  expires_at: new Date(Date.now() + 60_000).toISOString(),
-});
-const button = (label: string) =>
-  [...document.querySelectorAll("button")].find(
+const fail = (status: number, code = "forbidden") =>
+  Response.json({ ok: false, error: { code, message: "Fixture access failure" } }, { status });
+const button = (label: string, within: ParentNode = document) =>
+  [...within.querySelectorAll("button")].find(
     (el) => el.textContent === label || el.getAttribute("aria-label") === label,
   );
-const click = async (label: string) => {
-  const target = button(label);
-  expect(target).toBeDefined();
-  await act(async () => target!.click());
+const click = async (label: string, within?: ParentNode) => {
+  const element = button(label, within);
+  expect(element, label).toBeDefined();
+  await act(async () => element!.click());
 };
-const mount = (element: ReactNode) =>
-  act(async () => root.render(<I18nextProvider i18n={i18n}>{element}</I18nextProvider>));
+let host: HTMLDivElement;
+let root: Root;
+const mount = (jsx: ReactNode) =>
+  act(async () => root.render(<I18nextProvider i18n={i18n}>{jsx}</I18nextProvider>));
+const refresh = () => act(async () => vi.advanceTimersByTimeAsync(5000));
 
 beforeEach(async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.useFakeTimers();
   history.replaceState(null, "", "/");
   setAuthToken("");
-  copied.mockClear();
-  originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
-  Object.defineProperty(navigator, "clipboard", {
-    configurable: true,
-    value: { writeText: copied },
-  });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -85,241 +57,173 @@ afterEach(async () => {
   host.remove();
   history.replaceState(null, "", "/");
   setAuthToken("");
-  if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
-  else Reflect.deleteProperty(navigator, "clipboard");
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
-it("shows new arrivals on the open device panel and allows only the explicitly reviewed device", async () => {
-  const first = request("alpha", "Office Mac", "A431B282");
-  const second = request("beta", first.name, "BD912544");
-  const rows = [first];
-  const posts: string[] = [];
-  const onChooseSessions = vi.fn();
-  const devices: SessionNodeDevice[] = [
-    { node_id: first.node_id, name: first.name, enabled: true, connected: true },
-    { node_id: second.node_id, name: second.name, enabled: true, connected: true },
+it("uses the device directory for online sessions and revokes only the selected computer", async () => {
+  const name = "Office Mac";
+  const devices = [
+    { node_id: "alpha", name, enabled: true, connected: false },
+    { node_id: "beta", name, enabled: true, connected: true },
+    { node_id: "revoked", name: "Revoked", enabled: false, connected: true },
   ];
-  let approved = false;
-  let advertised: string | null = null;
-  let reads = 0;
-  let finish!: (response: Response) => void;
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: unknown, init?: RequestInit) => {
-      const path = String(input);
-      if (init?.method === "POST") {
-        posts.push(path);
-        return new Promise<Response>((resolve) => {
-          finish = resolve;
-        });
-      }
-      if (path === apiRoot)
-        return ok({ supported: true, join_supported: true, join_url: advertised, devices });
-      if (path === pending) {
-        reads++;
-        return ok({ requests: rows.slice() });
-      }
-      if (path === single + second.request_id)
-        return ok({ request: { ...second, status: approved ? "approved" : "pending" } });
-      if (path === single + first.request_id)
-        return ok({ request: { ...first, status: "pending" } });
-      throw Error("unexpected request");
-    }),
-  );
-  await mount(
-    <ModalFrame
-      isDark
-      onClose={vi.fn()}
-      titleId="fixture-title"
-      title={<h2 id="fixture-title">Sessions</h2>}
-      closeAriaLabel="Close"
-      panelClassName=""
-    >
-      <SessionNodesPanel onChooseSessions={onChooseSessions} />
-    </ModalFrame>,
-  );
-  expect(host.textContent).toContain(labels.joinNoAddress);
-  expect(host.textContent).toContain(labels.joinTicketFallback);
-  expect(button(labels.joinCopy)).toBeUndefined();
-  expect(host.textContent).toContain(first.name);
-  rows.push(second);
-  advertised = "https://hub.example";
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(5000);
-  });
-  const commandDetails = Array.from(host.querySelectorAll("details")).find(
-    (el) => el.querySelector("summary")?.textContent === labels.joinShowCommand,
-  );
-  if (commandDetails) await act(async () => commandDetails.querySelector("summary")!.click());
-  await click(labels.joinCopy);
-  expect(copied.mock.calls).toEqual([["cccc sessions node join https://hub.example"]]);
-  const matches = [...host.querySelectorAll("li")].filter(
-    (row) => row.textContent?.includes(first.name) && row.querySelector("code"),
-  );
-  expect(matches).toHaveLength(2);
-  expect(matches.map((row) => row.querySelector("code")?.textContent)).toEqual([
-    first.user_code,
-    second.user_code,
-  ]);
-  const reviewLabel = i18n.t("sessionNodes.joinReviewDevice", {
-    name: second.name,
-    code: second.user_code,
-  });
-  expect(matches[1].contains(button(reviewLabel) ?? null)).toBe(true);
-  await click(reviewLabel);
-  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
-  const review = document.querySelector('[role="dialog"]');
-  expect(review?.textContent).toContain(second.user_code);
-  expect(review?.textContent).not.toContain(first.user_code);
-  expect(posts).toEqual([]);
-  const allow = button(labels.joinAllow)!;
-  await act(async () => {
-    allow.click();
-    allow.click();
-  });
-  expect(posts).toEqual([single + second.request_id + "/approve"]);
-  approved = true;
-  // This key had an online grant before reauthorization. The new decision needs a fresh directory read.
-  devices[1] = { ...devices[1], connected: false };
-  rows.pop();
-  await act(async () => finish(ok({ status: "approved" })));
-  expect(document.body.textContent).toContain(labels.joinApproved);
-  expect(button(labels.joinAllow)).toBeUndefined();
-  expect(button(labels.viewSessions)).toBeUndefined();
-  const otherLabel = i18n.t("sessionNodes.joinOthers", { count: 1 });
-  await click(otherLabel);
-  await click(i18n.t("sessionNodes.joinReviewDevice", { name: first.name, code: first.user_code }));
-  expect(review?.textContent).toContain(first.user_code);
-  await click(labels.joinBack);
-  await click(i18n.t("sessionNodes.joinViewDevice", { name: second.name, code: second.user_code }));
-  await act(async () => vi.advanceTimersByTimeAsync(5000));
-  expect(button(labels.viewSessions)).toBeUndefined();
-  devices[1] = { ...devices[1], enabled: false, connected: true };
-  await act(async () => vi.advanceTimersByTimeAsync(5000));
-  expect(button(labels.viewSessions)).toBeUndefined();
-  devices[1] = { ...devices[1], enabled: true };
-  await act(async () => vi.advanceTimersByTimeAsync(5000));
-  expect(review?.textContent).toContain(labels.joinOnline);
-  await click(labels.viewSessions);
-  expect(onChooseSessions).toHaveBeenCalledOnce();
-  await mount(<div />);
-  const atClose = reads;
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(12_000);
-  });
-  expect(reads).toBe(atClose);
-});
-
-it("resumes only the linked request after administrator login and keeps rejection explicit", async () => {
-  history.replaceState({ retained: true }, "", "/?group=g-fixture&session_node_join=beta#chat");
-  const second = request("beta", "Design PC", "BD912544");
-  // This administrator's clock is ahead of the hub, which still reports the request as pending.
-  second.expires_at = new Date(Date.now() - 60_000).toISOString();
-  const requests: string[] = [];
-  let admin = false;
-  let status = "pending";
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: unknown, init?: RequestInit) => {
-      const path = String(input);
-      if (path.startsWith("/api/v1/web_access/session"))
-        return ok({ web_access_session: { is_admin: admin, current_browser_signed_in: admin } });
-      if (path.startsWith("/api/v1/groups")) return ok({ groups: [] });
-      requests.push(`${init?.method ?? "GET"} ${path}`);
-      if (path === single + "beta") return ok({ request: { ...second, status } });
-      if (path === single + "beta/deny") {
-        status = "denied";
-        throw Error("decision acknowledgement was lost");
-      }
-      throw Error("unexpected join API");
-    }),
-  );
-  await mount(<WebRoot pathname="/" />);
-  expect(requests).toEqual([]);
-  expect(document.body.textContent).not.toContain(second.user_code);
-  admin = true;
-  await click("Fixture administrator sign-in");
-  expect(requests).toEqual(["GET " + single + "beta"]);
-  expect(document.body.textContent).toContain(second.user_code);
-  await click(labels.joinDeny);
-  expect(requests).toEqual([
-    "GET " + single + "beta",
-    "POST " + single + "beta/deny",
-    "GET " + single + "beta",
-  ]);
-  expect(document.body.textContent).toContain(labels.joinDenied);
-  await click(enCommon.close);
-  expect(location.search).toBe("?group=g-fixture");
-  expect(location.hash).toBe("#chat");
-  expect(document.body.textContent).toContain("Fixture workbench");
-});
-
-it("keeps unavailable, expired and forbidden requests read-only", async () => {
-  history.replaceState(null, "", "/?session_node_join=gone");
-  const get = vi.fn(async (input: unknown, init?: RequestInit) => {
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
     const path = String(input);
-    if (init?.method === "POST") throw Error("a terminal request cannot be decided");
-    if (path.startsWith("/api/v1/web_access/session"))
-      return ok({ web_access_session: { is_admin: true, current_browser_signed_in: true } });
-    if (path.startsWith("/api/v1/groups")) return ok({ groups: [] });
-    if (path === single + "forbidden")
-      return Response.json(
-        { ok: false, error: { code: "forbidden", message: "admin only" } },
-        { status: 403 },
-      );
-    if (path === single + "approved")
-      return ok({
-        request: { ...request("approved", "Connected device", "AC43EF10"), status: "approved" },
-      });
+    calls.push((init?.method ?? "GET") + " " + path);
     if (path === apiRoot)
       return ok({
         supported: true,
+        devices,
         join_supported: true,
-        devices: [
-          { node_id: "node-approved", name: "Connected device", enabled: true, connected: true },
-        ],
+        join_url: "https://retired.example",
       });
-    if (path.startsWith("/api/v1/local_sessions")) return ok({ sources: [] });
-    if (path === single + "gone")
-      return Response.json(
-        { ok: false, error: { code: "not_found", message: "missing" } },
-        { status: 404 },
-      );
-    if (path === single + "expired")
-      return ok({
-        request: { ...request("expired", "Old device", "000AB001"), status: "expired" },
-      });
-    throw Error("unexpected join API");
+    if (path === apiRoot + "/beta/revoke" && init?.method === "POST") {
+      devices[1] = { ...devices[1], enabled: false, connected: false };
+      return ok({ revoked: true });
+    }
+    throw Error("Unexpected device operation");
   });
-  vi.stubGlobal("fetch", get);
-  await mount(<WebRoot pathname="/" />);
-  expect(document.body.textContent).toContain(labels.joinUnavailable);
-  history.pushState(null, "", "/?session_node_join=expired");
-  await act(async () => {
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
-  expect(document.body.textContent).toContain(labels.joinExpired);
-  history.pushState(null, "", "/?session_node_join=forbidden");
-  await act(async () => {
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
-  expect(document.body.textContent).toContain(labels.joinForbidden);
-
-  expect(button(labels.joinAllow)).toBeUndefined();
-  expect(button(labels.joinDeny)).toBeUndefined();
-  history.pushState(null, "", "/?session_node_join=approved");
-  await act(async () => {
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
-  await click(labels.viewSessions);
-  expect(location.search).toBe("");
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
-    enLayout.localSessions.overviewTitle,
+  const choose = vi.fn();
+  await mount(<SessionNodesPanel onChooseSessions={choose} />);
+  expect(calls).toEqual(["GET " + apiRoot]);
+  expect(host.querySelector("pre")?.textContent).toBe(
+    "cccc sessions node connect --runtime codex --ticket-stdin",
   );
-  expect(get.mock.calls.some(([path]) => String(path) === pending)).toBe(false);
-  expect(
-    get.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "POST"),
-  ).toBe(false);
+  await click(labels.ticketManage);
+  const rows = () => [...host.querySelectorAll(`ul[aria-label="${labels.devices}"] > li`)];
+  const [offline, online, revoked] = rows();
+  expect(offline.textContent).toContain(labels.offline);
+  expect(button(labels.viewSessions, offline)).toBeUndefined();
+  expect(button(labels.viewSessions, revoked)).toBeUndefined();
+  await click(labels.viewSessions, online);
+  expect(choose).toHaveBeenCalledOnce();
+  await click(labels.revoke, online);
+  expect(host.textContent).toContain(labels.revokeConfirm);
+  expect(calls).toEqual(["GET " + apiRoot]);
+  await click(labels.revoke, online);
+  expect(rows()[1].textContent).toContain(labels.revoked);
+  expect(button(labels.viewSessions, rows()[1])).toBeUndefined();
+  devices[0] = { ...devices[0], connected: true };
+  await refresh();
+  expect(button(labels.viewSessions, rows()[0])).toBeDefined();
+  expect(calls).toEqual(["GET " + apiRoot, "POST " + apiRoot + "/beta/revoke", "GET " + apiRoot]);
+  await mount(<div />);
+  await refresh();
+  expect(calls).toHaveLength(3);
+});
+
+it("shows terminal-pairing instructions for old links without loading authentication or device APIs", async () => {
+  history.replaceState(
+    { retained: true },
+    "",
+    "/?group=fixture&session_node_join=private-fixture-id#chat",
+  );
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", async (input: unknown) => {
+    const path = String(input);
+    calls.push(path);
+    if (path.startsWith("/api/v1/web_access/session")) return fail(401, "auth_required");
+    throw Error("Unexpected legacy-link request");
+  });
+  const initialize = vi.fn();
+  await mount(<WebRoot pathname="/" onWorkbenchEntry={initialize} />);
+  expect(host.textContent).toContain(labels.oldLinkHelp);
+  expect(host.textContent).not.toContain("private-fixture-id");
+  expect(host.textContent).not.toContain("Fixture sign-in");
+  await act(async () => vi.advanceTimersByTimeAsync(16000));
+  history.pushState(
+    { retained: true },
+    "",
+    "/?group=fixture&session_node_join=&section=devices#chat",
+  );
+  await act(async () => {
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect(host.textContent).toContain(labels.oldLinkTitle);
+  expect(calls).toEqual([]);
+  expect(initialize).not.toHaveBeenCalled();
+  expect(host.querySelector("button, a, input, form")).toBeNull();
+  expect(location.search).toBe("?group=fixture&session_node_join=&section=devices");
+  expect(location.hash).toBe("#chat");
+  expect(history.state).toEqual({ retained: true });
+  // Independently visiting a normal workbench URL retains its ordinary authentication flow.
+  history.pushState({ retained: true }, "", "/?group=fixture&section=devices#chat");
+  await act(async () => {
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  });
+  expect(initialize).toHaveBeenCalledOnce();
+  expect(location.search).toBe("?group=fixture&section=devices");
+  expect(location.hash).toBe("#chat");
+  expect(history.state).toEqual({ retained: true });
+  expect(host.textContent).toContain("Fixture sign-in");
+  expect(calls.length).toBeGreaterThan(0);
+  expect(calls.every((path) => path.startsWith("/api/v1/web_access/session"))).toBe(true);
+});
+
+it("offers tickets only with verified access and clears a cached ticket after access is lost", async () => {
+  let mode: "forbidden" | "failure" | "absent" | "unsupported" | "ready" = "forbidden";
+  let posts = 0;
+  const ticket = "synthetic-private-device-ticket";
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  const clipboard = vi.fn(async (_value: string) => {});
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: clipboard },
+  });
+  vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
+    const path = String(input);
+    if (path === apiRoot) {
+      if (mode === "forbidden") return fail(403);
+      if (mode === "absent") return fail(404, "not_found");
+      if (mode === "failure") throw Error("Fixture network unavailable");
+      return ok({ supported: mode === "ready", devices: [] });
+    }
+    if (path === apiRoot + "/invitations" && init?.method === "POST") {
+      posts++;
+      return posts === 1
+        ? ok({ ticket, expires_at: new Date(Date.now() + 600000).toISOString() })
+        : fail(403);
+    }
+    throw Error("Unexpected endpoint");
+  });
+  try {
+    await mount(<SessionNodesPanel onChooseSessions={vi.fn()} />);
+    expect(host.textContent).toContain(labels.adminRequired);
+    expect(button(labels.create)).toBeUndefined();
+    mode = "failure";
+    await refresh();
+    expect(host.textContent).toContain(labels.directoryFailed);
+    expect(button(labels.create)).toBeUndefined();
+    for (const state of ["absent", "unsupported"] as const) {
+      mode = state;
+      await refresh();
+      expect(host.textContent).toContain(labels.upgradeRequired);
+      expect(button(labels.create)).toBeUndefined();
+    }
+    expect(posts).toBe(0);
+    mode = "ready";
+    await refresh();
+    await click(labels.create);
+    expect(clipboard).toHaveBeenLastCalledWith(ticket);
+    expect(host.textContent).not.toContain(ticket);
+    mode = "failure";
+    await refresh();
+    expect(button(labels.copyTicket)).toBeUndefined();
+    mode = "ready";
+    await refresh();
+    await click(labels.copyTicket);
+    expect(posts).toBe(1);
+    await click(labels.createAnother);
+    expect(host.textContent).toContain(labels.adminRequired);
+    expect(button(labels.copyTicket)).toBeUndefined();
+    await refresh();
+    expect(button(labels.create)).toBeDefined();
+    expect(button(labels.copyTicket)).toBeUndefined();
+    expect(posts).toBe(2);
+  } finally {
+    if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  }
 });

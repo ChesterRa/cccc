@@ -66,7 +66,7 @@ pub fn register(home: &HomeLayout, gateway: &str, address: SocketAddr) -> io::Re
         store::check_gateway(state, gateway)?;
         let hub = state.hub.as_mut().ok_or_else(store::denied)?;
         hub.relay_address = Some(address);
-        hub.bound_invites = true;
+        hub.bound_invites = false;
         Ok(())
     })
 }

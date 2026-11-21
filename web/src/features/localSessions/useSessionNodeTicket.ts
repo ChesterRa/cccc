@@ -7,7 +7,7 @@ type Ticket = { ticket: string; expires_at: string };
 const valid = (ticket: Ticket) => Date.parse(ticket.expires_at) > Date.now();
 
 /** Tickets stay in memory; only explicit clicks create or copy them. */
-export function useSessionNodeTicket(setError: (message: string) => void) {
+export function useSessionNodeTicket(setError: (message: string) => void, onForbidden: () => void) {
   const { t } = useTranslation("layout");
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [ticketExpired, setTicketExpired] = useState(false);
@@ -60,15 +60,24 @@ export function useSessionNodeTicket(setError: (message: string) => void) {
       const response = await createSessionNodeInvitation();
       if (!alive.current) return;
       if (!response.ok) {
-        setError(response.error.message);
+        if (response.error.httpStatus === 401 || response.error.httpStatus === 403) onForbidden();
+        else setError(t("sessionNodes.ticketFailed"));
+        return;
+      }
+      if (
+        typeof response.result?.ticket !== "string" ||
+        !response.result.ticket ||
+        !Number.isFinite(Date.parse(response.result.expires_at))
+      ) {
+        setError(t("sessionNodes.ticketFailed"));
         return;
       }
       setTicket(response.result);
       setTicketExpired(!valid(response.result));
       setCreating(false);
       if (valid(response.result)) await copyTicket(response.result);
-    } catch (error) {
-      if (alive.current) setError(String(error));
+    } catch {
+      if (alive.current) setError(t("sessionNodes.ticketFailed"));
     } finally {
       pending.current = false;
       if (alive.current) {

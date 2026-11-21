@@ -91,7 +91,6 @@ export function useDirectActions(groupId: string) {
             extra.listener as DirectListener,
             String(extra.display_name || ""),
             controller.signal,
-            typeof extra.expires_in_seconds === "number" ? extra.expires_in_seconds : undefined,
           )
         : await apiJson<{ invitation?: string; id?: string }>("/api/v1/connect/direct", {
             method: "POST",
@@ -123,10 +122,13 @@ export function useDirectActions(groupId: string) {
     }
     if (result.result.invitation) {
       const text = result.result.invitation;
-      const preview = readDirectInvitation(text);
-      if (preview) setInvitations((previous) => ({ ...previous, [preview.id]: text }));
+      if (action !== "copy_invite") {
+        const preview = readDirectInvitation(text);
+        if (preview) setInvitations((previous) => ({ ...previous, [preview.id]: text }));
+        setTask(null);
+      }
+      // The requesting card checks copied material against its metadata before retaining it.
       received?.(text);
-      if (action !== "copy_invite") setTask(null);
     }
     if (action === "join") {
       setIncoming("");

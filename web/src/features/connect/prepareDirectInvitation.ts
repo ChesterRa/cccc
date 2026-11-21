@@ -28,7 +28,6 @@ export async function prepareDirectInvitation(
   listener: DirectListener,
   name: string,
   signal: AbortSignal,
-  expiresInSeconds = 604800,
 ): Promise<ApiResponse<{ invitation?: string }>> {
   const post = (body: Record<string, unknown>) =>
     apiJson<{ invitation?: string }>("/api/v1/connect/direct", {
@@ -40,7 +39,7 @@ export async function prepareDirectInvitation(
   const initial = await apiJson<DirectStatus>(statusUrl, { signal });
   if (!initial.ok) return initial;
   if (!initial.result.capabilities?.reusable_invitations) return fail("direct_upgrade_required");
-  if (expiresInSeconds === 0 && !initial.result.capabilities?.permanent_invitations)
+  if (!initial.result.capabilities?.permanent_invitations)
     return fail("direct_permanent_upgrade_required");
   if (signal.aborted) return fail("direct_action_aborted");
   const current = initial.result.listener;
@@ -60,7 +59,7 @@ export async function prepareDirectInvitation(
     const check = await apiJson<DirectStatus>(statusUrl, { signal });
     if (!check.ok) return check;
     if (!check.result.capabilities?.reusable_invitations) return fail("direct_upgrade_required");
-    if (expiresInSeconds === 0 && !check.result.capabilities?.permanent_invitations)
+    if (!check.result.capabilities?.permanent_invitations)
       return fail("direct_permanent_upgrade_required");
     if (!sameDirectListener(check.result.listener, listener))
       return fail("direct_settings_changed");
@@ -71,16 +70,15 @@ export async function prepareDirectInvitation(
         action: "invite",
         expected_listener: listener,
         reusable: true,
-        expires_in_seconds: expiresInSeconds,
+        expires_in_seconds: 0,
       });
       if (!invited.ok) return invited;
       // A server replaced between the status read and POST must not silently
-      // turn a reusable invitation into a legacy single-use one.
+      // return a single-use or finite key for this permanent-key request.
       const preview = invited.result.invitation
         ? readDirectInvitation(invited.result.invitation)
         : null;
-      if (!preview?.reusable || !!preview.permanent !== (expiresInSeconds === 0))
-        return fail("direct_upgrade_required");
+      if (!preview?.permanent) return fail("direct_permanent_upgrade_required");
       return invited;
     }
     if (Date.now() >= deadline) return fail("direct_listener_timeout");

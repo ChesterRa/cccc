@@ -1,149 +1,101 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSessionNodeTicket } from "./useSessionNodeTicket";
 import {
-  fetchPendingSessionNodeJoins,
   fetchSessionNodes,
   revokeSessionNode,
   type SessionNodeDevice,
-  type SessionNodeJoinRequest,
 } from "../../services/api/sessionNodes";
 
-export interface SessionNodeJoinDirectory {
-  url: string | null;
-  pending: Pick<SessionNodeJoinRequest, "request_id" | "name" | "user_code">[] | null;
-  error: "forbidden" | "failed" | null;
-}
+type Directory =
+  | { status: "ready"; devices: SessionNodeDevice[] }
+  | { status: "loading" | "unsupported" | "forbidden" | "failed" };
 
-export function useSessionNodes(includeJoinRequests = true) {
-  const [directoryStatus, setDirectoryStatus] = useState<
-    "loading" | "ready" | "forbidden" | "failed"
-  >("loading");
-  const [devices, setDevices] = useState<SessionNodeDevice[]>([]);
-  const [supported, setSupported] = useState<boolean | null>(null);
-  const [join, setJoin] = useState<SessionNodeJoinDirectory | null>(null);
-  const [error, setError] = useState("");
-  const [loadError, setLoadError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const invitation = useSessionNodeTicket(setError);
+export function useSessionNodes() {
+  const [directory, setDirectory] = useState<Directory>({ status: "loading" });
   const [revokeId, setRevokeId] = useState("");
-  const alive = useRef(true);
-  const [revision, setRevision] = useState(0);
-  const refreshDirectory = useCallback(() => {
-    // A previously connected key may be requesting a fresh grant. Verify it after approval.
-    setDevices([]);
-    setDirectoryStatus("loading");
-    setRevision((value) => value + 1);
+  const [revoking, setRevoking] = useState(false);
+  const [revokeError, setRevokeError] = useState(false);
+  const alive = useRef(false);
+  const mutation = useRef(0);
+  const inFlight = useRef(false);
+  const forbid = useCallback(() => {
+    mutation.current++;
+    setRevokeId("");
+    setRevokeError(false);
+    setDirectory({ status: "forbidden" });
   }, []);
   useEffect(() => {
     alive.current = true;
-    let cancelled = false;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const load = async () => {
+      const version = mutation.current;
       try {
         const response = await fetchSessionNodes(controller.signal);
-        if (cancelled) return;
-        if (response.ok) {
-          setDirectoryStatus("ready");
-          setLoadError("");
-          setSupported(response.result.supported);
-          setDevices(response.result.devices);
-          if (
-            includeJoinRequests &&
-            response.result.join_supported === true &&
-            response.result.supported
-          ) {
-            const url = response.result.join_url ?? null;
-            setJoin((previous) =>
-              previous?.url === url ? previous : { url, pending: null, error: null },
-            );
-            const pending = await fetchPendingSessionNodeJoins(controller.signal).catch(() => null);
-            if (cancelled) return;
-            setJoin(
-              pending?.ok && Array.isArray(pending.result.requests)
-                ? {
-                    url,
-                    pending: pending.result.requests.map(({ request_id, name, user_code }) => ({
-                      request_id,
-                      name,
-                      user_code,
-                    })),
-                    error: null,
-                  }
-                : {
-                    url,
-                    pending: null,
-                    error:
-                      pending &&
-                      !pending.ok &&
-                      (pending.error.httpStatus === 403 || pending.error.httpStatus === 401)
-                        ? "forbidden"
-                        : "failed",
-                  },
-            );
-          } else setJoin(null);
-        } else {
-          setJoin(null);
-          setDevices([]);
-          setDirectoryStatus(
-            response.error.httpStatus === 401 || response.error.httpStatus === 403
-              ? "forbidden"
-              : "failed",
-          );
-          if (response.error.httpStatus === 404) {
-            setSupported(false);
-            setLoadError("");
-          } else setLoadError(response.error.message);
+        if (controller.signal.aborted) return;
+        if (!response.ok) {
+          const status = response.error.httpStatus;
+          if (status === 401 || status === 403) forbid();
+          else setDirectory({ status: status === 404 ? "unsupported" : "failed" });
+        } else if (version === mutation.current) {
+          const result = response.result;
+          if (result?.supported === false) setDirectory({ status: "unsupported" });
+          else if (result?.supported === true && Array.isArray(result.devices))
+            setDirectory({ status: "ready", devices: result.devices });
+          else setDirectory({ status: "failed" });
         }
-      } catch (error) {
-        if (!cancelled) {
-          setDevices([]);
-          setDirectoryStatus("failed");
-          setLoadError(String(error));
-        }
+      } catch {
+        if (!controller.signal.aborted) setDirectory({ status: "failed" });
       }
-      if (!cancelled) timer = setTimeout(() => void load(), 5000);
+      if (!controller.signal.aborted) timer = setTimeout(() => void load(), 5000);
     };
     void load();
     return () => {
-      cancelled = true;
       alive.current = false;
       controller.abort();
       clearTimeout(timer);
     };
-  }, [includeJoinRequests, revision]);
+  }, [forbid]);
 
-  const revoke = async () => {
-    setBusy(true);
-    setError("");
+  async function revoke() {
+    if (
+      inFlight.current ||
+      directory.status !== "ready" ||
+      !directory.devices.some((d) => d.node_id === revokeId && d.enabled)
+    )
+      return;
+    inFlight.current = true;
+    setRevoking(true);
+    setRevokeError(false);
     try {
       const response = await revokeSessionNode(revokeId);
       if (!alive.current) return;
-      if (response.ok) {
-        setDevices((previous) =>
-          previous.map((device) =>
-            device.node_id === revokeId ? { ...device, enabled: false, connected: false } : device,
-          ),
+      if (response.ok && response.result.revoked === true) {
+        mutation.current++;
+        setDirectory((previous) =>
+          previous.status === "ready"
+            ? {
+                ...previous,
+                devices: previous.devices.map((device) =>
+                  device.node_id === revokeId
+                    ? { ...device, enabled: false, connected: false }
+                    : device,
+                ),
+              }
+            : previous,
         );
         setRevokeId("");
-      } else setError(response.error.message);
-    } catch (error) {
-      if (alive.current) setError(String(error));
+      } else if (
+        !response.ok &&
+        (response.error.httpStatus === 401 || response.error.httpStatus === 403)
+      )
+        forbid();
+      else setRevokeError(true);
+    } catch {
+      if (alive.current) setRevokeError(true);
     } finally {
-      if (alive.current) setBusy(false);
+      inFlight.current = false;
+      if (alive.current) setRevoking(false);
     }
-  };
-  return {
-    ...invitation,
-    devices,
-    directoryStatus,
-    refreshDirectory,
-    supported,
-    join,
-    error: error || loadError,
-    busy: busy || invitation.creating || invitation.copying,
-    revokeId,
-    setRevokeId,
-    revoke,
-  };
+  }
+  return { directory, revokeId, setRevokeId, revoking, revokeError, revoke, forbid };
 }

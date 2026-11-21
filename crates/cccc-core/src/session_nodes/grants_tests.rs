@@ -147,3 +147,34 @@ fn bounded_history_eviction_cannot_restore_a_revoked_grant_or_source() {
         replacement.grant_id
     );
 }
+
+#[test]
+fn manual_ticket_issue_preserves_previous_keys_grants_and_optional_state_fields() {
+    let f = Fixture::new();
+    let granted = f.pair("confirmed");
+    let key = identity(&f.home, "client", || "historical-test-key".into()).expect("saved key");
+    let issued = super::join_tests::previously_issued(&f);
+    store::update(&f.home, |state| {
+        let record = serde_json::json!({"generation":"00000000-0000-4000-8000-000000000000","expires_at":issued.expires_at});
+        state.revocations.insert("confirmed".into(), serde_json::from_value(record).expect("previous metadata"));
+        state.hub.as_mut().expect("old gateway metadata").bound_invites = true;
+        Ok(())
+    }).expect("historical optional fields");
+    let path = store::directory(&f.home).join("state.json");
+    let before: serde_json::Value = crate::fs::read_json(&path).expect("stored state");
+    create_invite(&f.home).expect("new manual ticket");
+    let after: serde_json::Value = crate::fs::read_json(&path).expect("round-trip state");
+    assert_eq!(before["revocations"], after["revocations"]);
+    assert_eq!(
+        before["invites"][&issued.invite_id],
+        after["invites"][&issued.invite_id]
+    );
+    assert_eq!(before["hub"], after["hub"]);
+    assert!(identity(&f.home, "client", || "must-not-replace".into()).expect("same key") == key);
+    assert_eq!(
+        pair(&f.home, "gateway", "confirmed", "Laptop", None)
+            .expect("resume saved grant")
+            .grant_id,
+        granted.grant_id
+    );
+}

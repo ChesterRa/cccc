@@ -43,7 +43,7 @@ pub(super) async fn connect_observed(
     ticket: Option<SessionNodeTicket>,
     name: &str,
     saved: Option<ClientDescriptor>,
-    join: Option<(String, SecretKey)>,
+    saved_key: Option<SecretKey>,
 ) -> Result<()> {
     let endpoint_address = match &ticket {
         Some(ticket) => SessionNodeEndpoint {
@@ -73,9 +73,9 @@ pub(super) async fn connect_observed(
             )
         })
     });
-    let (join_origin, key) = match join {
-        Some((origin, key)) => (Some(origin), key),
-        None => (None, network::key(home, "client")?),
+    let key = match saved_key {
+        Some(key) => key,
+        None => network::key(home, "client")?,
     };
     let (builder, destination) =
         network::connect_builder(key, &endpoint_address, relay_token.as_deref())?;
@@ -112,12 +112,17 @@ pub(super) async fn connect_observed(
     // Keep one signal subscription alive across connect, Hello, active work
     // and backoff; dropping it between phases can lose a user's single Ctrl-C.
     let mut stop = std::pin::pin!(stop_signal());
+    let mut announced_handshake = false;
     let result = loop {
         let connected = tokio::select! {
             _ = &mut stop => break Ok(()),
             result = tokio::time::timeout(Duration::from_secs(15), endpoint.connect(destination.clone(), SESSION_NODE_ALPN)) => result,
         };
         if let Ok(Ok(connection)) = connected {
+            if !announced_handshake {
+                eprintln!("Encrypted connection established. Waiting for hub confirmation.");
+                announced_handshake = true;
+            }
             let hello_request = Request::Hello {
                 version: SESSION_NODE_PROTOCOL,
                 name: name.into(),
@@ -137,7 +142,6 @@ pub(super) async fn connect_observed(
                     );
                     let mut current = descriptor.clone();
                     current.join_binding = super::client_join::confirmed_binding(
-                        join_origin.as_deref(),
                         &connection.remote_id().to_string(),
                         &current.node_id,
                         expected.as_ref(),
@@ -150,7 +154,7 @@ pub(super) async fn connect_observed(
                     *link.write().await = Some(connection.clone());
                     backoff = 1;
                     eprintln!(
-                        "Session node connected. Select its sessions in the hub's Connect sessions dialog. Press Ctrl-C to disconnect; native applications keep running."
+                        "Session node connected. Press Ctrl-C to disconnect. To reconnect later, run cccc sessions node connect."
                     );
                     let session = run_session(home, &daemon, &descriptor.secret, &connection);
                     tokio::select! { _ = &mut stop => { connection.close(0u32.into(), b"connector stopped"); break Ok(()); }, result = session => { if result.is_err() { eprintln!("Session node disconnected; pending writes will not be replayed."); } } }
@@ -176,8 +180,13 @@ pub(super) async fn connect_observed(
                     // A transport loss during enrollment/resume is not proof
                     // that the hub rejected the key. Retry only the handshake.
                     connection.close(0u32.into(), b"handshake interrupted");
+                    if backoff == 1 {
+                        eprintln!("Hub confirmation was interrupted. Retrying the connection.");
+                    }
                 }
             }
+        } else if backoff == 1 {
+            eprintln!("The encrypted connection to the hub could not be established. Retrying.");
         }
         tokio::select! { _ = &mut stop => break Ok(()), _ = tokio::time::sleep(Duration::from_secs(backoff)) => {} }
         backoff = (backoff * 2).min(15);

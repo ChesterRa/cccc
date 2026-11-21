@@ -254,7 +254,7 @@ pub enum DirectAction {
     },
     /// Stop the standalone collaboration listener.
     Stop,
-    /// Create a standalone Group connection invitation.
+    /// Create a permanent invitation. Each joining Group requires approval.
     Invite {
         /// Target Group ID.
         group_id: String,

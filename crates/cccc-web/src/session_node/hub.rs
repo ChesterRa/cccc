@@ -30,19 +30,6 @@ pub async fn create_invitation(home: &HomeLayout, port: u16) -> Result<SessionNo
     Ok(session_nodes::create_invite(home)?)
 }
 
-pub async fn create_bound_invitation(
-    home: &HomeLayout,
-    node: &str,
-    expires_at: &str,
-    generation: &str,
-) -> Result<SessionNodeTicket> {
-    super::capabilities::verify_join(home).await?;
-    prepare_invitation(home, 0).await?;
-    Ok(session_nodes::create_bound_invite(
-        home, node, expires_at, generation,
-    )?)
-}
-
 async fn prepare_invitation(home: &HomeLayout, port: u16) -> Result<()> {
     ensure_gateway(home, port).await?;
     ensure!(

@@ -22,21 +22,16 @@ export async function verifyEmptyDeviceFlow({
   const { click, button, row } = sessionPickerActions(t);
   const ticket = "synthetic-ticket-not-for-a-real-device";
   let deviceOnline = false;
-  let sharedAddress: string | undefined;
   let complete!: (response: Response) => void;
   const request = vi.fn(async (_url: unknown, init?: RequestInit) => {
     if (init?.method === "POST")
       return new Promise<Response>((resolve) => {
         complete = resolve;
       });
-    if (String(_url).endsWith("/join/pending"))
-      return Response.json({ ok: true, result: { requests: [] } });
     return Response.json({
       ok: true,
       result: {
         supported: true,
-        join_supported: !!sharedAddress,
-        join_url: sharedAddress,
         devices: deviceOnline
           ? [
               {
@@ -88,11 +83,12 @@ export async function verifyEmptyDeviceFlow({
     const preparation = document.querySelector(`section[aria-label="${labels.prepareTitle}"]`)!;
     expect(preparation).not.toBeNull();
     expect(preparation.textContent).toContain(labels.runtimeHint);
-    const command = "cccc sessions node connect --runtime codex --ticket-stdin --name laptop";
-    expect(button(labels.create)).toBeUndefined();
-    expect(button(labels.ticketPromptReady)).toBeDefined();
+    const command = "cccc sessions node connect --runtime codex --ticket-stdin";
+    expect(button(labels.create).disabled).toBe(false);
+    expect(button(labels.copyConnectCommand).textContent).toBe(labels.copyCommandText);
+    expect(posts()).toBe(0);
     expect(
-      button(labels.copyConnectCommand).compareDocumentPosition(button(labels.ticketPromptReady)) &
+      button(labels.copyConnectCommand).compareDocumentPosition(button(labels.create)) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
     await click(button(labels.copyConnectCommand));
@@ -103,19 +99,15 @@ export async function verifyEmptyDeviceFlow({
     )!;
     await click(legacy.querySelector("summary"));
     expect(legacy.open).toBe(true);
-    await click(button(labels.copyLegacyCommands));
-    expect(write).toHaveBeenLastCalledWith(
-      "cccc sessions enable --runtime codex\ncccc sessions node connect --ticket-stdin --name laptop",
-    );
+    expect(preparation.querySelectorAll("pre")).toHaveLength(1);
     expect(legacy.textContent).toContain(labels.legacyHint);
     await click(button(labels.enableApp));
     await click(document.querySelector('[role="menuitemradio"][data-value="claude"]'));
     await click(button(labels.copyConnectCommand));
     expect(write).toHaveBeenLastCalledWith(
-      "cccc sessions node connect --runtime claude --ticket-stdin --name laptop",
+      "cccc sessions node connect --runtime claude --ticket-stdin",
     );
-    expect(button(labels.create)).toBeUndefined();
-    await click(button(labels.ticketPromptReady));
+    expect(posts()).toBe(0);
     write.mockRejectedValueOnce(new Error("clipboard denied"));
     await click(button(labels.create));
     expect(button(labels.preparing).disabled).toBe(true);
@@ -211,10 +203,6 @@ export async function verifyEmptyDeviceFlow({
     await act(async () => vi.advanceTimersByTimeAsync(3000));
     expect(document.body.textContent).not.toContain(enLayout.localSessions.listening);
     expect(row(source.title).textContent).toContain(source.cwd);
-    sharedAddress = "https://hub.example:8443";
-    await click(button(enLayout.localSessions.addDevice));
-    expect(document.querySelector("[data-modal-header] bdi")?.textContent).toBe("hub.example");
-    expect(button(labels.joinCopy).textContent).toBe(labels.copyCommandText);
   } finally {
     if (previousExec) Object.defineProperty(document, "execCommand", previousExec);
     else Reflect.deleteProperty(document, "execCommand");

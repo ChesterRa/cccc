@@ -21,7 +21,7 @@ mod pairing;
 pub mod shared;
 pub use management::{remove, retire_group, set_state};
 use pairing::encode_invitation;
-pub use pairing::{hello, invite, invite_checked, join};
+pub use pairing::{decode_invitation, hello, invite, invite_checked, join};
 
 #[cfg(test)]
 #[path = "direct_tests.rs"]

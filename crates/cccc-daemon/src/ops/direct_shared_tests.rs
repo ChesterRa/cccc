@@ -29,11 +29,44 @@ fn reusable_invitation_actions_are_admin_only_and_polling_never_discloses_secret
     };
     let created = call(
         "connect_direct_invite",
-        json!({"group_id":group.group_id,"by":"user","reusable":true,"expires_in_seconds":0}),
+        json!({"group_id":group.group_id,"by":"user","reusable":true}),
     );
     assert!(created.ok, "{created:?}");
+    let before = chrono::Utc::now();
+    let finite = call(
+        "connect_direct_invite",
+        json!({"group_id":group.group_id,"by":"user","reusable":true,"expires_in_seconds":86_400}),
+    );
+    assert!(finite.ok);
+    let key = direct::decode_invitation(finite.result["invitation"].as_str().expect("finite key"))
+        .expect("decode finite");
+    assert_eq!(key.v, 2);
+    let deadline = chrono::DateTime::parse_from_rfc3339(&key.expires_at).expect("finite deadline");
+    let day = chrono::Duration::days(1);
+    assert!(
+        deadline >= before + day - chrono::Duration::seconds(1)
+            && deadline <= chrono::Utc::now() + day
+    );
+    let legacy = call(
+        "connect_direct_invite",
+        json!({"group_id":group.group_id,"by":"user"}),
+    );
+    assert!(legacy.ok);
+    let old = direct::decode_invitation(legacy.result["invitation"].as_str().expect("legacy key"))
+        .expect("decode legacy");
+    assert_eq!(old.v, 1);
+    assert!(!old.reusable());
     let saved = direct::load(&home).expect("store");
     let invitation = &saved.shared_invitations[0].invitation;
+    direct::configure(
+        &home,
+        Some(DirectListener {
+            bind: "127.0.0.1:8847".into(),
+            address: "forward.example:14447".into(),
+        }),
+        None,
+    )
+    .expect("update saved endpoint");
     let status = call(
         "connect_direct_status",
         json!({"group_id":group.group_id,"by":"user"}),
@@ -47,6 +80,14 @@ fn reusable_invitation_actions_are_admin_only_and_polling_never_discloses_secret
         "never"
     );
     assert_eq!(status.result["shared_invitations"][0]["uses"], 0);
+    assert_eq!(
+        status.result["shared_invitations"][0]["address"],
+        "127.0.0.1:8847"
+    );
+    assert_eq!(
+        status.result["listener"]["address"],
+        "forward.example:14447"
+    );
     let serialized = serde_json::to_string(&status.result).expect("status JSON");
     assert!(
         !serialized.contains(&invitation.secret),

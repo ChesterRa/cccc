@@ -227,9 +227,9 @@ provide a relay, discover devices or change firewall/router settings.
    needed after the port becomes ready. Failure shows a corrective next step;
    nothing creates invitations later from background polling. Receiving is shared
    across this instance's Groups, while each Group pair needs its own approval.
-   On upgraded instances, choose **24 hours**, **7 days** (default), **30 days**, or **Permanent**. Permanent keys use the v3 ticket format and require a compatible build on both endpoints.
-   The invitation appears under **Invitation keys**, with a short management ID and a prominent **Uses** count. Copy it and send it through
-   a trusted channel; multiple Groups can use it until its displayed deadline, or until manual deletion for a permanent key.
+   New invitations are permanent and reusable until deleted. The Web and `cccc direct invite GROUP_ID` request a v3 key and require compatible builds. Previously issued finite or single-use invitations retain their original terms.
+   The invitation appears under **Invitation keys**, with a short management ID and a **Uses** count and the connection address stored in that invitation. Changing the receiving settings leaves existing keys pointing to their original address. To share a different endpoint, create a new key after updating the settings. If a saved private IPv4 address no longer appears on the receiver’s interfaces, **Change** lets you pick another. A reachable forwarded or VPN address can still be used. Copy the invitation and send it through
+   a trusted channel. Each joining Group still requires separate approval.
    You can copy it again after reopening the panel. The request count counts each
    joining Group once, including requests still awaiting your approval.
    Deleting a key requires confirmation, cancels pending requests and disconnects all Group pairs created with that key. Its old grants cannot reconnect. A fresh key can request new approval for the same pair after the client learns the revocation. Expiry alone does not disconnect already approved pairs.
@@ -241,7 +241,6 @@ provide a relay, discover devices or change firewall/router settings.
    invitation. Reloading the browser or updating source files alone does not
    replace a running backend. Existing invitations marked **Single-use · Legacy**
    still connect only one Group and cannot be retrieved after closing the panel.
-   The CLI `invite` command retains the single-use, 30-minute flow.
 4. On the joining instance, open the intended Group's **Direct connection** panel,
    choose **I have an invitation**, paste it and check the displayed instance,
    Group and expiry, then click **Request connection**. The preview separates your

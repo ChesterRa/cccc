@@ -1,9 +1,7 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft } from "lucide-react";
 import { LcdIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
-import { DirectInviteLifetime } from "./DirectInviteLifetime";
 import { DirectJoinForm, DirectReceiveForm } from "./DirectPairingForms";
 import { readDirectInvitation, directInvitationExpired } from "./directConnectionModel";
 import type { useDirectActions } from "./useDirectActions";
@@ -16,7 +14,6 @@ export function DirectConnectionTask({
   actions: ReturnType<typeof useDirectActions>;
 }) {
   const { t } = useTranslation("layout");
-  const [expiresInSeconds, setExpiresInSeconds] = useState(604800);
   const { task, taskHeading, busy, status, incoming, setIncoming, closeTask, setError, act } =
     actions;
   if (!task) return null;
@@ -69,38 +66,27 @@ export function DirectConnectionTask({
         />
       ) : (
         <>
-          {task === "invite" && (
-            <DirectInviteLifetime
-              value={expiresInSeconds}
-              onChange={setExpiresInSeconds}
-              disabled={busy || !reusable}
-            />
+          {task === "invite" && reusable && !status?.capabilities?.permanent_invitations && (
+            <p role="status" className="text-[var(--color-text-secondary)]">
+              {t("direct.permanentUpgrade")}
+            </p>
           )}
-          {task === "invite" &&
-            expiresInSeconds === 0 &&
-            !status?.capabilities?.permanent_invitations && (
-              <p role="status" className="text-[var(--color-text-secondary)]">
-                {t("direct.permanentUpgrade")}
-              </p>
-            )}
           <DirectReceiveForm
             key={task}
             listener={status?.listener || null}
             addresses={status?.addresses || []}
             inviteMode={task === "invite"}
+            addressesCurrent={!!status && !actions.pollFailed}
             name={status?.display_name || ""}
             busy={busy}
             unavailable={
-              task === "invite" &&
-              (!reusable ||
-                (expiresInSeconds === 0 && !status?.capabilities?.permanent_invitations))
+              task === "invite" && (!reusable || !status?.capabilities?.permanent_invitations)
             }
             onSave={(listener, name, previous) =>
               void act(task === "invite" ? "invite" : "configure", {
                 listener,
                 display_name: name,
                 expected_listener: previous,
-                ...(task === "invite" ? { expires_in_seconds: expiresInSeconds } : {}),
               })
             }
             onStop={() =>

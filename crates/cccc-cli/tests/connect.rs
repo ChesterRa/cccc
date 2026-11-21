@@ -28,8 +28,32 @@ fn connect_cli_preserves_actor_scope_qualified_address_and_reply_defaults() {
         "version":env!("CARGO_PKG_VERSION"),"ts":"2026-09-16T00:00:00Z"}),
     )
     .expect("address");
+    // Exercise direct invite through the same real CLI/IPC entry point as the other connection commands.
+    let issuer = HomeLayout::from_path(temp.path().join("issuer")).expect("issuer");
+    let group = cccc_core::GroupStore::new(issuer.clone())
+        .expect("store")
+        .create("Direct", "")
+        .expect("group")
+        .group_id;
+    cccc_core::direct::configure(
+        &issuer,
+        Some(cccc_contracts::direct::DirectListener {
+            bind: "127.0.0.1:8847".into(),
+            address: "127.0.0.1:8847".into(),
+        }),
+        None,
+    )
+    .expect("fixture listener settings");
+    let permanent =
+        cccc_core::direct::shared::create(&issuer, &group, None, 0).expect("fixture permanent key");
+    let finite = cccc_core::direct::shared::create(&issuer, &group, None, 86_400)
+        .expect("fixture finite key");
+    let real_key = permanent.clone();
+    let requested_group = group.clone();
     let server = std::thread::spawn(move || {
-        for stream in listener.incoming().take(4) {
+        let mut checks = 0;
+        let mut issued = 0;
+        for stream in listener.incoming().take(9) {
             let stream = stream.expect("accept");
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(5)))
@@ -38,12 +62,27 @@ fn connect_cli_preserves_actor_scope_qualified_address_and_reply_defaults() {
             let mut line = String::new();
             stream.read_line(&mut line).expect("request");
             let request: DaemonRequest = serde_json::from_str(&line).expect("JSON");
-            writeln!(
-                stream.get_mut(),
-                "{}",
-                json!({"ok":true,"result":{"op":request.op,"args":request.args}})
-            )
-            .expect("response");
+            let result = match request.op.as_str() {
+                "connect_direct_status" => {
+                    checks += 1;
+                    assert_eq!(request.args["group_id"], requested_group);
+                    if checks == 3 {
+                        json!({})
+                    } else {
+                        json!({"capabilities":{"reusable_invitations":true,"permanent_invitations":true}})
+                    }
+                }
+                "connect_direct_invite" => {
+                    assert_eq!(request.args["reusable"], true);
+                    assert_eq!(request.args["expires_in_seconds"], 0);
+                    assert_eq!(request.args["by"], "user");
+                    assert_eq!(request.args["group_id"], requested_group);
+                    issued += 1;
+                    json!({"invitation":if issued==1 {&permanent} else {&finite}})
+                }
+                _ => json!({"op":request.op,"args":request.args}),
+            };
+            writeln!(stream.get_mut(), "{}", json!({"ok":true,"result":result})).expect("response");
         }
     });
     let invoke = |args: &[&str]| {
@@ -108,6 +147,28 @@ fn connect_cli_preserves_actor_scope_qualified_address_and_reply_defaults() {
     let local = invoke(&["send", "local", "--group", "g_explicit", "--to", "user"]);
     assert_eq!(local["op"], "message_send");
     assert_eq!(local["args"]["group_id"], "g_explicit");
+    let invite = || {
+        command(&home)
+            .env_remove("CCCC_GROUP_ID")
+            .env_remove("CCCC_ACTOR_ID")
+            .args(["direct", "invite", &group])
+            .output()
+            .expect("direct CLI")
+    };
+    let created = invite();
+    assert!(created.status.success());
+    let result = serde_json::from_slice::<Value>(&created.stdout).expect("invitation result");
+    assert!(result["invitation"].as_str() == Some(real_key.as_str()));
+    for message in [
+        "did not return a permanent invitation",
+        "Update and restart the daemon",
+    ] {
+        let refused = invite();
+        assert!(!refused.status.success());
+        assert!(refused.stdout.is_empty());
+        let error = String::from_utf8_lossy(&refused.stderr);
+        assert!(error.contains(message) && !error.contains("cccc-direct:"));
+    }
     server.join().expect("IPC joined");
 }
 

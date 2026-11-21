@@ -1,7 +1,7 @@
 # 已有会话的远程接入设计
 
 状态：局域网 iroh MVP 已实现，已通过隔离协议与页面验收；尚未部署到当前在线服务。
-目标是让另一台机器上已经运行的原生 CLI 会话加入中心 CCCC 的工作组。第 1–9 节保留初始 HTTPS/WSS 方案与完整能力设计；本次选用的 iroh 局域网实现及其边界见第 11 节和[操作说明](../guide/local-sessions.md#connect-sessions-from-another-computer-lan)。
+目标是让另一台机器上已经运行的原生 CLI 会话加入中心 CCCC 的工作组。第 1–9 节保留初始 HTTPS/WSS 方案与完整能力设计；本次选用的 iroh 局域网实现及其边界见第 11 节和[操作说明](../guide/local-sessions.md#connect-sessions-from-another-computer-lan-or-public-relay)。
 
 ## 1. 方案与现有边界
 
@@ -35,7 +35,9 @@ flowchart LR
 
 因此不能只给现有本机接口加一个远程 URL，也不能把远端 PID 当成本机进程验证。
 
-## 2. 用户流程
+## 2. 最初拟议的浏览器审批流程
+
+当前接入方式见第 11 节。本节记录最初的 HTTPS/WSS 提案。
 
 保留现有“接入会话”入口，增加“本机 / 远程设备”切换。
 
@@ -234,15 +236,15 @@ cccc sessions node connect --server https://cccc.example.com
 ```
 
 - Rust 工具链固定 `1.91.0`，新网关使用 `iroh 1.4.1` 的 Minimal 配置与 AWS-LC；不连接默认公共 Relay、不做全网地址发布或广播发现。启用公网 Web 地址时，仅使用本实例穿透入口后的原生 Relay；保持同一协作账本。
-- 多台电脑可以运行同一条 `cccc sessions node join <主机地址>`。命令只含主机地址。每台新电脑显示自己的校验码，管理员在确认页核对设备名称和校验码后批准。设备用本次申请的临时凭证领取绑定其公钥的短期票据，完成原生握手后取得自己的设备授权。无浏览器的电脑会显示可在另一台设备打开的确认链接。
-- 同一 `CCCC_HOME` 再次接入同一地址时，连接器沿用首次握手确认的主机身份和设备授权。网关保存已分配的 UDP 端口，普通 Web 重启时恢复已配对网关。需要重新申请时可使用 `--reauthorize`。
-- 缺少可用的 HTTPS 管理入口时，管理员可以在“会话总览 → 添加设备”生成十分钟有效的一次性设备票据，远端运行 `cccc sessions node connect --ticket-stdin --name laptop` 并在提示处粘贴。两种接入方式都使用前台桥接。Ctrl-C 只断开桥接。节点仅导出该用户、该 `CCCC_HOME` 已登记的 Codex/Claude 来源，不转发其他远端来源。
+- 管理员在「接入会话 → 添加设备」选择原生应用并复制命令。远端运行 `cccc sessions node connect --runtime codex --ticket-stdin`。终端提示输入时，管理员在主机生成一次性配对码。远端粘贴后通过原生握手取得独立设备授权。每个码可登记一台新电脑，十分钟有效。Claude Code 使用 `--runtime claude`。
+- 再次连接时，同一 `CCCC_HOME` 运行 `cccc sessions node connect` 即可复用已保存的设备密钥和授权。撤销后需重新发码。旧脚本的 `join <地址>` 在设备密钥、主机身份和已保存的地址绑定都匹配时可恢复连接，其他情况在终端提示输入配对码。
+- 连接成功后终端显示 `Session node connected`。Ctrl-C 只关闭前台桥接。网关恢复时复用已保存的 UDP 端口，设备只导出该用户、该 `CCCC_HOME` 已登记的 Codex 和 Claude 会话。
 - 中心仍由管理员从现有会话列表选择来源并加入组。来源使用节点公钥、授权代次与原生来源摘要组成命名空间；远端 PID 不作为中心机器上的进程验证，远端 cwd 不登记为中心物理工作区。
 - 中心复用现有接收租约、逐条投递、账本 claim/accepted/ambiguous 处理；节点在原生提交前持久化交接屏障。未知结果和重用同一交接 ID 的不同负载均不自动重放。活跃账本与完成回执的保留策略见下文。
 - Codex 使用原生 queue/steer，Claude 使用原有 Monitor。模型调用先在来源机器验证实际原生来源，再经私有 loopback broker 和加密通道返回中心；中心重查来源版本、组成员代次与角色，复用现有 MCP/Daemon 授权路径。
 - 支持消息收发/回复/精确读取、Inbox、bootstrap/help、任务和上下文等明确列出的协作工具。文件、执行、能力安装及 code-mode 入口不通过该通道开放；原应用自己的工具继续在原机器执行。消息附件在原生交接前明确失败，暂不跨机传输。
 - 设备撤销使新投递和工具调用失效；重新配对生成新授权与来源标识，旧组成员不会自动恢复。已跨过交接边界的原生工作可能继续执行，撤销不终止原应用。
-- 设备目录、签发票据、查看和处理待确认申请、撤销设备均须主机管理员权限。公开的 `POST /api/v1/session_nodes/join/requests` 和 `POST /api/v1/session_nodes/join/poll` 仅供设备发起和领取自己的申请。临时领取凭证保存在设备进程内，不进入确认链接。桥接只在空闲 Home 启动 daemon，遇到旧 daemon 明确退出，不替换在线服务。
+- 主机管理员可以查看设备目录、签发票据或撤销设备。原浏览器申请入口已退役。旧客户端调用原申请接口会得到 404，已保存的设备授权和仍有效的历史票据继续执行原身份校验。桥接仅在空闲 Home 启动 daemon。
 
 ### 投递记录保留策略
 

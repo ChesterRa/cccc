@@ -1,7 +1,4 @@
-import { createContext, useLayoutEffect, useRef, useState } from "react";
-
-// A completed administrator deep link hands off to the existing permission-gated sidebar entry.
-export const SessionOverviewRequest = createContext<(() => void) | null>(null);
+import { useLayoutEffect, useRef, useState } from "react";
 
 export type SessionDialogView = "sessions" | "group" | "device" | "help";
 

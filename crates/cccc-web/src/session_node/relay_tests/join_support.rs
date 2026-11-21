@@ -42,16 +42,13 @@ pub(super) async fn call(
 }
 
 pub(super) async fn advertised_urls(app: &Router, home: &HomeLayout, token: &str, original: &str) {
-    for (url, expected) in [
-        ("http://192.0.2.1:8848/", Value::Null),
-        ("https://localhost./", Value::Null),
-        ("https://127.0.0.1/", Value::Null),
-        ("https://[::ffff:127.0.0.1]/", Value::Null),
-        ("https://0.0.0.0/", Value::Null),
-        (
-            "https://shared.example.test/ui/",
-            json!("https://shared.example.test/"),
-        ),
+    for url in [
+        "http://192.0.2.1:8848/",
+        "https://localhost./",
+        "https://127.0.0.1/",
+        "https://[::ffff:127.0.0.1]/",
+        "https://0.0.0.0/",
+        "https://shared.example.test/ui/",
     ] {
         settings::update(home, |s| {
             s.remote_access.insert("web_public_url".into(), json!(url));
@@ -67,8 +64,8 @@ pub(super) async fn advertised_urls(app: &Router, home: &HomeLayout, token: &str
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(value["result"]["join_supported"], true);
-        assert_eq!(value["result"]["join_url"], expected);
+        assert_eq!(value["result"]["join_supported"], false);
+        assert_eq!(value["result"]["join_url"], Value::Null);
     }
     settings::update(home, |s| {
         s.remote_access

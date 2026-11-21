@@ -12,20 +12,6 @@ pub async fn verify(home: &HomeLayout, needs_relay: bool) -> Result<()> {
     validate(&response, needs_relay)
 }
 
-pub async fn verify_join(home: &HomeLayout) -> Result<()> {
-    let response = response(home).await?;
-    validate_join(&response)
-}
-
-fn validate_join(response: &cccc_contracts::DaemonResponse) -> Result<()> {
-    validate(response, false)?;
-    ensure!(
-        response.result.get("join_identity_binding") == Some(&json!(true)),
-        "The running daemon requires an explicit update/restart before device approval"
-    );
-    Ok(())
-}
-
 async fn response(home: &HomeLayout) -> Result<cccc_contracts::DaemonResponse> {
     let response = DaemonClient::new(home.clone())
         .without_voice_origin()
@@ -73,14 +59,13 @@ mod tests {
                 .clone(),
         );
         assert!(validate(&current, true).is_ok());
-        assert!(validate_join(&legacy).is_err());
-        assert!(validate_join(&current).is_err());
-        let bound = cccc_contracts::DaemonResponse::success(
-            json!({"protocol":1,"relay_ticket_version":2,"join_identity_binding":true})
+        // A retired approval capability does not disable ordinary relay tickets.
+        let retired = cccc_contracts::DaemonResponse::success(
+            json!({"protocol":1,"relay_ticket_version":2,"join_identity_binding":false})
                 .as_object()
                 .expect("packet")
                 .clone(),
         );
-        assert!(validate_join(&bound).is_ok());
+        assert!(validate(&retired, true).is_ok());
     }
 }

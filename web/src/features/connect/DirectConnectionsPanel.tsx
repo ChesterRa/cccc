@@ -88,6 +88,7 @@ export function DirectConnectionsPanel({
         ))}
       <DirectSharedInvitations
         invitations={status?.shared_invitations || []}
+        currentAddress={pollFailed ? undefined : status?.listener?.address}
         values={invitations}
         busy={busy}
         onCopy={copyInvitation}

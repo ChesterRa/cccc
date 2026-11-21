@@ -4,12 +4,17 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 export { DirectInvitationShare } from "./DirectInvitationShare";
 export { DirectJoinForm } from "./DirectJoinForm";
-import type { DirectAddress, DirectListener } from "./directConnectionModel";
+import {
+  savedPrivateAddressMissing,
+  type DirectAddress,
+  type DirectListener,
+} from "./directConnectionModel";
 
 export function DirectReceiveForm({
   listener,
   addresses,
   inviteMode = false,
+  addressesCurrent = false,
   name: initialName,
   busy,
   unavailable = false,
@@ -19,6 +24,7 @@ export function DirectReceiveForm({
   listener: DirectListener | null;
   addresses: DirectAddress[];
   inviteMode?: boolean;
+  addressesCurrent?: boolean;
   name: string;
   busy: boolean;
   unavailable?: boolean;
@@ -129,6 +135,15 @@ export function DirectReceiveForm({
               {t(savedListener ? "direct.savedAddress" : "direct.suggestedAddress")}
             </p>
           )}
+          {inviteMode &&
+            !changingAddress &&
+            addressesCurrent &&
+            savedListener?.address === address &&
+            savedPrivateAddressMissing(address, addresses) && (
+              <p role="status" className="text-xs text-[var(--color-text-secondary)]">
+                {t("direct.savedPrivateAddressMissing")}
+              </p>
+            )}
         </div>
         <details className="space-y-3">
           <summary className="cursor-pointer text-xs text-[var(--color-text-secondary)]">

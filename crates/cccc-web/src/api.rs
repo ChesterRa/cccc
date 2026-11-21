@@ -21,14 +21,6 @@ impl std::fmt::Display for ApiError {
 }
 
 impl ApiError {
-    pub(crate) fn rate_limited(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::TOO_MANY_REQUESTS,
-            code: code.into(),
-            message: message.into(),
-            details: json!({}),
-        }
-    }
     pub(crate) fn code(&self) -> &str {
         &self.code
     }

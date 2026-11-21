@@ -9,7 +9,7 @@ pub struct SessionsArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum SessionsAction {
-    /// Pair and connect sessions from another computer on the LAN.
+    /// Pair and connect native sessions from another computer.
     Node {
         #[command(subcommand)]
         action: super::SessionNodeAction,

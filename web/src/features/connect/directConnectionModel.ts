@@ -28,6 +28,7 @@ export type DirectStatus = {
 };
 export type DirectSharedInvitation = {
   id: string;
+  address?: string;
   expires_at: string;
   uses: number;
   current: boolean;
@@ -36,6 +37,17 @@ export type DirectSharedInvitation = {
 
 export function sameDirectListener(a: DirectListener | null, b: DirectListener | null): boolean {
   return a?.address === b?.address && a?.bind === b?.bind;
+}
+/** A saved LAN address may refer to an old VPN. Candidate ports do not establish IP ownership. */
+export function savedPrivateAddressMissing(address: string, candidates: DirectAddress[]): boolean {
+  const ip = /^((?:[0-9]{1,3}\.){3}[0-9]{1,3}):[0-9]+$/.exec(address)?.[1];
+  if (!ip || !candidates.length) return false;
+  const parts = ip.split(".");
+  const octets = parts.map(Number);
+  if (octets.some((value, i) => value > 255 || String(value) !== parts[i])) return false;
+  const [a, b] = octets;
+  const privateIp = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  return privateIp && !candidates.some((candidate) => candidate.address.startsWith(ip + ":"));
 }
 export type DirectInvitationPreview = {
   reusable?: boolean;

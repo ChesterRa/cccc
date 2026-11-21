@@ -25,7 +25,10 @@ export function SessionNodeDevices({
         {t("sessionNodes.devices")}{" "}
         <span className="text-[var(--color-text-secondary)]">{devices.length}</span>
       </h4>
-      <ul className="divide-y divide-[var(--glass-border-subtle)]">
+      <ul
+        aria-label={t("sessionNodes.devices")}
+        className="divide-y divide-[var(--glass-border-subtle)]"
+      >
         {devices.map((device) => (
           <li
             key={device.node_id}

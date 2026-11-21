@@ -6,6 +6,7 @@ import type { DirectSharedInvitation } from "./directConnectionModel";
 
 export function DirectSharedInvitations({
   invitations,
+  currentAddress,
   values,
   busy,
   onCopy,
@@ -13,6 +14,7 @@ export function DirectSharedInvitations({
   deleteAllowed,
 }: {
   invitations: DirectSharedInvitation[];
+  currentAddress?: string;
   values: Record<string, string>;
   busy: boolean;
   onCopy: (id: string) => Promise<string | null>;
@@ -34,6 +36,7 @@ export function DirectSharedInvitations({
             <DirectInvitationCard
               invitation={{ ...invitation, reusable: true }}
               cachedText={values[invitation.id]}
+              currentAddress={currentAddress}
               busy={busy}
               onRead={() => onCopy(invitation.id)}
               onDelete={() => setDeleting(invitation.id)}

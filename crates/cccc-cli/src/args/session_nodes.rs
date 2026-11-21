@@ -9,6 +9,9 @@ pub enum SessionNodeAction {
         port: u16,
     },
     /// Connect this computer's existing Codex/Claude sessions to a hub.
+    #[command(
+        after_help = "To pair Codex, run cccc sessions node connect --runtime codex --ticket-stdin. For Claude Code, use --runtime claude. To reconnect, run cccc sessions node connect."
+    )]
     Connect {
         /// Read one pairing ticket from stdin; omit to resume the saved pairing.
         #[arg(long)]
@@ -16,25 +19,26 @@ pub enum SessionNodeAction {
         /// Enable this native integration before pairing; does not filter exported sessions.
         #[arg(long, value_parser = ["codex", "claude"], requires = "ticket_stdin")]
         runtime: Option<String>,
-        /// Name shown on the hub for this computer.
-        #[arg(long, default_value = "Remote computer")]
-        name: String,
+        /// Name shown on the hub (defaults to this computer's hostname).
+        #[arg(long)]
+        name: Option<String>,
     },
-    /// Join this hub after browser approval, or reconnect an already approved device.
+    /// Reconnect an existing hub binding or paste a device pairing ticket in this terminal.
+    #[command(hide = true)]
     Join {
-        /// Trusted hub origin (HTTPS, or HTTP on loopback).
+        /// Previously paired hub origin (HTTPS, or HTTP on loopback).
         #[arg(value_name = "HUB_URL")]
         hub: String,
         /// Device name shown to the hub administrator (defaults to this computer's hostname).
         #[arg(long)]
         name: Option<String>,
-        /// Enable this native integration after approval; does not start the native app.
+        /// Enable this native integration before connecting.
         #[arg(long, value_parser = ["codex", "claude"])]
         runtime: Option<String>,
-        /// Print the confirmation link and code without opening a browser.
-        #[arg(long)]
+        /// Accepted for compatibility. Pairing takes place in the terminal.
+        #[arg(long, hide = true)]
         no_browser: bool,
-        /// Ask the administrator for a new approval even if this hub was already paired.
+        /// Read a fresh pairing ticket even when this hub has a saved binding.
         #[arg(long)]
         reauthorize: bool,
     },

@@ -6,7 +6,7 @@ This is an experimental integration for Linux (including WSL), macOS and native 
 
 Other runtimes, such as the Antigravity App or CLI, cannot be attached yet.
 
-Sessions on another computer can use the [LAN session connector](#connect-sessions-from-another-computer-lan) below. The ordinary local integration keeps its same-user/same-Home boundary; each computer owns its own native session metadata.
+Sessions on another computer can use the [LAN session connector](#connect-sessions-from-another-computer-lan-or-public-relay) below. The ordinary local integration keeps its same-user/same-Home boundary; each computer owns its own native session metadata.
 
 ## Enable once
 
@@ -342,37 +342,23 @@ Receiver presence is ephemeral and reconnects after a daemon restart. Current na
 
 The LAN connector supports existing **Codex and Claude Code** sessions. Both computers need a CCCC build with session-node protocol 1 (Rust 1.91); Pi/OpenCode remain local-only. The **Connect sessions** entry opens a **Sessions** overview grouped by device. An empty directory uses a compact, content-sized window with **Set up this computer** and **Add device** action cards; there is no zero-selection action bar. Once sessions are available, device sections become bordered groups and the window grows only up to the viewport limit. It shows session names, applications, directories and receive status with normal-size text. **Set up this computer** and **Add device** open separate views in the same window; configuration instructions do not sit above the directory. Returning restores the overview scroll position and selections. Select sessions first, then choose **Add to Group** to select an existing Group or create a new one. Foreman and directory settings appear only in the new-Group confirmation. Selecting sources does not admit them: the final confirmation still waits for verified Group membership and rejects unavailable sources. Pairing alone creates no Group membership.
 
-### Connect computers with the same command
+### Pair a computer from its terminal
 
-On the hub, open **Connect sessions → Add device** and copy the shared command. Run it on each computer using a CCCC build that supports `join`. The command contains only the hub's shareable HTTPS address, as in this example.
-
-```sh
-cccc sessions node join https://hub.example
-```
-
-For each first connection, keep the terminal open. It shows the device name, a short verification code and a link for the hub administrator. The device name defaults to the computer's hostname. Sign in to the hub as an administrator and open that link, or find its name and verification code under **Devices awaiting approval**. The code distinguishes computers that share a name. Compare the device name and code with that computer's terminal before choosing **Allow device**. Choose **Deny device** if they differ. Opening the link only displays the request. After approval, **Add device** waits for that computer to connect. Once the hub confirms it is online, choose **View sessions** to return to the existing session directory. While one computer connects, you can review the remaining requests in the same dialog.
-
-The command uses existing native integrations. To enable an integration during setup, append `--runtime codex` or `--runtime claude` and complete its hook review as described above. On an already authorized computer, the same command reconnects to its trusted hub. After a revocation or hub replacement, run `cccc sessions node join https://hub.example --reauthorize` to request approval again. Use **Pair with a one-time ticket** when the hub has no shareable HTTPS address or the installed versions only support tickets.
-
-### Pair one computer with a ticket
-
-1. On the hub Web, open **Connect sessions → Add device**. On newer hubs, choose **Pair with a one-time ticket**. First install the same CCCC build on the other computer, then copy the ticket-based connection command shown on the hub and run it interactively under that computer's normal OS user and `CCCC_HOME`:
+1. On the hub, open **Connect sessions → Add device** and select **Codex** or **Claude Code**. Copy the command and run it on the other computer in the OS account and `CCCC_HOME` that own its native sessions. For Codex, run:
 
    ```sh
-   cccc sessions node connect --runtime codex --ticket-stdin --name laptop
-   # Or use --runtime claude for Claude Code.
+   cccc sessions node connect --runtime codex --ticket-stdin
    ```
 
-   When the target terminal asks for a ticket, choose **The other terminal is asking for a ticket** on the hub to reveal ticket generation. This keeps installation time from consuming its expiry and avoids overwriting the ticket with a later command copy.
+   Use `--runtime claude` for Claude Code. The device name defaults to its hostname. Add `--name` to choose a different display name.
 
-2. On the hub, choose **Generate and copy pairing ticket**. The first successful request immediately attempts to copy it. If the browser blocks copying, the valid ticket stays in memory: choose **Copy pairing ticket** to retry with a fresh click, without generating another. An expired ticket can be generated and copied again with one click; choose **New ticket for another device** explicitly when pairing the next computer. Keep the ticket private: it enrolls one computer and expires after ten minutes. This is a device ticket, separate from CCCC Connect's Group invitations.
+2. When the other terminal asks for a ticket, choose **Generate and copy pairing ticket** on the hub. Paste the entire ticket at the terminal prompt and press Enter. Each ticket can enroll one new computer and expires after ten minutes. If copying fails, **Copy pairing ticket** retries the same unexpired ticket. Use **New ticket for another device** for the next computer. Give the ticket only to the person pairing that device. Keep it out of shell arguments and chat logs.
 
-   Paste the ticket at the command's prompt; never put it in arguments, shell commands, heredocs or scripts. With `--runtime codex|claude`, the CLI validates the ticket, rejects an already-running connector and checks the existing daemon's direct/relay capability before reusing `sessions enable` for the selected application. Invalid input or failed preflight does not configure the application. Setup failure prevents pairing, but the existing enable operation may have partially changed configuration; inspect its error before retrying. If setup succeeds and connection later fails, that integration remains enabled: the CLI reports the stage and does not automatically disable it. No hook trust, native application/model launch, restart or Group admission is automated. The runtime flag enables configuration; it does not restrict the connector's existing Codex/Claude source export.
+3. Keep the terminal open until it prints **Session node connected**. **Native integration enabled** confirms the application's local configuration. **Waiting for hub confirmation** means that the encrypted connection is up and device registration is still in progress. Finish its hook or plugin setup as described above and submit a prompt in the original session so it registers. On the hub, open **Manage paired devices → View sessions**, select the sessions, then choose **Add to Group** and confirm the target Group. A paired device can reconnect before any of its sessions have joined a Group.
 
-   Omitting `--runtime` keeps ordinary connect/reconnect behavior and does not configure either application. Older CLIs reject the new flag; upgrade to use the one-command flow, or retain the compatible two-command `cccc sessions enable --runtime codex` (or `claude`) followed by `cccc sessions node connect --ticket-stdin --name laptop`. The optional runtime flag requires `--ticket-stdin`; normal saved-key reconnect still uses the command shown below. After this computer connects, open **Manage paired devices** and choose **View sessions** beside it.
+The connector validates the ticket and checks the running daemon before applying the selected runtime's integration. An invalid ticket leaves the application configuration intact. If native setup itself fails, inspect its error for partial configuration. If the connection fails after setup, the integration stays enabled. The connector starts a daemon only in a vacant Home. An incompatible running daemon requires an explicit upgrade. Hook trust and native application restarts remain under the user's control.
 
-   Keep the connector running. It starts a daemon only when that Home is vacant; it never replaces a running older daemon. If the capability check reports an old daemon, update/restart that daemon explicitly first. Reload the native integration using the instructions above, and submit a native prompt so the existing session registers. Codex still needs its shared app-server/queue, and Claude still needs its Monitor.
-3. Back on the hub, choose **Back to sessions**, select the remote session alongside local sessions in the same list, then choose **Add to Group** to pick the target Group and confirm. Its device name identifies the origin; its cwd belongs to the other computer and is never attached as a local hub folder. LAN sources join as new members; switching an existing member to a different native source remains a local-only operation in this MVP.
+Omit `--runtime` when both applications are already configured. A CLI that does not recognize `--runtime` can run `cccc sessions enable --runtime codex` or `cccc sessions enable --runtime claude` first, followed by `cccc sessions node connect --ticket-stdin`. Current clients pair entirely in the terminal. Previously paired computers reconnect with `cccc sessions node connect` in the same Home.
 
 A new pairing replaces the saved local reconnect route, grant and membership hints only after the hub accepts it and local saving succeeds. Failure or cancellation preserves the current saved reconnect configuration; concurrent changes are not overwritten. A local save failure does not undo a pairing already accepted by the hub.
 
@@ -392,7 +378,7 @@ With no applicable process proxy variable, macOS uses the system's per-destinati
 
 SOCKS proxies, visible proxy credentials and unparseable selected proxy settings are not supported by the native relay. System PAC/WPAD policies are also unsupported: CCCC does not execute or fetch their scripts, read Keychain / credential-vault secrets, or treat an automatic policy as permission for bare public-relay access. These settings disable that relay path with a fixed message that does not echo the setting; available direct IP/UDP candidates remain usable, and a relay-only route fails clearly if no usable route remains. An explicit environment proxy or `NO_PROXY` override still takes priority. A successful `/generate_204` HTTP probe alone does not establish a relay WebSocket, device authentication or end-to-end session delivery.
 
-Existing IP-only version-1 tickets and saved direct routes remain readable. New relay tickets use ticket version 2; the application ALPN and hello protocol stay at `cccc/session-node/1`. Both the new hub runtime and relay connector require a daemon that advertises `relay_ticket_version: 2`; an older running daemon or gateway reports an explicit upgrade requirement and is never replaced automatically. To add public fallback to an already paired device whose saved route is IP-only, stop only its connector, issue a fresh ticket, and run `cccc sessions node connect --ticket-stdin --name laptop` again. The original application stays running, and an already-enabled device retains its grant and memberships. Revoked devices still need a new grant and explicit Group admission.
+Existing IP-only version-1 tickets and saved direct routes remain readable. New relay tickets use ticket version 2; the application ALPN and hello protocol stay at `cccc/session-node/1`. Both the new hub runtime and relay connector require a daemon that advertises `relay_ticket_version: 2`; an older running daemon or gateway reports an explicit upgrade requirement and is never replaced automatically. To add public fallback to an already paired device whose saved route is IP-only, stop only its connector, issue a fresh ticket, and run `cccc sessions node connect --ticket-stdin` again. The original application stays running, and an already-enabled device retains its grant and memberships. Revoked devices still need a new grant and explicit Group admission.
 
 The gateway binds its native relay only on loopback and publishes that listener through the authenticated device route. The public route does not use Web administrator tokens or browser cookies: iroh proves the device key, then CCCC checks the device grant or scoped bootstrap capability. Exhibits cannot serve the relay. Revocation disconnects existing relay connections and denies re-entry. Turning public access off closes relay access without revoking valid LAN device grants. Unknown application writes are never replayed when a path or connector reconnects.
 
@@ -405,7 +391,7 @@ Native `cccc_session list` includes remote memberships with `hub_id`. Pass the e
 Ctrl-C closes the bridge without stopping native sessions. Resume a paired computer with:
 
 ```sh
-cccc sessions node connect --name laptop
+cccc sessions node connect
 cccc sessions node status
 ```
 
@@ -413,9 +399,9 @@ A network drop reconnects with the stored node identity and backs off to fifteen
 
 **Revoke device** asks for confirmation and closes that computer's CCCC access to all admitted Groups. The CLI equivalent is `cccc sessions node revoke --node-id <endpoint-id>`. Native processes keep running, and work already offered at the handoff boundary may continue. Pairing the same computer again requires a new ticket and grant; its old Group memberships do not automatically revive. Pausing one member instead affects only that Group's access.
 
-The hub allows up to **32 active device grants**. Disconnected devices still count; revoking a device immediately frees its slot. Revoked history is separate: the hub retains at most 32 revoked devices, ordered by their original grant time, and removes older records and their cached sources during pairing or revocation. A retained or forgotten device can regain access through fresh administrator approval or a new one-time ticket. Either path creates a new grant. Old tickets and Group bindings remain invalid.
+The hub allows up to **32 active device grants**. Disconnected devices still count; revoking a device immediately frees its slot. Revoked history is separate: the hub retains at most 32 revoked devices, ordered by their original grant time, and removes older records and their cached sources during pairing or revocation. A previously revoked device can pair again using a new ticket from a hub administrator. Successful pairing creates a new grant. Old tickets and Group bindings remain invalid.
 
-The device directory, ticket issuance, request review, approval, denial and revocation are restricted to hub administrators. A joining device can submit a public request and use its private polling credential to claim only its own approved enrollment. The administrator link contains a request ID. It carries no polling credential or pairing ticket. Exhibit, Group-scoped users and remote model connectors have no device-management access. Older hubs continue to display the ticket flow they support.
+Only hub administrators can view the device directory, issue tickets and revoke devices. An old device confirmation link displays instructions for terminal pairing. A previously verified legacy hub URL can still select its matching saved connection on an upgraded client. First-time connections and reauthorization require a ticket from the administrator.
 
 ## Disconnect the integration
 

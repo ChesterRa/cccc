@@ -8,6 +8,7 @@ export type InvitationMetadata = {
   id: string;
   expires_at: string;
   reusable: boolean;
+  address?: string;
   uses?: number;
   current?: boolean;
   expired?: boolean;
@@ -18,12 +19,14 @@ export function DirectInvitationSummary({
   expired,
   busy,
   deleteDisabled,
+  currentAddress,
   onDelete,
 }: {
   invitation: InvitationMetadata;
   expired: boolean;
   busy: boolean;
   deleteDisabled: boolean;
+  currentAddress?: string;
   onDelete?: () => void;
 }) {
   const { t, i18n } = useTranslation("layout");
@@ -49,6 +52,19 @@ export function DirectInvitationSummary({
                     }),
                   })}
           </p>
+          {invitation.address && (
+            <p className="break-all text-sm text-[var(--color-text-secondary)]">
+              {t("direct.invitationAddress")}{" "}
+              <bdi dir="ltr" className="font-mono">
+                {invitation.address}
+              </bdi>
+            </p>
+          )}
+          {invitation.address && currentAddress && invitation.address !== currentAddress && (
+            <p role="status" className="break-words text-xs text-[var(--color-text-secondary)]">
+              {t("direct.invitationAddressChanged", { address: currentAddress })}
+            </p>
+          )}
           <p className="font-mono text-xs text-[var(--color-text-muted)]" title={invitation.id}>
             KEY · {invitation.id.slice(-12)}
           </p>

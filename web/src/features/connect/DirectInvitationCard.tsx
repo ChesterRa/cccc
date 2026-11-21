@@ -19,6 +19,7 @@ import { DirectInvitationSummary, type InvitationMetadata } from "./DirectInvita
 export function DirectInvitationCard({
   invitation,
   cachedText = "",
+  currentAddress,
   busy = false,
   framed = true,
   onRead,
@@ -27,6 +28,7 @@ export function DirectInvitationCard({
 }: {
   invitation: InvitationMetadata;
   cachedText?: string;
+  currentAddress?: string;
   busy?: boolean;
   framed?: boolean;
   onRead: () => Promise<string | null>;
@@ -52,16 +54,18 @@ export function DirectInvitationCard({
     directInvitationExpired(invitation.expires_at);
   const unavailable = busy || !!pending || expired;
   const read = async () => {
-    const text = cachedText || (await onRead());
+    const text = cachedText || value || (await onRead());
     if (!mounted.current) return null;
     const preview = text ? readDirectInvitation(text) : null;
     if (
       !text ||
       !preview ||
       preview.id !== invitation.id ||
+      (invitation.address && preview.address !== invitation.address) ||
       !!preview.reusable !== invitation.reusable ||
       directInvitationExpired(preview.expires_at) ||
-      !!preview.permanent !== (invitation.expires_at === DIRECT_PERMANENT_EXPIRY)
+      !!preview.permanent !== (invitation.expires_at === DIRECT_PERMANENT_EXPIRY) ||
+      (!preview.permanent && Date.parse(preview.expires_at) !== Date.parse(invitation.expires_at))
     ) {
       setCopy("failed");
       return null;
@@ -70,6 +74,11 @@ export function DirectInvitationCard({
     return text;
   };
 
+  // Older status responses lack the saved address. Use only matching text already obtained by an explicit action.
+  const preview =
+    !invitation.address && (cachedText || value) ? readDirectInvitation(cachedText || value) : null;
+  const address =
+    invitation.address ?? (preview?.id === invitation.id ? preview.address : undefined);
   return (
     <div
       className={classNames(
@@ -78,7 +87,8 @@ export function DirectInvitationCard({
       )}
     >
       <DirectInvitationSummary
-        invitation={invitation}
+        invitation={{ ...invitation, address }}
+        currentAddress={currentAddress}
         expired={expired}
         busy={busy || !!pending}
         deleteDisabled={deleteDisabled}

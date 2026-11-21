@@ -40,7 +40,7 @@ pub fn invite_checked(
         encode_invitation(&invitation)
     })
 }
-pub fn join(home: &HomeLayout, group: &str, text: &str) -> io::Result<String> {
+pub fn decode_invitation(text: &str) -> io::Result<DirectInvitation> {
     if text.len() > 8192 {
         return Err(invalid("Invitation is too large"));
     }
@@ -55,14 +55,21 @@ pub fn join(home: &HomeLayout, group: &str, text: &str) -> io::Result<String> {
         serde_json::from_slice(&raw).map_err(|_| invalid("Invalid direct invitation"))?;
     validate_endpoint(&invitation.host)?;
     address(&invitation.address)?;
-    let local = endpoint(home, group)?;
     if !matches!(invitation.v, 1..=3)
         || (invitation.v == 3) != (invitation.expires_at == DIRECT_PERMANENT_EXPIRY)
         || !is_direct(&invitation.id)
         || !unexpired(&invitation.expires_at)
         || invitation.secret.len() != 64
-        || local.instance_id == invitation.host.instance_id
     {
+        return Err(invalid("Invitation expired or belongs to this instance"));
+    }
+    Ok(invitation)
+}
+
+pub fn join(home: &HomeLayout, group: &str, text: &str) -> io::Result<String> {
+    let invitation = decode_invitation(text)?;
+    let local = endpoint(home, group)?;
+    if local.instance_id == invitation.host.instance_id {
         return Err(invalid("Invitation expired or belongs to this instance"));
     }
     let connection_id = if invitation.reusable() {

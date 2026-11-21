@@ -195,16 +195,16 @@ jobs:
           daemon_self_launch::combined_web_bind_failure_stops_its_owned_daemon
           -- --test-threads=1
 
-      - name: Verify Windows device approval and saved reconnect
+      - name: Verify Windows terminal device pairing and saved reconnect
         timeout-minutes: 10
         shell: pwsh
         run: |
-          $result = cargo test --package cccc --test session_node_join --locked join_approval_is_single_use_and_resume_skips_http -- --exact --test-threads=1 --color never
+          $result = cargo test --package cccc --test session_node_join --locked ticket_connect_and_legacy_resume_stay_in_the_terminal -- --exact --test-threads=1 --color never
           $exitCode = $LASTEXITCODE
           $result
           if ($exitCode -ne 0) { exit $exitCode }
           if (-not ($result -match '^test result: ok\. 1 passed;')) {
-            throw 'The Windows device join and reconnect test did not run'
+            throw 'The Windows terminal pairing and reconnect test did not run'
           }
 
       - name: Verify foreground terminal lifecycle in ConPTY

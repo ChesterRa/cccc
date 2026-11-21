@@ -1,173 +1,131 @@
 use super::{
-    api::Api,
-    created,
-    homes::{self, Homes},
+    PROMPT,
+    api::LocalOrigin,
+    homes::{Homes, output, paste, progress},
+    ticket,
 };
-use axum::http::StatusCode;
-use cccc_contracts::session_node_join::CreateRequest;
+use cccc_contracts::session_node::SessionNodeEndpoint;
 use cccc_core::{local_sessions::NativeHost, session_nodes};
-use homes::output;
-use serde_json::json;
-use std::time::Duration;
 
 #[tokio::test]
-async fn join_rejects_unsafe_origins_legacy_hubs_and_redirected_claims() {
+async fn legacy_urls_and_private_input_stay_local() {
     let f = Homes::new();
+    let (ok, text) = output(f.command(&["--help"]), &[]).await;
+    assert!(
+        ok && text
+            .lines()
+            .any(|line| line.trim_start().starts_with("connect "))
+    );
+    assert!(
+        !text
+            .lines()
+            .any(|line| line.trim_start().starts_with("join "))
+    );
     for bad in [
         "http://example.invalid",
         "https://private-input@hub.invalid",
         "https://hub.invalid/?secret=private-input",
     ] {
-        let (ok, text) = output(f.join(bad, &[]), &["private-input"]).await;
+        let (ok, text) = output(f.command(&["join", bad]), &["private-input"]).await;
         assert!(!ok && text.contains("HTTPS hub URL"));
     }
+    let origin = LocalOrigin::new().await;
+    origin
+        .forbid_requests(async {
+            let (ok, text) = output(f.command(&["connect"]), &[]).await;
+            assert!(!ok && text.contains("--ticket-stdin"));
+            for input in ["", "private-input", &"x".repeat(16 * 1024)] {
+                let mut child =
+                    f.command(&["join", &origin.url, "--no-browser", "--runtime", "codex"]);
+                let protected = [&origin.url[..], "private-input"];
+                progress(&mut child, PROMPT, &protected).await;
+                if !input.is_empty() {
+                    paste(&mut child, input).await;
+                }
+                let (ok, text) = output(child, &protected).await;
+                assert!(!ok && text.contains("Invalid or missing session-node pairing ticket"));
+            }
+        })
+        .await;
     assert!(
         !f.node.root().exists(),
-        "invalid origins do not initialize the device identity"
-    );
-    let mut api = Api::start().await;
-    let mut foreign = Api::start().await;
-    let mut old = f.join(&api.origin, &[]);
-    api.next(&mut old, "requests")
-        .await
-        .answer(StatusCode::NOT_FOUND, json!({}));
-    let (ok, text) = output(old, &[]).await;
-    assert!(!ok && text.contains("Update the hub") && text.contains("--ticket-stdin"));
-
-    let mut malformed = f.join(&api.origin, &[]);
-    let create = api.next(&mut malformed, "requests").await;
-    let private: CreateRequest =
-        serde_json::from_value(create.body.clone()).expect("private test claim");
-    let id = uuid::Uuid::new_v4().to_string();
-    let mut invalid = created(
-        &id,
-        &(chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
-    );
-    invalid["result"]["user_code"] = json!(private.device_code);
-    create.answer(StatusCode::OK, invalid);
-    let private_values = [&private.device_code[..]];
-    let (ok, text) = tokio::select! {
-        value=output(malformed,&private_values)=>value,
-        _=api.calls.recv()=>panic!("a malformed public verification code must stop before polling"),
-    };
-    assert!(!ok && text.contains("invalid confirmation details"));
-
-    let mut redirected = f.join(&api.origin, &[]);
-    let create = api.next(&mut redirected, "requests").await;
-    let value: CreateRequest = serde_json::from_value(create.body.clone()).expect("request body");
-    let id = uuid::Uuid::new_v4().to_string();
-    create.answer(
-        StatusCode::OK,
-        created(
-            &id,
-            &(chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339(),
-        ),
-    );
-    api.next(&mut redirected, "poll")
-        .await
-        .redirect(&format!("{}/capture", foreign.origin));
-    let (ok, text) = output(redirected, &[&value.device_code]).await;
-    assert!(!ok && text.contains("redirected"));
-    assert!(
-        tokio::time::timeout(Duration::from_millis(75), foreign.calls.recv())
-            .await
-            .is_err(),
-        "no polling credential may cross origins"
+        "invalid input must not create an identity or configure a runtime"
     );
 }
 
-/// A legacy offline descriptor can coexist with a pending approval, but a different
-/// connector that commits during the wait wins even if an approved ticket arrives.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pending_join_preserves_a_newer_owner_and_a_live_owner_receives_no_request() {
-    use cccc_contracts::session_node::{
-        SESSION_NODE_PROTOCOL, SessionNodeEndpoint, SessionNodeTicket,
-    };
+async fn waiting_for_a_ticket_preserves_a_newer_owner_and_an_unrelated_binding() {
     let mut f = Homes::new();
     f.start().await;
-    let mut api = Api::start().await;
-    let key = cccc_web::session_node::JoinTarget::prepare(&f.node, &api.origin)
-        .expect("local key")
-        .node_id();
-    let owner = NativeHost::capture(std::process::id()).expect("fixture owner");
-    let mut retired = owner.clone();
-    retired.started.push_str("-retired");
-    let mut descriptor = session_nodes::ClientDescriptor {
-        endpoint: SessionNodeEndpoint {
-            endpoint_id: key.clone(),
-            addresses: vec!["127.0.0.1:1".into()],
-            relay_url: None,
-        },
-        join_binding: None,
-        node_id: key.clone(),
-        grant_id: "old-grant".into(),
-        owner: retired,
-        address: "127.0.0.1:1".parse().expect("loopback broker"),
-        secret: "old-broker".into(),
-        connected: false,
-        memberships: vec![],
-    };
-    session_nodes::set_client(&f.node, &descriptor).expect("persist offline legacy descriptor");
-    assert!(
-        !cccc_web::session_node::JoinTarget::prepare(&f.node, &api.origin)
-            .expect("legacy descriptor")
-            .can_resume(),
-        "old descriptors without a binding need approval"
-    );
-    descriptor.join_binding = Some(session_nodes::JoinBinding {
-        origin: format!("{}/", api.origin),
-        hub_id: "different-authenticated-hub".into(),
-    });
-    session_nodes::set_client(&f.node, &descriptor).expect("controlled mismatched binding");
-    let mut pending = f.join(&api.origin, &["--runtime", "codex"]);
-    let request = api.next(&mut pending, "requests").await;
-    let claim: CreateRequest =
-        serde_json::from_value(request.body.clone()).expect("new-origin claim");
-    assert_eq!(claim.node_id, key);
-    let id = uuid::Uuid::new_v4().to_string();
-    let expiry = (chrono::Utc::now() + chrono::Duration::minutes(1)).to_rfc3339();
-    request.answer(StatusCode::OK, created(&id, &expiry));
-    let poll = api.next(&mut pending, "poll").await;
-    descriptor.owner = owner;
-    descriptor.connected = true;
-    descriptor.grant_id = "concurrently-committed-grant".into();
-    descriptor.join_binding = Some(session_nodes::JoinBinding {
-        origin: "https://another.example/".into(),
-        hub_id: key.clone(),
-    });
-    session_nodes::set_client(&f.node, &descriptor).expect("newer live connector");
-    let sig = f.descriptor_bytes();
-    let reserved = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .expect("test-owned address");
-    let ticket = SessionNodeTicket {
-        v: SESSION_NODE_PROTOCOL,
-        endpoint_id: key,
-        addresses: vec![reserved.local_addr().expect("test address").to_string()],
-        relay_url: None,
-        relay_token: None,
-        invite_id: id,
-        secret: "unused-approval-secret".into(),
-        expires_at: expiry,
-    };
-    let wire = cccc_web::session_node::encode_ticket(&ticket).expect("synthetic ticket");
-    poll.answer(
-        StatusCode::OK,
-        json!({"ok":true,"result":{"status":"approved","ticket":wire}}),
-    );
-    let (ok, text) = output(pending, &[&claim.device_code, &wire, &ticket.secret]).await;
-    assert!(
-        !ok && text.contains("changed during pairing") && !text.contains("integration enabled")
-    );
-    let (ok, text) = output(f.join(&api.origin, &["--reauthorize"]), &[]).await;
-    assert!(!ok && text.contains("already runs"));
-    assert!(
-        api.calls.try_recv().is_err(),
-        "a running connector must not trigger an approval"
-    );
-    assert!(
-        f.descriptor_bytes() == sig,
-        "concurrent ownership must preserve the entire newer grant and origin"
-    );
+    let origin = LocalOrigin::new().await;
+    origin
+        .forbid_requests(async {
+            let (wire, secret) = ticket(&f).await;
+            let hub_id = cccc_web::session_node::decode_ticket(&wire)
+                .expect("fixture hub")
+                .endpoint_id;
+            let live = NativeHost::capture(std::process::id()).expect("fixture owner");
+            let mut retired = live.clone();
+            retired.started.push_str("-retired");
+            let mut old = session_nodes::ClientDescriptor {
+                endpoint: SessionNodeEndpoint {
+                    endpoint_id: hub_id.clone(),
+                    addresses: vec!["127.0.0.1:1".into()],
+                    relay_url: None,
+                },
+                join_binding: Some(session_nodes::JoinBinding {
+                    origin: format!("{}/", origin.url),
+                    hub_id: hub_id.clone(),
+                }),
+                node_id: hub_id.clone(), // Another device key, even though both origin and hub identity match.
+                grant_id: "prior-grant".into(),
+                owner: retired,
+                address: "127.0.0.1:1".parse().expect("loopback broker"),
+                secret: "prior-broker-secret".into(),
+                connected: false,
+                memberships: vec![],
+            };
+            session_nodes::set_client(&f.node, &old)
+                .expect("legacy descriptor from a different device key");
+            let mut waiting = f.command(&["join", &origin.url, "--runtime", "codex"]);
+            let forbidden = [&wire[..], &secret[..], &origin.url[..]];
+            progress(&mut waiting, PROMPT, &forbidden).await;
+            assert!(
+                session_nodes::peers(&f.hub)
+                    .expect("before ticket")
+                    .is_empty()
+            );
+            old.owner = live;
+            old.connected = true;
+            old.grant_id = "newer-live-grant".into();
+            old.join_binding = Some(session_nodes::JoinBinding {
+                origin: "https://other.invalid/".into(),
+                hub_id,
+            });
+            session_nodes::set_client(&f.node, &old).expect("new live connector");
+            let saved = f.descriptor_bytes();
+            paste(&mut waiting, &wire).await;
+            let (ok, text) = output(waiting, &forbidden).await;
+            assert!(
+                !ok && text.contains("changed during pairing")
+                    && !text.contains("integration enabled")
+            );
+            let (ok, text) = output(
+                f.command(&["join", &origin.url, "--reauthorize"]),
+                &forbidden,
+            )
+            .await;
+            assert!(!ok && text.contains("already runs") && !text.contains(PROMPT));
+            assert!(
+                session_nodes::peers(&f.hub)
+                    .expect("new owner keeps its seat")
+                    .is_empty()
+            );
+            assert!(
+                f.descriptor_bytes() == saved,
+                "a pending or duplicate connector must not replace the newer owner or its grant"
+            );
+        })
+        .await;
     f.close().await;
 }

@@ -19,11 +19,9 @@ mod relay_proxy;
 mod relay_proxy_system;
 mod relay_runtime;
 
-pub use capabilities::verify_join as verify_join_daemon;
-
 pub use client::{connect, stop_signal};
 pub use client_join::JoinTarget;
-pub use hub::{create_bound_invitation, create_invitation, restore, revoke, stop};
+pub use hub::{create_invitation, restore, revoke, stop};
 pub use network::{decode as decode_ticket, encode as encode_ticket};
 
 pub(crate) use relay_http::routes as relay_routes;

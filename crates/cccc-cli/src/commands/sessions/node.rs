@@ -2,8 +2,6 @@ use super::*;
 use crate::args::SessionNodeAction;
 #[path = "node_connect.rs"]
 mod connect;
-#[path = "node_join.rs"]
-mod join;
 
 pub(super) async fn run(home: &HomeLayout, action: SessionNodeAction) -> Result<()> {
     match action {
@@ -22,24 +20,14 @@ pub(super) async fn run(home: &HomeLayout, action: SessionNodeAction) -> Result<
             ticket_stdin,
             name,
             runtime,
-        } => connect::run(home, ticket_stdin, &name, runtime.as_deref()).await,
+        } => connect::run(home, None, ticket_stdin, name, runtime.as_deref()).await,
         SessionNodeAction::Join {
             hub,
             name,
-            no_browser,
+            no_browser: _,
             reauthorize,
             runtime,
-        } => {
-            join::run(
-                home,
-                &hub,
-                name,
-                no_browser,
-                reauthorize,
-                runtime.as_deref(),
-            )
-            .await
-        }
+        } => connect::run(home, Some(&hub), reauthorize, name, runtime.as_deref()).await,
         SessionNodeAction::Status => {
             let mut status = json!({"endpoint":cccc_core::session_nodes::endpoint(home)?,"devices":cccc_core::session_nodes::peers(home)?});
             if let Some(client) = cccc_core::session_nodes::saved_client(home)? {

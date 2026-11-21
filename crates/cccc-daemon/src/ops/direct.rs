@@ -101,7 +101,7 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         json!({"listener":store.listener,"display_name":store.display_name,"addresses":addresses,"runtime":if fresh{runtime}else{Value::Null},"relations":relations,
         "capabilities":{"reusable_invitations":true,"permanent_invitations":true,"invitation_revocation":true},
         "shared_invitations":store.shared_invitations.iter().filter(|link|link.invitation.host.group_id==group).map(|link|json!({
-            "id":link.invitation.id,"created_at":link.created_at,"expires_at":link.invitation.expires_at,"uses":link.uses,
+            "id":link.invitation.id,"address":link.invitation.address,"created_at":link.created_at,"expires_at":link.invitation.expires_at,"uses":link.uses,
             "current":direct::current(home,&link.invitation.host).unwrap_or(false),"expired":!direct::unexpired(&link.invitation.expires_at)
         })).collect::<Vec<_>>() }),
     )
@@ -169,7 +169,7 @@ fn mutate(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                         Some(value) => value.as_i64().ok_or_else(|| {
                             OpError::invalid("Invitation lifetime must be an integer")
                         })?,
-                        None => 604_800,
+                        None => 0,
                     };
                     direct::shared::create(home, &group, expected.as_ref(), seconds)
                 }

@@ -27,7 +27,6 @@ export function LocalSessionsDialog({
   hubName?: string;
 }) {
   const { t } = useTranslation("layout");
-  const [advertisedUrl, setAdvertisedUrl] = useState<string | null>(null);
   const { modalRef } = useModalA11y(true, onClose);
   const navigation = useSessionDialogNavigation();
   const { view, navigate } = navigation;
@@ -88,7 +87,7 @@ export function LocalSessionsDialog({
       title={
         view === "device" ? (
           <div className="min-w-0">
-            <SessionNodeHubLabel instanceName={hubName} advertisedUrl={advertisedUrl} />
+            <SessionNodeHubLabel instanceName={hubName} />
             {heading}
           </div>
         ) : (
@@ -163,7 +162,6 @@ export function LocalSessionsDialog({
         >
           <LocalSessionsGuide
             view={view}
-            onAdvertisedUrl={setAdvertisedUrl}
             showEntryActions={hasSources || !!connection.error}
             request={helpRequest}
             onAddDevice={() => navigate("device")}

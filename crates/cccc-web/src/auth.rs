@@ -237,6 +237,7 @@ fn decode_token(value: &str) -> String {
 }
 
 fn is_public(method: &Method, path: &str) -> bool {
+    // Legacy clients must receive the no-op retirement response before opening a browser.
     (*method == Method::POST
         && matches!(
             path,

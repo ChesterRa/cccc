@@ -70,9 +70,9 @@ impl Homes {
         std::fs::read_to_string(self.temp.path().join("native-calls")).unwrap_or_default()
     }
 
-    pub fn join(&self, hub: &str, args: &[&str]) -> Child {
+    pub fn command(&self, args: &[&str]) -> Child {
         let mut c = Command::new(env!("CARGO_BIN_EXE_cccc"));
-        c.args(["sessions", "node", "join", hub, "--no-browser"])
+        c.args(["sessions", "node"])
             .args(args)
             .env_clear()
             .env("HOME", self.temp.path())
@@ -83,7 +83,7 @@ impl Homes {
             .env("CODEX_HOME", self.temp.path().join("codex"))
             .env("CLAUDE_CONFIG_DIR", self.temp.path().join("claude"))
             .current_dir(self.temp.path())
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
@@ -96,7 +96,8 @@ impl Homes {
         {
             let profile = self.temp.path();
             let local = profile.join("AppData/Local");
-            c.env("APPDATA", profile.join("AppData/Roaming"))
+            c.env("COMPUTERNAME", "Fixture-PC")
+                .env("APPDATA", profile.join("AppData/Roaming"))
                 .env("LOCALAPPDATA", &local)
                 .env("TEMP", local.join("Temp"))
                 .env("TMP", local.join("Temp"));
@@ -139,13 +140,19 @@ impl Homes {
     }
 }
 
-pub async fn connection(
-    home: &HomeLayout,
-    child: &mut Child,
-    private: &[&str],
-) -> (session_nodes::ClientDescriptor, String) {
+pub async fn paste(child: &mut Child, value: &str) {
+    use tokio::io::AsyncWriteExt;
+    child
+        .stdin
+        .take()
+        .expect("ticket pipe")
+        .write_all(format!("{value}\n").as_bytes())
+        .await
+        .expect("paste device ticket");
+}
+
+pub async fn progress(child: &mut Child, prefix: &str, forbidden: &[&str]) -> String {
     use tokio::io::{AsyncBufReadExt, BufReader};
-    let pid = child.id().expect("connector pid");
     let mut reader = BufReader::new(child.stderr.take().expect("CLI diagnostics"));
     let mut text = String::new();
     tokio::time::timeout(Duration::from_secs(18), async {
@@ -157,25 +164,44 @@ pub async fn connection(
                     .await
                     .expect("connector progress")
                     > 0,
-                "CLI exited before confirming a connection"
+                "CLI exited before the expected progress: {prefix}"
             );
             assert!(
-                text.len() < 48 * 1024 && private.iter().all(|value| !text.contains(value)),
-                "unexpected private or unbounded connector diagnostics"
+                text.len() < 48 * 1024 && forbidden.iter().all(|value| !text.contains(value)),
+                "unexpected private data or unbounded connector diagnostics"
             );
-            if text[start..].starts_with("Session node connected.") {
+            if text[start..].starts_with(prefix) {
                 break;
             }
         }
     })
     .await
-    .expect("actual Hello and connected progress");
+    .expect("terminal connector progress");
     child.stderr = Some(reader.into_inner());
+    text
+}
+
+pub async fn connection(
+    home: &HomeLayout,
+    child: &mut Child,
+    forbidden: &[&str],
+) -> session_nodes::ClientDescriptor {
+    let pid = child.id().expect("connector pid");
+    let messages = progress(child, "Session node connected.", forbidden).await;
+    assert!(
+        messages.contains("Encrypted connection established. Waiting for hub confirmation."),
+        "the terminal must distinguish a working transport from completed device enrollment"
+    );
     let descriptor = session_nodes::client(home)
         .expect("read connector state")
         .expect("connected requires a committed descriptor");
     assert_eq!(descriptor.owner.pid, pid);
-    (descriptor, text)
+    descriptor
+}
+
+pub async fn stop(mut child: Child, forbidden: &[&str]) {
+    child.start_kill().expect("stop fixture connector");
+    output(child, forbidden).await;
 }
 
 pub async fn output(child: Child, private: &[&str]) -> (bool, String) {

@@ -7,7 +7,7 @@ export function invitation(expires = Date.now() + 1800000, version = 1) {
           id: "direct-fixture",
           address: "office.test:8847",
           secret: "a".repeat(64),
-          expires_at: new Date(expires).toISOString(),
+          expires_at: version === 3 ? "never" : new Date(expires).toISOString(),
           host: {
             instance_id: "peer-a",
             name: "办公室",

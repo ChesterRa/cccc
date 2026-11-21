@@ -16,7 +16,6 @@ pub mod message_args;
 pub mod message_pins;
 pub mod reply_question;
 pub mod session_node;
-pub mod session_node_join;
 pub mod voice_notifications;
 pub mod voice_secretary;
 

@@ -136,7 +136,7 @@ pub fn register_endpoint(
         }
         state.saved_endpoint = Some(endpoint.clone());
         state.hub = Some(Hub {
-            bound_invites: true,
+            bound_invites: false,
             endpoint,
             owner,
             token_hash: hash(token),
@@ -176,12 +176,6 @@ pub fn peers(home: &HomeLayout) -> io::Result<Vec<SessionNodePeer>> {
             peer
         })
         .collect())
-}
-
-pub fn bound_invites_supported(home: &HomeLayout) -> io::Result<bool> {
-    Ok(read(home)?
-        .hub
-        .is_some_and(|hub| hub.owner.alive() && hub.bound_invites))
 }
 
 pub(super) fn invitation_hash(expected: Option<&str>, purpose: &str, secret: &str) -> String {

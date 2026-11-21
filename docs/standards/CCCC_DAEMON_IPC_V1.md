@@ -9963,7 +9963,7 @@ of records left by an interrupted deletion; another Group ID cannot remove them.
 | --- | --- | --- |
 | `connect_direct_status` | `group_id` | Listener configuration, local `addresses: [{interface, bind, address}]` suggestions, fresh runtime diagnostics, redacted relations for this Group |
 | `connect_direct_configure` | `listener: {bind, address} \| null`, `display_name?`, `expected_listener?` | `{configured:true}`; actual listener state is checked separately |
-| `connect_direct_invite` | `group_id`, `expected_listener?: {bind, address}`, `reusable?: bool`, `expires_in_seconds?: 0 \| 86400 \| 604800 \| 2592000` | `{invitation}`; omitted/false `reusable` retains the legacy single-use flow; reusable default lifetime is 7 days; `0` creates a permanent v3 key with `expires_at:"never"` |
+| `connect_direct_invite` | `group_id`, `expected_listener?: {bind, address}`, `reusable?: bool`, `expires_in_seconds?: 0 \| 86400 \| 604800 \| 2592000` | `{invitation}`. Omitted or false `reusable` keeps the legacy single-use flow. With `reusable:true`, an omitted lifetime or `0` creates a permanent v3 key with `expires_at:"never"`. Explicit supported nonzero lifetimes still create finite v2 keys. |
 | `connect_direct_copy_invite` | `group_id`, `id` | `{invitation}`; explicit administrator-only retrieval of an unexpired shared invitation |
 | `connect_direct_delete_invite` | `group_id`, `id` | `{removed:true}`; retires the key and all its pending/approved grants; existing channels lose authorization and old IDs cannot reconnect |
 | `connect_direct_join` | `group_id`, `invitation` | `{id}`; persists the request, not approval |
@@ -9983,9 +9983,9 @@ configured local port (default 8847). No discovery packet is sent.
 
 Reusable-invitation support is advertised as `capabilities.reusable_invitations:true`; permanent v3 keys and key-wide deletion additionally advertise `permanent_invitations:true` and `invitation_revocation:true`
 in Direct status. `shared_invitations` contains only this Group's invitation
-metadata (`id`, `created_at`, `expires_at`, `uses`, `current`, `expired`), never
-bearer material. New Web clients must check this capability rather than silently
-requesting a reusable invitation from an older daemon. Receivers persist the
+metadata (`id`, `address`, `created_at`, `expires_at`, `uses`, `current`, `expired`), never
+bearer material. The address is the endpoint stored in the issued invitation, including after the receiver changes its listener.
+The Web and CLI check permanent-key capability, explicitly request `reusable:true, expires_in_seconds:0`, and verify the returned v3 permanent invitation before offering it to the administrator. Receivers persist the
 reusable bearer invitation in the existing private Direct store so an explicit
 administrator copy action can retrieve it later. Every unique joining Group
 creates a separate pending grant, still requiring receiver approval. Duplicate
