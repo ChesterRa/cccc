@@ -70,6 +70,9 @@ export function ChetConversationPane({
     (item) => item.kind === "request" && item.state === "send_unknown",
   );
   const notices = [
+    chet.status?.start_problem
+      ? t("chet.startUntrusted", { workspace: chet.status.start_problem.workspace })
+      : "",
     chet.status?.history_write_failed ? t("chet.writeFailed") : "",
     chet.historyError ? t("chet.historyUnavailable", { error: chet.historyError }) : "",
   ].filter(Boolean);

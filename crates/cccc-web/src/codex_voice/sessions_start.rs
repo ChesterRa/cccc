@@ -261,10 +261,7 @@ impl CodexVoiceSessions {
         let state = Arc::clone(&self.state).lock_owned().await;
         self.ensure_open()
             .map_err(|_| ChetSubmitError::NotStarted)?;
-        let (state, analyst) = self
-            .prepare_analyst_locked(home, state)
-            .await
-            .map_err(|_| ChetSubmitError::NotStarted)?;
+        let (state, analyst) = self.prepare_chet_locked(home, state).await?;
         self.ensure_open()
             .map_err(|_| ChetSubmitError::NotStarted)?;
         let input = if let Some(context) = request.context.as_ref() {
@@ -361,13 +358,33 @@ impl CodexVoiceSessions {
         let state = Arc::clone(&self.state).lock_owned().await;
         self.ensure_open()
             .map_err(|_| ChetSubmitError::NotStarted)?;
-        let (_state, _) = self
-            .prepare_analyst_locked(home, state)
-            .await
-            .map_err(|_| ChetSubmitError::NotStarted)?;
+        let (_state, _) = self.prepare_chet_locked(home, state).await?;
         self.ensure_open()
             .map_err(|_| ChetSubmitError::NotStarted)?;
         Ok(())
+    }
+
+    /// Starts or reuses Chet's assistant. A failed start whose cause CCCC
+    /// recognizes stays in the Chet status until Chet runs; free provider text
+    /// never reaches it.
+    async fn prepare_chet_locked(
+        &self,
+        home: &HomeLayout,
+        state: tokio::sync::OwnedMutexGuard<ManagedState>,
+    ) -> std::result::Result<
+        (
+            tokio::sync::OwnedMutexGuard<ManagedState>,
+            Arc<AnalystRuntime>,
+        ),
+        ChetSubmitError,
+    > {
+        let prepared = self.prepare_analyst_locked(home, state).await;
+        let problem = prepared.as_ref().err().and_then(chet_start_problem);
+        *self
+            .chet_start_problem
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = problem;
+        prepared.map_err(|_| ChetSubmitError::NotStarted)
     }
 
     pub(crate) async fn current(&self) -> VoiceState {
@@ -413,18 +430,31 @@ impl CodexVoiceSessions {
             .collect();
         preparing.sort_unstable();
         let host_failure = self.chet_history_write_failed.load(Ordering::Acquire);
+        let start_problem = self
+            .chet_start_problem
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
         let Ok(state) = self.state.try_lock() else {
             return serde_json::json!({"generation":null,"preparing":preparing,"queued":[],
                                       "working":[],"history_write_failed":host_failure,
-                                      "owner_busy":true});
+                                      "start_problem":start_problem,"owner_busy":true});
         };
+        if state.analyst.is_some() {
+            // Chet runs, whichever path started it (text, Voice or a reset).
+            self.chet_start_problem
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+        }
         let mut queued = Vec::new();
         let mut working = Vec::new();
         let generation = if let Some(analyst) = &state.analyst {
             let Some((pending_ids, working_ids)) = analyst.analyst.try_in_flight() else {
                 return serde_json::json!({"generation":analyst.analyst.generation(),
                                           "preparing":preparing,"queued":[],"working":[],
-                                          "history_write_failed":host_failure,"owner_busy":true});
+                                          "history_write_failed":host_failure,
+                                          "start_problem":null,"owner_busy":true});
             };
             let voice = analyst
                 .chet_voice
@@ -445,6 +475,7 @@ impl CodexVoiceSessions {
         let host_failure = self.chet_history_write_failed.load(Ordering::Acquire);
         serde_json::json!({"generation":generation,"preparing":preparing,"queued":queued,
                            "working":working,"history_write_failed":host_failure,
+                           "start_problem":if generation.is_some() { serde_json::Value::Null } else { start_problem.unwrap_or(serde_json::Value::Null) },
                            "owner_busy":false})
     }
 
@@ -632,6 +663,17 @@ async fn create_realtime_answer_with_heartbeat(
             }
         }
     }
+}
+
+/// The part of a failed Chet start that is safe and useful to show: a cause
+/// CCCC recognizes by type, with the directory the user has to act on.
+fn chet_start_problem(error: &anyhow::Error) -> Option<serde_json::Value> {
+    error.chain().find_map(|cause| {
+        let io = cause.downcast_ref::<std::io::Error>()?;
+        let workspace = cccc_daemon::experimental_codex_voice::untrusted_claude_workspace(io)?;
+        Some(serde_json::json!({"code":"claude_workspace_untrusted",
+                                "workspace":workspace.to_string_lossy()}))
+    })
 }
 
 #[cfg(test)]

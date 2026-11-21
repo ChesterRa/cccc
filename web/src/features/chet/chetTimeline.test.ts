@@ -37,6 +37,7 @@ function status(overrides: Partial<ChetStatus> = {}): ChetStatus {
     queued: [],
     working: [],
     history_write_failed: false,
+    start_problem: null,
     owner_busy: false,
     ...overrides,
   };

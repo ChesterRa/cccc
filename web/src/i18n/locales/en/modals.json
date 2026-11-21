@@ -926,6 +926,7 @@
     "skipped_one": "{{count}} record can't be shown.",
     "skipped_other": "{{count}} records can't be shown.",
     "writeFailed": "Some records may not have been saved.",
+    "startUntrusted": "Claude Code hasn't trusted Chet's working folder {{workspace}}. Open Claude once in that folder, with the same Claude installation and settings folder, accept the trust prompt, then send again.",
     "you": "You",
     "sourceTranscript": "Voice transcript",
     "voiceRunHint": "Chet's voice transcript for this call. Written results that were saved appear separately.",

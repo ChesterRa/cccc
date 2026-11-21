@@ -13,7 +13,7 @@ export function actorSupportsNewSession(
   );
 }
 
-const SESSION_REPLACED_REASONS = [
+export const SESSION_REPLACED_REASONS = [
   "runtime",
   "transport",
   "record_version",

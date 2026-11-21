@@ -9,6 +9,7 @@ import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
 import { useShallow } from "zustand/react/shallow";
 import i18n from "../i18n";
 import { revealRuntimeConfirmation } from "./runtimeConfirmation";
+import { noticeRuntimeSessionReplaced } from "./runtimeSessionReplacedNotice";
 
 function latestActorHasResumeFailure(groupId: string, actorId: string): boolean {
   if (useGroupStore.getState().selectedGroupId !== groupId) return false;
@@ -80,7 +81,10 @@ export function useActorActions(groupId: string) {
         }
         clearStreamingEventsForActor(actor.id, groupId);
         await Promise.all([refreshActors(groupId), refreshGroups()]);
-        if (!isRunning) revealRuntimeConfirmation(groupId, actor.id, expectedTab, resp.result);
+        if (!isRunning) {
+          revealRuntimeConfirmation(groupId, actor.id, expectedTab, resp.result);
+          noticeRuntimeSessionReplaced(actor.title || actor.id, resp.result);
+        }
       } finally {
         endActorAction(actorActionInFlightRef, actionKey);
         changeActorBusy(groupId, actor.id, -1);
@@ -115,6 +119,7 @@ export function useActorActions(groupId: string) {
         } else {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
           revealRuntimeConfirmation(groupId, actor.id, expectedTab, resp.result);
+          noticeRuntimeSessionReplaced(actor.title || actor.id, resp.result);
         }
         setTermEpochByActor((prev) => ({ ...prev, [actionKey]: (prev[actionKey] || 0) + 1 }));
       } finally {

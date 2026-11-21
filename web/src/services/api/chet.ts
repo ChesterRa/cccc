@@ -77,6 +77,17 @@ export type ChetRecord =
   | (Base & { kind: "not_started"; input_id: string; reason: string })
   | (Base & { kind: "transcript"; transcript: ChetTranscript });
 
+/** Claude Code refused to run Chet in a working folder it has not trusted. */
+export type ChetStartProblem = { code: "claude_workspace_untrusted"; workspace: string };
+
+function startProblem(value: unknown): ChetStartProblem | null | undefined {
+  if (value === undefined || value === null) return null;
+  if (isObject(value) && value.code === "claude_workspace_untrusted" && isString(value.workspace)) {
+    return { code: value.code, workspace: value.workspace };
+  }
+  return undefined;
+}
+
 /** Live work the Web host can confirm right now; history holds everything else. */
 export type ChetStatus = {
   generation: string | null;
@@ -84,6 +95,8 @@ export type ChetStatus = {
   queued: string[];
   working: string[];
   history_write_failed: boolean;
+  /** A recognized reason the last Chet start failed; null while Chet runs or none is known. */
+  start_problem: ChetStartProblem | null;
   /** The owner was busy, so only `preparing` is known; nothing else may be inferred. */
   owner_busy: boolean;
 };
@@ -293,7 +306,8 @@ export async function fetchChetStatus(signal?: AbortSignal): Promise<ApiResponse
     !isStringArray(value.preparing) ||
     !isStringArray(value.queued) ||
     !isStringArray(value.working) ||
-    typeof value.history_write_failed !== "boolean"
+    typeof value.history_write_failed !== "boolean" ||
+    startProblem(value.start_problem) === undefined
   ) {
     return invalid("Chet status response is malformed");
   }
@@ -305,6 +319,7 @@ export async function fetchChetStatus(signal?: AbortSignal): Promise<ApiResponse
       queued: value.queued,
       working: value.working,
       history_write_failed: value.history_write_failed,
+      start_problem: startProblem(value.start_problem) ?? null,
       owner_busy: value.owner_busy === true,
     },
   };

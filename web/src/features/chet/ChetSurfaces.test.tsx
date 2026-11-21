@@ -185,6 +185,59 @@ it("renders saved requests and answers in the conversation pane", () => {
   expect(host.querySelector("textarea")).not.toBeNull();
 });
 
+it("says which folder Claude must trust before Chet can start", () => {
+  const chet = {
+    items: [],
+    status: {
+      generation: null,
+      preparing: [],
+      queued: [],
+      working: [],
+      history_write_failed: false,
+      start_problem: { code: "claude_workspace_untrusted", workspace: "/home/u/.cccc/chet" },
+      owner_busy: false,
+    },
+    historyError: null,
+    loaded: true,
+    hasOlder: false,
+    loadingOlder: false,
+    loadOlder: vi.fn(),
+    skipped: 0,
+    problems: new Map(),
+    storageAvailable: true,
+    resentIds: new Set(),
+    sendAgain: vi.fn(),
+    retry: vi.fn(),
+    putBack: vi.fn(),
+    dismiss: vi.fn(),
+    draft: "",
+    composerProblem: null,
+    duplicateRisk: false,
+    setText: vi.fn(),
+    send: vi.fn(),
+    clearComposerProblem: vi.fn(),
+  } as unknown as ChetConversation;
+  const controller = {
+    conversation: [],
+    call: null,
+    analystWorking: false,
+  } as unknown as CodexVoiceSessionController;
+  act(() =>
+    root.render(
+      <ChetConversationPane
+        controller={controller}
+        chet={chet}
+        isDark={false}
+        visible
+        analystExpanded={false}
+        onToggleAnalyst={vi.fn()}
+        onReviewRecovery={vi.fn()}
+      />,
+    ),
+  );
+  expect(host.textContent).toContain('chet.startUntrusted:{"workspace":"/home/u/.cccc/chet"}');
+});
+
 function timeline(
   items: ChetTimelineItem[],
   extra: Partial<ChetRequestActions> = {},

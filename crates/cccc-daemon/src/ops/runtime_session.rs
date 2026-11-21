@@ -193,6 +193,34 @@ pub(crate) fn announce_replaced(home: &HomeLayout, group_id: &str, actor_id: &st
     }
 }
 
+/// When the member's saved-conversation note was last written; `Null` when it has none.
+pub(crate) fn replaced_at(home: &HomeLayout, group_id: &str, actor_id: &str) -> Value {
+    actor_fields(home, group_id, actor_id)
+        .remove("runtime_session_replaced_at")
+        .unwrap_or(Value::Null)
+}
+
+/// What a start that began a new conversation instead of the saved one tells the person who
+/// started it: the note written since `before`, with its reasons and the user-facing sentence.
+pub(crate) fn replaced_since(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    before: &Value,
+) -> Option<Value> {
+    let mut fields = actor_fields(home, group_id, actor_id);
+    let at = fields.remove("runtime_session_replaced_at")?;
+    if !at.is_string() || &at == before {
+        return None;
+    }
+    let reasons = fields
+        .remove("runtime_session_replaced_reasons")
+        .filter(Value::is_array)
+        .unwrap_or_else(|| serde_json::json!([]));
+    let message = replaced::message(actor_id, &reasons);
+    Some(serde_json::json!({"at": at, "reasons": reasons, "message": message}))
+}
+
 pub fn actor_fields(home: &HomeLayout, group_id: &str, actor_id: &str) -> Map<String, Value> {
     let acp = selected_acp(home, group_id, actor_id).ok().flatten();
     let path = surface_path(home, group_id, actor_id, acp);

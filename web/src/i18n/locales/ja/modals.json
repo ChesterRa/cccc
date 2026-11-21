@@ -926,6 +926,7 @@
     "skipped_one": "{{count}} 件の記録を表示できません。",
     "skipped_other": "{{count}} 件の記録を表示できません。",
     "writeFailed": "一部の記録が保存されていない可能性があります。",
+    "startUntrusted": "Claude Code が Chet の作業フォルダ {{workspace}} をまだ信頼していません。同じ Claude のインストールと設定フォルダで、そのフォルダで一度 Claude を開き、信頼の確認を承認してから、もう一度送信してください。",
     "you": "あなた",
     "sourceTranscript": "音声の文字起こし",
     "voiceRunHint": "この通話での Chet の音声の文字起こしです。保存された文字の結果は別に表示されます。",

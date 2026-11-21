@@ -958,6 +958,9 @@ pub(super) fn lifecycle_leading(
         "actor_lifecycle", group_id = %group_id, actor_id = %actor_id, action = kind
     )
     .entered();
+    // The saved-conversation note before a start, to tell whether this start replaced it.
+    let replaced_before = matches!(kind, "actor.start" | "actor.restart")
+        .then(|| super::runtime_session::replaced_at(home, &group_id, &actor_id));
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     let action = match kind {
         "actor.start" => ActorAction::Start,
@@ -1147,10 +1150,14 @@ pub(super) fn lifecycle_leading(
         }
     }
     let actor = actor_runtime::actor_response(home, &group_id, &actor);
-    object(
-        json!({"runtime_confirmation_required":actor["runtime_confirmation_required"],
-        "actor": actor, "event": event, "runtime": status}),
-    )
+    let mut response = json!({"runtime_confirmation_required":actor["runtime_confirmation_required"],
+        "actor": actor, "event": event, "runtime": status});
+    if let Some(replaced) = replaced_before.as_ref().and_then(|before| {
+        super::runtime_session::replaced_since(home, &group_id, &actor_id, before)
+    }) {
+        response["runtime_session_replaced"] = replaced;
+    }
+    object(response)
 }
 
 /// A restart replaces the session: what it may hold is not sent again. A DeepSeek

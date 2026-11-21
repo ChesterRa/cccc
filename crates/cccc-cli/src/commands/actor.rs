@@ -241,7 +241,23 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: ActorArgs) -> R
             }
         }
     };
+    note_session_replaced(&response);
     print(response)
+}
+
+/// A start that began a new conversation instead of the saved one says so where the
+/// operator is looking, on stderr so the JSON result stays parseable.
+fn note_session_replaced(response: &cccc_contracts::DaemonResponse) {
+    if !response.ok {
+        return;
+    }
+    if let Some(message) = response
+        .result
+        .get("runtime_session_replaced")
+        .and_then(|replaced| replaced["message"].as_str())
+    {
+        eprintln!("Note: {message}");
+    }
 }
 
 fn expect_ok(response: &cccc_contracts::DaemonResponse) -> Result<Value> {

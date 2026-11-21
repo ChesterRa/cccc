@@ -36,6 +36,7 @@ import {
 } from "./actorSecretManagerModel";
 import { formatRuntimeCommand } from "./runtimeProfileControlsModel";
 import { revealRuntimeConfirmation } from "../../hooks/runtimeConfirmation";
+import { noticeRuntimeSessionReplaced } from "../../hooks/runtimeSessionReplacedNotice";
 
 export function useAppModalActorActions(args: {
   selectedGroupId: string;
@@ -650,6 +651,7 @@ export function useAppModalActorActions(args: {
           throw new Error(`${restartResp.error.code}: ${restartResp.error.message}`);
         }
         confirmationResult = restartResp.result;
+        noticeRuntimeSessionReplaced(String(editingActor.title || actorId), restartResp.result);
       }
 
       await refreshActors(targetGroupId);

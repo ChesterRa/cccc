@@ -71,7 +71,7 @@ pub(crate) fn claude_confirmation_launch(error: &io::Error) -> Option<&claude::C
 }
 
 /// The workspace Claude Code refused to launch in because its trust prompt was never accepted.
-pub(crate) fn untrusted_claude_workspace(error: &io::Error) -> Option<&std::path::Path> {
+pub fn untrusted_claude_workspace(error: &io::Error) -> Option<&std::path::Path> {
     claude::untrusted_workspace(error)
 }
 

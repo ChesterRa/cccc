@@ -159,6 +159,8 @@ pub(crate) struct CodexVoiceSessions {
     cleanup_gate: Arc<Mutex<()>>,
     chet_preparing: Arc<StdMutex<std::collections::HashSet<uuid::Uuid>>>,
     chet_history_write_failed: Arc<AtomicBool>,
+    /// A recognized reason the last Chet start failed, shown until Chet runs.
+    chet_start_problem: Arc<StdMutex<Option<serde_json::Value>>>,
     process_recovery: Option<crate::VoiceProcessRecovery>,
 }
 

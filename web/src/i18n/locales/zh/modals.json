@@ -926,6 +926,7 @@
     "skipped_one": "有 {{count}} 条记录无法显示。",
     "skipped_other": "有 {{count}} 条记录无法显示。",
     "writeFailed": "部分记录可能未保存。",
+    "startUntrusted": "Claude Code 还没有信任 Chet 的工作目录 {{workspace}}。请用同一个 Claude 安装和设置目录，在该目录里打开一次 Claude，接受信任提示，然后重新发送。",
     "you": "你",
     "sourceTranscript": "语音转写",
     "voiceRunHint": "Chet 在这次通话中的语音转写。文字结果若已保存，会单独显示。",

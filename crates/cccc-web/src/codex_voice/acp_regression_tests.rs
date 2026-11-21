@@ -657,6 +657,13 @@ async fn chet_http_reports_a_known_pre_admission_failure() {
             .iter()
             .any(|r| matches!(r["kind"].as_str(), Some("receipt" | "result")))
     );
+    let (status, live) = fixture
+        .request("GET", "/api/v1/chet/status", json!(null))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    // A cause CCCC does not recognize by type shows no provider text at all.
+    assert!(live["result"]["start_problem"].is_null());
+    assert!(!live.to_string().contains("devin"));
     let (_, retry) = fixture.request("POST", "/api/v1/chet/inputs", body).await;
     assert_eq!(retry["result"]["registration"], "existing");
     fixture.stop().await;

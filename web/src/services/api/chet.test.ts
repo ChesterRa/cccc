@@ -166,6 +166,33 @@ it("rejects a malformed status rather than guessing live work", async () => {
     },
   });
   expect(await fetchChetStatus()).toMatchObject({ ok: true, result: { owner_busy: false } });
+  respond({
+    ok: true,
+    result: {
+      generation: null,
+      preparing: [],
+      queued: [],
+      working: [],
+      history_write_failed: false,
+      start_problem: { code: "claude_workspace_untrusted", workspace: "/w" },
+    },
+  });
+  expect(await fetchChetStatus()).toMatchObject({
+    ok: true,
+    result: { start_problem: { code: "claude_workspace_untrusted", workspace: "/w" } },
+  });
+  respond({
+    ok: true,
+    result: {
+      generation: null,
+      preparing: [],
+      queued: [],
+      working: [],
+      history_write_failed: false,
+      start_problem: { code: "provider_text", workspace: "/w", detail: "secret" },
+    },
+  });
+  expect((await fetchChetStatus()).ok).toBe(false);
 });
 
 it("posts the ID with the request and reads only the two registrations", async () => {

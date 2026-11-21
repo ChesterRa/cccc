@@ -204,6 +204,55 @@ async fn declared_context_tools_preserve_authority_recovery_and_query_semantics(
         .await;
         assert_eq!(payload(&state)["agent_state"]["hot"]["focus"], "fixture");
         assert!(payload(&state)["agent_state"].get("warm").is_none());
+        // A bound member reads another member's state by naming it; writes stay its own.
+        payload(
+            &tool(
+                &home,
+                id,
+                "lead",
+                "cccc_agent_state",
+                json!({"action":"update","focus":"lead fixture"}),
+            )
+            .await,
+        );
+        let other = tool(
+            &home,
+            id,
+            "peer",
+            "cccc_agent_state",
+            json!({"action":"get","actor_id":"lead","include_warm":false}),
+        )
+        .await;
+        assert_eq!(payload(&other)["agent_state"]["id"], "lead");
+        assert_eq!(payload(&other)["agent_state"]["hot"]["focus"], "lead fixture");
+        payload(
+            &tool(
+                &home,
+                id,
+                "peer",
+                "cccc_agent_state",
+                json!({"action":"update","actor_id":"lead","focus":"peer again"}),
+            )
+            .await,
+        );
+        let lead = tool(
+            &home,
+            id,
+            "lead",
+            "cccc_agent_state",
+            json!({"action":"get","include_warm":false}),
+        )
+        .await;
+        assert_eq!(payload(&lead)["agent_state"]["hot"]["focus"], "lead fixture");
+        let own = tool(
+            &home,
+            id,
+            "peer",
+            "cccc_agent_state",
+            json!({"action":"get","include_warm":false}),
+        )
+        .await;
+        assert_eq!(payload(&own)["agent_state"]["hot"]["focus"], "peer again");
         let path = groups
             .group_dir(id)
             .expect("group dir")
@@ -793,3 +842,78 @@ async fn task_rows_filter_page_and_keep_the_task_version_through_the_daemon() {
 }
 
 cccc_daemon::session_owner_test_entry!();
+
+#[tokio::test]
+async fn bound_agent_state_read_ignores_a_different_runtime_actor() {
+    // A binding can run in a process whose environment names another actor. Only a target the
+    // caller gave may move the read; the environment's actor must not.
+    const CHILD: &str = "CCCC_AGENT_STATE_ENV_FIXTURE";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().expect("test exe"))
+            .args([
+                "--exact",
+                "bound_agent_state_read_ignores_a_different_runtime_actor",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("CCCC_ACTOR_ID", "lead")
+            .env_remove("CCCC_GROUP_ID")
+            .output()
+            .expect("isolated child");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let mut group = groups.create("agent state env", "").expect("group");
+    for id in ["lead", "peer"] {
+        cccc_core::actors::add(&mut group, cccc_contracts::Actor::new(id)).expect("actor");
+    }
+    groups.save(&group).expect("save group");
+    let daemon_home = home.clone();
+    let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    let client = cccc_client::DaemonClient::new(home.clone());
+    for _ in 0..100 {
+        let ping = cccc_contracts::DaemonRequest {
+            v: 1,
+            op: "ping".into(),
+            args: Default::default(),
+        };
+        if client.call(&ping).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let id = group.group_id.as_str();
+    for (actor, focus) in [("lead", "lead focus"), ("peer", "peer focus")] {
+        payload(
+            &tool(
+                &home,
+                id,
+                actor,
+                "cccc_agent_state",
+                json!({"action":"update","focus":focus}),
+            )
+            .await,
+        );
+    }
+    let own = tool(
+        &home,
+        id,
+        "peer",
+        "cccc_agent_state",
+        json!({"action":"get","include_warm":false}),
+    )
+    .await;
+    let state = &payload(&own)["agent_state"];
+    assert_eq!(state["id"], "peer");
+    assert_eq!(state["hot"]["focus"], "peer focus");
+    daemon_task.abort();
+    let _ = daemon_task.await;
+}
