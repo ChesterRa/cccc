@@ -5,4 +5,5 @@ mod proxy_connector;
 mod proxy_contract;
 mod proxy_fixture;
 mod proxy_process;
+mod proxy_system;
 mod transport;

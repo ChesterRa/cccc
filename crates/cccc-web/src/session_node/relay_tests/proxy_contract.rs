@@ -54,7 +54,10 @@ fn check(case: &str) {
         check_route();
         return;
     }
-    let selected = relay_proxy::select(&url::Url::parse(target).expect("target"));
+    let selected =
+        relay_proxy::select_with_system(&url::Url::parse(target).expect("target"), |_| {
+            Selection::Direct
+        });
     match case {
         "all" => {
             let Selection::Proxy(actual) = selected else {

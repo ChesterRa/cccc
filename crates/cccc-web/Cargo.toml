@@ -75,6 +75,9 @@ weixin-agent.workspace = true
 tokio-rustls.workspace = true
 tower.workspace = true
 
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+cccc-system-proxy = { version = "=0.4.58", path = "../cccc-system-proxy" }
+
 [build-dependencies]
 sha2.workspace = true
 

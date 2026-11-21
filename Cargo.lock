@@ -926,6 +926,7 @@ dependencies = [
  "cccc-pair-mcp",
  "cccc-pair-runtime",
  "cccc-pair-sherpa-onnx",
+ "cccc-system-proxy",
  "chromiumoxide",
  "chrono",
  "crc32fast",
@@ -967,6 +968,14 @@ dependencies = [
  "url",
  "uuid",
  "weixin-agent",
+]
+
+[[package]]
+name = "cccc-system-proxy"
+version = "0.4.58"
+dependencies = [
+ "core-foundation 0.10.1",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

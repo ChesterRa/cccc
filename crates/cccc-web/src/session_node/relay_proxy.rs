@@ -8,14 +8,16 @@ pub(super) enum Selection {
     Unavailable,
 }
 
-fn variable(upper: &str, lower: &str) -> String {
-    std::env::var(upper)
-        .or_else(|_| std::env::var(lower))
-        .unwrap_or_default()
+fn variable(upper: &str, lower: &str) -> Option<String> {
+    std::env::var(upper).or_else(|_| std::env::var(lower)).ok()
 }
 
 pub(super) fn select(relay: &Url) -> Selection {
-    let bypass = variable("NO_PROXY", "no_proxy");
+    select_with_system(relay, super::relay_proxy_system::select)
+}
+
+pub(super) fn select_with_system(relay: &Url, system: impl FnOnce(&Url) -> Selection) -> Selection {
+    let bypass = variable("NO_PROXY", "no_proxy").unwrap_or_default();
     // hyper-util 0.1.20's wildcard domain matcher does not cover IP literals.
     if cccc_core::local_network::is_loopback_url(relay)
         || bypass.split(',').any(|entry| entry.trim() == "*")
@@ -25,23 +27,33 @@ pub(super) fn select(relay: &Url) -> Selection {
     let Ok(target) = relay.as_str().parse() else {
         return Selection::Unavailable;
     };
+    // This placeholder is used only for NO_PROXY matching and is never dialed.
+    if Matcher::builder()
+        .all("http://unused.invalid")
+        .no(bypass)
+        .build()
+        .intercept(&target)
+        .is_none()
+    {
+        return Selection::Direct;
+    }
+    let protocol = if relay.scheme() == "https" {
+        variable("HTTPS_PROXY", "https_proxy")
+    } else {
+        variable("HTTP_PROXY", "http_proxy")
+    };
+    let all = variable("ALL_PROXY", "all_proxy");
+    if protocol.is_none() && all.is_none() {
+        return system(relay);
+    }
     let Some(proxy) = Matcher::from_env().intercept(&target) else {
-        let protocol = if relay.scheme() == "https" {
-            variable("HTTPS_PROXY", "https_proxy")
-        } else {
-            variable("HTTP_PROXY", "http_proxy")
-        };
-        let configured =
-            !protocol.trim().is_empty() || !variable("ALL_PROXY", "all_proxy").trim().is_empty();
-        // Reuse the library's NO_PROXY decision even when its proxy parser fails.
-        // This placeholder is used only for matching and is never dialed.
-        let bypassed = Matcher::builder()
-            .all("http://unused.invalid")
-            .no(bypass)
-            .build()
-            .intercept(&target)
-            .is_none();
-        return if configured && !bypassed {
+        // An explicit empty setting suppresses system fallback. Invalid or
+        // unsupported nonempty settings must never turn into public bare access.
+        return if protocol
+            .iter()
+            .chain(all.iter())
+            .any(|value| !value.trim().is_empty())
+        {
             Selection::Unavailable
         } else {
             Selection::Direct
