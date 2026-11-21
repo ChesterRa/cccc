@@ -236,6 +236,7 @@ cccc sessions node connect --server https://cccc.example.com
 ```
 
 - Rust 工具链固定 `1.91.0`，新网关使用 `iroh 1.4.1` 的 Minimal 配置与 AWS-LC；不连接默认公共 Relay、不做全网地址发布或广播发现。启用公网 Web 地址时，仅使用本实例穿透入口后的原生 Relay；保持同一协作账本。
+- 当票据或保存的路由同时包含 IP 和可用中继时，连接器先尝试常规拨号。QUIC 建连失败后，连接器用同一设备密钥重建本地端点，仅向中继拨这一次。失败会退避并恢复完整路由。已建立的会话继续运行，设备授权只在原生握手中确认。
 - 管理员在「接入会话 → 添加设备」选择原生应用并复制命令。远端运行 `cccc sessions node connect --runtime codex --ticket-stdin`。终端提示输入时，管理员在主机生成一次性配对码。远端粘贴后通过原生握手取得独立设备授权。每个码可登记一台新电脑，十分钟有效。Claude Code 使用 `--runtime claude`。
 - 再次连接时，同一 `CCCC_HOME` 运行 `cccc sessions node connect` 即可复用已保存的设备密钥和授权。撤销后需重新发码。旧脚本的 `join <地址>` 在设备密钥、主机身份和已保存的地址绑定都匹配时可恢复连接，其他情况在终端提示输入配对码。
 - 连接成功后终端显示 `Session node connected`。Ctrl-C 只关闭前台桥接。网关恢复时复用已保存的 UDP 端口，设备只导出该用户、该 `CCCC_HOME` 已登记的 Codex 和 Claude 会话。

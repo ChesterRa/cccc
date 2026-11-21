@@ -3,6 +3,7 @@
 mod broker;
 mod capabilities;
 mod client;
+mod client_dial;
 mod client_join;
 mod client_receive;
 mod hub;

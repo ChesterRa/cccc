@@ -3,6 +3,7 @@ pub(super) mod pairing_state;
 
 use super::{
     broker,
+    client_dial::Dialer,
     client_receive::run_session,
     network,
     protocol::{self, Request},
@@ -63,7 +64,7 @@ pub(super) async fn connect_observed(
     // Reserve before opening a second Hello: the hub replaces an older connection for the same key.
     let _owner_lock = pairing_state::reserve(home)?;
     pairing_state::ensure_current(home, saved.as_ref())?;
-    let relay_token = ticket.as_ref().and_then(|ticket| {
+    let mut relay_token = ticket.as_ref().and_then(|ticket| {
         ticket.relay_token.as_ref().map(|token| {
             format!(
                 "{}{}:{}",
@@ -77,14 +78,17 @@ pub(super) async fn connect_observed(
         Some(key) => key,
         None => network::key(home, "client")?,
     };
-    let (builder, destination) =
-        network::connect_builder(key, &endpoint_address, relay_token.as_deref())?;
-    let endpoint = builder.bind().await?;
+    let mut dialer = Dialer::bind(network::connect_builder(
+        key.clone(),
+        &endpoint_address,
+        relay_token.as_deref(),
+    )?)
+    .await?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
     let descriptor = ClientDescriptor {
         endpoint: endpoint_address,
         join_binding: None,
-        node_id: endpoint.id().to_string(),
+        node_id: key.public().to_string(),
         grant_id: String::new(),
         owner: NativeHost::capture(std::process::id())?,
         address: listener.local_addr()?,
@@ -114,11 +118,13 @@ pub(super) async fn connect_observed(
     let mut stop = std::pin::pin!(stop_signal());
     let mut announced_handshake = false;
     let result = loop {
+        let configure =
+            || network::connect_builder(key.clone(), &descriptor.endpoint, relay_token.as_deref());
         let connected = tokio::select! {
             _ = &mut stop => break Ok(()),
-            result = tokio::time::timeout(Duration::from_secs(15), endpoint.connect(destination.clone(), SESSION_NODE_ALPN)) => result,
+            result = dialer.connect(configure, backoff == 1) => result,
         };
-        if let Ok(Ok(connection)) = connected {
+        if let Some(connection) = connected {
             if !announced_handshake {
                 eprintln!("Encrypted connection established. Waiting for hub confirmation.");
                 announced_handshake = true;
@@ -137,7 +143,7 @@ pub(super) async fn connect_observed(
                 Ok(hello) => {
                     let peer: SessionNodePeer = serde_json::from_value(hello["peer"].clone())?;
                     ensure!(
-                        peer.node_id == endpoint.id().to_string(),
+                        peer.node_id == descriptor.node_id,
                         "Paired node identity mismatch"
                     );
                     let mut current = descriptor.clone();
@@ -151,6 +157,7 @@ pub(super) async fn connect_observed(
                     current.memberships = serde_json::from_value(hello["memberships"].clone())?;
                     pairing_state::commit(home, expected.as_ref(), &current)?;
                     invitation = None;
+                    relay_token = None;
                     *link.write().await = Some(connection.clone());
                     backoff = 1;
                     eprintln!(
@@ -192,7 +199,7 @@ pub(super) async fn connect_observed(
         backoff = (backoff * 2).min(15);
     };
     *link.write().await = None;
-    endpoint.close().await;
+    dialer.close().await;
     // Retain only the route and membership hints for explicit reconnect and
     // useful offline errors. A dead owner cannot authorize native tool calls.
     if let Ok(Some(current)) = session_nodes::saved_client(home) {

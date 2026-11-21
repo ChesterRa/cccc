@@ -1,5 +1,5 @@
 //! Real production connect/reconnect builder and CCCC Hello over the test-owned network.
-use super::super::{network, protocol};
+use super::super::{client_dial::Dialer, network, protocol};
 use super::proxy_fixture as wire;
 use cccc_contracts::session_node::*;
 use iroh::SecretKey;
@@ -83,24 +83,44 @@ pub(super) async fn run(case: &str) {
     if case != "http" {
         return;
     }
-    let (builder, destination) =
-        network::connect_builder(key, &route, None).expect("production reconnect route");
-    let builder = builder
-        .dns_resolver(wire::dns())
-        .ca_tls_config(wire::ca())
-        .net_report_config(probes);
-    let resumed = builder
-        .clear_ip_transports()
-        .bind()
+    // The first bind cannot trust the fixture CA, and its only IP candidate is a
+    // test-owned UDP sink. The replacement uses the same key, relay and HTTP proxy.
+    let sink = tokio::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("UDP sink");
+    route
+        .addresses
+        .push(sink.local_addr().expect("UDP address").to_string());
+    let configure = || {
+        let (builder, destination) = network::connect_builder(key.clone(), &route, None)?;
+        let builder = builder
+            .dns_resolver(wire::dns())
+            .net_report_config(probes.clone());
+        Ok::<_, anyhow::Error>((builder, destination))
+    };
+    let mut resumed = Dialer::bind(configure().expect("initial relay configuration"))
         .await
         .expect("resume endpoint");
     let connection = tokio::time::timeout(
-        Duration::from_secs(15),
-        resumed.connect(destination, SESSION_NODE_ALPN),
+        Duration::from_secs(45),
+        resumed.connect(
+            || {
+                let (builder, destination) = configure()?;
+                Ok((builder.ca_tls_config(wire::ca()), destination))
+            },
+            false,
+        ),
     )
     .await
-    .expect("resume deadline")
-    .expect("resume transport");
+    .expect("fallback deadline")
+    .expect("a fresh relay dial recovers the connection");
+    assert!(
+        connection
+            .paths()
+            .iter()
+            .any(|p| p.is_selected() && p.is_relay()),
+        "the resumed QUIC connection used the real relay"
+    );
     let hello = protocol::call(
         &connection,
         &protocol::Request::Hello {
