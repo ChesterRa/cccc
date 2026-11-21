@@ -8,12 +8,14 @@ export function SessionNodeDevices({
   revokeId,
   setRevokeId,
   revoke,
+  onChooseSessions,
 }: {
   devices: SessionNodeDevice[];
   busy: boolean;
   revokeId: string;
   setRevokeId: (id: string) => void;
   revoke: () => Promise<void>;
+  onChooseSessions: () => void;
 }) {
   const { t } = useTranslation("layout");
   if (!devices.length) return null;
@@ -41,6 +43,13 @@ export function SessionNodeDevices({
                 )}
               </span>
             </span>
+            {device.enabled === true &&
+              device.connected === true &&
+              revokeId !== device.node_id && (
+                <Button type="button" variant="outline" size="sm" onClick={onChooseSessions}>
+                  {t("sessionNodes.viewSessions")}
+                </Button>
+              )}
             {device.enabled &&
               (revokeId === device.node_id ? (
                 <div className="flex basis-full flex-wrap items-center justify-end gap-2">

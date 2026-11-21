@@ -1,22 +1,32 @@
-import { useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { LocalSessionsIcon } from "../../components/Icons";
 import { IconButton } from "../../components/ui/icon-button";
+import { SessionOverviewRequest } from "./useSessionDialogNavigation";
 import { LocalSessionsDialog } from "./LocalSessionsDialog";
 
 export function LocalSessionsButton({
   collapsed,
   isDark,
+  hubName,
   onSelectGroup,
 }: {
   collapsed: boolean;
   isDark: boolean;
+  hubName?: string;
   onSelectGroup: (id: string) => void;
 }) {
   const { t } = useTranslation("layout");
   const [open, setOpen] = useState(false);
+  const consumeOverview = useContext(SessionOverviewRequest);
+  useEffect(() => {
+    if (consumeOverview) {
+      setOpen(true);
+      consumeOverview();
+    }
+  }, [consumeOverview]);
   // A fixed key beside the Group list heading, so it neither scrolls away with many
   // Groups nor reads as one of them; collapsed, it sits under "new" as an icon.
   return (
@@ -47,6 +57,7 @@ export function LocalSessionsButton({
         createPortal(
           <LocalSessionsDialog
             isDark={isDark}
+            hubName={hubName}
             onClose={() => setOpen(false)}
             onSelectGroup={onSelectGroup}
           />,

@@ -12,7 +12,7 @@ export function clearSessionNodeJoinLink() {
 }
 
 /** Only copy a remote HTTPS origin that is also safe as a terminal argument. */
-function shareableOrigin(value: string | null | undefined): string | null {
+export function shareableSessionNodeOrigin(value: string | null | undefined): string | null {
   if (!value) return null;
   try {
     const url = new URL(value);
@@ -45,7 +45,8 @@ export function sessionNodeJoinCommand(
   advertised: string | null | undefined,
   browserOrigin: string,
 ) {
-  const origin = shareableOrigin(advertised) ?? shareableOrigin(browserOrigin);
+  const origin =
+    shareableSessionNodeOrigin(advertised) ?? shareableSessionNodeOrigin(browserOrigin);
   if (!origin) return null;
   // Bracketed IPv6 origins need quoting in shells such as zsh.
   return `cccc sessions node join ${origin.includes("[") ? `"${origin}"` : origin}`;

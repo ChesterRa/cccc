@@ -22,6 +22,8 @@ function verified(id: string, request: SessionNodeJoinDetail): boolean {
     typeof request.name === "string" &&
     !!request.name.trim() &&
     ["pending", "approved", "denied", "expired"].includes(request.status) &&
+    (request.status !== "approved" ||
+      (typeof request.node_id === "string" && !!request.node_id.trim())) &&
     (request.status !== "pending" ||
       (typeof request.user_code === "string" &&
         !!request.user_code.trim() &&

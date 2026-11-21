@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSessionNodeTicket } from "./useSessionNodeTicket";
 import {
   fetchPendingSessionNodeJoins,
@@ -14,7 +14,10 @@ export interface SessionNodeJoinDirectory {
   error: "forbidden" | "failed" | null;
 }
 
-export function useSessionNodes() {
+export function useSessionNodes(includeJoinRequests = true) {
+  const [directoryStatus, setDirectoryStatus] = useState<
+    "loading" | "ready" | "forbidden" | "failed"
+  >("loading");
   const [devices, setDevices] = useState<SessionNodeDevice[]>([]);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [join, setJoin] = useState<SessionNodeJoinDirectory | null>(null);
@@ -24,6 +27,13 @@ export function useSessionNodes() {
   const invitation = useSessionNodeTicket(setError);
   const [revokeId, setRevokeId] = useState("");
   const alive = useRef(true);
+  const [revision, setRevision] = useState(0);
+  const refreshDirectory = useCallback(() => {
+    // A previously connected key may be requesting a fresh grant. Verify it after approval.
+    setDevices([]);
+    setDirectoryStatus("loading");
+    setRevision((value) => value + 1);
+  }, []);
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
@@ -34,10 +44,15 @@ export function useSessionNodes() {
         const response = await fetchSessionNodes(controller.signal);
         if (cancelled) return;
         if (response.ok) {
+          setDirectoryStatus("ready");
           setLoadError("");
           setSupported(response.result.supported);
           setDevices(response.result.devices);
-          if (response.result.join_supported === true && response.result.supported) {
+          if (
+            includeJoinRequests &&
+            response.result.join_supported === true &&
+            response.result.supported
+          ) {
             const url = response.result.join_url ?? null;
             setJoin((previous) =>
               previous?.url === url ? previous : { url, pending: null, error: null },
@@ -69,11 +84,23 @@ export function useSessionNodes() {
           } else setJoin(null);
         } else {
           setJoin(null);
-          if (response.error.httpStatus === 404) setSupported(false);
-          else setLoadError(response.error.message);
+          setDevices([]);
+          setDirectoryStatus(
+            response.error.httpStatus === 401 || response.error.httpStatus === 403
+              ? "forbidden"
+              : "failed",
+          );
+          if (response.error.httpStatus === 404) {
+            setSupported(false);
+            setLoadError("");
+          } else setLoadError(response.error.message);
         }
       } catch (error) {
-        if (!cancelled) setLoadError(String(error));
+        if (!cancelled) {
+          setDevices([]);
+          setDirectoryStatus("failed");
+          setLoadError(String(error));
+        }
       }
       if (!cancelled) timer = setTimeout(() => void load(), 5000);
     };
@@ -84,7 +111,7 @@ export function useSessionNodes() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, []);
+  }, [includeJoinRequests, revision]);
 
   const revoke = async () => {
     setBusy(true);
@@ -109,6 +136,8 @@ export function useSessionNodes() {
   return {
     ...invitation,
     devices,
+    directoryStatus,
+    refreshDirectory,
     supported,
     join,
     error: error || loadError,

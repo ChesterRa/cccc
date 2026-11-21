@@ -4,14 +4,17 @@ import { useTranslation } from "react-i18next";
 import { ModalFrame } from "../../components/modals/ModalFrame";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { useTheme } from "../../hooks/useTheme";
+import { SessionNodeHubLabel } from "./SessionNodeProgress";
 import { SessionNodeJoinReview } from "./SessionNodeJoinReview";
 
 export function SessionNodeJoinDialog({
   requestId,
   onClose,
+  onChooseSessions,
 }: {
   requestId: string;
   onClose: () => void;
+  onChooseSessions: () => void;
 }) {
   const { t } = useTranslation("layout");
   const { isDark } = useTheme();
@@ -26,15 +29,22 @@ export function SessionNodeJoinDialog({
       surface="solid"
       titleId={titleId}
       title={
-        <h2 ref={title} tabIndex={-1} className="text-lg font-semibold outline-none">
-          {t("sessionNodes.joinReviewTitle")}
-        </h2>
+        <div className="min-w-0">
+          <SessionNodeHubLabel />
+          <h2 ref={title} tabIndex={-1} className="text-2xl font-semibold outline-none">
+            {t("localSessions.addDevice")}
+          </h2>
+        </div>
       }
       closeAriaLabel={t("common:close")}
-      panelClassName="w-full self-center max-w-[calc(100vw_-_2rem)] sm:max-w-md max-h-[88dvh]"
+      panelClassName="self-center w-[calc(100vw_-_1rem)] max-w-[554px] max-h-[calc(100dvh_-_1rem)] rounded-xl sm:max-h-[88dvh]"
     >
-      <div className="min-h-0 overflow-y-auto p-4 sm:p-6">
-        <SessionNodeJoinReview key={requestId} requestId={requestId} />
+      <div className="min-h-0 overflow-y-auto px-4 pt-3 pb-4 sm:px-6 sm:pb-5">
+        <SessionNodeJoinReview
+          key={requestId}
+          requestId={requestId}
+          onChooseSessions={onChooseSessions}
+        />
       </div>
     </ModalFrame>,
     document.body,

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import App from "./App";
 import { AuthGate } from "./components/AuthGate";
 import { PendingPageWorkUnloadGuard } from "./components/app/PendingPageWorkUnloadGuard";
 import { ConnectEmbeddedApp } from "./features/connect/ConnectEmbeddedApp";
 import { isConnectFramePath } from "./features/connect/protocol";
+import { SessionOverviewRequest } from "./features/localSessions/useSessionDialogNavigation";
 import { SessionNodeJoinDialog } from "./features/localSessions/SessionNodeJoinDialog";
 import {
   clearSessionNodeJoinLink,
@@ -16,8 +17,13 @@ import {
  */
 export function WebRoot({ pathname }: { pathname: string }) {
   const [requestId, setRequestId] = useState(linkedSessionNodeJoin);
+  const [openOverview, setOpenOverview] = useState(false);
+  const consumeOverview = useCallback(() => setOpenOverview(false), []);
   useEffect(() => {
-    const sync = () => setRequestId(linkedSessionNodeJoin());
+    const sync = () => {
+      setOpenOverview(false);
+      setRequestId(linkedSessionNodeJoin());
+    };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);
   }, []);
@@ -32,11 +38,21 @@ export function WebRoot({ pathname }: { pathname: string }) {
         <ConnectEmbeddedApp />
       ) : requestId !== null ? (
         <AuthGate key="device-review" requireAdmin>
-          <SessionNodeJoinDialog key={requestId} requestId={requestId} onClose={closeReview} />
+          <SessionNodeJoinDialog
+            key={requestId}
+            requestId={requestId}
+            onClose={closeReview}
+            onChooseSessions={() => {
+              setOpenOverview(true);
+              closeReview();
+            }}
+          />
         </AuthGate>
       ) : (
         <AuthGate>
-          <App />
+          <SessionOverviewRequest.Provider value={openOverview ? consumeOverview : null}>
+            <App />
+          </SessionOverviewRequest.Provider>
         </AuthGate>
       )}
     </>

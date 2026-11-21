@@ -21,13 +21,34 @@ export async function verifyEmptyDeviceFlow({
     key.split(".").reduce<unknown>((v, k) => (v as Record<string, unknown>)[k], enLayout) as string;
   const { click, button, row } = sessionPickerActions(t);
   const ticket = "synthetic-ticket-not-for-a-real-device";
+  let deviceOnline = false;
+  let sharedAddress: string | undefined;
   let complete!: (response: Response) => void;
   const request = vi.fn(async (_url: unknown, init?: RequestInit) => {
     if (init?.method === "POST")
       return new Promise<Response>((resolve) => {
         complete = resolve;
       });
-    return Response.json({ ok: true, result: { supported: true, devices: [] } });
+    if (String(_url).endsWith("/join/pending"))
+      return Response.json({ ok: true, result: { requests: [] } });
+    return Response.json({
+      ok: true,
+      result: {
+        supported: true,
+        join_supported: !!sharedAddress,
+        join_url: sharedAddress,
+        devices: deviceOnline
+          ? [
+              {
+                node_id: "connected-fixture",
+                name: "Fixture laptop",
+                enabled: true,
+                connected: true,
+              },
+            ]
+          : [],
+      },
+    });
   });
   vi.stubGlobal("fetch", request);
   const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -63,12 +84,15 @@ export async function verifyEmptyDeviceFlow({
       );
     }
     await click(button(enLayout.localSessions.addDevice));
+    expect(document.querySelector("[data-modal-header] bdi")).toBeNull();
     const preparation = document.querySelector(`section[aria-label="${labels.prepareTitle}"]`)!;
     expect(preparation).not.toBeNull();
     expect(preparation.textContent).toContain(labels.runtimeHint);
     const command = "cccc sessions node connect --runtime codex --ticket-stdin --name laptop";
+    expect(button(labels.create)).toBeUndefined();
+    expect(button(labels.ticketPromptReady)).toBeDefined();
     expect(
-      button(labels.copyConnectCommand).compareDocumentPosition(button(labels.create)) &
+      button(labels.copyConnectCommand).compareDocumentPosition(button(labels.ticketPromptReady)) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
     await click(button(labels.copyConnectCommand));
@@ -90,6 +114,8 @@ export async function verifyEmptyDeviceFlow({
     expect(write).toHaveBeenLastCalledWith(
       "cccc sessions node connect --runtime claude --ticket-stdin --name laptop",
     );
+    expect(button(labels.create)).toBeUndefined();
+    await click(button(labels.ticketPromptReady));
     write.mockRejectedValueOnce(new Error("clipboard denied"));
     await click(button(labels.create));
     expect(button(labels.preparing).disabled).toBe(true);
@@ -167,10 +193,17 @@ export async function verifyEmptyDeviceFlow({
     expect(button(labels.createAnother).disabled).toBe(true);
     await act(async () => finishCopy());
     expect(posts()).toBe(3);
+    expect(
+      Array.from(document.querySelectorAll("button")).some(
+        (entry) => entry.textContent === labels.viewSessions && !entry.closest("[hidden]"),
+      ),
+    ).toBe(false);
+    deviceOnline = true;
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    await click(button(labels.ticketManage));
     await click(
       Array.from(document.querySelectorAll("button")).find(
-        (entry) =>
-          entry.textContent === enLayout.localSessions.showSessions && !entry.closest("[hidden]"),
+        (entry) => entry.textContent === labels.viewSessions && !entry.closest("[hidden]"),
       )!,
     );
     expect(document.activeElement?.textContent).toBe(enLayout.localSessions.overviewTitle);
@@ -178,6 +211,10 @@ export async function verifyEmptyDeviceFlow({
     await act(async () => vi.advanceTimersByTimeAsync(3000));
     expect(document.body.textContent).not.toContain(enLayout.localSessions.listening);
     expect(row(source.title).textContent).toContain(source.cwd);
+    sharedAddress = "https://hub.example:8443";
+    await click(button(enLayout.localSessions.addDevice));
+    expect(document.querySelector("[data-modal-header] bdi")?.textContent).toBe("hub.example");
+    expect(button(labels.joinCopy).textContent).toBe(labels.copyCommandText);
   } finally {
     if (previousExec) Object.defineProperty(document, "execCommand", previousExec);
     else Reflect.deleteProperty(document, "execCommand");

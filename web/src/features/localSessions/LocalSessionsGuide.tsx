@@ -12,6 +12,7 @@ export function LocalSessionsGuide({
   onAddDevice,
   onShowHelp,
   onChooseSessions,
+  onAdvertisedUrl,
 }: {
   view: SessionDialogView;
   showEntryActions: boolean;
@@ -19,6 +20,7 @@ export function LocalSessionsGuide({
   onAddDevice: () => void;
   onShowHelp: () => void;
   onChooseSessions: () => void;
+  onAdvertisedUrl: (url: string | null) => void;
 }) {
   const { t } = useTranslation("layout");
   return (
@@ -48,7 +50,9 @@ export function LocalSessionsGuide({
       <div hidden={view !== "help"}>
         <LocalSessionsHelp request={request} onChooseSessions={onChooseSessions} />
       </div>
-      {view === "device" && <SessionNodesPanel onChooseSessions={onChooseSessions} />}
+      {view === "device" && (
+        <SessionNodesPanel onChooseSessions={onChooseSessions} onAdvertisedUrl={onAdvertisedUrl} />
+      )}
     </>
   );
 }

@@ -10,6 +10,7 @@ import { LocalSessionsSelection } from "./LocalSessionsSelection";
 import { LocalSessionsWelcome } from "./LocalSessionsWelcome";
 import { LocalSessionsConfirmation } from "./LocalSessionsConfirmation";
 import { MAX_SELECTED_SESSIONS, useLocalSessionsConnection } from "./useLocalSessionsConnection";
+import { SessionNodeHubLabel } from "./SessionNodeProgress";
 import { useSessionDialogNavigation } from "./useSessionDialogNavigation";
 
 export function LocalSessionsDialog({
@@ -17,13 +18,16 @@ export function LocalSessionsDialog({
   onClose,
   onSelectGroup,
   initialTargetGroupId,
+  hubName,
 }: {
   isDark: boolean;
   onClose: () => void;
   onSelectGroup: (id: string) => void;
   initialTargetGroupId?: string;
+  hubName?: string;
 }) {
   const { t } = useTranslation("layout");
+  const [advertisedUrl, setAdvertisedUrl] = useState<string | null>(null);
   const { modalRef } = useModalA11y(true, onClose);
   const navigation = useSessionDialogNavigation();
   const { view, navigate } = navigation;
@@ -39,7 +43,7 @@ export function LocalSessionsDialog({
   const panelWidth =
     view === "sessions" && !hasSources
       ? "sm:max-w-2xl"
-      : view === "device" || view === "help"
+      : view === "help"
         ? "sm:max-w-4xl"
         : "sm:max-w-3xl";
   const [helpRequest, setHelpRequest] = useState<LocalSessionsHelpRequest | null>(null);
@@ -63,26 +67,47 @@ export function LocalSessionsDialog({
           ? "localSessions.addDevice"
           : "localSessions.connectionHelp",
   );
+  const heading = (
+    <h2
+      ref={navigation.titleRef}
+      tabIndex={-1}
+      className={
+        view === "device"
+          ? "text-2xl font-semibold outline-none"
+          : "text-lg font-semibold outline-none"
+      }
+    >
+      {title}
+    </h2>
+  );
   return (
     <ModalFrame
       isDark={isDark}
       onClose={onClose}
       titleId="local-sessions-title"
       title={
-        <h2 ref={navigation.titleRef} tabIndex={-1} className="text-lg font-semibold outline-none">
-          {title}
-        </h2>
+        view === "device" ? (
+          <div className="min-w-0">
+            <SessionNodeHubLabel instanceName={hubName} advertisedUrl={advertisedUrl} />
+            {heading}
+          </div>
+        ) : (
+          heading
+        )
       }
       closeAriaLabel={t("common:close")}
       modalRef={modalRef}
       panelClassName={
-        view === "sessions" && !hasSources
-          ? "self-center h-auto max-h-[88dvh] w-full max-w-[calc(100vw_-_2rem)] sm:max-w-2xl"
-          : `h-[100dvh] w-full sm:h-auto sm:max-h-[88dvh] ${panelWidth}`
+        view === "device"
+          ? "self-center h-auto max-h-[calc(100dvh_-_1rem)] w-[calc(100vw_-_1rem)] max-w-[554px] rounded-xl sm:max-h-[88dvh]"
+          : view === "sessions" && !hasSources
+            ? "self-center h-auto max-h-[88dvh] w-full max-w-[calc(100vw_-_2rem)] sm:max-w-2xl"
+            : `h-[100dvh] w-full sm:h-auto sm:max-h-[88dvh] ${panelWidth}`
       }
       surface="solid"
       headerActions={
-        view !== "sessions" && (
+        view !== "sessions" &&
+        view !== "device" && (
           <Button
             variant="ghost"
             size="sm"
@@ -131,9 +156,14 @@ export function LocalSessionsDialog({
         aria-busy={connection.loading || connection.busy}
         data-lcd-scope
       >
-        <div className="space-y-5 p-4 sm:p-6">
+        <div
+          className={
+            view === "device" ? "min-w-0 px-4 pt-3 pb-4 sm:px-6 sm:pb-5" : "space-y-5 p-4 sm:p-6"
+          }
+        >
           <LocalSessionsGuide
             view={view}
+            onAdvertisedUrl={setAdvertisedUrl}
             showEntryActions={hasSources || !!connection.error}
             request={helpRequest}
             onAddDevice={() => navigate("device")}
