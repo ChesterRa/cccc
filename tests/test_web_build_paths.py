@@ -18,12 +18,22 @@ def _checkout(root: Path, name: str, *, packaged: bool) -> Path:
         encoding="utf-8",
     )
     shutil.copyfile(ROOT / "crates/cccc-web/build.rs", package / "build.rs")
-    # This dependency-free probe isolates asset paths/cache reuse. The real
-    # fingerprint emitter is exercised by the executable identity tests.
+    # Record when the actual Web build script runs. The real fingerprint
+    # emitter is exercised by the executable identity tests.
     identity = package.parent / "cccc-core/build_support"
     identity.mkdir(parents=True)
     (identity / "mod.rs").write_text(
-        "pub fn emit(_: &std::path::Path) -> std::io::Result<()> { Ok(()) }\n",
+        """use std::io::Write;
+
+pub fn emit(_: &std::path::Path) -> std::io::Result<()> {
+    let path = std::env::var_os("WEB_ASSETS_PROBE_LOG").expect("probe log path");
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(log, "run")
+}
+""",
         encoding="utf-8",
     )
     # Resolve relative paths from the package root, as RustEmbed does. Absolute
@@ -73,7 +83,12 @@ def test_shared_cargo_cache_embeds_the_current_checkout(
     first, second = [
         _checkout(tmp_path, name, packaged=packaged) for name in ("first", "second")
     ]
-    env = {**os.environ, "CARGO_TARGET_DIR": str(tmp_path / "target")}
+    build_log = tmp_path / "web-build-runs"
+    env = {
+        **os.environ,
+        "CARGO_TARGET_DIR": str(tmp_path / "target"),
+        "WEB_ASSETS_PROBE_LOG": str(build_log),
+    }
     env.pop("CCCC_FORCE_WEB_BUILD", None)
 
     def build(package: Path) -> str:
@@ -118,12 +133,7 @@ def test_shared_cargo_cache_embeds_the_current_checkout(
     frontend(second).write_text("frontend_second_updated", encoding="utf-8")
     assert build(second) == "backend_second:frontend_second_updated"
 
-    outputs = list(
-        (tmp_path / "target/release/build").glob("web-assets-probe-*/output")
-    )
-    before = {path: path.stat().st_mtime_ns for path in outputs}
+    before = build_log.read_bytes()
     assert before
     assert build(second) == "backend_second:frontend_second_updated"
-    assert {path: path.stat().st_mtime_ns for path in outputs} == before, (
-        "unchanged builds stay cached"
-    )
+    assert build_log.read_bytes() == before, "unchanged builds stay cached"
