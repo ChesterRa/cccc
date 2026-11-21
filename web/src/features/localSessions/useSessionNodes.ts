@@ -1,25 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { copyTextToClipboard } from "../../utils/copy";
+import { useSessionNodeTicket } from "./useSessionNodeTicket";
 import {
-  createSessionNodeInvitation,
   fetchSessionNodes,
   revokeSessionNode,
   type SessionNodeDevice,
 } from "../../services/api/sessionNodes";
 
 export function useSessionNodes() {
-  const { t } = useTranslation("layout");
   const [devices, setDevices] = useState<SessionNodeDevice[]>([]);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [copying, setCopying] = useState(false);
-  const [ticket, setTicket] = useState<{ ticket: string; expires_at: string } | null>(null);
-  const [ticketExpired, setTicketExpired] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const invitation = useSessionNodeTicket(setError);
   const [revokeId, setRevokeId] = useState("");
   const alive = useRef(true);
   useEffect(() => {
@@ -49,42 +42,6 @@ export function useSessionNodes() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!ticket) return;
-    const remaining = Date.parse(ticket.expires_at) - Date.now();
-    setTicketExpired(!Number.isFinite(remaining) || remaining <= 0);
-    if (!Number.isFinite(remaining) || remaining <= 0) return;
-    const timer = setTimeout(
-      () => {
-        setTicketExpired(true);
-        setCopied(false);
-      },
-      Math.min(remaining + 1, 2147483647),
-    );
-    return () => clearTimeout(timer);
-  }, [ticket]);
-
-  const create = async () => {
-    setCreating(true);
-    setCopied(false);
-    setBusy(true);
-    setError("");
-    try {
-      const response = await createSessionNodeInvitation();
-      if (!alive.current) return;
-      if (response.ok) {
-        setTicket(response.result);
-        setCopied(false);
-      } else setError(response.error.message);
-    } catch (error) {
-      if (alive.current) setError(String(error));
-    } finally {
-      if (alive.current) {
-        setBusy(false);
-        setCreating(false);
-      }
-    }
-  };
   const revoke = async () => {
     setBusy(true);
     setError("");
@@ -105,36 +62,14 @@ export function useSessionNodes() {
       if (alive.current) setBusy(false);
     }
   };
-  const copy = async () => {
-    if (
-      !ticket ||
-      Date.parse(ticket.expires_at) <= Date.now() ||
-      !Number.isFinite(Date.parse(ticket.expires_at))
-    )
-      return;
-    setError("");
-    setCopying(true);
-    const success = await copyTextToClipboard(ticket.ticket);
-    if (alive.current) {
-      setCopying(false);
-      setCopied(success && Date.parse(ticket.expires_at) > Date.now());
-      if (!success) setError(t("common:copyFailed"));
-    }
-  };
   return {
+    ...invitation,
     devices,
     supported,
     error: error || loadError,
-    busy,
-    creating,
-    copying,
-    ticket,
-    ticketExpired,
-    copied,
+    busy: busy || invitation.creating || invitation.copying,
     revokeId,
     setRevokeId,
-    create,
     revoke,
-    copy,
   };
 }

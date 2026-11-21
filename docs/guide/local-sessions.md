@@ -342,13 +342,16 @@ Receiver presence is ephemeral and reconnects after a daemon restart. Current na
 
 The LAN connector supports existing **Codex and Claude Code** sessions. Both computers need a CCCC build with session-node protocol 1 (Rust 1.91); Pi/OpenCode remain local-only. The **Connect sessions** entry opens a **Sessions** overview grouped by device. An empty directory uses a compact, content-sized window with **Set up this computer** and **Add device** action cards; there is no zero-selection action bar. Once sessions are available, device sections become bordered groups and the window grows only up to the viewport limit. It shows session names, applications, directories and receive status with normal-size text. **Set up this computer** and **Add device** open separate views in the same window; configuration instructions do not sit above the directory. Returning restores the overview scroll position and selections. Select sessions first, then choose **Add to Group** to select an existing Group or create a new one. Foreman and directory settings appear only in the new-Group confirmation. Selecting sources does not admit them: the final confirmation still waits for verified Group membership and rejects unavailable sources. Pairing alone creates no Group membership.
 
-1. On the hub Web, open **Connect sessions**, choose **Add device**, then **Create pairing ticket**. Keep the ticket private: it enrolls one computer and expires after ten minutes. This is a device ticket, separate from CCCC Connect's Group invitations.
-2. On the other computer, install the same CCCC build and run one interactive command under that computer's normal OS user and `CCCC_HOME`:
+1. On the hub Web, open **Connect sessions** and choose **Add device**. First install the same CCCC build on the other computer, then copy the connection command shown on the hub and run it interactively under that computer's normal OS user and `CCCC_HOME`:
 
    ```sh
    cccc sessions node connect --runtime codex --ticket-stdin --name laptop
    # Or use --runtime claude for Claude Code.
    ```
+
+   Wait for the ticket paste prompt before generating a code. This keeps installation time from consuming its expiry and avoids overwriting the ticket with a later command copy.
+
+2. On the hub, choose **Generate and copy pairing ticket**. The first successful request immediately attempts to copy it. If the browser blocks copying, the valid ticket stays in memory: choose **Copy pairing ticket** to retry with a fresh click, without generating another. An expired ticket can be generated and copied again with one click; choose **New ticket for another device** explicitly when pairing the next computer. Keep the ticket private: it enrolls one computer and expires after ten minutes. This is a device ticket, separate from CCCC Connect's Group invitations.
 
    Paste the ticket at the command's prompt; never put it in arguments, shell commands, heredocs or scripts. With `--runtime codex|claude`, the CLI validates the ticket, rejects an already-running connector and checks the existing daemon's direct/relay capability before reusing `sessions enable` for the selected application. Invalid input or failed preflight does not configure the application. Setup failure prevents pairing, but the existing enable operation may have partially changed configuration; inspect its error before retrying. If setup succeeds and connection later fails, that integration remains enabled: the CLI reports the stage and does not automatically disable it. No hook trust, native application/model launch, restart or Group admission is automated. The runtime flag enables configuration; it does not restrict the connector's existing Codex/Claude source export.
 
