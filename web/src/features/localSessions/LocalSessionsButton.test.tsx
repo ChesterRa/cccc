@@ -88,6 +88,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   useGroupStore.setState(useGroupStore.getInitialState(), true);
+  useUIStore.getState().dismissNotice();
   useUIStore.setState(useUIStore.getInitialState(), true);
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -100,6 +101,8 @@ const {
   checkbox,
   target,
   foreman,
+  expectOverview,
+  expectSelectedDetails,
   chooseForeman,
   chooseTarget,
   primary,
@@ -141,33 +144,26 @@ it("can open the existing session picker with the current Group already selected
   expect(target().textContent).toContain("Existing Group");
 });
 
-it("discovers only when opened and creates a new Group with a separate selection count", async () => {
+it("discovers on demand and requires an explicit target before creating a new Group", async () => {
   const select = vi.fn();
+  useGroupStore.setState({ groups: [], selectedGroupId: "" });
   await mount(select);
   expect(mocks.fetch).not.toHaveBeenCalled();
   const entry = button("Connect sessions");
-  expect(entry.title).toBe("Connect sessions");
   await click(entry);
   expect(host.querySelector('[role="dialog"]')).toBeNull();
-  expect(document.querySelector('[role="dialog"]')?.getAttribute("aria-labelledby")).toBe(
-    "local-sessions-title",
-  );
-  expect(document.getElementById("local-sessions-title")?.textContent).toBe(
-    enLayout.localSessions.overviewTitle,
-  );
-  expect(document.body.textContent).toContain(source.title);
-  expect(document.body.textContent).toContain(source.cwd);
-  expect(row(source.title).closest("section")?.textContent).toContain(
-    enLayout.localSessions.thisDevice,
-  );
-  expect(row(source.title).textContent).toContain(enLayout.localSessions.ready);
-  expect(document.querySelector('[role="radiogroup"]')).toBeNull();
-  expect(target()).toBeNull();
-  expect(foreman()).toBeNull();
-  expect(document.body.textContent).toContain("Selected sessions: 0 / 16");
-  expect(primary().disabled).toBe(true);
+  expectOverview(source);
+  await act(async () => {
+    useGroupStore.setState({ groups: [existingGroup] });
+  });
   await click(checkbox(source.title));
   expect(document.body.textContent).toContain("Selected sessions: 1 / 16");
+  await reviewSelection();
+  expect(primary().disabled).toBe(true);
+  await submitSelection();
+  expect(mocks.create).not.toHaveBeenCalled();
+  expect(mocks.join).not.toHaveBeenCalled();
+  await chooseTarget("");
   await submitSelection();
   expect(mocks.create).toHaveBeenCalledWith([source.source_id]);
   expect(mocks.join).not.toHaveBeenCalled();
@@ -197,11 +193,7 @@ it("announces discovery loading instead of claiming that the session directory i
 
 it("shows an empty directory as still watching, with the supported apps and described entry rows", async () => {
   mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [] } });
-  await verifyEmptyDeviceFlow({
-    open,
-    source,
-    showSources: () => mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } }),
-  });
+  await verifyEmptyDeviceFlow(open);
 });
 
 it("explains an empty directory without creating a Group or enabling an empty submission", async () => {
@@ -225,6 +217,7 @@ it("explains an empty directory without creating a Group or enabling an empty su
 });
 
 it("shows first-selected defaults only for a new Group", async () => {
+  useGroupStore.setState({ groups: [], selectedGroupId: "", groupDoc: null });
   mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
   await open();
   expect(target()).toBeNull();
@@ -273,7 +266,7 @@ it("submits the explicitly chosen Foreman first, keeping the other selections an
   expect(foreman()).toBeNull();
   await click(checkbox(source.title));
   await click(checkbox(third.title));
-  await reviewSelection();
+  await chooseTarget("");
   expect(foreman()?.dataset.value).toBe(second.source_id);
   await click(foreman());
   expect(
@@ -348,13 +341,17 @@ it("preserves selection order across targets and offline polls, then joins the e
   await click(target());
   expect(
     Array.from(document.querySelectorAll('[role="menuitemradio"]')).map((item) => item.textContent),
-  ).toEqual([expect.stringContaining("+ New Group"), "Existing Group", "g-untitled"]);
+  ).toEqual(["Existing Group", "g-untitled"]);
+  expect((document.activeElement as HTMLElement).dataset.value).toBe(existingGroup.group_id);
+  expect(primary().disabled).toBe(true);
+  expect(mocks.create).not.toHaveBeenCalled();
+  expect(mocks.join).not.toHaveBeenCalled();
   await act(async () => {
     document.activeElement?.dispatchEvent(
       new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
     );
   });
-  expect((document.activeElement as HTMLElement).dataset.value).toBe(existingGroup.group_id);
+  expect((document.activeElement as HTMLElement).dataset.value).toBe("g-untitled");
   await act(async () => {
     document.activeElement?.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
@@ -367,9 +364,7 @@ it("preserves selection order across targets and offline polls, then joins the e
   await click(document.querySelector('[role="menuitemradio"][data-value="g-existing"]'));
   expect(primary().disabled).toBe(false);
   expect(document.querySelector('section[aria-label="New Group defaults"]')).toBeNull();
-  expect(document.querySelector('section[aria-label="Selected sessions"]')?.textContent).toContain(
-    second.title,
-  );
+  expectSelectedDetails([second.title, "laptop", "Claude Code", "This computer", "Codex"]);
   expect(document.body.textContent).not.toContain(enLayout.localSessions.groupHint);
   await chooseTarget("");
   expect(document.querySelector("section dd")?.textContent).toBe(second.title);
@@ -440,6 +435,9 @@ it("refreshes the real current Group and roster without re-enabling a paused mem
   const state = useGroupStore.getState();
   expect(select).toHaveBeenCalledExactlyOnceWith(existingGroup.group_id);
   expect(state.selectedGroupId).toBe(existingGroup.group_id);
+  expect(useUIStore.getState().notice).toEqual({
+    message: expect.stringContaining("Existing Group"),
+  });
   expect(state.groupDoc).toMatchObject(existingGroup);
   expect(state.groups).toEqual([existingGroup]);
   expect(state.actors).toEqual([paused, native]);
@@ -576,6 +574,7 @@ it.each(["missing", "disconnected"])(
     await open();
     await click(checkbox(source.title));
     await click(checkbox(second.title));
+    await chooseTarget("");
     mocks.fetch.mockResolvedValueOnce({
       ok: true,
       result: {
@@ -631,6 +630,7 @@ it("allows explicit removal of an unavailable selection without silently changin
   await click(checkbox(second.title));
   expect(document.body.textContent).toContain("Selected sessions: 1 / 16");
   expect(primary().disabled).toBe(false);
+  await chooseTarget("");
   await submitSelection();
   expect(mocks.create).toHaveBeenCalledExactlyOnceWith([source.source_id]);
 });
@@ -639,7 +639,7 @@ it.each(["new", "existing"])(
   "enforces the 16-session limit for the %s target without disabling removal",
   async (kind) => {
     const joining = kind === "existing";
-    const action = joining ? "Connect to Group" : "Create & connect";
+    const action = joining ? enLayout.localSessions.join : enLayout.localSessions.create;
     const sources = Array.from({ length: 17 }, (_, index) => ({
       ...source,
       source_id: `codex:session-${index}`,
@@ -656,7 +656,7 @@ it.each(["new", "existing"])(
     expect(checkbox(sources[16].title).disabled).toBe(false);
     await click(checkbox(sources[16].title));
     await reviewSelection();
-    if (joining) await chooseTarget(existingGroup.group_id);
+    await chooseTarget(joining ? existingGroup.group_id : "");
     await click(button(action));
     const sourceIds = sources.slice(1).map((item) => item.source_id);
     if (joining)
@@ -737,6 +737,7 @@ it("distinguishes Codex creation origins without merging sessions in the same di
   expect(row(ide.title).querySelector('[title="Session created from VS Code"]')).not.toBeNull();
   await click(checkbox(source.title));
   await click(checkbox(ide.title));
+  await chooseTarget("");
   await submitSelection();
   expect(mocks.create).toHaveBeenCalledExactlyOnceWith([source.source_id, ide.source_id]);
 });
@@ -754,12 +755,14 @@ it.each([undefined, "future-provider-origin"])(
 );
 
 it.each([
-  { count: 1, joining: false, action: "Create & connect", pending: "Creating & connecting…" },
-  { count: 2, joining: false, action: "Create & connect", pending: "Creating & connecting…" },
-  { count: 2, joining: true, action: "Connect to Group", pending: "Connecting…" },
+  { count: 1, joining: false },
+  { count: 2, joining: false },
+  { count: 2, joining: true },
 ])(
-  "announces $pending, prevents duplicates, and refreshes after closing without navigating away",
-  async ({ count, joining, action, pending: pendingLabel }) => {
+  "announces pending work for $count sessions (joining: $joining), prevents duplicates, and refreshes after closing",
+  async ({ count, joining }) => {
+    const action = joining ? enLayout.localSessions.join : enLayout.localSessions.create;
+    const pendingLabel = joining ? enLayout.localSessions.joining : enLayout.localSessions.creating;
     vi.useFakeTimers();
     let resolve!: (value: unknown) => void;
     mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
@@ -774,7 +777,7 @@ it.each([
     await click(checkbox(source.title));
     if (count === 2) await click(checkbox(second.title));
     await reviewSelection();
-    if (joining) await chooseTarget(existingGroup.group_id);
+    await chooseTarget(joining ? existingGroup.group_id : "");
     const submit = button(action);
     await act(async () => {
       submit.click();
@@ -817,7 +820,7 @@ it.each(["new", "existing"])(
     vi.useFakeTimers();
     const joining = kind === "existing";
     const mutate = joining ? mocks.join : mocks.create;
-    const action = joining ? "Connect to Group" : "Create & connect";
+    const action = joining ? enLayout.localSessions.join : enLayout.localSessions.create;
     mutate.mockResolvedValueOnce({ ok: false, error: { message: "Synthetic mutation failure" } });
     mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
     const select = vi.fn();
@@ -825,7 +828,7 @@ it.each(["new", "existing"])(
     await click(checkbox(second.title));
     await click(checkbox(source.title));
     await reviewSelection();
-    if (joining) await chooseTarget(existingGroup.group_id);
+    await chooseTarget(joining ? existingGroup.group_id : "");
     await click(button(action));
     expect(mocks.error).toHaveBeenCalledExactlyOnceWith("Synthetic mutation failure");
     expect(mutate).toHaveBeenCalledOnce();
@@ -926,7 +929,7 @@ it.each(flowLabels)(
     expect(primary().disabled).toBe(false);
     await click(checkbox(second.title));
     expect(primary().disabled).toBe(false);
-    await reviewSelection();
+    await chooseTarget("");
     expect(button(multiple).disabled).toBe(false);
     expect(foreman()?.getAttribute("aria-label")).toBe(i18n.t("actors:groupRoleForeman"));
     expect(document.body.textContent).toContain(count);

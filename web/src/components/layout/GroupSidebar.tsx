@@ -242,6 +242,7 @@ export function GroupSidebar({
   const localSessionsEntry = (collapsed: boolean) =>
     !readOnly && canAccessLocalSessions ? (
       <LocalSessionsButton
+        initialTargetGroupId={selectedGroupId || undefined}
         collapsed={collapsed}
         isDark={isDark}
         hubName={

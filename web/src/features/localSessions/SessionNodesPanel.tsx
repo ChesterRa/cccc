@@ -1,96 +1,104 @@
-import { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "../../components/ui/button";
+import { ActorConfigTabs } from "../../components/modals/ActorConfigTabs";
 import type { SessionNodeDevice } from "../../services/api/sessionNodes";
-import { SessionNodeDevices } from "./SessionNodeDevices";
+import { SessionNodeDirectoryNotice } from "./SessionNodeDirectoryNotice";
+import { SessionNodeManagement } from "./SessionNodeManagement";
 import { SessionNodePreparation } from "./SessionNodePreparation";
 import { useSessionNodes } from "./useSessionNodes";
 import { useSessionNodeTicket } from "./useSessionNodeTicket";
 
-type DirectoryActions = ReturnType<typeof useSessionNodes>;
+type PanelProps = { onChooseSessions: (device: SessionNodeDevice) => void };
 
-/** A loss of device-management access unmounts this view and discards its private ticket. */
-function DevicesWithAccess({
-  devices,
+/** Both tabs share one authorized directory and one in-memory ticket. */
+function DeviceViews({
   actions,
   onChooseSessions,
-}: {
-  devices: SessionNodeDevice[] | null;
-  actions: DirectoryActions;
-  onChooseSessions: () => void;
-}) {
+}: PanelProps & { actions: ReturnType<typeof useSessionNodes> }) {
   const { t } = useTranslation("layout");
-  const [managed, setManaged] = useState(false);
+  const [view, setView] = useState("pair");
+  const switcher = useRef<HTMLFieldSetElement>(null);
+  const [query, setQuery] = useState("");
   const [ticketError, setTicketError] = useState("");
   const invitation = useSessionNodeTicket(setTicketError, actions.forbid);
   const busy = actions.revoking || invitation.creating || invitation.copying;
-  // A temporary network failure disables actions but keeps any unexpired ticket for a retry.
-  if (!devices) return <p role="alert">{t("sessionNodes.directoryFailed")}</p>;
+  if (actions.directory.status !== "ready")
+    return <SessionNodeDirectoryNotice status={actions.directory.status} />;
   return (
-    <div className="min-w-0 space-y-3">
-      <SessionNodePreparation invitation={invitation} busy={busy} />
-      {ticketError && (
-        <p role="alert" className="text-sm text-[var(--color-danger)]">
-          {ticketError}
-        </p>
-      )}
-      {devices.length > 0 && (
-        <div className="border-t border-[var(--glass-border-subtle)]">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-expanded={managed}
-            className="-ml-2 mt-1 min-h-10 max-sm:min-h-11"
-            onClick={() => setManaged(!managed)}
-          >
-            <ChevronDown size={14} aria-hidden="true" className={managed ? "rotate-180" : ""} />
-            {t("sessionNodes.ticketManage")}
-          </Button>
-          {managed && (
-            <SessionNodeDevices
-              devices={devices}
-              busy={busy}
-              revokeId={actions.revokeId}
-              setRevokeId={actions.setRevokeId}
-              revoke={actions.revoke}
-              onChooseSessions={onChooseSessions}
-            />
-          )}
-        </div>
-      )}
-      {actions.revokeError && (
-        <p role="alert" className="text-sm text-[var(--color-danger)]">
-          {t("sessionNodes.revokeFailed")}
-        </p>
-      )}
-    </div>
+    <fieldset
+      ref={switcher}
+      disabled={busy}
+      className="min-w-0 border-0 p-0 [&_[role=tab]]:min-h-10 [&_[role=tab]]:flex-1 max-sm:[&_[role=tab]]:min-h-11"
+    >
+      <ActorConfigTabs
+        ariaLabel={t("localSessions.addDevice")}
+        activeId={view}
+        onChange={(next) => {
+          if (!busy) {
+            actions.setRevokeId("");
+            setView(next);
+          }
+        }}
+        tabs={[
+          {
+            id: "pair",
+            label: t("localSessions.addDevice"),
+            panel: (
+              <div className="min-w-0 space-y-3">
+                <SessionNodePreparation
+                  invitation={invitation}
+                  busy={busy}
+                  onChooseDeviceSessions={() => {
+                    setQuery("");
+                    actions.setRevokeId("");
+                    setView("devices");
+                    requestAnimationFrame(() =>
+                      switcher.current
+                        ?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')
+                        ?.focus({ preventScroll: true }),
+                    );
+                  }}
+                />
+                {ticketError && (
+                  <p role="alert" className="text-sm text-[var(--color-danger)]">
+                    {ticketError}
+                  </p>
+                )}
+              </div>
+            ),
+          },
+          {
+            id: "devices",
+            label: t("sessionNodes.devices"),
+            panel:
+              view === "devices" ? (
+                <SessionNodeManagement
+                  devices={actions.directory.devices}
+                  actions={actions}
+                  query={query}
+                  onSearch={setQuery}
+                  onChooseSessions={onChooseSessions}
+                />
+              ) : null,
+          },
+        ]}
+      />
+    </fieldset>
   );
 }
 
-export function SessionNodesPanel({ onChooseSessions }: { onChooseSessions: () => void }) {
-  const { t } = useTranslation("layout");
-  const actions = useSessionNodes();
+export function SessionNodesPanel({
+  onChooseSessions,
+  active = true,
+}: PanelProps & { active?: boolean }) {
+  const actions = useSessionNodes(active);
   const { directory } = actions;
-  if (directory.status === "ready" || directory.status === "failed")
-    return (
-      <DevicesWithAccess
-        devices={directory.status === "ready" ? directory.devices : null}
-        actions={actions}
-        onChooseSessions={onChooseSessions}
-      />
-    );
-  if (directory.status === "unsupported")
-    return (
-      <div role="status" className="space-y-1">
-        <h3 className="text-base font-semibold">{t("sessionNodes.backendUpgradeTitle")}</h3>
-        <p className="text-sm text-[var(--color-text-secondary)]">
-          {t("sessionNodes.upgradeRequired")}
-        </p>
-      </div>
-    );
-  if (directory.status === "loading")
-    return <p role="status">{t("sessionNodes.checkingBackend")}</p>;
-  return <p role="alert">{t("sessionNodes.adminRequired")}</p>;
+  // An outage retains the ticket for a retry. Losing access unmounts both tabs and discards it.
+  if (
+    directory.status === "ready" ||
+    directory.status === "failed" ||
+    directory.status === "rechecking"
+  )
+    return <DeviceViews actions={actions} onChooseSessions={onChooseSessions} />;
+  return <SessionNodeDirectoryNotice status={directory.status} />;
 }

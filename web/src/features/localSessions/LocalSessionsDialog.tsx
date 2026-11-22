@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Laptop } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "../../components/modals/ModalFrame";
@@ -9,8 +9,10 @@ import { LocalSessionsGuide } from "./LocalSessionsGuide";
 import { LocalSessionsSelection } from "./LocalSessionsSelection";
 import { LocalSessionsWelcome } from "./LocalSessionsWelcome";
 import { LocalSessionsConfirmation } from "./LocalSessionsConfirmation";
-import { MAX_SELECTED_SESSIONS, useLocalSessionsConnection } from "./useLocalSessionsConnection";
+import { useLocalSessionsConnection } from "./useLocalSessionsConnection";
+import { SessionNodesPanel } from "./SessionNodesPanel";
 import { SessionNodeHubLabel } from "./SessionNodeProgress";
+import type { SessionNodeDevice } from "../../services/api/sessionNodes";
 import { useSessionDialogNavigation } from "./useSessionDialogNavigation";
 
 export function LocalSessionsDialog({
@@ -27,15 +29,39 @@ export function LocalSessionsDialog({
   hubName?: string;
 }) {
   const { t } = useTranslation("layout");
+  const [deviceBrowser, setDeviceBrowser] = useState<SessionNodeDevice | "all" | null>(null);
+  const deviceScope = typeof deviceBrowser === "object" ? deviceBrowser : null;
   const { modalRef } = useModalA11y(true, onClose);
   const navigation = useSessionDialogNavigation();
   const { view, navigate } = navigation;
+  const deviceSessions = view === "sessions" && deviceBrowser !== null;
+  const compactDialog = view === "device" || deviceSessions || view === "group";
+  function openDeviceSessions(device: SessionNodeDevice) {
+    setDeviceBrowser(device);
+    navigate("sessions");
+  }
+  function backToDevices() {
+    setDeviceBrowser(null);
+    navigate("device");
+  }
   const connection = useLocalSessionsConnection({
     onClose,
     onSelectGroup,
     initialTargetGroupId,
     reviewing: view === "group",
+    deviceId: deviceScope?.node_id,
+    browsingDeviceSessions: view === "sessions" && !!deviceScope,
   });
+  const unjoinedDeviceSources = deviceScope
+    ? connection.displayedSources.filter((source) => !connection.members.has(source.source_id))
+    : [];
+  const deviceHint = !connection.displayedSources.length
+    ? "sessionNodes.noDeviceSessions"
+    : !connection.membersReady || !unjoinedDeviceSources.length
+      ? null
+      : unjoinedDeviceSources.some((source) => source.connected)
+        ? "sessionNodes.deviceSessionsHint"
+        : "sessionNodes.noDeviceSessions";
   const hasSources =
     connection.displayedSources.length > 0 || !!connection.directory.removed_sources?.length;
   const empty = !connection.loading && !connection.error && !hasSources;
@@ -55,13 +81,26 @@ export function LocalSessionsDialog({
     !connection.loading &&
     !connection.error &&
     connection.selected.length > 0 &&
-    connection.selected.length <= MAX_SELECTED_SESSIONS &&
+    connection.selected.length <= connection.selectionLimit &&
     connection.unavailableCount === 0;
+  const reviewAction = connection.targetPending
+    ? "localSessions.chooseTarget"
+    : connection.creatingGroup
+      ? connection.busy
+        ? "localSessions.creating"
+        : "localSessions.create"
+      : connection.busy
+        ? "localSessions.joining"
+        : "localSessions.join";
   const title = t(
     view === "sessions"
       ? "localSessions.overviewTitle"
       : view === "group"
-        ? "localSessions.chooseGroup"
+        ? connection.targetPending
+          ? "localSessions.chooseTarget"
+          : connection.creatingGroup
+            ? "createNewGroup"
+            : "localSessions.chooseGroup"
         : view === "device"
           ? "localSessions.addDevice"
           : "localSessions.connectionHelp",
@@ -97,7 +136,7 @@ export function LocalSessionsDialog({
       closeAriaLabel={t("common:close")}
       modalRef={modalRef}
       panelClassName={
-        view === "device"
+        compactDialog
           ? "self-center h-auto max-h-[calc(100dvh_-_1rem)] w-[calc(100vw_-_1rem)] max-w-[554px] rounded-xl sm:max-h-[88dvh]"
           : view === "sessions" && !hasSources
             ? "self-center h-auto max-h-[88dvh] w-full max-w-[calc(100vw_-_2rem)] sm:max-w-2xl"
@@ -105,45 +144,60 @@ export function LocalSessionsDialog({
       }
       surface="solid"
       headerActions={
-        view !== "sessions" &&
-        view !== "device" && (
+        (deviceSessions || view === "help") && (
           <Button
             variant="ghost"
             size="sm"
             className="text-sm max-sm:min-h-11"
-            aria-label={t("localSessions.backToSessions")}
-            onClick={() => navigate("sessions")}
+            aria-label={t(deviceSessions ? "sessionNodes.devices" : "localSessions.backToSessions")}
+            onClick={deviceSessions ? backToDevices : () => navigate("sessions")}
           >
             <ArrowLeft size={16} aria-hidden="true" />
-            <span className="hidden sm:inline">{t("localSessions.backToSessions")}</span>
+            <span className="hidden sm:inline">
+              {t(deviceSessions ? "sessionNodes.devices" : "localSessions.backToSessions")}
+            </span>
           </Button>
         )
       }
       footerActions={
         ((view === "sessions" && hasSources) || view === "group") && (
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <p role="status" className="text-sm text-[var(--color-text-secondary)]">
-              {t("localSessions.selectedCount", {
-                count: connection.selected.length,
-                limit: MAX_SELECTED_SESSIONS,
-              })}
-            </p>
+          <div
+            className={
+              view === "group"
+                ? "flex flex-wrap items-center justify-between gap-2"
+                : "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+            }
+          >
+            {view === "group" ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="min-h-11 text-sm"
+                disabled={connection.busy}
+                onClick={() => navigate("sessions")}
+              >
+                <ArrowLeft size={16} aria-hidden="true" />
+                {t("localSessions.backToSessions")}
+              </Button>
+            ) : (
+              <p role="status" className="text-sm text-[var(--color-text-secondary)]">
+                {t("localSessions.selectedCount", {
+                  count: connection.selected.length,
+                  limit: connection.selectionLimit,
+                })}
+              </p>
+            )}
             <Button
-              disabled={view === "sessions" ? !canContinue : !connection.canSubmit}
+              disabled={
+                view === "sessions"
+                  ? !canContinue
+                  : connection.targetPending || !connection.canSubmit
+              }
               aria-busy={connection.busy}
               onClick={() => (view === "sessions" ? navigate("group") : void connection.start())}
             >
-              {view === "sessions"
-                ? t("localSessions.continue")
-                : t(
-                    connection.joining
-                      ? connection.busy
-                        ? "localSessions.joining"
-                        : "localSessions.join"
-                      : connection.busy
-                        ? "localSessions.creating"
-                        : "localSessions.create",
-                  )}
+              {t(view === "sessions" ? "localSessions.continue" : reviewAction)}
             </Button>
           </div>
         )
@@ -160,16 +214,51 @@ export function LocalSessionsDialog({
             view === "device" ? "min-w-0 px-4 pt-3 pb-4 sm:px-6 sm:pb-5" : "space-y-5 p-4 sm:p-6"
           }
         >
+          {view === "sessions" && deviceScope && (
+            <div className="min-w-0 space-y-1.5 border-b border-[var(--glass-border-subtle)] pb-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Laptop size={16} aria-hidden="true" className="shrink-0" />
+                <span dir="auto" className="min-w-0 flex-1 break-words font-medium">
+                  {deviceScope.name}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDeviceBrowser("all")}
+                >
+                  {t("sessionNodes.allSessions")}
+                </Button>
+              </div>
+              {!connection.loading && !connection.error && deviceHint && (
+                <p
+                  role="status"
+                  className="text-sm leading-relaxed text-[var(--color-text-secondary)]"
+                >
+                  {t(deviceHint, { action: t("localSessions.continue"), device: deviceScope.name })}
+                </p>
+              )}
+            </div>
+          )}
           <LocalSessionsGuide
             view={view}
-            showEntryActions={hasSources || !!connection.error}
+            showEntryActions={deviceBrowser === null && (hasSources || !!connection.error)}
             request={helpRequest}
             onAddDevice={() => navigate("device")}
             onShowHelp={() => showHelp("setup")}
             onChooseSessions={() => navigate("sessions")}
           />
+          {(view === "device" || deviceBrowser !== null) && (
+            <div hidden={view !== "device"}>
+              <SessionNodesPanel active={view === "device"} onChooseSessions={openDeviceSessions} />
+            </div>
+          )}
           <div hidden={view !== "sessions"}>
-            {empty ? (
+            {empty && deviceScope ? null : empty && deviceBrowser === "all" ? (
+              <p role="status" className="py-3 text-sm text-[var(--color-text-secondary)]">
+                {t("localSessions.empty")}
+              </p>
+            ) : empty ? (
               <LocalSessionsWelcome
                 isDark={isDark}
                 onLocalSetup={() => showHelp("setup")}

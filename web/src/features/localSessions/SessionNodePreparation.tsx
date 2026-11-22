@@ -9,9 +9,11 @@ import type { useSessionNodeTicket } from "./useSessionNodeTicket";
 export function SessionNodePreparation({
   invitation,
   busy,
+  onChooseDeviceSessions,
 }: {
   invitation: ReturnType<typeof useSessionNodeTicket>;
   busy: boolean;
+  onChooseDeviceSessions: () => void;
 }) {
   const { t, i18n } = useTranslation("layout");
   const [runtime, setRuntime] = useState("codex");
@@ -59,6 +61,7 @@ export function SessionNodePreparation({
               type="button"
               className="min-h-10 max-sm:min-h-11 whitespace-normal text-sm"
               disabled={busy}
+              title={hasCurrentTicket && copied && !busy ? t("sessionNodes.copyTicket") : undefined}
               onClick={() => void copy()}
             >
               {t(
@@ -67,7 +70,9 @@ export function SessionNodePreparation({
                   : copying
                     ? "sessionNodes.copyingTicket"
                     : hasCurrentTicket
-                      ? "sessionNodes.copyTicket"
+                      ? copied
+                        ? "common:copied"
+                        : "sessionNodes.copyTicket"
                       : "sessionNodes.create",
               )}
             </Button>
@@ -84,9 +89,21 @@ export function SessionNodePreparation({
             )}
           </div>
           {copied && hasCurrentTicket && (
-            <p role="status" className="text-xs text-[var(--color-text-secondary)]">
-              {t("common:copied")}
-            </p>
+            <div className="space-y-1.5">
+              <p role="status" className="text-xs text-[var(--color-text-secondary)]">
+                {t("sessionNodes.ticketCopiedHint")}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-10 max-sm:min-h-11"
+                disabled={busy}
+                onClick={onChooseDeviceSessions}
+              >
+                {t("sessionNodes.selectDeviceSessions")}
+              </Button>
+            </div>
           )}
           {ticket && (
             <p role="status" className="text-xs text-[var(--color-text-secondary)]">

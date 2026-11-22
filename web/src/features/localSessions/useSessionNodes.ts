@@ -7,9 +7,9 @@ import {
 
 type Directory =
   | { status: "ready"; devices: SessionNodeDevice[] }
-  | { status: "loading" | "unsupported" | "forbidden" | "failed" };
+  | { status: "loading" | "rechecking" | "unsupported" | "forbidden" | "failed" };
 
-export function useSessionNodes() {
+export function useSessionNodes(active = true) {
   const [directory, setDirectory] = useState<Directory>({ status: "loading" });
   const [revokeId, setRevokeId] = useState("");
   const [revoking, setRevoking] = useState(false);
@@ -24,6 +24,15 @@ export function useSessionNodes() {
     setDirectory({ status: "forbidden" });
   }, []);
   useEffect(() => {
+    if (!active) {
+      // Preserve an authorized ticket while the device tabs are hidden, but verify access again before showing it.
+      setDirectory((current) =>
+        current.status === "ready" || current.status === "failed"
+          ? { status: "rechecking" }
+          : current,
+      );
+      return;
+    }
     alive.current = true;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
@@ -54,7 +63,7 @@ export function useSessionNodes() {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [forbid]);
+  }, [active, forbid]);
 
   async function revoke() {
     if (

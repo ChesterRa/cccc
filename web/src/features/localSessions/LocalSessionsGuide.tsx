@@ -2,7 +2,6 @@ import { CircleHelp, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { LocalSessionsHelp, type LocalSessionsHelpRequest } from "./LocalSessionsHelp";
-import { SessionNodesPanel } from "./SessionNodesPanel";
 import type { SessionDialogView } from "./useSessionDialogNavigation";
 
 export function LocalSessionsGuide({
@@ -48,7 +47,6 @@ export function LocalSessionsGuide({
       <div hidden={view !== "help"}>
         <LocalSessionsHelp request={request} onChooseSessions={onChooseSessions} />
       </div>
-      {view === "device" && <SessionNodesPanel onChooseSessions={onChooseSessions} />}
     </>
   );
 }

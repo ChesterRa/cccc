@@ -8,11 +8,18 @@ const runtimeNames: Record<string, string> = {
   opencode: "OpenCode",
 };
 
-export function LocalSessionOrigin({ source }: { source: LocalSessionSource }) {
+export function LocalSessionOrigin({
+  source,
+  showDevice = false,
+}: {
+  source: LocalSessionSource;
+  showDevice?: boolean;
+}) {
   const { t } = useTranslation("layout");
   const remote = source.origin?.startsWith("remote:") ? source.origin.slice(7) : null;
+  const location = showDevice ? remote || t("localSessions.thisDevice") : source.cwd;
   const origin =
-    !remote && source.runtime === "codex"
+    !showDevice && !remote && source.runtime === "codex"
       ? source.origin === "cli"
         ? "CLI"
         : source.origin === "vscode"
@@ -31,8 +38,8 @@ export function LocalSessionOrigin({ source }: { source: LocalSessionSource }) {
         </>
       )}
       <span aria-hidden="true">·</span>
-      <span className="min-w-0 truncate text-[var(--color-text-muted)]" title={source.cwd}>
-        {source.cwd}
+      <span className="min-w-0 truncate text-[var(--color-text-muted)]" title={location} dir="auto">
+        {location}
       </span>
     </span>
   );

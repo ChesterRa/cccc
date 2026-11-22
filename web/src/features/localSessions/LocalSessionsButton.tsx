@@ -10,11 +10,13 @@ export function LocalSessionsButton({
   collapsed,
   isDark,
   hubName,
+  initialTargetGroupId,
   onSelectGroup,
 }: {
   collapsed: boolean;
   isDark: boolean;
   hubName?: string;
+  initialTargetGroupId?: string;
   onSelectGroup: (id: string) => void;
 }) {
   const { t } = useTranslation("layout");
@@ -50,6 +52,7 @@ export function LocalSessionsButton({
           <LocalSessionsDialog
             isDark={isDark}
             hubName={hubName}
+            initialTargetGroupId={initialTargetGroupId}
             onClose={() => setOpen(false)}
             onSelectGroup={onSelectGroup}
           />,

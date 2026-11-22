@@ -2,59 +2,55 @@ import { act } from "react";
 import { expect, vi } from "vite-plus/test";
 import enLayout from "../../i18n/locales/en/layout.json";
 import enCommon from "../../i18n/locales/en/common.json";
-import type { LocalSessionSource } from "../../types";
 import { sessionPickerActions } from "./LocalSessionsButton.actions";
 
 /** Network and clipboard are boundaries; real dialog, hook, timer and controls run. */
-export async function verifyEmptyDeviceFlow({
-  open,
-  showSources,
-  source,
-}: {
-  open: () => Promise<void>;
-  showSources: () => void;
-  source: LocalSessionSource;
-}) {
+export async function verifyEmptyDeviceFlow(open: () => Promise<void>) {
   vi.useFakeTimers();
   const labels = enLayout.sessionNodes;
   const t = (key: string) =>
     key.split(".").reduce<unknown>((v, k) => (v as Record<string, unknown>)[k], enLayout) as string;
-  const { click, button, row } = sessionPickerActions(t);
+  const { click, button } = sessionPickerActions(t);
   const ticket = "synthetic-ticket-not-for-a-real-device";
-  let deviceOnline = false;
   let complete!: (response: Response) => void;
   const request = vi.fn(async (_url: unknown, init?: RequestInit) => {
     if (init?.method === "POST")
       return new Promise<Response>((resolve) => {
         complete = resolve;
       });
-    return Response.json({
-      ok: true,
-      result: {
-        supported: true,
-        devices: deviceOnline
-          ? [
-              {
-                node_id: "connected-fixture",
-                name: "Fixture laptop",
-                enabled: true,
-                connected: true,
-              },
-            ]
-          : [],
-      },
-    });
+    return Response.json({ ok: true, result: { supported: true, devices: [] } });
   });
   vi.stubGlobal("fetch", request);
   const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
   const previousExec = Object.getOwnPropertyDescriptor(document, "execCommand");
   const write = vi.fn(async (_value: string) => {});
+  const written: string[] = [];
+  class DeferredItem {
+    private data: Record<string, Promise<Blob>>;
+    constructor(data: Record<string, Promise<Blob>>) {
+      this.data = data;
+    }
+    async getType(type: string) {
+      return this.data[type];
+    }
+  }
+  vi.stubGlobal("ClipboardItem", DeferredItem);
+  const deferredWrite = vi.fn(async (items: ClipboardItem[]) => {
+    const blob = await items[0].getType("text/plain");
+    written.push(await blob.text());
+  });
   const posts = () => request.mock.calls.filter(([, init]) => init?.method === "POST").length;
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
-    value: { writeText: write },
+    value: { writeText: write, write: deferredWrite },
   });
   Object.defineProperty(document, "execCommand", { configurable: true, value: vi.fn(() => false) });
+  const generate = async (label: string, writes: number) => {
+    await act(async () => {
+      button(label).click();
+      expect(deferredWrite).toHaveBeenCalledTimes(writes);
+    });
+  };
   try {
     await open();
     const statuses = Array.from(
@@ -108,8 +104,9 @@ export async function verifyEmptyDeviceFlow({
       "cccc sessions node connect --runtime claude --ticket-stdin",
     );
     expect(posts()).toBe(0);
+    deferredWrite.mockRejectedValueOnce(new Error("clipboard denied immediately"));
     write.mockRejectedValueOnce(new Error("clipboard denied"));
-    await click(button(labels.create));
+    await generate(labels.create, 1);
     expect(button(labels.preparing).disabled).toBe(true);
     expect(preparation.getAttribute("aria-busy")).toBe("true");
     await click(button(labels.preparing));
@@ -135,9 +132,9 @@ export async function verifyEmptyDeviceFlow({
     expect(posts()).toBe(1);
     expect(document.querySelector('[role="alert"]')).toBeNull();
     expect(preparation.textContent).toContain(enCommon.copied);
-    write.mockRejectedValueOnce(new Error("clipboard denied"));
-    await click(button(labels.createAnother));
+    await generate(labels.createAnother, 2);
     expect(posts()).toBe(2);
+    expect(written).toEqual([]);
     const nextTicket = ticket + "-next-device";
     await act(async () =>
       complete(
@@ -147,12 +144,12 @@ export async function verifyEmptyDeviceFlow({
         }),
       ),
     );
-    expect(write).toHaveBeenLastCalledWith(nextTicket);
+    expect(written).toEqual([nextTicket]);
     await act(async () => vi.advanceTimersByTimeAsync(1001));
     expect(preparation.textContent).toContain(labels.ticketExpired);
     expect(button(labels.copyTicket)).toBeUndefined();
-    expect(document.querySelector('[role="alert"]')?.textContent).not.toContain(labels.copyTicket);
-    await click(button(labels.create));
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    await generate(labels.create, 3);
     expect(posts()).toBe(3);
     await act(async () =>
       complete(
@@ -165,7 +162,7 @@ export async function verifyEmptyDeviceFlow({
         }),
       ),
     );
-    expect(write).toHaveBeenLastCalledWith(ticket + "-renewed");
+    expect(written).toEqual([nextTicket, ticket + "-renewed"]);
     expect(preparation.textContent).not.toContain(labels.ticketExpired);
     let finishCopy!: () => void;
     write.mockImplementationOnce(
@@ -174,7 +171,10 @@ export async function verifyEmptyDeviceFlow({
           finishCopy = resolve;
         }),
     );
-    const copyButton = button(labels.copyTicket);
+    const copyButton = [...preparation.querySelectorAll<HTMLButtonElement>("button")].find(
+      (entry) => entry.title === labels.copyTicket,
+    )!;
+    expect(copyButton.textContent).toBe(enCommon.copied);
     const calls = write.mock.calls.length;
     await act(async () => {
       copyButton.click();
@@ -185,24 +185,77 @@ export async function verifyEmptyDeviceFlow({
     expect(button(labels.createAnother).disabled).toBe(true);
     await act(async () => finishCopy());
     expect(posts()).toBe(3);
-    expect(
-      Array.from(document.querySelectorAll("button")).some(
-        (entry) => entry.textContent === labels.viewSessions && !entry.closest("[hidden]"),
-      ),
-    ).toBe(false);
-    deviceOnline = true;
-    await act(async () => vi.advanceTimersByTimeAsync(5000));
-    await click(button(labels.ticketManage));
-    await click(
-      Array.from(document.querySelectorAll("button")).find(
-        (entry) => entry.textContent === labels.viewSessions && !entry.closest("[hidden]"),
-      )!,
+    vi.stubGlobal(
+      "ClipboardItem",
+      class {
+        constructor() {
+          throw new Error("Promise items unsupported");
+        }
+      },
     );
-    expect(document.activeElement?.textContent).toBe(enLayout.localSessions.overviewTitle);
-    showSources();
-    await act(async () => vi.advanceTimersByTimeAsync(3000));
-    expect(document.body.textContent).not.toContain(enLayout.localSessions.listening);
-    expect(row(source.title).textContent).toContain(source.cwd);
+    await click(button(labels.createAnother));
+    expect(posts()).toBe(4);
+    const fallbackTicket = ticket + "-fallback";
+    await act(async () =>
+      complete(
+        Response.json({
+          ok: true,
+          result: {
+            ticket: fallbackTicket,
+            expires_at: new Date(Date.now() + 10000).toISOString(),
+          },
+        }),
+      ),
+    );
+    expect(write).toHaveBeenLastCalledWith(fallbackTicket);
+    expect(posts()).toBe(4);
+    vi.stubGlobal("ClipboardItem", DeferredItem);
+    deferredWrite.mockRejectedValueOnce(new Error("clipboard denied before the hub responds"));
+    await click(button(labels.createAnother));
+    await act(async () =>
+      complete(
+        Response.json(
+          { ok: false, error: { code: "forbidden", message: "Fixture access lost" } },
+          { status: 403 },
+        ),
+      ),
+    );
+    expect(posts()).toBe(5);
+    expect(document.body.textContent).toContain(labels.adminRequired);
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    for (const [value, remaining, feedback] of [
+      ["expired-fixture", -1, labels.ticketExpired],
+      [" ", 10000, labels.ticketFailed],
+    ] as const) {
+      await click(button(labels.create));
+      await act(async () =>
+        complete(
+          Response.json({
+            ok: true,
+            result: { ticket: value, expires_at: new Date(Date.now() + remaining).toISOString() },
+          }),
+        ),
+      );
+      expect(document.body.textContent).toContain(feedback);
+    }
+    expect(posts()).toBe(7);
+    await click(button(labels.create));
+    expect(posts()).toBe(8);
+    await click(button(enCommon.close));
+    await act(async () =>
+      complete(
+        Response.json({
+          ok: true,
+          result: {
+            ticket: "cancelled-fixture",
+            expires_at: new Date(Date.now() + 10000).toISOString(),
+          },
+        }),
+      ),
+    );
+    expect(written).toEqual([nextTicket, ticket + "-renewed"]);
+    expect(write).toHaveBeenLastCalledWith(fallbackTicket);
+    expect(document.body.textContent).not.toContain("cancelled-fixture");
   } finally {
     if (previousExec) Object.defineProperty(document, "execCommand", previousExec);
     else Reflect.deleteProperty(document, "execCommand");

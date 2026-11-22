@@ -31,8 +31,36 @@ export function sessionPickerActions(translate: (key: string) => string) {
       `section[aria-label="${translate("localSessions.newGroupDefaults")}"] button[aria-haspopup="menu"]`,
     );
   }
+  function expectOverview(source: { title: string; cwd: string }) {
+    expect(button(translate("localSessions.connect")).title).toBe(
+      translate("localSessions.connect"),
+    );
+    expect(document.querySelector('[role="dialog"]')?.getAttribute("aria-labelledby")).toBe(
+      "local-sessions-title",
+    );
+    expect(document.getElementById("local-sessions-title")?.textContent).toBe(
+      translate("localSessions.overviewTitle"),
+    );
+    expect(document.body.textContent).toContain(source.title);
+    expect(document.body.textContent).toContain(source.cwd);
+    expect(row(source.title).closest("section")?.textContent).toContain(
+      translate("localSessions.thisDevice"),
+    );
+    expect(row(source.title).textContent).toContain(translate("localSessions.ready"));
+    expect(document.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(target()).toBeNull();
+    expect(foreman()).toBeNull();
+    expect(document.body.textContent).toContain("Selected sessions: 0 / 16");
+    expect(primary().disabled).toBe(true);
+  }
+  function expectSelectedDetails(details: string[]) {
+    const selected = document.querySelector(
+      `section[aria-label="${translate("localSessions.selectedSessions")}"]`,
+    );
+    for (const detail of details) expect(selected?.textContent).toContain(detail);
+  }
   async function chooseForeman(sourceId: string) {
-    await reviewSelection();
+    await chooseTarget("");
     await click(foreman());
     await click(
       Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find(
@@ -42,6 +70,7 @@ export function sessionPickerActions(translate: (key: string) => string) {
   }
   async function chooseTarget(groupId: string) {
     await reviewSelection();
+    if (groupId === "") return click(button(translate("localSessions.newConversation")));
     await click(target());
     await click(
       Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')).find(
@@ -50,17 +79,21 @@ export function sessionPickerActions(translate: (key: string) => string) {
     );
   }
   function primary() {
-    if (!target()) return button(translate("localSessions.continue"));
-    return button(
-      translate(target().dataset.value ? "localSessions.join" : "localSessions.create"),
+    const labels = ["continue", "chooseTarget", "join", "create"].map((key) =>
+      translate(`localSessions.${key}`),
     );
+    return [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+      .reverse()
+      .find((entry) => labels.includes(entry.textContent || ""))!;
   }
+  const reviewing = () =>
+    !!document.querySelector(`section[aria-label="${translate("localSessions.target")}"]`);
   async function reviewSelection() {
-    if (!target() && primary()) await click(primary());
+    if (!reviewing() && primary()) await click(primary()!);
   }
   async function submitSelection() {
     await reviewSelection();
-    if (target()) await click(primary());
+    if (reviewing()) await click(primary()!);
   }
   async function overview() {
     await click(button(translate("localSessions.backToSessions")));
@@ -72,6 +105,8 @@ export function sessionPickerActions(translate: (key: string) => string) {
     checkbox,
     target,
     foreman,
+    expectOverview,
+    expectSelectedDetails,
     chooseForeman,
     chooseTarget,
     primary,

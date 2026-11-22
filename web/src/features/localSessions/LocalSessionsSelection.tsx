@@ -2,10 +2,7 @@ import { LocalSourceManagement } from "./LocalSourceManagement";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
 import { LocalSessionsList } from "./LocalSessionsList";
-import {
-  MAX_SELECTED_SESSIONS,
-  type useLocalSessionsConnection,
-} from "./useLocalSessionsConnection";
+import type { useLocalSessionsConnection } from "./useLocalSessionsConnection";
 
 export function LocalSessionsSelection({
   connection,
@@ -39,7 +36,7 @@ export function LocalSessionsSelection({
         loading={connection.loading}
         busy={connection.busy}
         isDark={isDark}
-        limit={MAX_SELECTED_SESSIONS}
+        limit={connection.selectionLimit}
         onResume={connection.resume}
         directory={connection.directory}
         management={connection.management}
