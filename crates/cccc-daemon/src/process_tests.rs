@@ -114,6 +114,23 @@ async fn an_active_update_blocks_start_before_ping_spawn_and_process_tree_cleanu
 }
 
 #[tokio::test]
+async fn an_expired_startup_budget_is_rejected_before_attempting_process_creation() {
+    let temp = tempfile::tempdir().expect("fixture directory");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let launch = DetachedDaemon::new("must-not-be-executed", ["daemon", "run"]);
+    let error = launch
+        .start_supervised_until(&home, tokio::time::Instant::now())
+        .await
+        .expect_err("an expired request cannot attempt to launch its executable");
+    assert!(
+        error
+            .to_string()
+            .contains("startup deadline elapsed before process creation"),
+        "{error:#}"
+    );
+}
+
+#[tokio::test]
 async fn reports_a_child_that_exits_before_becoming_ready() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -138,6 +155,18 @@ fn failing_daemon() -> DetachedDaemon {
 }
 
 #[cfg(unix)]
+async fn supervised_fixture_pid(home: &HomeLayout) -> i32 {
+    loop {
+        if let Ok(text) = std::fs::read_to_string(home.root().join("alive.pid"))
+            && let Ok(pid) = text.trim().parse::<i32>()
+        {
+            return pid;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn cancelled_supervised_start_terminates_process_before_readiness() {
     use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
@@ -146,19 +175,9 @@ async fn cancelled_supervised_start_terminates_process_before_readiness() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("create home layout");
     let launch = DetachedDaemon::new("sh", ["-c", "echo $$ > alive.pid; exec sleep 60"]);
     let mut startup = Box::pin(launch.start_supervised(&home));
-    let ready = async {
-        loop {
-            if let Ok(text) = std::fs::read_to_string(home.root().join("alive.pid"))
-                && let Ok(pid) = text.trim().parse::<i32>()
-            {
-                return pid;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    };
     let pid = tokio::select! {
         result = &mut startup => panic!("fake daemon must not become ready: {result:?}"),
-        pid = tokio::time::timeout(Duration::from_secs(5), ready) => pid.expect("fixture value must be available"),
+        pid = tokio::time::timeout(Duration::from_secs(5), supervised_fixture_pid(&home)) => pid.expect("fixture value must be available"),
     };
     drop(startup);
     // The resource was registered before the asynchronous readiness loop.
@@ -175,4 +194,25 @@ async fn cancelled_supervised_start_terminates_process_before_readiness() {
             status => panic!("supervised child survived cancellation: {status:?}"),
         }
     }
+
+    std::fs::remove_file(home.root().join("alive.pid")).expect("discard the previous child marker");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    let mut startup = Box::pin(launch.start_supervised_until(&home, deadline));
+    let pid = tokio::select! {
+        result = &mut startup => panic!("the deadline fixture must start a real child: {result:?}"),
+        pid = tokio::time::timeout(Duration::from_secs(5), supervised_fixture_pid(&home)) => pid.expect("new fixture PID"),
+    };
+    let error = tokio::time::timeout(Duration::from_secs(3), startup)
+        .await
+        .expect("the inherited budget must not become a fresh 30 seconds")
+        .expect_err("the silent child cannot become ready");
+    assert!(
+        error.to_string().contains("failed to become ready"),
+        "{error:#}"
+    );
+    assert_eq!(
+        waitpid(Pid::from_raw(pid), Some(WaitPidFlag::WNOHANG)),
+        Err(nix::errno::Errno::ECHILD),
+        "deadline cleanup must terminate and reap its own child"
+    );
 }

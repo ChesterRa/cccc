@@ -23,6 +23,20 @@ fn home() -> (tempfile::TempDir, HomeLayout) {
     (temp, home)
 }
 
+fn tcp_address(listener: &tokio::net::TcpListener) -> DaemonAddress {
+    DaemonAddress {
+        v: 1,
+        transport: Transport::Tcp,
+        path: String::new(),
+        host: "127.0.0.1".into(),
+        port: listener.local_addr().expect("daemon address").port(),
+        pid: std::process::id(),
+        version: PRODUCT_VERSION.into(),
+        source_id: String::new(),
+        ts: String::new(),
+    }
+}
+
 // A daemon installs a process-wide guard that intentionally lasts for the
 // host's lifetime. Keep the test daemon in its own process so its guard cannot
 // outlive the fixture home in the test runner.
@@ -95,6 +109,12 @@ fn hold_daemon_lock(home: &HomeLayout) -> File {
 
 #[test]
 fn an_owned_daemon_is_announced_as_stopping_with_this_process() {
+    assert_eq!(
+        crate::host_state::DaemonState::for_launch(Some(37), || {
+            panic!("A retained owner must not wait for external process inspection")
+        }),
+        crate::host_state::DaemonState::StartedHere { pid: 37 }
+    );
     let line = ownership_line(true, None);
     assert!(line.contains("started by this process"), "{line}");
     assert!(line.contains("stops when this process exits"), "{line}");
@@ -103,6 +123,15 @@ fn an_owned_daemon_is_announced_as_stopping_with_this_process() {
 
 #[test]
 fn an_external_daemon_is_announced_with_its_pid_and_how_to_stop_it() {
+    let inspected = std::cell::Cell::new(false);
+    assert_eq!(
+        crate::host_state::DaemonState::for_launch(None, || {
+            inspected.set(true);
+            Some(35681)
+        }),
+        crate::host_state::DaemonState::External { pid: Some(35681) }
+    );
+    assert!(inspected.get(), "External identity must still be inspected");
     let line = ownership_line(false, Some(35681));
     assert!(line.contains("external pid 35681"), "{line}");
     assert!(line.contains("keeps running after exit"), "{line}");
@@ -272,17 +301,7 @@ async fn a_daemon_still_starting_is_adopted_once_it_answers() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("daemon listener");
-    let published = DaemonAddress {
-        v: 1,
-        transport: Transport::Tcp,
-        path: String::new(),
-        host: "127.0.0.1".into(),
-        port: listener.local_addr().expect("daemon address").port(),
-        pid: std::process::id(),
-        version: PRODUCT_VERSION.into(),
-        source_id: String::new(),
-        ts: String::new(),
-    };
+    let published = tcp_address(&listener);
     let daemon_home = home.clone();
     let daemon = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -328,6 +347,68 @@ async fn daemon_startup_wait_stops_when_the_embedded_daemon_exits() {
     .await
     .expect("startup wait ignored the embedded daemon exit signal");
     assert!(!ready, "an exited embedded daemon cannot become ready");
+}
+
+#[tokio::test]
+async fn startup_readiness_retries_a_silent_probe_and_rejects_a_late_answer() {
+    let (_temp, home) = home();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    std::fs::write(
+        cccc_client::address_path(&home),
+        serde_json::to_vec(&tcp_address(&listener)).expect("address"),
+    )
+    .expect("publish daemon");
+    let server = tokio::spawn(async move {
+        for step in 0..3 {
+            let (stream, _) = listener.accept().await.expect("ping connection");
+            let mut stream = BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).await.expect("ping request");
+            let request: cccc_contracts::DaemonRequest =
+                serde_json::from_str(&line).expect("request");
+            assert_eq!(request.op, "ping");
+            if step == 0 {
+                // A real silent exchange ends only when the probe closes its connection.
+                line.clear();
+                assert_eq!(stream.read_line(&mut line).await.expect("probe closes"), 0);
+                continue;
+            }
+            if step == 2 {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            let mut reply = serde_json::to_vec(&compatible_ping(json!({}))).expect("reply");
+            reply.push(b'\n');
+            if step == 1 {
+                stream.write_all(&reply).await.expect("compatible reply");
+            } else {
+                // The caller has already closed the intentionally late response.
+                let _ = stream.write_all(&reply).await;
+            }
+        }
+    });
+    let client = DaemonClient::new(home);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let ready = tokio::time::timeout(
+        Duration::from_secs(3),
+        super::wait_until_ready(&client, deadline),
+    )
+    .await
+    .expect("A silent ping must not consume the client's default 60 seconds");
+    assert!(
+        ready,
+        "Retry must allow the next compatible answer before the total deadline"
+    );
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(80);
+    assert!(
+        !super::wait_until_ready(&client, deadline).await,
+        "An answer arriving after the total deadline cannot make startup ready"
+    );
+    tokio::time::timeout(Duration::from_secs(3), server)
+        .await
+        .expect("fixture finishes")
+        .expect("server assertions");
 }
 
 #[tokio::test]
@@ -423,7 +504,6 @@ fn fake_daemon(
     seen
 }
 
-#[cfg(unix)]
 fn compatible_ping(extra: serde_json::Value) -> DaemonResponse {
     let mut result = json!({
         "implementation": "rust",

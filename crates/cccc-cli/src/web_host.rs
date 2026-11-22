@@ -99,10 +99,6 @@ impl Interface {
 // it starts.
 #[cfg(not(windows))]
 const DAEMON_SHUTDOWN_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
-// One attempt in the readiness poll, not a verdict: a miss schedules a retry
-// and only `DAEMON_READY_TIMEOUT` concludes anything.
-#[cfg(not(windows))]
-const DAEMON_READINESS_POLL_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(not(windows))]
 const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const WEB_INSTANCE_EXIT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -304,7 +300,8 @@ async fn launch_with(
             let _ = daemon_exit_tx.send(true);
             result
         }));
-        let readiness = DaemonClient::new(home.clone()).with_timeout(DAEMON_READINESS_POLL_TIMEOUT);
+        let readiness = DaemonClient::new(home.clone())
+            .with_timeout(daemon_lifecycle::DAEMON_READINESS_POLL_TIMEOUT);
         let ready = tokio::select! {
             ready = daemon_lifecycle::wait_until_ready_or_owner_exits(
                 &readiness, &mut daemon_exit_rx, DAEMON_READY_TIMEOUT,
@@ -346,10 +343,6 @@ async fn launch_with(
         .as_ref()
         .is_some_and(|daemon| !daemon.is_finished());
 
-    let external_pid = match daemon_slot {
-        DaemonSlot::Adopted { pid } => pid,
-        DaemonSlot::Vacant => crate::daemon_takeover::daemon_pid(&home),
-    };
     #[cfg(windows)]
     let owned_pid = detached_daemon
         .lock()
@@ -358,10 +351,13 @@ async fn launch_with(
         .map(|owner| owner.pid());
     #[cfg(not(windows))]
     let owned_pid = daemon_owned.then_some(std::process::id());
-    let daemon_state = if let Some(pid) = owned_pid {
-        DaemonState::StartedHere { pid }
-    } else {
-        DaemonState::External { pid: external_pid }
+    let daemon_state = DaemonState::for_launch(owned_pid, || match daemon_slot {
+        DaemonSlot::Adopted { pid } => pid,
+        DaemonSlot::Vacant => crate::daemon_takeover::daemon_pid(&home),
+    });
+    let external_pid = match &daemon_state {
+        DaemonState::External { pid } => *pid,
+        DaemonState::StartedHere { .. } => None,
     };
     let voice_recovery = crate::web_voice_recovery::new(&home, daemon_owned);
 
