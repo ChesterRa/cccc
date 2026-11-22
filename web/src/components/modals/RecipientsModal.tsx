@@ -147,6 +147,7 @@ export function RecipientsModal({
                 (messageMode !== "mail" || !entry.read) &&
                 !entry.replied &&
                 !entry.cancelled &&
+                entry.waitingReason !== "member_disabled" &&
                 !["accepted", "claimed"].includes(entry.deliveryState);
               const actionKey = `deliver:${entry.id}`;
               // An ambiguous delivery counts as handled, but it is not a confirmed success.

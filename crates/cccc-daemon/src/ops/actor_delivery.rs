@@ -34,6 +34,7 @@ const TERMINAL_SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_mil
 const TERMINAL_REPEAT_SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
 
 type Key = (String, String);
+type DeliveryKey = (String, String, String);
 
 pub(super) fn terminal_submit_sequence(actor: &Actor) -> &'static [&'static [u8]] {
     match actor.submit {
@@ -181,9 +182,42 @@ fn sender_notices() -> &'static Mutex<VecDeque<SenderNotice>> {
     NOTICES.get_or_init(|| Mutex::new(VecDeque::new()))
 }
 
-fn in_flight() -> &'static Mutex<HashSet<(String, String, String)>> {
-    static IN_FLIGHT: OnceLock<Mutex<HashSet<(String, String, String)>>> = OnceLock::new();
+fn in_flight() -> &'static Mutex<HashSet<DeliveryKey>> {
+    static IN_FLIGHT: OnceLock<Mutex<HashSet<DeliveryKey>>> = OnceLock::new();
     IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// A queue slot owned by the caller until it reaches a worker.
+struct DeliverySlot(Option<DeliveryKey>);
+
+impl DeliverySlot {
+    fn reserve(group_id: &str, actor_id: &str, event_id: &str) -> Result<Self, Offer> {
+        let key = (
+            group_id.to_owned(),
+            actor_id.to_owned(),
+            event_id.to_owned(),
+        );
+        let mut pending = in_flight().lock().map_err(|_| Offer::Refused)?;
+        if pending.insert(key.clone()) {
+            Ok(Self(Some(key)))
+        } else {
+            Err(Offer::AlreadyInFlight)
+        }
+    }
+
+    fn transfer(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for DeliverySlot {
+    fn drop(&mut self) {
+        if let Some(key) = &self.0
+            && let Ok(mut pending) = in_flight().lock()
+        {
+            pending.remove(key);
+        }
+    }
 }
 
 fn fenced() -> &'static Mutex<HashSet<Key>> {
@@ -441,7 +475,7 @@ fn write_job_state(
     )
 }
 
-fn clear_in_flight(mut remove: impl FnMut(&(String, String, String)) -> bool) {
+fn clear_in_flight(mut remove: impl FnMut(&DeliveryKey) -> bool) {
     if let Ok(mut pending) = in_flight().lock() {
         pending.retain(|item| !remove(item));
     }
@@ -717,14 +751,68 @@ pub fn dispatch_to(
     )
 }
 
+pub(super) struct ExplicitDeliveryTargets<'a> {
+    routes: &'a [(&'a Actor, &'static str)],
+    slots: HashMap<String, DeliverySlot>,
+}
+
+/// Reserve all worker slots before writing an explicit claim. A worker that
+/// already holds a slot may still be waiting to take its own claim.
+pub(super) fn reserve_explicit_deliveries<'a>(
+    group: &GroupDoc,
+    event: &Event,
+    routes: &'a [(&'a Actor, &'static str)],
+) -> Result<ExplicitDeliveryTargets<'a>, crate::dispatch::OpError> {
+    use crate::dispatch::OpError;
+    use serde_json::json;
+
+    let mut slots = HashMap::new();
+    for (actor, transport) in routes {
+        if held_for_switch(group, actor) || is_fenced(&group.group_id, &actor.id) {
+            let mut error = OpError::new(
+                "delivery_blocked",
+                format!("actor is switching runtime: {}", actor.id),
+            );
+            error.details.insert("actor_id".into(), json!(actor.id));
+            error
+                .details
+                .insert("reason".into(), json!("runtime_switch"));
+            return Err(error);
+        }
+        // The Web Model runtime consumes this claim through wait_next_turn.
+        if transport.starts_with("web_model") {
+            continue;
+        }
+        let slot = match DeliverySlot::reserve(&group.group_id, &actor.id, &event.id) {
+            Ok(slot) => slot,
+            Err(Offer::AlreadyInFlight) => {
+                let mut error = OpError::new(
+                    "delivery_in_progress",
+                    format!("message is already queued for actor: {}", actor.id),
+                );
+                error.details.insert("actor_id".into(), json!(actor.id));
+                return Err(error);
+            }
+            Err(_) => {
+                return Err(OpError::io(std::io::Error::other(
+                    "delivery queue unavailable",
+                )));
+            }
+        };
+        slots.insert(actor.id.clone(), slot);
+    }
+    Ok(ExplicitDeliveryTargets { routes, slots })
+}
+
 /// Offer work its caller already claimed, each on the channel that claimed it.
-pub fn dispatch_preclaimed(
+pub(super) fn dispatch_preclaimed(
     home: &HomeLayout,
     group: &GroupDoc,
     event: &Event,
-    claims: &[(&Actor, &'static str)],
+    claims: ExplicitDeliveryTargets<'_>,
 ) -> DispatchReport {
     let targets = claims
+        .routes
         .iter()
         .map(|(actor, _)| (*actor).clone())
         .collect::<Vec<_>>();
@@ -784,7 +872,7 @@ fn dispatch_to_inner(
     event: &Event,
     targets: &[Actor],
     force_ambiguous: bool,
-    claims: Option<&[(&Actor, &'static str)]>,
+    claims: Option<ExplicitDeliveryTargets<'_>>,
     source: DispatchSource<'_>,
 ) -> DispatchReport {
     dispatch_to_inner_outcome(home, group, event, targets, force_ambiguous, claims, source).report
@@ -796,7 +884,7 @@ fn dispatch_to_inner_outcome(
     event: &Event,
     targets: &[Actor],
     force_ambiguous: bool,
-    claims: Option<&[(&Actor, &'static str)]>,
+    mut claims: Option<ExplicitDeliveryTargets<'_>>,
     source: DispatchSource<'_>,
 ) -> DispatchOutcome {
     if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
@@ -861,8 +949,9 @@ fn dispatch_to_inner_outcome(
         if actor_online {
             online += 1;
         }
-        let claimed_on = claims.and_then(|claims| {
+        let claimed_on = claims.as_ref().and_then(|claims| {
             claims
+                .routes
                 .iter()
                 .find(|(claimed, _)| claimed.id == actor.id)
                 .map(|(_, transport)| *transport)
@@ -900,6 +989,23 @@ fn dispatch_to_inner_outcome(
             continue;
         }
         let claimed = preclaimed || actor.external_session_id.is_empty() || force_ambiguous;
+        let slot = if let Some(claims) = &mut claims {
+            claims.slots.remove(&actor.id)
+        } else if claimed && matches!(source, DispatchSource::Unread(_)) {
+            // A live managed worker may be about to reclaim a failed attempt.
+            // The unread scan cannot take that claim away from its consumer.
+            match DeliverySlot::reserve(&group.group_id, &actor.id, &event.id) {
+                Ok(slot) => Some(slot),
+                Err(Offer::AlreadyInFlight) => continue,
+                Err(_) => {
+                    source.missed(group, actor, event);
+                    interrupted = true;
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
         if claimed && !preclaimed {
             use crate::ops::runtime_delivery::{ClaimResult, claim, claim_new_source};
             let result = if matches!(source, DispatchSource::New(_)) {
@@ -924,7 +1030,7 @@ fn dispatch_to_inner_outcome(
                 }
             }
         }
-        match offer_delivery(home, group, actor, event, transport, claimed) {
+        match offer_delivery(home, group, actor, event, transport, claimed, slot) {
             Offer::Queued => queued += 1,
             Offer::AlreadyInFlight => {}
             Offer::Held => {
@@ -960,15 +1066,29 @@ fn offer_delivery(
     event: &Event,
     transport: &'static str,
     claimed: bool,
+    slot: Option<DeliverySlot>,
 ) -> Offer {
-    let offered = enqueue(DeliveryJob {
-        home: home.clone(),
-        group: group.clone(),
-        actor: actor.clone(),
-        event: event.clone(),
-        claimed,
-        transport,
-    });
+    let slot = match slot {
+        Some(slot) => Ok(slot),
+        None => DeliverySlot::reserve(&group.group_id, &actor.id, &event.id),
+    };
+    let offered = match &slot {
+        Ok(_) => enqueue(DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: event.clone(),
+            claimed,
+            transport,
+        }),
+        Err(offer) => *offer,
+    };
+    if offered == Offer::Queued
+        && let Ok(slot) = slot
+    {
+        slot.transfer();
+        return offered;
+    }
     if offered == Offer::Refused {
         if claimed
             && let Err(error) = crate::ops::runtime_delivery::append_state_with_owner(
@@ -1290,7 +1410,7 @@ fn set_refill(group_id: &str, actor_id: &str, needed: bool) {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Offer {
     Queued,
     /// The member's runtime is being switched. A claimed job was already
@@ -1303,20 +1423,8 @@ enum Offer {
 
 fn enqueue(job: DeliveryJob) -> Offer {
     let key = (job.group.group_id.clone(), job.actor.id.clone());
-    let delivery_key = (key.0.clone(), key.1.clone(), job.event.id.clone());
-    let reserved = match in_flight().lock() {
-        Ok(mut pending) => pending.insert(delivery_key.clone()),
-        Err(_) => return Offer::Refused,
-    };
-    if !reserved {
-        return Offer::AlreadyInFlight;
-    }
-    let mut map = match workers().lock() {
-        Ok(map) => map,
-        Err(_) => {
-            clear_in_flight(|item| item == &delivery_key);
-            return Offer::Refused;
-        }
+    let Ok(mut map) = workers().lock() else {
+        return Offer::Refused;
     };
     if is_fenced(&key.0, &key.1) {
         // Settled under the worker map: the fence is lifted only afterwards.
@@ -1336,18 +1444,15 @@ fn enqueue(job: DeliveryJob) -> Offer {
         {
             tracing::warn!(message = %error.message, "failed to give back held runtime delivery");
         }
-        clear_in_flight(|item| item == &delivery_key);
         return Offer::Held;
     }
     let worker = map.entry(key.clone()).or_insert_with(|| spawn_worker(&key));
     let Some(sender) = worker.sender.as_ref() else {
-        clear_in_flight(|item| item == &delivery_key);
         return Offer::Refused;
     };
     match sender.try_send(job) {
         Ok(()) => Offer::Queued,
         Err(TrySendError::Full(_)) => {
-            clear_in_flight(|item| item == &delivery_key);
             tracing::warn!(group_id = %key.0, actor_id = %key.1, "PTY delivery queue is full");
             Offer::Refused
         }
@@ -1362,11 +1467,11 @@ fn enqueue(job: DeliveryJob) -> Offer {
             if let Some(stale) = stale {
                 stale.shutdown();
             }
-            if !result {
-                clear_in_flight(|item| item == &delivery_key);
-                return Offer::Refused;
+            if result {
+                Offer::Queued
+            } else {
+                Offer::Refused
             }
-            Offer::Queued
         }
     }
 }
@@ -2247,14 +2352,7 @@ done"#;
         .expect("claim");
 
         assert_eq!(
-            enqueue(DeliveryJob {
-                home: home.clone(),
-                group: group.clone(),
-                actor: actor.clone(),
-                event: event.clone(),
-                claimed: true,
-                transport: "pty",
-            }),
+            offer_delivery(&home, &group, &actor, &event, "pty", true, None),
             Offer::Queued
         );
         shutdown_actor(&group.group_id, &actor.id);
@@ -2312,14 +2410,7 @@ done"#;
         .expect("claim");
         let fence = fence_actor(&group.group_id, &actor.id);
 
-        let offered = enqueue(DeliveryJob {
-            home: home.clone(),
-            group: group.clone(),
-            actor: actor.clone(),
-            event: event.clone(),
-            claimed: true,
-            transport: "pty",
-        });
+        let offered = offer_delivery(&home, &group, &actor, &event, "pty", true, None);
         drop(fence);
 
         assert_eq!(offered, Offer::Held);
@@ -2586,8 +2677,22 @@ done"#;
         ));
 
         assert_eq!(
-            offer_delivery(&home, &group, &actor, &event, "pty", true),
+            offer_delivery(&home, &group, &actor, &event, "pty", true, None),
             Offer::AlreadyInFlight
+        );
+        let other = Actor::new("other");
+        let targets = [(&other, "pty"), (&actor, "pty")];
+        let Err(error) = reserve_explicit_deliveries(&group, &event, &targets) else {
+            panic!("the existing worker owns the second slot");
+        };
+        assert_eq!(error.code, "delivery_in_progress");
+        assert!(
+            !in_flight().lock().expect("in flight").contains(&(
+                group.group_id.clone(),
+                other.id,
+                event.id.clone()
+            )),
+            "rejecting the whole request releases earlier reservations"
         );
         let state = crate::ops::runtime_delivery::latest_state(
             &home,
@@ -2598,6 +2703,90 @@ done"#;
         .expect("state");
         assert_eq!(state.map(|(s, _)| s).as_deref(), Some("claimed"));
         assert!(!pending_group_ids().contains(&group.group_id));
+    }
+
+    #[test]
+    fn queued_managed_retry_keeps_its_claim_when_recovery_or_send_now_runs() {
+        use crate::ops::runtime_delivery::{self, ClaimResult, DeliveryOutcome};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("queued retry", "").expect("group");
+        let _guard = GroupGuard(group.group_id.clone());
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Deepseek;
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+
+        for (outcome, gap_eligible) in [
+            (DeliveryOutcome::Failed("turn failed"), false),
+            (DeliveryOutcome::Unsubmitted("no input was sent"), true),
+        ] {
+            let event = append_send(&path, &group.group_id, &actor.id, "queued work");
+            let _worker_slot = DeliverySlot::reserve(&group.group_id, &actor.id, &event.id)
+                .expect("reserve the live worker's slot");
+            let receipt = runtime_delivery::append_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &actor.created_at,
+                &event.id,
+                "deepseek",
+                outcome,
+            )
+            .expect("settle the preceding attempt");
+            let latest = || {
+                inbox::latest_delivery_receipt(&home, &group, &actor.id, &event.id)
+                    .expect("load latest receipt")
+                    .expect("delivery receipt")
+                    .id
+            };
+            let args = json!({
+                "group_id": group.group_id,
+                "actor_ids": [actor.id],
+                "source_event_id": event.id,
+            });
+            let response = crate::dispatch::dispatch(
+                &home,
+                &cccc_contracts::DaemonRequest {
+                    v: 1,
+                    op: "message_deliver".into(),
+                    args: args.as_object().expect("delivery args").clone(),
+                },
+            );
+            assert_eq!(
+                response.error.expect("already in the worker").code,
+                "delivery_in_progress"
+            );
+            assert_eq!(latest(), receipt.id, "Send now cannot take the live slot");
+            assert_eq!(dispatch_unread(&home, &group, &actor.id), 0);
+            assert_eq!(
+                latest(),
+                receipt.id,
+                "unread recovery cannot claim it either"
+            );
+
+            if gap_eligible {
+                gaps::record(&group, &actor, Some(&event));
+                let prepared = gaps::prepare_group(
+                    &home,
+                    &group,
+                    &crate::session_owner::OwnerObservations::default(),
+                );
+                assert!(!prepared.is_empty(), "include the known no-handoff receipt");
+                gaps::apply_group(&home, &group, prepared);
+                assert_eq!(latest(), receipt.id, "gap recovery cannot claim it either");
+            }
+            assert_eq!(
+                runtime_delivery::claim_current_attempt(
+                    &home, &group, &actor, &event.id, "deepseek"
+                )
+                .expect("the live worker can reclaim its own work"),
+                ClaimResult::Claimed
+            );
+        }
     }
 
     #[test]

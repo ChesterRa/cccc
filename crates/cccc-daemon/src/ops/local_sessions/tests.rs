@@ -3291,6 +3291,88 @@ fn offline_native_work_stays_pending_without_creating_an_uncertain_claim() {
 }
 
 #[test]
+fn explicit_delivery_does_not_strand_queued_native_work() {
+    let fixture = Fixture::new();
+    let group = fixture.conversation();
+    let actor = &group.actors[0];
+    store::detach(&fixture.home, &fixture.source.source_id, "fixture-receiver")
+        .expect("disconnect native channel before sending");
+    let sent = fixture.call(
+        "send",
+        json!({
+            "group_id": group.group_id,
+            "to": [actor.id],
+            "text": "Keep the original native handoff",
+            "message_mode": "send",
+        }),
+    );
+    let event_id = sent["event"]["id"].as_str().expect("source event");
+    assert_eq!(
+        super::super::runtime_delivery::latest_state(
+            &fixture.home,
+            &group.group_id,
+            &actor.id,
+            event_id,
+        )
+        .expect("delivery state while offline"),
+        None
+    );
+    let response = crate::dispatch::dispatch(
+        &fixture.home,
+        &req(
+            "message_deliver",
+            json!({
+                "group_id": group.group_id,
+                "source_event_id": event_id,
+                "actor_ids": [actor.id],
+            }),
+        ),
+    );
+    assert_eq!(
+        response
+            .error
+            .expect("queued native work rejects Send now")
+            .code,
+        "delivery_in_progress"
+    );
+
+    let receiver = fixture.attach();
+    let handoff = offered(&fixture.home, &receiver);
+    assert_eq!(handoff.event_ids, [event_id]);
+    transport::acknowledge(
+        &fixture.home,
+        &receiver,
+        &handoff.handoff_id,
+        transport::Outcome::Accepted,
+    )
+    .expect("accept the native handoff");
+    fixture.wait_state(&group, event_id, "accepted");
+    let ledger_path = GroupStore::new(fixture.home.clone())
+        .expect("group store")
+        .ledger_path(&group.group_id)
+        .expect("ledger path");
+    let receipts = cccc_core::ledger::read_all(&ledger_path)
+        .expect("read receipts")
+        .into_iter()
+        .filter(|event| {
+            event.kind == "runtime.delivery" && event.data["source_event_id"] == event_id
+        })
+        .map(|event| {
+            event.data["state"]
+                .as_str()
+                .expect("receipt state")
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(receipts, ["claimed", "accepted"]);
+    assert!(
+        transport::next(&fixture.home, &receiver)
+            .expect("check for duplicate native input")
+            .is_none()
+    );
+}
+
+#[test]
 fn pausing_native_access_recovers_only_work_that_was_never_offered() {
     for already_offered in [false, true] {
         let fixture = Fixture::new();

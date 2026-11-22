@@ -6800,10 +6800,13 @@ Args:
 
 Only the source sender or `user` may request delivery. Recipients MUST be
 explicit concrete recipients of the source event. Existing `accepted` evidence
-is never retried. Existing `claimed` evidence reports `delivery_in_progress`.
+is never retried. Existing `claimed` evidence or work already in a delivery
+worker's queue reports `delivery_in_progress`. Waiting work keeps its existing
+queue slot and takes its own claim when ready.
 Existing `ambiguous` evidence is rejected unless `force_ambiguous=true`.
-Disabled recipients return `delivery_blocked` without creating a delivery
-claim. A request that reserves new claims while the Group is paused or stopped
+Disabled recipients and recipients switching runtimes return
+`delivery_blocked` without creating a delivery claim. A request that reserves
+new claims while the Group is paused or stopped
 explicitly resumes the Group before handoff. A conflicting, already accepted,
 or otherwise no-op request MUST NOT change lifecycle state. A successful
 request records all claims before returning:

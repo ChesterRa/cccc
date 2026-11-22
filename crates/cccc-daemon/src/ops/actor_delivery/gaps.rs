@@ -280,10 +280,15 @@ pub(super) fn apply_group(home: &HomeLayout, group: &GroupDoc, prepared: Vec<Pre
                 continue;
             }
             let settled = sources.into_iter().all(|(event, claim)| {
+                // The live worker can still own its slot after a no-handoff
+                // receipt, until it reclaims or releases that attempt.
+                let Ok(slot) = DeliverySlot::reserve(&group.group_id, &actor.id, &event.id) else {
+                    return false;
+                };
                 match apply_gap_claim(home, group, actor, &event.id, transport, claim) {
                     Ok(true) => matches!(
-                        offer_delivery(home, group, actor, &event, transport, true),
-                        Offer::Queued | Offer::AlreadyInFlight
+                        offer_delivery(home, group, actor, &event, transport, true, Some(slot)),
+                        Offer::Queued
                     ),
                     Ok(false) => true,
                     Err(_) => false,

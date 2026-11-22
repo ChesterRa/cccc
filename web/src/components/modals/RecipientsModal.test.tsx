@@ -259,6 +259,17 @@ describe("delivery evidence and waiting reasons", () => {
     expect(markup).not.toContain("Retry");
     expect(markup).toContain("Send now");
 
+    const disabledOnly = renderModal(
+      [
+        entry({ id: "c", waitingReason: "member_disabled" }),
+        entry({ id: "h", deliveryState: "failed", waitingReason: "member_disabled" }),
+      ],
+      { statusKind: "delivery", messageMode: "send" },
+    );
+    expect(disabledOnly).toContain("Waiting · Member disabled");
+    expect(disabledOnly).not.toContain("Send now");
+    expect(disabledOnly).not.toContain("Retry");
+
     // Read Mail does not show a waiting or failure label even if a stale delivery state lingers.
     const readMail = renderModal(
       [

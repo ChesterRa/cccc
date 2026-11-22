@@ -1230,6 +1230,7 @@ fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map_err(OpError::io)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let targets = actor_delivery::reserve_explicit_deliveries(&group, &source, &delivery_claims)?;
     let (claimed, states) = crate::ops::runtime_delivery::claim_deliveries(
         home,
         &group,
@@ -1290,7 +1291,7 @@ fn message_deliver(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             return Err(settlement_error.unwrap_or(error));
         }
     };
-    actor_delivery::dispatch_preclaimed(home, &group, &source, &delivery_claims);
+    actor_delivery::dispatch_preclaimed(home, &group, &source, targets);
     object(json!({
         "event": source,
         "actor_ids": actor_ids,

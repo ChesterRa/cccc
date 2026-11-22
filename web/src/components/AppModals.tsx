@@ -29,6 +29,8 @@ import { installedRuntimeFor } from "../utils/installedRuntime";
 import { sameActorConfiguration } from "../utils/actorIdentity";
 import { projectCrossGroupRecipients, projectMessageMode } from "../utils/crossGroupRecipients";
 import { CHET_NAME, CHET_PRINCIPAL } from "../utils/chetIdentity";
+import { hasPendingActorSwitch } from "../features/runtimeSwitch/runtimeSwitchState";
+import { keepLiveReceipts } from "../utils/mergeLedgerEvents";
 import {
   useGroupStore,
   useUIStore,
@@ -42,6 +44,7 @@ import { getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import * as api from "../services/api";
 import {
   LedgerEvent,
+  LedgerEventStatusPayload,
   GroupSettings,
   ChatMessageData,
   PresentationMessageRef,
@@ -108,6 +111,18 @@ function LazyModalFallback() {
       </div>
     </div>
   );
+}
+
+function findChatMessageInLists(
+  lists: ReadonlyArray<LedgerEvent[] | undefined>,
+  eventId: string,
+): LedgerEvent | null {
+  if (!eventId) return null;
+  for (const list of lists) {
+    const hit = list?.find((x) => x.kind === "chat.message" && String(x.id || "") === eventId);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 export function AppModals({
@@ -573,20 +588,9 @@ export function AppModals({
   // Compute messageMeta for RecipientsModal (moved from App.tsx)
   const messageMetaEvent = useMemo(() => {
     if (!_recipientsEventId) return null;
-    const liveHit = events.find(
-      (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId,
-    );
-    if (liveHit) return liveHit;
-    const windowEvents = Array.isArray(chatWindow?.events) ? chatWindow.events : [];
-    const windowHit = windowEvents.find(
-      (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId,
-    );
-    if (windowHit) return windowHit;
-    const filteredEvents = Array.isArray(senderHistoryEvents) ? senderHistoryEvents : [];
-    return (
-      filteredEvents.find(
-        (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId,
-      ) || null
+    return findChatMessageInLists(
+      [events, chatWindow?.events, senderHistoryEvents],
+      _recipientsEventId,
     );
   }, [chatWindow?.events, events, senderHistoryEvents, _recipientsEventId]);
 
@@ -760,17 +764,78 @@ export function AppModals({
     };
   }, [actors, messageMetaEvent]);
 
+  const recipientsStatusRefreshRef = useRef<{ seq: number; controller: AbortController | null }>({
+    seq: 0,
+    controller: null,
+  });
+
+  const cancelMessageStatusRefresh = useCallback(() => {
+    recipientsStatusRefreshRef.current.seq += 1;
+    recipientsStatusRefreshRef.current.controller?.abort();
+    recipientsStatusRefreshRef.current.controller = null;
+  }, []);
+
   const refreshMessageStatus = useCallback(
-    async (eventId: string) => {
-      if (!selectedGroupId || !eventId) return;
-      const statusResp = await api.fetchLedgerStatuses(selectedGroupId, [eventId], {
-        noCache: true,
-      });
-      if (statusResp.ok) {
-        mergeEventStatuses(statusResp.result.statuses || {}, selectedGroupId);
+    async (eventId: string, options?: { groupId?: string; requireOpen?: boolean }) => {
+      const targetGroupId = String(options?.groupId ?? selectedGroupId ?? "").trim();
+      const targetEventId = String(eventId || "").trim();
+      if (!targetGroupId || !targetEventId) return;
+      cancelMessageStatusRefresh();
+      const seq = recipientsStatusRefreshRef.current.seq;
+      const controller = new AbortController();
+      recipientsStatusRefreshRef.current.controller = controller;
+      const beforeBucket = useGroupStore.getState().chatByGroup[targetGroupId];
+      const beforeEvent = findChatMessageInLists(
+        [
+          beforeBucket?.events,
+          beforeBucket?.chatWindow?.events,
+          beforeBucket?.senderHistory?.events,
+        ],
+        targetEventId,
+      );
+      try {
+        const statusResp = await api.fetchLedgerStatuses(targetGroupId, [targetEventId], {
+          noCache: true,
+          signal: controller.signal,
+        });
+        if (recipientsStatusRefreshRef.current.seq === seq) {
+          recipientsStatusRefreshRef.current.controller = null;
+        }
+        if (
+          !statusResp.ok ||
+          controller.signal.aborted ||
+          recipientsStatusRefreshRef.current.seq !== seq
+        ) {
+          return;
+        }
+        if (
+          options?.requireOpen &&
+          (useGroupStore.getState().selectedGroupId !== targetGroupId ||
+            useModalStore.getState().recipientsEventId !== targetEventId)
+        ) {
+          return;
+        }
+        const statuses: Record<string, LedgerEventStatusPayload> | undefined =
+          statusResp.result.statuses;
+        const rawStatus = statuses?.[targetEventId];
+        if (!rawStatus) return;
+        const liveBucket = useGroupStore.getState().chatByGroup[targetGroupId];
+        const liveEvent = findChatMessageInLists(
+          [liveBucket?.events, liveBucket?.chatWindow?.events, liveBucket?.senderHistory?.events],
+          targetEventId,
+        );
+        const nextStatus =
+          beforeEvent && liveEvent
+            ? keepLiveReceipts(rawStatus, beforeEvent, liveEvent)
+            : rawStatus;
+        mergeEventStatuses({ [targetEventId]: nextStatus }, targetGroupId);
+      } catch {
+        if (recipientsStatusRefreshRef.current.seq === seq) {
+          recipientsStatusRefreshRef.current.controller = null;
+        }
       }
     },
-    [mergeEventStatuses, selectedGroupId],
+    [cancelMessageStatusRefresh, mergeEventStatuses, selectedGroupId],
   );
 
   const handleDeliverMessage = useCallback(
@@ -778,6 +843,7 @@ export function AppModals({
       const targetGroupId = String(selectedGroupId || "").trim();
       const eventId = String(messageMeta?.sourceEventId || "").trim();
       if (!targetGroupId || !eventId || !actorId) return;
+      cancelMessageStatusRefresh();
       setMessageActionBusy(`deliver:${actorId}`);
       try {
         const resp = await api.deliverMessage(targetGroupId, eventId, [actorId], forceAmbiguous);
@@ -787,18 +853,30 @@ export function AppModals({
           }
           return;
         }
-        await refreshMessageStatus(eventId);
+        if (
+          useGroupStore.getState().selectedGroupId === targetGroupId &&
+          useModalStore.getState().recipientsEventId === eventId
+        ) {
+          await refreshMessageStatus(eventId, { groupId: targetGroupId, requireOpen: true });
+        }
       } finally {
         setMessageActionBusy("");
       }
     },
-    [messageMeta?.sourceEventId, refreshMessageStatus, selectedGroupId, showError],
+    [
+      cancelMessageStatusRefresh,
+      messageMeta?.sourceEventId,
+      refreshMessageStatus,
+      selectedGroupId,
+      showError,
+    ],
   );
 
   const handleCancelReplyRequest = useCallback(async () => {
     const targetGroupId = String(selectedGroupId || "").trim();
     const eventId = String(messageMeta?.sourceEventId || "").trim();
     if (!targetGroupId || !eventId) return;
+    cancelMessageStatusRefresh();
     setMessageActionBusy("cancel-reply");
     try {
       const resp = await api.cancelReplyRequest(targetGroupId, eventId);
@@ -808,11 +886,64 @@ export function AppModals({
         }
         return;
       }
-      await refreshMessageStatus(eventId);
+      if (
+        useGroupStore.getState().selectedGroupId === targetGroupId &&
+        useModalStore.getState().recipientsEventId === eventId
+      ) {
+        await refreshMessageStatus(eventId, { groupId: targetGroupId, requireOpen: true });
+      }
     } finally {
       setMessageActionBusy("");
     }
-  }, [messageMeta?.sourceEventId, refreshMessageStatus, selectedGroupId, showError]);
+  }, [
+    cancelMessageStatusRefresh,
+    messageMeta?.sourceEventId,
+    refreshMessageStatus,
+    selectedGroupId,
+    showError,
+  ]);
+
+  const recipientsSourceEventId = String(messageMeta?.sourceEventId || "").trim();
+  const recipientsLifecycleKey = useMemo(() => {
+    if (!selectedGroupId || !recipientsSourceEventId || !messageMeta) return "";
+    const selectedGroupMeta =
+      groups.find((g) => String(g.group_id || "") === selectedGroupId) || null;
+    const groupState = String(
+      (groupDoc?.group_id === selectedGroupId ? groupDoc.state : undefined) ??
+        selectedGroupMeta?.state ??
+        "",
+    );
+    const actorById = new Map(actors.map((actor) => [String(actor.id || ""), actor]));
+    const recipientStates = messageMeta.entries
+      .filter((entry) => entry.id !== "user" && entry.id !== CHET_PRINCIPAL)
+      .map((entry) => {
+        const actor = actorById.get(entry.id);
+        if (!actor) return `${entry.id}:missing`;
+        const enabled = actor.enabled === false ? "0" : "1";
+        const switching = hasPendingActorSwitch(groupDoc, actor, selectedGroupId) ? "1" : "0";
+        return `${entry.id}:${enabled}:${switching}`;
+      })
+      .sort()
+      .join("|");
+    return `${groupState}#${recipientStates}`;
+  }, [actors, groupDoc, groups, messageMeta, recipientsSourceEventId, selectedGroupId]);
+
+  useEffect(() => {
+    if (!selectedGroupId || !recipientsSourceEventId) return;
+    void refreshMessageStatus(recipientsSourceEventId, {
+      groupId: selectedGroupId,
+      requireOpen: true,
+    });
+    return () => {
+      cancelMessageStatusRefresh();
+    };
+  }, [
+    cancelMessageStatusRefresh,
+    recipientsLifecycleKey,
+    recipientsSourceEventId,
+    refreshMessageStatus,
+    selectedGroupId,
+  ]);
 
   // Handlers
   const handleUpdateSettings = async (settings: Partial<GroupSettings>): Promise<boolean> => {

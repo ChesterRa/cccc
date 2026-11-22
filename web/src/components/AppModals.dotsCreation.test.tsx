@@ -20,6 +20,7 @@ vi.mock("../services/api", () => ({
   addActor: (...args: unknown[]) => mocks.add(...args),
   bindGrokBot: (...args: unknown[]) => mocks.bind(...args),
   fetchGroupPrompts: async () => ({ ok: true, result: { help: { content: "" } } }),
+  fetchLedgerStatuses: vi.fn(async () => ({ ok: true, result: { statuses: {} } })),
   listActorProfiles: async () => ({ ok: true, result: { profiles: [] } }),
 }));
 vi.mock("./modals/ActorConfigModal", () => ({
