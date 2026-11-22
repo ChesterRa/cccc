@@ -170,6 +170,64 @@ fn binding_requires_the_live_native_revision_and_exact_enabled_actor_generation(
 }
 
 #[test]
+fn memberships_skip_missing_groups_but_preserve_existing_group_errors() {
+    let f = Fixture::new();
+    f.pair("node");
+    let remote = f.sources("node").remove(0);
+    let store = GroupStore::new(f.home.clone()).expect("store");
+    let mut healthy = store.create("Healthy Group", "").expect("Group");
+    let mut actor = Actor::new("remote-member");
+    actor.runtime = ActorRuntime::Codex;
+    actor.external_session_id = remote.source.source_id.clone();
+    actors::add(&mut healthy, actor).expect("member");
+    store.save(&healthy).expect("save");
+    let mut missing = healthy.clone();
+    missing.group_id = store.create("Missing Group", "").expect("Group").group_id;
+    store.save(&missing).expect("save missing Group fixture");
+    let missing_config = store
+        .group_dir(&missing.group_id)
+        .expect("directory")
+        .join("group.yaml");
+    std::fs::remove_file(&missing_config).expect("leave a stale registry entry");
+    assert_eq!(
+        store
+            .load(&missing.group_id)
+            .expect_err("missing file")
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    let result = memberships(&f.home, "node").expect("healthy memberships remain usable");
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].group_id, healthy.group_id);
+    assert_eq!(result[0].actor_id, healthy.actors[0].id);
+    assert!(
+        binding_valid(
+            &f.home,
+            &LocalSessionBinding {
+                group_id: missing.group_id.clone(),
+                actor_id: missing.actors[0].id.clone(),
+                actor_generation: actors::generation_identity(&missing.actors[0]),
+                source_id: remote.source.source_id,
+                session_revision: remote.session_revision,
+            }
+        )
+        .is_err(),
+        "Registry metadata cannot grant membership to a missing Group"
+    );
+    std::fs::write(&missing_config, "actors: [").expect("malformed existing Group");
+    assert!(
+        memberships(&f.home, "node").is_err(),
+        "Existing configuration errors must not be hidden"
+    );
+    update_sources(&f.home, "gateway", "node", vec![]).expect("withdraw all sources");
+    assert!(
+        memberships(&f.home, "node")
+            .expect("No usable source requires no Group projection")
+            .is_empty()
+    );
+}
+
+#[test]
 fn stale_gateway_and_expired_ticket_fail_closed_without_sleeping() {
     let f = Fixture::new();
     let invite = create_invite(&f.home).expect("invitation");
@@ -204,6 +262,11 @@ fn stale_gateway_and_expired_ticket_fail_closed_without_sleeping() {
     })
     .expect("expired source lease");
     assert!(source(&f.home, &source_id).is_err());
+    assert!(
+        memberships(&f.home, "node")
+            .expect("no usable sources")
+            .is_empty()
+    );
     clear_endpoint(&f.home, "wrong-gateway").expect("stale cleanup");
     assert!(endpoint(&f.home).expect("endpoint").is_some());
     clear_endpoint(&f.home, "gateway").expect("shutdown");
@@ -215,6 +278,10 @@ fn stale_gateway_and_expired_ticket_fail_closed_without_sleeping() {
         ["127.0.0.1:2345"]
     );
     assert!(pair(&f.home, "gateway", "node", "Laptop", None).is_err());
+    assert!(
+        memberships(&f.home, "node").is_err(),
+        "Empty sources must not bypass the native gateway check"
+    );
 }
 
 #[path = "relay_tests.rs"]

@@ -151,10 +151,17 @@ pub fn memberships(home: &HomeLayout, node_id: &str) -> io::Result<Vec<SessionNo
         .values()
         .filter(|source| source.node_id == node_id && source.alive && available(&state, source))
         .collect::<Vec<_>>();
+    if sources.is_empty() {
+        return Ok(Vec::new());
+    }
     let store = GroupStore::new(home.clone())?;
     let mut result = Vec::new();
     for meta in store.list()? {
-        let group = store.load(&meta.group_id)?;
+        let group = match store.load(&meta.group_id) {
+            Ok(group) => group,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
         for actor in &group.actors {
             if let Some(source) = sources
                 .iter()

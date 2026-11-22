@@ -12,6 +12,15 @@ use serde_json::json;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn relay_only_facade_enrolls_transfers_a_real_tool_write_resumes_and_revokes() {
     let f = Fixture::new().await;
+    let store = GroupStore::new(f.home.clone()).expect("store");
+    let missing = store.create("Unrelated stale Group", "").expect("Group");
+    std::fs::remove_file(
+        store
+            .group_dir(&missing.group_id)
+            .expect("directory")
+            .join("group.yaml"),
+    )
+    .expect("leave a stale registry entry throughout enrollment and sync");
     let mut invalid = f.ticket.clone();
     invalid.v = SESSION_NODE_PROTOCOL;
     assert!(
@@ -23,6 +32,7 @@ async fn relay_only_facade_enrolls_transfers_a_real_tool_write_resumes_and_revok
     let endpoint = f.endpoint(key.clone(), Some(&f.ticket)).await;
     let (connection, hello) = f.hello(&endpoint, Some(&f.ticket)).await;
     assert_eq!(hello["peer"]["node_id"], node_id);
+    assert_eq!(hello["memberships"], json!([]));
     let grant = hello["peer"]["grant_id"].clone();
     protocol::call(
         &connection,
@@ -35,7 +45,6 @@ async fn relay_only_facade_enrolls_transfers_a_real_tool_write_resumes_and_revok
     let source = session_nodes::list_sources(&f.home)
         .expect("directory")
         .remove(0);
-    let store = GroupStore::new(f.home.clone()).expect("store");
     let mut group = store.create("Relay isolated Group", "").expect("Group");
     let mut actor = Actor::new("remote-member");
     actor.runtime = ActorRuntime::Codex;

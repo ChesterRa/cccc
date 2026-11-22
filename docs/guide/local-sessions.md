@@ -362,6 +362,8 @@ Omit `--runtime` when both applications are already configured. A CLI that does 
 
 A new pairing replaces the saved local reconnect route, grant and membership hints only after the hub accepts it and local saving succeeds. Failure or cancellation preserves the current saved reconnect configuration; concurrent changes are not overwritten. A local save failure does not undo a pairing already accepted by the hub.
 
+If the terminal reports **Hub confirmation was interrupted**, the hub may already list the device as authorized. The connector retries with the same device identity. When a Group is still listed in the registry but its configuration file is missing, the hub omits that Group from the device’s memberships during pairing and synchronization.
+
 The original application keeps its account, model, context, cwd, terminal and approvals. The hub owns the Group, agent role, collaboration ledger and message delivery receipts. The connector exports only this Home's registered Codex/Claude sessions, not other remote sources. It does not copy native provider history or credentials.
 
 CCCC supports [remote Web access](web-ui.md#remote-access), including Cloudflare/Reach tunnels. When public access is configured and enabled with an HTTPS `web_public_url`, new pairing tickets also carry a private relay entry. The existing tunnel forwards `/relay` WebSocket traffic and the `/ping` and `/generate_204` discovery probes to this Web runtime. A path-only proxy must forward all three. Loopback HTTP origins are accepted for isolated checks; other cleartext relay URLs, embedded URL credentials, query tokens and arbitrary path prefixes are rejected.
