@@ -947,6 +947,7 @@
     "voiceDelegation": "语音交办",
     "voiceDelegationHint": "Chet 在通话中记下的任务，是它的转述，不是你的原话。",
     "openInGroup": "在工作组中打开",
+    "groupMessageCopy": "这是发给你的消息，无人值守期间抄送给 Chet。",
     "groupMessageTruncated": "这里只显示开头，全文在工作组中。",
     "groupMessageAttachments": "含附件，可在工作组中查看。",
     "groupMessageUnavailable": "这条工作组消息已无法查看。",

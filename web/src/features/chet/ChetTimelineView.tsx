@@ -177,6 +177,7 @@ function GroupMessageBlock({ item, onOpen }: { item: ChetRequestItem; onOpen?: O
     input.sender.kind === "user" ? t("chet.you") : shown?.sender_title || input.sender.actor_id;
   const notes = shown
     ? [
+        shown.copy ? t("chet.groupMessageCopy") : "",
         shown.truncated ? t("chet.groupMessageTruncated") : "",
         shown.has_attachments ? t("chet.groupMessageAttachments") : "",
       ].filter(Boolean)

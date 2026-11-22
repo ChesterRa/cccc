@@ -879,8 +879,10 @@ and rejects exhibit access.
 - When `resolve_sources` is true, either read also returns `sources`, an object
   keyed by Group input IDs present in, or referenced by, records in that response. A source is
   `{ status: "available", group_title, sender_title, text, sent_at,
-  has_attachments, truncated, reply_event_id }` or `{ status: "unavailable" }`.
-  `reply_event_id` is null or a later Chet-authored message in this Group that
+  has_attachments, truncated, copy, reply_event_id }` or `{ status: "unavailable" }`.
+  `copy` is true when the source was sent to the user and registered as an
+  unattended copy (`unattended_update`); it stays available after the mode is
+  turned off. `reply_event_id` is null or a later Chet-authored message in this Group that
   replies to the source and explicitly addresses its sender. Its presence means
   that a reply was recorded, not that a recipient received it; its absence does
   not prove a failed attempt. Available text

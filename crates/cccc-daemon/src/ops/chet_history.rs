@@ -165,10 +165,13 @@ fn sources(home: &HomeLayout, records: &[chet_history::Record]) -> Map<String, V
                         GroupInputSender::User => "user",
                         GroupInputSender::Actor { actor_id, .. } => actor_id.as_str(),
                     };
+                    // A copy was sent to the user; it was registered while
+                    // unattended mode covered it and stays shown afterwards.
+                    let copy = event.data.get("to") != Some(&json!([actors::CHET_SERVICE_PRINCIPAL]));
                     if event.kind != "chat.message"
                         || event.group_id != group_id
                         || event.by != sender
-                        || event.data.get("to") != Some(&json!([actors::CHET_SERVICE_PRINCIPAL]))
+                        || (copy && !cccc_core::unattended::copy_shape(event))
                     {
                         return None;
                     }
@@ -186,6 +189,7 @@ fn sources(home: &HomeLayout, records: &[chet_history::Record]) -> Map<String, V
                         "has_attachments":event.data.get("attachments").and_then(Value::as_array)
                             .is_some_and(|items| !items.is_empty()),
                         "truncated":end < text.len(),
+                        "copy":copy,
                         "reply_event_id":replies.get(input.event_id.as_str()).copied(),
                     })))
                 })
@@ -780,7 +784,26 @@ mod tests {
         // A message from before the mode turned on is not copied.
         assert!(!register(&before).ok);
         let during = send("while away");
-        assert_eq!(register(&during).result["registration"], "inserted");
+        let registered = register(&during);
+        assert_eq!(registered.result["registration"], "inserted");
+        let copy_id = registered.result["id"]
+            .as_str()
+            .expect("input ID")
+            .to_owned();
+        let shown = || {
+            let listed = call(
+                &home,
+                "chet_history_list",
+                json!({"by":"user","resolve_sources":true}),
+            );
+            assert!(listed.ok, "{listed:?}");
+            listed.result["sources"][&copy_id].clone()
+        };
+        // Chet's history shows the copy's text and that it was sent to the user.
+        let source = shown();
+        assert_eq!(source["status"], "available", "{source}");
+        assert_eq!(source["text"], "while away");
+        assert_eq!(source["copy"], true);
         // Once the mode is off, a registered copy reads as unavailable, which
         // its owner records as never started.
         switch(false);
@@ -788,10 +811,17 @@ mod tests {
             register(&during).error.expect("off").code,
             "chet_source_unavailable"
         );
+        // What Chet already received stays shown in its history.
+        assert_eq!(shown()["status"], "available");
         // Turning the mode on again starts a new period without the old copy.
         switch(true);
         assert!(!register(&during).ok);
         assert!(register(&send("away again")).ok);
+        // A sender who later leaves the Group does not hide what Chet received.
+        let mut current = groups.load(&group.group_id).expect("group");
+        current.actors.clear();
+        groups.save(&current).expect("save");
+        assert_eq!(shown()["status"], "available");
     }
 
     #[test]

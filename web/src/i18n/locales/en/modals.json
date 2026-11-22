@@ -947,6 +947,7 @@
     "voiceDelegation": "Voice request",
     "voiceDelegationHint": "A task Chet noted during a call, in its own words, not yours.",
     "openInGroup": "Open in Group",
+    "groupMessageCopy": "A message to you, copied while unattended mode was on.",
     "groupMessageTruncated": "Only the beginning is shown; the full text is in the Group.",
     "groupMessageAttachments": "Has attachments; see them in the Group.",
     "groupMessageUnavailable": "This Group message is no longer available.",

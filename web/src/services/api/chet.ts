@@ -51,6 +51,8 @@ export type ChetGroupSource =
       has_attachments: boolean;
       /** The text stops at a size limit; the Group holds the rest. */
       truncated: boolean;
+      /** Sent to the user; Chet held it as an unattended copy. */
+      copy?: boolean;
       /** Chet's reply to the sender that this Group's ledger shows, if any. */
       reply_event_id: string | null;
     }
@@ -160,6 +162,7 @@ function isGroupSource(value: unknown): value is ChetGroupSource {
     ["group_title", "sender_title", "text", "sent_at"].every((key) => isString(value[key])) &&
     typeof value.has_attachments === "boolean" &&
     typeof value.truncated === "boolean" &&
+    (value.copy === undefined || typeof value.copy === "boolean") &&
     (value.reply_event_id === null || isString(value.reply_event_id))
   );
 }

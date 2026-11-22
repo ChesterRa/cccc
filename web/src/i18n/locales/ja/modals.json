@@ -947,6 +947,7 @@
     "voiceDelegation": "音声からの依頼",
     "voiceDelegationHint": "通話中に Chet が記録したタスクで、Chet による要約です。あなたの発言そのものではありません。",
     "openInGroup": "グループで開く",
+    "groupMessageCopy": "あなた宛てのメッセージの、無人対応中の写しです。",
     "groupMessageTruncated": "冒頭のみ表示しています。全文はグループにあります。",
     "groupMessageAttachments": "添付ファイルがあります。グループで確認できます。",
     "groupMessageUnavailable": "このグループのメッセージは表示できなくなりました。",

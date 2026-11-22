@@ -28,6 +28,16 @@ pub fn copies(settings: &UnattendedSettings, group: &GroupDoc, event: &Event) ->
     else {
         return false;
     };
+    parse(&event.ts).is_some_and(|ts| ts >= since)
+        && copy_shape(event)
+        && event.group_id == group.group_id
+        && actors::find(group, &event.by).is_some_and(|actor| actor.internal_kind.is_none())
+}
+
+/// Whether this message has the form of a copy, whatever the mode and the
+/// Group's members are now: what Chet's history shows for a copy it
+/// registered while the mode covered it.
+pub fn copy_shape(event: &Event) -> bool {
     event.by != actors::CHET_SERVICE_PRINCIPAL
         && user_requests::targets_user(event)
         && matches!(
@@ -40,9 +50,6 @@ pub fn copies(settings: &UnattendedSettings, group: &GroupDoc, event: &Event) ->
             .get("to")
             .and_then(Value::as_array)
             .is_some_and(|to| to.contains(&json!(actors::CHET_SERVICE_PRINCIPAL)))
-        && parse(&event.ts).is_some_and(|ts| ts >= since)
-        && event.group_id == group.group_id
-        && actors::find(group, &event.by).is_some_and(|actor| actor.internal_kind.is_none())
 }
 
 fn parse(value: &str) -> Option<DateTime<Utc>> {
@@ -113,6 +120,8 @@ mod tests {
             "2026-11-22T13:59:59.000000Z",
         );
         assert!(!copies(&on(), &group(), &earlier));
+        // Chet's history still shows a copy registered in an earlier period.
+        assert!(copy_shape(&earlier));
         for (by, data) in [
             ("peer", json!({"to":["svc:chet"],"message_mode":"send"})),
             (

@@ -720,6 +720,12 @@ everywhere you see your pending replies. To correct Chet, reply to its answer: b
 goes to the member who asked. By default, a member's reply to Chet's answer comes to you, and to
 Chet while the switch is on.
 
+Each copy also appears in Chet's conversation, marked as a message to you that was copied; when a
+reply from Chet is recorded in the Group, a link to it is shown there. What Chet writes in its
+conversation stays there; only the messages it sends to the Group appear in the Group. While the
+switch is on, Chet's entry below the Group list also asks for attention when CCCC finds that
+Chet's Runtime is not ready, for example not installed or waiting for setup.
+
 Turning the switch off stops new copies. A copy that has not reached Chet yet is dropped, and a
 card answer Chet has not written yet is refused; replies and answers already written stay in their
 threads. One exception: a copy Chet's Runtime has already taken can still reach Chet, which may then

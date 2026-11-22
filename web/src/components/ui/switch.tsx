@@ -18,7 +18,7 @@ export function Switch({
       <span
         aria-hidden="true"
         data-switch-track
-        className="pointer-events-none relative h-7 w-12 rounded-full border border-[var(--color-border-secondary)] bg-[var(--color-bg-secondary)] transition-colors peer-checked:border-[var(--primary)] peer-checked:bg-[var(--primary)] peer-focus-visible:shadow-[var(--focus-ring)] peer-disabled:opacity-50 after:absolute after:left-px after:top-1/2 after:h-6 after:w-6 after:-translate-y-1/2 after:rounded-full after:bg-[var(--color-text-secondary)] after:transition-transform peer-checked:after:translate-x-5 peer-checked:after:bg-[var(--primary-foreground)] motion-reduce:after:transition-none"
+        className="pointer-events-none relative h-7 w-12 rounded-full border border-[var(--color-border-primary)] bg-[var(--color-bg-secondary)] transition-colors peer-checked:border-[var(--primary)] peer-focus-visible:shadow-[var(--focus-ring)] peer-disabled:opacity-50 after:absolute after:left-1 after:top-1/2 after:box-border after:h-[18px] after:w-[18px] after:-translate-y-1/2 after:rounded-full after:border after:border-[var(--color-text-secondary)] after:bg-[var(--color-bg-elevated)] after:transition-transform peer-checked:after:translate-x-5 peer-checked:after:border-[var(--primary)] peer-checked:after:bg-[var(--primary)] motion-reduce:after:transition-none"
       />
     </span>
   );

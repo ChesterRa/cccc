@@ -24,19 +24,27 @@ export function CodexVoiceDock({
   const identity = codexVoiceDisplayIdentity(controller);
   const providerLabel = t(`modals:codexVoiceProviders.${identity.provider}`);
   const callStatus = codexVoiceCallStatus(controller);
+  const unattended = useUnattendedStore((state) => state.unattended?.enabled === true);
   const attention = Boolean(
     controller.error ||
     controller.refreshError ||
     controller.playbackBlocked ||
     controller.analyst?.warning ||
-    controller.analyst?.phase === "needs_attention",
+    controller.analyst?.phase === "needs_attention" ||
+    // Unattended copies wait for a Chet that cannot run; the panel says why.
+    (unattended && controller.readiness?.analyst_runtime_available === false),
   );
   const phaseLabel = t(`modals:${callStatus.labelKey}`);
   const working = chetWorking || controller.analystWorking;
-  const unattended = useUnattendedStore((state) => state.unattended?.enabled === true);
   const refreshUnattended = useUnattendedStore((state) => state.refresh);
   useEffect(() => {
     void refreshUnattended();
+    // Another browser may have changed the mode; read it again when this page shows.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshUnattended();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refreshUnattended]);
   const unattendedLabel = unattended ? t("modals:chet.unattendedOn") : "";
   // A call names its own state; otherwise Chet's work, then what needs a look. Unattended
