@@ -70,6 +70,14 @@ pub(crate) enum Owner {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum NotificationLevel {
+    #[default]
+    All,
+    RequestsOnly,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct Subscription {
     pub(crate) endpoint: String,
@@ -83,6 +91,8 @@ pub(crate) struct Subscription {
     /// The VAPID public key the browser subscribed with.
     pub(crate) application_server_key: String,
     pub(crate) owner: Owner,
+    #[serde(default)]
+    pub(crate) level: NotificationLevel,
     /// The page origin it was made from; notification links lead back there.
     pub(crate) origin: String,
     pub(crate) created_at: String,
@@ -94,6 +104,12 @@ pub(crate) struct Subscription {
     /// following it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) since: BTreeMap<String, String>,
+}
+
+impl Subscription {
+    fn usable_by(&self, key: &str, owner: &Owner) -> bool {
+        self.application_server_key == key && self.owner == *owner && is_page_origin(&self.origin)
+    }
 }
 
 /// Whether `origin` is a page origin in the form a binding stores it.
@@ -110,6 +126,7 @@ pub(crate) struct NewSubscription {
     pub(crate) auth: String,
     pub(crate) application_server_key: String,
     pub(crate) origin: String,
+    pub(crate) level: Option<NotificationLevel>,
 }
 
 #[derive(Debug)]
@@ -122,6 +139,18 @@ pub(crate) enum BindError {
 }
 
 impl From<io::Error> for BindError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum SetLevelError {
+    NotFound,
+    Io(io::Error),
+}
+
+impl From<io::Error> for SetLevelError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)
     }
@@ -210,10 +239,10 @@ impl PushStore {
         })
     }
 
-    /// Hashes of the endpoints `owner` holds under the current key, leaving
+    /// Endpoint hashes and levels `owner` holds under the current key, leaving
     /// out any whose page origin is invalid, so the page offers to bind it
     /// again.
-    pub(crate) fn owned(&self, owner: &Owner) -> io::Result<Vec<String>> {
+    pub(crate) fn owned(&self, owner: &Owner) -> io::Result<Vec<(String, NotificationLevel)>> {
         let document = self.load()?;
         let Some(key) = document.key()? else {
             return Ok(Vec::new());
@@ -221,12 +250,8 @@ impl PushStore {
         Ok(document
             .subscriptions
             .iter()
-            .filter(|item| {
-                item.application_server_key == key.public_key()
-                    && item.owner == *owner
-                    && is_page_origin(&item.origin)
-            })
-            .map(|item| endpoint_hash(&item.endpoint))
+            .filter(|item| item.usable_by(key.public_key(), owner))
+            .map(|item| (endpoint_hash(&item.endpoint), item.level))
             .collect())
     }
 
@@ -268,6 +293,9 @@ impl PushStore {
                     item.auth = new.auth;
                     item.owner = owner.clone();
                     item.origin = new.origin;
+                    item.level = new.level.unwrap_or_default();
+                } else if let Some(level) = new.level {
+                    item.level = level;
                 }
                 item.updated_at = now;
             } else {
@@ -278,6 +306,7 @@ impl PushStore {
                     auth: new.auth,
                     application_server_key: current.to_owned(),
                     owner: owner.clone(),
+                    level: new.level.unwrap_or_default(),
                     origin: new.origin,
                     created_at: now.clone(),
                     updated_at: now,
@@ -302,6 +331,25 @@ impl PushStore {
                     .subscriptions
                     .retain(|item| item.owner != owner || !evicted.contains(&item.endpoint));
             }
+            Ok(())
+        })
+    }
+
+    /// Change what an existing browser receives without moving its starting point.
+    pub(crate) fn set_level(
+        &self,
+        endpoint: &str,
+        owner: &Owner,
+        level: NotificationLevel,
+    ) -> Result<(), SetLevelError> {
+        self.mutate(|document| {
+            let key = document.key()?.ok_or(SetLevelError::NotFound)?;
+            let item = document
+                .subscriptions
+                .iter_mut()
+                .find(|item| item.endpoint == endpoint && item.usable_by(key.public_key(), owner))
+                .ok_or(SetLevelError::NotFound)?;
+            item.level = level;
             Ok(())
         })
     }

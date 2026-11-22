@@ -82,7 +82,21 @@
       "verify": "已请求开启，但无法确认状态，请重试。",
       "disable": "未能完全关闭通知，请检查连接后重试。",
       "originInvalid": "服务器不接受打开此页面所用的地址。如果 CCCC 在反向代理之后，请转发原始 Host 头，或把这个地址加入 CCCC_WEB_CORS_ORIGINS。",
-      "signedOut": "登录已失效，请重新登录后再开启通知。"
+      "signedOut": "登录已失效，请重新登录后再开启通知。",
+      "updateLevel": "未能更新通知范围，请检查连接后重试。",
+      "subscriptionNotFound": "未找到此浏览器的通知订阅，请重新开启通知。"
+    },
+    "level": {
+      "label": "通知范围",
+      "help": "只对这个浏览器生效。",
+      "all": {
+        "label": "所有发给我的消息",
+        "description": "发给你的每条消息都会通知，包括普通汇报和普通回复。"
+      },
+      "requestsOnly": {
+        "label": "只在需要我回复时",
+        "description": "只通知需要你回复或做决定的消息，普通汇报和回复不再通知。"
+      }
     }
   },
   "navigation": {

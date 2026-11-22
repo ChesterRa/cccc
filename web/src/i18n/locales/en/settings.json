@@ -85,7 +85,21 @@
       "verify": "Setup was requested, but its status could not be confirmed. Try again.",
       "disable": "Could not fully disable notifications. Check your connection and try again.",
       "originInvalid": "This server does not accept the address this page was opened at. If CCCC runs behind a proxy, forward the original Host header or add this address to CCCC_WEB_CORS_ORIGINS.",
-      "signedOut": "Your sign-in is no longer valid. Sign in again, then enable notifications."
+      "signedOut": "Your sign-in is no longer valid. Sign in again, then enable notifications.",
+      "updateLevel": "Couldn't change what you're notified about. Check your connection and try again.",
+      "subscriptionNotFound": "This browser's notification subscription was not found. Enable notifications again."
+    },
+    "level": {
+      "label": "Notify me about",
+      "help": "Applies to this browser only.",
+      "all": {
+        "label": "All messages to me",
+        "description": "Every message addressed to you, including ordinary updates and replies."
+      },
+      "requestsOnly": {
+        "label": "Only when a reply is requested",
+        "description": "Only messages waiting for your reply or decision. Ordinary updates and replies don't notify you."
+      }
     }
   },
   "navigation": {

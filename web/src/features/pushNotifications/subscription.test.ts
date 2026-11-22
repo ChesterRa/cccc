@@ -5,6 +5,7 @@ import { apiJson } from "../../services/api/base";
 import {
   isBoundSubscription,
   bindSubscription,
+  boundSubscriptionLevel,
   existingPushSetup,
   findBrowserSubscription,
   preparePush,
@@ -15,6 +16,7 @@ import {
   subscribeFromGesture,
   subscriptionKeyMatches,
   unbindBeforeSignOut,
+  updateSubscriptionLevel,
   type BrowserSubscription,
 } from "./subscription";
 
@@ -318,6 +320,70 @@ describe("notification subscriptions", () => {
     await expect(removeSubscription({ subscription, registration })).rejects.toThrow(
       "unsubscribe_failed",
     );
+  });
+
+  it("validates subscription_levels and resolves the bound browser's level", async () => {
+    const hash = createHash("sha256").update(endpoint).digest("hex");
+    vi.mocked(apiJson).mockResolvedValueOnce({
+      ok: true,
+      result: {
+        vapid_public_key: publicKey,
+        subscriptions: [hash],
+        subscription_levels: { [hash]: "requests_only" },
+        sender: "here",
+      },
+    });
+    const config = await readPushConfig();
+    const browser = await findBrowserSubscription();
+    expect(await boundSubscriptionLevel(browser, config)).toBe("requests_only");
+    expect(
+      await boundSubscriptionLevel(browser, {
+        vapid_public_key: publicKey,
+        subscriptions: [hash],
+        sender: "here",
+      }),
+    ).toBe("all");
+    expect(await boundSubscriptionLevel(null, config)).toBe("all");
+
+    for (const badLevels of [[], null, { "bad-hash": "all" }, { [hash]: "mentions" }]) {
+      vi.mocked(apiJson).mockResolvedValueOnce({
+        ok: true,
+        result: {
+          vapid_public_key: publicKey,
+          subscriptions: [hash],
+          subscription_levels: badLevels,
+          sender: "here",
+        },
+      });
+      await expect(readPushConfig()).rejects.toThrow("config_unavailable");
+    }
+  });
+
+  it("updates the subscription level via PATCH and preserves server errors", async () => {
+    vi.mocked(apiJson).mockResolvedValueOnce({
+      ok: true,
+      result: { updated: true, level: "requests_only" },
+    });
+    await expect(updateSubscriptionLevel(endpoint, "requests_only")).resolves.toBe("requests_only");
+    expect(apiJson).toHaveBeenCalledWith("/api/v1/push/subscription", {
+      method: "PATCH",
+      body: JSON.stringify({ endpoint, level: "requests_only" }),
+      signal: expect.any(AbortSignal),
+    });
+
+    vi.mocked(apiJson).mockResolvedValueOnce({
+      ok: false,
+      error: { code: "push_subscription_not_found", message: "not found" },
+    });
+    await expect(updateSubscriptionLevel(endpoint, "all")).rejects.toThrow(
+      "push_subscription_not_found",
+    );
+
+    vi.mocked(apiJson).mockResolvedValueOnce({
+      ok: true,
+      result: { updated: true, level: "unexpected" },
+    });
+    await expect(updateSubscriptionLevel(endpoint, "all")).rejects.toThrow("update_level_failed");
   });
 });
 

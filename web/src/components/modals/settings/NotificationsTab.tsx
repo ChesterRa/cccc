@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   bindSubscription,
+  boundSubscriptionLevel,
   isBoundSubscription,
   existingPushSetup,
   findBrowserSubscription,
@@ -13,8 +14,10 @@ import {
   removeSubscription,
   subscriptionKeyMatches,
   subscribeFromGesture,
+  updateSubscriptionLevel,
   type BrowserSubscription,
   type PreparedPush,
+  type PushNotificationLevel,
 } from "../../../features/pushNotifications/subscription";
 import { SettingsPage } from "./SettingsKit";
 import { primaryButtonClass, secondaryButtonClass } from "./types";
@@ -35,15 +38,34 @@ const bindingErrors: Record<string, string> = {
   push_sender_unavailable: "serverUnavailable",
   push_service_unsupported: "serviceUnsupported",
   push_subscription_invalid: "subscriptionInvalid",
+  push_subscription_not_found: "subscriptionNotFound",
   push_key_mismatch: "keyMismatch",
   push_origin_invalid: "originInvalid",
   permission_denied: "signedOut",
 };
 
+const levelOptions: ReadonlyArray<{
+  value: PushNotificationLevel;
+  labelKey: string;
+  descriptionKey: string;
+}> = [
+  {
+    value: "all",
+    labelKey: "notifications.level.all.label",
+    descriptionKey: "notifications.level.all.description",
+  },
+  {
+    value: "requests_only",
+    labelKey: "notifications.level.requestsOnly.label",
+    descriptionKey: "notifications.level.requestsOnly.description",
+  },
+];
+
 export function NotificationsTab() {
   const { t } = useTranslation("settings");
   const [status, setStatus] = useState<Status>("checking");
   const [bound, setBound] = useState(false);
+  const [level, setLevel] = useState<PushNotificationLevel>("all");
   const [browser, setBrowser] = useState<BrowserSubscription | null>(null);
   const [prepared, setPrepared] = useState<PreparedPush | null>(null);
   const [available, setAvailable] = useState<PreparedPush | null>(null);
@@ -61,12 +83,18 @@ export function NotificationsTab() {
     if (status !== "checking") window.dispatchEvent(new Event(PUSH_STATUS_EVENT));
   }, [status]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (): Promise<{
+    matched: boolean;
+    level: PushNotificationLevel;
+  }> => {
     const version = ++refreshVersionRef.current;
     const current = () => mountedRef.current && refreshVersionRef.current === version;
     if (!pushSupported()) {
-      if (current()) setStatus("unsupported");
-      return false;
+      if (current()) {
+        setLevel("all");
+        setStatus("unsupported");
+      }
+      return { matched: false, level: "all" };
     }
     try {
       const local = await findBrowserSubscription();
@@ -75,11 +103,13 @@ export function NotificationsTab() {
       const needsReconnect =
         local && !subscriptionKeyMatches(local.subscription, config.vapid_public_key);
       const matches = !needsReconnect && (await isBoundSubscription(local, config));
+      const nextLevel = matches ? await boundSubscriptionLevel(local, config) : "all";
       const ready = needsReconnect ? null : await existingPushSetup(config, local);
       if (current()) {
         // A definite answer replaces what an earlier attempt reported.
         setError("");
         setBound(matches);
+        setLevel(nextLevel);
         setAvailable(ready);
         setStatus(
           pushSetupStatus({
@@ -91,14 +121,15 @@ export function NotificationsTab() {
           }),
         );
       }
-      return current() && matches;
+      return { matched: current() && matches, level: nextLevel };
     } catch {
       if (current()) {
         setBound(false);
+        setLevel("all");
         setAvailable(null);
         setStatus("unknown");
       }
-      return false;
+      return { matched: false, level: "all" };
     }
   }, []);
 
@@ -207,7 +238,7 @@ export function NotificationsTab() {
       try {
         const made = await subscription;
         await bindSubscription(made);
-        const confirmed = await refresh();
+        const { matched: confirmed } = await refresh();
         if (mountedRef.current) {
           setPrepared(null);
           if (!confirmed) setError("verify");
@@ -215,13 +246,32 @@ export function NotificationsTab() {
       } catch (cause) {
         // A lost response may mean the server did save it. Check before retrying;
         // never remove an existing browser subscription on an uncertain result.
-        const confirmed = await refresh();
+        const { matched: confirmed } = await refresh();
         if (mountedRef.current) {
           if (confirmed) setPrepared(null);
           else {
             const code = cause instanceof Error ? cause.message : "";
             setError(bindingErrors[code] || "subscribe");
           }
+        }
+      } finally {
+        finish();
+      }
+    })();
+  };
+
+  const changeLevel = (nextLevel: PushNotificationLevel) => {
+    if (nextLevel === level || !browser || !start()) return;
+    const endpoint = browser.subscription.endpoint;
+    void (async () => {
+      try {
+        const updated = await updateSubscriptionLevel(endpoint, nextLevel);
+        if (mountedRef.current) setLevel(updated);
+      } catch (cause) {
+        const result = await refresh();
+        if (mountedRef.current && !(result.matched && result.level === nextLevel)) {
+          const code = cause instanceof Error ? cause.message : "";
+          setError(bindingErrors[code] || "updateLevel");
         }
       } finally {
         finish();
@@ -319,6 +369,40 @@ export function NotificationsTab() {
           </p>
         )}
       </section>
+      {status === "enabled" && browser && (
+        <fieldset className="space-y-2 border-t border-[var(--glass-border-subtle)] pt-4">
+          <legend className="text-sm font-medium">{t("notifications.level.label")}</legend>
+          {levelOptions.map((option) => (
+            <label
+              key={option.value}
+              className={`flex items-start gap-2 text-xs leading-5 ${
+                busy ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+              }`}
+            >
+              <input
+                type="radio"
+                name="push-notification-level"
+                value={option.value}
+                checked={level === option.value}
+                aria-disabled={busy || undefined}
+                onChange={() => changeLevel(option.value)}
+                className="mt-1 shrink-0"
+              />
+              <span className="min-w-0">
+                <span className="block font-medium text-[var(--color-text-primary)]">
+                  {t(option.labelKey)}
+                </span>
+                <span className="block text-[var(--color-text-muted)]">
+                  {t(option.descriptionKey)}
+                </span>
+              </span>
+            </label>
+          ))}
+          <p className="text-xs leading-5 text-[var(--color-text-muted)]">
+            {t("notifications.level.help")}
+          </p>
+        </fieldset>
+      )}
     </SettingsPage>
   );
 }

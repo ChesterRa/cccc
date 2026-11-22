@@ -36,7 +36,7 @@ use tokio::time::Instant;
 
 use super::crypto::VapidKey;
 use super::sender::{Outcome, Sender};
-use super::store::{Owner, PushStore, Subscription, is_page_origin};
+use super::store::{NotificationLevel, Owner, PushStore, Subscription, is_page_origin};
 use crate::ledger_event_hub::LedgerEventHub;
 
 const TITLE_CHARS: usize = 80;
@@ -1134,8 +1134,8 @@ impl Notifier {
                 continue;
             }
             // Checked for every send: an earlier one can wait on the network
-            // while a token is revoked or the endpoint is bound again.
-            match self.permit(subscription, &event.group_id) {
+            // while the browser's level, binding or token changes.
+            match self.permit(subscription, &event.group_id, request) {
                 Permit::Send => {}
                 Permit::Skip => {
                     if request {
@@ -1353,19 +1353,24 @@ impl Notifier {
         self.reschedule();
     }
 
-    fn permit(&self, subscription: &Subscription, group_id: &str) -> Permit {
-        match self.store.current(&subscription.binding) {
-            Ok(Some(_)) => {}
+    fn permit(&self, subscription: &Subscription, group_id: &str, request: bool) -> Permit {
+        let current = match self.store.current(&subscription.binding) {
+            Ok(Some(current)) => current,
             Ok(None) => return Permit::Skip,
             Err(_) => return Permit::Unknown,
-        }
+        };
+        let level_permit = if request || current.level == NotificationLevel::All {
+            Permit::Send
+        } else {
+            Permit::Skip
+        };
         let Owner::Token {
             user_id,
             token_id,
             created_at,
-        } = &subscription.owner
+        } = &current.owner
         else {
-            return Permit::Send;
+            return level_permit;
         };
         let tokens = match AccessTokenStore::new(self.home.clone()).and_then(|store| store.list()) {
             Ok(tokens) => tokens,
@@ -1379,7 +1384,7 @@ impl Notifier {
             return Permit::Gone;
         };
         if token.is_admin || token.allowed_groups.iter().any(|group| group == group_id) {
-            Permit::Send
+            level_permit
         } else {
             Permit::Skip
         }

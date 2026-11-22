@@ -14,10 +14,12 @@ vi.mock("../../../features/pushNotifications/subscription", async (importOrigina
   findBrowserSubscription: vi.fn(),
   readPushConfig: vi.fn(),
   isBoundSubscription: vi.fn(),
+  boundSubscriptionLevel: vi.fn(),
   existingPushSetup: vi.fn(),
   preparePush: vi.fn(),
   subscribeFromGesture: vi.fn(),
   bindSubscription: vi.fn(),
+  updateSubscriptionLevel: vi.fn(),
   removeSubscription: vi.fn(),
   subscriptionKeyMatches: vi.fn(),
 }));
@@ -44,6 +46,8 @@ beforeEach(async () => {
     sender: "here",
   });
   vi.mocked(push.isBoundSubscription).mockImplementation(async () => Boolean(bound));
+  vi.mocked(push.boundSubscriptionLevel).mockResolvedValue("all");
+  vi.mocked(push.updateSubscriptionLevel).mockImplementation(async (_endpoint, level) => level);
   vi.mocked(push.subscriptionKeyMatches).mockReturnValue(true);
   vi.mocked(push.existingPushSetup).mockResolvedValue(null);
   vi.mocked(push.preparePush).mockResolvedValue(prepared);
@@ -554,4 +558,122 @@ it("drops an earlier error once a check gives a definite status", async () => {
   await act(async () => window.dispatchEvent(new Event("focus")));
   expect(alert()).toBeUndefined();
   expect(status()).toBe("notifications.status.disabled");
+});
+
+function levelRadio(value: push.PushNotificationLevel): HTMLInputElement | null {
+  return host.querySelector<HTMLInputElement>(
+    `input[type="radio"][name="push-notification-level"][value="${value}"]`,
+  );
+}
+
+it("shows the notification level selector only when notifications are enabled and switches via PATCH", async () => {
+  expect(levelRadio("all")).toBeNull();
+  expect(levelRadio("requests_only")).toBeNull();
+
+  bound = entry;
+  vi.stubGlobal("Notification", { permission: "granted", requestPermission });
+  vi.mocked(push.boundSubscriptionLevel).mockResolvedValue("requests_only");
+  await act(async () => {
+    root.unmount();
+    root = createRoot(host);
+    root.render(<NotificationsTab />);
+  });
+  expect(status()).toBe("notifications.status.enabled");
+  expect(levelRadio("requests_only")?.checked).toBe(true);
+  expect(levelRadio("all")?.checked).toBe(false);
+
+  // Clicking the already-selected option does not call PATCH.
+  await act(async () => levelRadio("requests_only")!.click());
+  expect(push.updateSubscriptionLevel).not.toHaveBeenCalled();
+
+  // Switching to "all" sends PATCH and updates checked state.
+  await act(async () => levelRadio("all")!.click());
+  expect(push.updateSubscriptionLevel).toHaveBeenCalledExactlyOnceWith(
+    subscription.endpoint,
+    "all",
+  );
+  expect(levelRadio("all")?.checked).toBe(true);
+  expect(alert()).toBeUndefined();
+
+  // Turning notifications off hides the selector again.
+  await act(async () => button("notifications.disable").click());
+  expect(status()).toBe("notifications.status.disabled");
+  expect(levelRadio("all")).toBeNull();
+});
+
+it("keeps focus and ignores extra clicks while a level update is in flight", async () => {
+  bound = entry;
+  vi.stubGlobal("Notification", { permission: "granted", requestPermission });
+  await act(async () => {
+    root.unmount();
+    root = createRoot(host);
+    root.render(<NotificationsTab />);
+  });
+  let finishPatch!: (level: push.PushNotificationLevel) => void;
+  vi.mocked(push.updateSubscriptionLevel).mockReturnValueOnce(
+    new Promise((resolve) => (finishPatch = resolve)),
+  );
+  const requestsRadio = levelRadio("requests_only")!;
+  requestsRadio.focus();
+  await act(async () => requestsRadio.click());
+  expect(requestsRadio.disabled).toBe(false);
+  expect(requestsRadio.getAttribute("aria-disabled")).toBe("true");
+  expect(document.activeElement).toBe(requestsRadio);
+
+  await act(async () => levelRadio("all")!.click());
+  expect(push.updateSubscriptionLevel).toHaveBeenCalledOnce();
+
+  await act(async () => finishPatch("requests_only"));
+  expect(levelRadio("requests_only")?.checked).toBe(true);
+  expect(requestsRadio.hasAttribute("aria-disabled")).toBe(false);
+});
+
+it("refreshes on 404 push_subscription_not_found and reports the error", async () => {
+  bound = entry;
+  vi.stubGlobal("Notification", { permission: "granted", requestPermission });
+  await act(async () => {
+    root.unmount();
+    root = createRoot(host);
+    root.render(<NotificationsTab />);
+  });
+  vi.mocked(push.updateSubscriptionLevel).mockRejectedValueOnce(
+    new Error("push_subscription_not_found"),
+  );
+  vi.mocked(push.isBoundSubscription).mockResolvedValue(false);
+  await act(async () => levelRadio("requests_only")!.click());
+  expect(status()).toBe("notifications.status.unbound");
+  expect(alert()).toBe("notifications.error.subscriptionNotFound");
+  expect(levelRadio("requests_only")).toBeNull();
+});
+
+it("stays quiet when a lost PATCH response actually saved the requested level", async () => {
+  bound = entry;
+  vi.stubGlobal("Notification", { permission: "granted", requestPermission });
+  await act(async () => {
+    root.unmount();
+    root = createRoot(host);
+    root.render(<NotificationsTab />);
+  });
+  vi.mocked(push.updateSubscriptionLevel).mockRejectedValueOnce(new Error("NETWORK_ERROR"));
+  vi.mocked(push.boundSubscriptionLevel).mockResolvedValueOnce("requests_only");
+  await act(async () => levelRadio("requests_only")!.click());
+  expect(status()).toBe("notifications.status.enabled");
+  expect(levelRadio("requests_only")?.checked).toBe(true);
+  expect(alert()).toBeUndefined();
+});
+
+it("reports a generic level update failure when the server did not change the level", async () => {
+  bound = entry;
+  vi.stubGlobal("Notification", { permission: "granted", requestPermission });
+  await act(async () => {
+    root.unmount();
+    root = createRoot(host);
+    root.render(<NotificationsTab />);
+  });
+  vi.mocked(push.updateSubscriptionLevel).mockRejectedValueOnce(new Error("NETWORK_ERROR"));
+  vi.mocked(push.boundSubscriptionLevel).mockResolvedValueOnce("all");
+  await act(async () => levelRadio("requests_only")!.click());
+  expect(status()).toBe("notifications.status.enabled");
+  expect(levelRadio("all")?.checked).toBe(true);
+  expect(alert()).toBe("notifications.error.updateLevel");
 });

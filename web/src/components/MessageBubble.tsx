@@ -696,6 +696,13 @@ export const MessageBubble = memo(
       />
     );
 
+    // Without a reply count or read receipts in the footer, the action menu opens the recipient
+    // list, so a plain Send's delivery and waiting state are always within reach. A final failure
+    // also keeps its footer mark: that one is a status, the menu item the steady way in.
+    const recipientStatusInMenu =
+      !obligationSummary &&
+      visibleReadStatusEntries.length === 0 &&
+      Object.keys(ev._obligation_status ?? {}).some((id) => id !== "user");
     const showAgentState = canShowAgentState && !collapseHeader;
     const messageActionProps = {
       readOnly,
@@ -712,6 +719,7 @@ export const MessageBubble = memo(
       onQuickReplyOpen,
       pinned,
       onTogglePin: pinnableId && onTogglePin ? () => onTogglePin(pinnableId, !pinned) : undefined,
+      onShowRecipients: recipientStatusInMenu ? onShowRecipients : undefined,
     };
     return (
       <div

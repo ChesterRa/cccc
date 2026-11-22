@@ -145,6 +145,7 @@ fn bind(store: &PushStore, endpoint: &str, owner: Owner) -> Subscription {
                 auth: URL_SAFE_NO_PAD.encode([1_u8; 16]),
                 application_server_key: key,
                 origin: "https://cccc.example".into(),
+                level: None,
             },
             owner,
             BTreeMap::new(),
@@ -186,9 +187,18 @@ fn each_send_is_checked_against_the_current_token_and_binding() {
         owner.clone(),
     );
 
-    assert!(matches!(notifier.permit(&local, "g_any"), Permit::Send));
-    assert!(matches!(notifier.permit(&ana, "g_allowed"), Permit::Send));
-    assert!(matches!(notifier.permit(&ana, "g_other"), Permit::Skip));
+    assert!(matches!(
+        notifier.permit(&local, "g_any", false),
+        Permit::Send
+    ));
+    assert!(matches!(
+        notifier.permit(&ana, "g_allowed", false),
+        Permit::Send
+    ));
+    assert!(matches!(
+        notifier.permit(&ana, "g_other", false),
+        Permit::Skip
+    ));
 
     // Rebound meanwhile: the old binding is not sent to.
     let rebound = bind(
@@ -196,16 +206,35 @@ fn each_send_is_checked_against_the_current_token_and_binding() {
         "https://fcm.googleapis.com/fcm/send/ana",
         owner,
     );
-    assert!(matches!(notifier.permit(&ana, "g_allowed"), Permit::Skip));
     assert!(matches!(
-        notifier.permit(&rebound, "g_allowed"),
+        notifier.permit(&ana, "g_allowed", false),
+        Permit::Skip
+    ));
+    assert!(matches!(
+        notifier.permit(&rebound, "g_allowed", false),
+        Permit::Send
+    ));
+    notifier
+        .store
+        .set_level(
+            &rebound.endpoint,
+            &rebound.owner,
+            NotificationLevel::RequestsOnly,
+        )
+        .expect("edit the existing binding");
+    assert!(matches!(
+        notifier.permit(&rebound, "g_allowed", false),
+        Permit::Skip
+    ));
+    assert!(matches!(
+        notifier.permit(&rebound, "g_allowed", true),
         Permit::Send
     ));
 
     // A revoked token takes its bindings with it.
     tokens.delete(&member.token_id()).expect("revoke");
     assert!(matches!(
-        notifier.permit(&rebound, "g_allowed"),
+        notifier.permit(&rebound, "g_allowed", false),
         Permit::Gone
     ));
     // The same secret added again is a different owner.
@@ -218,7 +247,7 @@ fn each_send_is_checked_against_the_current_token_and_binding() {
         .expect("token");
     assert_ne!(recreated.created_at, member.created_at);
     assert!(matches!(
-        notifier.permit(&rebound, "g_allowed"),
+        notifier.permit(&rebound, "g_allowed", false),
         Permit::Gone
     ));
 }
@@ -393,6 +422,7 @@ impl Fixture {
                     auth: auth.clone(),
                     application_server_key: server_key,
                     origin: "https://cccc.example".into(),
+                    level: None,
                 },
                 Owner::Local,
                 starting_points(&self.home, None).expect("starting points"),
@@ -554,6 +584,63 @@ async fn a_binding_is_sent_what_follows_it_from_the_moment_it_is_saved() {
     f.notifier.changed(&both).await;
     assert_eq!(a.received().last(), Some(&both.id));
     assert_eq!(b.received(), [both.id.clone()]);
+}
+
+#[tokio::test]
+async fn notification_levels_are_per_browser_and_skipped_messages_are_not_replayed() {
+    let mut f = Fixture::new();
+    let group = f.group();
+    f.write(&group, to_user("before either subscribed"));
+    let all = f.subscribe("all-level", 201).await;
+    let requests = f.subscribe("requests-level", 201).await;
+    f.notifier
+        .store
+        .set_level(
+            &requests.endpoint,
+            &Owner::Local,
+            NotificationLevel::RequestsOnly,
+        )
+        .expect("set level");
+
+    let early = f.write(&group, to_user("progress before the notifier wakes"));
+    f.notifier.activate().await;
+    assert_eq!(all.received(), [early.id.clone()]);
+    assert!(requests.received().is_empty());
+
+    let progress = f.write(&group, to_user("progress while following"));
+    let question = reply_question::Question {
+        v: 1,
+        context: String::new(),
+        prompt: "Which option should ship?".into(),
+        options: Vec::new(),
+        recommended: None,
+    };
+    let prompt = f.write(
+        &group,
+        message(
+            &question.text(),
+            json!({
+                "to": ["user"], "message_mode": "request_reply", "question": question,
+            }),
+        ),
+    );
+    f.notifier.changed(&prompt).await;
+    assert_eq!(
+        all.received(),
+        [early.id.clone(), progress.id.clone(), prompt.id.clone()]
+    );
+    assert_eq!(requests.received(), [prompt.id.clone()]);
+    assert!(f.notifier.pending.is_empty());
+
+    f.notifier
+        .store
+        .set_level(&requests.endpoint, &Owner::Local, NotificationLevel::All)
+        .expect("restore all");
+    f.notifier.sweep().await;
+    assert_eq!(requests.received(), [prompt.id.clone()]);
+    let next = f.write(&group, to_user("progress after switching back"));
+    f.notifier.changed(&next).await;
+    assert_eq!(requests.received(), [prompt.id, next.id]);
 }
 
 #[tokio::test]
@@ -953,6 +1040,10 @@ async fn a_request_is_offered_again_while_it_is_open() {
     assert!(f.notifier.retry.is_some_and(|at| at > Instant::now()));
     assert_eq!(a.device.tries(), 1);
     std::fs::write(&store, saved).expect("restore");
+    f.notifier
+        .store
+        .set_level(&a.endpoint, &Owner::Local, NotificationLevel::RequestsOnly)
+        .expect("switch levels while a request is pending");
     a.device.status.store(201, AtomicOrdering::SeqCst);
     f.due_now(&a);
     f.notifier.retry_pending().await;
