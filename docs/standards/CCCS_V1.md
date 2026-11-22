@@ -166,6 +166,8 @@ MUST NOT resolve the service principal as an Actor title. An explicit different
 recipient retains its ordinary routing. If an event claims that service author
 but cannot be verified in the current Group, the default reply MUST fail with
 an actionable error; it MUST NOT fall back to resolving the author as a name.
+When a member replies to a verified Chet answer on behalf of the user (§6.4),
+its default recipient is `user`.
 Cross-instance service addressing is not implied by the local selector.
 
 Before Chet sends a reply that addresses the source Actor, the daemon MUST
@@ -340,7 +342,8 @@ data: {
   `message_mode="request_reply"` in the same group.
 - Only the original sender or the human user may cancel the request.
 - A reply from a recipient closes only that recipient's obligation. A
-  cancellation closes every still-open recipient obligation.
+  cancellation closes every still-open recipient obligation. A recorded Chet
+  answer on behalf of the user closes the user's obligation (§6.4).
 - Append order is authoritative. If a recipient replied before cancellation,
   that recipient is `replied`; otherwise the cancellation state is
   `cancelled`. Later replies remain visible but do not change `cancelled` back
@@ -406,25 +409,36 @@ type ReplyAnswerV2 = {
   cross-group and Connect messages cannot carry one.
 - The recommendation is advice. A client MUST NOT preselect it or treat it as
   the user's choice.
-- `answer` appears only on the user's reply to a question, written by the
-  daemon's answer operation, never accepted from a caller's message fields.
+- `answer` appears only on a reply to a question from the daemon's answer
+  operation. It validates the caller's structured answer before writing it.
   V1 keeps its two mutually exclusive forms. V2 is used only for a selected
   option with a nonempty note; it does not change the question's V1 shape.
   The message `text` is generated for the requester: `Selected <id>: <label>`
   for a choice; for V2, that line followed by a blank line and `Note: <note>`;
   the user's words prefixed with `Other: ` when the question offered options;
   and the user's words alone when it did not. The note is preserved exactly.
-- The user's obligation follows §6.3: the first reply by the user or a
-  cancellation after the request closes it. `user` is the Group's shared human
+- The user's obligation follows §6.3. The first reply by the user, recorded
+  Chet answer on behalf of the user, or cancellation after the request closes
+  it. `user` is the Group's shared human
   audience; one person's answer closes the request for everyone with access to
   the Group.
-- An answer is accepted only while the request is open, from the user, for an
+- An answer is accepted only while the request is open, for an
   offered option, and only when the ledger proves the requester is still the
   same Actor registration: its latest `actor.add` precedes the request and
   records the identity the Group holds now. A removed, re-added or unproven
   requester is reported as such, never resolved to an Actor that shares its
   ID. Requests relayed from another Group or instance are answered with an
   ordinary reply.
+- During unattended mode, an authenticated Chet session can submit an answer
+  to an eligible new request from a member to the user. The daemon checks the
+  current mode and the source under the Group's write permit. It records the
+  answer as `by="svc:chet"` with the existing Group provenance and the
+  host-owned field `data._cccc_chet_on_behalf_of="user"`. The field is reserved
+  for this writer. Readers treat the recorded answer as the user's closure,
+  including when viewing copied history. Normal Chet replies keep their
+  ordinary reply semantics. For a reply to an answer Chet wrote in the current
+  Group, the user defaults to the original requester and a member defaults to
+  the user.
 - Closing the request and recording the answer do not mean the requester has
   received it; delivery is reported separately (§6.5). Answering never
   resumes a paused or stopped Group or re-enables an Actor; the answer waits

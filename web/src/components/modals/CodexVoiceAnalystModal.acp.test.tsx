@@ -9,6 +9,10 @@ import { CodexVoiceAnalystModal } from "./CodexVoiceAnalystModal";
 import { chetConversationStub } from "../../features/chet/chetTestSupport";
 
 const backend = vi.hoisted(() => ({ analyst: null as CodexVoiceAnalystInfo | null }));
+vi.mock("../../services/api/chet", async (original) => ({
+  ...(await original<typeof import("../../services/api/chet")>()),
+  fetchChetUnattended: vi.fn(async () => ({ ok: true, result: { enabled: false, since: null } })),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("../../hooks/useModalA11y", () => ({
   useModalA11y: () => ({ modalRef: createRef<HTMLDivElement>() }),

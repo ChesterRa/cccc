@@ -1,5 +1,6 @@
 import type { ChatMessageData, LedgerEvent, LedgerEventStatusPayload } from "../../types";
 import type { PendingReplyAnswer } from "../../services/api/pendingReplies";
+import { isChetAnswer } from "../../utils/chetIdentity";
 import { projectMessageMode } from "../../utils/crossGroupRecipients";
 import type { ReplyOption, ReplyState, StructuredQuestion } from "./types";
 
@@ -85,7 +86,8 @@ export function recordedOption(
   requester: string,
   reply: LedgerEvent | undefined,
 ): ReplyOption | null {
-  if (!question || reply?.kind !== "chat.message" || reply.by !== "user") return null;
+  if (!question || reply?.kind !== "chat.message" || (reply.by !== "user" && !isChetAnswer(reply)))
+    return null;
   const data = record(reply.data);
   const answer = record(data?.answer);
   if (

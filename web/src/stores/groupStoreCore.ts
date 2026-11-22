@@ -9,8 +9,10 @@ import {
   mergeConnectDelivery,
   mergeObligationStatus,
   mergeReadStatus,
+  mergeUserRequestStatus,
 } from "../utils/mergeLedgerEvents";
 import { replyObligationActor } from "../utils/crossInstanceMessages";
+import { CHET_PRINCIPAL, isChetAnswer } from "../utils/chetIdentity";
 import { unobservableGroupRuntime } from "../utils/groupStatus";
 import { isRuntimeUnobservable } from "../utils/terminalWorkingState";
 import type {
@@ -974,9 +976,11 @@ export function mergeLedgerEventStatuses(
           ? mergeReadStatus(patch.read_status, event._read_status)
           : undefined,
       _obligation_status: mergeObligationStatus(patch.obligation_status, event._obligation_status),
-      _user_request:
-        patch.user_request ??
-        (patch.obligation_status === undefined ? event._user_request : undefined),
+      _user_request: mergeUserRequestStatus(
+        patch.user_request,
+        patch.obligation_status,
+        event._user_request,
+      ),
       _retired_bridge: patch.retired_bridge || event._retired_bridge,
       _connect_delivery: mergeConnectDelivery(patch.connect_delivery, event._connect_delivery),
       _connect_cancellation: mergeConnectDelivery(
@@ -1050,6 +1054,7 @@ export function updateObligationAtIndex(
     : String(patch.actorId || "").trim();
   if (patch.reply && !actorId) return { next, changed: false };
   const recipientIds = actorId ? [actorId] : Object.keys(obligationStatus);
+  let userRequest = message._user_request;
   let changed = false;
   for (const recipientId of recipientIds) {
     if (
@@ -1085,10 +1090,24 @@ export function updateObligationAtIndex(
       continue;
     }
     obligationStatus[recipientId] = updated;
+    if (
+      recipientId === "user" &&
+      userRequest &&
+      updated.reply_requested &&
+      updated.replied &&
+      !previous.replied &&
+      patch.reply?.id
+    ) {
+      userRequest = {
+        ...userRequest,
+        reply_event_id: patch.reply.id,
+        reply_by: isChetAnswer(patch.reply) ? CHET_PRINCIPAL : "user",
+      };
+    }
     changed = true;
   }
   if (!changed) return { next, changed: false };
-  next[index] = { ...message, _obligation_status: obligationStatus };
+  next[index] = { ...message, _obligation_status: obligationStatus, _user_request: userRequest };
   return { next, changed: true };
 }
 

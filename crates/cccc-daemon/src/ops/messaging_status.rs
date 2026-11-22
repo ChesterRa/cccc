@@ -415,6 +415,7 @@ impl StatusSnapshot<'_> {
             && let Some(reply) = user_reply.and_then(|position| self.events.get(position))
         {
             status.insert("reply_event_id".into(), json!(reply.id));
+            status.insert("reply_by".into(), json!(reply.by));
         }
         Value::Object(status)
     }
@@ -516,16 +517,20 @@ fn collect_message_outcomes_from(
                 .and_then(Value::as_str)
                 .filter(|value| !value.is_empty())
             {
-                let author = super::connect_messages::stored_message(event)
-                    .ok()
-                    .filter(|message| {
-                        event.by == format!("connect:{}", message.source.instance_id)
-                            && message.reply_to.is_some()
-                    })
-                    .map(|message| {
-                        connect_reply_author(&message.source.instance_id, &message.sender)
-                    })
-                    .unwrap_or_else(|| event.by.clone());
+                let author = if user_requests::closes(event).is_some() {
+                    "user".into()
+                } else {
+                    super::connect_messages::stored_message(event)
+                        .ok()
+                        .filter(|message| {
+                            event.by == format!("connect:{}", message.source.instance_id)
+                                && message.reply_to.is_some()
+                        })
+                        .map(|message| {
+                            connect_reply_author(&message.source.instance_id, &message.sender)
+                        })
+                        .unwrap_or_else(|| event.by.clone())
+                };
                 replies
                     .entry(source_event_id.to_owned())
                     .or_default()
@@ -535,12 +540,7 @@ fn collect_message_outcomes_from(
             continue;
         }
         if event.kind == "chat.reply_request.cancelled" {
-            if let Some(source_event_id) = event
-                .data
-                .get("source_event_id")
-                .and_then(Value::as_str)
-                .filter(|value| !value.is_empty())
-            {
+            if let Some(source_event_id) = user_requests::closes(event) {
                 cancellations
                     .entry(source_event_id.to_owned())
                     .or_insert(position);

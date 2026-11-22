@@ -32,3 +32,21 @@ pub enum GroupInputSender {
         actor_generation: String,
     },
 }
+
+/// Unattended mode: while it is on, Group messages addressed to the user are
+/// also given to Chet, which acts for the user. It belongs to this instance's
+/// user, not to any Group. The host sets `since` when the mode turns on and
+/// copies only messages from that moment; a client never supplies it.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UnattendedSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+}
+
+impl UnattendedSettings {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+}

@@ -128,6 +128,19 @@ it("leaves a reply to Chet without recipients, naming Chet only for this Group's
   expect(other?.replyTarget.toChet).toBeUndefined();
 });
 
+it("addresses a correction to the requester after a Chet answer in this Group", () => {
+  const event: LedgerEvent = {
+    id: "answer",
+    kind: "chat.message",
+    by: "svc:chet",
+    data: { to: ["peer"], _cccc_chet_group_generation: "gen-2", _cccc_chet_on_behalf_of: "user" },
+  };
+  const reply = buildReplyComposerState(event, "g_local", [], undefined, "gen-2");
+  expect(reply?.toText).toBe("peer");
+  expect(reply?.replyTarget.toChet).toBeUndefined();
+  expect(buildReplyComposerState(event, "g_local", [], undefined, "other")?.toText).toBe("");
+});
+
 it("keeps a departed sender explicit instead of routing a reply to the original human audience", () => {
   const state = buildReplyComposerState(
     {

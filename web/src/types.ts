@@ -225,6 +225,7 @@ export type UserReplyRequestStatus = {
   question: "valid" | "none" | "unavailable";
   requester: "available" | "unavailable" | "unknown" | "unsupported";
   reply_event_id?: string;
+  reply_by?: "user" | "svc:chet";
   reply_route?: "composer";
 };
 

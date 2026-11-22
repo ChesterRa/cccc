@@ -30,6 +30,7 @@ const mergers = {
       [snapshot.id!]: {
         read_status: snapshot._read_status,
         obligation_status: snapshot._obligation_status,
+        user_request: snapshot._user_request,
       },
     }),
   history: (current: LedgerEvent[], snapshot: LedgerEvent) =>
@@ -68,6 +69,34 @@ describe.each(Object.entries(mergers))("late %s response", (_, merge) => {
     expect(merge(live.next, { ...source, _obligation_status: {} })[0]._obligation_status).toEqual(
       {},
     );
+  });
+
+  it("keeps the live Chet answer and its author through a stale pending snapshot", () => {
+    const request: LedgerEvent = {
+      ...source,
+      by: "worker",
+      data: { message_mode: "request_reply", to: ["user"] },
+      _obligation_status: { user: pending },
+      _user_request: { question: "none", requester: "available" },
+    };
+    const reply: LedgerEvent = {
+      id: "answer",
+      kind: "chat.message",
+      by: "svc:chet",
+      data: { reply_to: request.id, _cccc_chet_group_generation: "generation" },
+    };
+    expect(updateObligationAtIndex([request], 0, { reply }).changed).toBe(false);
+    const live = updateObligationAtIndex([request], 0, {
+      reply: { ...reply, data: { ...reply.data, _cccc_chet_on_behalf_of: "user" } },
+    });
+    expect(live.changed).toBe(true);
+    expect(merge(live.next, request)[0]).toMatchObject({
+      _obligation_status: { user: { replied: true } },
+      _user_request: { reply_event_id: "answer", reply_by: "svc:chet" },
+    });
+    const cancelled = { ...request, _obligation_status: { user: { ...pending, cancelled: true } } };
+    expect(merge(live.next, cancelled)[0]).toMatchObject(cancelled);
+    expect(merge(live.next, cancelled)[0]._user_request?.reply_by).toBeUndefined();
   });
 
   it("keeps a delivery's reason with its state", () => {

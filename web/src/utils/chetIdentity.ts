@@ -7,6 +7,7 @@ export const CHET_SELECTOR = "@chet";
 export const CHET_NAME = "Chet";
 /** The host stamps each message Chet writes with the Group generation it was written in. */
 const GENERATION_FIELD = "_cccc_chet_group_generation";
+const ANSWER_FOR_FIELD = "_cccc_chet_on_behalf_of";
 
 /** The generation Chet's messages carry, or "" until the Group is known. */
 export function chetGeneration(group: Pick<GroupDoc, "generation" | "created_at"> | null): string {
@@ -23,4 +24,17 @@ export function isChetMessage(event: LedgerEvent, generation: string): boolean {
   if (!generation || event.kind !== "chat.message" || event.by !== CHET_PRINCIPAL) return false;
   const data = event.data as Record<string, unknown> | undefined;
   return data?.[GENERATION_FIELD] === generation;
+}
+
+/** A recorded Chet answer also closes the request when read in copied history. */
+export function isChetAnswer(event: LedgerEvent | undefined): boolean {
+  if (event?.kind !== "chat.message" || event.by !== CHET_PRINCIPAL) return false;
+  const data = event.data as Record<string, unknown> | undefined;
+  const generation = data?.[GENERATION_FIELD];
+  return (
+    data?.[ANSWER_FOR_FIELD] === "user" &&
+    typeof generation === "string" &&
+    generation.length > 0 &&
+    generation !== "legacy:"
+  );
 }

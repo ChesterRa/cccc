@@ -1,4 +1,5 @@
 import type { ChatMessageData, ConnectMessageRouting, LedgerEvent } from "../types";
+import { isChetAnswer } from "./chetIdentity";
 
 type CrossInstanceMessageData =
   | {
@@ -37,7 +38,16 @@ export function replyObligationActor(source: LedgerEvent, reply: LedgerEvent): s
   const replyData = reply.data as ChatMessageData;
   if (replyData?.reply_to !== source.id) return null;
   if (!originalData?.dst_instance_id) {
-    return isCrossInstanceInboundMessage(reply.by, replyData) ? null : reply.by || null;
+    if (isCrossInstanceInboundMessage(reply.by, replyData)) return null;
+    if (isChetAnswer(reply)) {
+      return !originalData?.dst_group_id &&
+        originalData?.message_mode === "request_reply" &&
+        Array.isArray(originalData.to) &&
+        originalData.to.some((recipient) => recipient === "user" || recipient === "@user")
+        ? "user"
+        : null;
+    }
+    return reply.by || null;
   }
   const original = originalData.connect_message;
   const response = replyData.connect_message;

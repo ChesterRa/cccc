@@ -844,7 +844,10 @@ and rejects exhibit access.
   proof of deletion. `chet_source_unavailable` means the inspected ledger
   confirms that the source is missing, no longer matches its reference,
   imported from an earlier Group, or its member was removed or replaced after
-  the source message. An inconsistent
+  the source message. The recipient is Chet alone, or, for an unattended copy,
+  the user under the rule `unattended_get` describes; a copy that the current
+  unattended period no longer covers is also `chet_source_unavailable`, and
+  unreadable unattended settings are `invalid_chet_source`. An inconsistent
   Group document without a committed membership event is not proof of member
   retirement and remains `invalid_chet_source`. For a previously recorded,
   unclaimed Group input, the Web owner records `not_started` with
@@ -973,8 +976,11 @@ the same registration, one system notice to that member. Both are written before
 returns, so an identical retry completes whatever a previous call left out.
 
 The result is `{ registration: "inserted" | "existing", delivery: "recorded" |
-"existing" | "source_unavailable" }`. `source_unavailable` means the Group, its
-generation or the source message is gone; nothing is shown in the Group.
+"existing" | "source_unavailable" | "copy" }`. `source_unavailable` means the Group, its
+generation or the source message is gone; nothing is shown in the Group. `copy`
+means the source message was sent to the user and Chet held an unattended copy
+of it (`unattended_update`): only the private fact is written, with no delivery
+on the message and no notice to its sender.
 `chet_history_outcome_conflict` means the input already has another outcome:
 nothing is written, and the caller MUST NOT report the request as unsent.
 Other errors leave the expiry to be retried with the same arguments.
@@ -1036,6 +1042,39 @@ Result:
   }
 }
 ```
+
+#### `unattended_get`
+
+Args: none
+
+Result:
+```ts
+{ unattended: { enabled: boolean; since?: string } }
+```
+
+Unattended mode belongs to this instance's user, not to a Group, and is not
+recorded in any Group ledger. While it is on, Chet also receives each Group
+`chat.message` that a visible member sent to the user with a reply obligation
+(`send` or `request_reply`, not IM, not addressed to Chet) at or after `since`,
+and may answer such a request for the user through `reply` with `answer`.
+
+#### `unattended_update`
+
+Args:
+```ts
+{ by: "user"; enabled: boolean }
+```
+
+Result: same as `unattended_get`.
+
+Only the user may call it; a call that carries an Actor or session binding is
+refused with `permission_denied`. Turning the mode on sets `since` to the
+current time when it was off; turning it on again keeps the current `since`.
+Turning it off clears `since`: Chet receives no further copies, a copy not yet
+handed to Chet is recorded as never started, and an answer not yet written is
+refused. Messages and answers already written stay in their threads. A copy
+whose wait expires is recorded only in Chet history, without a delivery on the
+source message or a notice to its sender.
 
 #### `debug_snapshot`
 
@@ -5916,7 +5955,8 @@ For a `request_reply` message that gives the user an obligation,
 user_request: {
   question: "valid" | "none" | "unavailable" // CCCS §6.4 reading rule
   requester: "available" | "unavailable" | "unknown" | "unsupported"
-  reply_event_id?: string     // the user's reply, once it closed the request
+  reply_event_id?: string     // the reply that closed the user's request
+  reply_by?: "user" | "svc:chet" // that reply's recorded author
   reply_route?: "composer"    // with "unsupported": answer with an ordinary reply
 }
 ```
@@ -6453,7 +6493,8 @@ Args:
 {
   group_id: string
   reply_to: string
-  text: string
+  text?: string                  // required for an ordinary text reply
+  answer?: ReplyAnswerV1 | ReplyAnswerV2 // unattended Chet answer only
   by?: string
   to?: string[]                 // local: original sender; Connect: original remote participant
   message_mode?: "send" | "mail" // default: "send"
@@ -6476,9 +6517,21 @@ the full ID before any idempotency check, routing decision or ledger write, so
 callers must pass the full ID.
 
 `reply`, `send_files`, `send_cross_group` and `connect_send` reject a non-null
-`question` with `invalid_question` and a non-null `answer` with `invalid_args`
-before any write (`send_files` also before reading any file); a question is
-sent with `send`, and the user answers it with `reply_request_answer`.
+`question` before any write. The user answers a question with
+`reply_request_answer`. For an authenticated unattended Chet answer, `reply`
+accepts `group_id`, `reply_to`, `client_id` and `answer`, using Send and the
+host-supplied Chet origin. The daemon applies the same answer and requester
+checks as `reply_request_answer`. It checks the current unattended period
+before a new append and runs the idempotency check for `svc:chet`. An
+identical accepted retry returns the earlier answer even after unattended
+mode turns off. A member submitting `answer` through `reply` receives
+`permission_denied`. A user reply with `answer` and no Chet origin receives
+`invalid_args`, as do non-null answers on the file, cross-group and Connect
+send paths.
+
+For replies to a verified Chet answer on behalf of the user, a member's
+default recipient is `user`. The user's default recipient is the original
+requester (CCCS §6.4).
 
 Local cross-group replies route qualified recipients back to the parent message's
 source Group. Both ledger copies MUST reference their own Group's parent event:
@@ -6727,7 +6780,8 @@ Result:
 }
 ```
 
-A request is open until the user replies to it or it is cancelled (CCCS §6.3).
+A request is open until the user replies, a Chet answer on the user's behalf
+is recorded, or it is cancelled (CCCS §§6.3–6.4).
 Pages and totals come from one projection of the ledger kept from committed
 byte offsets, so a request that closes or arrives between pages neither shifts
 nor hides another. Unlike ordinary ledger reads, which skip records that do not

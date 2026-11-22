@@ -700,6 +700,37 @@ included, and a handoff Chet sends after the call has ended is not read aloud, a
 member's reply to it can still be taken up by Chet when the CCCC Web service and Chet's Runtime
 are available.
 
+#### Unattended mode
+
+The **Unattended** switch in Chet's title bar is for times you are away. It applies to every Group on
+this CCCC instance and is off by default; while it is on, Chet's entry below the Group list says
+**Unattended on**. Only a CCCC administrator can turn it on or off.
+
+While it is on, each new message a member of a Group on this instance sends to you with **Send**
+or **Request reply** still reaches you, with your usual notifications, and a copy also goes to
+Chet. Messages from other instances and IM are not copied. Chet can reply to the member, answer
+question cards for you, or point out a better approach or a risk; it is instructed to leave to you
+what only you can do, such as signing in or paying, and to say so. Only messages sent after the
+switch was turned on are copied; turning it off and on again starts a new period, and earlier
+cards are not answered.
+
+A card Chet answered reads **Chet chose A for you** (or **Chet answered for you**), and Chet's
+message is labelled as an answer on your behalf. A card counts as answered once Chet answers it,
+everywhere you see your pending replies. To correct Chet, reply to its answer: by default the reply
+goes to the member who asked. By default, a member's reply to Chet's answer comes to you, and to
+Chet while the switch is on.
+
+Turning the switch off stops new copies. A copy that has not reached Chet yet is dropped, and a
+card answer Chet has not written yet is refused; replies and answers already written stay in their
+threads. One exception: a copy Chet's Runtime has already taken can still reach Chet, which may then
+send an ordinary reply to the member, although it can no longer answer the card.
+
+Copies use Chet's usual session, Runtime and account, so they use its quota, queue behind one
+another, and can see your own conversation with Chet; Chet is instructed not to carry that into a
+Group, which is an instruction to the model, not isolation. Chet runs in the CCCC Web service, which
+must be running for copies to be handled; the browser can be closed. Chet can misjudge, and members
+may act on its answers before you correct them.
+
 During a call, investigations include a bounded recent excerpt so Chet
 can understand follow-ups and retain your limits; that excerpt becomes part of its retained conversation.
 Voice is instructed to prepare a self-contained task and clarify essential ambiguity before handing it off.

@@ -4,6 +4,14 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { CodexVoiceDock } from "./CodexVoiceDock";
 
+const unattended = vi.hoisted(() => ({ enabled: false }));
+vi.mock("../../stores/useUnattendedStore", () => ({
+  useUnattendedStore: (select: (state: unknown) => unknown) =>
+    select({
+      unattended: unattended.enabled ? { enabled: true, since: "t" } : null,
+      refresh: async () => undefined,
+    }),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 function controller(
@@ -119,6 +127,38 @@ describe("CodexVoiceDock", () => {
       expect(html).not.toContain("modals:codexVoiceProviders.grok");
       expect(html).not.toContain("Eve");
       if (surface !== "collapsed") expect(html).toMatch(/>Chet<\/span>/);
+    },
+  );
+
+  it.each(["sidebar", "mobile", "collapsed"] as const)(
+    "names unattended mode in the %s dock beside Chet's own state",
+    (surface) => {
+      const markup = (chetWorking = false, overrides: Partial<CodexVoiceSessionController> = {}) =>
+        renderToStaticMarkup(
+          <CodexVoiceDock
+            controller={controller(overrides)}
+            chetWorking={chetWorking}
+            variant={surface === "mobile" ? "mobile" : "sidebar"}
+            collapsed={surface === "collapsed"}
+            onOpen={vi.fn()}
+            onStart={vi.fn()}
+          />,
+        );
+      unattended.enabled = true;
+      try {
+        expect(markup()).toContain("modals:chet.unattendedOn");
+        expect(markup(true)).toContain("modals:chet.state.working · modals:chet.unattendedOn");
+        // A call or something that needs a look keeps the mode named beside it.
+        expect(markup(false, { error: "Needs attention" })).toContain(
+          "layout:codexVoiceAttention · modals:chet.unattendedOn",
+        );
+        expect(markup(false, { phase: "listening", owned: true, isEngaged: true })).toContain(
+          "modals:chet.unattendedOn",
+        );
+      } finally {
+        unattended.enabled = false;
+      }
+      expect(markup()).not.toContain("modals:chet.unattendedOn");
     },
   );
 

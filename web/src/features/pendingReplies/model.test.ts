@@ -146,6 +146,18 @@ describe("pending user reply projection", () => {
       label: "There",
     });
     expect(matchesSubmittedAnswer(parsed, { v: 1, option_id: "B" }, reply)).toBe(true);
+    const chet = { ...reply, by: "svc:chet" };
+    expect(recordedOption(parsed, "request", "worker", chet)).toBeNull();
+    expect(
+      recordedOption(parsed, "request", "worker", {
+        ...chet,
+        data: {
+          ...chet.data,
+          _cccc_chet_group_generation: "original-group-generation",
+          _cccc_chet_on_behalf_of: "user",
+        },
+      }),
+    ).toMatchObject({ id: "B", label: "There" });
     const wrong = { ...reply, data: { ...reply.data, text: "Selected A: Here" } };
     expect(recordedOption(parsed, "request", "worker", wrong)).toBeNull();
     expect(matchesSubmittedAnswer(parsed, { v: 1, option_id: "B" }, wrong)).toBe(false);

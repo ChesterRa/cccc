@@ -3,6 +3,7 @@ import type {
   LedgerEvent,
   LedgerEventStatusPayload,
   ObligationStatus,
+  UserReplyRequestStatus,
 } from "../types";
 
 const CROSS_GROUP_RECEIPT_KIND = "chat.cross_group_receipt";
@@ -27,6 +28,9 @@ export function keepLiveReceipts(
 ): LedgerEventStatusPayload {
   return {
     ...snapshot,
+    user_request:
+      snapshot.user_request &&
+      keepLiveFields(snapshot.user_request, before._user_request, live._user_request),
     connect_delivery: keepLiveFields(
       snapshot.connect_delivery,
       before._connect_delivery,
@@ -109,6 +113,21 @@ export function mergeObligationStatus(
   );
 }
 
+export function mergeUserRequestStatus(
+  incoming: UserReplyRequestStatus | undefined,
+  obligations: Record<string, ObligationStatus> | undefined,
+  existing: UserReplyRequestStatus | undefined,
+): UserReplyRequestStatus | undefined {
+  if (!obligations) return incoming ?? existing;
+  const user = obligations.user;
+  // Keep the closing reply with the completed obligation when a stale pending
+  // snapshot arrives. A terminal snapshot owns the outcome and its author.
+  if (incoming && user && !user.replied && !user.cancelled && existing?.reply_event_id) {
+    return { ...incoming, reply_event_id: existing.reply_event_id, reply_by: existing.reply_by };
+  }
+  return incoming;
+}
+
 export function mergeConnectDelivery(
   incoming?: ConnectDeliveryStatus,
   existing?: ConnectDeliveryStatus,
@@ -132,9 +151,11 @@ export function mergeEventWithExistingStatus(
       incoming._obligation_status,
       existing._obligation_status,
     ),
-    _user_request:
-      incoming._user_request ??
-      (incoming._obligation_status === undefined ? existing._user_request : undefined),
+    _user_request: mergeUserRequestStatus(
+      incoming._user_request,
+      incoming._obligation_status,
+      existing._user_request,
+    ),
     _connect_delivery: mergeConnectDelivery(incoming._connect_delivery, existing._connect_delivery),
     _connect_cancellation: mergeConnectDelivery(
       incoming._connect_cancellation,

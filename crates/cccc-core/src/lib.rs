@@ -67,6 +67,7 @@ pub mod scope;
 pub mod settings;
 pub mod space_credentials;
 pub mod system_prompt;
+pub mod unattended;
 #[cfg(unix)]
 pub mod unix_socket_path;
 pub mod update_capabilities;

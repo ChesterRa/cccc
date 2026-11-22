@@ -32,6 +32,7 @@ export function PendingReplyCard({
   checking,
   error,
   showRetainedDraft,
+  answeredByChet,
   answeredOption,
   quiet,
   draft,
@@ -48,6 +49,7 @@ export function PendingReplyCard({
   checking?: boolean;
   error?: string;
   showRetainedDraft?: boolean;
+  answeredByChet?: boolean;
   answeredOption?: { id: string; label: string } | null;
   /** 'Waiting for you' indicators are off: the question without their emphasis. */
   quiet?: boolean;
@@ -131,6 +133,7 @@ export function PendingReplyCard({
   if (readOnly) return null;
 
   if (state !== "pending") {
+    const statusLabel = state === "answered" && answeredByChet ? "chetAnswered" : state;
     return (
       <div
         className="border-t border-[var(--glass-border-subtle)] pt-3 text-sm text-[var(--color-text-secondary)]"
@@ -139,11 +142,14 @@ export function PendingReplyCard({
       >
         <p>
           {state === "answered" && answeredOption
-            ? t("pendingReply.answeredChoice", {
-                // The options stay listed above, so the letter is enough.
-                choice: answeredOption.id,
-              })
-            : t(`pendingReply.${state}`)}
+            ? t(
+                answeredByChet ? "pendingReply.chetAnsweredChoice" : "pendingReply.answeredChoice",
+                {
+                  // The options stay listed above, so the letter is enough.
+                  choice: answeredOption.id,
+                },
+              )
+            : t(`pendingReply.${statusLabel}`)}
         </p>
         {showRetainedDraft && (draft.text || draft.selection) && (
           <div className="mt-2 whitespace-pre-wrap break-words text-[var(--color-text-primary)]">

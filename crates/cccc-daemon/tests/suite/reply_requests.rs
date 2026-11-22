@@ -321,6 +321,120 @@ fn a_choice_with_note_is_recorded_once_and_retries_compare_the_entire_answer() {
 }
 
 #[test]
+fn chet_answers_once_for_the_current_period_and_followups_stay_in_the_thread() {
+    use cccc_core::user_requests::CHET_ANSWER_FOR_FIELD;
+    use cccc_core::voice_notifications::{ORIGIN_ARG, register_origin};
+
+    let f = Fixture::new();
+    let origin = uuid::Uuid::new_v4().simple().to_string();
+    register_origin(
+        &f.home,
+        &origin,
+        "fixture-generation",
+        "fixture-thread",
+        cccc_contracts::ActorRuntime::Codex,
+    )
+    .expect("Chet origin");
+    let set_unattended = |enabled| {
+        call(
+            &f.home,
+            "unattended_update",
+            json!({"by":"user","enabled":enabled}),
+        );
+    };
+    let answer_args = |source: &str, client_id: &str| {
+        let mut args = json!({
+            "reply_to":source,"by":"user","actor_id":"user","message_mode":"send",
+            "client_id":client_id,"require_peer_insight":true,
+            "answer":{"v":2,"option_id":"A","note":"Use the existing page."}
+        });
+        args[ORIGIN_ARG] = json!(origin);
+        args
+    };
+
+    let old = f.ask(choice());
+    set_unattended(true);
+    assert_eq!(
+        f.fail("reply", answer_args(&old, "old")).code,
+        "unattended_unavailable"
+    );
+    let current = f.ask(choice());
+    let later = f.ask(choice());
+    let mut no_origin = answer_args(&current, "answer");
+    no_origin
+        .as_object_mut()
+        .expect("arguments")
+        .remove(ORIGIN_ARG);
+    assert_eq!(f.fail("reply", no_origin).code, "invalid_args");
+    let mut from_member = answer_args(&current, "member");
+    from_member["by"] = json!("lead");
+    assert_eq!(f.fail("reply", from_member).code, "permission_denied");
+    let mut with_question = answer_args(&current, "question");
+    with_question["question"] = choice();
+    assert_eq!(f.fail("reply", with_question).code, "invalid_question");
+    let ordinary = f.ok(
+        "reply",
+        json!({"reply_to":current,"by":"user",(ORIGIN_ARG):origin,"text":"I'll check."}),
+    );
+    assert_eq!(ordinary["event"]["by"], "svc:chet");
+    assert_eq!(
+        f.status(&current)["obligation_status"]["user"]["replied"],
+        false
+    );
+
+    let args = answer_args(&current, "answer");
+    let answer = f.ok("reply", args.clone());
+    let event = &answer["event"];
+    assert_eq!(event["by"], "svc:chet");
+    assert_eq!(event["data"]["to"], json!(["lead"]));
+    assert_eq!(event["data"][CHET_ANSWER_FOR_FIELD], "user");
+    assert_eq!(event["data"]["answer"], args["answer"]);
+    assert!(event["data"].get(ORIGIN_ARG).is_none());
+    let status = f.status(&current);
+    assert_eq!(status["obligation_status"]["user"]["replied"], true);
+    assert_eq!(status["user_request"]["reply_event_id"], event["id"]);
+    assert_eq!(status["user_request"]["reply_by"], "svc:chet");
+    assert_eq!(
+        f.ok("user_reply_requests", json!({"by":"user"}))["total"],
+        2
+    );
+    assert_eq!(
+        f.fail(
+            "reply_request_answer",
+            json!({
+                "source_event_id":current,"client_id":"answer","answer":{"v":1,"option_id":"B"}
+            })
+        )
+        .code,
+        "reply_request_closed"
+    );
+
+    set_unattended(false);
+    let retry = f.ok("reply", args);
+    assert_eq!(retry["duplicate"], true);
+    assert_eq!(retry["event"]["id"], event["id"]);
+    let followup = f.ok(
+        "reply",
+        json!({"reply_to":event["id"],"by":"lead","text":"Understood."}),
+    );
+    assert_eq!(followup["event"]["data"]["to"], json!(["user"]));
+    let correction = f.ok(
+        "reply",
+        json!({"reply_to":event["id"],"by":"user","text":"Please use the other option."}),
+    );
+    assert_eq!(correction["event"]["data"]["to"], json!(["lead"]));
+    assert_eq!(
+        f.fail("reply", answer_args(&later, "after-off")).code,
+        "unattended_unavailable"
+    );
+    set_unattended(true);
+    assert_eq!(
+        f.fail("reply", answer_args(&later, "previous-period")).code,
+        "unattended_unavailable"
+    );
+}
+
+#[test]
 fn a_retry_returns_only_the_answer_the_requester_received() {
     let f = Fixture::new();
     f.add_actor("other");

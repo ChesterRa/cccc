@@ -571,7 +571,16 @@ fn send_with_audience_policy(
         }
     }
     let scope_key = message_scope(kind, &data);
-    let event = append_in_scope(home, &group.group_id, kind, &by, data, scope_key)?;
+    let chet_answer = in_place.is_some() && by == cccc_core::actors::CHET_SERVICE_PRINCIPAL;
+    let event = append_in_scope(
+        home,
+        &group.group_id,
+        kind,
+        &by,
+        data,
+        scope_key,
+        chet_answer,
+    )?;
     let mut advisories = Vec::new();
     let mut send_advisories = Vec::new();
     if kind == "chat.message"
@@ -789,7 +798,6 @@ fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
 
 fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     reject_chet_provenance(&request.args)?;
-    reply_questions::reject_fields(&request.args, "a reply")?;
     if ["priority", "reply_required", "requires_ack"]
         .iter()
         .any(|key| request.args.contains_key(*key))
@@ -812,6 +820,17 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     // Idempotency, routing and both ledgers compare and record full IDs only.
     let resolved = super::event_prefix::with_full_reply_target(home, request)?;
     let request = resolved.as_ref().unwrap_or(request);
+    reply_questions::reject_question(&request.args, "a reply")?;
+    if request
+        .args
+        .get("answer")
+        .is_some_and(|answer| !answer.is_null())
+    {
+        if message_mode != "send" {
+            return Err(OpError::new("invalid_message_mode", "an answer uses send"));
+        }
+        return super::reply_requests::answer_as_chet(home, request);
+    }
     let reply_to = required_arg(request, "reply_to")?;
     let group = load(home, request)?;
     let authority_by = string_arg(request, "by").unwrap_or_else(|| "user".into());
@@ -899,7 +918,8 @@ fn is_default_service_reply(
     {
         return Ok(false);
     }
-    if im {
+    let uses_request_thread = follows_chet_answer(group, by, target);
+    if im && !uses_request_thread {
         return Err(OpError::new(
             "chet_im_unsupported",
             "Chet is not available through IM; use the Chet panel",
@@ -911,7 +931,7 @@ fn is_default_service_reply(
             "Cannot verify this Chet message's origin in this Group; use @chet to start a new message",
         ));
     }
-    Ok(true)
+    Ok(!uses_request_thread)
 }
 
 fn routed_reply_recipients(args: &Map<String, Value>) -> Vec<(String, String)> {
@@ -1312,6 +1332,13 @@ fn recipient_tokens(args: &Map<String, Value>) -> Vec<String> {
 }
 
 fn default_reply_recipients(group: &GroupDoc, by: &str, target: &Event) -> Vec<String> {
+    if follows_chet_answer(group, by, target) {
+        return if by == "user" {
+            recipient_tokens(&target.data)
+        } else {
+            vec!["user".into()]
+        };
+    }
     let original_by = target.by.trim();
     if !original_by.is_empty() && original_by != by {
         return vec![if original_by == "@user" {
@@ -1325,6 +1352,11 @@ fn default_reply_recipients(group: &GroupDoc, by: &str, target: &Event) -> Vec<S
         return original_to;
     }
     vec![super::messaging_recipients::default_recipient(group).into()]
+}
+
+fn follows_chet_answer(group: &GroupDoc, by: &str, target: &Event) -> bool {
+    cccc_core::user_requests::is_chet_answer(target)
+        && (by == "user" || cccc_core::actors::find(group, by).is_some())
 }
 
 fn append_raw(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -1376,7 +1408,7 @@ pub(super) fn append(
     by: &str,
     data: Map<String, Value>,
 ) -> Result<Event, OpError> {
-    append_in_scope(home, group_id, kind, by, data, String::new())
+    append_in_scope(home, group_id, kind, by, data, String::new(), false)
 }
 
 fn append_in_scope(
@@ -1386,6 +1418,7 @@ fn append_in_scope(
     by: &str,
     mut data: Map<String, Value>,
     scope_key: String,
+    chet_answer: bool,
 ) -> Result<Event, OpError> {
     let origin = data.remove(cccc_core::voice_notifications::ORIGIN_ARG);
     reject_chet_provenance(&data)?;
@@ -1418,22 +1451,31 @@ fn append_in_scope(
                     cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD.into(),
                     json!(generation),
                 );
-                // The existing recording lease is a useful approximation of
-                // call-time handoffs, not proof of a turn's input modality.
-                // Do not create a Voice request for every text-only message.
-                let voice_active = match cccc_core::voice_recording_lease::current(home) {
-                    Ok(lease) => {
-                        lease["capture_mode"] == "codex_voice"
-                            && lease["dispatch_target"] == "codex_voice"
+                if chet_answer {
+                    event.data.insert(
+                        cccc_core::user_requests::CHET_ANSWER_FOR_FIELD.into(),
+                        json!("user"),
+                    );
+                } else {
+                    // The recording lease approximates call-time handoffs.
+                    // Only ordinary replies may register Voice work here.
+                    let voice_active = match cccc_core::voice_recording_lease::current(home) {
+                        Ok(lease) => {
+                            lease["capture_mode"] == "codex_voice"
+                                && lease["dispatch_target"] == "codex_voice"
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                code = error.code,
+                                "Voice handoff tracking is unavailable"
+                            );
+                            false
+                        }
+                    };
+                    if voice_active {
+                        cccc_core::voice_notifications::register_request(home, token, &event)
+                            .map_err(OpError::io)?;
                     }
-                    Err(error) => {
-                        tracing::warn!(code = error.code, "Voice handoff tracking is unavailable");
-                        false
-                    }
-                };
-                if voice_active {
-                    cccc_core::voice_notifications::register_request(home, token, &event)
-                        .map_err(OpError::io)?;
                 }
             } else {
                 cccc_core::voice_notifications::register_request(home, token, &event)
@@ -1496,7 +1538,9 @@ fn reject_unknown(unknown: Vec<&str>) -> Result<(), OpError> {
 
 /// This attestation belongs to the local host, never to a message caller.
 pub(super) fn reject_chet_provenance(data: &Map<String, Value>) -> Result<(), OpError> {
-    if data.contains_key(cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD) {
+    if data.contains_key(cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD)
+        || data.contains_key(cccc_core::user_requests::CHET_ANSWER_FOR_FIELD)
+    {
         return Err(OpError::new(
             "invalid_args",
             "Chet author provenance is host-owned",

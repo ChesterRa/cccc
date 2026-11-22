@@ -410,8 +410,20 @@ fn group_input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         {
             return (false, true);
         }
+        // A copy qualifies only while unattended mode covers it; once the
+        // mode is off, a registered copy reads as unavailable, and its owner
+        // records it as never started. Settings that cannot be read leave the
+        // copy to be validated again later.
+        if event.kind == "chat.message"
+            && event.data.get("to") != Some(&json!([actors::CHET_SERVICE_PRINCIPAL]))
+        {
+            match cccc_core::unattended::load(home) {
+                Ok(settings) if cccc_core::unattended::copies(&settings, &group, event) => {}
+                Ok(_) => return (false, true),
+                Err(_) => return (false, false),
+            }
+        }
         if event.kind != "chat.message"
-            || event.data.get("to") != Some(&json!([actors::CHET_SERVICE_PRINCIPAL]))
             || !matches!(
                 event.data.get("message_mode").and_then(Value::as_str),
                 Some("send" | "request_reply")
@@ -709,6 +721,77 @@ mod tests {
             )
             .ok
         );
+    }
+
+    #[test]
+    fn unattended_copy_registers_only_while_the_mode_covers_its_message() {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path()).expect("home layout");
+        let groups = cccc_core::GroupStore::new(home.clone()).expect("groups");
+        let mut group = groups.create("Unattended copy", "").expect("group");
+        let mut actor = cccc_contracts::Actor::new("worker");
+        actor.runtime = cccc_contracts::ActorRuntime::WebModel;
+        group.actors.push(actor.clone());
+        groups.save(&group).expect("save");
+        let send = |text: &str| {
+            let sent = call(
+                &home,
+                "send",
+                json!({"group_id":group.group_id,"by":"worker",
+                "to":["user"],"text":text,"message_mode":"send"}),
+            );
+            assert!(sent.ok, "{sent:?}");
+            GroupInput {
+                group_id: group.group_id.clone(),
+                group_generation: connect_groups::generation(&group),
+                event_id: sent.result["event"]["id"]
+                    .as_str()
+                    .expect("event ID")
+                    .into(),
+                sender: GroupInputSender::Actor {
+                    actor_id: "worker".into(),
+                    actor_generation: actors::generation_identity(&actor),
+                },
+                reply_to: None,
+            }
+        };
+        let register = |input: &GroupInput| {
+            call(
+                &home,
+                "chet_history_group_input",
+                json!({"by":"user","input":input}),
+            )
+        };
+        let switch = |enabled: bool| {
+            let response = call(
+                &home,
+                "unattended_update",
+                json!({"by":"user","enabled":enabled}),
+            );
+            assert!(response.ok, "{response:?}");
+        };
+
+        let before = send("before the mode");
+        assert_eq!(
+            register(&before).error.expect("off").code,
+            "chet_source_unavailable"
+        );
+        switch(true);
+        // A message from before the mode turned on is not copied.
+        assert!(!register(&before).ok);
+        let during = send("while away");
+        assert_eq!(register(&during).result["registration"], "inserted");
+        // Once the mode is off, a registered copy reads as unavailable, which
+        // its owner records as never started.
+        switch(false);
+        assert_eq!(
+            register(&during).error.expect("off").code,
+            "chet_source_unavailable"
+        );
+        // Turning the mode on again starts a new period without the old copy.
+        switch(true);
+        assert!(!register(&during).ok);
+        assert!(register(&send("away again")).ok);
     }
 
     #[test]

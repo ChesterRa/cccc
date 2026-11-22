@@ -102,6 +102,8 @@
     "tooLong": "回答は {{count}} 文字です。上限は {{limit}} 文字です。入力内容は保持されています。",
     "answered": "回答済み",
     "answeredChoice": "回答済み: {{choice}}",
+    "chetAnswered": "Chet が代理で回答しました",
+    "chetAnsweredChoice": "Chet が {{choice}} を代理で選びました",
     "withdrawn": "このリクエストは取り消されました。",
     "unavailable": "元の依頼者は退出または置き換えられました。返信前に相手に連絡してください。",
     "requesterUnknown": "元の依頼者を確認できません。返信前に相手に連絡してください。",

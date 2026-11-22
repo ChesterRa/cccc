@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import {
   codexVoiceCallStatus,
@@ -8,6 +9,7 @@ import { ChetHead } from "../../features/chet/ChetHead";
 import { AlertIcon, StopIcon, VoiceWaveformIcon } from "../Icons";
 import { IconButton } from "../ui/icon-button";
 import type { CodexVoiceDockProps } from "./codexVoiceDockTypes";
+import { useUnattendedStore } from "../../stores/useUnattendedStore";
 
 export function CodexVoiceDock({
   controller,
@@ -31,8 +33,16 @@ export function CodexVoiceDock({
   );
   const phaseLabel = t(`modals:${callStatus.labelKey}`);
   const working = chetWorking || controller.analystWorking;
-  // A call names its own state; otherwise Chet's work, then what needs a look.
-  const statusLabel = controller.isEngaged
+  const unattended = useUnattendedStore((state) => state.unattended?.enabled === true);
+  const refreshUnattended = useUnattendedStore((state) => state.refresh);
+  useEffect(() => {
+    void refreshUnattended();
+  }, [refreshUnattended]);
+  const unattendedLabel = unattended ? t("modals:chet.unattendedOn") : "";
+  // A call names its own state; otherwise Chet's work, then what needs a look. Unattended
+  // mode stays named after whichever of these shows, so the user always sees that Chet
+  // acts for them.
+  const chetState = controller.isEngaged
     ? [providerLabel, identity.voice, phaseLabel].filter(Boolean).join(" · ")
     : controller.refreshError
       ? phaseLabel
@@ -40,7 +50,10 @@ export function CodexVoiceDock({
         ? t("layout:codexVoiceAttention")
         : working
           ? t("modals:chet.state.working")
-          : t("modals:chet.subtitle");
+          : unattendedLabel
+            ? ""
+            : t("modals:chet.subtitle");
+  const statusLabel = [chetState, unattendedLabel].filter(Boolean).join(" · ");
   const stopLabel = t(
     controller.externalCall ? "modals:codexVoiceStopExisting" : "modals:codexVoiceStop",
   );

@@ -34,6 +34,8 @@ import {
 } from "../Icons";
 import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
+import { Switch } from "../ui/switch";
+import { useUnattendedStore } from "../../stores/useUnattendedStore";
 import { ModalFrame } from "./ModalFrame";
 import { useChatObscuringView } from "../../hooks/useChatObscuringView";
 import { ProcessRecoveryDialog } from "./ProcessRecoveryDialog";
@@ -79,6 +81,14 @@ export function CodexVoiceAnalystModal({
   const openSettings = useModalStore((state) => state.openCodexVoiceSettings);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const [mobilePane, setMobilePane] = useState<MobilePane>("conversation");
+  const unattended = useUnattendedStore((state) => state.unattended);
+  const unattendedSaving = useUnattendedStore((state) => state.saving);
+  const unattendedError = useUnattendedStore((state) => state.error);
+  const refreshUnattended = useUnattendedStore((state) => state.refresh);
+  const setUnattended = useUnattendedStore((state) => state.setEnabled);
+  useEffect(() => {
+    if (isOpen) void refreshUnattended();
+  }, [isOpen, refreshUnattended]);
   const { modalRef } = useModalA11y(isOpen, onClose);
   useChatObscuringView(isOpen);
   const [splitLayout, setSplitLayout] = useState(() => {
@@ -291,17 +301,38 @@ export function CodexVoiceAnalystModal({
         </div>
       }
       headerActions={
-        <IconButton
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-lcd-key
-          className="max-sm:h-11 max-sm:w-11"
-          onClick={openSettings}
-          label={t("codexVoiceSettings")}
-        >
-          <SettingsIcon size={17} />
-        </IconButton>
+        <>
+          <label
+            className="flex cursor-pointer items-center gap-1.5 text-xs text-[var(--color-text-secondary)]"
+            title={
+              unattendedError
+                ? t("chet.unattendedFailed", { error: unattendedError })
+                : t("chet.unattendedHint")
+            }
+            data-unattended={unattended?.enabled ? "on" : "off"}
+          >
+            <span className={unattendedError ? "text-rose-500" : undefined}>
+              {t("chet.unattended")}
+            </span>
+            <Switch
+              checked={Boolean(unattended?.enabled)}
+              disabled={!unattended || unattendedSaving}
+              onChange={(event) => void setUnattended(event.target.checked)}
+              aria-label={t("chet.unattended")}
+            />
+          </label>
+          <IconButton
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-lcd-key
+            className="max-sm:h-11 max-sm:w-11"
+            onClick={openSettings}
+            label={t("codexVoiceSettings")}
+          >
+            <SettingsIcon size={17} />
+          </IconButton>
+        </>
       }
     >
       <div className="relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">

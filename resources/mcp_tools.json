@@ -464,7 +464,19 @@
         },
         "text": {
           "type": "string",
-          "description": "Reply content visible to the recipient in CCCC."
+          "description": "Required for an ordinary reply. Omit when supplying a structured answer."
+        },
+        "answer": {
+          "type": "object",
+          "description": "For Chet in unattended mode only. Answer a request to the user with its event_id and a stable idempotency_key. Supply answer without top-level text, to, or other message content. Use v:1 with option_id or free text, or v:2 with option_id and a note explaining the choice.",
+          "properties": {
+            "v": { "type": "integer", "enum": [1, 2] },
+            "option_id": { "type": "string" },
+            "text": { "type": "string" },
+            "note": { "type": "string" }
+          },
+          "required": ["v"],
+          "additionalProperties": false
         },
         "insight": {
           "type": "string",
@@ -483,7 +495,7 @@
               }
             }
           ],
-          "description": "One audience domain only: user alone, @chet alone, or one/more agent IDs/selectors. Never mix domains. Omit it to reply to the original sender, including Chet."
+          "description": "One audience domain only: user alone, @chet alone, or one/more agent IDs/selectors. Never mix domains. Omit to use the original conversation's reply route."
         },
         "mode": {
           "type": "string",
@@ -508,10 +520,7 @@
           "type": "string",
           "description": "Stable retry key for this logical reply. Reuse only with identical parameters."
         }
-      },
-      "required": [
-        "text"
-      ]
+      }
     },
     "annotations": {
       "readOnlyHint": false,

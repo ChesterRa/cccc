@@ -253,11 +253,12 @@ mod tests {
 
     #[test]
     fn read_only_refuses_chet_history_and_inputs() {
-        for method in [Method::GET, Method::HEAD, Method::POST] {
+        for method in [Method::GET, Method::HEAD, Method::POST, Method::PUT] {
             for path in [
                 "/api/v1/chet/history",
                 "/api/v1/chet/status",
                 "/api/v1/chet/inputs",
+                "/api/v1/chet/unattended",
             ] {
                 assert!(!is_read_only_safe(&method, path), "{path}");
             }
