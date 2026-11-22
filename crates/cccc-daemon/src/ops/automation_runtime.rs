@@ -7,15 +7,23 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::dispatch::dispatch;
 use crate::ops::{actor_delivery, actor_runtime, actor_runtime_status, group_runtime};
+use crate::session_owner::OwnerObservations;
 
-pub fn prepare_exited() -> BTreeMap<String, Vec<cccc_runtime::SessionStatus>> {
-    let exited = match actor_runtime::reap_exited() {
+pub(crate) fn prepare_local_exited(
+    home: &HomeLayout,
+) -> BTreeMap<String, Vec<cccc_runtime::SessionStatus>> {
+    let exited = match actor_runtime::reap_local_exits() {
         Ok(exited) => exited,
         Err(error) => {
             tracing::warn!(diagnostic_action = "runtime_reap", diagnostic_code = %error.code, message = %error.message, "runtime reap failed");
             Vec::new()
         }
     };
+    // The daemon also hosts private local terminals such as Voice Secretary.
+    // Their exits have no Group member to reconcile in owner mode.
+    if crate::session_owner::enabled(home) {
+        return BTreeMap::new();
+    }
     let mut grouped = BTreeMap::<String, Vec<_>>::new();
     for status in exited {
         grouped
@@ -30,9 +38,13 @@ pub fn pending_delivery_group_ids() -> Vec<String> {
     actor_delivery::pending_group_ids()
 }
 
-pub fn maintain_group(home: &HomeLayout, group_id: &str, exited: Vec<cccc_runtime::SessionStatus>) {
-    actor_delivery::drain_group(home, group_id);
-    if let Err(error) = actor_runtime::reconcile_provider_exits(home, group_id) {
+pub(crate) fn maintain_group(
+    home: &HomeLayout,
+    group_id: &str,
+    exited: Vec<cccc_runtime::SessionStatus>,
+    observed: &OwnerObservations,
+) {
+    if let Err(error) = actor_runtime::reconcile_observed_exits(home, group_id, observed) {
         tracing::warn!(diagnostic_action = "managed_exit_reconcile", diagnostic_code = %error.code, %group_id, "managed provider exit reconciliation failed");
     }
     if let Err(error) = actor_runtime::reconcile_exited(home, exited) {
@@ -50,25 +62,86 @@ pub fn group_ids(home: &HomeLayout) -> Vec<String> {
     }
 }
 
+pub(crate) struct PreparedMaintenance {
+    group: GroupDoc,
+    drain: actor_delivery::PreparedDrain,
+    unread: Option<(HashSet<String>, HashSet<String>)>,
+}
+
+pub(crate) fn prepare_maintenance(
+    home: &HomeLayout,
+    group_id: &str,
+    include_unread: bool,
+    observed: &OwnerObservations,
+) -> Option<PreparedMaintenance> {
+    let group = GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+        .ok()?;
+    let drain = actor_delivery::prepare_drain(home, &group, observed);
+    let unread = include_unread.then(|| {
+        observed.with_scope(|| {
+            let eligible = actors::visible(&group)
+                .filter(|actor| {
+                    actor.enabled && actor_runtime_status::resolve(home, &group, actor).running
+                })
+                .map(|actor| actor.id.clone())
+                .collect::<HashSet<_>>();
+            let idle = idle_actor_ids(group_id, &eligible);
+            (eligible, idle)
+        })
+    });
+    Some(PreparedMaintenance {
+        group,
+        drain,
+        unread,
+    })
+}
+
+pub(crate) fn apply_maintenance(
+    home: &HomeLayout,
+    prepared: PreparedMaintenance,
+    observed: &OwnerObservations,
+    cancelled: &AtomicBool,
+) {
+    let group_id = &prepared.group.group_id;
+    let Ok(group) = GroupStore::new(home.clone()).and_then(|store| store.load(group_id)) else {
+        return;
+    };
+    if group.generation != prepared.group.generation {
+        return;
+    }
+    let current = group == prepared.group && observed.is_current();
+    actor_delivery::apply_drain(home, &group, observed, prepared.drain, current);
+    run_tick(
+        home,
+        group_id,
+        prepared.unread.filter(|_| current && observed.is_current()),
+        observed,
+        cancelled,
+    );
+}
+
+#[cfg(test)]
 pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cancelled: &AtomicBool) {
+    if let Ok(observed) = crate::session_owner::observe_owners_for_maintenance(home)
+        && let Some(prepared) = prepare_maintenance(home, group_id, include_unread, &observed)
+    {
+        run_tick(home, group_id, prepared.unread, &observed, cancelled);
+    }
+}
+
+fn run_tick(
+    home: &HomeLayout,
+    group_id: &str,
+    unread: Option<(HashSet<String>, HashSet<String>)>,
+    observed: &OwnerObservations,
+    cancelled: &AtomicBool,
+) {
     if cancelled.load(Ordering::Acquire) {
         return;
     }
-    let delivery_actor_ids = if include_unread {
-        GroupStore::new(home.clone())
-            .and_then(|store| store.load(group_id))
-            .map(|group| {
-                actors::visible(&group)
-                    .filter(|actor| actor.enabled)
-                    .filter(|actor| actor_runtime_status::resolve(home, &group, actor).running)
-                    .map(|actor| actor.id.clone())
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default()
-    } else {
-        HashSet::new()
-    };
-    let idle_actor_ids = idle_actor_ids(group_id, &delivery_actor_ids);
+    let include_unread = unread.is_some();
+    let (delivery_actor_ids, idle_actor_ids) = unread.unwrap_or_default();
     match cccc_core::automation::tick_group_with_idle_actors(
         home,
         group_id,
@@ -78,7 +151,7 @@ pub fn tick_group(home: &HomeLayout, group_id: &str, include_unread: bool, cance
     ) {
         Ok(result) => {
             let unread_success = result.unread_failure.is_none();
-            apply(home, result, cancelled);
+            apply_with_observations(home, result, cancelled, Some(observed));
             // Opt-in, payload-free evidence that daemon discovery, runtime
             // eligibility and the periodic unread pass actually participated
             // in an operator's isolated real-group memory replay.
@@ -120,8 +193,13 @@ fn idle_actor_ids(group_id: &str, actor_ids: &HashSet<String>) -> HashSet<String
 /// have no managed session, keep the tick's delays. Runs under the Group write
 /// permit of the send, which the tick also takes, so the two never both notify.
 pub fn notify_idle_mail_recipients(home: &HomeLayout, group: &GroupDoc, mail: &Event) {
-    notify_idle_mail_recipients_with(home, group, mail, |actor_id| {
-        super::local_headless::ready_for_mail_notice(&group.group_id, actor_id)
+    notify_idle_mail_recipients_with(home, group, mail, |actor| {
+        let ready = || super::local_headless::ready_for_mail_notice(&group.group_id, &actor.id);
+        if !crate::session_owner::enabled(home) {
+            return ready();
+        }
+        crate::session_owner::running_target(home, &group.group_id, actor)
+            .is_ok_and(|target| target.is_some_and(|target| target.observe(ready)))
     });
 }
 
@@ -129,7 +207,7 @@ fn notify_idle_mail_recipients_with(
     home: &HomeLayout,
     group: &GroupDoc,
     mail: &Event,
-    idle: impl Fn(&str) -> bool,
+    idle: impl Fn(&cccc_contracts::Actor) -> bool,
 ) {
     let targets = mail
         .data
@@ -148,10 +226,12 @@ fn notify_idle_mail_recipients_with(
     }
     let recipients = actors::visible(group)
         .filter(|actor| {
-            actor.enabled && actor.id != mail.by && inbox::is_for_actor(group, mail, &actor.id)
+            actor.enabled
+                && actor.id != mail.by
+                && inbox::is_for_actor(group, mail, &actor.id)
+                && idle(actor)
         })
         .map(|actor| actor.id.clone())
-        .filter(|actor_id| idle(actor_id))
         .collect::<HashSet<_>>();
     if recipients.is_empty() {
         return;
@@ -165,6 +245,15 @@ fn notify_idle_mail_recipients_with(
 }
 
 fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
+    apply_with_observations(home, result, cancelled, None)
+}
+
+fn apply_with_observations(
+    home: &HomeLayout,
+    result: TickResult,
+    cancelled: &AtomicBool,
+    observed: Option<&OwnerObservations>,
+) {
     if let Some(error) = &result.rule_failure {
         tracing::warn!(%error, "automation rule pass failed; committed notifications retained for delivery");
     }
@@ -229,7 +318,11 @@ fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
         }
         match store.load(&event.group_id) {
             Ok(group) => {
-                actor_delivery::dispatch(home, &group, &event);
+                if let Some(observed) = observed {
+                    actor_delivery::dispatch_observed_notice(home, &group, &event, observed);
+                } else {
+                    actor_delivery::dispatch(home, &group, &event);
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
@@ -261,11 +354,10 @@ fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
                     "group_set_state"
                 };
                 let mut succeeded = true;
-                if state == "active"
-                    && store.load(&group_id).is_ok_and(|group| {
-                        group_runtime::status(home, &group)["runtime_running"].as_bool()
-                            == Some(false)
-                    })
+                if state == "active" && store.load(&group_id).is_ok_and(|group| {
+                    let status = || group_runtime::status(home, &group);
+                    observed.map_or_else(status, |observed| observed.with_scope(status))["runtime_running"].as_bool() == Some(false)
+                })
                 {
                     if cancelled.load(Ordering::Acquire) {
                         return;
@@ -380,6 +472,50 @@ mod tests {
     use super::*;
     use cccc_contracts::Actor;
     use cccc_core::{GroupStore, HomeLayout, actors};
+
+    #[test]
+    fn prepared_gap_is_left_pending_when_group_pauses_before_maintenance_writes() {
+        let temp = tempfile::tempdir().expect("fixture directory");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("stale maintenance", "").expect("group");
+        let mut actor = Actor::new("peer");
+        actor.runtime = cccc_contracts::ActorRuntime::Custom;
+        group.actors.push(actor.clone());
+        group.state = cccc_contracts::GroupState::Active;
+        store.save(&group).expect("save group");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":[actor.id],"text":"pending", "message_mode":"send"})
+            .as_object()
+            .expect("message fields")
+            .clone();
+        cccc_core::ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &event)
+            .expect("record message");
+        actor_delivery::record_member_catchup(&group, &actor);
+        let observations = OwnerObservations::default();
+        let prepared = prepare_maintenance(&home, &group.group_id, false, &observations)
+            .expect("prepared group");
+        store
+            .mutate(&group.group_id, |doc| {
+                doc.state = cccc_contracts::GroupState::Paused;
+                Ok(())
+            })
+            .expect("change group while preparing");
+        apply_maintenance(&home, prepared, &observations, &AtomicBool::new(false));
+        assert!(pending_delivery_group_ids().contains(&group.group_id));
+        assert!(
+            super::super::runtime_delivery::latest_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &event.id
+            )
+            .expect("delivery receipt")
+            .is_none()
+        );
+        actor_delivery::shutdown_group(&group.group_id);
+    }
 
     /// Issue the next unread-tick Mail notice for an idle `peer`, if any.
     fn idle_notice(home: &HomeLayout, group_id: &str) -> Option<Event> {
@@ -518,7 +654,7 @@ mod tests {
         let written = mail(json!(["peer", "busy"]));
 
         // Everyone but `busy` is idle, the sender included.
-        notify_idle_mail_recipients_with(&home, &group, &written, |actor_id| actor_id != "busy");
+        notify_idle_mail_recipients_with(&home, &group, &written, |actor| actor.id != "busy");
 
         let notices = cccc_core::ledger::read_all(&ledger)
             .expect("events")

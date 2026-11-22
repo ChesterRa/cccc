@@ -414,14 +414,24 @@ impl Backend {
             | Mutation::Terminal { actor, .. } => Some(actor),
             _ => None,
         };
-        let verified_pty = if let Some(wanted) = wanted {
-            let registered = self
-                .actors
-                .lock()
-                .map_err(|_| poisoned())?
-                .get(&key(wanted))
-                .cloned()
-                .ok_or_else(|| Failure::new("actor_not_owned", "actor stopped before execution"))?;
+        let (verified_owner, submit_cancelled) = if let Some(wanted) = wanted {
+            let key = key(wanted);
+            let (registered, cancelled) = {
+                let actors = self.actors.lock().map_err(|_| poisoned())?;
+                let registered = actors.get(&key).cloned().ok_or_else(|| {
+                    Failure::new("actor_not_owned", "actor stopped before execution")
+                })?;
+                let cancelled = if matches!(&mutation, Mutation::Submit { .. }) {
+                    self.cancelled
+                        .lock()
+                        .map_err(|_| poisoned())?
+                        .get(&key)
+                        .cloned()
+                } else {
+                    None
+                };
+                (registered, cancelled)
+            };
             let replaced = || Failure::new("session_replaced", "session changed before execution");
             if registered.actor_created_at != wanted.actor_created_at {
                 return Err(replaced());
@@ -430,14 +440,9 @@ impl Backend {
             if observed.actor.generation != wanted.generation {
                 return Err(replaced());
             }
-            match observed.owner.map(|owner| owner.identity) {
-                Some(actor_runtime::OwnerIdentity::Pty {
-                    pid, started_at, ..
-                }) => Some((pid, started_at)),
-                _ => None,
-            }
+            (observed.owner.map(|owner| owner.identity), cancelled)
         } else {
-            None
+            (None, None)
         };
         #[cfg(test)]
         tests::pause_validated_submit(&mutation);
@@ -601,23 +606,16 @@ impl Backend {
                         "reason":cccc_runtime::PtyHandoffReason::SessionChanged.to_string(),
                     }))
                 };
-                let cancelled = self
-                    .cancelled
-                    .lock()
-                    .map_err(|_| poisoned())?
-                    .get(&key(&source.actor))
-                    .cloned();
-                let Some(cancelled) = cancelled else {
-                    return if verified_pty.is_some() {
+                use actor_runtime::OwnerIdentity;
+                let Some(cancelled) = submit_cancelled else {
+                    return if matches!(verified_owner, Some(OwnerIdentity::Pty { .. })) {
                         terminal_changed()
                     } else {
                         Err(Failure::new("actor_not_owned", "actor stopped"))
                     };
                 };
                 let started = AtomicBool::new(false);
-                if verified_pty.is_none()
-                    && deepseek_runtime::registered_generation(&group.group_id, &actor.id).is_some()
-                {
+                if let Some(OwnerIdentity::DeepSeek { generation }) = &verified_owner {
                     if events.len() != 1 {
                         return Err(Failure::new(
                             "invalid_input",
@@ -628,7 +626,7 @@ impl Backend {
                         Failure::new("invalid_input", "DeepSeek needs one source event")
                     })?;
                     let result = deepseek_runtime::deliver_prepared(
-                        home, &group, &actor, event, &text, &cancelled, &started,
+                        home, &group, &actor, generation, event, &text, &cancelled, &started,
                     );
                     let mut response = json!({
                         "backend":"deepseek",
@@ -639,17 +637,21 @@ impl Backend {
                         response["delivery_evidence"] = json!(DeliveryEvidence::ChannelAccepted);
                     }
                     Ok(response)
-                } else if verified_pty.is_none()
-                    && local_headless::registered_running(&group.group_id, &actor.id).is_some()
+                } else if let Some(OwnerIdentity::Managed {
+                    generation: Some(generation),
+                }) = &verified_owner
                 {
                     let result = local_headless::submit_prepared(
-                        home, &group, &actor, &events, &text, &cancelled, &started,
+                        home, &group, &actor, generation, &events, &text, &cancelled, &started,
                     );
                     Ok(result.owner_result(started.load(Ordering::Acquire)))
                 } else {
                     // Keep the terminal identity observed at execution validation even if
                     // Stop and Start replaced this member before we got to the writer.
-                    let Some((pid, started_at)) = verified_pty else {
+                    let Some(OwnerIdentity::Pty {
+                        pid, started_at, ..
+                    }) = verified_owner
+                    else {
                         return Err(Failure::new(
                             "session_replaced",
                             "terminal changed before submission",

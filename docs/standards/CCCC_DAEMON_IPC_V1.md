@@ -4771,6 +4771,14 @@ Result:
 
 #### `actor_start` / `actor_stop` / `actor_restart`
 
+After successful session-owner takeover, an explicit `actor_stop` can stop an
+observed running member of a verified unique owner while a different owner is
+unavailable. The operation and confirmation stay bound to the selected member
+generation. The Group running intent is preserved when there is no confirmed
+running member and a remaining enabled member's state is unknown. See the session owner contract
+for the targeted Send and Stop conditions and retained-generation boundaries.
+[Session owner observations and recovery](CCCC_SESSION_OWNER_V1.md#observations-exit-and-recovery)
+
 Daemon-owned runtime resources MUST be retired after owner exit, including abrupt exit.
 On Unix, a daemon MAY use an EOF watchdog and a durable owned-process-group ledger
 to recover groups missed by graceful shutdown. Recovery MUST start only after acquiring

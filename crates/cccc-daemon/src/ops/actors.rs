@@ -1012,22 +1012,33 @@ pub(super) fn lifecycle_leading(
             "Reset this session in its original runtime; CCCC only controls collaboration access",
         ));
     }
-    let (runtime_was_running, orphaned_confirmation) = crate::session_owner::read_scope(|| {
-        // A request refused by the owner must leave delivery and resume state alone.
-        actor_runtime::require_owner_observation(home, &group, &original_actor)?;
-        // Only an explicit user Start may replace a confirmation PTY whose watcher was cancelled.
-        let orphaned_confirmation = kind == "actor.start"
-            && actor_runtime::user_confirmation_retry(request)
-            && original_actor.external_session_id.is_empty()
-            && super::local_headless::orphaned_confirmation(&group_id, &actor_id)
-                .map_err(OpError::io)?;
-        // Leave Hermes's open setup and typed input alone.
-        let setup_open = kind == "actor.start"
-            && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
-        let running = (actor_process_running(&group, &original_actor) && !orphaned_confirmation)
-            || setup_open;
-        Ok::<_, OpError>((running, orphaned_confirmation))
-    })?;
+    let stop_target = if kind == "actor.stop" {
+        crate::session_owner::running_target(home, &group_id, &original_actor)
+            .map_err(OpError::io)?
+    } else {
+        None
+    };
+    let (runtime_was_running, orphaned_confirmation) = if stop_target.is_some() {
+        (true, false)
+    } else {
+        crate::session_owner::read_scope(|| {
+            // A request refused by the owner must leave delivery and resume state alone.
+            actor_runtime::require_owner_observation(home, &group, &original_actor)?;
+            // Only an explicit user Start may replace a confirmation PTY whose watcher was cancelled.
+            let orphaned_confirmation = kind == "actor.start"
+                && actor_runtime::user_confirmation_retry(request)
+                && original_actor.external_session_id.is_empty()
+                && super::local_headless::orphaned_confirmation(&group_id, &actor_id)
+                    .map_err(OpError::io)?;
+            // Leave Hermes's open setup and typed input alone.
+            let setup_open = kind == "actor.start"
+                && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
+            let running = (actor_process_running(&group, &original_actor)
+                && !orphaned_confirmation)
+                || setup_open;
+            Ok::<_, OpError>((running, orphaned_confirmation))
+        })?
+    };
     let replacing_running =
         runtime_was_running && matches!(kind, "actor.restart" | "actor.new_session");
     let effective_runtime = if original_actor.external_session_id.is_empty()
@@ -1090,21 +1101,28 @@ pub(super) fn lifecycle_leading(
     {
         super::local_headless::retry_confirmation(&group_id, &actor_id).map_err(OpError::io)?;
     }
-    let status = match actor_runtime::apply(home, &group, &actor_id, apply_kind) {
+    let status = match actor_runtime::apply_with_stop_target(
+        home,
+        &group,
+        &actor_id,
+        apply_kind,
+        stop_target.as_ref(),
+    ) {
         Ok(status) => status,
         Err(error) => {
             // A failed teardown has not launched a replacement. Do not turn
             // this error into a second stop/start attempt during rollback.
-            let effect =
-                if error.details.get("lifecycle_stage").and_then(Value::as_str) == Some("stop") {
-                    ActorLifecycleEffect::None
-                } else {
-                    lifecycle_effect(
-                        kind,
-                        runtime_was_running,
-                        observe_actor_process_running(home, &group, &original_actor).ok(),
-                    )
-                };
+            let effect = if stop_target.is_some()
+                || error.details.get("lifecycle_stage").and_then(Value::as_str) == Some("stop")
+            {
+                ActorLifecycleEffect::None
+            } else {
+                lifecycle_effect(
+                    kind,
+                    runtime_was_running,
+                    observe_actor_process_running(home, &group, &original_actor).ok(),
+                )
+            };
             return Err(rollback_actor_lifecycle(
                 home,
                 &group,
@@ -1115,25 +1133,33 @@ pub(super) fn lifecycle_leading(
             ));
         }
     };
-    let effect = lifecycle_effect(
-        kind,
-        runtime_was_running,
-        observe_actor_process_running(home, &group, &original_actor).ok(),
-    );
-    let actor =
-        match actor_runtime::persist_lifecycle(home, &group, &actor_id, enabled, status.as_ref()) {
-            Ok(actor) => actor,
-            Err(error) => {
-                return Err(rollback_actor_lifecycle(
-                    home,
-                    &group,
-                    &original_actor,
-                    runtime_session_snapshot.as_ref(),
-                    effect,
-                    error,
-                ));
-            }
-        };
+    let effect = if stop_target.is_some() {
+        ActorLifecycleEffect::Stopped
+    } else {
+        lifecycle_effect(
+            kind,
+            runtime_was_running,
+            observe_actor_process_running(home, &group, &original_actor).ok(),
+        )
+    };
+    let persisted = if let Some(target) = &stop_target {
+        actor_runtime::persist_target_stop(home, &group, &actor_id, target)
+    } else {
+        actor_runtime::persist_lifecycle(home, &group, &actor_id, enabled, status.as_ref())
+    };
+    let actor = match persisted {
+        Ok(actor) => actor,
+        Err(error) => {
+            return Err(rollback_actor_lifecycle(
+                home,
+                &group,
+                &original_actor,
+                runtime_session_snapshot.as_ref(),
+                effect,
+                error,
+            ));
+        }
+    };
     let event = match append_event(
         home,
         &group_id,
@@ -1179,7 +1205,14 @@ pub(super) fn lifecycle_leading(
             ),
         }
     }
-    let actor = actor_runtime::actor_response(home, &group_id, &actor);
+    let actor = if stop_target.is_some() {
+        let mut value = json!(actor);
+        value["runtime_confirmation_required"] = json!(false);
+        value["runtime_confirmation_paused"] = json!(false);
+        value
+    } else {
+        actor_runtime::actor_response(home, &group_id, &actor)
+    };
     let mut response = json!({"runtime_confirmation_required":actor["runtime_confirmation_required"],
         "actor": actor, "event": event, "runtime": status});
     if let Some(replaced) = replaced_before.as_ref().and_then(|before| {

@@ -580,6 +580,21 @@ pub(super) fn delivery_states(
     })
 }
 
+pub(super) fn latest_delivery_receipt(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    source: &str,
+) -> io::Result<Option<Event>> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, snapshot| {
+        let Some(location) = projection.deliveries.latest_location(actor, source) else {
+            return Ok(None);
+        };
+        Ok(snapshot.events(&[location])?.pop())
+    })
+}
+
 // Called only after releasing the ledger writer lock. Never wait for a cold
 // replay or page decoding: a missed callback is recovered from source offsets
 // on the next query. Exact commit offsets make delayed callbacks idempotent.

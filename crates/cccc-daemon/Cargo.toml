@@ -47,6 +47,9 @@ webpki-roots.workspace = true
 uuid.workspace = true
 zip.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+socket2 = "0.6"
+
 [target.'cfg(windows)'.dependencies]
 win32job.workspace = true
 

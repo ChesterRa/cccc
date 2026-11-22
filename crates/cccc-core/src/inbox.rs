@@ -128,6 +128,16 @@ pub fn delivery_states(
     projection::delivery_states(home, group, actors, source)
 }
 
+/// The exact last receipt used to revalidate a delivery after an external read.
+pub fn latest_delivery_receipt(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    source: &str,
+) -> io::Result<Option<Event>> {
+    projection::latest_delivery_receipt(home, group, actor, source)
+}
+
 pub fn list_unread(
     home: &HomeLayout,
     group: &GroupDoc,

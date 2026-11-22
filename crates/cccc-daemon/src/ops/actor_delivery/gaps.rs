@@ -1,6 +1,8 @@
 //! Revisit a send that was recorded before its transport or first claim could be established.
 //! The ledger holds the messages. Keep only the affected range for each member.
 use super::*;
+use crate::ops::runtime_delivery::{PreparedGapClaim, apply_gap_claim, prepare_gap_claim};
+use crate::session_owner::OwnerObservations;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct Gap {
@@ -8,6 +10,7 @@ pub(super) struct Gap {
     // None means an explicit lifecycle catch-up covered the full pending history.
     range: Option<(String, String)>,
     paused: bool,
+    origin: u64,
     revision: u64,
 }
 
@@ -50,17 +53,17 @@ pub(super) fn record(group: &GroupDoc, actor: &Actor, event: Option<&Event>) {
         return;
     }
     if let Ok(mut pending) = gaps().lock() {
+        use std::sync::atomic::AtomicU64;
+        static NEXT_ORIGIN: AtomicU64 = AtomicU64::new(0);
         let key = (group.group_id.clone(), actor.id.clone());
-        let revision = pending
-            .get(&key)
-            .map_or(0, |gap| gap.revision.wrapping_add(1));
         pending.insert(
             key,
             Gap {
                 created_at: actor.created_at.clone(),
                 range: event.map(|e| (e.id.clone(), e.id.clone())),
                 paused: false,
-                revision,
+                origin: NEXT_ORIGIN.fetch_add(1, Ordering::Relaxed),
+                revision: 0,
             },
         );
     }
@@ -114,68 +117,91 @@ pub(super) fn collect_groups(groups: &mut HashSet<String>) {
     }
 }
 
-pub(super) fn recover_group(home: &HomeLayout, group_id: &str) {
+pub(super) struct PreparedGap {
+    actor_id: String,
+    gap: Gap,
+    action: GapAction,
+}
+
+enum GapAction {
+    Complete,
+    Offer {
+        transport: &'static str,
+        sources: Vec<(Event, PreparedGapClaim)>,
+        last_page: bool,
+    },
+}
+
+pub(super) fn prepare_group(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    observed: &OwnerObservations,
+) -> Vec<PreparedGap> {
     let pending = gaps()
         .lock()
         .map(|gaps| {
             gaps.iter()
-                .filter(|((group, _), gap)| group == group_id && !gap.paused)
-                .map(|(key, gap)| (key.clone(), gap.clone()))
+                .filter(|((group_id, _), gap)| group_id == &group.group_id && !gap.paused)
+                .map(|((_, actor_id), gap)| (actor_id.clone(), gap.clone()))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if pending.is_empty() {
-        return;
-    }
-    let group =
-        match cccc_core::GroupStore::new(home.clone()).and_then(|store| store.load(group_id)) {
-            Ok(group) => group,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                clear(|(group, _)| group == group_id);
-                return;
-            }
-            Err(_) => return,
-        };
-    for (key, gap) in pending {
-        if recover_member(home, &group, &key.1, &gap) {
-            complete(&key.0, &key.1, Some(&gap));
-        }
-    }
+    pending
+        .into_iter()
+        .filter_map(|(actor_id, gap)| {
+            let action = prepare_member(home, group, &actor_id, &gap, observed)?;
+            Some(PreparedGap {
+                actor_id,
+                gap,
+                action,
+            })
+        })
+        .collect()
 }
 
-/// True when the range is settled or the member's normal lifecycle now owns it.
-fn recover_member(home: &HomeLayout, group: &GroupDoc, actor_id: &str, gap: &Gap) -> bool {
+fn prepare_member(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    gap: &Gap,
+    observed: &OwnerObservations,
+) -> Option<GapAction> {
     let Some(actor) = group
         .actors
         .iter()
         .find(|actor| actor.id == actor_id && actor.created_at == gap.created_at)
     else {
-        return true;
+        return Some(GapAction::Complete);
     };
     if !actor.enabled
         || !actor.external_session_id.is_empty()
         || matches!(group.state, GroupState::Paused | GroupState::Stopped)
         || held_for_switch(group, actor)
     {
-        return true;
+        return Some(GapAction::Complete);
     }
 
-    // Observe once before reading or claiming a page, even if many sends missed the owner.
-    let Ok(owner) = crate::ops::actor_runtime::delivery_owner(&group.group_id, actor_id) else {
-        return false;
+    let transport = observed
+        .with_scope(|| {
+            use crate::dispatch::OpError;
+            use crate::ops::actor_runtime::{
+                OwnerState, confirmation_pause_applies, delivery_owner,
+            };
+            let owner = delivery_owner(&group.group_id, actor_id).map_err(OpError::io)?;
+            if (!configured_for_push(actor)
+                && !owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.state == OwnerState::Running))
+                || confirmation_pause_applies(home, &group.group_id, actor)?
+            {
+                return Ok::<_, OpError>(None);
+            }
+            Ok(Some(owner_transport(home, group, actor, owner.as_ref())))
+        })
+        .ok()?;
+    let Some(transport) = transport else {
+        return Some(GapAction::Complete);
     };
-    if !configured_for_push(actor)
-        && !owner
-            .as_ref()
-            .is_some_and(|owner| owner.state == crate::ops::actor_runtime::OwnerState::Running)
-    {
-        return true;
-    }
-    match crate::ops::actor_runtime::confirmation_pause_applies(home, &group.group_id, actor) {
-        Ok(false) => {}
-        Ok(true) => return true,
-        Err(_) => return false,
-    }
     let occupied = in_flight()
         .lock()
         .map(|pending| {
@@ -187,7 +213,7 @@ fn recover_member(home: &HomeLayout, group: &GroupDoc, actor_id: &str, gap: &Gap
         .unwrap_or(QUEUE_CAPACITY);
     let slots = QUEUE_CAPACITY.saturating_sub(occupied);
     if slots == 0 {
-        return false;
+        return None;
     }
     let range = gap
         .range
@@ -199,27 +225,91 @@ fn recover_member(home: &HomeLayout, group: &GroupDoc, actor_id: &str, gap: &Gap
         Ok(events) => events,
         Err(error) => {
             tracing::warn!(%error, %actor_id, group_id = %group.group_id, "could not read unclaimed or unsubmitted deliveries");
-            return false;
+            return None;
         }
     };
-    let mut complete = events.len() < slots;
-    let transport = owner_transport(home, group, actor, owner.as_ref());
+    let mut last_page = events.len() < slots;
+    let mut sources = Vec::new();
     for event in events {
-        match crate::ops::runtime_delivery::claim_unclaimed_or_unsubmitted(
-            home, group, actor, &event.id, transport,
-        ) {
-            Ok(true) => match offer_delivery(home, group, actor, &event, transport, true) {
-                Offer::Queued | Offer::AlreadyInFlight => {}
-                Offer::Held | Offer::Refused => {
-                    complete = false;
-                    break;
-                }
-            },
-            Ok(false) => {}
-            Err(_) => return false,
+        match prepare_gap_claim(home, group, actor, &event.id) {
+            Ok(Some(claim)) => sources.push((event, claim)),
+            Ok(None) => {}
+            Err(_) => {
+                last_page = false;
+                break;
+            }
         }
     }
-    complete
+    Some(GapAction::Offer {
+        transport,
+        sources,
+        last_page,
+    })
+}
+
+pub(super) fn apply_group(home: &HomeLayout, group: &GroupDoc, prepared: Vec<PreparedGap>) {
+    for PreparedGap {
+        actor_id,
+        gap,
+        action,
+    } in prepared
+    {
+        let key = (group.group_id.clone(), actor_id.clone());
+        if let GapAction::Offer {
+            transport,
+            sources,
+            last_page,
+        } = action
+        {
+            // A concurrent append only extends this range. The prepared
+            // prefix keeps its order, and the exact comparison in complete()
+            // below leaves the newly appended tail pending.
+            if !gaps().lock().is_ok_and(|pending| {
+                pending
+                    .get(&key)
+                    .is_some_and(|current| !current.paused && current.origin == gap.origin)
+            }) {
+                continue;
+            }
+            let Some(actor) = group.actors.iter().find(|actor| {
+                actor.id == actor_id && actor.created_at == gap.created_at && actor.enabled
+            }) else {
+                continue;
+            };
+            if held_for_switch(group, actor) {
+                continue;
+            }
+            let settled = sources.into_iter().all(|(event, claim)| {
+                match apply_gap_claim(home, group, actor, &event.id, transport, claim) {
+                    Ok(true) => matches!(
+                        offer_delivery(home, group, actor, &event, transport, true),
+                        Offer::Queued | Offer::AlreadyInFlight
+                    ),
+                    Ok(false) => true,
+                    Err(_) => false,
+                }
+            });
+            if !settled || !last_page {
+                continue;
+            }
+        }
+        complete(&group.group_id, &actor_id, Some(&gap));
+    }
+}
+
+#[cfg(test)]
+fn recover_group(home: &HomeLayout, group_id: &str) {
+    match cccc_core::GroupStore::new(home.clone()).and_then(|store| store.load(group_id)) {
+        Ok(group) => apply_group(
+            home,
+            &group,
+            prepare_group(home, &group, &OwnerObservations::default()),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            clear(|(group, _)| group == group_id)
+        }
+        Err(_) => {}
+    }
 }
 
 #[cfg(test)]
@@ -406,10 +496,27 @@ mod tests {
         let b_unclaimed = send("B unclaimed");
 
         record(&group, &actor, None);
+        let prepared = prepare_group(&home, &group, &OwnerObservations::default());
+        let trailing = send("appended during preparation");
+        let tail = ledger::read_all(&path)
+            .expect("read ledger")
+            .into_iter()
+            .find(|event| event.id == trailing)
+            .expect("appended message");
+        assert!(extend(&group, &actor, &tail));
+        apply_group(&home, &group, prepared);
+        let delivered: Vec<String> = rx.try_iter().map(|job| job.event.id).collect();
+        assert_eq!(delivered, vec![a_unsubmitted.clone(), b_unclaimed.clone()]);
+        assert!(
+            gaps()
+                .lock()
+                .expect("gaps")
+                .contains_key(&(group.group_id.clone(), actor.id.clone()))
+        );
         recover_group(&home, &group.group_id);
 
         let delivered: Vec<String> = rx.try_iter().map(|job| job.event.id).collect();
-        assert_eq!(delivered, vec![a_unsubmitted.clone(), b_unclaimed.clone()]);
+        assert_eq!(delivered, vec![trailing]);
 
         let events = ledger::read_all(&path).expect("read ledger");
         let claim_count = |source: &str| {

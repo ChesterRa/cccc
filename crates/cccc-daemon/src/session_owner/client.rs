@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 
 pub(super) struct Client {
     pub address: Address,
+    identified_source: bool,
+    same_source: bool,
     control: Mutex<Option<Control>>,
 }
 
@@ -23,6 +25,43 @@ struct Control {
 
 struct Connection(BufReader<UnixStream>);
 
+#[cfg(all(test, target_os = "linux"))]
+#[test]
+fn full_owner_accept_queue_rejects_connect_before_waiting_for_io() {
+    let temp = tempfile::tempdir().expect("private socket directory");
+    let address = Address {
+        owner_id: "fixture".into(),
+        instance: "fixture".into(),
+        contract: CONTRACT,
+        pid: std::process::id(),
+        socket: temp.path().join("control.sock"),
+    };
+    let listener = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)
+        .expect("fixture socket");
+    listener
+        .bind(&socket2::SockAddr::unix(&address.socket).expect("socket address"))
+        .expect("bind");
+    listener.listen(0).expect("one queued connection");
+    drop(UnixStream::connect(&address.socket).expect("fill the accept queue"));
+
+    // Release the slot if a regression would otherwise hang this test.
+    let (done, wait) = std::sync::mpsc::channel::<()>();
+    let drain = std::thread::spawn(move || {
+        let _ = wait.recv_timeout(Duration::from_secs(2));
+        listener.accept().expect("drain the queued connection");
+        listener
+    });
+    let rejected = Connection::connect(&address);
+    let _ = done.send(());
+    let listener = drain.join().expect("release accept queue");
+    assert_eq!(
+        rejected.err().expect("queue backpressure").kind(),
+        io::ErrorKind::WouldBlock
+    );
+    Connection::connect(&address).expect("connect after the owner accepts again");
+    listener.accept().expect("accept recovered connection");
+}
+
 impl Client {
     pub(super) fn connect(address: Address) -> io::Result<Self> {
         Self::connect_with_build(address).map(|(client, _)| client)
@@ -33,9 +72,28 @@ impl Client {
         let build = connection.verify(&address)?;
         let client = Self {
             address,
+            identified_source: build
+                .get("source_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|source| {
+                    source.len() == 64 && source.bytes().all(|byte| byte.is_ascii_hexdigit())
+                }),
+            same_source: same_execution_source(cccc_core::build_info::source_id(), &build),
             control: Mutex::new(None),
         };
         Ok((client, build))
+    }
+
+    pub(super) fn supports_target(
+        &self,
+        owner: &crate::ops::actor_runtime::RegisteredOwner,
+    ) -> bool {
+        use crate::ops::actor_runtime::OwnerIdentity;
+        // A kept PTY is bound by the old contract and this controller cannot
+        // start its replacement in a different execution source. The other
+        // backends need the same-source execution fences for targeted writes.
+        self.same_source
+            || (self.identified_source && matches!(owner.identity, OwnerIdentity::Pty { .. }))
     }
 
     /// A read never acquires or replaces the mutating stream.
@@ -217,14 +275,10 @@ impl Client {
     /// callers cannot assign numbers in a different order from their writes.
     /// On exchange failure the operation is uncertain; it is never resent.
     pub(super) fn mutate(&self, mutation: Mutation) -> io::Result<OperationId> {
-        match self.change(mutation)? {
-            Response::Admitted { operation } => Ok(operation),
-            Response::Failed { error } => Err(failure(error)),
-            _ => Err(invalid_response()),
-        }
+        self.mutate_tracked(mutation, |_| Ok(()))
     }
 
-    pub(super) fn submit(
+    pub(super) fn mutate_tracked(
         &self,
         mutation: Mutation,
         remember: impl FnOnce(&OperationId) -> io::Result<()>,
@@ -557,6 +611,8 @@ mod finite_observation_tests {
                 pid: std::process::id(),
                 socket,
             },
+            identified_source: false,
+            same_source: false,
             control: Mutex::new(None),
         };
         let result = client.observe(Instant::now() + Duration::from_secs(1));
@@ -577,7 +633,13 @@ impl Connection {
     fn connect(address: &Address) -> io::Result<Self> {
         let socket = (|| {
             let path = SocketPath::new(&address.socket)?;
-            UnixStream::connect(&path.path)
+            let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+            // A suspended owner can fill its accept queue even after those
+            // clients timed out and closed. Bound connect before the first I/O.
+            socket.set_nonblocking(true)?;
+            socket.connect(&socket2::SockAddr::unix(&path.path)?)?;
+            socket.set_nonblocking(false)?;
+            Ok::<UnixStream, io::Error>(socket.into())
         })()
         .map_err(|error| with_owner(address, error))?;
         socket.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -962,6 +1024,8 @@ mod control_tests {
         });
         let client = Client {
             address,
+            identified_source: false,
+            same_source: false,
             control: Mutex::new(Some(Control {
                 connection: Connection(BufReader::new(old_client)),
                 epoch: 1,

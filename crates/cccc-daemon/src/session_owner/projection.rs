@@ -5,10 +5,21 @@ use super::protocol::ActorSnapshot;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-type Snapshot = Result<Vec<ActorSnapshot>, (io::ErrorKind, String)>;
+pub(super) type Snapshot = Result<Vec<ActorSnapshot>, (io::ErrorKind, String)>;
+pub(super) type Snapshots = BTreeMap<String, Snapshot>;
+
+#[derive(Default)]
+struct Observations {
+    snapshots: Arc<Snapshots>,
+    // A captured maintenance pass cannot fall through to a live read.
+    home: Option<PathBuf>,
+}
+
 thread_local! {
-    static SCOPE: RefCell<Option<BTreeMap<String, Snapshot>>> = const { RefCell::new(None) };
+    static SCOPE: RefCell<Option<Observations>> = const { RefCell::new(None) };
 }
 
 pub(super) fn read_scope<T>(read: impl FnOnce() -> T) -> T {
@@ -17,7 +28,7 @@ pub(super) fn read_scope<T>(read: impl FnOnce() -> T) -> T {
         if scope.is_some() {
             false
         } else {
-            *scope = Some(BTreeMap::new());
+            *scope = Some(Observations::default());
             true
         }
     });
@@ -25,10 +36,49 @@ pub(super) fn read_scope<T>(read: impl FnOnce() -> T) -> T {
     read()
 }
 
+pub(super) fn captured<T>(home: &Path, snapshots: Arc<Snapshots>, read: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Observations>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPE.with(|scope| scope.replace(self.0.take()));
+        }
+    }
+
+    let previous = SCOPE.with(|scope| {
+        scope.replace(Some(Observations {
+            snapshots,
+            home: Some(home.to_path_buf()),
+        }))
+    });
+    let _restore = Restore(previous);
+    read()
+}
+
+pub(super) fn captured_home() -> Option<PathBuf> {
+    SCOPE.with(|scope| scope.borrow().as_ref()?.home.clone())
+}
+
 pub(super) fn get(instance: &str) -> Option<io::Result<Vec<ActorSnapshot>>> {
-    SCOPE
-        .with(|scope| scope.borrow().as_ref()?.get(instance).cloned())
-        .map(|snapshot| snapshot.map_err(|(kind, message)| io::Error::new(kind, message)))
+    SCOPE.with(|scope| {
+        let scope = scope.borrow();
+        let scope = scope.as_ref()?;
+        match scope.snapshots.get(instance) {
+            Some(snapshot) => Some(
+                snapshot
+                    .clone()
+                    .map_err(|(kind, message)| io::Error::new(kind, message)),
+            ),
+            None if scope.home.is_some() => Some(Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "session owner was not observed in this maintenance pass",
+            ))),
+            None => None,
+        }
+    })
+}
+
+pub(super) fn capture(snapshot: io::Result<Vec<ActorSnapshot>>) -> Snapshot {
+    snapshot.map_err(|error| (error.kind(), error.to_string()))
 }
 
 pub(super) fn remember(instance: &str, snapshot: &io::Result<Vec<ActorSnapshot>>) {
@@ -38,7 +88,7 @@ pub(super) fn remember(instance: &str, snapshot: &io::Result<Vec<ActorSnapshot>>
                 Ok(actors) => Ok(actors.clone()),
                 Err(error) => Err((error.kind(), error.to_string())),
             };
-            scope.insert(instance.into(), value);
+            Arc::make_mut(&mut scope.snapshots).insert(instance.into(), value);
         }
     });
 }
@@ -46,7 +96,7 @@ pub(super) fn remember(instance: &str, snapshot: &io::Result<Vec<ActorSnapshot>>
 pub(super) fn invalidate() {
     SCOPE.with(|scope| {
         if let Some(scope) = scope.borrow_mut().as_mut() {
-            scope.clear();
+            scope.snapshots = Arc::default();
         }
     });
 }
@@ -105,5 +155,20 @@ mod tests {
             })
         });
         assert!(get("owner").is_none());
+    }
+
+    #[test]
+    fn captured_observations_refuse_live_fallback_after_invalidation() {
+        captured(
+            Path::new("/captured"),
+            Arc::new(BTreeMap::from([("known".into(), Ok(Vec::new()))])),
+            || {
+                assert!(get("known").expect("captured owner snapshot").is_ok());
+                assert!(get("new-owner").expect("missing owner is fenced").is_err());
+                invalidate();
+                assert!(get("known").expect("invalidated owner is fenced").is_err());
+            },
+        );
+        assert!(get("known").is_none());
     }
 }

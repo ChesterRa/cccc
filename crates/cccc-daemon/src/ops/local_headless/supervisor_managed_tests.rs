@@ -327,6 +327,64 @@ mod structured_admission {
     }
 
     #[test]
+    fn prepared_managed_input_stays_bound_to_its_validated_generation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let fixture = Fixture::new();
+        let actor = &fixture.group.actors[0];
+        let generation = || {
+            local_headless::registered_generation(&fixture.group.group_id, &actor.id)
+                .expect("registered managed holder")
+                .0
+        };
+        let old = generation();
+        local_headless::stop(&fixture.group.group_id, &actor.id).expect("stop old holder");
+        local_headless::start(&fixture.home, &fixture.group, actor).expect("start replacement");
+        let current = generation();
+        assert_ne!(current, old);
+        let cancelled = AtomicBool::new(false);
+        let started = AtomicBool::new(false);
+        let event = Event::new("chat.message", &fixture.group.group_id);
+        let submit = |generation| {
+            local_headless::submit_prepared(
+                &fixture.home,
+                &fixture.group,
+                actor,
+                generation,
+                std::slice::from_ref(&event),
+                "GENERATION_BOUND_INPUT",
+                &cancelled,
+                &started,
+            )
+        };
+        assert!(matches!(
+            submit(&old),
+            local_headless::BatchSubmission::Deferred
+        ));
+        assert!(!started.load(Ordering::Acquire));
+        assert!(
+            !fixture
+                .requests()
+                .iter()
+                .any(|request| request.to_string().contains("GENERATION_BOUND_INPUT"))
+        );
+
+        assert!(matches!(
+            submit(&current),
+            local_headless::BatchSubmission::Accepted(_)
+        ));
+        assert!(started.load(Ordering::Acquire));
+        assert_eq!(
+            fixture
+                .requests()
+                .iter()
+                .filter(|request| request.to_string().contains("GENERATION_BOUND_INPUT"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn opencode_actor_delivery_uses_ordinary_input_on_its_bound_session() {
         if std::env::var_os("OPENCODE_ACTOR_FIXTURE_CHILD").is_none() {
             let temp = tempfile::tempdir().expect("isolated Actor launcher");

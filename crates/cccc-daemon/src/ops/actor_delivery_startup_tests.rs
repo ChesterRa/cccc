@@ -781,7 +781,8 @@ fn unknown_deepseek_attempt_settles_before_any_auto_wake() {
             &actor,
             &AtomicBool::new(false),
             &mut attempted,
-            &mut wakes
+            &mut wakes,
+            None,
         ),
         BatchOutcome::Delivered
     );

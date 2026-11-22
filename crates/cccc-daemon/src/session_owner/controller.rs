@@ -1,4 +1,5 @@
 use super::client::{self, Client};
+use super::facade::OwnedTerminalExit;
 use super::protocol::{
     ActorRef, ActorSnapshot, ExecutionFact, Failure, Mutation, OperationId, OperationSource,
     OperationState, PreparedLaunch,
@@ -10,6 +11,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -18,9 +20,87 @@ type OwnerClients = BTreeMap<String, Arc<Client>>;
 struct Controller {
     home: HomeLayout,
     clients: Mutex<OwnerClients>,
+    members: Mutex<BTreeMap<(String, String), Arc<MemberRegistration>>>,
     construction: Mutex<()>,
+    revision: AtomicU64,
     deliveries: Mutex<BTreeMap<OperationSource, OperationId>>,
-    recoveries: Mutex<BTreeMap<(String, String, String, String), String>>,
+    recoveries: Mutex<BTreeMap<DeliveryRecoveryKey, (String, bool)>>,
+}
+
+type DeliveryRecoveryKey = (String, String, String, String);
+
+struct MemberRegistration {
+    client: Arc<Client>,
+    actor: ActorRef,
+    // Retain the operation identity across promotion of a pending Start, so
+    // a concurrent Stop can remove this registration without removing a new one.
+    start: Option<OperationId>,
+    start_pending: bool,
+    terminal_exited: AtomicBool,
+}
+
+impl MemberRegistration {
+    fn pending_start(&self) -> Option<&OperationId> {
+        self.start.as_ref().filter(|_| self.start_pending)
+    }
+}
+
+fn member_key(actor: &ActorRef) -> (String, String) {
+    (actor.group_id.clone(), actor.actor_id.clone())
+}
+
+impl Controller {
+    fn changed(&self) {
+        self.revision.fetch_add(1, Ordering::Release);
+    }
+
+    fn registration(
+        &self,
+        group: &str,
+        actor: &str,
+    ) -> io::Result<Option<Arc<MemberRegistration>>> {
+        Ok(self
+            .members
+            .lock()
+            .map_err(poisoned)?
+            .get(&(group.to_owned(), actor.to_owned()))
+            .cloned())
+    }
+
+    fn remember_start(
+        &self,
+        client: &Arc<Client>,
+        actor: &ActorRef,
+        operation: &OperationId,
+    ) -> io::Result<Arc<MemberRegistration>> {
+        let entry = Arc::new(MemberRegistration {
+            client: client.clone(),
+            actor: actor.clone(),
+            start: Some(operation.clone()),
+            start_pending: true,
+            terminal_exited: AtomicBool::new(false),
+        });
+        self.members
+            .lock()
+            .map_err(poisoned)?
+            .insert(member_key(actor), entry.clone());
+        self.changed();
+        Ok(entry)
+    }
+
+    fn confirm_stop(&self, registration: &Arc<MemberRegistration>) -> io::Result<()> {
+        let mut members = self.members.lock().map_err(poisoned)?;
+        let key = member_key(&registration.actor);
+        if members.get(&key).is_some_and(|member| {
+            member.pending_start().is_none()
+                && (Arc::ptr_eq(member, registration)
+                    || (registration.start.is_some() && member.start == registration.start))
+        }) {
+            members.remove(&key);
+            self.changed();
+        }
+        Ok(())
+    }
 }
 
 fn controllers() -> &'static Mutex<BTreeMap<PathBuf, Arc<Controller>>> {
@@ -33,9 +113,33 @@ fn controllers() -> &'static Mutex<BTreeMap<PathBuf, Arc<Controller>>> {
 pub(super) fn initialize(home: &HomeLayout) -> io::Result<Vec<AgentIdentity>> {
     let clients = discover(home)?;
     let mut retained = Vec::new();
+    let mut members: BTreeMap<_, Arc<MemberRegistration>> = BTreeMap::new();
     for client in clients.values() {
         client.take_control()?;
         let observed = client.owner_snapshot()?;
+        for snapshot in &observed.actors {
+            let actor = snapshot.actor.clone();
+            let key = member_key(&actor);
+            if let Some(previous) = members.get(&key) {
+                return Err(io::Error::other(format!(
+                    "member {}/{} is registered with both session owners {} and {}",
+                    actor.group_id,
+                    actor.actor_id,
+                    previous.client.address.owner_id,
+                    client.address.owner_id,
+                )));
+            }
+            members.insert(
+                key,
+                Arc::new(MemberRegistration {
+                    client: client.clone(),
+                    actor,
+                    start: None,
+                    start_pending: false,
+                    terminal_exited: AtomicBool::new(terminal_exited(snapshot)),
+                }),
+            );
+        }
         retained.extend(
             observed
                 .actors
@@ -58,7 +162,9 @@ pub(super) fn initialize(home: &HomeLayout) -> io::Result<Vec<AgentIdentity>> {
     let controller = Arc::new(Controller {
         home: home.clone(),
         clients: Mutex::new(clients),
+        members: Mutex::new(members),
         construction: Mutex::new(()),
+        revision: AtomicU64::new(0),
         deliveries: Mutex::new(BTreeMap::new()),
         recoveries: Mutex::new(BTreeMap::new()),
     });
@@ -92,6 +198,10 @@ fn retire_unused_factory(controller: &Controller, client: &Arc<Client>) {
             .is_some_and(|stored| Arc::ptr_eq(stored, client))
     {
         clients.remove(&client.address.owner_id);
+        if let Ok(mut members) = controller.members.lock() {
+            members.retain(|_, member| !Arc::ptr_eq(&member.client, client));
+        }
+        controller.changed();
     }
 }
 
@@ -134,6 +244,11 @@ pub(super) fn require_available(
     group: Option<&str>,
     actor: Option<&str>,
 ) -> io::Result<()> {
+    if let Some((group, actor)) = group.zip(actor)
+        && super::projection::captured_home().as_deref() == Some(home.root())
+    {
+        return snapshot(group, actor).map(drop);
+    }
     let controller = for_home(home)?;
     let clients = controller
         .clients
@@ -179,6 +294,177 @@ pub(super) fn clients_for_observation(home: &HomeLayout) -> io::Result<Vec<Arc<C
         .cloned()
         .collect();
     Ok(clients)
+}
+
+/// An observation made without the Group write permit. Its captured scope
+/// permits local decisions only, even if an owner was added after capture.
+#[derive(Default)]
+pub(crate) struct OwnerObservations {
+    source: ObservationSource,
+    snapshots: Arc<super::projection::Snapshots>,
+    exited_terminals: Vec<OwnedTerminalExit>,
+    provider_exits: Vec<AgentIdentity>,
+}
+
+#[derive(Default)]
+enum ObservationSource {
+    #[default]
+    Local,
+    Captured {
+        controller: Arc<Controller>,
+        revision: u64,
+    },
+    Unavailable(PathBuf),
+}
+
+impl OwnerObservations {
+    pub(crate) fn unavailable(home: &HomeLayout) -> Self {
+        Self {
+            source: ObservationSource::Unavailable(home.root().to_path_buf()),
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn is_current(&self) -> bool {
+        match &self.source {
+            ObservationSource::Local => true,
+            ObservationSource::Unavailable(_) => false,
+            ObservationSource::Captured {
+                controller,
+                revision,
+            } => {
+                controller.revision.load(Ordering::Acquire) == *revision
+                    && for_home(&controller.home)
+                        .is_ok_and(|current| Arc::ptr_eq(&current, controller))
+            }
+        }
+    }
+
+    pub(crate) fn with_scope<T>(&self, read: impl FnOnce() -> T) -> T {
+        let home = match &self.source {
+            ObservationSource::Local => return read(),
+            ObservationSource::Captured { controller, .. } => controller.home.root(),
+            ObservationSource::Unavailable(home) => home.as_path(),
+        };
+        let snapshots = if self.is_current() {
+            self.snapshots.clone()
+        } else {
+            Arc::default()
+        };
+        super::projection::captured(home, snapshots, read)
+    }
+
+    pub(crate) fn exited_terminals(&self) -> &[OwnedTerminalExit] {
+        &self.exited_terminals
+    }
+
+    pub(crate) fn provider_exits(&self, group_id: &str) -> Vec<AgentIdentity> {
+        self.provider_exits
+            .iter()
+            .filter(|exit| exit.group_id == group_id)
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn exit_group_ids(&self) -> Vec<String> {
+        self.exited_terminals
+            .iter()
+            .map(|exit| exit.status.group_id.clone())
+            .chain(self.provider_exits.iter().map(|exit| exit.group_id.clone()))
+            .collect()
+    }
+}
+
+pub(super) fn observe_owners_for_maintenance(home: &HomeLayout) -> io::Result<OwnerObservations> {
+    let controller = for_home(home)?;
+    let revision = controller.revision.load(Ordering::Acquire);
+    let mut observed = OwnerObservations {
+        source: ObservationSource::Captured {
+            controller: controller.clone(),
+            revision,
+        },
+        ..Default::default()
+    };
+    for client in clients_for_observation(home)? {
+        let snapshots = client.snapshots();
+        match &snapshots {
+            Ok(members) => {
+                let starts = controller
+                    .members
+                    .lock()
+                    .map_err(poisoned)?
+                    .values()
+                    .filter(|entry| Arc::ptr_eq(&client, &entry.client) && entry.start_pending)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for start in starts {
+                    let _ = settle_start(&controller, &start);
+                }
+                for snapshot in members
+                    .iter()
+                    .filter(|member| member.observation_error.is_none())
+                {
+                    if terminal_exited(snapshot)
+                        && let Some(entry) = controller
+                            .registration(&snapshot.actor.group_id, &snapshot.actor.actor_id)?
+                        && Arc::ptr_eq(&client, &entry.client)
+                        && !entry.start_pending
+                        && entry.actor == snapshot.actor
+                    {
+                        // The exact terminal cannot run again. A replacement
+                        // has its own registration, even under the same name.
+                        entry.terminal_exited.store(true, Ordering::Release);
+                    }
+                    if snapshot.provider_exited {
+                        observed
+                            .provider_exits
+                            .push(identity(&snapshot.actor, &client.address.owner_id));
+                    }
+                    if let Some(status) =
+                        snapshot.terminal.as_ref().filter(|status| !status.running)
+                    {
+                        if let Some(managed) = &snapshot.managed_status {
+                            // Losing a viewer is not a provider exit. Apply the
+                            // detachment to its original holder outside the Group permit.
+                            if managed.pid.is_some() {
+                                let detach = Mutation::DetachViewer {
+                                    actor: snapshot.actor.clone(),
+                                };
+                                if let Err(error) = wait_viewer_detach(&client, detach) {
+                                    tracing::debug!(%error, "managed terminal detachment remains unconfirmed");
+                                }
+                            }
+                        } else {
+                            observed.exited_terminals.push(OwnedTerminalExit {
+                                status: status.clone(),
+                                actor_created_at: snapshot.actor.actor_created_at.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::debug!(owner_id = %client.address.owner_id, kind = ?error.kind(), "session owner could not be observed for maintenance")
+            }
+        }
+        Arc::make_mut(&mut observed.snapshots).insert(
+            client.address.instance.clone(),
+            super::projection::capture(snapshots),
+        );
+    }
+    Ok(observed)
+}
+
+fn wait_viewer_detach(client: &Client, detach: Mutation) -> io::Result<()> {
+    let operation = client.mutate(detach)?;
+    let result = client.wait(&operation, Duration::from_secs(5));
+    if matches!(
+        client.query(&operation),
+        Ok(OperationState::Finished { .. })
+    ) {
+        client.acknowledge(&operation)?;
+    }
+    result.map(drop)
 }
 
 pub(super) fn browser_resources(
@@ -294,6 +580,17 @@ fn wait_browser_operation(
 }
 
 fn all_clients() -> io::Result<Vec<Arc<Client>>> {
+    if let Some(home) = super::projection::captured_home() {
+        let controller = controllers().lock().map_err(poisoned)?.get(&home).cloned();
+        return controller.map_or_else(
+            || {
+                Err(io::Error::other(
+                    "captured owner controller is no longer available",
+                ))
+            },
+            |controller| clients_for_observation(&controller.home),
+        );
+    }
     let controllers = controllers()
         .lock()
         .map_err(poisoned)?
@@ -314,6 +611,7 @@ fn all_clients() -> io::Result<Vec<Arc<Client>>> {
     Ok(result)
 }
 
+#[cfg(test)]
 pub(super) fn exited_terminals() -> io::Result<Vec<cccc_runtime::SessionStatus>> {
     let mut result = Vec::new();
     for client in all_clients()? {
@@ -333,43 +631,69 @@ pub(super) fn exited_terminals() -> io::Result<Vec<cccc_runtime::SessionStatus>>
     Ok(result)
 }
 
-pub(super) fn provider_exits(home: &HomeLayout, group: &str) -> io::Result<Vec<AgentIdentity>> {
-    let controller = for_home(home)?;
-    let clients = controller
-        .clients
-        .lock()
-        .map_err(poisoned)?
-        .values()
-        .cloned()
-        .collect::<Vec<_>>();
-    let mut exits = Vec::new();
-    for client in clients {
-        exits.extend(
-            client
-                .snapshots()?
-                .iter()
-                .filter(|snapshot| snapshot.provider_exited && snapshot.actor.group_id == group)
-                .map(|snapshot| identity(&snapshot.actor, &client.address.owner_id)),
-        );
+pub(super) fn snapshot(group: &str, actor: &str) -> io::Result<Option<ActorSnapshot>> {
+    if let Some(home) = super::projection::captured_home() {
+        let controller = controllers().lock().map_err(poisoned)?.get(&home).cloned();
+        if let Some(controller) = controller
+            && let Some(member) = controller.registration(group, actor)?
+        {
+            if member.start_pending {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "member start is unconfirmed",
+                ));
+            }
+            return snapshot_from([member.client.clone()], group, actor);
+        }
     }
-    Ok(exits)
+    snapshot_from(all_clients()?, group, actor)
 }
 
-pub(super) fn snapshot(group: &str, actor: &str) -> io::Result<Option<ActorSnapshot>> {
+fn member_snapshot<'a>(
+    snapshots: &'a [ActorSnapshot],
+    group: &str,
+    actor: &str,
+) -> io::Result<Option<&'a ActorSnapshot>> {
+    let mut matches = snapshots
+        .iter()
+        .filter(|snapshot| snapshot.actor.group_id == group && snapshot.actor.actor_id == actor);
+    let Some(snapshot) = matches.next() else {
+        return Ok(None);
+    };
+    if let Some(error) = &snapshot.observation_error {
+        return Err(io::Error::other(error.clone()));
+    }
+    if matches.next().is_some() {
+        return Err(io::Error::other(
+            "member is registered with multiple session owners",
+        ));
+    }
+    Ok(Some(snapshot))
+}
+
+fn snapshot_from(
+    clients: impl IntoIterator<Item = Arc<Client>>,
+    group: &str,
+    actor: &str,
+) -> io::Result<Option<ActorSnapshot>> {
+    Ok(observe_member(clients, group, actor)?.map(|(_, snapshot)| snapshot))
+}
+
+fn observe_member(
+    clients: impl IntoIterator<Item = Arc<Client>>,
+    group: &str,
+    actor: &str,
+) -> io::Result<Option<(Arc<Client>, ActorSnapshot)>> {
     let mut found = None;
-    for client in all_clients()? {
-        for snapshot in client.projected_snapshots()? {
-            if snapshot.actor.group_id == group && snapshot.actor.actor_id == actor {
-                if let Some(error) = &snapshot.observation_error {
-                    return Err(io::Error::other(error.clone()));
-                }
-                if found.is_some() {
-                    return Err(io::Error::other(
-                        "member is registered with multiple session owners",
-                    ));
-                }
-                found = Some(snapshot);
+    for client in clients {
+        let snapshots = client.projected_snapshots()?;
+        if let Some(snapshot) = member_snapshot(&snapshots, group, actor)? {
+            if found.is_some() {
+                return Err(io::Error::other(
+                    "member is registered with multiple session owners",
+                ));
             }
+            found = Some((client, snapshot.clone()));
         }
     }
     Ok(found)
@@ -431,6 +755,7 @@ fn current_factory(controller: &Controller) -> io::Result<(Arc<Client>, bool)> {
                 .lock()
                 .map_err(poisoned)?
                 .insert(owner_id, client.clone());
+            controller.changed();
             client
         }
     };
@@ -444,9 +769,16 @@ pub(super) fn start(
 ) -> io::Result<ActorSnapshot> {
     let controller = for_home(home)?;
     let _construction = controller.construction.lock().map_err(poisoned)?;
+    resolve_start(&controller, &actor)?;
     // Changing the default owner cannot authorize replacing old resources.
     // Their registration must first be removed by a confirmed native Stop.
-    if snapshot(&actor.group_id, &actor.actor_id)?.is_some() {
+    if snapshot_from(
+        clients_for_observation(home)?,
+        &actor.group_id,
+        &actor.actor_id,
+    )?
+    .is_some()
+    {
         return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
             "member is still registered; confirm its stop before starting it again",
@@ -456,20 +788,39 @@ pub(super) fn start(
     // Publish and reserve its first Start before another constructor can make
     // this factory non-default and retire it as empty. Only admission is under
     // this lock; provider initialization still waits outside it.
-    let operation = client.mutate(Mutation::Start {
-        actor,
-        launch: Box::new(launch),
-    })?;
+    let mut tracked = None;
+    let admission = client.mutate_tracked(
+        Mutation::Start {
+            actor: actor.clone(),
+            launch: Box::new(launch),
+        },
+        |operation| {
+            tracked = Some(controller.remember_start(&client, &actor, operation)?);
+            Ok(())
+        },
+    );
+    if let Err(error) = &admission
+        && error.get_ref().is_some_and(|cause| cause.is::<Failure>())
+        && let Some(registration) = &tracked
+    {
+        replace_start(&controller, registration, None)?;
+    }
+    let operation = admission?;
     drop(_construction);
     let result = client.wait(&operation, Duration::from_secs(60));
-    if matches!(
-        client.query(&operation),
-        Ok(OperationState::Finished { .. })
-    ) {
-        // Lifecycle results need no Group-delivery append. A failed launch's
-        // actual holding registration still remains in the owner snapshot.
-        client.acknowledge(&operation)?;
-        retire_unused_factory(&controller, &client);
+    if let Some(registration) = &tracked {
+        if let Ok(value) = &result {
+            let snapshot: ActorSnapshot =
+                serde_json::from_value(value.clone()).map_err(io::Error::other)?;
+            if same_member(&snapshot.actor, &actor) {
+                replace_start(&controller, registration, Some(snapshot.actor))?;
+            }
+            client.acknowledge(&operation)?;
+        } else {
+            // An execution error can leave an occupied reservation. Resolve
+            // what the original owner can prove without replaying the Start.
+            let _ = settle_start(&controller, registration);
+        }
     }
     let mut snapshot: ActorSnapshot = serde_json::from_value(result?).map_err(io::Error::other)?;
     if let Some(terminal) = &mut snapshot.terminal {
@@ -478,15 +829,268 @@ pub(super) fn start(
     // A new factory is ready. Failure to retire an old one must not undo Start.
     if created_factory {
         retire_unused_factories(&controller);
+    } else {
+        retire_unused_factory(&controller, &client);
     }
     Ok(snapshot)
+}
+
+fn same_member(first: &ActorRef, second: &ActorRef) -> bool {
+    first.group_id == second.group_id
+        && first.actor_id == second.actor_id
+        && first.actor_created_at == second.actor_created_at
+}
+
+fn replace_start(
+    controller: &Controller,
+    previous: &Arc<MemberRegistration>,
+    actor: Option<ActorRef>,
+) -> io::Result<()> {
+    let mut members = controller.members.lock().map_err(poisoned)?;
+    let key = member_key(&previous.actor);
+    if members
+        .get(&key)
+        .is_some_and(|current| Arc::ptr_eq(current, previous))
+    {
+        if let Some(actor) = actor {
+            members.insert(
+                key,
+                Arc::new(MemberRegistration {
+                    client: previous.client.clone(),
+                    actor,
+                    start: previous.start.clone(),
+                    start_pending: false,
+                    terminal_exited: AtomicBool::new(false),
+                }),
+            );
+        } else {
+            members.remove(&key);
+        }
+        controller.changed();
+    }
+    Ok(())
+}
+
+fn resolve_start(controller: &Controller, actor: &ActorRef) -> io::Result<()> {
+    if let Some(registration) = controller.registration(&actor.group_id, &actor.actor_id)?
+        && registration.start_pending
+    {
+        registration.client.take_control()?;
+        settle_start(controller, &registration)?;
+    }
+    Ok(())
+}
+
+fn settle_start(controller: &Controller, registration: &Arc<MemberRegistration>) -> io::Result<()> {
+    let Some(operation) = registration.pending_start() else {
+        return Ok(());
+    };
+    let client = &registration.client;
+    let unresolved = || {
+        io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "previous member start is unconfirmed",
+        )
+    };
+    let (resolved, finished) = match client.query(operation)? {
+        OperationState::NotAdmitted => (None, false),
+        OperationState::Finished { .. } => {
+            let actor = &registration.actor;
+            let observed = client.snapshots()?.into_iter().find(|snapshot| {
+                snapshot.actor.group_id == actor.group_id
+                    && snapshot.actor.actor_id == actor.actor_id
+            });
+            match observed {
+                Some(snapshot) if same_member(&snapshot.actor, actor) => {
+                    (Some(snapshot.actor), true)
+                }
+                None => (None, true),
+                _ => return Err(unresolved()),
+            }
+        }
+        OperationState::Pending | OperationState::Unknown => return Err(unresolved()),
+    };
+    let released = resolved.is_none();
+    replace_start(controller, registration, resolved)?;
+    if finished {
+        match client.acknowledge(operation) {
+            Ok(()) if released => retire_unused_factory(controller, client),
+            Ok(()) => {}
+            Err(error) => {
+                tracing::debug!(%error, "completed member start acknowledgement is pending")
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) struct OwnedTarget {
+    controller: Arc<Controller>,
+    registration: Arc<MemberRegistration>,
+    snapshot: ActorSnapshot,
+    observed: Vec<ActorSnapshot>,
+}
+
+impl OwnedTarget {
+    pub(crate) fn observe<T>(&self, read: impl FnOnce() -> T) -> T {
+        super::projection::captured(
+            self.controller.home.root(),
+            Arc::new(BTreeMap::from([(
+                self.registration.client.address.instance.clone(),
+                Ok(vec![self.snapshot.clone()]),
+            )])),
+            read,
+        )
+    }
+
+    fn require_registration(&self) -> io::Result<()> {
+        let actor = &self.snapshot.actor;
+        let registration = self
+            .controller
+            .registration(&actor.group_id, &actor.actor_id)?;
+        if for_home(&self.controller.home)
+            .is_ok_and(|current| Arc::ptr_eq(&current, &self.controller))
+            && registration.is_some_and(|entry| Arc::ptr_eq(&entry, &self.registration))
+        {
+            return Ok(());
+        }
+        Err(io::Error::other(
+            "member registration changed before the operation",
+        ))
+    }
+
+    pub(crate) fn stop(&self) -> io::Result<Option<cccc_runtime::SessionStatus>> {
+        let actor = &self.snapshot.actor;
+        self.require_registration()?;
+        let client = &self.registration.client;
+        let operation = client.mutate(Mutation::Stop {
+            actor: actor.clone(),
+        })?;
+        client.wait(&operation, Duration::from_secs(60))?;
+        self.controller.confirm_stop(&self.registration)?;
+        if let Err(error) = client.acknowledge(&operation) {
+            tracing::debug!(kind = ?error.kind(), "confirmed member stop acknowledgement is pending");
+        } else {
+            retire_unused_factory(&self.controller, client);
+        }
+        Ok(self.snapshot.terminal.clone().map(|mut status| {
+            status.running = false;
+            status
+        }))
+    }
+
+    pub(crate) fn member_running(
+        &self,
+        group_id: &str,
+        actor: &cccc_contracts::Actor,
+    ) -> Option<bool> {
+        let Some(entry) = self.controller.registration(group_id, &actor.id).ok()? else {
+            return Some(false);
+        };
+        if entry.start_pending || entry.actor.actor_created_at != actor.created_at {
+            return None;
+        }
+        if entry.terminal_exited.load(Ordering::Acquire) {
+            return Some(false);
+        }
+        if !Arc::ptr_eq(&entry.client, &self.registration.client) {
+            return None;
+        }
+        let snapshot = self.observed.iter().find(|observed| {
+            same_member(&observed.actor, &entry.actor) && observed.observation_error.is_none()
+        })?;
+        use crate::ops::actor_runtime::OwnerState;
+        match snapshot.owner.as_ref().map(|owner| owner.state) {
+            Some(OwnerState::Running) if !snapshot.provider_exited => Some(true),
+            Some(OwnerState::Exited) if entry.actor.generation.is_some() => {
+                (snapshot.actor == entry.actor).then_some(false)
+            }
+            None if snapshot
+                .terminal
+                .as_ref()
+                .is_some_and(|terminal| terminal.running) =>
+            {
+                Some(true)
+            }
+            _ => None,
+        }
+    }
+}
+
+pub(super) fn running_target(
+    home: &HomeLayout,
+    group_id: &str,
+    actor: &cccc_contracts::Actor,
+) -> io::Result<Option<OwnedTarget>> {
+    let controller = for_home(home)?;
+    let Some(entry) = controller.registration(group_id, &actor.id)? else {
+        return Ok(None);
+    };
+    let replaced = || {
+        io::Error::other(Failure::new(
+            "actor_replaced",
+            "member creation identity changed",
+        ))
+    };
+    if entry.actor.actor_created_at != actor.created_at {
+        return Err(replaced());
+    }
+    if entry.start_pending {
+        return Ok(None);
+    }
+    let observed = entry.client.projected_snapshots()?;
+    let Some(snapshot) = member_snapshot(&observed, group_id, &actor.id)?.cloned() else {
+        return Ok(None);
+    };
+    if !same_member(&entry.actor, &snapshot.actor) {
+        return Err(replaced());
+    }
+    if snapshot.actor.generation.is_none()
+        || !running(&snapshot)
+        || snapshot.owner.as_ref().is_none_or(|owner| {
+            owner.state != crate::ops::actor_runtime::OwnerState::Running
+                || !entry.client.supports_target(owner)
+        })
+    {
+        return Ok(None);
+    }
+    Ok(Some(OwnedTarget {
+        controller,
+        registration: entry,
+        snapshot,
+        observed,
+    }))
 }
 
 pub(super) fn perform(actor: &ActorRef, mutation: Mutation) -> io::Result<serde_json::Value> {
     let stopping = matches!(&mutation, Mutation::Stop { .. });
     let client = client_for(actor)?;
+    let stopping_registration = if stopping {
+        let controllers = controllers().lock().map_err(poisoned)?;
+        let mut target = None;
+        for controller in controllers.values() {
+            if let Some(entry) = controller.registration(&actor.group_id, &actor.actor_id)?
+                && Arc::ptr_eq(&entry.client, &client)
+                && same_member(&entry.actor, actor)
+            {
+                target = Some((controller.clone(), entry));
+                break;
+            }
+        }
+        target
+    } else {
+        None
+    };
     let operation = client.mutate(mutation)?;
     let result = client.wait(&operation, Duration::from_secs(60));
+    if result.is_ok()
+        && let Some((controller, entry)) = stopping_registration
+    {
+        // Stop waits for an admitted launch to leave the backend. Its execution
+        // receipt may still be publishing, so keep an unresolved entry for maintenance.
+        let _ = settle_start(&controller, &entry);
+        controller.confirm_stop(&entry)?;
+    }
     if matches!(
         client.query(&operation),
         Ok(OperationState::Finished { .. })
@@ -508,24 +1112,55 @@ pub(super) fn submit(
     text: &str,
     cancelled: &std::sync::atomic::AtomicBool,
     started: &std::sync::atomic::AtomicBool,
+    target: Option<&OwnedTarget>,
 ) -> io::Result<serde_json::Value> {
-    use std::sync::atomic::Ordering;
     let controller = for_home(home)?;
-    let snapshot = snapshot(&group.group_id, &actor.id)?
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "member has no owner"))?;
+    let (client, snapshot) = match target {
+        Some(target) => {
+            if !Arc::ptr_eq(&controller, &target.controller)
+                || target.snapshot.actor.group_id != group.group_id
+                || target.snapshot.actor.actor_id != actor.id
+                || target.snapshot.actor.actor_created_at != actor.created_at
+            {
+                return Err(io::Error::other(
+                    "delivery target no longer matches the member",
+                ));
+            }
+            target.require_registration()?;
+            (target.registration.client.clone(), target.snapshot.clone())
+        }
+        None => observe_member(clients_for_observation(home)?, &group.group_id, &actor.id)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "member has no owner"))?,
+    };
     let source = OperationSource {
         actor: snapshot.actor.clone(),
         event_ids: events.iter().map(|event| event.id.clone()).collect(),
         input_sha256: format!("{:x}", Sha256::digest(text.as_bytes())),
     };
     let source_key = source.clone();
-    let client = client_for(&snapshot.actor)?;
-    let known = controller
-        .deliveries
-        .lock()
-        .map_err(poisoned)?
-        .get(&source_key)
-        .cloned();
+    let known = {
+        let deliveries = controller.deliveries.lock().map_err(poisoned)?;
+        let known = deliveries.get(&source_key).cloned();
+        if target.is_some()
+            && ((known
+                .as_ref()
+                .is_some_and(|operation| operation.instance != client.address.instance))
+                || deliveries.keys().any(|previous| {
+                    previous != &source_key
+                        && same_member(&previous.actor, &source.actor)
+                        && previous
+                            .event_ids
+                            .iter()
+                            .any(|id| source.event_ids.contains(id))
+                }))
+        {
+            started.store(true, Ordering::Release);
+            return Err(io::Error::other(
+                "an earlier delivery attempt still owns this source",
+            ));
+        }
+        known
+    };
     let operation = match known {
         Some(operation) => {
             started.store(true, Ordering::Release);
@@ -569,7 +1204,7 @@ pub(super) fn submit(
                     events: events.to_vec(),
                     text: text.into(),
                 };
-                let admitted = client.submit(mutation, |operation| {
+                let admitted = client.mutate_tracked(mutation, |operation| {
                     let mut deliveries = controller.deliveries.lock().map_err(poisoned)?;
                     if deliveries.len() >= 4096 {
                         return Err(io::Error::new(
@@ -619,7 +1254,10 @@ pub(super) fn submit(
                         == Some("not_written");
                 if not_started || not_written {
                     for event in events {
-                        crate::ops::runtime_delivery::append_state(
+                        use crate::ops::runtime_delivery::{
+                            DeliveryOutcome, OwnerAcknowledgement, append_state_with_owner,
+                        };
+                        append_state_with_owner(
                             home,
                             &group.group_id,
                             &actor.id,
@@ -630,9 +1268,10 @@ pub(super) fn submit(
                                 Some("managed") => "managed_session",
                                 _ => "pty",
                             },
-                            crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
+                            DeliveryOutcome::Unsubmitted(
                                 "owner operation ended before native input was written",
                             ),
+                            OwnerAcknowledgement::KnownAttempt,
                         )
                         .map_err(|error| io::Error::other(error.message))?;
                     }
@@ -701,6 +1340,7 @@ pub(super) fn event_facts(
     actor: &str,
     created: &str,
     event: &str,
+    allow_lookup: bool,
 ) -> io::Result<Vec<(Arc<Client>, ExecutionFact)>> {
     let controller = for_home(home)?;
     let known = controller
@@ -717,7 +1357,11 @@ pub(super) fn event_facts(
         .map(|(source, operation)| (source.clone(), operation.clone()))
         .collect::<Vec<_>>();
     if known.is_empty() {
-        return find_event(home, group, actor, created, event);
+        return if allow_lookup {
+            find_event(home, group, actor, created, event)
+        } else {
+            Ok(Vec::new())
+        };
     }
     let clients = controller
         .clients
@@ -747,12 +1391,19 @@ pub(super) fn event_facts(
         .collect()
 }
 
+pub(super) enum DeliveryLookup {
+    AllOwners,
+    KnownAttempt,
+    RetryableSource,
+}
+
 pub(super) fn acknowledge_event(
     home: &HomeLayout,
     group: &str,
     actor: &str,
     created: &str,
     event: &str,
+    lookup: DeliveryLookup,
 ) -> io::Result<()> {
     let document = cccc_core::GroupStore::new(home.clone())?.load(group)?;
     if !document
@@ -762,7 +1413,41 @@ pub(super) fn acknowledge_event(
     {
         return Ok(());
     }
-    for (client, fact) in event_facts(home, group, actor, created, event)? {
+    let mut facts = event_facts(
+        home,
+        group,
+        actor,
+        created,
+        event,
+        matches!(lookup, DeliveryLookup::AllOwners),
+    )?;
+    if facts.is_empty() && matches!(lookup, DeliveryLookup::RetryableSource) {
+        // The durable receipt already proves no native input. Reclaim a retained
+        // fact on the next target in case it would otherwise match this retry.
+        // A different owner cannot match the new target's execution source.
+        let controller = for_home(home)?;
+        if let Some(entry) = controller.registration(group, actor)?
+            && !entry.start_pending
+            && entry.actor.actor_created_at == created
+        {
+            let client = &entry.client;
+            facts.extend(
+                client
+                    .find_event(group, actor, created, event)?
+                    .into_iter()
+                    .map(|fact| (client.clone(), fact)),
+            );
+        } else {
+            facts = find_event(home, group, actor, created, event)?;
+        }
+    }
+    for (client, fact) in facts {
+        if matches!(fact.state, OperationState::Pending) {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "the original delivery attempt is still executing",
+            ));
+        }
         if !matches!(fact.state, OperationState::Finished { .. }) {
             continue;
         }
@@ -1087,6 +1772,14 @@ pub(super) fn running(snapshot: &ActorSnapshot) -> bool {
             .is_some_and(|owner| owner.state == crate::ops::actor_runtime::OwnerState::Running)
 }
 
+fn terminal_exited(snapshot: &ActorSnapshot) -> bool {
+    use crate::ops::actor_runtime::{OwnerIdentity, OwnerState};
+    snapshot.observation_error.is_none()
+        && snapshot.owner.as_ref().is_some_and(|owner| {
+            matches!(owner.identity, OwnerIdentity::Pty { .. }) && owner.state == OwnerState::Exited
+        })
+}
+
 pub(super) fn track_recovery(
     home: &HomeLayout,
     group: &str,
@@ -1094,8 +1787,24 @@ pub(super) fn track_recovery(
     created: &str,
     event: &str,
     transport: &str,
+    known_only: bool,
 ) -> io::Result<()> {
     let controller = for_home(home)?;
+    if known_only
+        && !controller
+            .deliveries
+            .lock()
+            .map_err(poisoned)?
+            .keys()
+            .any(|source| {
+                source.actor.group_id == group
+                    && source.actor.actor_id == actor
+                    && source.actor.actor_created_at == created
+                    && source.event_ids.iter().any(|id| id == event)
+            })
+    {
+        return Ok(());
+    }
     let mut recoveries = controller.recoveries.lock().map_err(poisoned)?;
     if recoveries.len() >= 4096 {
         return Err(io::Error::other(
@@ -1104,7 +1813,7 @@ pub(super) fn track_recovery(
     }
     recoveries.insert(
         (group.into(), actor.into(), created.into(), event.into()),
-        transport.into(),
+        (transport.into(), known_only),
     );
     Ok(())
 }
@@ -1124,7 +1833,7 @@ pub(super) fn recovery_groups() -> Vec<String> {
 pub(super) fn recoveries(
     home: &HomeLayout,
     group: &str,
-) -> io::Result<Vec<(String, String, String, String)>> {
+) -> io::Result<Vec<super::DeliveryRecovery>> {
     let controller = for_home(home)?;
     Ok(controller
         .recoveries
@@ -1132,12 +1841,13 @@ pub(super) fn recoveries(
         .map_err(poisoned)?
         .iter()
         .filter(|((group_id, _, _, _), _)| group_id == group)
-        .map(|((_, actor, created, event), transport)| {
+        .map(|((_, actor, created, event), (transport, known_only))| {
             (
                 actor.clone(),
                 created.clone(),
                 event.clone(),
                 transport.clone(),
+                *known_only,
             )
         })
         .collect())
@@ -1164,6 +1874,145 @@ fn poisoned<T>(_: std::sync::PoisonError<T>) -> io::Error {
 #[cfg(all(test, target_os = "linux", debug_assertions))]
 mod tests {
     use super::*;
+
+    fn test_pty(path: &std::path::Path, actor: &ActorRef) -> PreparedLaunch {
+        PreparedLaunch::Pty {
+            spec: cccc_runtime::LaunchSpec {
+                group_id: actor.group_id.clone(),
+                actor_id: actor.actor_id.clone(),
+                runner: cccc_contracts::RunnerKind::Pty,
+                command: vec!["sleep".into(), "60".into()],
+                cwd: path.into(),
+                env: Default::default(),
+                cols: 80,
+                rows: 24,
+            },
+            history: cccc_runtime::HistoryConfig {
+                path: path.join("history"),
+                max_bytes: 4096,
+                hot_bytes: 4096,
+                persist: false,
+            },
+            launch: cccc_runtime::ActorLaunch {
+                runtime: cccc_contracts::ActorRuntime::Custom,
+                submit: cccc_contracts::Actor::new(&actor.actor_id).submit,
+            },
+            preamble: String::new(),
+        }
+    }
+
+    #[test]
+    fn uncertain_start_is_released_only_by_fenced_non_admission_or_retained_registration() {
+        let temp = tempfile::tempdir().expect("fixture directory");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let _home = cccc_core::fs::try_exclusive_lock(&home.daemon_dir().join("ccccd.lock"))
+            .expect("lock")
+            .expect("fixture home exclusive");
+        initialize(&home).expect("controller");
+        let controller = for_home(&home).expect("fixture controller");
+        let (client, _) = current_factory(&controller).expect("fault fixture owner");
+        let actor = ActorRef {
+            group_id: "g_uncertain_start".into(),
+            actor_id: "peer".into(),
+            actor_created_at: "created".into(),
+            generation: None,
+        };
+        let mutation = || Mutation::Start {
+            actor: actor.clone(),
+            launch: Box::new(test_pty(temp.path(), &actor)),
+        };
+        let route = || {
+            controller
+                .registration(&actor.group_id, &actor.actor_id)
+                .expect("route")
+        };
+
+        let blocked = client.mutate_tracked(mutation(), |operation| {
+            controller.remember_start(&client, &actor, operation)?;
+            Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "fixture before writing the frame",
+            ))
+        });
+        assert!(blocked.is_err());
+        assert!(resolve_start(&controller, &actor).is_err());
+        assert!(route().expect("unconfirmed reservation").start.is_some());
+        client.release().expect("close first control stream");
+        resolve_start(&controller, &actor).expect("prove not admitted after fencing");
+        assert!(route().is_none());
+
+        let first = client
+            .mutate_tracked(mutation(), |operation| {
+                controller.remember_start(&client, &actor, operation)?;
+                Ok(())
+            })
+            .expect("admit Start");
+        client
+            .wait(&first, Duration::from_secs(10))
+            .expect("owner finished despite lost controller receipt");
+        let pending = route().expect("in-flight reservation");
+        assert_eq!(pending.pending_start(), Some(&first));
+        client
+            .release()
+            .expect("close control stream after admission");
+        observe_owners_for_maintenance(&home)
+            .expect("recover the original owner registration without another Start");
+        let current = route().expect("registered member");
+        assert!(current.pending_start().is_none() && current.actor.generation.is_some());
+        assert_eq!(
+            client.query(&first).expect("acknowledged operation"),
+            OperationState::Unknown
+        );
+        assert!(Arc::ptr_eq(&current.client, &client));
+        let Err(duplicate) = start(&home, actor.clone(), test_pty(temp.path(), &actor)) else {
+            panic!("member was started twice");
+        };
+        assert_eq!(duplicate.kind(), io::ErrorKind::AlreadyExists);
+        finish(&home, ShutdownMode::Stop, "fixture-shutdown".into()).expect("clean fixture owner");
+    }
+
+    #[test]
+    fn captured_owner_observation_keeps_equal_member_keys_in_their_own_homes() {
+        let temp = tempfile::tempdir().expect("fixture directory");
+        let actor = ActorRef {
+            group_id: "g_shared_fixture".into(),
+            actor_id: "peer".into(),
+            actor_created_at: "created".into(),
+            generation: None,
+        };
+        let run = |name| {
+            let home = HomeLayout::from_path(temp.path().join(name)).expect("isolated home");
+            home.initialize().expect("initialize");
+            let lock = cccc_core::fs::try_exclusive_lock(&home.daemon_dir().join("ccccd.lock"))
+                .expect("lock")
+                .expect("fixture home exclusive");
+            initialize(&home).expect("controller");
+            let observed =
+                start(&home, actor.clone(), test_pty(home.root(), &actor)).expect("start member");
+            let pid = observed.terminal.expect("PTY").pid.expect("running PID");
+            (home, lock, pid)
+        };
+        let (first, _first_lock, first_pid) = run("first");
+        let (second, _second_lock, second_pid) = run("second");
+        assert_ne!(first_pid, second_pid);
+        for (home, pid) in [(&first, first_pid), (&second, second_pid)] {
+            let observed = observe_owners_for_maintenance(home).expect("owner observations");
+            let terminal = observed.with_scope(|| {
+                snapshot(&actor.group_id, &actor.actor_id)
+                    .expect("member observation")
+                    .expect("member")
+                    .terminal
+                    .expect("terminal")
+            });
+            assert_eq!(terminal.pid, Some(pid));
+            let mut replaced = cccc_contracts::Actor::new(&actor.actor_id);
+            replaced.created_at = "a-different-creation".into();
+            assert!(running_target(home, &actor.group_id, &replaced).is_err());
+            finish(home, ShutdownMode::Stop, "fixture-shutdown".into())
+                .expect("clean fixture owner");
+        }
+    }
 
     fn with_unreachable_owner(home: &HomeLayout, check: impl FnOnce(&str)) {
         home.initialize().expect("initialize fixture home");
@@ -1352,33 +2201,7 @@ mod tests {
             actor_created_at: "created".into(),
             generation: None,
         };
-        let result = start(
-            &home,
-            actor.clone(),
-            PreparedLaunch::Pty {
-                spec: cccc_runtime::LaunchSpec {
-                    group_id: actor.group_id.clone(),
-                    actor_id: actor.actor_id.clone(),
-                    runner: cccc_contracts::RunnerKind::Pty,
-                    command: vec!["sleep".into(), "60".into()],
-                    cwd: temp.path().into(),
-                    env: Default::default(),
-                    cols: 80,
-                    rows: 24,
-                },
-                history: cccc_runtime::HistoryConfig {
-                    path: temp.path().join("history"),
-                    max_bytes: 4096,
-                    hot_bytes: 4096,
-                    persist: false,
-                },
-                launch: cccc_runtime::ActorLaunch {
-                    runtime: cccc_contracts::ActorRuntime::Custom,
-                    submit: cccc_contracts::Actor::new("peer").submit,
-                },
-                preamble: String::new(),
-            },
-        );
+        let result = start(&home, actor.clone(), test_pty(temp.path(), &actor));
         let new_id: String =
             cccc_core::fs::read_json(&default_path).expect("read saved owner identity");
         assert_ne!(new_id, old_id);

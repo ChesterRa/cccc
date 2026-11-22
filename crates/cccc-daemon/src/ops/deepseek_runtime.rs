@@ -7,10 +7,11 @@ mod recovery;
 mod turn_failure;
 mod turn_timeout;
 
+pub use delivery::TurnDelivery;
 #[cfg(test)]
 pub use delivery::deliver;
+pub(crate) use delivery::deliver_marked;
 pub(crate) use delivery::deliver_prepared;
-pub use delivery::{TurnDelivery, deliver_marked};
 pub use lifecycle::apply;
 pub(crate) use lifecycle::check_replacement;
 

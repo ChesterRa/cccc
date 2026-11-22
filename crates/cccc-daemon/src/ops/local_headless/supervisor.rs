@@ -579,20 +579,24 @@ pub fn submit_batch(
         source_events,
         cancelled,
         &AtomicBool::new(false),
+        None,
     )
 }
 
 /// As [`submit_batch`], setting `started` right before input is handed to the
 /// managed session or written to its terminal. Input may have arrived even
 /// when the submission then reports `Deferred`.
-pub fn submit_batch_marked(
+pub(crate) fn submit_batch_marked(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
     source_events: &[Event],
     cancelled: &AtomicBool,
     started: &AtomicBool,
+    target: Option<&crate::session_owner::OwnedTarget>,
 ) -> BatchSubmission {
+    #[cfg(not(unix))]
+    let _ = target;
     #[cfg(unix)]
     if crate::session_owner::enabled(home) {
         let Some(text) = super::super::actor_delivery_render::render_batch_with_mail_context(
@@ -611,6 +615,7 @@ pub fn submit_batch_marked(
             &text,
             cancelled,
             started,
+            target,
         ) {
             Ok(result) => {
                 let reached_input = result
@@ -690,10 +695,12 @@ fn submit_admitted(
 
 /// The controller renders authorized input. The existing session alone admits
 /// it, consumes its startup prompt and owns the actual provider operation.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn submit_prepared(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
+    generation: &str,
     source_events: &[Event],
     delivery: &str,
     cancelled: &AtomicBool,
@@ -702,7 +709,10 @@ pub(crate) fn submit_prepared(
     let Some(item) = lookup(&(group.group_id.clone(), actor.id.clone())) else {
         return BatchSubmission::Deferred;
     };
-    if !item.running() || cancelled.load(Ordering::Acquire) {
+    if item.managed.generation() != generation
+        || !item.running()
+        || cancelled.load(Ordering::Acquire)
+    {
         return BatchSubmission::Deferred;
     }
     item.admit_batch(source_events, || {
@@ -839,29 +849,22 @@ fn submit_prepared_admitted(
         }
         return outcome;
     }
-    if let Err(error) = item.reattach_viewer() {
-        tracing::warn!(
-            %error,
-            group_id = %group.group_id,
-            actor_id = %actor.id,
-            "failed to re-attach managed Actor viewer for delivery"
-        );
-        return BatchSubmission::Deferred;
-    }
-    if item.has_terminal() {
+    let viewer = match item.delivery_viewer() {
+        Ok(viewer) => viewer,
+        Err(error) => {
+            tracing::warn!(%error, group_id = %group.group_id, actor_id = %actor.id,
+                "failed to re-attach managed Actor viewer for delivery");
+            return BatchSubmission::Deferred;
+        }
+    };
+    if let Some(viewer) = viewer {
         let launched = item.launched(actor);
         let mut outcome = BatchSubmission::Deferred;
         let accepted = submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
             if launched.runtime == ActorRuntime::Kilo {
-                outcome = submit_kilo_input(item, &launched, prepared, cancelled, started);
+                outcome = submit_kilo_input(item, &viewer, &launched, prepared, cancelled, started);
             } else {
-                outcome = submit_managed_terminal_input(
-                    &group.group_id,
-                    &launched,
-                    prepared,
-                    cancelled,
-                    started,
-                );
+                outcome = submit_managed_viewer(&viewer, &launched, prepared, cancelled, started);
             }
             outcome.is_accepted()
         });
@@ -928,6 +931,7 @@ pub(super) fn reconcile_owner_submission(
     }
 }
 
+#[cfg(test)]
 pub(super) fn submit_managed_terminal_input(
     group_id: &str,
     actor: &Actor,
@@ -938,12 +942,22 @@ pub(super) fn submit_managed_terminal_input(
     let Ok(viewer) = crate::session_owner::runtime::status(group_id, &actor.id) else {
         return BatchSubmission::Deferred;
     };
+    submit_managed_viewer(&viewer, actor, text, cancelled, started)
+}
+
+fn submit_managed_viewer(
+    viewer: &cccc_runtime::SessionStatus,
+    actor: &Actor,
+    text: &str,
+    cancelled: &AtomicBool,
+    started: &AtomicBool,
+) -> BatchSubmission {
     if !viewer.running {
         return BatchSubmission::Deferred;
     }
     classify_terminal_handoff(started, || {
         super::super::actor_delivery::submit_terminal_text_for_session(
-            &viewer, actor, text, cancelled,
+            viewer, actor, text, cancelled,
         )
     })
 }
@@ -953,14 +967,12 @@ pub(super) fn submit_managed_terminal_input(
 /// of when the provider starts work.
 fn submit_kilo_input(
     item: &Session,
+    viewer: &cccc_runtime::SessionStatus,
     actor: &Actor,
     text: &str,
     cancelled: &AtomicBool,
     started: &AtomicBool,
 ) -> BatchSubmission {
-    let Ok(viewer) = crate::session_owner::runtime::status(&item.group_id, &actor.id) else {
-        return BatchSubmission::Deferred;
-    };
     let Some(pid) = viewer.pid.filter(|_| viewer.running) else {
         return BatchSubmission::Deferred;
     };
@@ -972,7 +984,7 @@ fn submit_kilo_input(
         None
     } else {
         if !cccc_runtime::wait_for_new_kilo_composer(
-            &viewer,
+            viewer,
             std::time::Duration::from_secs(15),
             cancelled,
         )
@@ -987,7 +999,7 @@ fn submit_kilo_input(
     };
     started.store(true, Ordering::Release);
     let write = super::super::actor_delivery::submit_viewer_text(
-        &viewer,
+        viewer,
         receipt.is_some(),
         actor,
         text,

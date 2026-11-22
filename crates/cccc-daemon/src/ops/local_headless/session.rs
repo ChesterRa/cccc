@@ -203,8 +203,14 @@ impl Session {
     }
 
     pub(super) fn reattach_viewer(&self) -> io::Result<()> {
+        self.delivery_viewer().map(drop)
+    }
+
+    /// Select the viewer while the managed generation still owns its lifecycle
+    /// lock. The terminal writer will recheck this viewer's PID and start time.
+    pub(super) fn delivery_viewer(&self) -> io::Result<Option<cccc_runtime::SessionStatus>> {
         if !self.managed.tui_ready() {
-            return Ok(());
+            return Ok(None);
         }
         let _guard = self.stop_lock.lock().map_err(|_| super::poisoned())?;
         if !self.running() {
@@ -213,8 +219,10 @@ impl Session {
                 "managed provider is not running",
             ));
         }
-        if cccc_runtime::status(&self.group_id, &self.actor_id).is_ok_and(|status| status.running) {
-            return Ok(());
+        if let Ok(status) = cccc_runtime::status(&self.group_id, &self.actor_id)
+            && status.running
+        {
+            return Ok(Some(status));
         }
         let viewer = self
             .viewer
@@ -247,9 +255,10 @@ impl Session {
             "headless.session.viewer_attached",
             serde_json::Map::new(),
         );
-        Ok(())
+        Ok(Some(status))
     }
 
+    #[cfg(test)]
     pub(super) fn has_terminal(&self) -> bool {
         self.has_terminal.load(Ordering::Acquire)
     }

@@ -13,7 +13,11 @@ mod drain;
 mod gaps;
 mod lifecycle;
 mod terminal;
-pub(crate) use drain::{drain_group, pending_group_ids};
+#[cfg(test)]
+pub(crate) use drain::drain_group;
+pub(crate) use drain::{
+    PreparedDrain, apply_drain, drain_local_completions, pending_group_ids, prepare_drain,
+};
 pub use lifecycle::{
     ShutdownReason, pause_group, shutdown_actor, shutdown_actor_for, shutdown_all, shutdown_group,
 };
@@ -75,6 +79,23 @@ pub(super) struct DeliveryCompletion {
     pub event_id: String,
     pub transport: String,
     pub outcome: CompletedDelivery,
+}
+
+impl DeliveryCompletion {
+    fn persist(&self, home: &HomeLayout) -> Result<Event, crate::dispatch::OpError> {
+        crate::ops::runtime_delivery::append_state_with_owner(
+            home,
+            &self.group_id,
+            &self.actor_id,
+            &self.actor_created_at,
+            &self.event_id,
+            &self.transport,
+            self.outcome.ledger_outcome(),
+            crate::ops::runtime_delivery::OwnerAcknowledgement::AfterWritePermit {
+                known_only: true,
+            },
+        )
+    }
 }
 
 pub(super) enum CompletedDelivery {
@@ -360,15 +381,19 @@ pub(super) fn complete_job(job: &DeliveryJob, evidence: Option<DeliveryEvidence>
 }
 
 pub(super) fn finish_job(job: &DeliveryJob, outcome: CompletedDelivery) {
-    match crate::ops::runtime_delivery::append_state(
-        &job.home,
-        &job.group.group_id,
-        &job.actor.id,
-        &job.actor.created_at,
-        &job.event.id,
-        job.transport,
-        outcome.ledger_outcome(),
-    ) {
+    finish_job_with_owner(
+        job,
+        outcome,
+        crate::ops::runtime_delivery::OwnerAcknowledgement::KnownAttempt,
+    );
+}
+
+fn finish_job_with_owner(
+    job: &DeliveryJob,
+    outcome: CompletedDelivery,
+    owner: crate::ops::runtime_delivery::OwnerAcknowledgement,
+) {
+    match write_job_state(job, outcome.ledger_outcome(), owner) {
         Ok(_) => release_in_flight(job),
         Err(error) => {
             tracing::warn!(
@@ -386,6 +411,34 @@ pub(super) fn finish_job(job: &DeliveryJob, outcome: CompletedDelivery) {
             });
         }
     }
+}
+
+pub(super) fn append_job_state(
+    job: &DeliveryJob,
+    outcome: crate::ops::runtime_delivery::DeliveryOutcome<'_>,
+) -> Result<Event, crate::dispatch::OpError> {
+    write_job_state(
+        job,
+        outcome,
+        crate::ops::runtime_delivery::OwnerAcknowledgement::KnownAttempt,
+    )
+}
+
+fn write_job_state(
+    job: &DeliveryJob,
+    outcome: crate::ops::runtime_delivery::DeliveryOutcome<'_>,
+    owner: crate::ops::runtime_delivery::OwnerAcknowledgement,
+) -> Result<Event, crate::dispatch::OpError> {
+    crate::ops::runtime_delivery::append_state_with_owner(
+        &job.home,
+        &job.group.group_id,
+        &job.actor.id,
+        &job.actor.created_at,
+        &job.event.id,
+        job.transport,
+        outcome,
+        owner,
+    )
 }
 
 fn clear_in_flight(mut remove: impl FnMut(&(String, String, String)) -> bool) {
@@ -421,15 +474,7 @@ fn exhaust_job(job: &DeliveryJob, reason: &str) {
 }
 
 fn settle_failure(job: &DeliveryJob, outcome: crate::ops::runtime_delivery::DeliveryOutcome<'_>) {
-    if let Err(error) = crate::ops::runtime_delivery::append_state(
-        &job.home,
-        &job.group.group_id,
-        &job.actor.id,
-        &job.actor.created_at,
-        &job.event.id,
-        job.transport,
-        outcome,
-    ) {
+    if let Err(error) = append_job_state(job, outcome) {
         tracing::warn!(
             message = %error.message,
             event_id = %job.event.id,
@@ -444,13 +489,8 @@ fn settle_failure(job: &DeliveryJob, outcome: crate::ops::runtime_delivery::Deli
 /// the submission, and the event keeps its in-flight slot meanwhile.
 pub(super) fn withdraw_jobs(jobs: &[DeliveryJob], reason: &str) {
     for job in jobs {
-        match crate::ops::runtime_delivery::append_state(
-            &job.home,
-            &job.group.group_id,
-            &job.actor.id,
-            &job.actor.created_at,
-            &job.event.id,
-            job.transport,
+        match append_job_state(
+            job,
             crate::ops::runtime_delivery::DeliveryOutcome::Withdrawn(reason),
         ) {
             Ok(_) => release_in_flight(job),
@@ -552,7 +592,26 @@ pub(super) fn tell_sender_not_sent_to_chet(
     )
 }
 
+/// The caller just appended this source. No retained execution has seen it.
 pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchReport {
+    dispatch_with_origin(home, group, event, DispatchSource::New(None))
+}
+
+pub(super) fn dispatch_observed_notice(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    event: &Event,
+    observed: &crate::session_owner::OwnerObservations,
+) {
+    dispatch_with_origin(home, group, event, DispatchSource::New(Some(observed)));
+}
+
+fn dispatch_with_origin(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    event: &Event,
+    source: DispatchSource<'_>,
+) -> DispatchReport {
     if !matches!(event.kind.as_str(), "chat.message" | "system.notify")
         || matches!(group.state, GroupState::Paused | GroupState::Stopped)
     {
@@ -577,7 +636,20 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
             if configured_for_push(actor) {
                 return true;
             }
-            match running_push_owner(group, actor) {
+            let observed = if source.uses_live_target() {
+                crate::session_owner::running_target(home, &group.group_id, actor).and_then(
+                    |target| {
+                        if target.is_some() {
+                            Ok(true)
+                        } else {
+                            running_push_owner(group, actor)
+                        }
+                    },
+                )
+            } else {
+                source.observe(|| running_push_owner(group, actor))
+            };
+            match observed {
                 Ok(running) => running,
                 Err(_) => {
                     if actor.enabled && !held_for_switch(group, actor) {
@@ -589,15 +661,7 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
         })
         .cloned()
         .collect::<Vec<_>>();
-    dispatch_to_inner(
-        home,
-        group,
-        event,
-        &targets,
-        false,
-        None,
-        DispatchSource::New,
-    )
+    dispatch_to_inner(home, group, event, &targets, false, None, source)
 }
 
 /// Whether work reaches this Actor by push rather than by its own pull. What
@@ -676,15 +740,26 @@ pub fn dispatch_preclaimed(
 }
 
 #[derive(Clone, Copy)]
-enum DispatchSource {
-    New,
+enum DispatchSource<'a> {
+    New(Option<&'a crate::session_owner::OwnerObservations>),
     Unread(&'static str),
     Directed,
 }
-impl DispatchSource {
+impl DispatchSource<'_> {
+    fn uses_live_target(self) -> bool {
+        matches!(self, Self::New(None))
+    }
+
+    fn observe<T>(self, read: impl FnOnce() -> T) -> T {
+        match self {
+            Self::New(Some(observed)) => observed.with_scope(read),
+            _ => read(),
+        }
+    }
+
     fn missed(self, group: &GroupDoc, actor: &Actor, event: &Event) {
         match self {
-            Self::New => {
+            Self::New(_) => {
                 if actor.external_session_id.is_empty() {
                     gaps::record(group, actor, Some(event));
                 } else {
@@ -710,7 +785,7 @@ fn dispatch_to_inner(
     targets: &[Actor],
     force_ambiguous: bool,
     claims: Option<&[(&Actor, &'static str)]>,
-    source: DispatchSource,
+    source: DispatchSource<'_>,
 ) -> DispatchReport {
     dispatch_to_inner_outcome(home, group, event, targets, force_ambiguous, claims, source).report
 }
@@ -722,7 +797,7 @@ fn dispatch_to_inner_outcome(
     targets: &[Actor],
     force_ambiguous: bool,
     claims: Option<&[(&Actor, &'static str)]>,
-    source: DispatchSource,
+    source: DispatchSource<'_>,
 ) -> DispatchOutcome {
     if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
         return DispatchOutcome {
@@ -740,15 +815,36 @@ fn dispatch_to_inner_outcome(
         if !actor.enabled || held_for_switch(group, actor) {
             continue;
         }
+        let target = if source.uses_live_target() && actor.external_session_id.is_empty() {
+            match crate::session_owner::running_target(home, &group.group_id, actor) {
+                Ok(target) => target,
+                Err(error) => {
+                    tracing::debug!(%error, actor_id = %actor.id, "delivery target is not observable");
+                    source.missed(group, actor, event);
+                    interrupted = true;
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        let observe_pause = || {
+            source.observe(|| {
+                crate::ops::actor_runtime::confirmation_pause_applies(home, &group.group_id, actor)
+            })
+        };
         // Leave new events pending while this managed Claude awaits an explicit
         // retry. Already claimed work must reach the worker to be settled safely.
         if !preclaimed
-            && crate::ops::actor_runtime::confirmation_pause_applies(home, &group.group_id, actor)
+            && actor.external_session_id.is_empty()
+            && target
+                .as_ref()
+                .map_or_else(observe_pause, |target| target.observe(observe_pause))
                 .is_ok_and(|paused| paused)
         {
             continue;
         }
-        if matches!(source, DispatchSource::New) && gaps::extend(group, actor, event) {
+        if matches!(source, DispatchSource::New(_)) && gaps::extend(group, actor, event) {
             continue;
         }
         let actor_online = if matches!(source, DispatchSource::Unread(_)) {
@@ -757,7 +853,10 @@ fn dispatch_to_inner_outcome(
         } else if !actor.external_session_id.is_empty() {
             super::local_sessions::connected(home, &actor.external_session_id)
         } else {
-            running_push_owner(group, actor).unwrap_or(false)
+            target.is_some()
+                || source
+                    .observe(|| running_push_owner(group, actor))
+                    .unwrap_or(false)
         };
         if actor_online {
             online += 1;
@@ -772,21 +871,28 @@ fn dispatch_to_inner_outcome(
             DispatchSource::Unread(transport) => Some(transport),
             _ => claimed_on,
         };
-        let transport =
-            match known_transport.map_or_else(|| delivery_transport(home, group, actor), Ok) {
-                Ok(transport) => transport,
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        group_id = %group.group_id,
-                        actor_id = %actor.id,
-                        "failed to read the Actor's runtime owner"
-                    );
-                    source.missed(group, actor, event);
-                    interrupted = true;
-                    continue;
-                }
-            };
+        let observe_transport = || source.observe(|| delivery_transport(home, group, actor));
+        let transport = match known_transport.map_or_else(
+            || {
+                target.as_ref().map_or_else(observe_transport, |target| {
+                    target.observe(observe_transport)
+                })
+            },
+            Ok,
+        ) {
+            Ok(transport) => transport,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    group_id = %group.group_id,
+                    actor_id = %actor.id,
+                    "failed to read the Actor's runtime owner"
+                );
+                source.missed(group, actor, event);
+                interrupted = true;
+                continue;
+            }
+        };
         if preclaimed && transport.starts_with("web_model") {
             // Structured Web Model consumers take the durable claim through
             // runtime_wait_next_turn. Do not enqueue the actor on the PTY lane.
@@ -795,16 +901,15 @@ fn dispatch_to_inner_outcome(
         }
         let claimed = preclaimed || actor.external_session_id.is_empty() || force_ambiguous;
         if claimed && !preclaimed {
-            match crate::ops::runtime_delivery::claim(
-                home,
-                group,
-                actor,
-                &event.id,
-                transport,
-                force_ambiguous,
-            ) {
-                Ok(crate::ops::runtime_delivery::ClaimResult::Claimed) => {}
-                Ok(crate::ops::runtime_delivery::ClaimResult::Terminal(_)) => continue,
+            use crate::ops::runtime_delivery::{ClaimResult, claim, claim_new_source};
+            let result = if matches!(source, DispatchSource::New(_)) {
+                claim_new_source(home, group, actor, &event.id, transport)
+            } else {
+                claim(home, group, actor, &event.id, transport, force_ambiguous)
+            };
+            match result {
+                Ok(ClaimResult::Claimed) => {}
+                Ok(ClaimResult::Terminal(_)) => continue,
                 Err(error) => {
                     tracing::warn!(
                         group_id = %group.group_id,
@@ -830,7 +935,7 @@ fn dispatch_to_inner_outcome(
                 interrupted = true;
                 if actor.external_session_id.is_empty() {
                     match source {
-                        DispatchSource::New => gaps::record(group, actor, Some(event)),
+                        DispatchSource::New(_) => gaps::record(group, actor, Some(event)),
                         DispatchSource::Unread(_) | DispatchSource::Directed => {
                             gaps::record(group, actor, None);
                         }
@@ -846,6 +951,8 @@ fn dispatch_to_inner_outcome(
     }
 }
 
+/// Process-owned jobs have passed the durable claim check for this attempt.
+/// The previous daemon's live claims are reconciled by recovery outside this queue.
 fn offer_delivery(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -864,7 +971,7 @@ fn offer_delivery(
     });
     if offered == Offer::Refused {
         if claimed
-            && let Err(error) = crate::ops::runtime_delivery::append_state(
+            && let Err(error) = crate::ops::runtime_delivery::append_state_with_owner(
                 home,
                 &group.group_id,
                 &actor.id,
@@ -874,6 +981,7 @@ fn offer_delivery(
                 crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
                     "daemon delivery queue did not accept the event",
                 ),
+                crate::ops::runtime_delivery::OwnerAcknowledgement::NotOffered,
             )
         {
             tracing::warn!(message = %error.message, "failed to record rejected runtime delivery");
@@ -918,7 +1026,12 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
         record_member_catchup(group, actor);
         return 0;
     }
-    match crate::ops::actor_runtime::confirmation_pause_applies(home, &group.group_id, actor) {
+    let pause = if actor.external_session_id.is_empty() {
+        crate::ops::actor_runtime::confirmation_pause_applies(home, &group.group_id, actor)
+    } else {
+        Ok(false)
+    };
+    match pause {
         Ok(false) => {}
         Ok(true) => {
             set_refill(&group.group_id, actor_id, false);
@@ -1208,7 +1321,7 @@ fn enqueue(job: DeliveryJob) -> Offer {
     if is_fenced(&key.0, &key.1) {
         // Settled under the worker map: the fence is lifted only afterwards.
         if job.claimed
-            && let Err(error) = crate::ops::runtime_delivery::append_state(
+            && let Err(error) = crate::ops::runtime_delivery::append_state_with_owner(
                 &job.home,
                 &key.0,
                 &key.1,
@@ -1218,6 +1331,7 @@ fn enqueue(job: DeliveryJob) -> Offer {
                 crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
                     "held while the member's runtime was switched",
                 ),
+                crate::ops::runtime_delivery::OwnerAcknowledgement::NotOffered,
             )
         {
             tracing::warn!(message = %error.message, "failed to give back held runtime delivery");
@@ -1280,9 +1394,10 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     break;
                 };
                 vec![job]
-            } else if deferred.len() >= BATCH_CAPACITY {
+            } else if !attempted.is_empty() || deferred.len() >= BATCH_CAPACITY {
                 // Failed startup or paused delivery must not grow this batch
                 // beyond its limit by draining the bounded channel on retries.
+                // An admitted batch keeps its original event set until settled.
                 if !actor_delivery_worker::interruptible_sleep(
                     deferred_retry_delay(deferred_failures),
                     &thread_cancelled,
@@ -1301,7 +1416,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
             };
-            if actor_delivery_worker::merges_batches(&batch[0]) {
+            if attempted.is_empty() && actor_delivery_worker::merges_batches(&batch[0]) {
                 while batch.len() < BATCH_CAPACITY {
                     match receiver.try_recv() {
                         Ok(job) => batch.push(job),
@@ -1371,9 +1486,8 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                     // A definitive native failure settles this attempt before
                     // another claim can authorize the existing bounded retry.
                     // Keep the in-flight worker slot throughout the backoff.
-                    match crate::ops::runtime_delivery::append_state(
-                        &job.home, &job.group.group_id, &job.actor.id,
-                        &job.actor.created_at, &job.event.id, job.transport,
+                    match append_job_state(
+                        job,
                         crate::ops::runtime_delivery::DeliveryOutcome::Failed(&reason),
                     ) {
                         Ok(_) => {
@@ -1396,6 +1510,7 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
         }
         let replacing = thread_replaced.load(Ordering::Acquire);
         for job in deferred.into_iter().chain(receiver.try_iter()) {
+            use crate::ops::runtime_delivery::OwnerAcknowledgement;
             let reason = "delivery worker stopped before runtime acceptance".to_owned();
             if !job.claimed {
                 release_in_flight(&job);
@@ -1406,7 +1521,11 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 && job.actor.external_session_id.is_empty()
             {
                 if !attempted.contains(&job.event.id) {
-                    finish_job(&job, CompletedDelivery::Unsubmitted(reason));
+                    finish_job_with_owner(
+                        &job,
+                        CompletedDelivery::Unsubmitted(reason),
+                        OwnerAcknowledgement::NotOffered,
+                    );
                 } else {
                     // The execution task belongs to its owner. The next
                     // controller queries it before settling this durable claim.
@@ -1417,28 +1536,21 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
             // Each native handoff marks its own attempted input. A stopped
             // whole-turn transport may have received it before any acceptance
             // result; calling it failed would authorize an automatic replay.
-            if attempted.contains(&job.event.id) {
-                // The old runtime may already hold this input. Keep it for the
-                // replacement to review instead of submitting it twice.
-                finish_job(
-                    &job,
+            let native = !job.actor.external_session_id.is_empty();
+            let (outcome, acknowledgement) = if attempted.contains(&job.event.id) {
+                (
                     CompletedDelivery::Ambiguous(
                         if replacing { "runtime replaced while this delivery was being submitted" }
                         else { "runtime stopped after submission before its outcome was confirmed" }.into(),
                     ),
-                );
-            } else if replacing && job.actor.external_session_id.is_empty() {
-                // Never submitted to the old runtime: the replacement receives it.
-                finish_job(&job, CompletedDelivery::Unsubmitted(reason));
-            } else if job.actor.external_session_id.is_empty() {
-                fail_job(&job, &reason);
-            } else if !job.claimed {
-                release_in_flight(&job);
+                    OwnerAcknowledgement::AfterWritePermit { known_only: true },
+                )
+            } else if replacing || native {
+                (CompletedDelivery::Unsubmitted(reason), OwnerAcknowledgement::NotOffered)
             } else {
-                // Native processing removes every offered terminal outcome
-                // from the batch. Remaining work is known not to be submitted.
-                finish_job(&job, CompletedDelivery::Unsubmitted(reason));
-            }
+                (CompletedDelivery::Failed(reason), OwnerAcknowledgement::NotOffered)
+            };
+            finish_job_with_owner(&job, outcome, acknowledgement);
         }
     });
     let thread = match thread {

@@ -34,6 +34,7 @@ struct Source {
 struct State {
     state: String,
     transport: String,
+    location: Location,
     // pending_sources skips malformed state records; latest_state does not.
     // The flag is the record's own `retryable`: true stopped before submission,
     // false used up its automatic retries, absent is an ordinary record.
@@ -176,6 +177,7 @@ impl DeliveryState {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
+                    location,
                     pending,
                 },
             );
@@ -186,6 +188,12 @@ impl DeliveryState {
             .get(actor)
             .and_then(|states| states.get(source))
             .map(|state| (state.state.clone(), state.transport.clone()))
+    }
+    pub fn latest_location(&self, actor: &str, source: &str) -> Option<Location> {
+        self.latest
+            .get(actor)?
+            .get(source)
+            .map(|state| state.location)
     }
     /// Whether the actor's current delivery of this source failed after using
     /// up its automatic retries, so that only an explicit request may retry it.

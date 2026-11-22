@@ -40,20 +40,24 @@ pub fn deliver(
         event,
         cancelled,
         &AtomicBool::new(false),
+        None,
     )
 }
 
 /// As [`deliver`], setting `started` right before the request is handed to
 /// the provider. A started request may have reached DeepSeek even when the
 /// delivery ends incomplete.
-pub fn deliver_marked(
+pub(crate) fn deliver_marked(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
     event: &Event,
     cancelled: &AtomicBool,
     started: &AtomicBool,
+    target: Option<&crate::session_owner::OwnedTarget>,
 ) -> TurnDelivery {
+    #[cfg(not(unix))]
+    let _ = target;
     #[cfg(unix)]
     if crate::session_owner::enabled(home) {
         let Some(text) = crate::ops::actor_delivery_render::render_batch_with_mail_context(
@@ -72,6 +76,7 @@ pub fn deliver_marked(
             &text,
             cancelled,
             started,
+            target,
         ) {
             Ok(result) => {
                 started.store(
@@ -142,6 +147,7 @@ fn deliver_with_timeout_marked(
         home,
         group,
         actor,
+        None,
         event,
         &payload,
         cancelled,
@@ -155,6 +161,7 @@ pub(crate) fn deliver_prepared(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
+    generation: &str,
     event: &Event,
     payload: &str,
     cancelled: &AtomicBool,
@@ -164,6 +171,7 @@ pub(crate) fn deliver_prepared(
         home,
         group,
         actor,
+        Some(generation),
         event,
         payload,
         cancelled,
@@ -177,6 +185,7 @@ fn deliver_prepared_with_timeout(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
+    generation: Option<&str>,
     event: &Event,
     payload: &str,
     cancelled: &AtomicBool,
@@ -187,10 +196,11 @@ fn deliver_prepared_with_timeout(
         return TurnDelivery::Incomplete;
     }
     let key = (group.group_id.clone(), actor.id.clone());
-    let holder = sessions()
-        .read()
-        .ok()
-        .and_then(|map| map.get(&key).cloned());
+    let holder = sessions().read().ok().and_then(|map| {
+        map.get(&key)
+            .filter(|entry| generation.is_none_or(|wanted| entry.generation == wanted))
+            .cloned()
+    });
     let Some(holder) = holder else {
         return TurnDelivery::Incomplete;
     };
@@ -221,6 +231,9 @@ fn deliver_prepared_with_timeout(
     let Ok(mut supervisor) = holder.supervisor.lock() else {
         return TurnDelivery::Incomplete;
     };
+    if cancelled.load(Ordering::Acquire) || !holder.running.load(Ordering::Acquire) {
+        return TurnDelivery::Incomplete;
+    }
     let Some(session_id) = supervisor.session_id().map(str::to_owned) else {
         return TurnDelivery::Incomplete;
     };
