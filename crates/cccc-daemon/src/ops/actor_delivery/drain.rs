@@ -16,14 +16,8 @@ pub(crate) fn pending_group_ids() -> Vec<String> {
     if let Ok(notices) = sender_notices().lock() {
         groups.extend(notices.iter().map(|notice| notice.group_id.clone()));
     }
-    if let Ok(workers) = workers().lock() {
-        groups.extend(
-            workers
-                .iter()
-                .filter(|(_, worker)| worker.needs_refill)
-                .map(|((group_id, _), _)| group_id.clone()),
-        );
-    }
+    collect_refill_groups(&mut groups);
+    collect_group_catchup_groups(&mut groups);
     gaps::collect_groups(&mut groups);
     groups.extend(crate::session_owner::recovery_groups());
     groups.into_iter().collect()
@@ -65,24 +59,21 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
     }
     tell_senders(home, group_id);
 
+    resolve_group_catchup(home, group_id);
+
     gaps::recover_group(home, group_id);
 
-    let actors = workers()
-        .lock()
-        .map(|workers| {
-            workers
-                .iter()
-                .filter(|((id, _), worker)| id == group_id && worker.needs_refill)
-                .map(|((_, actor_id), _)| actor_id.clone())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let actors = pending_refill_actors(group_id);
     if actors.is_empty() {
         return;
     }
     let group =
         match cccc_core::GroupStore::new(home.clone()).and_then(|store| store.load(group_id)) {
             Ok(group) => group,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                clear_refills(|(group, _)| group == group_id);
+                return;
+            }
             Err(error) => {
                 tracing::warn!(%error, %group_id, "failed to reload pending native deliveries");
                 return;
@@ -104,6 +95,32 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
         if has_capacity {
             dispatch_unread(home, &group, &actor_id);
         }
+    }
+}
+
+fn resolve_group_catchup(home: &HomeLayout, group_id: &str) {
+    let Some(revision) = active_group_catchup_revision(group_id) else {
+        return;
+    };
+    let group = match cccc_core::GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+    {
+        Ok(group) => group,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            clear_group_catchup(group_id);
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(%error, %group_id, "failed to reload group for pending delivery catch-up");
+            return;
+        }
+    };
+    complete_group_catchup(group_id, revision);
+    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        return;
+    }
+    for actor in &group.actors {
+        record_member_catchup(&group, actor);
     }
 }
 
@@ -276,7 +293,9 @@ mod tests {
             actor_created_at: actor.created_at.clone(),
             event_id: source.id.clone(),
             transport: "pty".into(),
-            outcome: CompletedDelivery::Accepted,
+            outcome: CompletedDelivery::Accepted(Some(
+                cccc_contracts::event::DeliveryEvidence::TerminalWritten,
+            )),
         });
 
         drain_group(&home, &group.group_id);
@@ -292,6 +311,7 @@ mod tests {
             event.kind == "runtime.delivery"
                 && event.data["source_event_id"] == source.id
                 && event.data["state"] == "accepted"
+                && event.data["delivery_evidence"] == "terminal_written"
         }));
     }
 

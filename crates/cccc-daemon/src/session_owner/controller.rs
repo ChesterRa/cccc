@@ -1165,6 +1165,165 @@ fn poisoned<T>(_: std::sync::PoisonError<T>) -> io::Error {
 mod tests {
     use super::*;
 
+    fn with_unreachable_owner(home: &HomeLayout, check: impl FnOnce(&str)) {
+        home.initialize().expect("initialize fixture home");
+        let _home = cccc_core::fs::try_exclusive_lock(&home.daemon_dir().join("ccccd.lock"))
+            .expect("check fixture lock")
+            .expect("isolated home lock");
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let client = Arc::new(client::start(home, &id).expect("start fixture owner"));
+        client.retire().expect("retire empty owner");
+        let path = Paths::new(home, &id).expect("fixture owner paths").address;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while path.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fixture owner must exit"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        initialize(home).expect("install fixture controller");
+        struct RemoveController(PathBuf);
+        impl Drop for RemoveController {
+            fn drop(&mut self) {
+                controllers().lock().expect("registry lock").remove(&self.0);
+            }
+        }
+        let _cleanup = RemoveController(home.root().into());
+        for_home(home)
+            .expect("get fixture controller")
+            .clients
+            .lock()
+            .expect("owner registry")
+            .insert(id.clone(), client);
+        check(&id);
+    }
+
+    #[test]
+    fn member_stop_preserves_the_group_intent_when_a_peer_is_unobservable() {
+        let temp = tempfile::tempdir().expect("fixture directory");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("isolated home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("fixture group store");
+        let mut group = store
+            .create("stop with unavailable peer", "")
+            .expect("group");
+        group.running = true;
+        group.state = cccc_contracts::GroupState::Active;
+        group.actors = ["stopped", "peer"]
+            .map(|id| {
+                let mut actor = cccc_contracts::Actor::new(id);
+                actor.runtime = cccc_contracts::ActorRuntime::Custom;
+                actor.normalize_runtime_constraints();
+                actor
+            })
+            .into();
+        store
+            .save(&group)
+            .expect("save Group with both members enabled");
+
+        with_unreachable_owner(&home, |_| {
+            use crate::ops::actor_runtime::persist_lifecycle;
+            persist_lifecycle(&home, &group, "stopped", false, None).expect("save confirmed Stop");
+            let after = store.load(&group.group_id).expect("reload saved intent");
+            assert!(!after.actors[0].enabled);
+            assert!(after.actors[1].enabled);
+            assert!(
+                after.running,
+                "unavailable owner is not proof that the peer stopped"
+            );
+            assert_eq!(after.state, group.state);
+            persist_lifecycle(&home, &after, "peer", false, None).expect("save last member Stop");
+            assert!(
+                !store
+                    .load(&group.group_id)
+                    .expect("reload final intent")
+                    .running
+            );
+        });
+    }
+
+    #[test]
+    fn lifecycle_refusals_preserve_resume_state_and_pending_deliveries() {
+        let temp = tempfile::tempdir().expect("fixture directory");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("isolated home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("fixture group store");
+        let mut group = store
+            .create("unavailable lifecycle preflight", "")
+            .expect("group");
+        group.state = cccc_contracts::GroupState::Active;
+        group.running = true;
+        let mut actor = cccc_contracts::Actor::new("peer");
+        actor.runtime = cccc_contracts::ActorRuntime::Codex;
+        actor.normalize_runtime_constraints();
+        group.actors.push(actor);
+        store.save(&group).expect("save Group");
+        let receipts = store
+            .state_dir(&group.group_id)
+            .expect("group state")
+            .join("runtime_sessions");
+        std::fs::create_dir_all(&receipts).expect("fixture receipt directory");
+        let receipt = receipts.join("peer.json");
+        let original = serde_json::json!({"runtime":"codex","transport":"codex_app_server",
+                                           "status":"resume_failed","resume_eligible":false});
+        cccc_core::fs::write_json(&receipt, &original).expect("record resume failure");
+
+        with_unreachable_owner(&home, |owner_id| {
+            let request = |op: &str, args: serde_json::Value| {
+                let request =
+                    serde_json::from_value(serde_json::json!({"v":1,"op":op,"args":args}))
+                        .expect("lifecycle fixture request");
+                crate::dispatch::dispatch(&home, &request)
+            };
+            let delivery = request(
+                "send",
+                serde_json::json!({
+                    "group_id":group.group_id,"by":"user","text":"waiting on the owner",
+                    "to":["peer"],"message_mode":"send",
+                }),
+            );
+            assert!(
+                delivery.ok,
+                "ledger send must succeed during the outage: {delivery:?}"
+            );
+            let pending = || {
+                crate::ops::automation_runtime::pending_delivery_group_ids()
+                    .contains(&group.group_id)
+            };
+            struct ClearDeliveries(String);
+            impl Drop for ClearDeliveries {
+                fn drop(&mut self) {
+                    crate::ops::actor_delivery::shutdown_group(&self.0);
+                }
+            }
+            let _clear_deliveries = ClearDeliveries(group.group_id.clone());
+            assert!(pending(), "unavailable owner left a delivery gap");
+            for op in ["actor_restart", "actor_stop", "actor_update"] {
+                let mut args = serde_json::json!({
+                    "group_id":group.group_id,"by":"user","actor_id":"peer"
+                });
+                if op == "actor_update" {
+                    args["patch"] = serde_json::json!({"enabled":false});
+                }
+                let response = request(op, args);
+                let error = response.error.expect("refused by unavailable owner");
+                assert_eq!(error.code, "io_error");
+                assert!(error.message.contains(owner_id));
+                assert!(
+                    pending(),
+                    "a rejected {op} must leave pending delivery alone"
+                );
+                let saved: serde_json::Value =
+                    cccc_core::fs::read_json(&receipt).expect("reload resume state");
+                assert_eq!(
+                    saved, original,
+                    "a rejected {op} cannot change resume eligibility"
+                );
+                let persisted = store.load(&group.group_id).expect("reload Group");
+                assert!(persisted.running && persisted.actors[0].enabled);
+            }
+        });
+    }
+
     #[test]
     fn a_closed_empty_factory_retires_after_a_new_factory_starts() {
         let temp = tempfile::tempdir().expect("isolated test directory");

@@ -1854,6 +1854,7 @@ export function ChatTab({
                 presentation={resourcePresentation}
                 onLocateMessage={locateMessageFromPanel}
                 onAttachPath={attachWorkspacePath}
+                onEmptied={closeResourcePanel}
               />
             </Suspense>
           </MobilePresentationSurface>

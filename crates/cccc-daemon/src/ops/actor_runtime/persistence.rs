@@ -10,20 +10,6 @@ pub fn persist_lifecycle(
     GroupStore::new(home.clone())
         .map_err(OpError::io)?
         .mutate(&group.group_id, |doc| {
-            // From the stored document: this launch may have adopted a Profile
-            // snapshot, and with it a runtime that needs no process.
-            let running = doc.actors.iter().any(|actor| {
-                let enabled = if actor.id == actor_id {
-                    enabled
-                } else {
-                    actor.enabled
-                };
-                enabled
-                    && (actor_is_running(doc, actor)
-                        || is_structured(actor)
-                        || (actor.id == actor_id
-                            && target_status.is_some_and(|status| status.running)))
-            });
             let mut patch = serde_json::Map::new();
             patch.insert("enabled".into(), serde_json::Value::Bool(enabled));
             let actor = cccc_core::actors::update(doc, actor_id, &patch)?;
@@ -39,7 +25,27 @@ pub fn persist_lifecycle(
                     doc.running = true;
                 }
             } else {
-                doc.running = running;
+                // The stored configuration may include a Profile's current launch fields.
+                // Preserve the group's desired state if any required observation failed.
+                if let Some(running) = crate::session_owner::read_scope(|| {
+                    let mut all_observed = true;
+                    for member in doc.actors.iter().filter(|member| member.enabled) {
+                        if is_structured(member)
+                            || (member.id == actor_id
+                                && target_status.is_some_and(|status| status.running))
+                        {
+                            return Some(true);
+                        }
+                        if require_owner_observation(home, doc, member).is_err() {
+                            all_observed = false;
+                        } else if actor_is_running(doc, member) {
+                            return Some(true);
+                        }
+                    }
+                    all_observed.then_some(false)
+                }) {
+                    doc.running = running;
+                }
                 if enabled && doc.state == cccc_contracts::GroupState::Stopped {
                     doc.state = cccc_contracts::GroupState::Active;
                 }

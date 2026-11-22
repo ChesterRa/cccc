@@ -60,10 +60,23 @@ function keepLiveReceipts(
           const next = keepLiveFields(status, prior, current)!;
           if (
             current &&
+            (current.delivery_state !== prior?.delivery_state ||
+              current.delivery_reason !== prior?.delivery_reason ||
+              current.delivery_evidence !== prior?.delivery_evidence ||
+              current.waiting_reason !== prior?.waiting_reason)
+          ) {
+            next.delivery_state = current.delivery_state;
+            next.delivery_reason = current.delivery_reason;
+            next.delivery_evidence = current.delivery_evidence;
+            next.waiting_reason = current.waiting_reason;
+          }
+          if (
+            current &&
             (current.replied !== prior?.replied || current.cancelled !== prior?.cancelled)
           ) {
             next.replied = current.replied;
             next.cancelled = current.cancelled;
+            if (next.replied || next.cancelled) next.waiting_reason = undefined;
           }
           return [actor, next];
         }),

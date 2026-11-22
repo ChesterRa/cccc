@@ -1049,18 +1049,44 @@ Args:
 Result:
 ```ts
 {
-  developer_mode: true
+  implementation: "rust"
+  version: string
+  build: Record<string, unknown>
+  executable: string | null
+  pid: number
+  home: string
   observability: Record<string, unknown>
-  daemon: { pid: number; version: string; ts: string }
-  group?: { group_id: string; state: string; active_scope_key: string; title: string }
-  actors?: Array<{ id: string; role: string; runtime: string; runner: string; runner_effective: string; enabled: boolean; running: boolean; unread_count: number }>
-  delivery?: Record<string, unknown>
+  memory: {
+    ledger_index: {
+      entries: number
+      budget_bytes: number
+      budget_limit_bytes: number
+      largest_budget_bytes: number
+      pinned: number
+      hits: number
+      entries_created: number
+      index_rebuilds: number
+      evictions: number
+      invalidations: number
+    }
+    process: { vm_rss_kib: number | null; rss_anon_kib: number | null; vm_swap_kib: number | null }
+  }
+  group?: { group_id: string; title: string; state: string; running: boolean; active_scope_key: string }
+  actors?: Array<{ id: string; role: string; runtime: string; runner: string; enabled: boolean; running: boolean | null; runtime_owner_available: boolean; pid: number | null }>
 }
 ```
 
 Notes:
 - Requires developer mode.
 - Permission is `user`, or `foreman` when `group_id` is provided.
+- `memory` is diagnostic only and never authorizes or gates an operation.
+  `ledger_index` budgets are the cache's eviction weights (the larger of the
+  source file bytes and the estimated event memory), not measured memory; the
+  counters count since daemon start, and `index_rebuilds` counts every
+  completed full index build, cold reads included. `process` comes from one
+  read of `/proc/self/status` in KiB and is `null` where a platform does not
+  report a field. Compare budgets and process memory only within one snapshot.
+  The result names no Group in `memory`.
 
 ### 8.3 Groups and Scopes
 
@@ -5894,6 +5920,24 @@ Each recipient in `obligation_status` also carries `delivery_state` and an optio
 `runtime.delivery`. The reason is daemon diagnostic text, not localized, and is empty
 or absent when that event has none.
 
+For an accepted delivery, `delivery_evidence` is the recognized evidence from
+that same receipt (CCCS §6.5). Retained and historical receipts without this
+field keep generic acceptance.
+
+`waiting_reason` is an optional read-time observation. For a local recipient
+whose message has no receipt yet, or whose latest receipt is explicitly
+`failed` with `retryable: true`, it reports the first applicable reason in the
+following order.
+`group_paused`, `group_stopped`, `member_disabled`, `runtime_switch`, then
+`not_submitted` for the retryable receipt. It is omitted for ordinary Mail
+without a delivery attempt, Mail the recipient has already read, closed reply
+requests, and other receipt states or failures without `retryable: true`.
+Reading a status does not schedule or retry
+delivery.
+
+`cccc ledger search --with-obligation-status` exposes this projection on its
+matching messages.
+
 #### `message_pins_list`
 
 Return the Group's shared Web message pins without delivering messages or
@@ -7030,6 +7074,7 @@ Args:
   sender?: string // only messages from this Actor ID or "user"
   before_event_id?: string
   event_id?: string // exact visible message/notice; exclusive with filters/pagination
+  with_obligation_status?: boolean // include recipient status for an exact chat.message
   limit?: number
   _cccc_mcp_identity?: { version: string; source_id: string } // diagnostic only
 }
@@ -7037,7 +7082,12 @@ Args:
 
 Result:
 ```ts
-{ messages: CCCSEventV1[]; has_more: boolean; delivery_text?: string | null }
+{
+  messages: CCCSEventV1[]
+  has_more: boolean
+  delivery_text?: string | null
+  obligation_status?: Record<string, object>
+}
 ```
 
 Results are newest-first, limited to the actor's current generation, and MUST
@@ -7069,6 +7119,13 @@ Actor cannot read never match. Exact reads cannot be combined with `mode`,
 `query`, `sender`, `before_event_id` or `limit`. They remain non-consuming and
 do not acknowledge execution, create a delivery or replay a handoff.
 
+An exact visible chat read with `with_obligation_status: true` includes
+`obligation_status` as defined by `ledger_statuses`. For an Agent reading a
+message it received, only that Agent's entry is exposed. For its own outgoing
+message, it can see its recipients' entries. Agent results omit
+`delivery_reason`. A visibility failure returns the same `event_not_found`
+as an exact history read without status.
+
 For a successful exact read by a native Actor of its own message, the daemon
 MAY prepend a diagnostic when the client does not report `_cccc_mcp_identity`.
 Missing metadata does not prove that the caller is an MCP server or that its
@@ -7081,7 +7138,7 @@ both are self-reported diagnostics, never authentication. The warning does not
 cover agents that never make an exact history read.
 
 The MCP `cccc_message_history` tool presents an exact read as
-`{ delivery_text, message }`, where `message` is the single returned event. From
+`{ delivery_text, message, obligation_status? }`, where `message` is the single returned event. From
 a `chat.message`, it omits `data.text` (compared without trailing line breaks)
 and the normalized `data.insight` only when that complete value appears in
 `delivery_text`. From a `system.notify`, it omits a non-empty `data.message`

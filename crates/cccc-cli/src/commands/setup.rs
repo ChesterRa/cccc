@@ -148,9 +148,17 @@ fn setup_deepseek(home: &HomeLayout, install: bool) -> serde_json::Value {
         let command = cccc_runtime::default_command(cccc_contracts::ActorRuntime::Deepseek);
         cccc_daemon::deepseek_setup::prepare_for_start(home, &mut env, &command)
     };
+    deepseek_setup_json(home, result)
+}
+
+fn deepseek_setup_json(
+    home: &HomeLayout,
+    result: Result<cccc_daemon::deepseek_setup::DeepSeekSetupOutcome, String>,
+) -> serde_json::Value {
     match result {
         Ok(outcome) => json!({
             "runtime":"deepseek",
+            "mode":"managed_session",
             "status":"ready",
             "managed":true,
             "mcp":"injected_per_session",

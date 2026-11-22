@@ -122,6 +122,16 @@
     "notDelivered": "尚未投递",
     "deliveryClaimed": "正在发送…",
     "deliveryAccepted": "已投递到 Runtime",
+    "deliveryTerminalWritten": "已写入终端（未确认执行）",
+    "deliveryChannelAccepted": "Runtime 已受理",
+    "deliveryWaiting": "等待中",
+    "waitingReason": {
+      "groupPaused": "等待中 · 工作组已暂停",
+      "groupStopped": "等待中 · 工作组已停止",
+      "memberDisabled": "等待中 · 成员已禁用",
+      "runtimeSwitch": "等待中 · 正在切换 Runtime",
+      "notSubmitted": "等待中 · 尚未提交"
+    },
     "deliveryFailed": "投递失败",
     "deliveryAmbiguous": "投递状态不确定",
     "sendNow": "立即发送",

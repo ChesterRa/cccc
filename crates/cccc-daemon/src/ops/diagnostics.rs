@@ -32,6 +32,7 @@ fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "pid":std::process::id(),
         "home":home.root(),
         "observability":global.observability,
+        "memory":memory_snapshot(),
     });
     if !group_id.is_empty() {
         let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
@@ -62,6 +63,45 @@ fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         result["actors"] = Value::Array(actors);
     }
     object(result)
+}
+
+/// Diagnostic memory view. Ledger index figures are eviction budgets, not
+/// measured memory; compare them with the process figures from the same read.
+fn memory_snapshot() -> Value {
+    let index = cccc_core::ledger_index::stats();
+    let (rss, anon, swap) = process_status_kib();
+    json!({
+        "ledger_index":{
+            "entries":index.entries,
+            "budget_bytes":index.budget_bytes,
+            "budget_limit_bytes":index.budget_limit_bytes,
+            "largest_budget_bytes":index.largest_budget_bytes,
+            "pinned":index.pinned,
+            "hits":index.hits,
+            "entries_created":index.entries_created,
+            "index_rebuilds":index.index_rebuilds,
+            "evictions":index.evictions,
+            "invalidations":index.invalidations,
+        },
+        "process":{"vm_rss_kib":rss,"rss_anon_kib":anon,"vm_swap_kib":swap},
+    })
+}
+
+/// VmRSS, RssAnon and VmSwap from one read of /proc/self/status; None where
+/// the platform or kernel does not report a field.
+fn process_status_kib() -> (Option<u64>, Option<u64>, Option<u64>) {
+    let Ok(status) = fs::read_to_string("/proc/self/status") else {
+        return (None, None, None);
+    };
+    let field = |name: &str| {
+        status.lines().find_map(|line| {
+            let mut fields = line.split_ascii_whitespace();
+            (fields.next()? == name).then_some(())?;
+            let value = fields.next()?.parse().ok()?;
+            (fields.next()? == "kB").then_some(value)
+        })
+    };
+    (field("VmRSS:"), field("RssAnon:"), field("VmSwap:"))
 }
 
 fn tail_logs(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

@@ -122,6 +122,16 @@
     "notDelivered": "未配信",
     "deliveryClaimed": "送信中…",
     "deliveryAccepted": "Runtime に配信済み",
+    "deliveryTerminalWritten": "端末に書き込み済み（実行未確認）",
+    "deliveryChannelAccepted": "Runtime が受理",
+    "deliveryWaiting": "待機中",
+    "waitingReason": {
+      "groupPaused": "待機中 · グループ一時停止中",
+      "groupStopped": "待機中 · グループ停止中",
+      "memberDisabled": "待機中 · メンバー無効",
+      "runtimeSwitch": "待機中 · Runtime 切り替え中",
+      "notSubmitted": "待機中 · 未送信"
+    },
     "deliveryFailed": "配信失敗",
     "deliveryAmbiguous": "配信状態が不明",
     "sendNow": "今すぐ送信",

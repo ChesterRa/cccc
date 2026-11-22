@@ -227,8 +227,20 @@ fn apply(home: &HomeLayout, result: TickResult, cancelled: &AtomicBool) {
         if cancelled.load(Ordering::Acquire) {
             return;
         }
-        if let Ok(group) = store.load(&event.group_id) {
-            actor_delivery::dispatch(home, &group, &event);
+        match store.load(&event.group_id) {
+            Ok(group) => {
+                actor_delivery::dispatch(home, &group, &event);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    group_id = %event.group_id,
+                    event_id = %event.id,
+                    "failed to reload group for committed notification delivery"
+                );
+                actor_delivery::record_group_catchup(&event.group_id);
+            }
         }
     }
     for action in result.actions {
@@ -687,6 +699,77 @@ mod tests {
             updated.automation["rules"][0]["enabled"], false,
             "a durably appended one-time notification is complete and must not survive export/import as enabled"
         );
+    }
+
+    #[test]
+    fn failed_group_reload_after_committed_notification_records_group_catchup() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("notify reload fail", "").expect("group");
+        struct Cleanup(String);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                actor_delivery::shutdown_group(&self.0);
+            }
+        }
+        let _cleanup = Cleanup(group.group_id.clone());
+        store
+            .mutate(&group.group_id, |group| {
+                group.state = cccc_contracts::GroupState::Active;
+                actors::add(group, Actor::new("peer"))?;
+                Ok(())
+            })
+            .expect("recipient");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut notify = Event::new("system.notify", &group.group_id);
+        notify.by = "system".into();
+        notify.data = json!({
+            "kind":"automation",
+            "title":"reminder",
+            "message":"check status",
+            "to":["peer"],
+            "target_actor_id":"peer",
+        })
+        .as_object()
+        .cloned()
+        .expect("notify data");
+        cccc_core::ledger::append(&ledger_path, &notify).expect("append notify");
+
+        // Break group.yaml transiently after the notification was committed.
+        let group_file = home.groups_dir().join(&group.group_id).join("group.yaml");
+        let saved = std::fs::read(&group_file).expect("saved group yaml");
+        std::fs::write(&group_file, b":::not: [valid yaml").expect("corrupt group yaml");
+
+        let result = TickResult {
+            notifications: vec![notify.clone()],
+            ..TickResult::default()
+        };
+        apply(&home, result, &AtomicBool::new(false));
+        assert!(
+            pending_delivery_group_ids().contains(&group.group_id),
+            "reload failure must schedule group catch-up"
+        );
+
+        // Draining while still unreadable keeps the catch-up pending.
+        actor_delivery::drain_group(&home, &group.group_id);
+        assert!(pending_delivery_group_ids().contains(&group.group_id));
+
+        // Restoring group.yaml lets maintenance claim and recover the notification.
+        std::fs::write(&group_file, saved).expect("restore group yaml");
+        actor_delivery::drain_group(&home, &group.group_id);
+        let events = cccc_core::ledger::read_all(&ledger_path).expect("ledger events");
+        let claimed = events
+            .iter()
+            .filter(|event| {
+                event.kind == "runtime.delivery"
+                    && event.data["actor_id"] == "peer"
+                    && event.data["source_event_id"] == notify.id
+                    && event.data["state"] == "claimed"
+            })
+            .count();
+        assert_eq!(claimed, 1, "committed notification must be claimed once");
+        assert!(!pending_delivery_group_ids().contains(&group.group_id));
     }
 
     fn set_rule(store: &GroupStore, group_id: &str, action: serde_json::Value) {

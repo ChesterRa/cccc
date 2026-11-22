@@ -20,6 +20,7 @@ pub fn shutdown_actor(group_id: &str, actor_id: &str) {
 /// and the caller settles it.
 pub fn shutdown_actor_for(group_id: &str, actor_id: &str, reason: ShutdownReason) {
     gaps::clear(|(group, actor)| group == group_id && actor == actor_id);
+    clear_refills(|(group, actor)| group == group_id && actor == actor_id);
     let worker = workers()
         .lock()
         .ok()
@@ -32,12 +33,14 @@ pub fn shutdown_actor_for(group_id: &str, actor_id: &str, reason: ShutdownReason
 
 pub fn shutdown_group(group_id: &str) {
     gaps::clear(|(group, _)| group == group_id);
+    clear_refills(|(group, _)| group == group_id);
+    clear_group_catchup(group_id);
     shutdown_group_workers(group_id);
 }
 
 /// A user's next send can resume a paused group without a lifecycle restart.
 pub fn pause_group(group_id: &str) {
-    gaps::set_group_paused(group_id, true);
+    set_group_paused(group_id, true);
     shutdown_group_workers(group_id);
 }
 
@@ -63,6 +66,8 @@ fn shutdown_group_workers(group_id: &str) {
 
 pub fn shutdown_all() {
     gaps::clear(|_| true);
+    clear_refills(|_| true);
+    clear_all_group_catchups();
     let removed = workers()
         .lock()
         .map(|mut workers| {

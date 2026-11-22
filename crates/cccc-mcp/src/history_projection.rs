@@ -123,6 +123,9 @@ mod tests {
             cccc_core::peer_insight::PEER_PERSPECTIVE_AGENT_LABEL
         ));
         let mut projected = result(chat_event(data.clone()), json!(delivery_text));
+        let status =
+            json!({"peer1":{"delivery_state":"accepted","delivery_evidence":"terminal_written"}});
+        projected.insert("obligation_status".into(), status.clone());
 
         apply("cccc_message_history", &mut projected, &exact());
 
@@ -133,6 +136,7 @@ mod tests {
         assert_eq!(
             Value::Object(projected.clone()),
             json!({"delivery_text":delivery_text,"message":expected,
+                "obligation_status":status,
                 "mcp_omitted_fields":{"message":["text","insight"]}})
         );
         let payload = serde_json::to_string(&projected).expect("payload");

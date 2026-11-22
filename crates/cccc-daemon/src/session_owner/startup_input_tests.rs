@@ -168,7 +168,7 @@ time.sleep(30)
         &actor.created_at,
         &first.id,
         "pty",
-        crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
+        crate::ops::runtime_delivery::DeliveryOutcome::Accepted(None),
     )
     .expect("durable accepted delivery");
     wait_until(|| {

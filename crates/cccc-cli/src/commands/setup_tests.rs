@@ -81,7 +81,7 @@ fn batch_count_includes_only_written_or_registered_configuration() {
         setup("claude"),
         setup("pi"),
         hermes_setup(),
-        json!({"runtime":"deepseek","status":"ready","managed":true,"mcp":"injected_per_session"}),
+        json!({"runtime":"deepseek","mode":"managed_session","status":"ready","managed":true,"mcp":"injected_per_session"}),
         // Nothing configured: a manual runtime and a missing CLI.
         setup("custom"),
         json!({"runtime":"kimi","status":"unavailable","error":"kimi CLI not found"}),
@@ -149,4 +149,24 @@ fn opencode_setup_reports_session_owned_mcp_without_global_config_mutation() {
 #[test]
 fn pi_setup_reports_session_owned_mcp_without_global_config_mutation() {
     assert_managed_setup("pi", ActorRuntime::Pi);
+}
+
+#[test]
+fn deepseek_ready_setup_reports_managed_session_mode() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let value = deepseek_setup_json(
+        &home,
+        Ok(cccc_daemon::deepseek_setup::DeepSeekSetupOutcome {
+            dsh_home: temp.path().join("dsh"),
+            profile: temp.path().join("profile.json"),
+            packages_installed: false,
+            profile_created: false,
+        }),
+    );
+    assert_eq!(value["runtime"], "deepseek");
+    assert_eq!(value["mode"], "managed_session");
+    assert_eq!(value["status"], "ready");
+    assert_eq!(value["managed"], true);
+    assert_eq!(value["mcp"], "injected_per_session");
 }

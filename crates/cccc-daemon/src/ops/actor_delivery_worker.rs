@@ -1,4 +1,5 @@
 use crate::session_owner::runtime as cccc_runtime;
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_contracts::{Actor, ActorRuntime, GroupState};
 use cccc_core::GroupStore;
 use cccc_runtime::PtyHandoff;
@@ -305,7 +306,7 @@ pub(super) fn process_batch_tracked(
                 pending.delivered();
             }
             preamble_session.clone_from(&status.started_at);
-            finish_jobs(jobs);
+            finish_jobs(jobs, Some(DeliveryEvidence::TerminalWritten));
             BatchOutcome::Delivered
         }
         PtyHandoff::NotWritten(_) => {
@@ -366,7 +367,10 @@ fn process_owned_pty_batch(
             if let Some(notice) = instructions {
                 notice.delivered();
             }
-            finish_jobs(jobs);
+            finish_jobs(
+                jobs,
+                DeliveryEvidence::from_json(&result["delivery_evidence"]),
+            );
             BatchOutcome::Delivered
         }
         Ok(result)
@@ -580,7 +584,7 @@ fn process_external_batch(
                 if includes_preamble {
                     complete_preamble.given();
                 }
-                finish_job(job, CompletedDelivery::Accepted);
+                complete_job(job, Some(DeliveryEvidence::ChannelAccepted));
                 *preamble_session = marker;
                 if let Some(pending) = instructions {
                     pending.delivered();
@@ -717,7 +721,7 @@ fn settle_deepseek_attempts(
         match fact {
             Ok(RetainedDelivery::Pending) => return Some(BatchOutcome::Retry),
             Ok(RetainedDelivery::Failed(reason)) => return Some(BatchOutcome::Rejected(reason)),
-            Ok(RetainedDelivery::Accepted) => complete_job(&jobs.remove(0)),
+            Ok(RetainedDelivery::Accepted(evidence)) => complete_job(&jobs.remove(0), evidence),
             Ok(RetainedDelivery::Unsubmitted) => {
                 attempted.remove(&job.event.id);
                 return_to_queue(jobs, attempted);
@@ -795,7 +799,9 @@ fn process_deepseek_batch(
             attempted.insert(job.event.id.clone());
         }
         match delivery {
-            TurnDelivery::Completed => complete_job(&jobs.remove(0)),
+            TurnDelivery::Completed => {
+                complete_job(&jobs.remove(0), Some(DeliveryEvidence::ChannelAccepted));
+            }
             TurnDelivery::Failed(reason) => return BatchOutcome::Rejected(reason),
             TurnDelivery::Incomplete => return BatchOutcome::Retry,
         }
@@ -908,7 +914,9 @@ fn settle_managed_batch(
     outcome: crate::ops::local_headless::BatchSubmission,
 ) -> BatchOutcome {
     match outcome {
-        crate::ops::local_headless::BatchSubmission::Accepted => finish_jobs(jobs),
+        crate::ops::local_headless::BatchSubmission::Accepted(evidence) => {
+            finish_jobs(jobs, evidence);
+        }
         crate::ops::local_headless::BatchSubmission::Deferred => return BatchOutcome::Retry,
         crate::ops::local_headless::BatchSubmission::Withheld => {
             super::actor_delivery::withdraw_jobs(
@@ -958,9 +966,9 @@ pub(super) fn merges_batches(job: &DeliveryJob) -> bool {
         && !crate::ops::local_headless::supports(&actor)
 }
 
-fn finish_jobs(jobs: &[DeliveryJob]) {
+fn finish_jobs(jobs: &[DeliveryJob], evidence: Option<DeliveryEvidence>) {
     for job in jobs {
-        complete_job(job);
+        complete_job(job, evidence);
     }
 }
 

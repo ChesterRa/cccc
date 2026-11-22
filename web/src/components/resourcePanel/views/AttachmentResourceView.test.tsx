@@ -42,29 +42,53 @@ function preview(media: AttachmentResourceMedia, href: string, active = true, is
   );
 }
 
-it("owns the SVG image URL until its resource view closes", async () => {
+it("renders SVG attachments via opaque data URL without same-origin blob allocation or script injection", async () => {
   vi.stubGlobal(
     "fetch",
     vi
       .fn()
       .mockResolvedValue({
         ok: true,
-        blob: async () => new Blob(['<svg><script id="bad" /></svg>'], { type: "image/svg+xml" }),
+        blob: async () =>
+          new Blob(['<svg><script id="bad" /></svg>'], { type: "application/octet-stream" }),
+      }),
+  );
+  const create = vi.spyOn(URL, "createObjectURL");
+  await act(async () => root.render(preview("image", "/fixture.svg", true, true)));
+  await vi.waitFor(() => expect(host.querySelector("[data-graphic-image] img")).not.toBeNull());
+  expect(create).not.toHaveBeenCalled();
+  expect(
+    host
+      .querySelector<HTMLImageElement>("[data-graphic-image] img")
+      ?.getAttribute("src")
+      ?.startsWith("data:image/svg+xml;base64,"),
+  ).toBe(true);
+  expect(host.querySelector("script#bad")).toBeNull();
+});
+
+it("owns a raster image blob URL disguised as .svg until its resource view closes", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        blob: async () => new Blob(["png-bytes"], { type: "image/png" }),
       }),
   );
   const create = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:resource-owned");
   const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
   await act(async () => root.render(preview("image", "/fixture.svg", true, true)));
+  await vi.waitFor(() => expect(host.querySelector("[data-graphic-image] img")).not.toBeNull());
   expect(create).toHaveBeenCalledOnce();
   expect(
     host.querySelector<HTMLImageElement>("[data-graphic-image] img")?.getAttribute("src"),
   ).toBe("blob:resource-owned");
-  expect(host.querySelector("script#bad")).toBeNull();
   await act(async () => root.render(null));
   expect(revoke).toHaveBeenCalledWith("blob:resource-owned");
 });
 
-it("does not allocate an SVG URL after the resource changes while its response is pending", async () => {
+it("does not allocate a URL after the resource changes while its response is pending", async () => {
   let finish!: (blob: Blob) => void;
   const pending = new Promise<Blob>((resolve) => {
     finish = resolve;
@@ -74,7 +98,7 @@ it("does not allocate an SVG URL after the resource changes while its response i
   await act(async () => root.render(preview("image", "/slow.svg", true, true)));
   await act(async () => root.render(preview("image", "/other.png")));
   await act(async () => {
-    finish(new Blob(["fixture"], { type: "image/svg+xml" }));
+    finish(new Blob(["png-bytes"], { type: "image/png" }));
     await pending;
   });
   expect(create).not.toHaveBeenCalled();

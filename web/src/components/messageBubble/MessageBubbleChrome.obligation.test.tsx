@@ -116,7 +116,7 @@ describe("reply progress summary", () => {
 
 describe("undelivered message", () => {
   function renderDelivery(
-    states: Record<string, { state: string; reason?: string }>,
+    states: Record<string, { state: string; reason?: string; waitingReason?: string }>,
     options: { readOnly?: boolean; mode?: string } = {},
   ) {
     const host = document.createElement("div");
@@ -140,7 +140,7 @@ describe("undelivered message", () => {
             by: "user",
             data: { text: "Hello", to: Object.keys(states), message_mode: options.mode ?? "send" },
             _obligation_status: Object.fromEntries(
-              Object.entries(states).map(([id, { state, reason }]) => [
+              Object.entries(states).map(([id, { state, reason, waitingReason }]) => [
                 id,
                 {
                   replied: false,
@@ -148,6 +148,7 @@ describe("undelivered message", () => {
                   cancelled: false,
                   delivery_state: state,
                   delivery_reason: reason,
+                  waiting_reason: waitingReason,
                 },
               ]),
             ),
@@ -170,12 +171,13 @@ describe("undelivered message", () => {
     expect(label.title).toBe("The agent stopped right after starting");
   });
 
-  it("stays quiet about delivered, sending and uncertain work", () => {
+  it("stays quiet about delivered, sending, uncertain, and retryable waiting work", () => {
     expect(
       renderDelivery({
         a: { state: "accepted" },
         b: { state: "claimed" },
         c: { state: "ambiguous" },
+        d: { state: "failed", waitingReason: "not_submitted", reason: "queue full" },
       }),
     ).toEqual([]);
   });

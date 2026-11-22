@@ -285,6 +285,14 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     };
     final_preview.role = None;
     final_preview.normalize_runtime_constraints();
+    // Saving Enabled can stop or start a runtime. Verify its owner before
+    // changing the saved member or shutting down any delivery work.
+    let enabled_patched = patch.contains_key("enabled");
+    let was_running = if enabled_patched {
+        observe_actor_process_running(home, &group, &original_actor)?
+    } else {
+        false
+    };
     // A Web Model's route is its authority, so saving a new one ends it. A turn
     // that route still carries is settled by a runtime switch, not by a save.
     let route_changes = web_model_route_changes(&original_actor, &final_preview);
@@ -311,12 +319,10 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     } else {
         None
     };
-    let enabled_patched = patch.contains_key("enabled");
     let enabling_native = enabled_patched
         && !original_actor.enabled
         && final_preview.enabled
         && !final_preview.external_session_id.is_empty();
-    let was_running = actor_process_running(&group, &original_actor);
     // Saving only Enabled leaves Hermes's open setup, and the user's input, alone.
     let setup_open = patch.len() == 1
         && patch.get("enabled").and_then(Value::as_bool) == Some(true)
@@ -405,7 +411,10 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if enabled_patched && !actor.enabled {
         actor_delivery::shutdown_actor(&group_id, &actor_id);
         if let Err(error) = actor_runtime::apply(home, &group, &actor_id, "actor.stop") {
-            let effect = if was_running && !actor_process_running(&group, &original_actor) {
+            let effect = if was_running
+                && observe_actor_process_running(home, &group, &original_actor)
+                    .is_ok_and(|running| !running)
+            {
                 ActorUpdateEffect::Stopped
             } else {
                 ActorUpdateEffect::None
@@ -432,7 +441,10 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         )
     {
         if let Err(error) = actor_runtime::apply(home, &updated_group, &actor_id, "actor.start") {
-            let effect = if !was_running && actor_process_running(&updated_group, &actor) {
+            let effect = if !was_running
+                && observe_actor_process_running(home, &updated_group, &actor)
+                    .is_ok_and(|running| running)
+            {
                 ActorUpdateEffect::Started
             } else {
                 ActorUpdateEffect::None
@@ -524,6 +536,17 @@ fn actor_process_running(group: &GroupDoc, actor: &Actor) -> bool {
     actor_runtime::actor_is_running(group, actor)
 }
 
+fn observe_actor_process_running(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> Result<bool, OpError> {
+    crate::session_owner::read_scope(|| {
+        actor_runtime::require_owner_observation(home, group, actor)?;
+        Ok(actor_process_running(group, actor))
+    })
+}
+
 fn rollback_actor_update(
     home: &HomeLayout,
     original_group: &GroupDoc,
@@ -613,14 +636,17 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .iter()
         .position(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
-    let _browser_work = actor_runtime::hold_browser_work(home, &group_id, &actor_id)?;
     let original_actor = group.actors[index].clone();
+    let runtime_was_running = crate::session_owner::read_scope(|| {
+        actor_runtime::require_owner_observation(home, &group, &original_actor)?;
+        Ok::<_, OpError>(actor_process_running(&group, &original_actor))
+    })?;
+    let _browser_work = actor_runtime::hold_browser_work(home, &group_id, &actor_id)?;
     let original_web_model_target = web_model_target(&group, &actor_id).cloned();
     let original_web_model_delivery_preference =
         web_model_delivery_preference(&group, &actor_id).cloned();
     let original_runtime_state = runtime_state(&group, &actor_id).cloned();
     let original_secrets = actor_secrets::values(home, &group_id, &actor_id)?;
-    let runtime_was_running = actor_process_running(&group, &original_actor);
     actor_delivery::shutdown_actor(&group_id, &actor_id);
     if let Err(error) = actor_runtime::apply(home, &group, &actor_id, "actor.stop") {
         actor_delivery::dispatch_group_unread(home, &group);
@@ -986,18 +1012,22 @@ pub(super) fn lifecycle_leading(
             "Reset this session in its original runtime; CCCC only controls collaboration access",
         ));
     }
-    // Only an explicit user Start may replace a protected confirmation PTY
-    // whose watcher was cancelled. Automatic delivery must leave it alone.
-    let orphaned_confirmation = kind == "actor.start"
-        && actor_runtime::user_confirmation_retry(request)
-        && original_actor.external_session_id.is_empty()
-        && super::local_headless::orphaned_confirmation(&group_id, &actor_id)
-            .map_err(OpError::io)?;
-    // Start leaves Hermes's open setup, and what the user has typed into it, alone.
-    let setup_open = kind == "actor.start"
-        && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
-    let runtime_was_running =
-        (actor_process_running(&group, &original_actor) && !orphaned_confirmation) || setup_open;
+    let (runtime_was_running, orphaned_confirmation) = crate::session_owner::read_scope(|| {
+        // A request refused by the owner must leave delivery and resume state alone.
+        actor_runtime::require_owner_observation(home, &group, &original_actor)?;
+        // Only an explicit user Start may replace a confirmation PTY whose watcher was cancelled.
+        let orphaned_confirmation = kind == "actor.start"
+            && actor_runtime::user_confirmation_retry(request)
+            && original_actor.external_session_id.is_empty()
+            && super::local_headless::orphaned_confirmation(&group_id, &actor_id)
+                .map_err(OpError::io)?;
+        // Leave Hermes's open setup and typed input alone.
+        let setup_open = kind == "actor.start"
+            && actor_runtime::hermes_setup_open(home, &group_id, &original_actor)?;
+        let running = (actor_process_running(&group, &original_actor) && !orphaned_confirmation)
+            || setup_open;
+        Ok::<_, OpError>((running, orphaned_confirmation))
+    })?;
     let replacing_running =
         runtime_was_running && matches!(kind, "actor.restart" | "actor.new_session");
     let effective_runtime = if original_actor.external_session_id.is_empty()
@@ -1072,7 +1102,7 @@ pub(super) fn lifecycle_leading(
                     lifecycle_effect(
                         kind,
                         runtime_was_running,
-                        actor_process_running(&group, &original_actor),
+                        observe_actor_process_running(home, &group, &original_actor).ok(),
                     )
                 };
             return Err(rollback_actor_lifecycle(
@@ -1088,7 +1118,7 @@ pub(super) fn lifecycle_leading(
     let effect = lifecycle_effect(
         kind,
         runtime_was_running,
-        actor_process_running(&group, &original_actor),
+        observe_actor_process_running(home, &group, &original_actor).ok(),
     );
     let actor =
         match actor_runtime::persist_lifecycle(home, &group, &actor_id, enabled, status.as_ref()) {
@@ -1197,14 +1227,32 @@ enum ActorLifecycleEffect {
     Replaced,
 }
 
-fn lifecycle_effect(kind: &str, was_running: bool, is_running: bool) -> ActorLifecycleEffect {
+fn lifecycle_effect(
+    kind: &str,
+    was_running: bool,
+    is_running: Option<bool>,
+) -> ActorLifecycleEffect {
     match (kind, was_running, is_running) {
-        ("actor.stop", true, false) => ActorLifecycleEffect::Stopped,
-        ("actor.start", false, true) => ActorLifecycleEffect::Started,
-        ("actor.restart" | "actor.new_session", true, true) => ActorLifecycleEffect::Replaced,
-        ("actor.restart" | "actor.new_session", true, false) => ActorLifecycleEffect::Stopped,
-        ("actor.restart" | "actor.new_session", false, true) => ActorLifecycleEffect::Started,
+        ("actor.stop", true, Some(false)) => ActorLifecycleEffect::Stopped,
+        ("actor.start", false, Some(true)) => ActorLifecycleEffect::Started,
+        ("actor.restart" | "actor.new_session", true, Some(true)) => ActorLifecycleEffect::Replaced,
+        ("actor.restart" | "actor.new_session", true, Some(false)) => ActorLifecycleEffect::Stopped,
+        ("actor.restart" | "actor.new_session", false, Some(true)) => ActorLifecycleEffect::Started,
         _ => ActorLifecycleEffect::None,
+    }
+}
+
+#[test]
+fn rollback_distinguishes_an_unobservable_actor_from_a_stopped_actor() {
+    for kind in ["actor.stop", "actor.restart", "actor.new_session"] {
+        assert!(matches!(
+            lifecycle_effect(kind, true, None),
+            ActorLifecycleEffect::None
+        ));
+        assert!(matches!(
+            lifecycle_effect(kind, true, Some(false)),
+            ActorLifecycleEffect::Stopped
+        ));
     }
 }
 

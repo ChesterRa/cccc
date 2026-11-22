@@ -449,6 +449,7 @@ data: {
   delivery_id: string
   state: "claimed" | "accepted" | "failed" | "ambiguous" | "withdrawn"
   transport: string
+  delivery_evidence?: "terminal_written" | "channel_accepted"
   reason?: string | null
   retryable?: boolean
 }
@@ -470,13 +471,19 @@ data: {
 - `accepted` means the runtime adapter accepted the payload (queue, PTY,
   headless API, or browser submission boundary). It does not claim that the
   model read, understood, or acted on it.
+- An accepted record MAY include `delivery_evidence` from the handoff itself.
+  `terminal_written` confirms that CCCC wrote the terminal input.
+  `channel_accepted` confirms the runtime's delivery path accepted the input.
+  Neither value establishes model execution. Receipts without recognized
+  evidence retain generic acceptance. Readers MUST NOT infer evidence from
+  `transport`, current Actor settings or later runtime observations.
 - `failed` means the adapter established that handoff did not occur, or that
   the runtime ran the turn and it failed after its retries. It does not prove
   that the model never saw the input.
-- For `transport="local_session"`, a failed attempt MAY carry `retryable=true`
-  only when the daemon established that it stopped before native submission
-  (for example, a paused worker or a full daemon queue). This work remains
-  pending for normal recovery. A native rejection or a legacy failed receipt
+- A failed attempt MAY carry `retryable=true` only when the daemon established
+  that it stopped before runtime submission (for example, a paused worker or
+  a full daemon queue). This work remains pending for normal recovery. For
+  `transport="local_session"`, a native rejection or a legacy failed receipt
   without that evidence MUST NOT automatically retry. This flag never permits
   replay after `accepted`, `ambiguous` or `withdrawn`.
 - A daemon-managed runtime that retries a failed turn on its own MAY record the

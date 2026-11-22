@@ -2,6 +2,7 @@ use super::protocol::{
     ActorRef, ActorSnapshot, Failure, Mutation, PreparedLaunch, TerminalAction, TerminalRead,
 };
 use crate::ops::{actor_runtime, deepseek_runtime, local_headless};
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -413,7 +414,7 @@ impl Backend {
             | Mutation::Terminal { actor, .. } => Some(actor),
             _ => None,
         };
-        if let Some(wanted) = wanted {
+        let verified_pty = if let Some(wanted) = wanted {
             let registered = self
                 .actors
                 .lock()
@@ -421,15 +422,25 @@ impl Backend {
                 .get(&key(wanted))
                 .cloned()
                 .ok_or_else(|| Failure::new("actor_not_owned", "actor stopped before execution"))?;
-            if registered.actor_created_at != wanted.actor_created_at
-                || snapshot(&registered)?.actor.generation != wanted.generation
-            {
-                return Err(Failure::new(
-                    "session_replaced",
-                    "session changed before execution",
-                ));
+            let replaced = || Failure::new("session_replaced", "session changed before execution");
+            if registered.actor_created_at != wanted.actor_created_at {
+                return Err(replaced());
             }
-        }
+            let observed = snapshot(&registered)?;
+            if observed.actor.generation != wanted.generation {
+                return Err(replaced());
+            }
+            match observed.owner.map(|owner| owner.identity) {
+                Some(actor_runtime::OwnerIdentity::Pty {
+                    pid, started_at, ..
+                }) => Some((pid, started_at)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        #[cfg(test)]
+        tests::pause_validated_submit(&mutation);
         match mutation {
             Mutation::BrowserEnsure { spec, programs } => {
                 serde_json::to_value(self.browsers.ensure(spec, programs)?)
@@ -583,15 +594,30 @@ impl Backend {
                 events,
                 text,
             } => {
+                let terminal_changed = || {
+                    Ok(json!({
+                        "backend":"pty",
+                        "outcome":"not_written",
+                        "reason":cccc_runtime::PtyHandoffReason::SessionChanged.to_string(),
+                    }))
+                };
                 let cancelled = self
                     .cancelled
                     .lock()
                     .map_err(|_| poisoned())?
                     .get(&key(&source.actor))
-                    .cloned()
-                    .ok_or_else(|| Failure::new("actor_not_owned", "actor stopped"))?;
+                    .cloned();
+                let Some(cancelled) = cancelled else {
+                    return if verified_pty.is_some() {
+                        terminal_changed()
+                    } else {
+                        Err(Failure::new("actor_not_owned", "actor stopped"))
+                    };
+                };
                 let started = AtomicBool::new(false);
-                if deepseek_runtime::registered_generation(&group.group_id, &actor.id).is_some() {
+                if verified_pty.is_none()
+                    && deepseek_runtime::registered_generation(&group.group_id, &actor.id).is_some()
+                {
                     if events.len() != 1 {
                         return Err(Failure::new(
                             "invalid_input",
@@ -604,19 +630,41 @@ impl Backend {
                     let result = deepseek_runtime::deliver_prepared(
                         home, &group, &actor, event, &text, &cancelled, &started,
                     );
-                    Ok(
-                        json!({"backend":"deepseek","outcome":result,"started":started.load(Ordering::Acquire)}),
-                    )
-                } else if local_headless::registered_running(&group.group_id, &actor.id).is_some() {
+                    let mut response = json!({
+                        "backend":"deepseek",
+                        "outcome":result,
+                        "started":started.load(Ordering::Acquire),
+                    });
+                    if result == deepseek_runtime::TurnDelivery::Completed {
+                        response["delivery_evidence"] = json!(DeliveryEvidence::ChannelAccepted);
+                    }
+                    Ok(response)
+                } else if verified_pty.is_none()
+                    && local_headless::registered_running(&group.group_id, &actor.id).is_some()
+                {
                     let result = local_headless::submit_prepared(
                         home, &group, &actor, &events, &text, &cancelled, &started,
                     );
-                    Ok(
-                        json!({"backend":"managed","outcome":result,"started":started.load(Ordering::Acquire)}),
-                    )
+                    Ok(result.owner_result(started.load(Ordering::Acquire)))
                 } else {
-                    let expected = cccc_runtime::status(&group.group_id, &actor.id)
-                        .map_err(runtime_failure)?;
+                    // Keep the terminal identity observed at execution validation even if
+                    // Stop and Start replaced this member before we got to the writer.
+                    let Some((pid, started_at)) = verified_pty else {
+                        return Err(Failure::new(
+                            "session_replaced",
+                            "terminal changed before submission",
+                        ));
+                    };
+                    let expected = match cccc_runtime::status(&group.group_id, &actor.id) {
+                        Ok(status) => status,
+                        Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {
+                            return terminal_changed();
+                        }
+                        Err(error) => return Err(runtime_failure(error)),
+                    };
+                    if expected.pid != pid || expected.started_at != started_at {
+                        return terminal_changed();
+                    }
                     let launched = expected.launch.map_or_else(
                         || (*actor).clone(),
                         |launch| actor_runtime::as_launched(&actor, launch),
@@ -626,10 +674,17 @@ impl Backend {
                         .lock()
                         .map_err(|_| poisoned())?
                         .get(&key(&source.actor))
-                        .cloned()
-                        .ok_or_else(|| {
-                            Failure::new("owner_error", "PTY startup context is missing")
-                        })?;
+                        .cloned();
+                    let Some(preamble) = preamble else {
+                        return if cancelled.load(Ordering::Acquire) {
+                            terminal_changed()
+                        } else {
+                            Err(Failure::new(
+                                "owner_error",
+                                "PTY startup context is missing",
+                            ))
+                        };
+                    };
                     let mut preamble = preamble.lock().map_err(|_| poisoned())?;
                     let mut payload = text;
                     if let Some(context) = preamble.as_ref() {
@@ -695,7 +750,11 @@ impl Backend {
                             ("uncertain", Some(reason.to_string()))
                         }
                     };
-                    Ok(json!({"backend":"pty","outcome":outcome,"reason":reason}))
+                    let mut response = json!({"backend":"pty","outcome":outcome,"reason":reason});
+                    if outcome == "accepted" {
+                        response["delivery_evidence"] = json!(DeliveryEvidence::TerminalWritten);
+                    }
+                    Ok(response)
                 }
             }
             Mutation::Permission {
@@ -1224,6 +1283,214 @@ fn serialization_failure(error: serde_json::Error) -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session_owner::protocol::OperationSource;
+    use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind};
+    use cccc_runtime::{ActorLaunch, HistoryConfig, LaunchSpec};
+    use sha2::{Digest, Sha256};
+    use std::path::Path;
+    use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+    use std::time::Duration;
+
+    struct SubmitPause {
+        source: String,
+        arrived: SyncSender<()>,
+        resume: Receiver<()>,
+    }
+
+    static SUBMIT_PAUSE: Mutex<Option<SubmitPause>> = Mutex::new(None);
+
+    pub(super) fn pause_validated_submit(mutation: &Mutation) {
+        let Mutation::Submit { source, .. } = mutation else {
+            return;
+        };
+        let pause = {
+            let mut pending = SUBMIT_PAUSE.lock().expect("submit pause");
+            pending
+                .as_ref()
+                .is_some_and(|pause| source.event_ids.contains(&pause.source))
+                .then(|| pending.take().expect("matching pause"))
+        };
+        if let Some(pause) = pause {
+            pause.arrived.send(()).expect("report validated identity");
+            pause
+                .resume
+                .recv_timeout(Duration::from_secs(10))
+                .expect("resume submit");
+        }
+    }
+
+    fn start_receiving_pty(
+        home: &HomeLayout,
+        backend: &Backend,
+        actor: &ActorRef,
+        output: &Path,
+    ) -> ActorRef {
+        let start = Mutation::Start {
+            actor: actor.clone(),
+            launch: Box::new(PreparedLaunch::Pty {
+                spec: LaunchSpec {
+                    group_id: actor.group_id.clone(),
+                    actor_id: actor.actor_id.clone(),
+                    runner: RunnerKind::Pty,
+                    command: vec![
+                        "sh".into(),
+                        "-c".into(),
+                        "exec >>\"$1\"; cat".into(),
+                        "owner-test".into(),
+                        output.to_str().expect("fixture file").into(),
+                    ],
+                    cwd: output.parent().expect("fixture directory").into(),
+                    env: BTreeMap::new(),
+                    cols: 80,
+                    rows: 24,
+                },
+                history: HistoryConfig {
+                    path: output.with_extension("history"),
+                    max_bytes: 4096,
+                    hot_bytes: 4096,
+                    persist: false,
+                },
+                launch: ActorLaunch {
+                    runtime: ActorRuntime::Custom,
+                    submit: Actor::new("peer").submit,
+                },
+                preamble: "Owner test preamble".into(),
+            }),
+        };
+        backend.validate(&start).expect("validate actor to start");
+        backend.reserve(&start).expect("reserve start");
+        let started: ActorSnapshot =
+            serde_json::from_value(backend.execute(home, start).expect("start fixture PTY"))
+                .expect("decode started snapshot");
+        started.actor
+    }
+
+    #[test]
+    fn submit_keeps_terminal_generation_after_execution_validation() {
+        for had_terminal in [true, false] {
+            assert_submit_during_replacement(had_terminal);
+        }
+    }
+
+    fn assert_submit_during_replacement(had_terminal: bool) {
+        let temp = tempfile::tempdir().expect("fixture directory");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("isolated home");
+        let group = cccc_core::GroupStore::new(home.clone())
+            .expect("group store")
+            .create("submit during replacement", "")
+            .expect("group");
+        let mut actor = Actor::new("peer");
+        actor.runtime = ActorRuntime::Custom;
+        let member = ActorRef {
+            group_id: group.group_id.clone(),
+            actor_id: actor.id.clone(),
+            actor_created_at: actor.created_at.clone(),
+            generation: None,
+        };
+        struct PtyCleanup<'a>(&'a ActorRef);
+        impl Drop for PtyCleanup<'_> {
+            fn drop(&mut self) {
+                let _ = cccc_runtime::stop(&self.0.group_id, &self.0.actor_id);
+            }
+        }
+        let _cleanup = PtyCleanup(&member);
+        let backend = Backend::default();
+        let original = if had_terminal {
+            start_receiving_pty(&home, &backend, &member, &temp.path().join("old"))
+        } else {
+            // The fallback must not use a newly published terminal if none was
+            // verified for the registered member at execution validation.
+            backend
+                .actors
+                .lock()
+                .expect("member registry")
+                .insert(key(&member), member.clone());
+            backend
+                .cancelled
+                .lock()
+                .expect("member cancellation")
+                .insert(key(&member), Arc::new(AtomicBool::new(false)));
+            member.clone()
+        };
+        let replacement_output = temp.path().join("new");
+        let submission = |actor_ref: ActorRef, event: Event, text: &str| Mutation::Submit {
+            source: OperationSource {
+                actor: actor_ref,
+                event_ids: vec![event.id.clone()],
+                input_sha256: format!("{:x}", Sha256::digest(text.as_bytes())),
+            },
+            group: Box::new(group.clone()),
+            actor: Box::new(actor.clone()),
+            events: vec![event],
+            text: text.into(),
+        };
+        let event = Event::new("chat.message", &group.group_id);
+        let (arrived, paused) = sync_channel(0);
+        let (resume, ready) = sync_channel(0);
+        *SUBMIT_PAUSE.lock().expect("submit pause") = Some(SubmitPause {
+            source: event.id.clone(),
+            arrived,
+            resume: ready,
+        });
+        let stale = submission(original.clone(), event, "stale-submit");
+        backend.validate(&stale).expect("admit original generation");
+        backend.reserve(&stale).expect("reserve original Submit");
+        let (replacement, outcome) = std::thread::scope(|scope| {
+            let submitting = scope.spawn(|| backend.execute(&home, stale));
+            paused
+                .recv_timeout(Duration::from_secs(5))
+                .expect("old Submit passed execution validation");
+            let stop = Mutation::Stop {
+                actor: original.clone(),
+            };
+            backend.reserve(&stop).expect("reserve stop");
+            backend.execute(&home, stop).expect("stop original fixture");
+            let replacement = start_receiving_pty(&home, &backend, &member, &replacement_output);
+            resume.send(()).expect("resume original Submit");
+            (replacement, submitting.join().expect("join submission"))
+        });
+        assert_ne!(replacement.generation, original.generation);
+        if had_terminal {
+            let outcome = outcome.expect("definite zero-write result");
+            assert_eq!(outcome["outcome"], "not_written");
+            assert_eq!(
+                outcome["reason"],
+                cccc_runtime::PtyHandoffReason::SessionChanged.to_string()
+            );
+        } else {
+            assert_eq!(
+                outcome.expect_err("no PTY was verified").code,
+                "session_replaced"
+            );
+        }
+
+        let control = submission(
+            replacement,
+            Event::new("chat.message", &group.group_id),
+            "current-submit",
+        );
+        backend
+            .validate(&control)
+            .expect("control uses current generation");
+        let accepted = backend
+            .execute(&home, control)
+            .expect("submit to verified replacement");
+        assert_eq!(accepted["outcome"], "accepted");
+        assert_eq!(accepted["delivery_evidence"], "terminal_written");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let received = std::fs::read_to_string(&replacement_output).unwrap_or_default();
+            assert!(!received.contains("stale-submit"));
+            if received.contains("current-submit") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "replacement did not receive valid input"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 
     #[test]
     fn stop_all_can_finish_another_member_while_one_launch_is_still_pending() {

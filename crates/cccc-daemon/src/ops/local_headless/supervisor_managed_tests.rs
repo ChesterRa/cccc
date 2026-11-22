@@ -1081,3 +1081,183 @@ mod launch_lifetime {
         }
     }
 }
+
+#[test]
+fn terminal_handoff_evidence_distinguishes_zero_byte_deferral_from_partial_write_uncertainty() {
+    use super::BatchSubmission;
+    use super::supervisor::{classify_terminal_handoff, reconcile_owner_submission};
+    use cccc_runtime::{PtyHandoff, PtyHandoffReason, RuntimeError};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let io_err = || {
+        PtyHandoffReason::Runtime(RuntimeError::Io(std::io::Error::from(
+            std::io::ErrorKind::BrokenPipe,
+        )))
+    };
+
+    // 1. Non-owner, >=1 byte written before I/O failure (cancelled stays false):
+    //    must settle Unconfirmed with started=true and never trigger a second write.
+    let started = AtomicBool::new(false);
+    let mut attempts = 0;
+    let mut final_outcome = BatchSubmission::Deferred;
+    for _ in 0..3 {
+        attempts += 1;
+        final_outcome = classify_terminal_handoff(&started, || PtyHandoff::Uncertain(io_err()));
+        if final_outcome != BatchSubmission::Deferred {
+            break;
+        }
+    }
+    assert_eq!(attempts, 1, "partial write must never auto-retry");
+    assert_eq!(final_outcome, BatchSubmission::Unconfirmed);
+    assert!(started.load(Ordering::Acquire));
+    assert_eq!(
+        reconcile_owner_submission(Some(final_outcome), started.load(Ordering::Acquire)),
+        BatchSubmission::Unconfirmed
+    );
+
+    // 2. 0-byte NotWritten: resets started=false and stays Deferred on both non-owner
+    //    and Unix owner reconciliation, allowing the next attempt to deliver once.
+    let started = AtomicBool::new(false);
+    let first = classify_terminal_handoff(&started, || PtyHandoff::NotWritten(io_err()));
+    assert_eq!(first, BatchSubmission::Deferred);
+    assert!(
+        !started.load(Ordering::Acquire),
+        "0-byte NotWritten must reset started so Unix owner does not misclassify it as Unconfirmed"
+    );
+    assert_eq!(
+        reconcile_owner_submission(Some(first), started.load(Ordering::Acquire)),
+        BatchSubmission::Deferred
+    );
+
+    let second = classify_terminal_handoff(&started, || PtyHandoff::Accepted);
+    assert_eq!(
+        second,
+        BatchSubmission::Accepted(Some(
+            cccc_contracts::event::DeliveryEvidence::TerminalWritten
+        ))
+    );
+    assert!(started.load(Ordering::Acquire));
+    assert_eq!(
+        reconcile_owner_submission(Some(second), started.load(Ordering::Acquire)),
+        BatchSubmission::Accepted(Some(
+            cccc_contracts::event::DeliveryEvidence::TerminalWritten
+        ))
+    );
+
+    // 3. Conservative owner guard: Deferred paired with started=true still upgrades to Unconfirmed.
+    assert_eq!(
+        reconcile_owner_submission(Some(BatchSubmission::Deferred), true),
+        BatchSubmission::Unconfirmed
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn managed_terminal_submit_key_io_error_after_payload_is_unconfirmed_without_retry() {
+    use super::BatchSubmission;
+    use super::supervisor::{reconcile_owner_submission, submit_managed_terminal_input};
+    use cccc_contracts::ActorSubmit;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    let temp = tempfile::tempdir().expect("isolated pty fixture");
+    let ready = temp.path().join("ready");
+    let out = temp.path().join("out");
+    let group_id = format!("g_partial_pty_{}", std::process::id());
+    let mut actor = Actor::new("managed-viewer");
+    actor.runtime = ActorRuntime::Custom;
+    actor.submit = ActorSubmit::Enter;
+
+    // 0-byte control: before any PTY exists, submission defers with started=false.
+    let cancelled = AtomicBool::new(false);
+    let started = AtomicBool::new(false);
+    let absent = submit_managed_terminal_input(&group_id, &actor, "hello", &cancelled, &started);
+    assert_eq!(absent, BatchSubmission::Deferred);
+    assert!(!started.load(Ordering::Acquire));
+    assert_eq!(
+        reconcile_owner_submission(Some(absent), started.load(Ordering::Acquire)),
+        BatchSubmission::Deferred
+    );
+
+    // Real PTY that reads the 5-byte payload then exits before the submit key is written,
+    // forcing a post-payload I/O failure while cancelled stays false.
+    let mut env = std::collections::BTreeMap::new();
+    env.insert("READY".into(), ready.to_string_lossy().into_owned());
+    env.insert("OUT".into(), out.to_string_lossy().into_owned());
+    cccc_runtime::start(cccc_runtime::LaunchSpec {
+        group_id: group_id.clone(),
+        actor_id: actor.id.clone(),
+        runner: RunnerKind::Pty,
+        command: vec![
+            "sh".into(),
+            "-c".into(),
+            "stty raw -echo; touch \"$READY\"; dd bs=1 count=5 of=\"$OUT\" 2>/dev/null; exit 0"
+                .into(),
+        ],
+        cwd: temp.path().into(),
+        env,
+        cols: 80,
+        rows: 24,
+    })
+    .expect("start real pty");
+    struct Cleanup(String, String);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = cccc_runtime::stop(&self.0, &self.1);
+        }
+    }
+    let _cleanup = Cleanup(group_id.clone(), actor.id.clone());
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !ready.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(ready.exists(), "pty fixture did not become ready");
+
+    // 0-byte pre-write rejection on a live PTY (empty trimmed input -> NotWritten):
+    // started resets to false so owner reconciliation keeps Deferred.
+    let pre_write = submit_managed_terminal_input(&group_id, &actor, "\r\n", &cancelled, &started);
+    assert_eq!(pre_write, BatchSubmission::Deferred);
+    assert!(!started.load(Ordering::Acquire));
+    assert_eq!(
+        reconcile_owner_submission(Some(pre_write), started.load(Ordering::Acquire)),
+        BatchSubmission::Deferred
+    );
+
+    // Payload is written and received, then submit-key write fails after process exit.
+    let outcome = submit_managed_terminal_input(&group_id, &actor, "hello", &cancelled, &started);
+    assert!(!cancelled.load(Ordering::Acquire));
+    assert_eq!(
+        std::fs::read_to_string(&out).expect("payload reached pty"),
+        "hello"
+    );
+    assert_eq!(
+        outcome,
+        BatchSubmission::Unconfirmed,
+        "post-payload submit-key failure must not collapse into Deferred retry"
+    );
+    assert!(started.load(Ordering::Acquire));
+}
+#[cfg(unix)]
+#[test]
+fn managed_owner_acceptance_keeps_the_wire_outcome_and_optional_evidence() {
+    use super::BatchSubmission;
+    use cccc_contracts::event::DeliveryEvidence;
+    use serde_json::json;
+
+    let old = json!({"backend":"managed","outcome":"Accepted","started":true});
+    assert_eq!(
+        BatchSubmission::from_owner_result(&old),
+        Some(BatchSubmission::Accepted(None))
+    );
+    for evidence in [
+        DeliveryEvidence::TerminalWritten,
+        DeliveryEvidence::ChannelAccepted,
+    ] {
+        let accepted = BatchSubmission::Accepted(Some(evidence));
+        let result = accepted.owner_result(true);
+        assert_eq!(result["outcome"], "Accepted");
+        assert_eq!(result["delivery_evidence"], json!(evidence));
+        assert_eq!(BatchSubmission::from_owner_result(&result), Some(accepted));
+    }
+}

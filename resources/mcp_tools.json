@@ -121,6 +121,10 @@
           "type": "string",
           "description": "Read this exact visible message or system notice, returned as full delivery_text plus message. Exclusive with mode, query, sender, before_event_id and limit."
         },
+        "with_obligation_status": {
+          "type": "boolean",
+          "description": "With event_id, include reply and delivery status for a visible chat message. Agents see their own recipient status on incoming messages and their recipients' status on outgoing messages."
+        },
         "limit": {
           "type": "integer",
           "default": 50,

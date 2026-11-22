@@ -1008,7 +1008,12 @@ export function updateReadThroughIndex(messages: LedgerEvent[], endIndex: number
     if (!readStatus || !Object.prototype.hasOwnProperty.call(readStatus, actorId)) continue;
     if (readStatus[actorId] === true) continue;
     readStatus[actorId] = true;
-    next[i] = { ...message, _read_status: readStatus };
+    const obligation = message._obligation_status?.[actorId];
+    const nextObligationStatus =
+      obligation && obligation.waiting_reason !== undefined
+        ? { ...message._obligation_status, [actorId]: { ...obligation, waiting_reason: undefined } }
+        : message._obligation_status;
+    next[i] = { ...message, _read_status: readStatus, _obligation_status: nextObligationStatus };
     changed = true;
   }
   return { next, changed };
@@ -1021,6 +1026,8 @@ export type ObligationStatusPatch = {
   cancelled?: true;
   deliveryState?: string;
   deliveryReason?: string;
+  deliveryEvidence?: string;
+  waitingReason?: string;
 };
 
 export function updateObligationAtIndex(
@@ -1056,12 +1063,22 @@ export function updateObligationAtIndex(
     if (patch.deliveryState !== undefined) {
       updated.delivery_state = patch.deliveryState;
       updated.delivery_reason = patch.deliveryReason;
+      updated.delivery_evidence = patch.deliveryEvidence;
+      updated.waiting_reason =
+        patch.waitingReason === "not_submitted" &&
+        previous.waiting_reason &&
+        previous.waiting_reason !== "not_submitted"
+          ? previous.waiting_reason
+          : patch.waitingReason;
     }
     if ((patch.reply || patch.replied) && !updated.cancelled) updated.replied = true;
     if (patch.cancelled && !updated.replied) updated.cancelled = true;
+    if (updated.replied || updated.cancelled) updated.waiting_reason = undefined;
     if (
       updated.delivery_state === previous.delivery_state &&
       (updated.delivery_reason || "") === (previous.delivery_reason || "") &&
+      (updated.delivery_evidence || "") === (previous.delivery_evidence || "") &&
+      (updated.waiting_reason || "") === (previous.waiting_reason || "") &&
       updated.replied === previous.replied &&
       updated.cancelled === previous.cancelled
     ) {

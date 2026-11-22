@@ -2223,7 +2223,7 @@ fn native_codex_preflight_preserves_existing_claim_and_terminal_states() {
     let actor = &fixture.group.actors[0];
     for (state, outcome) in [
         ("claimed", LedgerOutcome::Claimed),
-        ("accepted", LedgerOutcome::Accepted),
+        ("accepted", LedgerOutcome::Accepted(None)),
         ("ambiguous", LedgerOutcome::Ambiguous("prior attempt")),
         ("withdrawn", LedgerOutcome::Withdrawn("prior attempt")),
     ] {

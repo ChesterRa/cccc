@@ -121,7 +121,13 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
                 actor_delivery::dispatch_unread(home, &group, &actor.id);
             }
             // Held for the user's own start, as a Group start holds it.
-            Err(error) if error.code == actor_runtime::RUNTIME_CONFIRMATION_PAUSED => {}
+            Err(error)
+                if matches!(
+                    error.code.as_str(),
+                    actor_runtime::RUNTIME_CONFIRMATION_PAUSED
+                        | actor_runtime::CLAUDE_RESUME_FAILED
+                        | actor_runtime::RUNTIME_RESUME_FAILED
+                ) => {}
             Err(error) => {
                 tracing::warn!(
                     group_id = %group.group_id,
@@ -129,6 +135,7 @@ fn restore_group(home: &HomeLayout, store: &GroupStore, group_id: &str) -> Resul
                     message = %error.message,
                     "failed to restore actor runtime"
                 );
+                actor_delivery::record_member_catchup(&group, &actor);
             }
         }
     }
@@ -320,6 +327,7 @@ mod tests {
     #[cfg(unix)]
     impl Drop for OwnedRuntime {
         fn drop(&mut self) {
+            super::actor_delivery::shutdown_group(&self.0);
             let _ = cccc_runtime::stop(&self.0, "peer1");
         }
     }
@@ -357,6 +365,34 @@ mod tests {
         restore_group(&home, &store, &group.group_id).expect("failed actor restore is nonfatal");
         assert!(!actor_runtime::actor_is_running(&group, &group.actors[0]));
         assert!(respawn_events(&store, &group).is_empty());
+        assert!(
+            super::actor_delivery::pending_group_ids().contains(&group.group_id),
+            "non-pause restore failure must schedule delivery catch-up"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confirmation_paused_restore_does_not_schedule_member_catchup() {
+        let (_temp, home, store, mut group) = restore_fixture(ActorRuntime::Claude);
+        let _cleanup = OwnedRuntime(group.group_id.clone());
+        group.actors[0].runner = RunnerKind::Pty;
+        store.save(&group).expect("save claude actor");
+        crate::ops::local_headless::pause_confirmation(&group.group_id, "peer1")
+            .expect("pause confirmation");
+        struct PauseGuard(String);
+        impl Drop for PauseGuard {
+            fn drop(&mut self) {
+                let _ = crate::ops::local_headless::retry_confirmation(&self.0, "peer1");
+            }
+        }
+        let _pause = PauseGuard(group.group_id.clone());
+
+        restore_group(&home, &store, &group.group_id).expect("paused restore is nonfatal");
+        assert!(
+            !super::actor_delivery::pending_group_ids().contains(&group.group_id),
+            "confirmation-paused restore must not schedule automatic catch-up"
+        );
     }
 }
 

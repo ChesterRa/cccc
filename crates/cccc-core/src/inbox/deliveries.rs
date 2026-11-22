@@ -5,6 +5,12 @@ use super::*;
 use crate::ledger::snapshot::Location;
 use std::collections::HashSet;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PendingFilter {
+    AllPending,
+    UnclaimedOrUnsubmitted,
+}
+
 #[derive(Default)]
 pub(super) struct DeliveryState {
     positions: HashMap<String, usize>,
@@ -195,6 +201,20 @@ impl DeliveryState {
                     && generation.is_none_or(|generation| *position > generation)
             })
     }
+    /// Whether the actor's current delivery of this source ended with a
+    /// confirmed pre-submission failure (`failed` with `retryable: true`).
+    pub fn is_unsubmitted(&self, actor: &str, source: &str) -> bool {
+        let generation = self.generations.get(actor).copied();
+        self.latest
+            .get(actor)
+            .and_then(|states| states.get(source))
+            .and_then(|state| state.pending.as_ref())
+            .is_some_and(|(state, position, retryable)| {
+                state == "failed"
+                    && *retryable == Some(true)
+                    && generation.is_none_or(|generation| *position > generation)
+            })
+    }
     pub fn source_position(&self, id: &str) -> Option<usize> {
         self.sources
             .iter()
@@ -206,7 +226,7 @@ impl DeliveryState {
         group: &GroupDoc,
         actor: &str,
         limit: usize,
-        only_unclaimed: bool,
+        filter: PendingFilter,
         range: std::ops::RangeInclusive<usize>,
     ) -> Vec<Location> {
         let Some(actor_index) = self.actors.get(actor) else {
@@ -238,9 +258,7 @@ impl DeliveryState {
             .take_while(|source| source.position <= *range.end())
             .filter(|source| current(source.position) && source.recipients.contains(actor_index))
             .filter(|source| {
-                if only_unclaimed && states.is_some_and(|states| states.contains_key(&source.id)) {
-                    return false;
-                }
+                let has_record = states.is_some_and(|states| states.contains_key(&source.id));
                 let (state, retryable) = states
                     .and_then(|states| states.get(&source.id))
                     .and_then(|state| state.pending.as_ref())
@@ -249,6 +267,9 @@ impl DeliveryState {
                     .unwrap_or(("", None));
                 let failed = state == "failed";
                 let retry = failed && retryable == Some(true);
+                if filter == PendingFilter::UnclaimedOrUnsubmitted && has_record && !retry {
+                    return false;
+                }
                 if matches!(state, "accepted" | "ambiguous" | "withdrawn")
                     || (failed && retryable == Some(false))
                     || (external_session && failed && !retry)

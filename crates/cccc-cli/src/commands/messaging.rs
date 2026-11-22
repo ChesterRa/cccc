@@ -267,6 +267,9 @@ pub async fn ledger(client: &DaemonClient, home: &HomeLayout, args: LedgerArgs) 
                 "kind":args.kind,
                 "limit":args.limit,
             });
+            if args.with_obligation_status {
+                request["with_obligation_status"] = json!(true);
+            }
             if let Some(value) = args.by {
                 request["by"] = json!(value);
             }

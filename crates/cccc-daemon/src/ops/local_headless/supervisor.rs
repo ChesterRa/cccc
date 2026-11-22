@@ -5,6 +5,7 @@ use super::{
     BatchSubmission, HeadlessStatus, Session, managed_reader, poisoned, provider_cli,
     run_managed_launch,
 };
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, json};
@@ -617,17 +618,8 @@ pub fn submit_batch_marked(
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(true);
                 started.store(reached_input, Ordering::Release);
-                match result
-                    .get("outcome")
-                    .cloned()
-                    .and_then(|value| serde_json::from_value::<BatchSubmission>(value).ok())
-                {
-                    Some(BatchSubmission::Deferred) if reached_input => {
-                        BatchSubmission::Unconfirmed
-                    }
-                    Some(outcome) => outcome,
-                    None => BatchSubmission::Unconfirmed,
-                }
+                let outcome = BatchSubmission::from_owner_result(&result);
+                reconcile_owner_submission(outcome, reached_input)
             }
             Err(error)
                 if !started.load(Ordering::Acquire)
@@ -793,7 +785,7 @@ fn submit_prepared_admitted(
                 }
             }) {
                 Ok(_) => {
-                    outcome = BatchSubmission::Accepted;
+                    outcome = BatchSubmission::Accepted(Some(DeliveryEvidence::ChannelAccepted));
                     true
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -840,7 +832,7 @@ fn submit_prepared_admitted(
                 }
             }
         });
-        if outcome == BatchSubmission::Accepted
+        if outcome.is_accepted()
             && let Some(notice) = instruction_notice.take()
         {
             notice.delivered();
@@ -863,17 +855,15 @@ fn submit_prepared_admitted(
             if launched.runtime == ActorRuntime::Kilo {
                 outcome = submit_kilo_input(item, &launched, prepared, cancelled, started);
             } else {
-                started.store(true, Ordering::Release);
-                if super::super::actor_delivery::submit_terminal_text(
+                outcome = submit_managed_terminal_input(
                     &group.group_id,
                     &launched,
                     prepared,
                     cancelled,
-                ) {
-                    outcome = BatchSubmission::Accepted;
-                }
+                    started,
+                );
             }
-            outcome == BatchSubmission::Accepted
+            outcome.is_accepted()
         });
         if accepted && let Some(notice) = instruction_notice.take() {
             notice.delivered();
@@ -901,6 +891,61 @@ fn submit_with_startup_prompt(
         *startup_prompt = None;
     }
     accepted
+}
+
+/// Reconcile a managed terminal write using exact byte evidence:
+/// - `Accepted`: full payload and submit keys written.
+/// - `NotWritten`: proven 0 bytes written; resets `started` so neither non-owner
+///   nor Unix session-owner treats a pre-write deferral as unconfirmed.
+/// - `Uncertain`: at least 1 byte written before failure/cancellation; keeps
+///   `started = true` and settles `Unconfirmed` so it is never auto-retried.
+pub(super) fn classify_terminal_handoff(
+    started: &AtomicBool,
+    submit: impl FnOnce() -> cccc_runtime::PtyHandoff,
+) -> BatchSubmission {
+    started.store(true, Ordering::Release);
+    match submit() {
+        cccc_runtime::PtyHandoff::Accepted => {
+            BatchSubmission::Accepted(Some(DeliveryEvidence::TerminalWritten))
+        }
+        cccc_runtime::PtyHandoff::NotWritten(_) => {
+            started.store(false, Ordering::Release);
+            BatchSubmission::Deferred
+        }
+        cccc_runtime::PtyHandoff::Uncertain(_) => BatchSubmission::Unconfirmed,
+    }
+}
+
+#[cfg(any(unix, test))]
+pub(super) fn reconcile_owner_submission(
+    outcome: Option<BatchSubmission>,
+    reached_input: bool,
+) -> BatchSubmission {
+    match outcome {
+        Some(BatchSubmission::Deferred) if reached_input => BatchSubmission::Unconfirmed,
+        Some(outcome) => outcome,
+        None => BatchSubmission::Unconfirmed,
+    }
+}
+
+pub(super) fn submit_managed_terminal_input(
+    group_id: &str,
+    actor: &Actor,
+    text: &str,
+    cancelled: &AtomicBool,
+    started: &AtomicBool,
+) -> BatchSubmission {
+    let Ok(viewer) = crate::session_owner::runtime::status(group_id, &actor.id) else {
+        return BatchSubmission::Deferred;
+    };
+    if !viewer.running {
+        return BatchSubmission::Deferred;
+    }
+    classify_terminal_handoff(started, || {
+        super::super::actor_delivery::submit_terminal_text_for_session(
+            &viewer, actor, text, cancelled,
+        )
+    })
 }
 
 /// Kilo enables terminal paste before its composer can receive a message.
@@ -954,7 +999,9 @@ fn submit_kilo_input(
     }
     let Some(receipt) = receipt else {
         return match write {
-            cccc_runtime::PtyHandoff::Accepted => BatchSubmission::Accepted,
+            cccc_runtime::PtyHandoff::Accepted => {
+                BatchSubmission::Accepted(Some(DeliveryEvidence::TerminalWritten))
+            }
             _ => BatchSubmission::Unconfirmed,
         };
     };
@@ -969,7 +1016,7 @@ fn submit_kilo_input(
     {
         viewer.confirmed_input = Some(generation);
     }
-    BatchSubmission::Accepted
+    BatchSubmission::Accepted(Some(DeliveryEvidence::ChannelAccepted))
 }
 
 #[cfg(test)]

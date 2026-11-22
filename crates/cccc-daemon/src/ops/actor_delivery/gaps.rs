@@ -193,22 +193,28 @@ fn recover_member(home: &HomeLayout, group: &GroupDoc, actor_id: &str, gap: &Gap
         .range
         .as_ref()
         .map(|(first, last)| (first.as_str(), last.as_str()));
-    let events = match inbox::unclaimed_deliveries(home, group, actor_id, range, slots) {
+    let events = match inbox::unclaimed_or_unsubmitted_deliveries(
+        home, group, actor_id, range, slots,
+    ) {
         Ok(events) => events,
         Err(error) => {
-            tracing::warn!(%error, %actor_id, group_id = %group.group_id, "could not read unclaimed deliveries");
+            tracing::warn!(%error, %actor_id, group_id = %group.group_id, "could not read unclaimed or unsubmitted deliveries");
             return false;
         }
     };
-    let complete = events.len() < slots;
+    let mut complete = events.len() < slots;
     let transport = owner_transport(home, group, actor, owner.as_ref());
     for event in events {
-        match crate::ops::runtime_delivery::claim_first_attempt(
+        match crate::ops::runtime_delivery::claim_unclaimed_or_unsubmitted(
             home, group, actor, &event.id, transport,
         ) {
-            Ok(true) => {
-                offer_delivery(home, group, actor, &event, transport, true);
-            }
+            Ok(true) => match offer_delivery(home, group, actor, &event, transport, true) {
+                Offer::Queued | Offer::AlreadyInFlight => {}
+                Offer::Held | Offer::Refused => {
+                    complete = false;
+                    break;
+                }
+            },
             Ok(false) => {}
             Err(_) => return false,
         }
@@ -219,12 +225,21 @@ fn recover_member(home: &HomeLayout, group: &GroupDoc, actor_id: &str, gap: &Gap
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::runtime_delivery::{DeliveryOutcome, append_state, claim_first_attempt};
+    use crate::ops::runtime_delivery::{
+        DeliveryOutcome, append_state, claim_unclaimed_or_unsubmitted,
+    };
     use cccc_core::{GroupStore, ledger};
     use serde_json::json;
 
+    struct GroupGuard(String);
+    impl Drop for GroupGuard {
+        fn drop(&mut self) {
+            shutdown_group(&self.0);
+        }
+    }
+
     #[test]
-    fn a_gap_skips_existing_receipts_before_paging_and_rechecks_at_claim() {
+    fn a_gap_skips_non_retryable_receipts_and_rechecks_at_claim() {
         let temp = tempfile::tempdir().expect("isolated directory");
         let home = HomeLayout::from_path(temp.path()).expect("isolated home");
         let store = GroupStore::new(home.clone()).expect("group store");
@@ -261,25 +276,164 @@ mod tests {
         let first = source();
         receipt(&first, DeliveryOutcome::Claimed);
         for outcome in [
-            DeliveryOutcome::Accepted,
+            DeliveryOutcome::Accepted(None),
             DeliveryOutcome::Ambiguous("unknown"),
-            DeliveryOutcome::Unsubmitted("not written"),
+            DeliveryOutcome::Withdrawn("withheld"),
+            DeliveryOutcome::Failed("ordinary failure"),
+            DeliveryOutcome::RetriesExhausted("retries used up"),
         ] {
             receipt(&source(), outcome);
         }
+        let unsubmitted = source();
+        receipt(&unsubmitted, DeliveryOutcome::Claimed);
+        receipt(&unsubmitted, DeliveryOutcome::Unsubmitted("not written"));
         let last = source();
         source(); // A later send has its own outcome.
-        let page = || {
-            inbox::unclaimed_deliveries(&home, &group, &actor.id, Some((&first, &last)), 1)
-                .expect("read unclaimed page")
+        let page = |limit| {
+            inbox::unclaimed_or_unsubmitted_deliveries(
+                &home,
+                &group,
+                &actor.id,
+                Some((&first, &last)),
+                limit,
+            )
+            .expect("read eligible gap page")
         };
-        let events = page();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].id, last);
-        // The original delivery path resolved the source since the maintenance read.
-        receipt(&last, DeliveryOutcome::Unsubmitted("not written"));
-        assert!(!claim_first_attempt(&home, &group, &actor, &last, "pty").expect("recheck claim"));
-        assert!(page().is_empty());
+        let events = page(4);
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![unsubmitted.as_str(), last.as_str()]
+        );
+        assert!(
+            claim_unclaimed_or_unsubmitted(&home, &group, &actor, &unsubmitted, "pty")
+                .expect("claim unsubmitted")
+        );
+        // Once another path records a non-retryable outcome, gap claim refuses it.
+        for outcome in [
+            DeliveryOutcome::Failed("ordinary failure"),
+            DeliveryOutcome::RetriesExhausted("retries used up"),
+            DeliveryOutcome::Ambiguous("unknown"),
+            DeliveryOutcome::Withdrawn("withheld"),
+            DeliveryOutcome::Accepted(None),
+        ] {
+            let control = source();
+            receipt(&control, outcome);
+            assert!(
+                !claim_unclaimed_or_unsubmitted(&home, &group, &actor, &control, "pty")
+                    .expect("recheck non-retryable claim"),
+                "must refuse {outcome:?}"
+            );
+        }
+        // Finalizing `last` before claim also prevents duplicate claiming.
+        receipt(&last, DeliveryOutcome::Failed("ordinary failure"));
+        assert!(
+            !claim_unclaimed_or_unsubmitted(&home, &group, &actor, &last, "pty")
+                .expect("recheck claim")
+        );
+        assert!(page(4).is_empty());
+    }
+
+    #[test]
+    fn whole_history_gap_recovers_unsubmitted_and_unclaimed_without_touching_other_states() {
+        let temp = tempfile::tempdir().expect("isolated directory");
+        let home = HomeLayout::from_path(temp.path()).expect("isolated home");
+        let store = GroupStore::new(home.clone()).expect("group store");
+        let mut group = store
+            .create("n1 whole history gap", "")
+            .expect("create group");
+        let _guard = GroupGuard(group.group_id.clone());
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save membership");
+        let path = store.ledger_path(&group.group_id).expect("group ledger");
+        let (tx, rx) = mpsc::sync_channel(QUEUE_CAPACITY);
+        workers().lock().expect("workers").insert(
+            (group.group_id.clone(), actor.id.clone()),
+            DeliveryWorker {
+                sender: Some(tx),
+                cancelled: Arc::new(AtomicBool::new(false)),
+                replaced: Arc::new(AtomicBool::new(false)),
+                thread: None,
+            },
+        );
+        let send = |text: &str| {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = "user".into();
+            event.data = json!({"to":[actor.id],"text":text,"message_mode":"send"})
+                .as_object()
+                .expect("message data")
+                .clone();
+            ledger::append(&path, &event).expect("append source message");
+            event.id
+        };
+        let receipt = |source: &str, outcome| {
+            append_state(
+                &home,
+                &group.group_id,
+                &actor.id,
+                &actor.created_at,
+                source,
+                "pty",
+                outcome,
+            )
+            .expect("append delivery receipt");
+        };
+
+        let a_unsubmitted = send("A unsubmitted");
+        receipt(&a_unsubmitted, DeliveryOutcome::Claimed);
+        receipt(
+            &a_unsubmitted,
+            DeliveryOutcome::Unsubmitted("stopped before write"),
+        );
+        let c_accepted = send("C accepted");
+        receipt(&c_accepted, DeliveryOutcome::Accepted(None));
+        let d_claimed = send("D claimed");
+        receipt(&d_claimed, DeliveryOutcome::Claimed);
+        let e_ambiguous = send("E ambiguous");
+        receipt(&e_ambiguous, DeliveryOutcome::Ambiguous("uncertain"));
+        let f_withdrawn = send("F withdrawn");
+        receipt(&f_withdrawn, DeliveryOutcome::Withdrawn("withheld"));
+        let g_exhausted = send("G exhausted");
+        receipt(
+            &g_exhausted,
+            DeliveryOutcome::RetriesExhausted("retries used up"),
+        );
+        let h_legacy_failed = send("H legacy failed");
+        receipt(&h_legacy_failed, DeliveryOutcome::Failed("legacy failed"));
+        let b_unclaimed = send("B unclaimed");
+
+        record(&group, &actor, None);
+        recover_group(&home, &group.group_id);
+
+        let delivered: Vec<String> = rx.try_iter().map(|job| job.event.id).collect();
+        assert_eq!(delivered, vec![a_unsubmitted.clone(), b_unclaimed.clone()]);
+
+        let events = ledger::read_all(&path).expect("read ledger");
+        let claim_count = |source: &str| {
+            events
+                .iter()
+                .filter(|event| {
+                    event.kind == "runtime.delivery"
+                        && event.data["source_event_id"] == source
+                        && event.data["state"] == "claimed"
+                })
+                .count()
+        };
+        assert_eq!(claim_count(&a_unsubmitted), 2, "A gets one recovery claim");
+        assert_eq!(claim_count(&b_unclaimed), 1, "B gets its first claim");
+        assert_eq!(claim_count(&c_accepted), 0);
+        assert_eq!(claim_count(&d_claimed), 1);
+        assert_eq!(claim_count(&e_ambiguous), 0);
+        assert_eq!(claim_count(&f_withdrawn), 0);
+        assert_eq!(claim_count(&g_exhausted), 0);
+        assert_eq!(claim_count(&h_legacy_failed), 0);
+
+        let mut groups = HashSet::new();
+        collect_groups(&mut groups);
+        assert!(!groups.contains(&group.group_id));
     }
 
     #[test]
@@ -305,8 +459,14 @@ mod tests {
         let direct = send("peer");
         group.actors.remove(0);
         store.save(&group).expect("save membership");
-        let events = inbox::unclaimed_deliveries(&home, &group, "peer", Some((&first, &direct)), 2)
-            .expect("read with new roles");
+        let events = inbox::unclaimed_or_unsubmitted_deliveries(
+            &home,
+            &group,
+            "peer",
+            Some((&first, &direct)),
+            2,
+        )
+        .expect("read with new roles");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].id, direct);
     }

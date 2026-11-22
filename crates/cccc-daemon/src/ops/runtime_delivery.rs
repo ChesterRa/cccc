@@ -1,3 +1,4 @@
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_contracts::{Actor, Event};
 use cccc_core::fs::with_exclusive_lock;
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
@@ -32,7 +33,7 @@ pub enum ClaimResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryOutcome<'a> {
     Claimed,
-    Accepted,
+    Accepted(Option<DeliveryEvidence>),
     Failed(&'a str),
     /// This attempt stopped before any native transport submission.
     Unsubmitted(&'a str),
@@ -49,7 +50,7 @@ impl<'a> DeliveryOutcome<'a> {
     fn parts(self) -> (&'static str, &'a str) {
         match self {
             Self::Claimed => ("claimed", ""),
-            Self::Accepted => ("accepted", ""),
+            Self::Accepted(_) => ("accepted", ""),
             Self::Failed(reason) | Self::Unsubmitted(reason) | Self::RetriesExhausted(reason) => {
                 ("failed", reason)
             }
@@ -95,6 +96,11 @@ pub fn append_state(
     .cloned()
     .expect("runtime delivery data");
     match outcome {
+        DeliveryOutcome::Accepted(Some(evidence)) => {
+            event
+                .data
+                .insert("delivery_evidence".into(), json!(evidence));
+        }
         DeliveryOutcome::Unsubmitted(_) => {
             event.data.insert("retryable".into(), json!(true));
         }
@@ -189,11 +195,14 @@ pub fn latest_state(
 enum ClaimPolicy {
     Automatic,
     Explicit,
-    FirstAttempt,
+    GapCatchup,
 }
 
-/// Used only to recover a source that could not be routed before its first claim.
-pub(super) fn claim_first_attempt(
+/// Used by gap catch-up to claim a source that either has no delivery record
+/// yet or ended with a confirmed pre-submission failure (`failed`, `retryable: true`).
+/// Accepted, claimed, ambiguous, withdrawn, retry-exhausted, and legacy unflagged
+/// failed records are never claimed here.
+pub(super) fn claim_unclaimed_or_unsubmitted(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
@@ -206,7 +215,7 @@ pub(super) fn claim_first_attempt(
         &[(actor, transport)],
         source_event_id,
         false,
-        ClaimPolicy::FirstAttempt,
+        ClaimPolicy::GapCatchup,
     )
     .map(|(claimed, _)| claimed)
 }
@@ -291,8 +300,17 @@ fn claim_with(
                     .unwrap_or_default();
                 states.insert(actor.id.clone(), state.clone());
                 // Checked under the claim lock: a worker may have used up the
-                // retries after the caller read its pending snapshot.
-                if (policy == ClaimPolicy::FirstAttempt && latest.contains_key(&actor.id))
+                // retries or finalized the source after the caller read its snapshot.
+                let gap_blocked = policy == ClaimPolicy::GapCatchup
+                    && latest.contains_key(&actor.id)
+                    && !(state == "failed"
+                        && inbox::delivery_is_unsubmitted(
+                            home,
+                            group,
+                            &actor.id,
+                            source_event_id,
+                        )?);
+                if gap_blocked
                     || matches!(state.as_str(), "claimed" | "accepted" | "withdrawn")
                     || (state == "ambiguous" && !force_ambiguous)
                     || (policy == ClaimPolicy::Automatic
@@ -389,7 +407,7 @@ pub fn settle_stranded_claims(home: &HomeLayout, group: &GroupDoc) -> Result<usi
 fn retained_outcome(fact: &crate::session_owner::RetainedDelivery) -> DeliveryOutcome<'_> {
     use crate::session_owner::RetainedDelivery;
     match fact {
-        RetainedDelivery::Accepted => DeliveryOutcome::Accepted,
+        RetainedDelivery::Accepted(evidence) => DeliveryOutcome::Accepted(*evidence),
         RetainedDelivery::Unsubmitted => {
             DeliveryOutcome::Unsubmitted("retained operation ended before native input")
         }
@@ -810,7 +828,7 @@ mod tests {
             &actor,
             "accepted",
             "local_session",
-            DeliveryOutcome::Accepted,
+            DeliveryOutcome::Accepted(None),
         );
         receipt(
             &actor,
@@ -841,7 +859,7 @@ mod tests {
             &actor,
             "changed-transport",
             "pty",
-            DeliveryOutcome::Accepted,
+            DeliveryOutcome::Accepted(None),
         );
 
         // Every transport's open claim may have reached the replaced owner.

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
 import { MESSAGE_IMAGE_PREVIEW_HEIGHT_PX } from "./imageLayout";
 import { ImagePreviewFailure } from "./ImagePreviewFailure";
+import { resolveSvgImageSource } from "./svgImageSource";
 import {
   openAttachmentResource,
   type MessageAttachmentSource,
@@ -68,10 +69,15 @@ export function ImagePreview({
           throw new Error(`svg_fetch_failed:${resp.status}`);
         }
         const blob = await resp.blob();
+        const resolved = await resolveSvgImageSource(blob);
         // The source may have changed while the response body was loading.
         if (cancelled) return;
-        objectUrl = URL.createObjectURL(blob);
-        setResolvedHref(objectUrl);
+        if (resolved.kind === "raster") {
+          objectUrl = URL.createObjectURL(resolved.blob);
+          setResolvedHref(objectUrl);
+        } else {
+          setResolvedHref(resolved.src);
+        }
         setIsResolvingSvg(false);
       } catch {
         if (!cancelled) {

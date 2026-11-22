@@ -495,6 +495,41 @@ mod tests {
     }
 
     #[test]
+    fn compaction_makes_a_cached_index_rebuild_and_keeps_its_events() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("compact index", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let event = Event::new("chat.message", &group.group_id);
+        ledger::append(&path, &event).expect("append");
+        assert!(
+            crate::ledger_index::find_event(&path, &event.id)
+                .expect("cold read")
+                .is_some()
+        );
+        let before = crate::ledger_index::stats().index_rebuilds;
+
+        compact(&home, &group.group_id, "test")
+            .expect("compact")
+            .expect("segment");
+        assert!(
+            crate::ledger_index::find_event(&path, &event.id)
+                .expect("read after compaction")
+                .is_some()
+        );
+        assert!(
+            crate::ledger_index::find_event(&path, &event.id)
+                .expect("second read")
+                .is_some()
+        );
+
+        // Counters are process-wide and other tests may add to them, so this
+        // checks that compaction made the next read rebuild at least once.
+        assert!(crate::ledger_index::stats().index_rebuilds > before);
+    }
+
+    #[test]
     fn compact_writes_python_compatible_segment_and_manifest() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");

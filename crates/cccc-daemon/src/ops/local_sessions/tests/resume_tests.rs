@@ -245,7 +245,7 @@ fn restored_pending_work_keeps_terminal_delivery_receipts() {
             )
             .expect("claim");
             let outcome = match state {
-                "accepted" => Some(DeliveryOutcome::Accepted),
+                "accepted" => Some(DeliveryOutcome::Accepted(None)),
                 "ambiguous" => Some(DeliveryOutcome::Ambiguous("unknown")),
                 "withdrawn" => Some(DeliveryOutcome::Withdrawn("cancelled")),
                 _ => None,

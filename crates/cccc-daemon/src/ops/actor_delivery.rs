@@ -1,3 +1,4 @@
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_contracts::{Actor, ActorRuntime, ActorSubmit, Event, GroupState};
 use cccc_core::{GroupDoc, HomeLayout, inbox};
 use serde::Serialize;
@@ -10,14 +11,12 @@ use crate::ops::actor_delivery_worker;
 
 mod drain;
 mod gaps;
-pub(super) use gaps::set_group_paused;
 mod lifecycle;
 mod terminal;
 pub(crate) use drain::{drain_group, pending_group_ids};
 pub use lifecycle::{
     ShutdownReason, pause_group, shutdown_actor, shutdown_actor_for, shutdown_all, shutdown_group,
 };
-pub(super) use terminal::submit_terminal_text;
 pub(crate) use terminal::{submit_terminal_text_for_session, submit_viewer_text};
 
 const QUEUE_CAPACITY: usize = 256;
@@ -79,7 +78,7 @@ pub(super) struct DeliveryCompletion {
 }
 
 pub(super) enum CompletedDelivery {
-    Accepted,
+    Accepted(Option<DeliveryEvidence>),
     Withdrawn(String),
     Failed(String),
     Unsubmitted(String),
@@ -90,7 +89,7 @@ impl CompletedDelivery {
     fn ledger_outcome(&self) -> crate::ops::runtime_delivery::DeliveryOutcome<'_> {
         use crate::ops::runtime_delivery::DeliveryOutcome;
         match self {
-            Self::Accepted => DeliveryOutcome::Accepted,
+            Self::Accepted(evidence) => DeliveryOutcome::Accepted(*evidence),
             Self::Withdrawn(reason) => DeliveryOutcome::Withdrawn(reason),
             Self::Failed(reason) => DeliveryOutcome::Failed(reason),
             Self::Unsubmitted(reason) => DeliveryOutcome::Unsubmitted(reason),
@@ -105,8 +104,6 @@ struct DeliveryWorker {
     /// Set before cancellation when the Actor's runtime owner is replaced.
     replaced: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
-    /// Native pending work exceeded this worker's memory queue or query page.
-    needs_refill: bool,
 }
 
 impl DeliveryWorker {
@@ -173,6 +170,136 @@ fn fenced() -> &'static Mutex<HashSet<Key>> {
     FENCED.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// External-session members needing a later unread refill, kept independently of
+/// live workers so pre-enqueue read failures survive even before a worker spawns.
+/// Value is `paused`.
+fn refills() -> &'static Mutex<HashMap<Key, bool>> {
+    static REFILLS: OnceLock<Mutex<HashMap<Key, bool>>> = OnceLock::new();
+    REFILLS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Groups whose `GroupDoc` reload failed after committing a notification, awaiting
+/// maintenance catch-up. Value is `(paused, revision)`.
+fn group_catchups() -> &'static Mutex<HashMap<String, (bool, u64)>> {
+    static GROUP_CATCHUPS: OnceLock<Mutex<HashMap<String, (bool, u64)>>> = OnceLock::new();
+    GROUP_CATCHUPS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(in crate::ops) fn set_group_paused(group_id: &str, paused: bool) {
+    gaps::set_group_paused(group_id, paused);
+    if let Ok(mut pending) = refills().lock() {
+        for ((group, _), flag) in pending.iter_mut() {
+            if group == group_id {
+                *flag = paused;
+            }
+        }
+    }
+    if let Ok(mut pending) = group_catchups().lock()
+        && let Some((flag, _)) = pending.get_mut(group_id)
+    {
+        *flag = paused;
+    }
+}
+
+/// Schedule a whole-history catch-up for one member after a pre-enqueue failure
+/// (e.g. pending read error, restore failure, or >queue-capacity backlog).
+pub(in crate::ops) fn record_member_catchup(group: &GroupDoc, actor: &Actor) {
+    if matches!(group.state, GroupState::Paused | GroupState::Stopped)
+        || !actor.enabled
+        || held_for_switch(group, actor)
+    {
+        return;
+    }
+    if actor.external_session_id.is_empty() {
+        gaps::record(group, actor, None);
+    } else {
+        set_refill(&group.group_id, &actor.id, true);
+    }
+}
+
+/// Schedule a group-level catch-up when a notification was appended to the ledger
+/// but the group document could not be reloaded to dispatch it immediately.
+pub(in crate::ops) fn record_group_catchup(group_id: &str) {
+    if let Ok(mut pending) = group_catchups().lock() {
+        let revision = pending
+            .get(group_id)
+            .map_or(0, |(_, rev)| rev.wrapping_add(1));
+        pending.insert(group_id.to_owned(), (false, revision));
+    }
+}
+
+fn active_group_catchup_revision(group_id: &str) -> Option<u64> {
+    group_catchups()
+        .lock()
+        .ok()
+        .and_then(|pending| pending.get(group_id).copied())
+        .filter(|(paused, _)| !paused)
+        .map(|(_, revision)| revision)
+}
+
+fn complete_group_catchup(group_id: &str, revision: u64) {
+    if let Ok(mut pending) = group_catchups().lock()
+        && pending
+            .get(group_id)
+            .is_some_and(|(_, current)| *current == revision)
+    {
+        pending.remove(group_id);
+    }
+}
+
+fn clear_group_catchup(group_id: &str) {
+    if let Ok(mut pending) = group_catchups().lock() {
+        pending.remove(group_id);
+    }
+}
+
+fn clear_all_group_catchups() {
+    if let Ok(mut pending) = group_catchups().lock() {
+        pending.clear();
+    }
+}
+
+fn collect_group_catchup_groups(groups: &mut HashSet<String>) {
+    if let Ok(pending) = group_catchups().lock() {
+        groups.extend(
+            pending
+                .iter()
+                .filter(|(_, (paused, _))| !paused)
+                .map(|(group_id, _)| group_id.clone()),
+        );
+    }
+}
+
+fn clear_refills(remove: impl Fn(&Key) -> bool) {
+    if let Ok(mut pending) = refills().lock() {
+        pending.retain(|key, _| !remove(key));
+    }
+}
+
+fn collect_refill_groups(groups: &mut HashSet<String>) {
+    if let Ok(pending) = refills().lock() {
+        groups.extend(
+            pending
+                .iter()
+                .filter(|(_, paused)| !**paused)
+                .map(|((group_id, _), _)| group_id.clone()),
+        );
+    }
+}
+
+fn pending_refill_actors(group_id: &str) -> Vec<String> {
+    refills()
+        .lock()
+        .map(|pending| {
+            pending
+                .iter()
+                .filter(|((id, _), paused)| id == group_id && !**paused)
+                .map(|((_, actor_id), _)| actor_id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Keeps new delivery work away from one Actor while its runtime owner is
 /// replaced. Dropping the guard lifts the fence.
 pub struct DeliveryFence(Key);
@@ -228,8 +355,8 @@ pub(super) fn record_completion(completion: DeliveryCompletion) {
     }
 }
 
-pub(super) fn complete_job(job: &DeliveryJob) {
-    finish_job(job, CompletedDelivery::Accepted);
+pub(super) fn complete_job(job: &DeliveryJob, evidence: Option<DeliveryEvidence>) {
+    finish_job(job, CompletedDelivery::Accepted(evidence));
 }
 
 pub(super) fn finish_job(job: &DeliveryJob, outcome: CompletedDelivery) {
@@ -557,11 +684,23 @@ enum DispatchSource {
 impl DispatchSource {
     fn missed(self, group: &GroupDoc, actor: &Actor, event: &Event) {
         match self {
-            Self::New => gaps::record(group, actor, Some(event)),
-            Self::Unread(_) => gaps::record(group, actor, None),
+            Self::New => {
+                if actor.external_session_id.is_empty() {
+                    gaps::record(group, actor, Some(event));
+                } else {
+                    set_refill(&group.group_id, &actor.id, true);
+                }
+            }
+            Self::Unread(_) => record_member_catchup(group, actor),
             Self::Directed => {}
         }
     }
+}
+
+struct DispatchOutcome {
+    report: DispatchReport,
+    interrupted: bool,
+    held: bool,
 }
 
 fn dispatch_to_inner(
@@ -573,11 +712,29 @@ fn dispatch_to_inner(
     claims: Option<&[(&Actor, &'static str)]>,
     source: DispatchSource,
 ) -> DispatchReport {
+    dispatch_to_inner_outcome(home, group, event, targets, force_ambiguous, claims, source).report
+}
+
+fn dispatch_to_inner_outcome(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    event: &Event,
+    targets: &[Actor],
+    force_ambiguous: bool,
+    claims: Option<&[(&Actor, &'static str)]>,
+    source: DispatchSource,
+) -> DispatchOutcome {
     if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
-        return report(targets.len(), 0, 0);
+        return DispatchOutcome {
+            report: report(targets.len(), 0, 0),
+            interrupted: false,
+            held: false,
+        };
     }
     let mut queued = 0;
     let mut online = 0;
+    let mut interrupted = false;
+    let mut held = false;
     let preclaimed = claims.is_some();
     for actor in targets {
         if !actor.enabled || held_for_switch(group, actor) {
@@ -626,6 +783,7 @@ fn dispatch_to_inner(
                         "failed to read the Actor's runtime owner"
                     );
                     source.missed(group, actor, event);
+                    interrupted = true;
                     continue;
                 }
             };
@@ -656,15 +814,36 @@ fn dispatch_to_inner(
                         "failed to claim runtime delivery"
                     );
                     source.missed(group, actor, event);
+                    interrupted = true;
                     continue;
                 }
             }
         }
-        if offer_delivery(home, group, actor, event, transport, claimed) {
-            queued += 1;
+        match offer_delivery(home, group, actor, event, transport, claimed) {
+            Offer::Queued => queued += 1,
+            Offer::AlreadyInFlight => {}
+            Offer::Held => {
+                held = true;
+                interrupted = true;
+            }
+            Offer::Refused => {
+                interrupted = true;
+                if actor.external_session_id.is_empty() {
+                    match source {
+                        DispatchSource::New => gaps::record(group, actor, Some(event)),
+                        DispatchSource::Unread(_) | DispatchSource::Directed => {
+                            gaps::record(group, actor, None);
+                        }
+                    }
+                }
+            }
         }
     }
-    report(targets.len(), online, queued)
+    DispatchOutcome {
+        report: report(targets.len(), online, queued),
+        interrupted,
+        held,
+    }
 }
 
 fn offer_delivery(
@@ -674,7 +853,7 @@ fn offer_delivery(
     event: &Event,
     transport: &'static str,
     claimed: bool,
-) -> bool {
+) -> Offer {
     let offered = enqueue(DeliveryJob {
         home: home.clone(),
         group: group.clone(),
@@ -683,39 +862,40 @@ fn offer_delivery(
         claimed,
         transport,
     });
-    if offered == Offer::Refused
-        && claimed
-        && let Err(error) = crate::ops::runtime_delivery::append_state(
-            home,
-            &group.group_id,
-            &actor.id,
-            &actor.created_at,
-            &event.id,
-            transport,
-            if actor.external_session_id.is_empty() {
-                crate::ops::runtime_delivery::DeliveryOutcome::Failed(
-                    "daemon delivery queue did not accept the event",
-                )
-            } else {
+    if offered == Offer::Refused {
+        if claimed
+            && let Err(error) = crate::ops::runtime_delivery::append_state(
+                home,
+                &group.group_id,
+                &actor.id,
+                &actor.created_at,
+                &event.id,
+                transport,
                 crate::ops::runtime_delivery::DeliveryOutcome::Unsubmitted(
                     "daemon delivery queue did not accept the event",
-                )
-            },
-        )
-    {
-        tracing::warn!(message = %error.message, "failed to record rejected runtime delivery");
+                ),
+            )
+        {
+            tracing::warn!(message = %error.message, "failed to record rejected runtime delivery");
+        }
+        if !actor.external_session_id.is_empty() {
+            set_refill(&group.group_id, &actor.id, true);
+        }
     }
-    offered == Offer::Queued
+    offered
 }
 
 pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usize {
     if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        set_refill(&group.group_id, actor_id, false);
         return 0;
     }
     let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
+        set_refill(&group.group_id, actor_id, false);
         return 0;
     };
     if !actor.enabled || held_for_switch(group, actor) {
+        set_refill(&group.group_id, actor_id, false);
         return 0;
     }
     let gap = gaps::resume_member(&group.group_id, actor_id);
@@ -728,8 +908,33 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
             .as_ref()
             .is_some_and(|o| o.state == crate::ops::actor_runtime::OwnerState::Running)
     {
+        set_refill(&group.group_id, actor_id, false);
         gaps::complete(&group.group_id, actor_id, gap.as_ref());
         return 0;
+    }
+    if let Some(Err(error)) = &observed {
+        tracing::warn!(%error, group_id = %group.group_id, %actor_id,
+            "failed to read the runtime owner for pending deliveries");
+        record_member_catchup(group, actor);
+        return 0;
+    }
+    match crate::ops::actor_runtime::confirmation_pause_applies(home, &group.group_id, actor) {
+        Ok(false) => {}
+        Ok(true) => {
+            set_refill(&group.group_id, actor_id, false);
+            gaps::complete(&group.group_id, actor_id, gap.as_ref());
+            return 0;
+        }
+        Err(error) => {
+            tracing::warn!(
+                message = %error.message,
+                group_id = %group.group_id,
+                %actor_id,
+                "failed to check confirmation pause for pending deliveries"
+            );
+            record_member_catchup(group, actor);
+            return 0;
+        }
     }
     let events = match crate::ops::runtime_delivery::pending_sources(
         home,
@@ -740,6 +945,7 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
         Ok(events) => events,
         Err(error) => {
             tracing::warn!(message = %error.message, %actor_id, "failed to load pending runtime deliveries");
+            record_member_catchup(group, actor);
             return 0;
         }
     };
@@ -783,28 +989,39 @@ pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> u
         };
         owner_transport(home, group, actor, owner.as_ref())
     };
-    let queued = events
-        .into_iter()
-        .map(|event| {
-            dispatch_to_inner(
-                home,
-                group,
-                &event,
-                std::slice::from_ref(actor),
-                false,
-                None,
-                DispatchSource::Unread(transport),
-            )
-            .queued
-        })
-        .sum();
-    if !full_page {
+    let mut queued = 0;
+    let mut interrupted = false;
+    let mut held = false;
+    for event in events {
+        let outcome = dispatch_to_inner_outcome(
+            home,
+            group,
+            &event,
+            std::slice::from_ref(actor),
+            false,
+            None,
+            DispatchSource::Unread(transport),
+        );
+        queued += outcome.report.queued;
+        if outcome.held {
+            held = true;
+            break;
+        }
+        if outcome.interrupted {
+            interrupted = true;
+            break;
+        }
+    }
+    if held {
+        return queued;
+    }
+    if !full_page && !interrupted {
         gaps::complete(&group.group_id, actor_id, gap.as_ref());
     }
-    if native && full_page {
-        // The whole page may already be in flight. Its tail still needs a
-        // later ledger read after those deliveries settle.
-        set_refill(&group.group_id, actor_id, true);
+    if full_page {
+        // The whole page may already be in flight (or filled the queue). Its
+        // tail still needs a later ledger read after those deliveries settle.
+        record_member_catchup(group, actor);
     }
     queued
 }
@@ -950,10 +1167,13 @@ fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {
 }
 
 fn set_refill(group_id: &str, actor_id: &str, needed: bool) {
-    if let Ok(mut workers) = workers().lock()
-        && let Some(worker) = workers.get_mut(&(group_id.into(), actor_id.into()))
-    {
-        worker.needs_refill = needed;
+    if let Ok(mut pending) = refills().lock() {
+        let key = (group_id.to_owned(), actor_id.to_owned());
+        if needed {
+            pending.insert(key, false);
+        } else {
+            pending.remove(&key);
+        }
     }
 }
 
@@ -963,18 +1183,20 @@ enum Offer {
     /// The member's runtime is being switched. A claimed job was already
     /// given back as unsubmitted, so the switch's own dispatch offers it again.
     Held,
+    /// The event already holds an in-flight slot in the worker or completion queue.
+    AlreadyInFlight,
     Refused,
 }
 
 fn enqueue(job: DeliveryJob) -> Offer {
     let key = (job.group.group_id.clone(), job.actor.id.clone());
     let delivery_key = (key.0.clone(), key.1.clone(), job.event.id.clone());
-    let reserved = in_flight()
-        .lock()
-        .map(|mut pending| pending.insert(delivery_key.clone()))
-        .unwrap_or(false);
+    let reserved = match in_flight().lock() {
+        Ok(mut pending) => pending.insert(delivery_key.clone()),
+        Err(_) => return Offer::Refused,
+    };
     if !reserved {
-        return Offer::Refused;
+        return Offer::AlreadyInFlight;
     }
     let mut map = match workers().lock() {
         Ok(map) => map,
@@ -1010,17 +1232,13 @@ fn enqueue(job: DeliveryJob) -> Offer {
     };
     match sender.try_send(job) {
         Ok(()) => Offer::Queued,
-        Err(TrySendError::Full(job)) => {
-            if !job.actor.external_session_id.is_empty() {
-                worker.needs_refill = true;
-            }
+        Err(TrySendError::Full(_)) => {
             clear_in_flight(|item| item == &delivery_key);
             tracing::warn!(group_id = %key.0, actor_id = %key.1, "PTY delivery queue is full");
             Offer::Refused
         }
         Err(TrySendError::Disconnected(job)) => {
-            let mut replacement = spawn_worker(&key);
-            replacement.needs_refill = worker.needs_refill;
+            let replacement = spawn_worker(&key);
             let result = replacement
                 .sender
                 .as_ref()
@@ -1235,7 +1453,6 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
         cancelled,
         replaced,
         thread,
-        needs_refill: false,
     }
 }
 
@@ -1848,10 +2065,15 @@ done"#;
         }
         let cancelled = Arc::new(AtomicBool::new(false));
         let cancel = Arc::clone(&cancelled);
-        let group = group_id.clone();
         let (result_tx, result_rx) = mpsc::channel();
+        let expected = cccc_runtime::status(&group_id, &actor.id).expect("terminal status");
         let thread = std::thread::spawn(move || {
-            let result = submit_terminal_text(&group, &actor, &"x".repeat(1024 * 1024), &cancel);
+            let result = submit_terminal_text_for_session(
+                &expected,
+                &actor,
+                &"x".repeat(1024 * 1024),
+                &cancel,
+            );
             result_tx.send(result).expect("result receiver");
         });
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -1861,7 +2083,6 @@ done"#;
             cancelled,
             replaced: Arc::new(AtomicBool::new(false)),
             thread: Some(thread),
-            needs_refill: false,
         };
         let (done_tx, done_rx) = mpsc::channel();
         let shutdown = std::thread::spawn(move || {
@@ -1873,7 +2094,11 @@ done"#;
         shutdown.join().expect("shutdown thread");
         assert!(blocked, "fixture must block input before shutdown");
         stopped.expect("delivery shutdown must finish before stopping the runtime");
-        assert!(!result_rx.recv().expect("cancelled submission"));
+        assert!(matches!(
+            result_rx.recv().expect("cancelled submission"),
+            cccc_runtime::PtyHandoff::Uncertain(cccc_runtime::PtyHandoffReason::Cancelled)
+                | cccc_runtime::PtyHandoff::NotWritten(cccc_runtime::PtyHandoffReason::Cancelled)
+        ));
     }
 
     #[test]
@@ -2019,6 +2244,279 @@ done"#;
             pending.iter().map(|event| &event.id).collect::<Vec<_>>(),
             [&event.id],
             "the switch's own dispatch offers it again"
+        );
+    }
+
+    struct GroupGuard(String);
+    impl Drop for GroupGuard {
+        fn drop(&mut self) {
+            shutdown_group(&self.0);
+        }
+    }
+
+    fn install_stub_worker(group_id: &str, actor_id: &str) -> mpsc::Receiver<DeliveryJob> {
+        let (tx, rx) = mpsc::sync_channel(QUEUE_CAPACITY);
+        workers().lock().expect("workers").insert(
+            (group_id.to_owned(), actor_id.to_owned()),
+            DeliveryWorker {
+                sender: Some(tx),
+                cancelled: Arc::new(AtomicBool::new(false)),
+                replaced: Arc::new(AtomicBool::new(false)),
+                thread: None,
+            },
+        );
+        rx
+    }
+
+    fn append_send(ledger_path: &std::path::Path, group_id: &str, to: &str, text: &str) -> Event {
+        let mut event = Event::new("chat.message", group_id);
+        event.by = "user".into();
+        event.data = json!({"to":[to],"text":text,"message_mode":"send"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        ledger::append(ledger_path, &event).expect("append send");
+        event
+    }
+
+    #[test]
+    fn non_external_queue_full_records_unsubmitted_and_recovers_in_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("queue full", "").expect("group");
+        let _guard = GroupGuard(group.group_id.clone());
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let rx = install_stub_worker(&group.group_id, &actor.id);
+
+        for index in 0..QUEUE_CAPACITY {
+            let filler = append_send(&path, &group.group_id, &actor.id, &format!("fill-{index}"));
+            let report = dispatch(&home, &group, &filler);
+            assert_eq!(report.queued, 1);
+        }
+
+        let first_overflow = append_send(&path, &group.group_id, &actor.id, "overflow-1");
+        let second_overflow = append_send(&path, &group.group_id, &actor.id, "overflow-2");
+        assert_eq!(dispatch(&home, &group, &first_overflow).queued, 0);
+        // Subsequent send joins the open gap and cannot overtake the rejected one.
+        assert_eq!(dispatch(&home, &group, &second_overflow).queued, 0);
+
+        let records = ledger::read_all(&path).expect("ledger");
+        let rejected = records
+            .iter()
+            .rfind(|record| {
+                record.kind == "runtime.delivery"
+                    && record.data["source_event_id"] == first_overflow.id
+            })
+            .expect("rejected delivery record");
+        assert_eq!(rejected.data["state"], "failed");
+        assert_eq!(rejected.data["retryable"], true);
+        assert!(
+            !records.iter().any(|record| {
+                record.kind == "runtime.delivery"
+                    && record.data["source_event_id"] == second_overflow.id
+            }),
+            "second overflow stays behind the open gap without overtaking"
+        );
+        assert!(pending_group_ids().contains(&group.group_id));
+
+        // Free two slots in the worker queue and drain the group.
+        for _ in 0..2 {
+            let job = rx.try_recv().expect("queued filler");
+            complete_job(&job, None);
+        }
+        drain_group(&home, &group.group_id);
+
+        let mut remaining: Vec<String> = rx.try_iter().map(|job| job.event.id).collect();
+        let tail = remaining.split_off(remaining.len() - 2);
+        assert_eq!(tail, vec![first_overflow.id, second_overflow.id]);
+        // One more drain with capacity clears the completed gap.
+        clear_in_flight(|item| item.0 == group.group_id);
+        drain_group(&home, &group.group_id);
+        assert!(!pending_group_ids().contains(&group.group_id));
+    }
+
+    #[test]
+    fn non_external_dispatch_unread_pages_beyond_queue_capacity_in_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("backlog paging", "").expect("group");
+        let _guard = GroupGuard(group.group_id.clone());
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let rx = install_stub_worker(&group.group_id, &actor.id);
+
+        let total = QUEUE_CAPACITY + 4;
+        let ids: Vec<String> = (0..total)
+            .map(|index| append_send(&path, &group.group_id, &actor.id, &format!("msg-{index}")).id)
+            .collect();
+
+        assert_eq!(
+            dispatch_unread(&home, &group, &actor.id),
+            QUEUE_CAPACITY,
+            "first page fills the bounded queue"
+        );
+        assert!(
+            pending_group_ids().contains(&group.group_id),
+            "full page schedules catch-up for the tail"
+        );
+
+        // Draining while all slots are occupied does not duplicate or drop the tail.
+        drain_group(&home, &group.group_id);
+        let first_page: Vec<String> = rx
+            .try_iter()
+            .map(|job| {
+                complete_job(&job, None);
+                job.event.id
+            })
+            .collect();
+        assert_eq!(first_page, ids[..QUEUE_CAPACITY]);
+
+        // Once slots free up, maintenance delivers the tail in exact ledger order.
+        drain_group(&home, &group.group_id);
+        let second_page: Vec<String> = rx
+            .try_iter()
+            .map(|job| {
+                complete_job(&job, None);
+                job.event.id
+            })
+            .collect();
+        assert_eq!(second_page, ids[QUEUE_CAPACITY..]);
+        assert!(!pending_group_ids().contains(&group.group_id));
+    }
+
+    #[test]
+    fn dispatch_unread_pending_sources_error_records_catchup_and_recovers() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("pending read error", "").expect("group");
+        let _guard = GroupGuard(group.group_id.clone());
+        let pty_actor = Actor::new("pty_peer");
+        let mut native_actor = Actor::new("native_peer");
+        native_actor.external_session_id = "ext_session_1".into();
+        group
+            .actors
+            .extend([pty_actor.clone(), native_actor.clone()]);
+        store.save(&group).expect("save group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+
+        let pty_msg = append_send(&path, &group.group_id, &pty_actor.id, "for pty");
+        let native_msg = append_send(&path, &group.group_id, &native_actor.id, "for native");
+
+        // Corrupt read_cursors.json so pending_sources fails before any worker exists.
+        let cursor_path = store
+            .state_dir(&group.group_id)
+            .expect("state dir")
+            .join("read_cursors.json");
+        std::fs::write(&cursor_path, b"{not valid json").expect("corrupt cursors");
+
+        assert_eq!(dispatch_unread(&home, &group, &pty_actor.id), 0);
+        assert_eq!(dispatch_unread(&home, &group, &native_actor.id), 0);
+        assert!(pending_group_ids().contains(&group.group_id));
+
+        // Install stub workers and restore the cursor file, then drain.
+        let pty_rx = install_stub_worker(&group.group_id, &pty_actor.id);
+        let native_rx = install_stub_worker(&group.group_id, &native_actor.id);
+        std::fs::remove_file(&cursor_path).expect("restore cursors");
+
+        drain_group(&home, &group.group_id);
+        assert_eq!(
+            pty_rx
+                .try_iter()
+                .map(|job| job.event.id)
+                .collect::<Vec<_>>(),
+            vec![pty_msg.id]
+        );
+        assert_eq!(
+            native_rx
+                .try_iter()
+                .map(|job| job.event.id)
+                .collect::<Vec<_>>(),
+            vec![native_msg.id]
+        );
+        assert!(!pending_group_ids().contains(&group.group_id));
+    }
+
+    #[test]
+    fn already_in_flight_offer_does_not_overwrite_claimed_receipt() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("already in flight", "").expect("group");
+        let _guard = GroupGuard(group.group_id.clone());
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let event = append_send(&path, &group.group_id, &actor.id, "in flight");
+
+        crate::ops::runtime_delivery::append_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &actor.created_at,
+            &event.id,
+            "pty",
+            crate::ops::runtime_delivery::DeliveryOutcome::Claimed,
+        )
+        .expect("claim");
+        in_flight().lock().expect("in flight").insert((
+            group.group_id.clone(),
+            actor.id.clone(),
+            event.id.clone(),
+        ));
+
+        assert_eq!(
+            offer_delivery(&home, &group, &actor, &event, "pty", true),
+            Offer::AlreadyInFlight
+        );
+        let state = crate::ops::runtime_delivery::latest_state(
+            &home,
+            &group.group_id,
+            &actor.id,
+            &event.id,
+        )
+        .expect("state");
+        assert_eq!(state.map(|(s, _)| s).as_deref(), Some("claimed"));
+        assert!(!pending_group_ids().contains(&group.group_id));
+    }
+
+    #[test]
+    fn confirmation_paused_backlog_does_not_schedule_refill_spin() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("paused confirmation", "").expect("group");
+        let _guard = GroupGuard(group.group_id.clone());
+        let mut actor = Actor::new("claude");
+        actor.runtime = ActorRuntime::Claude;
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        for index in 0..QUEUE_CAPACITY {
+            append_send(&path, &group.group_id, &actor.id, &format!("wait-{index}"));
+        }
+        crate::ops::local_headless::pause_confirmation(&group.group_id, &actor.id)
+            .expect("pause confirmation");
+        struct PauseGuard(String, String);
+        impl Drop for PauseGuard {
+            fn drop(&mut self) {
+                let _ = crate::ops::local_headless::retry_confirmation(&self.0, &self.1);
+            }
+        }
+        let _pause_guard = PauseGuard(group.group_id.clone(), actor.id.clone());
+
+        assert_eq!(dispatch_unread(&home, &group, &actor.id), 0);
+        assert!(
+            !pending_group_ids().contains(&group.group_id),
+            "paused confirmation backlog must not keep a maintenance refill spinning"
         );
     }
 }

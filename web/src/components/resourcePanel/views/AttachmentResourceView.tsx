@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { DocumentPreview } from "../../messageBubble/DocumentPreview";
 import { pauseOtherMessageMedia } from "../../messageBubble/messageMedia";
+import { resolveSvgImageSource } from "../../messageBubble/svgImageSource";
 import { GraphicViewer } from "../../viewer/GraphicViewer";
 import type { AttachmentResource } from "../../../stores/useResourcePanelStore";
 
@@ -53,13 +54,14 @@ function ResourceImage({
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const blob = await response.blob();
+        const resolved = await resolveSvgImageSource(blob);
         if (controller.signal.aborted) return;
-        objectUrl = URL.createObjectURL(blob);
-        setSvg({
-          href,
-          src: objectUrl,
-          isSvg: blob.type.split(";", 1)[0].trim().toLowerCase() === "image/svg+xml",
-        });
+        if (resolved.kind === "raster") {
+          objectUrl = URL.createObjectURL(resolved.blob);
+          setSvg({ href, src: objectUrl, isSvg: false });
+        } else {
+          setSvg({ href, src: resolved.src, isSvg: true });
+        }
       } catch {
         if (!controller.signal.aborted) setSvg({ href, error: true });
       }

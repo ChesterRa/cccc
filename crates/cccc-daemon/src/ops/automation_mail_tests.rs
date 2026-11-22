@@ -103,7 +103,7 @@ impl Fixture {
                 ClaimResult::Claimed
             );
             let outcome = match state {
-                "accepted" => Some(DeliveryOutcome::Accepted),
+                "accepted" => Some(DeliveryOutcome::Accepted(None)),
                 "failed" => Some(DeliveryOutcome::Failed("fixture handoff failed")),
                 "claimed" => None,
                 _ => panic!("unknown fixture delivery state"),
@@ -337,7 +337,7 @@ fn repeat_mail_respects_resolution_pause_resume_and_actor_generation() {
                     &mail.id,
                     "pty",
                     if outcome == "accepted" {
-                        DeliveryOutcome::Accepted
+                        DeliveryOutcome::Accepted(None)
                     } else {
                         DeliveryOutcome::Ambiguous("fixture")
                     },

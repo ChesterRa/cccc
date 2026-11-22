@@ -33,6 +33,7 @@ pub(crate) use supervisor::{
     pauses_after_confirmation, registered_generation, registered_running, registered_workspace,
 };
 
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_core::HomeLayout;
 use serde::Serialize;
 use std::future::Future;
@@ -178,15 +179,48 @@ pub struct HeadlessStatus {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchSubmission {
     Deferred,
-    Accepted,
+    Accepted(Option<DeliveryEvidence>),
     Unconfirmed,
     /// Early Mail notices the Actor is no longer ready for. Nothing was sent;
     /// the unread tick re-issues them once the Actor is idle and the Mail is
     /// still unread, so they are withdrawn rather than retried.
     Withheld,
+}
+
+impl BatchSubmission {
+    fn is_accepted(self) -> bool {
+        matches!(self, Self::Accepted(_))
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn owner_result(self, started: bool) -> serde_json::Value {
+        use serde_json::json;
+        let outcome = match self {
+            Self::Deferred => "Deferred",
+            Self::Accepted(_) => "Accepted",
+            Self::Unconfirmed => "Unconfirmed",
+            Self::Withheld => "Withheld",
+        };
+        let mut result = json!({"backend":"managed","outcome":outcome,"started":started});
+        if let Self::Accepted(Some(evidence)) = self {
+            result["delivery_evidence"] = json!(evidence);
+        }
+        result
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn from_owner_result(result: &serde_json::Value) -> Option<Self> {
+        Some(match result.get("outcome")?.as_str()? {
+            "Deferred" => Self::Deferred,
+            "Accepted" => Self::Accepted(DeliveryEvidence::from_json(&result["delivery_evidence"])),
+            "Unconfirmed" => Self::Unconfirmed,
+            "Withheld" => Self::Withheld,
+            _ => return None,
+        })
+    }
 }
 
 #[derive(Debug)]

@@ -26,7 +26,12 @@ export function mergeObligationStatus(
       return [
         actor,
         previous && !status.replied && !status.cancelled && (previous.replied || previous.cancelled)
-          ? { ...status, replied: previous.replied, cancelled: previous.cancelled }
+          ? {
+              ...status,
+              replied: previous.replied,
+              cancelled: previous.cancelled,
+              waiting_reason: undefined,
+            }
           : status,
       ];
     }),

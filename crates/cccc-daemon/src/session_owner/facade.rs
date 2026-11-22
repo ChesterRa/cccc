@@ -1,3 +1,4 @@
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_core::HomeLayout;
 use std::io;
 
@@ -283,7 +284,7 @@ pub(crate) fn acknowledge_event(
 
 pub(crate) enum RetainedDelivery {
     Pending,
-    Accepted,
+    Accepted(Option<DeliveryEvidence>),
     Unsubmitted,
     Failed(String),
     Withdrawn,
@@ -331,29 +332,30 @@ pub(crate) fn observe_delivery(
                 .get("backend")
                 .and_then(serde_json::Value::as_str)
             {
-                Some("managed") => match result.get("outcome").cloned().and_then(|value| {
-                    serde_json::from_value::<crate::ops::local_headless::BatchSubmission>(value)
-                        .ok()
-                }) {
-                    Some(crate::ops::local_headless::BatchSubmission::Accepted) => {
-                        RetainedDelivery::Accepted
+                Some("managed") => {
+                    match crate::ops::local_headless::BatchSubmission::from_owner_result(&result) {
+                        Some(crate::ops::local_headless::BatchSubmission::Accepted(evidence)) => {
+                            RetainedDelivery::Accepted(evidence)
+                        }
+                        Some(crate::ops::local_headless::BatchSubmission::Withheld) => {
+                            RetainedDelivery::Withdrawn
+                        }
+                        Some(crate::ops::local_headless::BatchSubmission::Deferred)
+                            if result.get("started").and_then(serde_json::Value::as_bool)
+                                == Some(false) =>
+                        {
+                            RetainedDelivery::Unsubmitted
+                        }
+                        _ => RetainedDelivery::Unknown,
                     }
-                    Some(crate::ops::local_headless::BatchSubmission::Withheld) => {
-                        RetainedDelivery::Withdrawn
-                    }
-                    Some(crate::ops::local_headless::BatchSubmission::Deferred)
-                        if result.get("started").and_then(serde_json::Value::as_bool)
-                            == Some(false) =>
-                    {
-                        RetainedDelivery::Unsubmitted
-                    }
-                    _ => RetainedDelivery::Unknown,
-                },
+                }
                 Some("deepseek") => match result.get("outcome").cloned().and_then(|value| {
                     serde_json::from_value::<crate::ops::deepseek_runtime::TurnDelivery>(value).ok()
                 }) {
                     Some(crate::ops::deepseek_runtime::TurnDelivery::Completed) => {
-                        RetainedDelivery::Accepted
+                        RetainedDelivery::Accepted(DeliveryEvidence::from_json(
+                            &result["delivery_evidence"],
+                        ))
                     }
                     Some(crate::ops::deepseek_runtime::TurnDelivery::Failed(reason)) => {
                         RetainedDelivery::Failed(reason)
@@ -367,7 +369,9 @@ pub(crate) fn observe_delivery(
                     _ => RetainedDelivery::Unknown,
                 },
                 Some("pty") => match result.get("outcome").and_then(serde_json::Value::as_str) {
-                    Some("accepted") => RetainedDelivery::Accepted,
+                    Some("accepted") => RetainedDelivery::Accepted(DeliveryEvidence::from_json(
+                        &result["delivery_evidence"],
+                    )),
                     Some("not_written") => RetainedDelivery::Unsubmitted,
                     _ => RetainedDelivery::Unknown,
                 },

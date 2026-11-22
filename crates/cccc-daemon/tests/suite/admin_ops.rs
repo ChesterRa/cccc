@@ -480,6 +480,33 @@ fn diagnostics_are_developer_gated_and_logs_are_bounded() {
         .observability
         .insert("developer_mode".into(), Value::Bool(true));
     settings::save(&home, &global).expect("save");
+    let snapshot = ok(&home, "debug_snapshot", json!({}));
+    let memory = &snapshot.result["memory"];
+    for key in [
+        "entries",
+        "budget_bytes",
+        "budget_limit_bytes",
+        "largest_budget_bytes",
+        "pinned",
+        "hits",
+        "entries_created",
+        "index_rebuilds",
+        "evictions",
+        "invalidations",
+    ] {
+        assert!(memory["ledger_index"][key].is_u64(), "ledger_index.{key}");
+    }
+    for key in ["vm_rss_kib", "rss_anon_kib", "vm_swap_kib"] {
+        let value = &memory["process"][key];
+        if cfg!(target_os = "linux") {
+            assert!(value.is_u64(), "process.{key}");
+        } else {
+            assert!(value.is_null() || value.is_u64(), "process.{key}");
+        }
+    }
+    if cfg!(target_os = "linux") {
+        assert!(memory["process"]["vm_rss_kib"].as_u64() > Some(0));
+    }
     let empty = ok(
         &home,
         "debug_tail_logs",

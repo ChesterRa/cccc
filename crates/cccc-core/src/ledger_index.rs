@@ -191,6 +191,7 @@ fn current(path: &Path) -> io::Result<Arc<RwLock<LedgerIndex>>> {
     let next_revisions = revisions(path)?;
     if index.revisions != next_revisions {
         *index = LedgerIndex::rebuild(path, next_revisions)?;
+        cache::note_rebuild();
     }
     let weight = index
         .revisions
@@ -247,6 +248,13 @@ pub(crate) fn note_append(path: &Path, event: &Event, encoded_len: usize) {
     } else {
         index.revisions.clear();
     }
+}
+
+pub use cache::Stats;
+
+/// Read-only diagnostics of the shared ledger index cache.
+pub fn stats() -> Stats {
+    cache::stats()
 }
 
 pub(crate) fn invalidate_path(path: &Path) {

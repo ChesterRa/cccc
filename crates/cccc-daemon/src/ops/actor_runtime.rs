@@ -79,6 +79,19 @@ pub fn apply(
     apply_resolved(home, group, &actor, kind)
 }
 
+pub(super) fn require_owner_observation(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> Result<(), OpError> {
+    #[cfg(unix)]
+    if actor.external_session_id.is_empty() && crate::session_owner::enabled(home) {
+        crate::session_owner::snapshot(&group.group_id, &actor.id).map_err(OpError::io)?;
+    }
+    let _ = (home, group, actor);
+    Ok(())
+}
+
 /// Restore policy and startup must use the same effective Profile snapshot.
 pub(super) fn apply_resolved(
     home: &HomeLayout,
@@ -94,12 +107,8 @@ pub(super) fn apply_resolved(
         return Ok(result);
     }
     let actor_id = &actor.id;
-    #[cfg(unix)]
-    if crate::session_owner::enabled(home) {
-        // An unavailable owner is not an absent one. In particular, automatic
-        // restore must not launch a replacement on a failed read.
-        crate::session_owner::snapshot(&group.group_id, actor_id).map_err(OpError::io)?;
-    }
+    // Recheck at execution in case an owner became unavailable after the caller's preflight.
+    require_owner_observation(home, group, actor)?;
     if actor_id == "voice-secretary" || actor.internal_kind.as_deref() == Some("voice_secretary") {
         return Err(OpError::new(
             "global_secretary_owner",

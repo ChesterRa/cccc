@@ -122,6 +122,16 @@
     "notDelivered": "Not delivered",
     "deliveryClaimed": "Sending…",
     "deliveryAccepted": "Sent to runtime",
+    "deliveryTerminalWritten": "Written to terminal (execution unconfirmed)",
+    "deliveryChannelAccepted": "Accepted by the runtime",
+    "deliveryWaiting": "Waiting",
+    "waitingReason": {
+      "groupPaused": "Waiting · Group paused",
+      "groupStopped": "Waiting · Group stopped",
+      "memberDisabled": "Waiting · Member disabled",
+      "runtimeSwitch": "Waiting · Switching runtime",
+      "notSubmitted": "Waiting · Not submitted yet"
+    },
     "deliveryFailed": "Delivery failed",
     "deliveryAmbiguous": "Delivery uncertain",
     "sendNow": "Send now",

@@ -188,6 +188,11 @@ the actual terminal execution result; it does not create a second Inbox or
 durable input journal. A daemon reconnects by member/source references and
 queries facts instead of reconstructing a lost sequence or resending input.
 
+An accepted Submit result may carry `delivery_evidence` alongside the existing
+outcome. It records the handoff boundary defined in CCCS §6.5, not provider
+execution. A daemon can settle an older result without evidence as generic
+acceptance.
+
 Query returns one of:
 
 | Result | Meaning |
@@ -232,10 +237,10 @@ replay authority.
 
 ## Observations, exit and recovery
 
-Finite synchronous list projections may explicitly share one snapshot per
-owner instance within that request. Outside that scope, observations read the
-owner directly. Writes invalidate the current request's projection. Wait/follow
-loops and delivery decisions must not retain a scoped or time-based cache.
+Finite synchronous list projections and the read phase of a lifecycle request
+may share one snapshot per owner instance. Outside that scope, observations
+read the owner directly. Writes invalidate the current request's projection.
+Wait/follow loops and delivery decisions must not retain a scoped or time-based cache.
 
 A member getter failure is retained with its identity as a private per-member
 observation error. Other members can still be observed and reattached. Public
@@ -251,6 +256,19 @@ member need not inherit a member-specific observation error.
 Owner unavailability is not evidence of member exit. Lists and successful
 configuration responses preserve unknown observations explicitly. Missing
 fields and an unavailable Group projection must not trigger automatic Start.
+When a successful member Stop recomputes the saved Group running intent from
+the remaining processes, an unknown observation cannot clear that intent.
+An observed running member still counts, and the existing rules for
+structured members that need no process continue to apply.
+Start, Stop, Restart, New Session, Remove and edits to Enabled check owner
+availability before changing delivery workers, resume eligibility or the
+current process. The execution checks still apply if availability changes
+after that observation. Rollback requires a known runtime effect before
+stopping or restoring a process.
+When executing a PTY Submit, the owner binds the write to the
+terminal identity verified for that operation. If that PTY has already been
+replaced or stopped before writing, the result confirms that nothing was
+written. It cannot submit the old operation to the replacement terminal.
 
 The public maintenance request and final shutdown report are specified in
 [CCCC_DAEMON_IPC_V1.md](CCCC_DAEMON_IPC_V1.md). Reports distinguish confirmed

@@ -218,6 +218,9 @@ pub struct SearchArgs {
     /// Maximum number of matching events to return; the daemon clamps to 1-200.
     #[arg(short = 'n', long = "limit", default_value_t = 50)]
     pub limit: u64,
+    /// Include reply and delivery status on matching messages.
+    #[arg(long)]
+    pub with_obligation_status: bool,
 }
 
 #[derive(Debug, Subcommand)]
