@@ -6,6 +6,54 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.59]
+
+### Added
+
+- On Linux and native Apple Silicon Macs, CCCC can restart or install a compatible update
+  while managed agents keep running. Choose **Keep agents running** in **Settings > This
+  instance > Update** (**Update now** or **Restart CCCC**), **Keep agents; update** or **Keep
+  agents and restart CCCC** in the terminal interface, or run
+  `cccc daemon stop --keep-agents` and `cccc daemon start`. CCCC reconnects to the same
+  processes with their terminal and output, and reports which members it found, restarted
+  or could not confirm. The first upgrade from v0.4.58 still stops managed agents.
+- Web and the terminal interface check for a release only when asked, and can update a
+  website installation in place, or restart CCCC into a locally rebuilt executable.
+- A full-screen viewer steps through the attachments of one message; task details open
+  beside the board on larger screens.
+- DeepSeek members run on the official Harness developer preview `0.2.2-rc.5`; generic ACP
+  members show tool activity.
+
+### Changed
+
+- `cccc daemon stop` says which agents it stopped and names any it could not confirm, with
+  a next step that works: run it again after a plain stop, or the review command after a
+  stop that kept agents.
+- OpenCode decides from its own settings whether a message joins a running turn; a Group
+  request to Chet that waits more than ten minutes is reported as not sent.
+- A start that begins a new conversation instead of resuming says so.
+
+### Fixed
+
+- A message sent while CCCC briefly could not reach a member's session owner is delivered
+  once the owner answers, in order, without another message.
+- A confirmed local command such as `/model` in a managed Claude Code terminal no longer
+  shows the member as working.
+- Environment values that are not valid Unicode no longer crash CCCC; a `CCCC_HOME` too
+  long for the daemon socket is reported with a workaround.
+- Managed-member failure reasons are no longer masked when they only resemble an inherited
+  environment value; delayed activity snapshots no longer replace a newer turn; a member
+  reading another member's agent state gets that member's state.
+- Fewer idle writes and lookups: browser members skip unchanged Group writes, member status
+  shares one owner snapshot per round, and two mid-sized ledger indexes stay cached when
+  switching Groups.
+- The Windows CLI reserves enough stack to start in debug builds.
+
+### Known limitation
+
+- With two session owners after a keep restart, one owner that stops responding blocks new
+  messages and individual stops for members of the other until it responds again.
+
 ## [0.4.58]
 
 ### Added

@@ -47,14 +47,15 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.58
+## What's new in 0.4.59
 
-- **Read documents in the page.** Markdown attachments switch between the rendered view and their unchanged source without downloading again. HTML attachments, Group HTML files and HTML from the raw GitHub and gist hosts open as a static preview: scripts do not run, forms are disabled and external resources are not loaded. HTML up to 20 MiB previews in full, embedded images included.
-- **One row for the phone composer.** At rest, the empty composer keeps attach, the template button, the input and voice on one row, so the template button no longer drops to a second line. A send in flight keeps its progress and **Stop waiting for upload** in view.
+- **Keep agents running while you maintain CCCC.** On Linux and native Apple Silicon Macs, restart CCCC or install a compatible update while managed agents keep working. Choose **Keep agents running** in **Settings > This instance > Update**, the keep option under `/update` or `/restart` in the terminal interface, or run `cccc daemon stop --keep-agents` and `cccc daemon start`. CCCC reconnects to the same processes and reports which members it found, restarted or could not confirm.
+- **Update from CCCC itself.** Web and the terminal interface check for a release when you ask, update a website installation in place, or restart into a locally rebuilt executable.
+- **Clearer results when something goes wrong.** A stop that cannot confirm an agent gives a next step that works, and a message sent while CCCC briefly cannot reach a member is delivered once it can.
 
-**Upgrade notes.** Before upgrading, let sends and recordings finish, restore or discard waiting sends, then send or copy every unsent draft and save unsaved edits in Files: all of these live only in the open page. Then restart the daemon and Web and reload open pages. A daemon restart still stops the agents that CCCC started.
+**Upgrade notes.** The first upgrade from 0.4.58 still stops managed agents, so let active turns finish first. Later compatible updates can keep them running. Windows updates restart agents.
 
-Details: [0.4.58 release notes](https://chesterra.github.io/cccc/release/v0.4.58_release_notes).
+Details: [0.4.59 release notes](https://chesterra.github.io/cccc/release/v0.4.59_release_notes).
 
 ## Quick start
 
