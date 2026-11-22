@@ -54,6 +54,7 @@ win32job.workspace = true
 cccc-linux-memory = { path = "../cccc-linux-memory" }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 axum.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]

@@ -694,6 +694,7 @@ dependencies = [
  "crossterm_winapi",
  "fs2",
  "nix 0.28.0",
+ "notify",
  "openssl-sys",
  "portable-pty",
  "ratatui",
