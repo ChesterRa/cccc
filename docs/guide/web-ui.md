@@ -648,10 +648,11 @@ arrive independently, so their display order does not establish a one-to-one rel
 #### Messages from Groups
 
 A Group member can address Chet with `@chet` as the only recipient, using **Send** or
-**Request reply**; Mail is not available for Chet. In the Web UI, a CCCC administrator can choose
+**Send + Reply**; Mail is not available for Chet. In the Web UI, a CCCC administrator can choose
 `@chet` in a Group's recipient row. If a member's ID or title is `chet`, `@chet` is ambiguous and
-the send is refused. Chet's messages in a Group are labelled **Chet**, and a reply to one without
-other recipients goes back to Chet. Chet writes to a Group directly; it does not forward
+the send is refused. Chet's messages in a Group are labelled **Chet**, and a reply to an ordinary
+Chet message without other recipients goes back to Chet; replies to Chet's card answers are
+described under Unattended mode. Chet writes to a Group directly; it does not forward
 messages between Groups or send through Connect.
 
 A Group message to Chet appears in Chet's conversation with its sender, Group and time, and
@@ -707,7 +708,7 @@ this CCCC instance and is off by default; while it is on, Chet's entry below the
 **Unattended on**. Only a CCCC administrator can turn it on or off.
 
 While it is on, each new message a member of a Group on this instance sends to you with **Send**
-or **Request reply** still reaches you, with your usual notifications, and a copy also goes to
+or **Send + Reply** still reaches you, with your usual notifications, and a copy also goes to
 Chet. Messages from other instances and IM are not copied. Chet can reply to the member, answer
 question cards for you, or point out a better approach or a risk; it is instructed to leave to you
 what only you can do, such as signing in or paying, and to say so. Only messages sent after the
@@ -726,10 +727,11 @@ conversation stays there; only the messages it sends to the Group appear in the 
 switch is on, Chet's entry below the Group list also asks for attention when CCCC finds that
 Chet's Runtime is not ready, for example not installed or waiting for setup.
 
-Turning the switch off stops new copies. A copy that has not reached Chet yet is dropped, and a
-card answer Chet has not written yet is refused; replies and answers already written stay in their
-threads. One exception: a copy Chet's Runtime has already taken can still reach Chet, which may then
-send an ordinary reply to the member, although it can no longer answer the card.
+Turning the switch off stops new copies. Just before each copy is handed to Chet, CCCC checks
+again: a copy that waits there is not handed over, and its entry in Chet's history says it did not start. A copy
+that has already passed that check, because it is being handed over or Chet's Runtime has taken it,
+can still reach Chet, which may then send an ordinary reply to the member, although it can no
+longer answer the card. Replies and answers already written stay in their threads.
 
 Copies use Chet's usual session, Runtime and account, so they use its quota, queue behind one
 another, and can see your own conversation with Chet; Chet is instructed not to carry that into a

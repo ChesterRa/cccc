@@ -1056,9 +1056,11 @@ Result:
 
 Unattended mode belongs to this instance's user, not to a Group, and is not
 recorded in any Group ledger. While it is on, Chet also receives each Group
-`chat.message` that a visible member sent to the user with a reply obligation
-(`send` or `request_reply`, not IM, not addressed to Chet) at or after `since`,
-and may answer such a request for the user through `reply` with `answer`.
+`chat.message` that a visible member sent to the user with `send` or
+`request_reply` (not IM, not addressed to Chet) at or after `since`, and may
+answer a `request_reply` for the user through `reply` with `answer`. Only
+`request_reply` creates a reply obligation; Chet may also reply to an ordinary
+`send`.
 
 #### `unattended_update`
 
@@ -1072,9 +1074,10 @@ Result: same as `unattended_get`.
 Only the user may call it; a call that carries an Actor or session binding is
 refused with `permission_denied`. Turning the mode on sets `since` to the
 current time when it was off; turning it on again keeps the current `since`.
-Turning it off clears `since`: Chet receives no further copies, a copy not yet
-handed to Chet is recorded as never started, and an answer not yet written is
-refused. Messages and answers already written stay in their threads. A copy
+Turning it off clears `since`: Chet receives no new copies. A registered copy
+that is no longer eligible at the final check before handoff is recorded as not
+started; a copy that has already passed that check may still be processed and
+get an ordinary reply. New card answers are refused. Messages and answers already written stay in their threads. A copy
 whose wait expires is recorded only in Chet history, without a delivery on the
 source message or a notice to its sender.
 

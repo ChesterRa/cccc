@@ -143,12 +143,17 @@ delivery was in progress is settled after the start and is not sent twice.
   before stopping any agents.
 
 After such a restart, CCCC can use two session owners for a while: the earlier
-one holds the kept agents and the new one holds agents started afterwards. In
-v0.4.59, if one of them stops responding while CCCC runs, CCCC cannot send new
-messages to the other owner's agents or stop them individually. Avoid a plain
-`cccc daemon stop` then, because it also stops the agents that are still
-working. The [v0.4.59 release notes](../release/v0.4.59_release_notes.md#known-limitation)
-give the tested steps for each case.
+one holds the kept agents and the new one holds agents started afterwards. If
+one of them stops responding while CCCC runs, running agents whose healthy owner
+CCCC can verify keep receiving new messages and can be stopped individually.
+Messages to the unresponsive owner's agents that were not yet handed off can
+remain pending and be sent after it responds, and stopping the whole Group waits
+for both owners. Managed and DeepSeek agents kept running from v0.4.59 get this
+only after they are restarted. If you need the healthy owner's agents to keep
+working, keep the daemon running: a plain `cccc daemon stop` also stops them,
+and startup can then fail and name the unresponsive owner. The
+[v0.4.60 release notes](../release/v0.4.60_release_notes.md#known-limitation)
+give the steps for that case.
 
 If you are returning to a version that cannot reattach running agents, let
 active work finish. If you stopped CCCC with `--keep-agents`, first use the
