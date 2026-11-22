@@ -39,6 +39,100 @@ impl AnalystLifecycle {
         .await
     }
 
+    pub(crate) async fn admit_chet_text(
+        &self,
+        id: &str,
+        text: &str,
+    ) -> Result<VoiceDelegationAdmission> {
+        if self.session.runtime() != cccc_contracts::ActorRuntime::Opencode {
+            return self.admit_terminal(id, text).await;
+        }
+        let delegation_id = id.trim();
+        let text = text.trim();
+        if delegation_id.is_empty() || text.is_empty() {
+            bail!("Chet input ID and text are required");
+        }
+        let origin = AnalystTurnOrigin::ChetText;
+        let mut state = self.state.lock().await;
+        if state.invalidated {
+            bail!("OpenCode lifecycle is unavailable");
+        }
+        if !state.queue.is_empty() || !super::queue::can_admit_private(&state) {
+            return self.enqueue(delegation_id, text, origin, state);
+        }
+        use sha2::Digest;
+        let fingerprint: [u8; 32] = sha2::Sha256::digest(text.as_bytes()).into();
+        if let Some(previous) = state.acp_inputs.get(delegation_id) {
+            if previous != &(fingerprint, origin) {
+                bail!("Input ID reused with different content or origin");
+            }
+            return Ok(state
+                .delegations
+                .get(delegation_id)
+                .cloned()
+                .map(VoiceDelegationAdmission::Turn)
+                .unwrap_or(VoiceDelegationAdmission::NativeInputPending));
+        }
+        match self
+            .submit_private_inbox(delegation_id, text, &mut state)
+            .await
+        {
+            Ok(()) => {
+                state
+                    .acp_inputs
+                    .insert(delegation_id.into(), (fingerprint, origin));
+                Ok(VoiceDelegationAdmission::NativeInputPending)
+            }
+            Err(error) if is_would_block(&error) => {
+                self.enqueue(delegation_id, text, origin, state)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Keep admission serialized with Group reservations and with delivery events.
+    /// A private input released by the host queue needs the same inbox evidence.
+    pub(super) async fn submit_private_inbox(
+        &self,
+        id: &str,
+        text: &str,
+        state: &mut LifecycleState,
+    ) -> Result<()> {
+        self.session
+            .submit_bound_opencode(self.session.generation(), id, text)
+            .await?;
+        // Account for any deadline that elapsed before this acceptance.
+        super::queue::update_group_waits(state, tokio::time::Instant::now());
+        state.native_pending.push_back(PendingStart {
+            delegation_id: id.into(),
+            origin: AnalystTurnOrigin::ChetText,
+            cancelling: false,
+        });
+        self.queue_notify.notify_one();
+        Ok(())
+    }
+
+    pub(crate) async fn admit_group_until(
+        &self,
+        id: &str,
+        text: &str,
+        deadline: &GroupWaitDeadline,
+    ) -> Result<VoiceDelegationAdmission> {
+        if self.session.runtime() != cccc_contracts::ActorRuntime::Opencode {
+            return self.admit_group(id, text).await;
+        }
+        let id = id.trim();
+        let text = text.trim();
+        if id.is_empty() || text.is_empty() {
+            bail!("Group input ID and text are required");
+        }
+        let state = self.state.lock().await;
+        if state.invalidated {
+            bail!("OpenCode lifecycle is unavailable");
+        }
+        self.enqueue_until(id, text, AnalystTurnOrigin::Group, state, Some(deadline))
+    }
+
     pub(super) async fn admit_input(
         &self,
         delegation_id: &str,
@@ -56,8 +150,17 @@ impl AnalystLifecycle {
         }
         let bound_opencode_input = self.session.runtime() == cccc_contracts::ActorRuntime::Opencode
             && origin != AnalystTurnOrigin::Voice;
+        if self.session.runtime() == cccc_contracts::ActorRuntime::Opencode
+            && origin == AnalystTurnOrigin::Voice
+            && state
+                .queue
+                .iter()
+                .any(|input| input.origin == AnalystTurnOrigin::Group)
+        {
+            return self.enqueue(delegation_id, text, origin, state);
+        }
         if self.session.structured_only() || bound_opencode_input {
-            // Structured runtimes and OpenCode's Chet inputs keep separate turns.
+            // These requests use the host queue to reserve their own turn.
             // OpenCode's visible TUI may have switched sessions; use the bound
             // HTTP session, as Actor delivery does. Voice retains native admission.
             return self.enqueue(delegation_id, text, origin, state);
@@ -349,10 +452,10 @@ impl AnalystLifecycle {
             let preserve_group =
                 current_origin.is_some_and(|origin| origin != AnalystTurnOrigin::Group);
             let (retained, queued): (std::collections::VecDeque<_>, std::collections::VecDeque<_>) =
-                state
-                    .queue
-                    .drain(..)
-                    .partition(|input| preserve_group && input.origin == AnalystTurnOrigin::Group);
+                state.queue.drain(..).partition(|input| {
+                    input.wait_expired()
+                        || (preserve_group && input.origin == AnalystTurnOrigin::Group)
+                });
             state.queue = retained;
             self.queue_len
                 .store(state.queue.len(), std::sync::atomic::Ordering::Release);

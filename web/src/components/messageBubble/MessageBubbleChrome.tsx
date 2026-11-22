@@ -1,9 +1,12 @@
 import { useTranslation } from "react-i18next";
 import type { ChatMessageData, LedgerEvent } from "../../types";
+import { CHET_PRINCIPAL } from "../../utils/chetIdentity";
 import { classNames } from "../../utils/classNames";
 import type { WebModelDeliveryStatus } from "../../utils/webModelDeliveryStatus";
 import { WebModelDeliveryRecovery } from "../webModel/WebModelDeliveryRecovery";
 
+/** Daemon reason: the host held a request to Chet until its wait expired. */
+const CHET_WAIT_EXPIRED_REASON = "chet_wait_expired";
 // A framed label in the status tone: no fill, no rounding.
 const STATUS_LABEL_CLASS =
   "inline-flex min-w-0 max-w-full items-center gap-1.5 border px-2 py-0.5 text-xs font-semibold tracking-tight";
@@ -71,13 +74,22 @@ export function MessageFooter({
   const undelivered = Object.entries(isMail ? {} : (event._obligation_status ?? {})).filter(
     ([id, status]) => status.delivery_state === "failed" && id !== webModelDeliveryStatus?.actorId,
   );
-  const undeliveredLabel = undelivered.length
-    ? t("deliveryFailedFor", {
-        names: undelivered.map(([id]) => displayNameMap.get(id) || id).join(", "),
-      })
-    : "";
-  const undeliveredReason = undelivered.find(([, status]) => status.delivery_reason)?.[1]
-    .delivery_reason;
+  // Chet is addressed alone. CCCC proved this request never reached it, so the
+  // whole outcome is shown, not only a reason on hover.
+  const chetNotSent = undelivered.some(
+    ([id, status]) => id === CHET_PRINCIPAL && status.delivery_reason === CHET_WAIT_EXPIRED_REASON,
+  );
+  const undeliveredLabel = chetNotSent
+    ? t("chetRequestNotSent")
+    : undelivered.length
+      ? t("deliveryFailedFor", {
+          names: undelivered.map(([id]) => displayNameMap.get(id) || id).join(", "),
+        })
+      : "";
+  const undeliveredReason = chetNotSent
+    ? undefined
+    : undelivered.find(([, status]) => status.delivery_reason)?.[1].delivery_reason;
+  const undeliveredTextClass = chetNotSent ? "min-w-0 whitespace-normal" : "truncate";
   const deliveryLabel = webModelDeliveryStatus
     ? t(`webModelDelivery.${webModelDeliveryStatus.state}`)
     : "";
@@ -182,17 +194,17 @@ export function MessageFooter({
         {undelivered.length > 0 ? (
           readOnly ? (
             <span className={STATUS_LABEL_CLASS} data-status-tone="error">
-              <span className="truncate">{undeliveredLabel}</span>
+              <span className={undeliveredTextClass}>{undeliveredLabel}</span>
             </span>
           ) : (
             <button
               type="button"
-              className={classNames("touch-target-sm", STATUS_LABEL_CLASS)}
+              className={classNames("touch-target-sm text-left", STATUS_LABEL_CLASS)}
               data-status-tone="error"
               title={undeliveredReason}
               onClick={onShowRecipients}
             >
-              <span className="truncate">{undeliveredLabel}</span>
+              <span className={undeliveredTextClass}>{undeliveredLabel}</span>
             </button>
           )
         ) : null}

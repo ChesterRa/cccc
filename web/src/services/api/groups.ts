@@ -1562,10 +1562,16 @@ export async function attachScope(groupId: string, path: string, options?: { act
 export async function startGroup(groupId: string) {
   clearActorsReadOnlyRequest(groupId);
   clearGroupsReadRequest();
-  return apiJson<{ group: GroupDoc }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/start?by=user`,
-    { method: "POST" },
-  );
+  return apiJson<{
+    group: GroupDoc;
+    /** Each member whose start began a new conversation instead of its saved one. */
+    runtime_sessions_replaced?: Array<{
+      actor_id: string;
+      at: string;
+      reasons: string[];
+      message?: string;
+    }>;
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/start?by=user`, { method: "POST" });
 }
 
 export async function stopGroup(groupId: string) {

@@ -71,7 +71,7 @@ pub(crate) fn claude_confirmation_launch(error: &io::Error) -> Option<&claude::C
 }
 
 /// The workspace Claude Code refused to launch in because its trust prompt was never accepted.
-pub(crate) fn untrusted_claude_workspace(error: &io::Error) -> Option<&std::path::Path> {
+pub fn untrusted_claude_workspace(error: &io::Error) -> Option<&std::path::Path> {
     claude::untrusted_workspace(error)
 }
 
@@ -97,6 +97,9 @@ use pi_rpc::PiRpcClient;
 use process::ChildOwner;
 use protocol::ProtocolClient;
 
+pub(crate) const MANAGED_RESUMED_INBOX_DRAINED_METHOD: &str =
+    "cccc/managedAgent/resumedInboxDrained";
+pub(crate) const MANAGED_INBOX_CANCELLED_METHOD: &str = "cccc/managedAgent/inboxCancelled";
 pub(crate) const MANAGED_AGENT_DISCONNECTED_METHOD: &str = "cccc/managedAgent/disconnected";
 pub(crate) const MANAGED_AGENT_DELEGATION_ATTACHED_METHOD: &str =
     "cccc/managedAgent/delegationAttached";
@@ -178,6 +181,8 @@ pub struct TurnReceipt {
 #[derive(Debug)]
 enum DelegationState {
     Started(TurnReceipt),
+    /// OpenCode accepted this input without assigning it a turn yet.
+    InboxAccepted,
     Unresolved(String),
 }
 
@@ -468,8 +473,14 @@ fn required_value<'a>(value: &'a str, name: &str) -> io::Result<&'a str> {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 impl AnalystSession {
+    pub(crate) fn into_opencode_lifecycle_fixture(mut self) -> Self {
+        self.runtime = ActorRuntime::Opencode;
+        self
+    }
+
+    #[cfg(unix)]
     /// Exercise Actor output using the existing inert shutdown transport. The
     /// selected runtime only chooses the actual structured projection branch.
     pub(crate) fn for_output_test(

@@ -345,6 +345,14 @@ async fn opencode_chet_inputs_keep_the_bound_session_and_separate_results_while_
     use cccc_daemon::experimental_codex_voice::VoiceDelegationAdmission;
     let fixture = ChetHttpFixture::new().await;
     let root = fixture.configure_opencode();
+    // The Web registered this Group source while Chet was stopped. A later
+    // private admission must not turn its elapsed, unblocked wait into an expiry.
+    let group_wait = Arc::new(GroupWaitDeadline::new(tokio::time::Instant::now()));
+    fixture
+        .state
+        .codex_voice
+        .observe_chet_group_wait(&group_wait)
+        .await;
     let ids = [
         uuid::Uuid::new_v4(),
         uuid::Uuid::new_v4(),
@@ -360,11 +368,12 @@ async fn opencode_chet_inputs_keep_the_bound_session_and_separate_results_while_
     };
     assert_eq!(submit(0).await.0, axum::http::StatusCode::OK);
     wait_opencode_fixture(|| root.join("admission-started").exists()).await;
+    // Private Chat joins the bound session's inbox: the second input waits for
+    // the first admission, then enters the inbox while the first turn runs.
     assert_eq!(submit(1).await.0, axum::http::StatusCode::OK);
-    // The second input must enter the host queue before the first HTTP receipt.
-    fixture.wait_queued(ids[1]).await;
     std::fs::write(root.join("release-admission"), "go").expect("release HTTP receipt");
     fixture.wait_for(ids[0], "receipt").await;
+    wait_opencode_fixture(|| opencode_fixture_requests(&root).len() == 2).await;
     let analyst = fixture
         .state
         .codex_voice
@@ -415,12 +424,14 @@ async fn opencode_chet_inputs_keep_the_bound_session_and_separate_results_while_
     assert!(matches!(
         analyst
             .analyst
-            .submit_group_input("group-input", "GROUP")
+            .submit_group_input_until("group-input", "GROUP", &group_wait)
             .await
             .expect("queue Group input"),
         VoiceDelegationAdmission::Queued { .. }
     ));
-    assert_eq!(opencode_fixture_requests(&root).len(), 1);
+    // Private inputs share the inbox; a result notice and a Group input each
+    // wait for a turn of their own.
+    assert_eq!(opencode_fixture_requests(&root).len(), 3);
     std::fs::write(root.join("release-completion"), "go").expect("finish first turn");
     for (id, text) in ids.into_iter().zip(texts) {
         let records = fixture.wait_for(id, "result").await;
@@ -460,7 +471,15 @@ async fn opencode_chet_inputs_keep_the_bound_session_and_separate_results_while_
     assert!(
         requests
             .iter()
-            .all(|r| r["sessionID"] == "ses_chet_fixture" && r["delivery"] == "queue")
+            .all(|r| r["sessionID"] == "ses_chet_fixture")
+    );
+    // Private text keeps OpenCode's own delivery setting; exclusive turns queue.
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r.get("delivery").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        [None, None, None, Some("queue"), Some("queue")]
     );
     assert_eq!(
         requests
@@ -518,7 +537,8 @@ async fn opencode_chet_unconfirmed_admission_does_not_replay_or_start_later_inpu
             wait_opencode_fixture(|| root.join("admission-started").exists()).await;
         }
     }
-    fixture.wait_queued(next).await;
+    // NEXT waits behind the first admission, which holds the Chet owner.
+    std::fs::write(root.join("release-admission"), "go").expect("disconnect HTTP admission");
     let analyst = fixture
         .state
         .codex_voice
@@ -528,7 +548,6 @@ async fn opencode_chet_unconfirmed_admission_does_not_replay_or_start_later_inpu
         .analyst
         .clone()
         .expect("OpenCode owner");
-    std::fs::write(root.join("release-admission"), "go").expect("disconnect HTTP admission");
     wait_opencode_fixture(|| {
         analyst.info().warning == "analyst_disconnected"
             && analyst
@@ -657,6 +676,13 @@ async fn chet_http_reports_a_known_pre_admission_failure() {
             .iter()
             .any(|r| matches!(r["kind"].as_str(), Some("receipt" | "result")))
     );
+    let (status, live) = fixture
+        .request("GET", "/api/v1/chet/status", json!(null))
+        .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    // A cause CCCC does not recognize by type shows no provider text at all.
+    assert!(live["result"]["start_problem"].is_null());
+    assert!(!live.to_string().contains("devin"));
     let (_, retry) = fixture.request("POST", "/api/v1/chet/inputs", body).await;
     assert_eq!(retry["result"]["registration"], "existing");
     fixture.stop().await;
@@ -1679,7 +1705,15 @@ async fn a_group_voice_binding_failure_stops_the_current_notification_consumer()
     fixture
         .state
         .codex_voice
-        .submit_chet_group_input(&fixture.home, uuid::Uuid::new_v4(), &input, &request)
+        .submit_chet_group_input(
+            &fixture.home,
+            uuid::Uuid::new_v4(),
+            &input,
+            &request,
+            &cccc_daemon::experimental_codex_voice::GroupWaitDeadline::new(
+                tokio::time::Instant::now() + Duration::from_secs(600),
+            ),
+        )
         .await
         .expect("Group input is still admitted");
     assert!(

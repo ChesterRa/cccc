@@ -500,6 +500,16 @@ data: {
 - A normal `mail` append creates no `runtime.delivery`. An explicit manual
   delivery of that existing message may create one without appending a second
   `chat.message`.
+- A Group message addressed to Chet MAY carry one `runtime.delivery` with
+  `actor_id="svc:chet"` and `transport="chet_group"`. It records only that the
+  host never handed the request to Chet: `state="failed"`,
+  `reason="chet_wait_expired"`, `retryable=false`, with no preceding `claimed`,
+  because no external submission was attempted. The daemon appends it at most
+  once per source event, derives `delivery_id` from the source event, the
+  service principal and the Group generation, and appends it only after Chet's
+  private history durably records that the input will never be submitted.
+  Clients show it on the source message as "not sent to Chet and not run; send
+  it again if still needed". It reveals nothing about Chet's other work.
 
 ### 6.6 `chat.reaction` (Optional)
 

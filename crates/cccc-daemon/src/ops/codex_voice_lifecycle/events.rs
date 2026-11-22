@@ -18,6 +18,17 @@ impl AnalystLifecycle {
             tracing::warn!("ignored Voice Analyst event for a different managed session");
             return;
         }
+        {
+            let mut state = self.state.lock().await;
+            if state.invalidated {
+                return;
+            }
+            if (!state.queue.is_empty() || !state.source_waits.is_empty())
+                && self.session.runtime() == cccc_contracts::ActorRuntime::Opencode
+            {
+                super::queue::update_group_waits(&mut state, tokio::time::Instant::now());
+            }
+        }
         let method = event.message["method"].as_str().unwrap_or_default();
         let params = &event.message["params"];
         if method == "mcpServer/elicitation/request" {
@@ -46,6 +57,53 @@ impl AnalystLifecycle {
                 tracing::error!(%error, "failed to stop disconnected Voice Analyst session");
             }
             return;
+        }
+        if method == super::super::codex_voice_analyst::MANAGED_RESUMED_INBOX_DRAINED_METHOD {
+            self.state.lock().await.resumed_inbox_pending = false;
+            return;
+        }
+        if method == super::super::codex_voice_analyst::MANAGED_INBOX_CANCELLED_METHOD {
+            if let Some(id) = event.requested_delegation_id.as_deref() {
+                let mut state = self.state.lock().await;
+                if let Some(pending) = take_native_pending(&mut state.native_pending, id) {
+                    self.complete_unadmitted_input(
+                        id,
+                        pending.origin,
+                        "cancelled",
+                        "",
+                        AnalystCompletionSource::RuntimeNotStarted,
+                    );
+                }
+            }
+            return;
+        }
+        if self.session.runtime() == cccc_contracts::ActorRuntime::Opencode
+            && let Some(id) = event.requested_delegation_id.as_deref()
+            && (method == "turn/started"
+                || method
+                    == super::super::codex_voice_analyst::MANAGED_AGENT_DELEGATION_ATTACHED_METHOD)
+        {
+            let mut state = self.state.lock().await;
+            let turn_id = params["turn"]["id"]
+                .as_str()
+                .or_else(|| params["turnId"].as_str());
+            if state.active.as_ref().is_some_and(|active| {
+                Some(active.turn_id.as_str()) == turn_id
+                    && state.native_pending.iter().any(|pending| {
+                        pending.delegation_id == id
+                            && (active.origin == AnalystTurnOrigin::Group
+                                || pending.origin == AnalystTurnOrigin::Group)
+                    })
+            }) {
+                // An observed association contradicts the audience reservation. Claims already
+                // sent to the provider remain unconfirmed. Suppress all further output and
+                // settle unsubmitted work before releasing this generation.
+                self.invalidate_locked(&mut state);
+                drop(state);
+                tracing::error!("OpenCode input delivery contradicted the Group reservation");
+                let _ = self.session.stop_for_voice(self.session.generation()).await;
+                return;
+            }
         }
         if method == super::super::codex_voice_analyst::MANAGED_AGENT_DELEGATION_ATTACHED_METHOD {
             self.handle_delegation_attached(&event).await;

@@ -2771,7 +2771,8 @@
           "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
         },
         "actor_id": {
-          "type": "string"
+          "type": "string",
+          "description": "With action=get, the member whose state to read; leave it out to read your own. update and clear always act on your own state."
         },
         "action": {
           "type": "string",

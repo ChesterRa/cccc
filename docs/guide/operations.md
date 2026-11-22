@@ -142,6 +142,14 @@ delivery was in progress is settled after the start and is not sent twice.
 - On Windows and with an Intel macOS build, the daemon rejects `--keep-agents`
   before stopping any agents.
 
+After such a restart, CCCC can use two session owners for a while: the earlier
+one holds the kept agents and the new one holds agents started afterwards. In
+v0.4.59, if one of them stops responding while CCCC runs, CCCC cannot send new
+messages to the other owner's agents or stop them individually. Avoid a plain
+`cccc daemon stop` then, because it also stops the agents that are still
+working. The [v0.4.59 release notes](../release/v0.4.59_release_notes.md#known-limitation)
+give the tested steps for each case.
+
 If you are returning to a version that cannot reattach running agents, let
 active work finish. If you stopped CCCC with `--keep-agents`, first use the
 newer executable and the same `CCCC_HOME` to run `cccc daemon start` and
@@ -162,7 +170,9 @@ On Linux and macOS, when the CCCC host started its own daemon, open
 `/restart` in the terminal interface. The confirmation shows whether CCCC
 will use the current program or a new build at its launch path. Choose
 **Keep agents running** where offered, or **Restart agents** to restart them
-along with CCCC. The Web reconnects at the same address and shows the result.
+along with CCCC. In the terminal, the choices are **Keep agents and restart
+CCCC** (where offered) and **Restart agents with CCCC**. The Web reconnects
+at the same address and shows the result.
 
 To run multiple instances on one machine, use a distinct `CCCC_HOME` and Web
 port for each. A restart only reconnects to sessions in its own home. Instances
@@ -208,6 +218,14 @@ other agents and the lists keep working.
 3. Fix what made the launch fail, then run `cccc daemon start`. It reattaches the agents that
    kept running and, in a running Group, starts that agent again: if the cause is still there,
    the agent is Unknown again.
+
+A plain `cccc daemon stop` can also fail to confirm a running agent, for example when its
+terminal does not answer in time. It then says to run `cccc daemon stop` again: with CCCC
+stopped, that run reaches the agent's session owner directly and stops the agent once it
+answers. The review command comes second: `list` shows the owner's retained recovery
+records, and an agent the owner still runs may not appear there. After
+`cccc daemon stop --keep-agents`, use only the review command, because a plain stop would
+also stop the agents it kept.
 
 ## 5) Secure Remote Access
 

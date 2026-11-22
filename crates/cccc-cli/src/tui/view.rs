@@ -856,10 +856,15 @@ fn agents_outcome(result: &AgentsResult) -> Option<String> {
     const STOP_THEM: &str = "run `cccc daemon stop` to stop them";
     match result {
         AgentsResult::NotOwned => None,
-        AgentsResult::Unconfirmed => Some(format!(
-            "not confirmed; some may still be running; {STOP_THEM}"
-        )),
+        // Without a receipt the stop's mode is unknown: kept agents come first, since a
+        // plain stop would also end work that was meant to stay.
+        AgentsResult::Unconfirmed => Some(
+            "not confirmed; some may still be running; start CCCC again to reattach any that are, \
+             or stop them with `cccc daemon stop`"
+                .to_owned(),
+        ),
         &AgentsResult::Confirmed {
+            plain,
             stopped,
             kept,
             uncertain,
@@ -874,14 +879,23 @@ fn agents_outcome(result: &AgentsResult) -> Option<String> {
                     "kept {kept} running; start CCCC again to reattach them"
                 ));
             }
-            // An owner kept for review is not settled by another stop; name its command.
-            if uncertain > 0 && review_owners.is_empty() {
-                parts.push(format!("{uncertain} may still be running; {STOP_THEM}"));
-            } else if uncertain > 0 {
-                parts.push(format!(
-                    "{uncertain} may still be running; to review, run {}",
-                    crate::daemon_lifecycle::review_commands(review_owners)
-                ));
+            // After a plain stop, another one reaches a live session owner directly; the
+            // owner's review command lists only records it gave up on, so it comes second.
+            // After a kept stop, another plain stop would also stop the agents just kept.
+            if uncertain > 0 {
+                let next = match (plain, review_owners.is_empty()) {
+                    (true, true) => format!("; {STOP_THEM}"),
+                    (true, false) => format!(
+                        "; {STOP_THEM}; if it cannot confirm them, run {}",
+                        crate::daemon_lifecycle::review_commands(review_owners)
+                    ),
+                    (false, false) => format!(
+                        "; to review, run {}",
+                        crate::daemon_lifecycle::review_commands(review_owners)
+                    ),
+                    (false, true) => String::new(),
+                };
+                parts.push(format!("{uncertain} may still be running{next}"));
             }
             // Nothing confirmed is not "none were running": a daemon without session owners
             // stops agents it does not list, so an empty receipt adds no line.

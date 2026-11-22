@@ -661,7 +661,8 @@ removed, or the Group was re-created, the entry says the message is no longer av
 messages that Chet can take up are queued as turns of their own, and Chet is instructed to answer
 questions and requests in the Group each came from, while an acknowledgement alone needs no reply;
 your typed or spoken requests go ahead of Group messages still
-waiting, and a Group turn already running is not interrupted. Once Chet has finished, the entry
+waiting (on OpenCode, only while Chet is answering a Group message; see below), and a Group turn
+already running is not interrupted. Once Chet has finished, the entry
 links the reply it finds in the Group, which **View reply** opens, or says that no reply is seen
 yet; a reply in the Group does not show that the sender has read it. A Group message whose
 submission cannot be confirmed is not resent automatically. While the CCCC Web service is
@@ -671,6 +672,16 @@ been replaced by the time it is taken up can remain only in its Group. A message
 conversation is checked again just before it is handed to Chet: if its sender has left the Group
 or been replaced, or the Group was removed or re-created, the entry says it was not handed to
 Chet.
+
+When Chet runs on OpenCode, a Group message cannot be handed over while messages from your own
+conversation with Chet are still waiting for Chet to take them up. A Group message that waits
+only behind work Chet is already doing simply runs after it. If, ten minutes after the Group
+message was sent, it is still held back by your messages that Chet has not taken up, it is not
+sent: the message in the Group says it was not sent to Chet and did not run, and can be sent
+again, and Chet's history says the same; a member who sent it also gets a notice. Your
+conversation with Chet carries on, and neither notice includes its text or status. Once a Group
+message is queued with Chet, messages you send to Chet go after it, unless Chet is answering
+another Group message at the time.
 
 Group messages enter Chet's usual session, which can also hold your own conversation with Chet
 and other Groups' content. Chet is instructed not to carry that into a Group and to pass requests

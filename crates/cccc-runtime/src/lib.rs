@@ -58,6 +58,7 @@ pub use command::{
     canonical_deepseek_runtime_manifest, deepseek_acp_profile, deepseek_executable,
     deepseek_external_preflight, deepseek_home, deepseek_installation_ready,
     deepseek_managed_command, deepseek_packages_to_reinstall, default_command, detect_runtimes,
+    unicode_environment,
 };
 pub use command_output::{
     CapturedOutput, capture_command, capture_command_blocking, capture_command_with_start_evidence,

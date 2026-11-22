@@ -144,6 +144,19 @@ pub enum StartFailure {
     SourceUnavailable,
 }
 
+/// The `NotStarted` fact for a Group input whose wait for Chet expired before
+/// the host submitted it. A cancellation with this ID is that expiry, not a
+/// user's cancellation, so the reason enum stays readable by older builds.
+pub fn group_wait_expired_id(input_id: Uuid) -> Uuid {
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(b"cccc.chet.group_wait_expired.v1\0");
+    digest.update(input_id.as_bytes());
+    let mut bytes = [0; 16];
+    bytes.copy_from_slice(&digest.finalize()[..16]);
+    Uuid::from_bytes(bytes)
+}
+
 impl Record {
     fn id(&self) -> Uuid {
         match self {

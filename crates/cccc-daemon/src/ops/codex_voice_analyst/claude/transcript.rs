@@ -73,6 +73,10 @@ pub(super) struct TranscriptState {
     /// promptIds of the turn that settled last. An interruption marker under one of them
     /// comes after its turn ended and must not cancel the next one.
     settled_prompt_ids: HashSet<String>,
+    /// promptId of the latest command the user ran in Claude Code itself, such as /model.
+    /// Claude records it as a hidden caveat followed by the command and its output under the
+    /// same promptId, and no model turn follows. The next caveat replaces it.
+    local_command_prompt_id: Option<String>,
 }
 
 impl TranscriptState {
@@ -88,6 +92,7 @@ impl TranscriptState {
             active: None,
             meta_prompt_ids: Vec::new(),
             settled_prompt_ids: HashSet::new(),
+            local_command_prompt_id: None,
         }
     }
 
@@ -143,6 +148,7 @@ impl TranscriptState {
             return Ok(IngestOutcome::None);
         }
         match record.get("type").and_then(Value::as_str) {
+            Some("user") if self.is_local_command(record) => Ok(IngestOutcome::None),
             Some("user") => self.ingest_user(record, controlled, native),
             Some("assistant") => {
                 if controlled.is_some() && self.active.is_none() && !self.meta_prompt_ids.is_empty()
@@ -346,6 +352,13 @@ impl TranscriptState {
         else {
             return;
         };
+        if text_content(content)
+            .trim_start()
+            .starts_with(LOCAL_COMMAND_CAVEAT)
+        {
+            self.local_command_prompt_id = Some(prompt_id.to_owned());
+            return;
+        }
         match self.active.as_mut() {
             Some(active) => {
                 active.prompt_ids.insert(prompt_id.to_owned());
@@ -511,6 +524,33 @@ fn contains_tool_result(content: &Value) -> bool {
     })
 }
 
+const LOCAL_COMMAND_CAVEAT: &str = "<local-command-caveat>";
+const LOCAL_COMMAND_RECORDS: [&str; 3] = [
+    "<command-name>",
+    "<local-command-stdout>",
+    "<local-command-stderr>",
+];
+
+impl TranscriptState {
+    /// A record of a command the user ran in Claude Code itself, not input for the model.
+    /// Only its caveat's promptId identifies it: input that reaches the model, such as a
+    /// skill or pasted text, can carry the same tags.
+    fn is_local_command(&self, record: &Value) -> bool {
+        let Some(prompt_id) = record.get("promptId").and_then(Value::as_str) else {
+            return false;
+        };
+        if self.local_command_prompt_id.as_deref() != Some(prompt_id.trim()) {
+            return false;
+        }
+        let content = record.pointer("/message/content").unwrap_or(&Value::Null);
+        let text = text_content(content);
+        let text = text.trim_start();
+        LOCAL_COMMAND_RECORDS
+            .iter()
+            .any(|tag| text.starts_with(tag))
+    }
+}
+
 fn text_content(content: &Value) -> String {
     if let Some(text) = content.as_str() {
         return text.to_owned();
@@ -597,6 +637,84 @@ mod tests {
             events.try_recv().expect("native lifecycle event").message["params"]["turn"]["status"],
             "completed"
         );
+    }
+
+    fn local_model_command(state: &mut TranscriptState, prompt_id: &str) {
+        // The three records Claude Code 2.1.327 writes after /model is confirmed.
+        for record in [
+            json!({"type":"user","sessionId":"session-1","promptId":prompt_id,"isMeta":true,
+                "message":{"content":"<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request, and its output goes straight to the user. It's recorded here as context for later messages.</local-command-caveat>"}}),
+            json!({"type":"user","sessionId":"session-1","promptId":prompt_id,
+                "message":{"content":"<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>sonnet</command-args>"}}),
+            json!({"type":"user","sessionId":"session-1","promptId":prompt_id,
+                "message":{"content":"<local-command-stdout>Set model to Sonnet 5.5</local-command-stdout>"}}),
+        ] {
+            assert_eq!(
+                state.ingest(&record, None).expect("local command record"),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_local_command_opens_no_turn_and_the_next_prompt_runs() {
+        let (mut state, mut events) = harness();
+        local_model_command(&mut state, "local-1");
+        assert_eq!(state.active_turn_id(), None);
+        assert!(!state.hidden_input_pending());
+        assert!(events.try_recv().is_err(), "a local command starts no turn");
+
+        let turn_id = state
+            .ingest(
+                &json!({"type":"user","sessionId":"session-1","promptId":"prompt-1",
+                    "message":{"content":"inspect this"}}),
+                Some(PendingPrompt {
+                    delegation_id: "delegation-1",
+                    text: "inspect this",
+                    turn_id: "claude-controlled-1",
+                }),
+            )
+            .expect("user record")
+            .expect("matched prompt");
+        assert_eq!(turn_id, "claude-controlled-1");
+        state
+            .ingest(
+                &json!({"type":"assistant","sessionId":"session-1",
+                    "message":{"content":[{"type":"text","text":"done"}]}}),
+                None,
+            )
+            .expect("assistant record");
+        state
+            .ingest(
+                &json!({"type":"system","sessionId":"session-1","subtype":"turn_duration"}),
+                None,
+            )
+            .expect("turn end");
+        assert_eq!(state.active_turn_id(), None);
+        let statuses: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
+            .filter_map(|event| {
+                event.message["params"]["turn"]["status"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect();
+        assert_eq!(statuses.last().map(String::as_str), Some("completed"));
+    }
+
+    #[test]
+    fn command_tags_without_a_local_caveat_are_still_input() {
+        // Text with the same tags under another promptId, as when it is pasted, reaches the
+        // model. (A real skill record starts with <command-message> and has no caveat.)
+        let (mut state, _events) = harness();
+        local_model_command(&mut state, "local-1");
+        state
+            .ingest(
+                &json!({"type":"user","sessionId":"session-1","promptId":"skill-1",
+                    "message":{"content":"<command-name>/review</command-name>"}}),
+                None,
+            )
+            .expect("skill record");
+        assert_eq!(state.active_turn_id(), Some("claude-skill-1"));
     }
 
     #[test]

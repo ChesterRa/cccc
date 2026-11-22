@@ -23,6 +23,7 @@
   "agentStoppedDescription": "このエージェントは現在停止しています。",
   "runtimeResumeFailedTitle": "再開に失敗しました",
   "runtimeSessionReplaced": "以前に保存された会話は再開されませんでした（{{time}}）。",
+  "runtimeSessionReplacedNow": "{{name}} は新しい会話を始めました。保存されていた会話は再開されていません。",
   "runtimeSessionReplacedReasons": "保存後に変わったもの：{{reasons}}。",
   "runtimeSessionReplacedReasonSeparator": "、",
   "runtimeSessionReplacedReason": {

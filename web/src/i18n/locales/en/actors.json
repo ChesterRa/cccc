@@ -23,6 +23,7 @@
   "agentStoppedDescription": "This agent is currently stopped.",
   "runtimeResumeFailedTitle": "Resume failed",
   "runtimeSessionReplaced": "The previously saved conversation was not resumed ({{time}}).",
+  "runtimeSessionReplacedNow": "{{name}} started a new conversation; the saved one was not resumed.",
   "runtimeSessionReplacedReasons": "Changed since it was saved: {{reasons}}.",
   "runtimeSessionReplacedReasonSeparator": ", ",
   "runtimeSessionReplacedReason": {

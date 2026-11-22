@@ -11,6 +11,7 @@ fn inner() -> (Inner, broadcast::Receiver<AnalystEvent>) {
             events,
             state: Mutex::new(events::State::default()),
             running: AtomicBool::new(true),
+            resumed_inbox: AtomicBool::new(false),
         },
         receiver,
     )
@@ -67,12 +68,33 @@ fn drain(receiver: &mut broadcast::Receiver<AnalystEvent>) -> Vec<AnalystEvent> 
 }
 
 #[tokio::test]
-async fn opencode_chet_queue_policy_keeps_the_native_terminal_and_voice_admission() {
+async fn opencode_bound_submission_preserves_voice_and_console_admission() {
     use crate::ops::codex_voice_analyst::{AnalystSession, WorkspaceBinding};
     use crate::ops::codex_voice_lifecycle::{
         AnalystLifecycle, AnalystLifecycleEvent, VoiceDelegationAdmission,
     };
-    let (inner, _) = inner();
+    use std::future::IntoFuture;
+    use std::sync::atomic::AtomicUsize;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind the test OpenCode endpoint");
+    let (mut inner, _) = inner();
+    inner.endpoint = format!(
+        "http://{}",
+        listener.local_addr().expect("bound OpenCode test address")
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    let app = axum::Router::new().route(
+        "/api/session/ses_fixture/prompt",
+        axum::routing::post(move |axum::Json(prompt): axum::Json<Value>| {
+            let seq = seen.fetch_add(1, Ordering::SeqCst);
+            let expected = if seq == 0 { "ordinary input" } else { "keep this out of the pending voice turn" };
+            assert_eq!(prompt, json!({"text":expected}));
+            async move { axum::Json(json!({"data":{"id":format!("msg_ordinary{seq}"),"sessionID":"ses_fixture","delivery":"steer"}})) }
+        }),
+    );
+    let server = tokio::spawn(axum::serve(listener, app).into_future());
     let (stop, _) = watch::channel(false);
     let session = Arc::new(AnalystSession {
         binding: WorkspaceBinding {
@@ -107,16 +129,31 @@ async fn opencode_chet_queue_policy_keeps_the_native_terminal_and_voice_admissio
         events.recv().await.expect("active"),
         AnalystLifecycleEvent::Started { .. }
     ));
-    // Real-time Voice still offers its native handoff while Chet text waits.
+    for _ in 0..2 {
+        session
+            .submit_bound_opencode(session.generation(), "actor:fixed", "ordinary input")
+            .await
+            .expect("confirmed ordinary admission");
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // Voice still offers its native handoff; direct console entries keep their old queue.
     assert!(
         matches!(lifecycle.admit_voice("voice", "spoken request").await.expect("Voice admission"),
         VoiceDelegationAdmission::NativeInput { delegation_id, .. } if delegation_id == "voice")
     );
     assert!(matches!(
         lifecycle
+            .admit_chet_text("private", "keep this out of the pending voice turn")
+            .await
+            .expect("private Chat waits for Voice"),
+        VoiceDelegationAdmission::Queued { .. }
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        lifecycle
             .admit_terminal("text", "typed request")
             .await
-            .expect("Chet input"),
+            .expect("console input"),
         VoiceDelegationAdmission::Queued { .. }
     ));
     assert!(matches!(
@@ -126,6 +163,28 @@ async fn opencode_chet_queue_policy_keeps_the_native_terminal_and_voice_admissio
             .expect("notification"),
         VoiceDelegationAdmission::Queued { .. }
     ));
+    lifecycle
+        .reject_native_voice("voice")
+        .await
+        .expect("reject the pending Voice input");
+    session.publish_event_for_test(json!({"method":"turn/completed",
+        "params":{"threadId":"ses_fixture","turn":{"id":"busy","status":"completed"}}}));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while calls.load(Ordering::SeqCst) != 2 {
+            tokio::task::yield_now().await;
+        }
+        loop {
+            if let Some((queued, working)) = lifecycle.try_in_flight() {
+                assert!(!working.iter().any(|id| id == "private"));
+                if queued.iter().any(|id| id == "private") {
+                    break;
+                }
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("queued private input awaiting delivery");
     session.publish_event_for_test(json!({
         "method":crate::ops::codex_voice_analyst::MANAGED_AGENT_DISCONNECTED_METHOD,
         "params":{"threadId":"ses_fixture","reason":"offline fixture cleanup"}
@@ -138,10 +197,51 @@ async fn opencode_chet_queue_policy_keeps_the_native_terminal_and_voice_admissio
     })
     .await
     .expect("fixture disconnected");
+    server.abort();
     session
         .stop(session.generation())
         .await
         .expect("stop fixture");
+}
+
+#[test]
+fn resumed_inbox_blocks_until_all_existing_items_settle_without_reassigning_them() {
+    let (inner, mut receiver) = inner();
+    let mut state = events::State::default();
+    let item = |id: &str| {
+        json!({"sessionID":"ses_fixture","id":id,"type":"user",
+        "payload":{"text":"same"},"delivery":"steer"})
+    };
+    state
+        .restore_inbox(
+            "ses_fixture",
+            &json!({"data":[item("msg_old"),item("msg_other")]}),
+        )
+        .expect("restore both stored inbox items");
+    inner.resumed_inbox.store(true, Ordering::Release);
+    native_input::register(&mut state.native, "new-request".into(), "same".into())
+        .expect("register the new input with matching text");
+    deliver(&mut state, &inner, "msg_old");
+    assert!(inner.resumed_inbox.load(Ordering::Acquire));
+    assert!(
+        drain(&mut receiver)
+            .iter()
+            .all(|e| e.requested_delegation_id.is_none())
+    );
+    observe(
+        &mut state,
+        &inner,
+        "session.inbox.cancelled",
+        json!({"inboxID":"msg_other"}),
+    );
+    assert!(!inner.resumed_inbox.load(Ordering::Acquire));
+    let events = drain(&mut receiver);
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].message["method"],
+        crate::ops::codex_voice_analyst::MANAGED_RESUMED_INBOX_DRAINED_METHOD
+    );
+    assert_eq!(state.native.len(), 1);
 }
 
 #[test]
@@ -653,7 +753,7 @@ async fn v2_unresolved_admission_disconnects_without_replaying_or_remaining_busy
     use std::future::IntoFuture;
     use std::sync::atomic::AtomicUsize;
 
-    for cancel in [false, true] {
+    for (cancel, ordinary) in [(false, false), (true, false), (false, true), (true, true)] {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("isolated backend");
@@ -687,7 +787,7 @@ async fn v2_unresolved_admission_disconnects_without_replaying_or_remaining_busy
             lease: None,
         };
         if cancel {
-            let request = client.start_prompt("unknown-delegation", "synthetic input");
+            let request = client.post_input("unknown-delegation", "synthetic input", ordinary);
             tokio::pin!(request);
             tokio::select! {
                 result = &mut request => panic!("held request unexpectedly returned: {result:?}"),
@@ -695,7 +795,7 @@ async fn v2_unresolved_admission_disconnects_without_replaying_or_remaining_busy
             }
         } else {
             client
-                .start_prompt("unknown-delegation", "synthetic input")
+                .post_input("unknown-delegation", "synthetic input", ordinary)
                 .await
                 .expect_err("backend failure");
         }
@@ -710,7 +810,7 @@ async fn v2_unresolved_admission_disconnects_without_replaying_or_remaining_busy
         assert_eq!(event.message["method"], "cccc/managedAgent/disconnected");
         assert_eq!(
             client
-                .start_prompt("later-delegation", "different input")
+                .post_input("later-delegation", "different input", ordinary)
                 .await
                 .expect_err("a new owner is required")
                 .kind(),
@@ -719,4 +819,46 @@ async fn v2_unresolved_admission_disconnects_without_replaying_or_remaining_busy
         assert_eq!(calls.load(Ordering::SeqCst), 1, "no hidden replay");
         server.abort();
     }
+}
+
+#[test]
+fn ordinary_cancel_settles_only_the_confirmed_inbox_identity() {
+    let (inner, mut receiver) = inner();
+    let mut state = events::State::default();
+    enqueue(&mut state, &inner, "msg_human", "identical");
+    deliver(&mut state, &inner, "msg_human");
+    drain(&mut receiver);
+    for id in ["msg_one", "msg_two"] {
+        enqueue(&mut state, &inner, id, "identical");
+        state
+            .inbox_delegations
+            .insert(id.into(), format!("private:{id}"));
+    }
+    for _ in 0..2 {
+        observe(
+            &mut state,
+            &inner,
+            "session.inbox.cancelled",
+            json!({"inboxID":"msg_two"}),
+        );
+    }
+    let observed = drain(&mut receiver);
+    assert_eq!(observed.len(), 1);
+    assert_eq!(
+        observed[0].requested_delegation_id.as_deref(),
+        Some("private:msg_two")
+    );
+    assert_eq!(
+        observed[0].message["method"],
+        crate::ops::codex_voice_analyst::MANAGED_INBOX_CANCELLED_METHOD
+    );
+    assert!(state.inbox_delegations.contains_key("msg_one"));
+    assert_eq!(
+        state
+            .active
+            .as_ref()
+            .expect("original human turn remains active")
+            .id,
+        "msg_human"
+    );
 }

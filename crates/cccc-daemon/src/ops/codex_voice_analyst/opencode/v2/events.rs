@@ -1,12 +1,14 @@
 use super::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub(super) struct State {
     pub(super) active: Option<Turn>,
     pub(super) controlled: Option<(String, String)>,
+    pub(super) inbox_delegations: HashMap<String, String>,
     pub(super) native: VecDeque<native_input::PendingNativeInput>,
     pending: HashMap<String, Value>,
+    pub(super) inherited: HashSet<String>,
     tools: HashMap<String, Tool>,
     last_sequence: Option<u64>,
 }
@@ -36,6 +38,36 @@ fn string<'a>(value: &'a Value, key: &str) -> io::Result<&'a str> {
 }
 
 impl State {
+    /// Outstanding items from a previous owner have no trustworthy current
+    /// delegation. Observe them like native input and fence Group admission.
+    pub(super) fn restore_inbox(&mut self, session_id: &str, inbox: &Value) -> io::Result<()> {
+        let rows = inbox["data"]
+            .as_array()
+            .ok_or_else(|| io::Error::other("OpenCode V2 returned invalid inbox data"))?;
+        for item in rows.iter().filter(|item| item["type"] == "user") {
+            let id = string(item, "id")?;
+            if item["sessionID"] != session_id
+                || !id.starts_with("msg_")
+                || self.pending.len() >= 256
+            {
+                return Err(io::Error::other(
+                    "OpenCode V2 returned an invalid resumed inbox",
+                ));
+            }
+            self.inherited.insert(id.to_owned());
+            self.pending.insert(id.to_owned(), item.clone());
+        }
+        Ok(())
+    }
+
+    fn settle_inherited(&mut self, inner: &Inner, id: &str) {
+        if self.inherited.remove(id) && self.inherited.is_empty() {
+            inner.resumed_inbox.store(false, Ordering::Release);
+            inner.publish(json!({"method":crate::ops::codex_voice_analyst::MANAGED_RESUMED_INBOX_DRAINED_METHOD,
+                "params":{"threadId":inner.session_id}}), None);
+        }
+    }
+
     pub(super) fn observe(&mut self, inner: &Inner, event: &Value) -> io::Result<()> {
         let data = &event["data"];
         if data["sessionID"] != inner.session_id {
@@ -59,7 +91,16 @@ impl State {
             }
             "session.inbox.cancelled" => {
                 let id = string(data, "inboxID")?;
+                self.settle_inherited(inner, id);
                 self.pending.remove(id);
+                if let Some(delegation) = self.inbox_delegations.remove(id) {
+                    inner.publish(
+                        json!({"method":crate::ops::codex_voice_analyst::MANAGED_INBOX_CANCELLED_METHOD,
+                               "params":{"threadId":inner.session_id,"inboxID":id}}),
+                        Some(delegation),
+                    );
+                    return Ok(());
+                }
                 if self
                     .controlled
                     .as_ref()
@@ -86,14 +127,20 @@ impl State {
                 let Some(item) = self.pending.remove(id) else {
                     return Ok(());
                 };
-                let delegation = if self
+                let inherited = self.inherited.contains(id);
+                let delegation = if inherited {
+                    None
+                } else if self
                     .controlled
                     .as_ref()
                     .is_some_and(|(expected, _)| expected == id)
                 {
                     self.controlled.take().map(|(_, delegation)| delegation)
                 } else {
-                    native_input::observe(&mut self.native, string(&item["payload"], "text")?)
+                    let input_text = string(&item["payload"], "text")?;
+                    self.inbox_delegations
+                        .remove(id)
+                        .or_else(|| native_input::observe(&mut self.native, input_text))
                 };
                 if item["delivery"] == "queue" || self.active.is_none() {
                     if self.active.is_some() {
@@ -109,6 +156,7 @@ impl State {
                     // Native steering contributes to the existing execution.
                     self.started(inner, delegation);
                 }
+                self.settle_inherited(inner, id);
             }
             "session.step.started" => {
                 let turn = self.active.as_mut().ok_or_else(|| {

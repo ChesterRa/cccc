@@ -404,11 +404,17 @@ pub(crate) fn receipt_line(
         uncertain.extend(report.retained.iter().cloned());
     }
     if !uncertain.is_empty() {
-        // Another stop cannot settle what a session owner could not confirm: that owner is
-        // kept for review, so name its command. Only a stop the daemon confirmed, with no
-        // owner named, is worth running again.
+        // A plain stop is worth running again: once the daemon is gone, it reaches a live
+        // session owner directly and can confirm the agent it still holds. The owner's
+        // review command lists only records the owner gave up on, so it comes second.
+        // After a kept stop, another plain stop would also stop the agents just kept.
         let owners = review_owners(&uncertain);
-        let next = if !owners.is_empty() {
+        let next = if report.mode == ShutdownMode::Stop && !owners.is_empty() {
+            format!(
+                "; run `cccc daemon stop` again to retry; if it still cannot confirm them, run {}",
+                review_commands(&owners)
+            )
+        } else if !owners.is_empty() {
             format!("; to review, run {}", review_commands(&owners))
         } else if report.mode == ShutdownMode::Stop && matches!(receipt, Receipt::Confirmed(_)) {
             "; run `cccc daemon stop` again to retry".to_owned()
@@ -459,11 +465,16 @@ pub(crate) fn agents_result(receipt: &Receipt) -> crate::host_state::AgentsResul
         Receipt::NotSupported | Receipt::Missing => AgentsResult::Unconfirmed,
         Receipt::Confirmed(report) | Receipt::WithoutDaemon(report) => {
             let plain = report.mode == ShutdownMode::Stop;
+            let mut uncertain = report.unconfirmed.clone();
+            if plain {
+                uncertain.extend(report.retained.iter().cloned());
+            }
             AgentsResult::Confirmed {
+                plain,
                 stopped: report.confirmed_stopped.len(),
                 kept: if plain { 0 } else { report.retained.len() },
-                uncertain: report.unconfirmed.len() + if plain { report.retained.len() } else { 0 },
-                review_owners: review_owners(&report.unconfirmed),
+                uncertain: uncertain.len(),
+                review_owners: review_owners(&uncertain),
             }
         }
     }

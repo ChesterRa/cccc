@@ -658,6 +658,7 @@
   "noMoreMessages": "これ以上メッセージはありません",
   "loadingHistory": "読み込み中…",
   "deliveryFailedFor": "配信失敗: {{names}}",
+  "chetRequestNotSent": "このリクエストは Chet に送られず、実行もされていません。必要なら、もう一度送ってください。",
   "showRecipientStatus": "受信者の状況を表示",
   "read": "既読",
   "pending": "未読",

@@ -50,7 +50,9 @@ pub fn live_web_binding(home: &cccc_core::HomeLayout) -> Option<(String, u16)> {
 /// This API is intentionally experimental. It owns no ledger schema or roster
 /// identity and may change when the upstream private Voice protocol changes.
 pub mod experimental_codex_voice {
-    pub use crate::ops::codex_voice_analyst::{LaunchConfig, TurnReceipt};
+    pub use crate::ops::codex_voice_analyst::{
+        LaunchConfig, TurnReceipt, untrusted_claude_workspace,
+    };
     pub use crate::ops::codex_voice_controller::{
         CodexVoiceAnalyst, CodexVoiceCall, DEFAULT_REALTIME_VOICE, FinalProjection,
         GrokRealtimeConnection, ProviderDelegation, REALTIME_VOICES, RealtimeCallConfig,
@@ -60,6 +62,7 @@ pub mod experimental_codex_voice {
         validate_provider_voice, validate_realtime_voice,
     };
     pub use crate::ops::codex_voice_lifecycle::{
-        AnalystCompletionSource, AnalystLifecycleEvent, AnalystTurnOrigin, VoiceDelegationAdmission,
+        AnalystCompletionSource, AnalystLifecycleEvent, AnalystTurnOrigin, GroupWaitDeadline,
+        VoiceDelegationAdmission,
     };
 }

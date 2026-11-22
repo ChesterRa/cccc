@@ -191,7 +191,10 @@ export function buildChetTimeline(
       for (const id of record.input_ids) if (!results.has(id)) results.set(id, { record, index });
     } else if (record.kind === "not_started") {
       if (!notStarted.has(record.input_id)) {
-        notStarted.set(record.input_id, { reason: record.reason, index });
+        notStarted.set(record.input_id, {
+          reason: record.wait_expired === true ? "wait_expired" : record.reason,
+          index,
+        });
       }
     }
   });

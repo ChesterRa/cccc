@@ -23,7 +23,7 @@ pub fn ensure(
 ) -> io::Result<PathBuf> {
     // Actor launch carries only overrides; the provider also inherits the
     // daemon environment. Resolve the home Cursor itself reads.
-    let effective: BTreeMap<String, String> = std::env::vars()
+    let effective: BTreeMap<String, String> = cccc_runtime::unicode_environment()
         .chain(
             environment
                 .iter()

@@ -26,11 +26,11 @@ async fn in_flight_snapshot_includes_starting_native_and_active_inputs_without_w
         origin: AnalystTurnOrigin::Terminal,
         cancelling: false,
     });
-    state.queue.push_back(queue::QueuedInput {
-        delegation_id: "queued".into(),
-        text: "later".into(),
-        origin: AnalystTurnOrigin::Terminal,
-    });
+    state.queue.push_back(queue::QueuedInput::new(
+        "queued",
+        "later",
+        AnalystTurnOrigin::Terminal,
+    ));
     state.active = Some(ActiveTurn {
         turn_id: "turn".into(),
         latest_delegation_id: "active".into(),
@@ -64,11 +64,11 @@ async fn invalidation_reports_queued_inputs_as_never_started() {
         .lock()
         .await
         .queue
-        .push_back(queue::QueuedInput {
-            delegation_id: "queued".into(),
-            text: "later".into(),
-            origin: AnalystTurnOrigin::Terminal,
-        });
+        .push_back(queue::QueuedInput::new(
+            "queued",
+            "later",
+            AnalystTurnOrigin::Terminal,
+        ));
     lifecycle.invalidate().await;
     match events.recv().await.expect("not started") {
         AnalystLifecycleEvent::Completed {
@@ -100,11 +100,7 @@ async fn busy_input_is_not_requeued_after_invalidation() {
     let mut events = lifecycle.subscribe();
     let mut state = lifecycle.state.lock().await;
     lifecycle.requeue_after_busy(
-        queue::QueuedInput {
-            delegation_id: "live".into(),
-            text: "later".into(),
-            origin: AnalystTurnOrigin::Terminal,
-        },
+        queue::QueuedInput::new("live", "later", AnalystTurnOrigin::Terminal),
         &mut state,
     );
     assert_eq!(
@@ -121,11 +117,7 @@ async fn busy_input_is_not_requeued_after_invalidation() {
     assert!(events.try_recv().is_err());
     state.invalidated = true;
     lifecycle.requeue_after_busy(
-        queue::QueuedInput {
-            delegation_id: "busy".into(),
-            text: "later".into(),
-            origin: AnalystTurnOrigin::Terminal,
-        },
+        queue::QueuedInput::new("busy", "later", AnalystTurnOrigin::Terminal),
         &mut state,
     );
     assert!(state.queue.is_empty());
@@ -170,11 +162,11 @@ async fn late_receipt_after_invalidation_does_not_revive_queued_work() {
         .lock()
         .await
         .queue
-        .push_back(queue::QueuedInput {
-            delegation_id: "late".into(),
-            text: "question".into(),
-            origin: AnalystTurnOrigin::Terminal,
-        });
+        .push_back(queue::QueuedInput::new(
+            "late",
+            "question",
+            AnalystTurnOrigin::Terminal,
+        ));
     lifecycle.queue_notify.notify_one();
     tokio::time::timeout(Duration::from_secs(3), start_seen)
         .await
@@ -515,11 +507,9 @@ async fn cancelling_a_queued_user_input_still_starts_the_waiting_group_input() {
             ("user-input", AnalystTurnOrigin::Terminal),
             ("group", AnalystTurnOrigin::Group),
         ] {
-            state.queue.push_back(queue::QueuedInput {
-                delegation_id: id.into(),
-                text: id.into(),
-                origin,
-            });
+            state
+                .queue
+                .push_back(queue::QueuedInput::new(id, id, origin));
         }
         lifecycle
             .queue_len
@@ -1635,4 +1625,279 @@ async fn test_session_with_retryable_interrupt()
     .await
     .expect("connect test Analyst");
     (session, server, second_interrupt_rx)
+}
+
+#[tokio::test]
+async fn inconsistent_opencode_association_suppresses_all_result_text_and_drains_the_queue() {
+    let (session, server) = test_session().await;
+    let lifecycle = AnalystLifecycle::start(Arc::new(session.into_opencode_lifecycle_fixture()));
+    let mut stream = lifecycle.subscribe();
+    {
+        let mut state = lifecycle.state.lock().await;
+        state.active = Some(ActiveTurn {
+            turn_id: "T".into(),
+            latest_delegation_id: "G".into(),
+            delegation_ids: vec!["G".into()],
+            origin: AnalystTurnOrigin::Group,
+            cancelling: false,
+            deltas: String::new(),
+            completed_text: "fixture result".into(),
+            result_overflowed: false,
+        });
+        state.native_pending.push_back(PendingStart {
+            delegation_id: "P".into(),
+            origin: AnalystTurnOrigin::Terminal,
+            cancelling: false,
+        });
+        state.queue.push_back(queue::QueuedInput::new(
+            "waiting",
+            "fixture",
+            AnalystTurnOrigin::Group,
+        ));
+    }
+    let gen_id = lifecycle.session.generation().to_owned();
+    lifecycle
+        .handle(AnalystEvent {
+            generation: gen_id.clone(),
+            requested_delegation_id: Some("P".into()),
+            message: json!({"method":"turn/started","params":{"turn":{"id":"T"}}}),
+        })
+        .await;
+    lifecycle.handle(AnalystEvent{
+        generation:gen_id, requested_delegation_id:None,
+        message:json!({"method":"turn/completed","params":{"turn":{"id":"T","status":"completed"}}}),
+    }).await;
+    let state = lifecycle.state.lock().await;
+    assert!(
+        state.invalidated
+            && state.active.is_none()
+            && state.native_pending.is_empty()
+            && state.queue.is_empty()
+    );
+    drop(state);
+    assert!(
+        matches!(stream.recv().await.expect("queued Group completion"), AnalystLifecycleEvent::Completed {
+        source:AnalystCompletionSource::HostNotStarted,delegation_id,result,..}
+        if delegation_id=="waiting" && result.is_empty())
+    );
+    assert!(matches!(
+        stream.recv().await.expect("lifecycle disconnection"),
+        AnalystLifecycleEvent::Disconnected
+    ));
+    assert!(stream.try_recv().is_err());
+    drop(lifecycle);
+    server.abort();
+}
+
+#[test]
+fn queued_private_chat_can_resume_a_held_inbox_after_the_group_leaves() {
+    let mut state = LifecycleState::default();
+    state.native_pending.push_back(PendingStart {
+        delegation_id: "held-private".into(),
+        origin: AnalystTurnOrigin::ChetText,
+        cancelling: false,
+    });
+    // User input can be ordered ahead of a Group while remaining fenced.
+    state.queue.push_back(queue::QueuedInput::new(
+        "next-private",
+        "continue",
+        AnalystTurnOrigin::ChetText,
+    ));
+    state.queue.push_back(queue::QueuedInput::new(
+        "waiting-group",
+        "question",
+        AnalystTurnOrigin::Group,
+    ));
+    assert!(!queue::can_dispatch_front(&state));
+    state.queue.pop_back();
+    assert!(queue::can_dispatch_front(&state));
+    state
+        .native_pending
+        .front_mut()
+        .expect("pending private input")
+        .origin = AnalystTurnOrigin::Voice;
+    assert!(!queue::can_dispatch_front(&state));
+}
+
+#[tokio::test]
+async fn opencode_private_inputs_precede_a_waiting_group_only_while_a_group_is_running() {
+    let (session, server) = test_session().await;
+    let session = Arc::new(session.into_opencode_lifecycle_fixture());
+    let lifecycle = AnalystLifecycle::start(Arc::clone(&session));
+    let mut events = lifecycle.subscribe();
+    session.publish_event_for_test(json!({
+        "method":"turn/started", "params":{"threadId":"thread-lifecycle","turn":{"id":"busy"}}
+    }));
+    events.recv().await.expect("active turn");
+    lifecycle
+        .state
+        .lock()
+        .await
+        .active
+        .as_mut()
+        .expect("active")
+        .origin = AnalystTurnOrigin::Group;
+    lifecycle
+        .admit_group("next-group", "question")
+        .await
+        .expect("queue Group");
+    lifecycle
+        .admit_chet_text("first-private", "first")
+        .await
+        .expect("queue private during Group");
+    lifecycle
+        .state
+        .lock()
+        .await
+        .active
+        .as_mut()
+        .expect("active")
+        .origin = AnalystTurnOrigin::ChetText;
+    lifecycle
+        .admit_chet_text("later-private", "later")
+        .await
+        .expect("queue private during private turn");
+    let state = lifecycle.state.lock().await;
+    let order: Vec<_> = state
+        .queue
+        .iter()
+        .map(|input| input.delegation_id.as_str())
+        .collect();
+    assert_eq!(order, ["first-private", "next-group", "later-private"]);
+    drop(state);
+    drop(lifecycle);
+    server.abort();
+}
+
+#[tokio::test]
+async fn delayed_group_dispatch_keeps_each_sources_observed_inbox_deadline() {
+    let (session, server) = test_session().await;
+    let lifecycle = AnalystLifecycle::start(Arc::new(session.into_opencode_lifecycle_fixture()));
+    let at = tokio::time::Instant::now() + std::time::Duration::from_secs(600);
+    let first = GroupWaitDeadline::new(at);
+    let second = GroupWaitDeadline::new(at + std::time::Duration::from_secs(1));
+    lifecycle.observe_group_wait(&first).await;
+    lifecycle.observe_group_wait(&second).await;
+    {
+        let mut state = lifecycle.state.lock().await;
+        // A private input was admitted while both sources awaited the same
+        // serial worker. Its withdrawal falls between their two deadlines.
+        state.native_pending.push_back(PendingStart {
+            delegation_id: "private".into(),
+            origin: AnalystTurnOrigin::ChetText,
+            cancelling: false,
+        });
+        queue::update_group_waits(&mut state, at);
+        state.native_pending.clear();
+        // A Voice turn keeps the host busy without blocking the private inbox.
+        state.native_pending.push_back(PendingStart {
+            delegation_id: "voice".into(),
+            origin: AnalystTurnOrigin::Voice,
+            cancelling: false,
+        });
+        queue::update_group_waits(&mut state, at + std::time::Duration::from_secs(2));
+        assert!(state.source_waits.is_empty());
+    }
+    lifecycle
+        .admit_group_until("one", "first", &first)
+        .await
+        .expect("admit the first Group request");
+    lifecycle
+        .admit_group_until("two", "second", &second)
+        .await
+        .expect("admit the second Group request");
+    // The second deadline elapsed with an empty private inbox, before the
+    // serial worker admitted this Group. A later blocker cannot change that.
+    {
+        let mut state = lifecycle.state.lock().await;
+        state.resumed_inbox_pending = true;
+        queue::update_group_waits(&mut state, at + Duration::from_secs(30));
+    }
+    assert!(lifecycle.group_wait_expired("one").await);
+    assert!(!lifecycle.group_wait_expired("two").await);
+    drop(lifecycle);
+    server.abort();
+}
+
+#[tokio::test]
+async fn opencode_group_expiry_reserves_only_unsent_work_until_persisted() {
+    let (session, server) = test_session().await;
+    let lifecycle = AnalystLifecycle::start(Arc::new(session.into_opencode_lifecycle_fixture()));
+    let mut events = lifecycle.subscribe();
+    // The intake owner computes absolute deadlines from two distinct source events.
+    let start = tokio::time::Instant::now();
+    let deadline = start + std::time::Duration::from_secs(600);
+    {
+        let mut state = lifecycle.state.lock().await;
+        state.native_pending.push_back(PendingStart {
+            delegation_id: "private".into(),
+            origin: AnalystTurnOrigin::ChetText,
+            cancelling: false,
+        });
+    }
+    for (id, due) in [
+        ("group-one", deadline),
+        ("group-two", deadline + std::time::Duration::from_secs(1)),
+    ] {
+        lifecycle
+            .admit_group_until(id, "request", &GroupWaitDeadline::new(due))
+            .await
+            .expect("admit the Group request with its source deadline");
+    }
+    {
+        let mut state = lifecycle.state.lock().await;
+        assert_eq!(
+            queue::update_group_waits(&mut state, start + std::time::Duration::from_secs(599)),
+            Some(deadline)
+        );
+        assert!(!state.queue[0].wait_expired());
+        assert_eq!(
+            queue::update_group_waits(&mut state, deadline),
+            Some(deadline + std::time::Duration::from_secs(1))
+        );
+        assert!(state.queue[0].wait_expired());
+        // The private input is consumed after the first deadline, before the second.
+        state.native_pending.clear();
+        assert_eq!(
+            queue::update_group_waits(&mut state, deadline),
+            Some(deadline + Duration::from_secs(1))
+        );
+        assert!(state.queue[0].wait_expired());
+        assert!(!state.queue[1].wait_expired());
+        // Simulate a long running tool after the private inbox item is consumed.
+        queue::update_group_waits(&mut state, deadline + std::time::Duration::from_secs(900));
+        assert!(!state.queue[1].wait_expired());
+        // A private input entering the inbox now did not hold this Group
+        // request at its deadline, regardless of its host queue position.
+        state.native_pending.push_back(PendingStart {
+            delegation_id: "later-private".into(),
+            origin: AnalystTurnOrigin::ChetText,
+            cancelling: false,
+        });
+        queue::update_group_waits(&mut state, deadline + Duration::from_secs(901));
+        assert!(!state.queue[1].wait_expired());
+    }
+    assert!(lifecycle.group_wait_expired("group-one").await);
+    lifecycle.invalidate().await;
+    assert!(lifecycle.group_wait_expired("group-one").await);
+    lifecycle
+        .settle_group_wait("group-one", AnalystCompletionSource::HostGroupWaitExpired)
+        .await;
+    lifecycle
+        .settle_group_wait("group-one", AnalystCompletionSource::HostGroupWaitExpired)
+        .await;
+    assert!(!lifecycle.group_wait_expired("group-one").await);
+    let mut persisted = vec![];
+    while let Ok(event) = events.try_recv() {
+        if let AnalystLifecycleEvent::Completed {
+            source: AnalystCompletionSource::HostGroupWaitExpired,
+            delegation_id,
+            ..
+        } = event
+        {
+            persisted.push(delegation_id);
+        }
+    }
+    assert_eq!(persisted, ["group-one"]);
+    server.abort();
 }

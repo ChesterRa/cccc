@@ -326,8 +326,7 @@ mod tests {
     ))]
     #[test]
     fn a_kept_holder_must_answer_now() {
-        use nix::sys::signal::{Signal, kill};
-        use nix::unistd::Pid;
+        use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process, waitid};
         let (_directory, home) = home();
         home.initialize().expect("initialize home");
         let owner_id = uuid::Uuid::new_v4().simple().to_string();
@@ -337,20 +336,34 @@ mod tests {
         };
         let pid = Pid::from_raw(
             i32::try_from(client::load(&home, &owner_id).expect("address").pid).expect("pid"),
-        );
+        )
+        .expect("positive owner PID");
         receipt(&home, ShutdownMode::PreserveAgents);
         let answered = check_now(&home);
-        kill(pid, Signal::SIGSTOP).expect("stop the holder");
+        kill_process(pid, Signal::STOP).expect("signal the holder");
+        // Sending SIGSTOP does not wait for the child to stop. Observe its
+        // state without reaping it; the launching client already has a waiter.
+        let state = rustix::io::retry_on_intr(|| {
+            waitid(
+                WaitId::Pid(pid),
+                WaitIdOptions::STOPPED | WaitIdOptions::EXITED | WaitIdOptions::NOWAIT,
+            )
+        });
         let stopped = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime")
             .block_on(check_within(&home, Duration::from_millis(500)));
-        kill(pid, Signal::SIGCONT).expect("continue the holder");
+        kill_process(pid, Signal::CONT).expect("continue the holder");
         started.retire().expect("retire the empty holder");
         assert_eq!(answered, Ok(()));
+        assert!(
+            state.expect("observe holder").is_some_and(|s| s.stopped()),
+            "the kernel did not report the holder stopped"
+        );
         let refusal = stopped.expect_err("a stopped holder does not answer");
         assert!(refusal.contains(&owner_id), "{refusal}");
         assert!(refusal.contains("cannot take over"), "{refusal}");
+        assert!(refusal.contains("TimedOut"), "{refusal}");
     }
 }

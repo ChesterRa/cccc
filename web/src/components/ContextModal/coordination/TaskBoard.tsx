@@ -17,6 +17,7 @@ import { TaskBoardGrid } from "./TaskBoardGrid";
 import { TaskBoardLoadNotice } from "./TaskBoardLoadNotice";
 import { TaskBoardToolbar } from "./TaskBoardToolbar";
 import { TaskColumnJump } from "./TaskColumnJump";
+import { useBoardColumnOrder } from "./useBoardColumnOrder";
 import { useTaskKeysPlacement } from "./useTaskKeysPlacement";
 
 interface TaskBoardProps {
@@ -118,6 +119,7 @@ export function TaskBoard({
   const emptyBoard =
     showEmpty && !hasActiveFilters && !hasArchivedTasks && Number(tasksSummary.total || 0) === 0;
   useTaskKeysPlacement(boardRef, showBoard);
+  const statuses = useBoardColumnOrder(boardRef, showBoard, archivedExpanded);
 
   const grid = showBoard ? (
     <TaskBoardGrid
@@ -126,6 +128,7 @@ export function TaskBoard({
       syncBusy={syncBusy}
       searchQuery={searchQuery}
       archivedExpanded={archivedExpanded}
+      statuses={statuses}
       board={filteredBoard}
       pages={columnPages}
       taskMap={taskMap}
@@ -184,7 +187,7 @@ export function TaskBoard({
               <TaskColumnJump
                 boardRef={boardRef}
                 columnPages={columnPages}
-                archivedExpanded={archivedExpanded}
+                columns={statuses}
                 tr={tr}
               />
             ) : undefined

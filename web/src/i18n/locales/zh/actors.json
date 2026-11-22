@@ -23,6 +23,7 @@
   "agentStoppedDescription": "该智能体当前已停止。",
   "runtimeResumeFailedTitle": "恢复会话失败",
   "runtimeSessionReplaced": "{{time}} 未恢复此前保存的对话。",
+  "runtimeSessionReplacedNow": "{{name}} 开始了新对话，没有接回之前保存的对话。",
   "runtimeSessionReplacedReasons": "保存之后变了：{{reasons}}。",
   "runtimeSessionReplacedReasonSeparator": "、",
   "runtimeSessionReplacedReason": {

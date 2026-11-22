@@ -37,6 +37,16 @@ type GroupState = ReturnType<typeof useGroupStore.getState>;
 type UiState = ReturnType<typeof useUIStore.getState>;
 type ModalState = ReturnType<typeof useModalStore.getState>;
 
+function earlierObservation(incoming?: string | null, current?: string | null): boolean {
+  if (!incoming || !current || incoming === current) return false;
+  const left = Date.parse(incoming);
+  const right = Date.parse(current);
+  if (left !== right) return left < right;
+  // Date.parse accounts for UTC offsets but truncates the daemon's microseconds.
+  const fraction = (stamp: string) => (stamp.match(/\.(\d+)/)?.[1] || "").replace(/0+$/, "");
+  return fraction(incoming) < fraction(current);
+}
+
 export type LedgerEventProcessorDeps = {
   alreadyProcessed?: boolean;
   actors: Actor[];
@@ -97,12 +107,33 @@ export function processLedgerEvent(
     const actors = event.data?.actors;
     if (Array.isArray(actors) && actors.length > 0) {
       const store = useGroupStore.getState();
-      deps.updateActorActivity(actors, groupId);
+      const current = new Map<string, Actor>();
+      if (store.selectedGroupId === groupId) {
+        for (const actor of store.internalRuntimeActorsByGroup[groupId] || [])
+          current.set(actor.id, actor);
+        for (const actor of store.actors) current.set(actor.id, actor);
+      }
+      // A stopped or unobservable member must still clear the previous observation.
+      const retained: Actor[] = [];
+      const updates = actors.filter((row) => {
+        const actor = current.get(row.id);
+        if (
+          actor &&
+          row.running &&
+          earlierObservation(row.effective_working_updated_at, actor.effective_working_updated_at)
+        ) {
+          retained.push(actor);
+          return false;
+        }
+        return true;
+      });
+      if (!updates.length) return;
+      deps.updateActorActivity(updates, groupId);
       deps.updateGroupRuntimeState(
         groupId,
         computeGroupRuntimeFromActorActivityUpdates(
-          deps.actors,
-          actors,
+          [...deps.actors.map((actor) => current.get(actor.id) ?? actor), ...retained],
+          updates,
           getRuntimeStatusFallbackForGroup(store, groupId),
         ),
       );

@@ -10,7 +10,7 @@ pub fn ensure(
     environment: &BTreeMap<String, String>,
     add: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<PathBuf> {
-    let effective: BTreeMap<String, String> = std::env::vars()
+    let effective: BTreeMap<String, String> = cccc_runtime::unicode_environment()
         .chain(environment.iter().map(|(k, v)| (k.clone(), v.clone())))
         .collect();
     let keys = if cfg!(windows) {

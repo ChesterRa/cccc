@@ -37,6 +37,7 @@ function status(overrides: Partial<ChetStatus> = {}): ChetStatus {
     queued: [],
     working: [],
     history_write_failed: false,
+    start_problem: null,
     owner_busy: false,
     ...overrides,
   };
@@ -166,6 +167,24 @@ describe("buildChetTimeline", () => {
       notStartedReason: "assistant_unavailable",
     });
     expect(cancelled).toMatchObject({ state: "not_started", notStartedReason: "cancelled" });
+  });
+
+  it("tells an expired Group wait from other cancellations", () => {
+    const [expired, withdrawn] = requests([
+      input("a"),
+      input("b"),
+      {
+        kind: "not_started",
+        id: "n1",
+        created_at: at(1),
+        input_id: "a",
+        reason: "cancelled",
+        wait_expired: true,
+      },
+      { kind: "not_started", id: "n2", created_at: at(1), input_id: "b", reason: "cancelled" },
+    ]);
+    expect(expired).toMatchObject({ state: "not_started", notStartedReason: "wait_expired" });
+    expect(withdrawn).toMatchObject({ state: "not_started", notStartedReason: "cancelled" });
   });
 
   it("derives live phases only from status that can confirm them", () => {

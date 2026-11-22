@@ -352,6 +352,96 @@ async fn an_agent_is_told_at_once_that_its_recipient_is_stopped() {
 }
 
 #[tokio::test]
+async fn an_unclaimed_message_reaches_the_same_member_when_its_owner_answers_again() {
+    if !cccc_daemon::session_owner::platform_supported() {
+        return;
+    }
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("owner-unavailable-before-claim", false).await;
+    let socket = owner_socket(&temp);
+    let held = socket.with_file_name("held.sock");
+    let ledger_path = group_ledger_path(&temp, &group_id);
+    std::fs::rename(&socket, &held).expect("make the owner unavailable for the send");
+    let source = send(&client, &group_id, "can reach me after the owner returns").await;
+    assert!(
+        delivery_states(&ledger_path, &source).is_empty(),
+        "cannot claim on a guessed transport"
+    );
+    std::fs::rename(held, socket).expect("restore the same running owner");
+    // No new send, actor restart, or explicit redelivery wakes this source.
+    wait_for_delivery_state(&ledger_path, &source, "accepted").await;
+    assert_eq!(
+        delivery_states(&ledger_path, &source),
+        ["claimed", "accepted"]
+    );
+    shutdown(&client, daemon).await;
+}
+
+#[tokio::test]
+async fn a_resumed_group_delivers_the_missing_source_before_a_later_send() {
+    if !cccc_daemon::session_owner::platform_supported() {
+        return;
+    }
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("resume-owner-gap", false).await;
+    let socket = owner_socket(&temp);
+    let held = socket.with_file_name("held.sock");
+    let path = group_ledger_path(&temp, &group_id);
+    std::fs::rename(&socket, &held).expect("hide owner socket");
+    let first = send(&client, &group_id, "first during outage").await;
+    for state in ["paused", "active"] {
+        call(
+            &client,
+            "group_set_state",
+            json!({"group_id":group_id,"state":state,"by":"user"}),
+        )
+        .await;
+    }
+    assert!(delivery_states(&path, &first).is_empty());
+    std::fs::rename(held, socket).expect("restore owner socket");
+    let second = send(&client, &group_id, "second after resume").await;
+    wait_for_delivery_state(&path, &second, "accepted").await;
+    wait_for_delivery_state(&path, &first, "accepted").await;
+    let sources = ledger::read_all(&path)
+        .expect("read delivery order")
+        .into_iter()
+        .filter(|event| {
+            event.kind == "runtime.delivery"
+                && event.data["actor_id"] == "peer1"
+                && event.data["state"] == "claimed"
+        })
+        .filter_map(|event| event.data["source_event_id"].as_str().map(str::to_owned))
+        .filter(|id| id == &first || id == &second)
+        .collect::<Vec<_>>();
+    assert_eq!(sources, [first, second], "claim both once in ledger order");
+    shutdown(&client, daemon).await;
+}
+
+fn owner_socket(temp: &tempfile::TempDir) -> std::path::PathBuf {
+    let owners = temp.path().join("rust-home/daemon/session-owners");
+    let mut sockets = std::fs::read_dir(owners)
+        .expect("session owner directory")
+        .map(|entry| entry.expect("owner").path().join("control.sock"))
+        .filter(|path| path.exists());
+    let socket = sockets.next().expect("member owner socket");
+    assert!(sockets.next().is_none(), "fixture has a single owner");
+    socket
+}
+
+fn delivery_states(path: &std::path::Path, source: &str) -> Vec<String> {
+    ledger::read_all(path)
+        .expect("ledger")
+        .into_iter()
+        .filter(|event| {
+            event.kind == "runtime.delivery"
+                && event.data["source_event_id"] == source
+                && event.data["actor_id"] == "peer1"
+        })
+        .map(|event| event.data["state"].as_str().expect("state").to_owned())
+        .collect()
+}
+
+#[tokio::test]
 async fn a_short_outage_heals_while_messages_keep_arriving() {
     let _guard = DAEMON_TEST_LOCK.lock().await;
     let (temp, daemon, client, group_id) = setup("short-outage-test", false).await;

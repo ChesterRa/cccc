@@ -264,6 +264,18 @@ jobs:
       - name: Verify Group copy path checks on macOS
         run: >-
           cargo test --package cccc-pair-core --lib --locked group_copy
+      - name: Verify macOS session owner transport and offline installer checks
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --package cccc-pair-daemon --lib --locked -- \
+            session_owner::transport::tests:: \
+            session_owner::installer::tests:: \
+            --test-threads=1 | tee "$RUNNER_TEMP/macos-session-owner.log"
+          grep -Fq 'test session_owner::transport::tests::long_owner_paths_support_control_and_terminal_connections ... ok' "$RUNNER_TEMP/macos-session-owner.log"
+          grep -Fq 'test session_owner::transport::tests::mcp_registration_uses_the_native_peer_while_start_and_control_are_pending ... ok' "$RUNNER_TEMP/macos-session-owner.log"
+          grep -Fq 'test session_owner::installer::tests::a_kept_holder_must_answer_now ... ok' "$RUNNER_TEMP/macos-session-owner.log"
 
   rust-linux:
     needs: web

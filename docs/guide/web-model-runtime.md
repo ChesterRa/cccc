@@ -575,8 +575,8 @@ output, not text already discarded.
 If CCCC cannot verify a browser submission, later deliveries to that chat pause
 so they cannot replace an unsent draft. Check the saved conversation in the
 embedded browser, manually send or clear the draft, and wait for any response
-to finish. In the delivery-target section, **I checked ChatGPT — resume** resumes
-queued messages after checking that the saved chat is open and its composer is
+to finish. In the delivery-target section, **Review complete · resume delivery**
+resumes queued messages after checking that the saved chat is open and its composer is
 empty. It does not resend or mark the unverified message as accepted. A conversation needs a verified binding before new deliveries can start. Ordinary unsent drafts detected before a new batch is claimed
 are also preserved; queued delivery continues once they are sent or cleared.
 

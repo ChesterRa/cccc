@@ -119,15 +119,18 @@ impl IndexCache {
         retired
     }
 
+    /// The base budget, raised so the largest index always fits beside one other of the same
+    /// size up to the base budget. Someone moving between two Groups then keeps both indexes;
+    /// without it, two mid-sized ledgers would rebuild on every switch while a larger one fit.
     fn weight_limit(&self) -> u64 {
-        let oversized_allowance = self
+        let largest = self
             .entries
             .values()
             .map(|cached| cached.source_bytes)
             .max()
-            .filter(|largest| *largest > self.max_source_bytes)
             .unwrap_or_default();
-        self.max_source_bytes.saturating_add(oversized_allowance)
+        self.max_source_bytes
+            .max(largest.saturating_add(largest.min(self.max_source_bytes)))
     }
 }
 
@@ -220,18 +223,46 @@ mod tests {
 
     #[test]
     fn updates_weight_and_evicts_the_idle_lru_entry() {
-        let mut cache = IndexCache::new(2, 10);
+        let mut cache = IndexCache::new(3, 10);
         let first = Path::new("first");
         let second = Path::new("second");
-        drop(cache.entry(first, 4));
+        let third = Path::new("third");
+        drop(cache.entry(first, 3));
         drop(cache.entry(second, 4));
+        drop(cache.entry(third, 3));
         let first_index = cache.get(first).expect("first entry");
 
-        cache.update_weight(first, 9, &first_index);
+        cache.update_weight(first, 5, &first_index);
 
         assert!(cache.entries.contains_key(first));
         assert!(!cache.entries.contains_key(second));
-        assert_eq!(cache.source_bytes, 9);
+        assert!(cache.entries.contains_key(third));
+        assert_eq!(cache.source_bytes, 8);
+    }
+
+    #[test]
+    fn budget_grows_with_the_largest_entry_without_a_step() {
+        for (largest, limit) in [(5, 10), (6, 12), (10, 20), (11, 21)] {
+            let mut cache = IndexCache::new(4, 10);
+            cache.entry(Path::new("largest"), largest);
+            assert_eq!(cache.weight_limit(), limit, "largest weight {largest}");
+        }
+    }
+
+    #[test]
+    fn keeps_two_alternating_mid_sized_entries() {
+        let mut cache = IndexCache::new(4, 10);
+        let first = Path::new("first");
+        let second = Path::new("second");
+        // Hold no index between accesses: an entry in use is never evicted.
+        for _ in 0..3 {
+            for (path, weight) in [(first, 8), (second, 6)] {
+                let (_, retired) = cache.entry(path, weight);
+                assert!(retired.is_empty(), "{} was evicted", path.display());
+            }
+        }
+        assert_eq!(cache.entries.len(), 2);
+        assert_eq!(cache.source_bytes, 14);
     }
 
     #[test]

@@ -9,7 +9,6 @@ import type {
 } from "@dnd-kit/core";
 import type { Task } from "../../../types";
 import type { TaskColumnPages } from "../../../features/contextModal/taskBoardData";
-import { useUIStore } from "../../../stores/useUIStore";
 import { classNames } from "../../../utils/classNames";
 import {
   taskStatusLabel,
@@ -29,6 +28,7 @@ export function TaskBoardGrid({
   syncBusy,
   searchQuery,
   archivedExpanded,
+  statuses,
   board,
   pages,
   taskMap,
@@ -49,6 +49,8 @@ export function TaskBoardGrid({
   syncBusy: boolean;
   searchQuery: string;
   archivedExpanded: boolean;
+  /** Column order, from useBoardColumnOrder. */
+  statuses: BoardStatus[];
   board: BoardColumns;
   pages: TaskColumnPages;
   taskMap: Map<string, Task>;
@@ -124,13 +126,8 @@ export function TaskBoardGrid({
     };
     return { announcements, screenReaderInstructions };
   }, [taskMap, tr]);
-  // On phones Active comes first, in the DOM, so focus follows the visual order.
-  // Columns are keyed so a change of order keeps each column and its controls.
-  const smallScreen = useUIStore((state) => state.isSmallScreen);
-  const statuses: BoardStatus[] = smallScreen
-    ? ["active", "planned", "done"]
-    : ["planned", "active", "done"];
-  if (archivedExpanded) statuses.push("archived");
+  // The order is in the DOM, so focus follows the visual order. Columns are keyed so a change
+  // of order keeps each column and its controls.
   return (
     <div className="@container/task-board min-w-0">
       <DndContext

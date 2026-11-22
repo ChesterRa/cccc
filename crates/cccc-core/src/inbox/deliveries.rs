@@ -195,7 +195,20 @@ impl DeliveryState {
                     && generation.is_none_or(|generation| *position > generation)
             })
     }
-    pub fn pending(&self, group: &GroupDoc, actor: &str, limit: usize) -> Vec<Location> {
+    pub fn source_position(&self, id: &str) -> Option<usize> {
+        self.sources
+            .iter()
+            .find(|source| source.id == id)
+            .map(|source| source.position)
+    }
+    pub fn pending(
+        &self,
+        group: &GroupDoc,
+        actor: &str,
+        limit: usize,
+        only_unclaimed: bool,
+        range: std::ops::RangeInclusive<usize>,
+    ) -> Vec<Location> {
         let Some(actor_index) = self.actors.get(actor) else {
             return Vec::new();
         };
@@ -217,10 +230,17 @@ impl DeliveryState {
                     .filter(|target| current(*target) && target <= read)
             })
             .max();
-        self.sources
+        let start = self
+            .sources
+            .partition_point(|source| source.position < *range.start());
+        self.sources[start..]
             .iter()
+            .take_while(|source| source.position <= *range.end())
             .filter(|source| current(source.position) && source.recipients.contains(actor_index))
             .filter(|source| {
+                if only_unclaimed && states.is_some_and(|states| states.contains_key(&source.id)) {
+                    return false;
+                }
                 let (state, retryable) = states
                     .and_then(|states| states.get(&source.id))
                     .and_then(|state| state.pending.as_ref())

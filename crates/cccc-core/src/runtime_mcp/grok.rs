@@ -14,7 +14,7 @@ pub fn ensure(
     executable: &Path,
     grok: &str,
 ) -> io::Result<PathBuf> {
-    let mut environment: BTreeMap<String, String> = std::env::vars()
+    let mut environment: BTreeMap<String, String> = cccc_runtime::unicode_environment()
         .chain(
             environment
                 .iter()

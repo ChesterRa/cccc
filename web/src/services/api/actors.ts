@@ -14,7 +14,12 @@ import {
 export type ProfileView = "global" | "my" | "all" | "accessible";
 export type ProfileScope = "global" | "user";
 
-export type ActorRuntimeActionResult = { actor?: Actor; runtime_confirmation_required?: boolean };
+export type ActorRuntimeActionResult = {
+  actor?: Actor;
+  runtime_confirmation_required?: boolean;
+  /** Present when this start began a new conversation instead of the saved one. */
+  runtime_session_replaced?: { at: string; reasons: string[]; message?: string };
+};
 
 export type ActorRuntimeSwitchTarget =
   | { kind: "native"; source_id: string; expected_native_session_id: string }

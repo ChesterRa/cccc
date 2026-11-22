@@ -101,31 +101,7 @@ pub(super) fn take_unannounced(path: &Path) -> Option<Value> {
 /// back without its saved conversation. The Web conversation shows chat
 /// messages only; there the member's listing fields carry the same fact.
 pub(super) fn notice(group_id: &str, actor_id: &str, noted: &Value) -> Event {
-    let changed: Vec<_> = noted["reasons"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|reason| match reason.as_str()? {
-            "runtime" => Some("runtime"),
-            "transport" => Some("connection type"),
-            "record_version" => Some("CCCC's saved format"),
-            "workspace" => Some("workspace"),
-            "command" => Some("launch command"),
-            "model" => Some("model"),
-            "launch_path" => Some("launch PATH"),
-            "cccc_cli" => Some("CCCC program location"),
-            "launch_identity" => Some("launch settings or environment"),
-            _ => None,
-        })
-        .collect();
-    let mut message =
-        format!("{actor_id} started a new conversation. The one saved before it was not resumed.");
-    if !changed.is_empty() {
-        message = format!(
-            "{message} Changed since it was saved: {}.",
-            changed.join(", ")
-        );
-    }
+    let message = message(actor_id, &noted["reasons"]);
     let mut event = Event::new("system.notify", group_id);
     event.by = "system".into();
     // No `target_actor_id` or `actor_id`: either would route this to the member
@@ -147,6 +123,36 @@ pub(super) fn notice(group_id: &str, actor_id: &str, noted: &Value) -> Event {
     .cloned()
     .unwrap_or_default();
     event
+}
+
+/// What the user is told when a member began a new conversation instead of its saved one.
+pub(super) fn message(actor_id: &str, reasons: &Value) -> String {
+    let changed: Vec<_> = reasons
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|reason| match reason.as_str()? {
+            "runtime" => Some("runtime"),
+            "transport" => Some("connection type"),
+            "record_version" => Some("CCCC's saved format"),
+            "workspace" => Some("workspace"),
+            "command" => Some("launch command"),
+            "model" => Some("model"),
+            "launch_path" => Some("launch PATH"),
+            "cccc_cli" => Some("CCCC program location"),
+            "launch_identity" => Some("launch settings or environment"),
+            _ => None,
+        })
+        .collect();
+    let message =
+        format!("{actor_id} started a new conversation. The one saved before it was not resumed.");
+    if changed.is_empty() {
+        return message;
+    }
+    format!(
+        "{message} Changed since it was saved: {}.",
+        changed.join(", ")
+    )
 }
 
 /// The provider conversation a receipt points at. Native ACP receipts name no
@@ -455,6 +461,40 @@ mod tests {
         fixture.claude("sonnet", "/config/c", FIRST, false);
         announce();
         assert_eq!(notices().len(), 1);
+    }
+
+    #[test]
+    fn a_start_reports_only_the_replacement_it_caused() {
+        let fixture = Fixture::new();
+        let at = || receipts::replaced_at(&fixture.home, &fixture.group, "peer");
+        let since = |before: &Value| {
+            receipts::replaced_since(&fixture.home, &fixture.group, "peer", before)
+        };
+        let before = at();
+        fixture.claude("sonnet", "/config/a", FIRST, false);
+        assert_eq!(since(&before), None, "a first start replaces nothing");
+
+        let before = at();
+        fixture.claude("opus", "/config/a", SECOND, false);
+        let reported = since(&before).expect("this start replaced the saved conversation");
+        assert_eq!(reported["at"], at());
+        assert!(
+            reported["reasons"]
+                .as_array()
+                .is_some_and(|reasons| reasons.contains(&json!("model")))
+        );
+        let message = reported["message"].as_str().expect("message");
+        assert!(
+            message.starts_with("peer started a new conversation."),
+            "{message}"
+        );
+        assert!(message.contains("model"), "{message}");
+
+        // Resuming the new conversation later reports nothing, though the note stays.
+        let before = at();
+        fixture.claude("opus", "/config/a", SECOND, true);
+        assert_eq!(since(&before), None);
+        assert!(at().is_string());
     }
 
     #[test]

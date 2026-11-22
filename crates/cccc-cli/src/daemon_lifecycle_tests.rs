@@ -704,7 +704,7 @@ fn receipt_lines_count_only_confirmed_agents_and_name_the_rest_as_possibly_runni
         "{mixed}"
     );
 
-    // Only a stop the daemon confirmed, naming no owner, suggests stopping again.
+    // A plain stop suggests stopping again; naming no owner, only when the daemon confirmed it.
     assert!(
         partly.contains("run `cccc daemon stop` again to retry"),
         "{partly}"
@@ -733,35 +733,40 @@ fn receipt_lines_count_only_confirmed_agents_and_name_the_rest_as_possibly_runni
         "an offline stop already was the retry: {offline}"
     );
 
-    // An owner kept for review is named with its command, in either mode, once per owner.
+    // An agent a live session owner still holds: after a plain stop, another stop reaches
+    // that owner directly and can confirm it, so it comes first and the owner's review
+    // command, once per owner, is the fallback. After a kept stop, another plain stop would
+    // also stop the kept agents, so only the review command is named.
     let owner = "2cabc7ed-cb39-40ea-a8e2-c06dd258b4a1";
     let review = "`cccc daemon process-recovery --owner session --owner-id 2cabc7edcb3940eaa8e2c06dd258b4a1 list`";
-    for (intent, mode) in [
-        (stop, ShutdownMode::Stop),
-        (keep, ShutdownMode::PreserveAgents),
-    ] {
-        let line = super::receipt_line(
-            &home,
-            intent,
-            &report(
-                mode,
-                vec![],
-                vec![],
-                vec![
-                    held(&group.group_id, "c1", owner),
-                    held(&group.group_id, "c2", owner),
-                ],
-            ),
+    let held_two = |mode| {
+        report(
+            mode,
+            vec![],
+            vec![],
+            vec![
+                held(&group.group_id, "c1", owner),
+                held(&group.group_id, "c2", owner),
+            ],
         )
+    };
+    let plain = super::receipt_line(&home, stop, &held_two(ShutdownMode::Stop))
         .expect("an owner-held agent is reported");
-        assert!(
-            line.contains("could not confirm 2 agents (c1, c2 in Night shift), which may still be running; to review, run ")
-                && line.contains(review)
-                && line.matches("process-recovery").count() == 1
-                && !line.contains("daemon stop"),
-            "{line}"
-        );
-    }
+    assert!(
+        plain.contains("could not confirm 2 agents (c1, c2 in Night shift), which may still be running; run `cccc daemon stop` again to retry; if it still cannot confirm them, run ")
+            && plain.contains(review)
+            && plain.matches("process-recovery").count() == 1,
+        "{plain}"
+    );
+    let kept = super::receipt_line(&home, keep, &held_two(ShutdownMode::PreserveAgents))
+        .expect("an owner-held agent is reported");
+    assert!(
+        kept.contains("could not confirm 2 agents (c1, c2 in Night shift), which may still be running; to review, run ")
+            && kept.contains(review)
+            && kept.matches("process-recovery").count() == 1
+            && !kept.contains("daemon stop"),
+        "{kept}"
+    );
     let two = super::receipt_line(
         &home,
         stop,
@@ -778,7 +783,7 @@ fn receipt_lines_count_only_confirmed_agents_and_name_the_rest_as_possibly_runni
     .expect("two owners are reported");
     assert!(
         two.contains(
-            "to review, run `cccc daemon process-recovery --owner session --owner-id 2cabc7edcb3940eaa8e2c06dd258b4a1 list` and `cccc daemon process-recovery --owner session --owner-id 9f0e8d7c6b5a49388271605f4e3d2c1b list`"
+            "if it still cannot confirm them, run `cccc daemon process-recovery --owner session --owner-id 2cabc7edcb3940eaa8e2c06dd258b4a1 list` and `cccc daemon process-recovery --owner session --owner-id 9f0e8d7c6b5a49388271605f4e3d2c1b list`"
         ),
         "{two}"
     );
@@ -846,5 +851,47 @@ async fn startup_names_retained_agents_without_claiming_web_has_reconnected() {
         super::retained_line(&DaemonClient::new(quiet.clone()), &quiet)
             .await
             .is_none()
+    );
+}
+
+#[test]
+fn the_terminal_summary_keeps_the_stop_mode_and_the_owners_of_every_uncertain_agent() {
+    use crate::host_state::AgentsResult;
+    use cccc_daemon::session_owner::ShutdownMode;
+    // A plain stop keeps nothing on purpose: an agent left with its owner is uncertain,
+    // and that owner is named for review.
+    assert_eq!(
+        super::agents_result(&report(
+            ShutdownMode::Stop,
+            vec![agent("g", "a1")],
+            vec![held("g", "b2", "1b2b3b4b5b6b4b7b8b9b0b1b2b3b4b5b")],
+            vec![held("g", "c3", "2c3c4c5c6c7c4c8c9c0c1c2c3c4c5c6c")],
+        )),
+        AgentsResult::Confirmed {
+            plain: true,
+            stopped: 1,
+            kept: 0,
+            uncertain: 2,
+            review_owners: vec![
+                "1b2b3b4b5b6b4b7b8b9b0b1b2b3b4b5b".into(),
+                "2c3c4c5c6c7c4c8c9c0c1c2c3c4c5c6c".into()
+            ],
+        }
+    );
+    // A kept stop, possibly asked for from another terminal, counts what it kept.
+    assert_eq!(
+        super::agents_result(&report(
+            ShutdownMode::PreserveAgents,
+            vec![],
+            vec![held("g", "b2", "1b2b3b4b5b6b4b7b8b9b0b1b2b3b4b5b")],
+            vec![held("g", "c3", "2c3c4c5c6c7c4c8c9c0c1c2c3c4c5c6c")],
+        )),
+        AgentsResult::Confirmed {
+            plain: false,
+            stopped: 0,
+            kept: 1,
+            uncertain: 1,
+            review_owners: vec!["2c3c4c5c6c7c4c8c9c0c1c2c3c4c5c6c".into()],
+        }
     );
 }

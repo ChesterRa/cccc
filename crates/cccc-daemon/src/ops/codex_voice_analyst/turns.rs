@@ -5,6 +5,10 @@ use std::time::Duration;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl AnalystSession {
+    pub(crate) fn has_resumed_inbox(&self) -> bool {
+        matches!(&self.protocol, ManagedProtocol::OpenCode(client) if client.has_resumed_inbox())
+    }
+
     #[cfg(test)]
     pub(crate) async fn reconnect(self, expected_generation: &str) -> io::Result<Self> {
         self.require_generation(expected_generation)?;
@@ -47,6 +51,47 @@ impl AnalystSession {
         .await
     }
 
+    pub(crate) async fn submit_bound_opencode(
+        &self,
+        generation: &str,
+        id: &str,
+        text: &str,
+    ) -> io::Result<()> {
+        self.require_generation(generation)?;
+        let id = required_value(id, "delegation_id")?;
+        let text = required_value(text, "text")?;
+        let ManagedProtocol::OpenCode(client) = &self.protocol else {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "OpenCode bound backend required",
+            ));
+        };
+        let mut delegations = self.delegations.lock().await;
+        if let Some(previous) = delegations.get(id) {
+            return match previous {
+                DelegationState::InboxAccepted | DelegationState::Started(_) => Ok(()),
+                DelegationState::Unresolved(reason) => {
+                    Err(io::Error::new(io::ErrorKind::AlreadyExists, reason.clone()))
+                }
+            };
+        }
+        match client.post_input(id, text, true).await {
+            Ok(_) => {
+                delegations.insert(id.to_owned(), DelegationState::InboxAccepted);
+                Ok(())
+            }
+            Err(error) => {
+                if error.kind() != io::ErrorKind::WouldBlock {
+                    delegations.insert(
+                        id.to_owned(),
+                        DelegationState::Unresolved(error.to_string()),
+                    );
+                }
+                Err(error)
+            }
+        }
+    }
+
     pub(crate) async fn start_turn(
         &self,
         expected_generation: &str,
@@ -60,6 +105,10 @@ impl AnalystSession {
         if let Some(state) = delegations.get(delegation_id) {
             return match state {
                 DelegationState::Started(receipt) => Ok(receipt.clone()),
+                DelegationState::InboxAccepted => Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "OpenCode already accepted this input; no independent turn was reserved",
+                )),
                 DelegationState::Unresolved(reason) => Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
                     format!(

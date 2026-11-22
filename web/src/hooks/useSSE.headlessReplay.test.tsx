@@ -1059,3 +1059,107 @@ it.each(
     }
   },
 );
+
+it.each([
+  ["droid", "headless"],
+  ["codex", "pty"],
+] as const)(
+  "keeps the next queued %s turn when a previous turn's activity arrives late",
+  async (runtime, runner) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const original = useGroupStore.getState();
+    const sources = stubEventSources();
+    const actor: Actor = { id: "worker", runtime, runner, running: true };
+    const peer: Actor = { ...actor, id: "peer", running: false };
+    useGroupStore.setState({
+      selectedGroupId: "g",
+      groups: [{ group_id: "g", title: "g" }],
+      actors: [actor, peer],
+      chatByGroup: {},
+      refreshActors: vi.fn().mockResolvedValue(undefined),
+    });
+    let connection: ReturnType<typeof useSSE>;
+    function Probe() {
+      connection = useSSE({
+        activeTabRef: { current: "chat" },
+        chatAtBottomRef: { current: true },
+        actorsRef: { current: [actor, peer] },
+      });
+      return null;
+    }
+    const root = createRoot(document.createElement("div"));
+    try {
+      await act(async () => root.render(<Probe />));
+      await act(async () => connection!.connectStream("g"));
+      const ledger = sources.find((source) => source.url.includes("/ledger/stream"))!;
+      const stream = sources.find((source) => source.url.includes("/headless/stream"))!;
+      await act(async () => stream.emit("headless.snapshot", { events: [] }));
+      const turn = (kind: string, id: string, ts: string) =>
+        stream.emit("headless", {
+          id: kind + id,
+          group_id: "g",
+          actor_id: actor.id,
+          type: "headless.turn." + kind,
+          ts: "2026-11-21T00:00:00." + ts + "Z",
+          data: { turn_id: id },
+        });
+      const activity = (actors: object[]) =>
+        ledger.emit("ledger", { group_id: "g", kind: "actor.activity", data: { actors } });
+      const olderActivity = {
+        id: actor.id,
+        running: true,
+        runner_effective: runner,
+        effective_working_state: "working",
+        effective_active_task_id: "A",
+        effective_working_updated_at: "2026-11-21T01:00:00.000100+01:00",
+      };
+      const peerIdle = { id: peer.id, running: true, effective_working_state: "idle" };
+      await act(async () => {
+        turn("started", "A", "000100");
+        turn("completed", "A", "000500");
+        turn("started", "B", "000900");
+        activity([
+          {
+            ...olderActivity,
+            effective_working_state: "idle",
+            effective_active_task_id: null,
+            effective_working_updated_at: "2026-11-21T00:00:00.000500Z",
+          },
+        ]);
+        activity([olderActivity, peerIdle]);
+      });
+      const state = () => useGroupStore.getState();
+      expect(state().actors[0]?.effective_active_task_id).toBe("B");
+      expect(state().actors[1]?.running).toBe(true);
+      expect(state().groups[0]?.runtime_status?.lifecycle_state).toBe("active");
+      await act(async () => turn("completed", "B", "001000"));
+      expect(state().actors[0]?.effective_working_state).toBe("idle");
+      await act(async () => activity([olderActivity, peerIdle]));
+      expect(state().actors[0]?.effective_working_state).toBe("idle");
+      expect(state().groups[0]?.runtime_status?.lifecycle_state).toBe("idle");
+      await act(async () =>
+        activity([{ id: actor.id, running: false, effective_working_state: "stopped" }]),
+      );
+      expect(state().actors[0]?.running).toBe(false);
+      expect(state().groups[0]?.runtime_status?.running_actor_count).toBe(1);
+      await act(async () =>
+        activity([
+          {
+            id: actor.id,
+            effective_working_state: "unknown",
+            effective_working_reason: "runtime_owner_unavailable",
+          },
+        ]),
+      );
+      expect(state().actors[0]?.running).toBeUndefined();
+      expect(state().groups[0]?.runtime_status?.available).toBe(false);
+    } finally {
+      await act(async () => {
+        connection!.cleanup();
+        root.unmount();
+      });
+      vi.unstubAllGlobals();
+      useGroupStore.setState(original);
+    }
+  },
+);

@@ -270,11 +270,16 @@ pub fn web_model_catalog() -> Vec<Value> {
 pub(crate) fn describe_paired_identity(catalog: &mut [Value]) {
     for tool in catalog {
         let actor_is_target = tool["name"] == "cccc_actor";
+        let reads_other_state = tool["name"] == "cccc_agent_state";
         if let Some(properties) = tool["inputSchema"]["properties"].as_object_mut() {
             if let Some(group) = properties.get_mut("group_id") {
                 group["description"] = Value::String("The paired CCCC Group is supplied by the connector. Omit this field; a caller cannot change the Group with this argument.".into());
             }
-            if !actor_is_target && let Some(actor) = properties.get_mut("actor_id") {
+            if reads_other_state {
+                if let Some(actor) = properties.get_mut("actor_id") {
+                    actor["description"] = Value::String("With action=get, the member whose state to read; leave it out to read the paired CCCC Actor's own. update and clear always act on the paired CCCC Actor.".into());
+                }
+            } else if !actor_is_target && let Some(actor) = properties.get_mut("actor_id") {
                 actor["description"] = Value::String("The paired CCCC Actor is supplied by the connector. Omit this field; a caller cannot change its identity with this argument.".into());
             }
         }

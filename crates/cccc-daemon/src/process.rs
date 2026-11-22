@@ -86,6 +86,8 @@ impl DetachedDaemon {
         }
 
         let paths = DaemonPaths::new(home.clone());
+        #[cfg(unix)]
+        crate::server::validate_endpoint_path(&paths)?;
         let log = OpenOptions::new()
             .create(true)
             .append(true)

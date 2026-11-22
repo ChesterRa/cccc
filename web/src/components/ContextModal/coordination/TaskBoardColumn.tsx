@@ -60,8 +60,10 @@ export function TaskBoardColumn({
       tabIndex={-1}
       data-rendered-task-count={items.length}
       data-total-task-count={totalCount}
+      // Only the drop highlight animates: visibility, which a phone's task details hide the
+      // board with, would otherwise switch only once the transition ends.
       className={classNames(
-        "min-w-0 rounded-2xl border p-3 transition-all",
+        "min-w-0 rounded-2xl border p-3 transition-[background-color,border-color,box-shadow]",
         isOver
           ? "border-black/10 bg-[rgb(245,245,245)] shadow-[0_0_0_1px_rgba(17,24,39,0.08)] dark:border-white/12 dark:bg-white/[0.08] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.06)]"
           : "glass-panel",

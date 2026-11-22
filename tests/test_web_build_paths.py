@@ -7,6 +7,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BUILD_SCRIPT_RAN = "build-script-ran"
 
 
 def _checkout(root: Path, name: str, *, packaged: bool) -> Path:
@@ -18,22 +19,16 @@ def _checkout(root: Path, name: str, *, packaged: bool) -> Path:
         encoding="utf-8",
     )
     shutil.copyfile(ROOT / "crates/cccc-web/build.rs", package / "build.rs")
-    # Record when the actual Web build script runs. The real fingerprint
-    # emitter is exercised by the executable identity tests.
+    # This dependency-free probe isolates asset paths/cache reuse. The real
+    # fingerprint emitter is exercised by the executable identity tests. The
+    # stand-in marks each build-script run in the package directory, outside
+    # the paths the script watches.
     identity = package.parent / "cccc-core/build_support"
     identity.mkdir(parents=True)
     (identity / "mod.rs").write_text(
-        """use std::io::Write;
-
-pub fn emit(_: &std::path::Path) -> std::io::Result<()> {
-    let path = std::env::var_os("WEB_ASSETS_PROBE_LOG").expect("probe log path");
-    let mut log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    writeln!(log, "run")
-}
-""",
+        "pub fn emit(_: &std::path::Path) -> std::io::Result<()> {\n"
+        f'    std::fs::write("{BUILD_SCRIPT_RAN}", "")\n'
+        "}\n",
         encoding="utf-8",
     )
     # Resolve relative paths from the package root, as RustEmbed does. Absolute
@@ -83,12 +78,7 @@ def test_shared_cargo_cache_embeds_the_current_checkout(
     first, second = [
         _checkout(tmp_path, name, packaged=packaged) for name in ("first", "second")
     ]
-    build_log = tmp_path / "web-build-runs"
-    env = {
-        **os.environ,
-        "CARGO_TARGET_DIR": str(tmp_path / "target"),
-        "WEB_ASSETS_PROBE_LOG": str(build_log),
-    }
+    env = {**os.environ, "CARGO_TARGET_DIR": str(tmp_path / "target")}
     env.pop("CCCC_FORCE_WEB_BUILD", None)
 
     def build(package: Path) -> str:
@@ -133,7 +123,9 @@ def test_shared_cargo_cache_embeds_the_current_checkout(
     frontend(second).write_text("frontend_second_updated", encoding="utf-8")
     assert build(second) == "backend_second:frontend_second_updated"
 
-    before = build_log.read_bytes()
-    assert before
+    # An earlier build left the mark. Clear it; an unchanged rebuild must not
+    # run the build script again.
+    marker = second / BUILD_SCRIPT_RAN
+    marker.unlink()
     assert build(second) == "backend_second:frontend_second_updated"
-    assert build_log.read_bytes() == before, "unchanged builds stay cached"
+    assert not marker.exists(), "unchanged builds stay cached"

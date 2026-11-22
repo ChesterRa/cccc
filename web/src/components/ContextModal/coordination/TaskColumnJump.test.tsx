@@ -40,7 +40,7 @@ function Fixture({
           <TaskColumnJump
             boardRef={boardRef}
             columnPages={pages}
-            archivedExpanded={archived}
+            columns={["active", "planned", "done", ...(archived ? ["archived" as const] : [])]}
             tr={tr}
           />
         </div>

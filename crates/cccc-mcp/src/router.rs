@@ -104,6 +104,10 @@ async fn call_scoped(
     }
     crate::tools::apply_default_action(name, &mut arguments);
     remove_untrusted_authority(&mut arguments);
+    // The bound identity replaces `actor_id` below. A read of another member's state names
+    // that member in the same field, so keep the target the caller gave for the projection,
+    // before the runtime environment fills an omitted one.
+    let agent_state_target = agent_state_read_target(name, &arguments);
     add_runtime_context(home, &mut arguments);
     arguments.remove("_cccc_web_binding");
     arguments.remove("_cccc_native_binding");
@@ -237,7 +241,14 @@ async fn call_scoped(
                 Err(error) => return Err(error.into()),
             };
             let mut result = daemon(client, &op, args).await?;
-            crate::context_projection::apply(name, &mut result, &arguments);
+            match &agent_state_target {
+                Some(target) => {
+                    let mut projection = arguments.clone();
+                    projection.insert("actor_id".into(), target.clone());
+                    crate::context_projection::apply(name, &mut result, &projection);
+                }
+                None => crate::context_projection::apply(name, &mut result, &arguments),
+            }
             crate::history_projection::apply(name, &mut result, &arguments);
             if name == "cccc_backlog" {
                 crate::backlog_projection::apply(&mut result, &arguments)?;
@@ -946,6 +957,22 @@ fn apply_actor_context(args: &mut Map<String, Value>, actor: Option<&str>) {
         // Tool arguments are model-controlled and must not be able to impersonate user.
         args.insert("by".into(), Value::String(actor.to_owned()));
     }
+}
+
+/// The member a `cccc_agent_state` read asks for. Omitted, the read stays on the caller; writes
+/// never take a target.
+fn agent_state_read_target(name: &str, args: &Map<String, Value>) -> Option<Value> {
+    if name != "cccc_agent_state"
+        || !matches!(
+            args.get("action").and_then(Value::as_str),
+            None | Some("get" | "list")
+        )
+    {
+        return None;
+    }
+    args.get("actor_id")
+        .filter(|value| value.as_str().is_some_and(|id| !id.trim().is_empty()))
+        .cloned()
 }
 
 fn remove_untrusted_authority(args: &mut Map<String, Value>) {

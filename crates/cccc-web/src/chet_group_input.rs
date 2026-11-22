@@ -2,12 +2,13 @@
 //! owns message content; Chet history records receipt and the dispatch claim.
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use cccc_contracts::chet::{GroupInput, GroupInputSender};
 use cccc_contracts::{DaemonRequest, Event};
-use cccc_core::chet_history::{Record, TextRequest};
+use cccc_core::chet_history::{Record, TextRequest, group_wait_expired_id};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout, actors, connect_groups, ledger};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -16,6 +17,7 @@ use uuid::Uuid;
 
 use crate::AppState;
 use crate::codex_voice::ChetSubmitError;
+use cccc_daemon::experimental_codex_voice::GroupWaitDeadline;
 
 type SourceKey = (String, String, String);
 
@@ -28,6 +30,9 @@ struct KnownInput {
     input: GroupInput,
     attempted: bool,
     queued: bool,
+    /// Its wait expired before this process started. The Group may still lack
+    /// that fact if the process stopped in between, so it is recorded again.
+    expiry_unsettled: bool,
 }
 
 struct Work {
@@ -35,10 +40,18 @@ struct Work {
     id: Uuid,
     input: GroupInput,
     event: Event,
+    /// Chet notes on it whether its message's wait ran out while a private
+    /// input held the inbox, even before this worker reaches it.
+    wait: Arc<GroupWaitDeadline>,
 }
 
 /// How often the worker reads what each Group committed since the last sweep.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
+/// How long a Group request waits, from its message, for the host to hand it to
+/// Chet. Until then a private conversation keeps priority.
+const GROUP_WAIT: Duration = Duration::from_secs(600);
+/// Pause between attempts to record an expiry the daemon did not confirm.
+const EXPIRY_RETRY: Duration = Duration::from_secs(5);
 
 pub(crate) fn spawn(state: AppState) {
     spawn_with_interval(state, SWEEP_INTERVAL);
@@ -220,6 +233,7 @@ async fn call(state: &AppState, op: &str, args: Value) -> Result<serde_json::Map
 async fn load_known(state: &AppState) -> Result<HashMap<SourceKey, KnownInput>> {
     let mut inputs = HashMap::<Uuid, GroupInput>::new();
     let mut attempted = HashSet::new();
+    let mut expired = HashSet::new();
     let mut after = "0".to_owned();
     loop {
         let page = call(
@@ -237,9 +251,13 @@ async fn load_known(state: &AppState) -> Result<HashMap<SourceKey, KnownInput>> 
                 Record::GroupInput { id, input, .. } => {
                     inputs.insert(id, input);
                 }
-                Record::GroupDispatch { input_id, .. }
-                | Record::Receipt { input_id, .. }
-                | Record::NotStarted { input_id, .. } => {
+                Record::NotStarted { id, input_id, .. } => {
+                    if id == group_wait_expired_id(input_id) {
+                        expired.insert(input_id);
+                    }
+                    attempted.insert(input_id);
+                }
+                Record::GroupDispatch { input_id, .. } | Record::Receipt { input_id, .. } => {
                     attempted.insert(input_id);
                 }
                 Record::Result { input_ids, .. } => attempted.extend(input_ids),
@@ -272,6 +290,7 @@ async fn load_known(state: &AppState) -> Result<HashMap<SourceKey, KnownInput>> 
                     input,
                     attempted: attempted.contains(&id),
                     queued: false,
+                    expiry_unsettled: expired.contains(&id),
                 },
             )
         })
@@ -287,6 +306,14 @@ async fn reconcile_pending(
     shutdown: &mut broadcast::Receiver<()>,
 ) -> bool {
     for entry in known.values_mut() {
+        if entry.expiry_unsettled {
+            if shutdown.try_recv().is_ok() {
+                return true;
+            }
+            entry.expiry_unsettled = record_wait_expiry(state, entry.id, &entry.input)
+                .await
+                .is_err();
+        }
         if entry.attempted || entry.queued {
             continue;
         }
@@ -359,6 +386,102 @@ fn source_unavailable_id(input_id: Uuid) -> Uuid {
     let mut bytes = [0; 16];
     bytes.copy_from_slice(&digest[..16]);
     Uuid::from_bytes(bytes)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Expiry {
+    Recorded,
+    /// Chet history already holds another outcome for this input, so the
+    /// expiry is not recorded and the Group is told nothing.
+    OtherOutcome,
+}
+
+/// Records, once, that this Group input was never sent because its wait
+/// expired: privately in Chet history and as a failed delivery on its message.
+/// An error leaves it to be tried again.
+async fn record_wait_expiry(state: &AppState, id: Uuid, input: &GroupInput) -> Result<Expiry> {
+    let response = state
+        .client
+        .call(&DaemonRequest {
+            v: 1,
+            op: "chet_group_wait_expired".into(),
+            args: json!({"by":"user","group_id":input.group_id,"input_id":id})
+                .as_object()
+                .expect("fixed object")
+                .clone(),
+        })
+        .await?;
+    if response.ok {
+        return Ok(Expiry::Recorded);
+    }
+    // The same expiry retried reads as existing; a conflict is another outcome.
+    if response.error.as_ref().map(|error| error.code.as_str())
+        == Some("chet_history_outcome_conflict")
+    {
+        return Ok(Expiry::OtherOutcome);
+    }
+    bail!("Chet Group wait expiry is not recorded")
+}
+
+/// Records an expiry, then lets the Runtime release the input it holds unsent.
+/// A write that fails is tried again; the input is never sent meanwhile.
+async fn settle_wait_expiry(state: &AppState, id: Uuid, input: &GroupInput) {
+    let mut shutdown = state.shutdown.subscribe();
+    let mut expiry = None;
+    loop {
+        if expiry.is_none() {
+            expiry = record_wait_expiry(state, id, input).await.ok();
+            if expiry != Some(Expiry::Recorded) {
+                // A failed write, or a history that contradicts the expiry:
+                // either way the user should see it.
+                state.codex_voice.mark_chet_history_write_failed();
+            }
+        }
+        let released = match expiry {
+            Some(Expiry::Recorded) => state.codex_voice.confirm_chet_group_wait_expiry(id).await,
+            // Not an expiry: the earlier outcome stays, and the Runtime lets
+            // the input go as unconfirmed.
+            Some(Expiry::OtherOutcome) => {
+                state
+                    .codex_voice
+                    .release_chet_group_wait_unconfirmed(id)
+                    .await
+            }
+            None => false,
+        };
+        if released {
+            return;
+        }
+        tokio::select! {
+            _ = shutdown.recv() => return,
+            _ = tokio::time::sleep(EXPIRY_RETRY) => {},
+        }
+    }
+}
+
+/// The message's own time starts the wait, so a restart does not extend it. A
+/// message time ahead of this clock waits the whole period.
+fn wait_deadline(
+    message_ts: &str,
+    now: chrono::DateTime<chrono::Utc>,
+    instant: tokio::time::Instant,
+) -> tokio::time::Instant {
+    let waited = match chrono::DateTime::parse_from_rfc3339(message_ts) {
+        Ok(sent) => now
+            .signed_duration_since(sent)
+            .to_std()
+            .unwrap_or_else(|_| {
+                tracing::warn!(
+                    "Chet Group message time is ahead of this clock; waiting the whole period"
+                );
+                Duration::ZERO
+            }),
+        Err(_) => {
+            tracing::warn!("Chet Group message time is unreadable; waiting the whole period");
+            Duration::ZERO
+        }
+    };
+    instant + GROUP_WAIT.saturating_sub(waited)
 }
 
 fn source_key(input: &GroupInput) -> SourceKey {
@@ -503,12 +626,20 @@ async fn register_event(
         input: input.clone(),
         attempted: false,
         queued: false,
+        expiry_unsettled: false,
     });
+    let wait = Arc::new(GroupWaitDeadline::new(wait_deadline(
+        &event.ts,
+        chrono::Utc::now(),
+        tokio::time::Instant::now(),
+    )));
+    state.codex_voice.observe_chet_group_wait(&wait).await;
     match work.try_send(Work {
         key,
         id,
         input,
         event,
+        wait,
     }) {
         Ok(()) => entry.queued = true,
         Err(mpsc::error::TrySendError::Full(_)) => {} // The next ledger sweep retries it.
@@ -523,7 +654,11 @@ async fn dispatch(
     shutdown: &mut broadcast::Receiver<()>,
 ) -> Result<bool> {
     let Work {
-        id, input, event, ..
+        id,
+        input,
+        event,
+        wait,
+        ..
     } = work;
     // Revalidation on an existing reference detects a removed/recreated source
     // before a pending input is passed to the Runtime.
@@ -563,15 +698,21 @@ async fn dispatch(
     let preparation = state.codex_voice.track_chet_preparation(id);
     match state
         .codex_voice
-        .submit_chet_group_input(&state.home, id, &input, &prompt)
+        .submit_chet_group_input(&state.home, id, &input, &prompt, &wait)
         .await
     {
         Ok(()) => {
             drop(preparation);
             let id_text = id.to_string();
-            // Keep at most one Group input in the Runtime. Other messages stay
-            // durable, leaving the existing user input path responsive.
+            // Keep at most one live Group input in the Runtime. Other messages
+            // stay durable, leaving the existing user input path responsive.
             loop {
+                // An expired input is never sent; the Runtime holds it until
+                // the expiry is recorded, and the next one starts after that.
+                if state.codex_voice.chet_group_wait_expired(id).await {
+                    settle_wait_expiry(state, id, &input).await;
+                    break;
+                }
                 let status = state.codex_voice.chet_status().await;
                 let present = ["preparing", "queued", "working"].iter().any(|name| {
                     status
@@ -736,6 +877,21 @@ fn bounded_reference_history(
 mod tests {
     use super::*;
     use cccc_contracts::DaemonResponse;
+
+    #[test]
+    fn a_group_wait_counts_from_its_message_and_never_exceeds_the_period() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-21T07:00:00Z")
+            .expect("now")
+            .with_timezone(&chrono::Utc);
+        let instant = tokio::time::Instant::now();
+        let remaining = |ts: &str| wait_deadline(ts, now, instant) - instant;
+        assert_eq!(remaining("2026-11-21T06:59:59Z"), Duration::from_secs(599));
+        assert_eq!(remaining("2026-11-21T06:50:00Z"), Duration::ZERO);
+        assert_eq!(remaining("2026-11-21T06:00:00Z"), Duration::ZERO);
+        // A message time ahead of this clock, or unreadable, waits the whole period.
+        assert_eq!(remaining("2026-11-21T07:05:00Z"), GROUP_WAIT);
+        assert_eq!(remaining("not a time"), GROUP_WAIT);
+    }
 
     #[test]
     fn group_input_instructions_keep_requests_and_acknowledgements_distinct() {
@@ -1205,6 +1361,7 @@ mod tests {
             },
             attempted,
             queued,
+            expiry_unsettled: false,
         };
         let mut known = HashMap::new();
         known.insert(
