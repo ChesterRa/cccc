@@ -1,8 +1,9 @@
 import { useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { FileText, Image as ImageGlyph, Presentation, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import type { ClosedEntry, ResourceTab } from "../../stores/useResourcePanelStore";
 import { resourceSource } from "./resourceSource";
+import { resourceTabIcon } from "./resourceTabIcon";
 import { classNames } from "../../utils/classNames";
 import { CloseIcon, LcdIcon } from "../Icons";
 import { buttonVariants } from "../ui/button-variants";
@@ -153,20 +154,7 @@ export function ResourceTabsList({
                 data-resource-row
               >
                 <LcdIcon
-                  icon={
-                    tab.kind === "workspace"
-                      ? FileText
-                      : tab.kind === "presentation"
-                        ? Presentation
-                        : ImageGlyph
-                  }
-                  glyph={
-                    tab.kind === "workspace"
-                      ? "file-text"
-                      : tab.kind === "presentation"
-                        ? "monitor"
-                        : "image"
-                  }
+                  {...resourceTabIcon(tab)}
                   className="h-4 w-4 shrink-0"
                   aria-hidden="true"
                 />

@@ -16,11 +16,8 @@ import {
   Columns2,
   Download,
   ExternalLink,
-  FileText,
-  Image as ImageGlyph,
   Maximize2,
   Minimize2,
-  Presentation,
   SquareChevronLeft,
   SquareChevronRight,
 } from "lucide-react";
@@ -50,6 +47,7 @@ import { WorkspaceEntryMenu } from "../workspace/WorkspaceEntryMenu";
 import { WorkspaceViewer } from "../workspace/WorkspaceViewer";
 import type { WorkspaceFilesController } from "../workspace/useWorkspaceFiles";
 import { ClosedEntryRow, ResourceTabsList } from "./ResourceTabsList";
+import { resourceTabIcon } from "./resourceTabIcon";
 import { SplitDivider, SplitPaneHeader } from "./ResourceSplit";
 import {
   followTabs,
@@ -156,16 +154,7 @@ function TabIcon({ tab }: { tab: ResourceTab }) {
         data-resource-tab-thumbnail
       />
     );
-  // An attached SVG keeps the image glyph; other attached files, such as a PDF, get the file one.
-  const image = tab.kind === "attachment" && tab.media === "image";
-  return (
-    <LcdIcon
-      icon={tab.kind === "presentation" ? Presentation : image ? ImageGlyph : FileText}
-      glyph={tab.kind === "presentation" ? "monitor" : image ? "image" : "file-text"}
-      className="h-4 w-4 shrink-0"
-      aria-hidden="true"
-    />
-  );
+  return <LcdIcon {...resourceTabIcon(tab)} className="h-4 w-4 shrink-0" aria-hidden="true" />;
 }
 
 type PendingClose = { keys: string[]; blocked: ResourceTab[] };

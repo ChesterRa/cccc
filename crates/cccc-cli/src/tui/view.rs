@@ -856,9 +856,13 @@ fn agents_outcome(result: &AgentsResult) -> Option<String> {
     const STOP_THEM: &str = "run `cccc daemon stop` to stop them";
     match result {
         AgentsResult::NotOwned => None,
-        AgentsResult::Unconfirmed => Some(format!(
-            "not confirmed; some may still be running; {STOP_THEM}"
-        )),
+        // Without a receipt the stop's mode is unknown: kept agents come first, since a
+        // plain stop would also end work that was meant to stay.
+        AgentsResult::Unconfirmed => Some(
+            "not confirmed; some may still be running; start CCCC again to reattach any that are, \
+             or stop them with `cccc daemon stop`"
+                .to_owned(),
+        ),
         &AgentsResult::Confirmed {
             plain,
             stopped,

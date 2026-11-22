@@ -935,7 +935,10 @@ async fn launch_with(
                             daemon_lifecycle::StopIntent::StopAgents
                         }
                     },
-                    _ => stop_intent,
+                    // Another terminal may have stopped this daemon with `--keep-agents`,
+                    // so without a receipt the wording that offers both choices is the
+                    // safe one: a plain stop would end work that was meant to stay.
+                    _ => daemon_lifecycle::StopIntent::KeepAgents,
                 };
                 if let Some(line) = daemon_lifecycle::receipt_line(&home, intent, &receipt) {
                     cccc_runtime::diagnostic(format_args!("{line}"));
@@ -1026,13 +1029,7 @@ async fn finish_handover(
         {
             (None, Some(report))
         }
-        (None, Ok(()), Ok(Some(report))) => (
-            Some(format!(
-                "{} agent(s) could not be confirmed stopped; see `cccc daemon process-recovery`",
-                report.unconfirmed.len()
-            )),
-            None,
-        ),
+        (None, Ok(()), Ok(Some(report))) => (Some(unconfirmed_stop_reason(&report)), None),
         (None, Ok(()), Ok(None)) => (
             Some("the daemon left no stop receipt for this update".into()),
             None,
@@ -1243,9 +1240,59 @@ async fn verify_daemon_stopped(home: &HomeLayout) -> Result<()> {
     )
 }
 
+/// A stop that ends agents but could not confirm some. The review command needs the
+/// owner's ID and reads its records only while no CCCC holds the home.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn unconfirmed_stop_reason(report: &cccc_daemon::session_owner::ShutdownReport) -> String {
+    let count = report.unconfirmed.len();
+    let owners = daemon_lifecycle::review_owners(&report.unconfirmed);
+    if owners.is_empty() {
+        format!("{count} agent(s) could not be confirmed stopped")
+    } else {
+        format!(
+            "{count} agent(s) could not be confirmed stopped; after CCCC is stopped, review the named session owner(s) with {}",
+            daemon_lifecycle::review_commands(&owners)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unconfirmed_stop_names_the_owner_review_command() {
+        use cccc_daemon::session_owner::{AgentIdentity, ShutdownMode, ShutdownReport};
+        let agent = |owner: Option<&str>| AgentIdentity {
+            group_id: "g_1".into(),
+            actor_id: "a".into(),
+            actor_created_at: "2026-11-22T00:00:00Z".into(),
+            generation: None,
+            owner_id: owner.map(Into::into),
+        };
+        let mut report = ShutdownReport {
+            v: 1,
+            daemon_pid: 1,
+            request_id: "r".into(),
+            mode: ShutdownMode::Stop,
+            confirmed_stopped: Vec::new(),
+            retained: Vec::new(),
+            unconfirmed: vec![
+                agent(Some("6601de51-cf61-4faa-870e-4351abe7141c")),
+                agent(None),
+            ],
+        };
+        assert_eq!(
+            unconfirmed_stop_reason(&report),
+            "2 agent(s) could not be confirmed stopped; after CCCC is stopped, review the named session owner(s) with \
+             `cccc daemon process-recovery --owner session --owner-id 6601de51cf614faa870e4351abe7141c list`"
+        );
+        report.unconfirmed = vec![agent(None)];
+        assert_eq!(
+            unconfirmed_stop_reason(&report),
+            "1 agent(s) could not be confirmed stopped"
+        );
+    }
 
     #[test]
     fn only_an_enabled_interactive_normal_launch_uses_the_interface() {

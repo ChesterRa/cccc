@@ -624,7 +624,7 @@ fn the_receipt_reports_what_actually_stopped() {
             log_path: log.clone(),
         }),
         format!(
-            "CCCC stopped with problems.\n  Web     stopped\n  Daemon  stopped\n  Agents  not confirmed; some may still be running; run `cccc daemon stop` to stop them\n  Log     {}",
+            "CCCC stopped with problems.\n  Web     stopped\n  Daemon  stopped\n  Agents  not confirmed; some may still be running; start CCCC again to reattach any that are, or stop them with `cccc daemon stop`\n  Log     {}",
             std::path::Path::new("/home/me/.cccc/daemon/ccccd.log").display()
         )
     );
