@@ -52,7 +52,7 @@ export function DirectJoinForm({
           onChange={(event) => setIncoming(event.target.value)}
         />
         {invalid && (
-          <p id={`${id}-error`} role="alert" className="text-xs text-[var(--color-danger)]">
+          <p id={`${id}-error`} role="alert" className="text-xs text-[var(--color-accent-danger)]">
             {t("direct.invalidInvitation")}
           </p>
         )}
@@ -102,7 +102,7 @@ export function DirectJoinForm({
             <p
               id={`${id}-expiry`}
               role={expired ? "alert" : undefined}
-              className={`flex items-start gap-2 ${expired ? "text-[var(--color-danger)]" : ""}`}
+              className={`flex items-start gap-2 ${expired ? "text-[var(--color-accent-danger)]" : ""}`}
             >
               <LcdIcon
                 icon={Clock3}

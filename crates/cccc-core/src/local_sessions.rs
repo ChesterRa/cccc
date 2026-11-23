@@ -635,7 +635,7 @@ pub fn scan_records(home: &HomeLayout) -> io::Result<(Vec<NativeSession>, Vec<St
 }
 
 pub fn scan(home: &HomeLayout) -> io::Result<(Vec<NativeSession>, Vec<String>)> {
-    let (mut sessions, errors) = scan_records(home)?;
+    let (mut sessions, mut errors) = scan_records(home)?;
     let codex_disabled = integration_disabled(home, LocalSessionRuntime::Codex)?;
     let claude_disabled = integration_disabled(home, LocalSessionRuntime::Claude)?;
     let pi_disabled = integration_disabled(home, LocalSessionRuntime::Pi)?;
@@ -652,8 +652,10 @@ pub fn scan(home: &HomeLayout) -> io::Result<(Vec<NativeSession>, Vec<String>)> 
     });
     let mut available = Vec::new();
     for session in sessions {
-        if !source_control::blocked(home, &session.source_id)? {
-            available.push(session);
+        match source_control::blocked(home, &session.source_id) {
+            Ok(false) => available.push(session),
+            Ok(true) => {}
+            Err(error) => errors.push(error.to_string()),
         }
     }
     Ok((available, errors))

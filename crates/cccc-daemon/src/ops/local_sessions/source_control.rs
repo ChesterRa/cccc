@@ -179,7 +179,10 @@ pub(super) fn project(
     let mut states = serde_json::Map::new();
     let mut removed = Vec::new();
     for record in records {
-        let state = stored::state(home, &record.source_id).map_err(OpError::io)?;
+        let Ok(state) = stored::state(home, &record.source_id) else {
+            // Leave the unavailable source out of the management projection.
+            continue;
+        };
         let diagnostic = if state.access_blocked {
             cccc_contracts::source_control::SourceDiagnostic::default()
         } else {

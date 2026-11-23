@@ -36,7 +36,7 @@ export function DirectActionDialog({
         <DialogTitle className="pr-8 text-lg font-semibold">{title}</DialogTitle>
         <DialogDescription className="text-sm leading-relaxed">{description}</DialogDescription>
         {failed && (
-          <p role="alert" className="text-sm text-[var(--color-danger)]">
+          <p role="alert" className="text-sm text-[var(--color-accent-danger)]">
             {t("direct.actionFailed")}
           </p>
         )}

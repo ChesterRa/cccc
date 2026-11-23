@@ -19,7 +19,7 @@ function VoiceSecretaryLoadFailure(props: VoiceSecretaryComposerControlProps) {
     <button
       type="button"
       className={classNames(
-        "glass-btn inline-flex items-center justify-center rounded-lg text-[var(--color-danger)] transition-colors",
+        "glass-btn inline-flex items-center justify-center rounded-lg text-[var(--color-accent-danger)] transition-colors",
         assistantRow ? "h-11 w-24 gap-1.5 text-[11px] font-semibold sm:h-9" : "h-11 w-11",
       )}
       aria-label={label}

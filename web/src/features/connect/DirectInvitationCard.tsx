@@ -174,7 +174,7 @@ export function DirectInvitationCard({
         </span>
       )}
       {copy === "failed" && (
-        <p role="alert" className="text-sm text-[var(--color-danger)]">
+        <p role="alert" className="text-sm text-[var(--color-accent-danger)]">
           {t(value || cachedText ? "direct.copyFailed" : "direct.actionFailed")}
         </p>
       )}

@@ -76,9 +76,33 @@ export async function verifyEmptyDeviceFlow(open: () => Promise<void>) {
     }
     await click(button(enLayout.localSessions.addDevice));
     expect(document.querySelector("[data-modal-header] bdi")).toBeNull();
+    expect(button(enLayout.localSessions.backToSessions)).toBeDefined();
+    await click(button(enLayout.localSessions.backToSessions));
+    expect(document.getElementById("local-sessions-title")?.textContent).toBe(
+      enLayout.localSessions.overviewTitle,
+    );
+    await click(button(enLayout.localSessions.addDevice));
     const preparation = document.querySelector(`section[aria-label="${labels.prepareTitle}"]`)!;
     expect(preparation).not.toBeNull();
+    expect(preparation.textContent).toContain(labels.scopeHint);
     expect(preparation.textContent).toContain(labels.runtimeHint);
+    const commandPre = preparation.querySelector("pre")!;
+    expect(commandPre.textContent).toBe(
+      "cccc sessions node connect --runtime codex --ticket-stdin",
+    );
+    expect(commandPre.className).not.toContain("[overflow-wrap:anywhere]");
+    expect(
+      [...commandPre.querySelectorAll("span.whitespace-nowrap")].map((token) => token.textContent),
+    ).toEqual(["cccc", "sessions", "node", "connect", "--runtime", "codex", "--ticket-stdin"]);
+    const connectors = [
+      ...preparation.querySelectorAll(`ol[aria-label="${labels.progress}"] li > span.border-t`),
+    ];
+    expect(connectors).toHaveLength(2);
+    expect(
+      connectors.every(
+        (line) => line.classList.contains("hidden") && line.classList.contains("sm:inline-block"),
+      ),
+    ).toBe(true);
     const command = "cccc sessions node connect --runtime codex --ticket-stdin";
     expect(button(labels.create).disabled).toBe(false);
     expect(button(labels.copyConnectCommand).textContent).toBe(labels.copyCommandText);
@@ -122,11 +146,27 @@ export async function verifyEmptyDeviceFlow(open: () => Promise<void>) {
     expect(preparation.textContent).toContain(labels.prepareHint);
     expect(document.body.textContent).not.toContain(labels.online);
     expect(write).toHaveBeenLastCalledWith(ticket);
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain(labels.copyFailed);
+    const alert = document.querySelector('[role="alert"]');
+    expect(alert?.textContent).toContain(labels.copyFailed);
+    expect(alert?.className).toContain("text-[var(--color-accent-danger)]");
     expect(document.body.textContent).not.toContain(ticket);
     expect([...document.querySelectorAll("textarea")].some((area) => area.value === ticket)).toBe(
       false,
     );
+    await click(button(labels.showTicket));
+    const revealed = document.querySelector<HTMLTextAreaElement>(
+      `textarea[aria-label="${labels.ticketLabel}"]`,
+    );
+    expect(revealed?.readOnly).toBe(true);
+    expect(revealed?.value).toBe(ticket);
+    await click(button(labels.hideTicket));
+    expect(document.querySelector(`textarea[aria-label="${labels.ticketLabel}"]`)).toBeNull();
+    expect(document.body.textContent).not.toContain(ticket);
+    await click(button(labels.showTicket));
+    expect(
+      document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${labels.ticketLabel}"]`)
+        ?.value,
+    ).toBe(ticket);
     await click(button(labels.copyTicket));
     expect(write).toHaveBeenLastCalledWith(ticket);
     expect(posts()).toBe(1);
@@ -145,7 +185,14 @@ export async function verifyEmptyDeviceFlow(open: () => Promise<void>) {
       ),
     );
     expect(written).toEqual([nextTicket]);
+    expect(document.querySelector(`textarea[aria-label="${labels.ticketLabel}"]`)).toBeNull();
+    await click(button(labels.showTicket));
+    expect(
+      document.querySelector<HTMLTextAreaElement>(`textarea[aria-label="${labels.ticketLabel}"]`)
+        ?.value,
+    ).toBe(nextTicket);
     await act(async () => vi.advanceTimersByTimeAsync(1001));
+    expect(document.querySelector(`textarea[aria-label="${labels.ticketLabel}"]`)).toBeNull();
     expect(preparation.textContent).toContain(labels.ticketExpired);
     expect(button(labels.copyTicket)).toBeUndefined();
     expect(document.querySelector('[role="alert"]')).toBeNull();

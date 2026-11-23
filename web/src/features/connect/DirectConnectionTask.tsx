@@ -97,7 +97,7 @@ export function DirectConnectionTask({
             <p role="status">{t(task === "invite" ? "direct.preparing" : "direct.saving")}</p>
           )}
           {status?.runtime?.error && (
-            <p className="break-words text-[var(--color-danger)]" role="alert">
+            <p className="break-words text-[var(--color-accent-danger)]" role="alert">
               {t("direct.listenerFailed")} {status.runtime.error}
             </p>
           )}

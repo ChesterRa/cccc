@@ -4,6 +4,8 @@ use super::*;
 #[path = "direct_shared_tests.rs"]
 mod tests;
 
+const MAX_PENDING_PER_PERMANENT_INVITATION: usize = 8;
+
 pub fn create(
     home: &HomeLayout,
     group: &str,
@@ -144,11 +146,30 @@ pub fn hello(
             return Ok(DirectState::Revoked);
         };
         let link = &store.shared_invitations[index];
-        if hash(secret) != hash(&link.invitation.secret) || !current(home, &link.invitation.host)? {
+        let secret_sha256 = hash(secret);
+        if secret_sha256 != hash(&link.invitation.secret) || !current(home, &link.invitation.host)?
+        {
             return Err(invalid("Invitation no longer matches this Group"));
         }
         if !unexpired(&link.invitation.expires_at) {
             return Ok(DirectState::Expired);
+        }
+        if link.invitation.permanent()
+            && store
+                .relations
+                .iter()
+                .filter(|relation| {
+                    relation.state == DirectState::Pending
+                        && relation.local.group_id == link.invitation.host.group_id
+                        && relation.invitation.is_none()
+                        && relation.secret_sha256 == secret_sha256
+                })
+                .count()
+                >= MAX_PENDING_PER_PERMANENT_INVITATION
+        {
+            return Err(invalid(
+                "This invitation has too many pending requests. Ask the receiving administrator to review them or use another invitation",
+            ));
         }
         if store.relations.len() >= 64
             || store.relations.iter().any(|relation| {
@@ -171,7 +192,7 @@ pub fn hello(
             created_at: cccc_contracts::utc_now(),
             expires_at: link.invitation.expires_at.clone(),
             invitation: None,
-            secret_sha256: hash(secret),
+            secret_sha256,
         });
         store.shared_invitations[index].uses =
             store.shared_invitations[index].uses.saturating_add(1);

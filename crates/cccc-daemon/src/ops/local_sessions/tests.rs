@@ -1619,6 +1619,100 @@ fn one_corrupt_source_does_not_hide_other_sources_or_accept_cloud_control() {
     assert_eq!(reused["reused"], true);
 }
 
+#[test]
+fn unreadable_device_directory_preserves_local_discovery_and_admission() {
+    let fixture = Fixture::new();
+    fixture.attach();
+    let path = fixture.home.root().join("state/session_nodes/state.json");
+    std::fs::create_dir_all(path.parent().expect("state directory")).expect("create device state");
+    std::fs::write(&path, "{").expect("unreadable device directory");
+
+    let listing = fixture.call("local_session_list", json!({"include_offline":true}));
+    assert_eq!(listing["sources"].as_array().expect("sources").len(), 1);
+    assert_eq!(listing["sources"][0]["source_id"], fixture.source.source_id);
+    let group = fixture.conversation();
+    assert_eq!(
+        group.actors[0].external_session_id,
+        fixture.source.source_id
+    );
+}
+
+#[test]
+fn unreadable_source_control_disables_only_its_own_source() {
+    use sha2::{Digest, Sha256};
+
+    let fixture = Fixture::new();
+    fixture.attach();
+    let mut other = fixture.source.clone();
+    other.runtime = LocalSessionRuntime::Pi;
+    other.source_id = other.runtime.source_id(&other.host.key());
+    native::write(&fixture.home, other.clone()).expect("second source");
+    let suffix = format!("{:x}.json", Sha256::digest(other.source_id.as_bytes()));
+    let path = fixture
+        .home
+        .root()
+        .join("state/source_controls")
+        .join(suffix);
+    std::fs::create_dir_all(path.parent().expect("control directory"))
+        .expect("create control directory");
+    std::fs::write(&path, "{").expect("unreadable source control");
+
+    let listing = fixture.call("local_session_list", json!({"include_offline":true}));
+    assert_eq!(listing["sources"].as_array().expect("sources").len(), 1);
+    assert_eq!(listing["sources"][0]["source_id"], fixture.source.source_id);
+    assert!(listing["source_states"].get(&other.source_id).is_none());
+    assert!(native::read(&fixture.home, &other.source_id).is_err());
+    assert!(store::attach(&fixture.home, &other.source_id, "other-receiver").is_err());
+}
+
+#[test]
+fn native_source_can_create_a_local_group_but_needs_admin_for_device_sources() {
+    use cccc_contracts::local_session::LocalSessionSourceBinding;
+
+    let fixture = Fixture::new();
+    fixture.attach();
+    let binding = LocalSessionSourceBinding {
+        source_id: fixture.source.source_id.clone(),
+        session_revision: fixture.source.revision.clone(),
+    };
+    let groups = GroupStore::new(fixture.home.clone()).expect("Group store");
+    for operation in ["local_session_conversation", "local_session_send"] {
+        let response = crate::dispatch::dispatch(
+            &fixture.home,
+            &req(
+                operation,
+                json!({
+                    "source_id": fixture.source.source_id,
+                    "source_ids": ["remote:fixture"],
+                    "text": "Local fixture",
+                    "_cccc_native_source_binding": binding,
+                }),
+            ),
+        );
+        assert_eq!(
+            response.error.expect("deny native device selection").code,
+            "permission_denied"
+        );
+        assert!(groups.list().expect("no Group created").is_empty());
+    }
+
+    let created = fixture.call(
+        "local_session_conversation",
+        json!({
+            "source_id": fixture.source.source_id,
+            "source_ids": [],
+            "_cccc_native_source_binding": binding,
+        }),
+    );
+    let group = groups
+        .load(created["group_id"].as_str().expect("Group ID"))
+        .expect("local conversation");
+    assert_eq!(
+        group.actors[0].external_session_id,
+        fixture.source.source_id
+    );
+}
+
 // Re-exec instead of mutating process-wide provider homes in parallel tests.
 fn isolated_codex_test(name: &str) -> bool {
     const ISOLATED: &str = "CCCC_TEST_CODEX_DELIVERY_ISOLATED";

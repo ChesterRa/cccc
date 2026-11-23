@@ -1,12 +1,13 @@
 import { Layers2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { LcdIcon } from "../../components/Icons";
 
 export function SessionNodeHubLabel({ instanceName }: { instanceName?: string }) {
   const { t } = useTranslation("layout");
   const identity = instanceName?.trim();
   return (
     <p className="mb-1 flex min-w-0 items-center gap-1.5 text-xs font-normal text-[var(--color-text-secondary)]">
-      <Layers2 size={14} aria-hidden="true" />
+      <LcdIcon icon={Layers2} glyph="server" size={14} aria-hidden="true" />
       {t("sessionNodes.sessionsHub")}
       {identity && <bdi className="truncate">{identity}</bdi>}
     </p>
@@ -38,7 +39,7 @@ export function SessionNodeProgress({ ticketIssued }: { ticketIssued: boolean })
             {index > 0 && (
               <span
                 aria-hidden="true"
-                className="w-3 border-t border-[var(--color-border-primary)] sm:w-6"
+                className="hidden w-4 border-t border-[var(--color-border-primary)] sm:inline-block sm:w-6"
               />
             )}
             <span

@@ -1,5 +1,6 @@
 import { CircleHelp, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { LcdIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import { LocalSessionsHelp, type LocalSessionsHelpRequest } from "./LocalSessionsHelp";
 import type { SessionDialogView } from "./useSessionDialogNavigation";
@@ -30,7 +31,7 @@ export function LocalSessionsGuide({
             className="text-sm max-sm:min-h-11"
             onClick={onShowHelp}
           >
-            <CircleHelp size={16} aria-hidden="true" />
+            <LcdIcon icon={CircleHelp} glyph="circle-info" size={16} aria-hidden="true" />
             {t("localSessions.localSetup")}
           </Button>
           <Button
@@ -39,7 +40,7 @@ export function LocalSessionsGuide({
             className="text-sm max-sm:min-h-11"
             onClick={onAddDevice}
           >
-            <Plus size={16} aria-hidden="true" />
+            <LcdIcon icon={Plus} glyph="plus" size={16} aria-hidden="true" />
             {t("localSessions.addDevice")}
           </Button>
         </div>

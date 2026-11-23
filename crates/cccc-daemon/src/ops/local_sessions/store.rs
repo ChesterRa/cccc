@@ -169,6 +169,15 @@ pub(super) fn sources(home: &HomeLayout) -> Result<Vec<LocalSessionSource>, OpEr
     for error in errors {
         tracing::warn!(%error,"Native session metadata is unavailable");
     }
+    let remote_sources = cccc_core::session_nodes::list_sources(home).unwrap_or_else(|error| {
+        tracing::warn!(
+            diagnostic_action = "read_session_nodes_state",
+            diagnostic_code = crate::diagnostic_log::io_code(&error),
+            %error,
+            "Device-session directory is unavailable"
+        );
+        Vec::new()
+    });
     let leases = leases().lock().map_err(|_| unavailable())?;
     let mut sources = sessions
         .into_iter()
@@ -184,7 +193,7 @@ pub(super) fn sources(home: &HomeLayout) -> Result<Vec<LocalSessionSource>, OpEr
             session.source(connected)
         })
         .collect::<Vec<_>>();
-    for remote in cccc_core::session_nodes::list_sources(home).map_err(OpError::io)? {
+    for remote in remote_sources {
         let mut source = remote.source;
         source.connected &= remote.alive
             && leases

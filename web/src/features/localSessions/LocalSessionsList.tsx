@@ -4,6 +4,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { useTranslation } from "react-i18next";
 import type { Actor, LocalSessionSource } from "../../types";
 import { ActorAvatar } from "../../components/ActorAvatar";
+import { LcdIcon } from "../../components/Icons";
 import { Laptop, Monitor } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { LocalSessionOrigin, LocalSessionStatus } from "./LocalSessionOrigin";
@@ -72,9 +73,21 @@ export function LocalSessionsList({
         >
           <h3 className="flex min-w-0 items-center gap-2 border-b border-[var(--glass-border)] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
             {device === t("localSessions.thisDevice") ? (
-              <Monitor size={14} strokeWidth={1.5} aria-hidden="true" />
+              <LcdIcon
+                icon={Monitor}
+                glyph="monitor"
+                size={14}
+                strokeWidth={1.5}
+                aria-hidden="true"
+              />
             ) : (
-              <Laptop size={14} strokeWidth={1.5} aria-hidden="true" />
+              <LcdIcon
+                icon={Laptop}
+                glyph="server"
+                size={14}
+                strokeWidth={1.5}
+                aria-hidden="true"
+              />
             )}
             <span className="min-w-0 flex-1 truncate normal-case tracking-normal" title={device}>
               {device}

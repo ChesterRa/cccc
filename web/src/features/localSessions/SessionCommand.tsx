@@ -26,11 +26,21 @@ export function SessionCommand({
           dir="ltr"
           className={
             emphasis
-              ? "min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere] px-1 py-1 font-mono text-xs leading-relaxed sm:text-sm"
+              ? "min-w-0 flex-1 whitespace-pre-wrap px-1 py-1 font-mono text-xs leading-relaxed sm:text-sm"
               : "min-w-0 flex-1 overflow-x-auto px-1 py-2 font-mono text-sm"
           }
         >
-          {command}
+          {emphasis
+            ? command.split(/( +)/).map((part, index) =>
+                part.trim() ? (
+                  <span key={index} className="whitespace-nowrap">
+                    {part}
+                  </span>
+                ) : (
+                  part
+                ),
+              )
+            : command}
         </pre>
         <Button
           type="button"

@@ -60,7 +60,7 @@ export function LocalSessionsConfirmation({
           </p>
         </section>
         {connection.targetUnavailable && (
-          <p role="alert" className="text-[var(--color-danger)]">
+          <p role="alert" className="text-[var(--color-accent-danger)]">
             {t("localSessions.targetUnavailable")}
           </p>
         )}
@@ -70,7 +70,7 @@ export function LocalSessionsConfirmation({
           </p>
         )}
         {connection.error && (
-          <p role="alert" className="text-[var(--color-danger)]">
+          <p role="alert" className="text-[var(--color-accent-danger)]">
             {t("localSessions.loadFailed")}
           </p>
         )}

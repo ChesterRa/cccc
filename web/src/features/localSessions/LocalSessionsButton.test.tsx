@@ -125,6 +125,14 @@ async function open(select = vi.fn()) {
 }
 
 it("can open the existing session picker with the current Group already selected", async () => {
+  vi.useFakeTimers();
+  const paused: Actor = {
+    id: "native-paused",
+    title: "Paused",
+    external_session_id: source.source_id,
+    enabled: false,
+  };
+  mocks.members.mockResolvedValue({ ok: true, result: { actors: [paused] } });
   await act(async () =>
     root.render(
       <I18nextProvider i18n={i18n}>
@@ -137,10 +145,17 @@ it("can open the existing session picker with the current Group already selected
       </I18nextProvider>,
     ),
   );
-  expect(mocks.members).not.toHaveBeenCalled();
+  expect(mocks.members).toHaveBeenCalledExactlyOnceWith(existingGroup.group_id, false, {
+    noCache: true,
+  });
+  expect(row(source.title).textContent).toContain(enLayout.localSessions.memberPaused);
+  expect(button(enActors.dotsResume)).toBeDefined();
+  await act(async () => vi.advanceTimersByTimeAsync(9000));
+  expect(mocks.members).toHaveBeenCalledTimes(1);
+  mocks.members.mockResolvedValue({ ok: true, result: { actors: [] } });
   await click(checkbox(source.title));
   await reviewSelection();
-  expect(mocks.members).toHaveBeenCalledWith(existingGroup.group_id, false, { noCache: true });
+  expect(mocks.members).toHaveBeenCalledTimes(2);
   expect(target().textContent).toContain("Existing Group");
 });
 

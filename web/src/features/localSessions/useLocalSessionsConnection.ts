@@ -19,6 +19,7 @@ export function useLocalSessionsConnection({
   initialTargetGroupId,
   deviceId,
   browsingDeviceSessions = false,
+  viewingSessions = false,
   reviewing = true,
 }: {
   onClose: () => void;
@@ -26,6 +27,7 @@ export function useLocalSessionsConnection({
   initialTargetGroupId?: string;
   deviceId?: string;
   browsingDeviceSessions?: boolean;
+  viewingSessions?: boolean;
   reviewing?: boolean;
 }) {
   const { t } = useTranslation("layout");
@@ -47,8 +49,11 @@ export function useLocalSessionsConnection({
   const targetRef = useRef(targetGroupId);
   targetRef.current = targetGroupId;
   const membersRequest = useRef(0);
+  const fetchedOverviewTarget = useRef("");
   const submitting = useRef(false);
   const alive = useRef(true);
+  const allSources = useLocalSessionSources(setSelected);
+  const hasVisibleSources = allSources.sources.length > 0;
   const loadMembers = useCallback(async (groupId: string, reconcileSelection = true) => {
     const request = ++membersRequest.current;
     try {
@@ -71,29 +76,42 @@ export function useLocalSessionsConnection({
   }, []);
   useEffect(() => {
     setNotice("");
-    if (!targetGroupId || (!reviewing && !browsingDeviceSessions)) return;
+    if (!targetGroupId) return;
+    const poll = reviewing || browsingDeviceSessions;
+    const annotateOverview = viewingSessions && hasVisibleSources;
+    if (!poll && !annotateOverview) return;
+    if (!poll && fetchedOverviewTarget.current === targetGroupId) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    setMembership({ groupId: targetGroupId, actors: [], loaded: false, failed: false });
+    fetchedOverviewTarget.current = targetGroupId;
+    if (poll) {
+      setMembership({ groupId: targetGroupId, actors: [], loaded: false, failed: false });
+    }
     const load = async () => {
-      // Browsing only annotates the rows; entering review verifies again before submission.
+      // Overview annotates once without polling; review and device views stay fresh until submitted.
       await loadMembers(targetGroupId, reviewing);
-      if (!cancelled) timer = setTimeout(() => void load(), 3000);
+      if (poll && !cancelled) timer = setTimeout(() => void load(), 3000);
     };
     void load();
     return () => {
       cancelled = true;
-      membersRequest.current += 1;
+      if (poll) membersRequest.current += 1;
       clearTimeout(timer);
     };
-  }, [targetGroupId, loadMembers, reviewing, browsingDeviceSessions]);
+  }, [
+    targetGroupId,
+    loadMembers,
+    reviewing,
+    browsingDeviceSessions,
+    viewingSessions,
+    hasVisibleSources,
+  ]);
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
     };
   }, []);
-  const allSources = useLocalSessionSources(setSelected);
   // The hub namespaces remote source aliases by node ID. Display names can coincide.
   const fromDevice = (source: LocalSessionSource) =>
     source.source_id.startsWith(`remote:${deviceId}:`);

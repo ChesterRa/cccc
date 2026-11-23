@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import { Search } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { LcdIcon } from "../../components/Icons";
 import { Input } from "../../components/ui/input";
 import type { SessionNodeDevice } from "../../services/api/sessionNodes";
 import { SessionNodeDevices } from "./SessionNodeDevices";
@@ -37,7 +38,9 @@ export function SessionNodeManagement({
   return (
     <div className="min-w-0 space-y-2">
       <label className="relative block">
-        <Search
+        <LcdIcon
+          icon={Search}
+          glyph="search"
           size={16}
           aria-hidden="true"
           className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--color-text-tertiary)]"
@@ -81,7 +84,7 @@ export function SessionNodeManagement({
         </p>
       )}
       {actions.revokeError && (
-        <p role="alert" className="text-sm text-[var(--color-danger)]">
+        <p role="alert" className="text-sm text-[var(--color-accent-danger)]">
           {t("sessionNodes.revokeFailed")}
         </p>
       )}

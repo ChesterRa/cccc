@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ArrowLeft, Laptop } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { LcdIcon } from "../../components/Icons";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "../../components/modals/ModalFrame";
 import { Button } from "../../components/ui/button";
@@ -49,6 +50,7 @@ export function LocalSessionsDialog({
     onSelectGroup,
     initialTargetGroupId,
     reviewing: view === "group",
+    viewingSessions: view === "sessions",
     deviceId: deviceScope?.node_id,
     browsingDeviceSessions: view === "sessions" && !!deviceScope,
   });
@@ -144,7 +146,7 @@ export function LocalSessionsDialog({
       }
       surface="solid"
       headerActions={
-        (deviceSessions || view === "help") && (
+        (deviceSessions || view === "device" || view === "help") && (
           <Button
             variant="ghost"
             size="sm"
@@ -152,7 +154,7 @@ export function LocalSessionsDialog({
             aria-label={t(deviceSessions ? "sessionNodes.devices" : "localSessions.backToSessions")}
             onClick={deviceSessions ? backToDevices : () => navigate("sessions")}
           >
-            <ArrowLeft size={16} aria-hidden="true" />
+            <LcdIcon icon={ArrowLeft} glyph="chevron-left" size={16} aria-hidden="true" />
             <span className="hidden sm:inline">
               {t(deviceSessions ? "sessionNodes.devices" : "localSessions.backToSessions")}
             </span>
@@ -177,7 +179,7 @@ export function LocalSessionsDialog({
                 disabled={connection.busy}
                 onClick={() => navigate("sessions")}
               >
-                <ArrowLeft size={16} aria-hidden="true" />
+                <LcdIcon icon={ArrowLeft} glyph="chevron-left" size={16} aria-hidden="true" />
                 {t("localSessions.backToSessions")}
               </Button>
             ) : (
@@ -217,7 +219,13 @@ export function LocalSessionsDialog({
           {view === "sessions" && deviceScope && (
             <div className="min-w-0 space-y-1.5 border-b border-[var(--glass-border-subtle)] pb-2">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <Laptop size={16} aria-hidden="true" className="shrink-0" />
+                <LcdIcon
+                  icon={Laptop}
+                  glyph="server"
+                  size={16}
+                  aria-hidden="true"
+                  className="shrink-0"
+                />
                 <span dir="auto" className="min-w-0 flex-1 break-words font-medium">
                   {deviceScope.name}
                 </span>

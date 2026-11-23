@@ -91,7 +91,7 @@ export function AccountGroupConnectionsPanel({
                   </p>
                 )}
                 {error && headline && (
-                  <p className="break-words text-xs text-[var(--color-danger)]">{error}</p>
+                  <p className="break-words text-xs text-[var(--color-accent-danger)]">{error}</p>
                 )}
               </div>
             </div>
@@ -109,7 +109,7 @@ export function AccountGroupConnectionsPanel({
               {primary}
             </div>
             {error && (
-              <p role="alert" className="text-xs text-[var(--color-danger)]">
+              <p role="alert" className="text-xs text-[var(--color-accent-danger)]">
                 {error}
               </p>
             )}
@@ -150,7 +150,7 @@ export function AccountGroupConnectionsPanel({
                         href={accountLink(`/connect/${link.id}/disconnect`)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="shrink-0 text-xs text-[var(--color-text-secondary)] underline-offset-2 hover:text-[var(--color-danger)] hover:underline"
+                        className="shrink-0 text-xs text-[var(--color-text-secondary)] underline-offset-2 hover:text-[var(--color-accent-danger)] hover:underline"
                       >
                         {t("groupConnections.disconnect")}
                       </a>

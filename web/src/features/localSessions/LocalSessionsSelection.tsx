@@ -17,7 +17,7 @@ export function LocalSessionsSelection({
   return (
     <section className="space-y-5" aria-label={t("localSessions.sessionsHeading")}>
       {connection.error && (
-        <p role="alert" className="break-words text-[var(--color-danger)]">
+        <p role="alert" className="break-words text-[var(--color-accent-danger)]">
           {t("localSessions.loadFailed")}
           <span className="block">{connection.error}</span>
         </p>

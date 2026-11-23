@@ -54,18 +54,125 @@ async fn read_ticket(requested: bool) -> Result<Option<SessionNodeTicket>> {
     if !requested {
         return Ok(None);
     }
-    eprintln!(
-        "Paste the hub's session-node ticket, then press Enter (do not put it in the command):"
-    );
-    let mut line = String::new();
-    tokio::io::BufReader::new(tokio::io::stdin().take(16 * 1024 + 1))
-        .read_line(&mut line)
-        .await?;
+    let line = if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        read_hidden_line().await?
+    } else {
+        eprintln!("{TICKET_PROMPT}");
+        let mut line = String::new();
+        tokio::io::BufReader::new(tokio::io::stdin().take(TICKET_LIMIT + 1))
+            .read_line(&mut line)
+            .await?;
+        line
+    };
     // Deserialization diagnostics can include invalid field values. Never echo
     // any part of the supplied capability through an error chain or a log.
     cccc_web::session_node::decode_ticket(&line)
         .map(Some)
         .map_err(|_| anyhow::anyhow!("Invalid or missing session-node pairing ticket; paste a fresh device ticket at the prompt"))
+}
+
+const TICKET_PROMPT: &str =
+    "Paste the hub's session-node ticket, then press Enter (do not put it in the command):";
+
+/// The ticket is a pairing secret: on a terminal, echo is off before the prompt
+/// appears, so a paste never reaches the screen or its scrollback. An interrupt
+/// restores the terminal before the command ends.
+async fn read_hidden_line() -> Result<String> {
+    use std::io::{BufRead, Read};
+    // Listen first: once echo is off, an interrupt must not end the process
+    // before the terminal is restored.
+    let mut interrupt = interrupt_signal()?;
+    let hidden = EchoOff::new()?;
+    eprintln!("{TICKET_PROMPT}");
+    // A blocking terminal read cannot be cancelled, so it runs on its own
+    // thread and the guard stays here, where cancellation can drop it.
+    let (sender, received) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let read = std::io::stdin()
+            .lock()
+            .take(TICKET_LIMIT + 1)
+            .read_line(&mut line)
+            .map(|_| line);
+        let _ = sender.send(read);
+    });
+    let line = tokio::select! {
+        read = received => read.context("Ticket input stopped")??,
+        _ = interrupt.recv() => {
+            drop(hidden);
+            eprintln!();
+            anyhow::bail!("Pairing cancelled");
+        }
+    };
+    drop(hidden);
+    if cfg!(windows) {
+        eprintln!();
+    }
+    Ok(line)
+}
+
+const TICKET_LIMIT: u64 = 16 * 1024;
+
+#[cfg(unix)]
+fn interrupt_signal() -> std::io::Result<tokio::signal::unix::Signal> {
+    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+}
+
+#[cfg(windows)]
+fn interrupt_signal() -> std::io::Result<tokio::signal::windows::CtrlC> {
+    tokio::signal::windows::ctrl_c()
+}
+
+/// Turns off only the terminal's echo, keeping its line editing, and restores
+/// the exact original mode when dropped.
+struct EchoOff {
+    #[cfg(unix)]
+    original: nix::sys::termios::Termios,
+    #[cfg(windows)]
+    original: u32,
+}
+
+impl EchoOff {
+    #[cfg(unix)]
+    fn new() -> Result<Self> {
+        use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
+        use std::os::fd::AsFd;
+        let stdin = std::io::stdin();
+        let original = tcgetattr(stdin.as_fd())?;
+        let mut hidden = original.clone();
+        hidden.local_flags.remove(LocalFlags::ECHO);
+        hidden.local_flags.insert(LocalFlags::ECHONL);
+        tcsetattr(stdin.as_fd(), SetArg::TCSANOW, &hidden)?;
+        Ok(Self { original })
+    }
+
+    #[cfg(windows)]
+    fn new() -> Result<Self> {
+        const ENABLE_ECHO_INPUT: u32 = 0x0004;
+        let console =
+            crossterm_winapi::ConsoleMode::from(crossterm_winapi::Handle::input_handle()?);
+        let original = console.mode()?;
+        console.set_mode(original & !ENABLE_ECHO_INPUT)?;
+        Ok(Self { original })
+    }
+}
+
+impl Drop for EchoOff {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsFd;
+            let _ = nix::sys::termios::tcsetattr(
+                std::io::stdin().as_fd(),
+                nix::sys::termios::SetArg::TCSANOW,
+                &self.original,
+            );
+        }
+        #[cfg(windows)]
+        if let Ok(handle) = crossterm_winapi::Handle::input_handle() {
+            let _ = crossterm_winapi::ConsoleMode::from(handle).set_mode(self.original);
+        }
+    }
 }
 
 fn device_name(explicit: Option<String>) -> Result<String> {

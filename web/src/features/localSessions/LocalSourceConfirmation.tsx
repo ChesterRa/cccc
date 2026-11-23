@@ -69,7 +69,7 @@ export function LocalSourceConfirmation({ management }: { management: SourceMana
           </p>
         )}
         {management.error && (
-          <p role="alert" className="break-words text-sm text-[var(--color-danger)]">
+          <p role="alert" className="break-words text-sm text-[var(--color-accent-danger)]">
             {management.error}
           </p>
         )}

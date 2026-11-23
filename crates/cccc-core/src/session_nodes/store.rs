@@ -43,11 +43,32 @@ pub(super) fn directory(home: &HomeLayout) -> PathBuf {
 }
 
 pub(super) fn read(home: &HomeLayout) -> io::Result<State> {
-    let path = directory(home).join("state.json");
-    if !path.exists() {
-        return Ok(State::default());
+    Ok(read_file(home, "state.json")?.unwrap_or_default())
+}
+
+pub(super) fn read_file<T: serde::de::DeserializeOwned>(
+    home: &HomeLayout,
+    name: &str,
+) -> io::Result<Option<T>> {
+    let path = directory(home).join(name);
+    match fs::read_json(&path) {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            let kind = if error
+                .get_ref()
+                .is_some_and(|cause| cause.is::<serde_json::Error>())
+            {
+                io::ErrorKind::InvalidData
+            } else {
+                error.kind()
+            };
+            Err(io::Error::new(
+                kind,
+                format!("Could not read state/session_nodes/{name} ({kind:?})"),
+            ))
+        }
     }
-    fs::read_json(&path)
 }
 
 pub(super) fn update<T>(

@@ -268,16 +268,17 @@ it("switches within the add-device dialog, filters sessions by device, and revok
   const beforeReopen = rosterReads();
   await click(enLayout.localSessions.connectShort);
   original = dialog();
+  expect(rosterReads()).toBe(beforeReopen + 1);
   await click(enLayout.localSessions.addDevice, original);
   await click(labels.devices, original);
-  expect(rosterReads()).toBe(beforeReopen);
+  expect(rosterReads()).toBe(beforeReopen + 1);
   await click(labels.chooseSessionsToJoin, rows()[1]);
   const memberRow = () =>
     [...original.querySelectorAll("label")].find((label) =>
       label.textContent?.includes("Second workspace"),
     );
   expect(memberRow()?.textContent).toContain(enLayout.localSessions.memberJoined);
-  expect(rosterReads()).toBe(beforeReopen + 1);
+  expect(rosterReads()).toBe(beforeReopen + 2);
   expect(original.textContent).not.toContain(
     i18n.t("sessionNodes.deviceSessionsHint", { action: enLayout.localSessions.continue }),
   );

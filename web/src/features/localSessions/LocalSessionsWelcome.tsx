@@ -2,6 +2,8 @@ import { Button } from "../../components/ui/button";
 import { ChevronRight, Laptop, Monitor, type LucideIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ActorAvatar } from "../../components/ActorAvatar";
+import { LcdIcon } from "../../components/Icons";
+import type { LcdGlyphName } from "../../components/LcdGlyph";
 
 const supportedRuntimes = [
   { runtime: "codex", name: "Codex" },
@@ -12,12 +14,14 @@ const supportedRuntimes = [
 
 function EntryRow({
   icon: Icon,
+  glyph,
   title,
   description,
   descriptionId,
   onClick,
 }: {
   icon: LucideIcon;
+  glyph: LcdGlyphName;
   title: string;
   description: string;
   descriptionId: string;
@@ -34,7 +38,7 @@ function EntryRow({
         className="group flex h-auto min-h-16 w-full justify-start rounded-none whitespace-normal items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--glass-tab-bg-hover)]"
       >
         <span className="flex h-10 w-10 shrink-0 items-center justify-center border border-[var(--glass-border)] text-[var(--color-text-secondary)] group-hover:text-[var(--color-text-primary)]">
-          <Icon size={20} strokeWidth={1.5} aria-hidden="true" />
+          <LcdIcon icon={Icon} glyph={glyph} size={20} strokeWidth={1.5} aria-hidden="true" />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-semibold">{title}</span>
@@ -42,7 +46,9 @@ function EntryRow({
             {description}
           </span>
         </span>
-        <ChevronRight
+        <LcdIcon
+          icon={ChevronRight}
+          glyph="chevron-right"
           size={18}
           strokeWidth={1.5}
           className="shrink-0 text-[var(--color-text-muted)] transition-transform group-hover:translate-x-0.5 group-hover:text-[var(--color-text-primary)] motion-reduce:transition-none"
@@ -103,6 +109,7 @@ export function LocalSessionsWelcome({
       <ul className="divide-y divide-[var(--glass-border)] border border-[var(--glass-border)]">
         <EntryRow
           icon={Monitor}
+          glyph="monitor"
           title={t("localSessions.localSetup")}
           description={t("localSessions.localSetupDescription")}
           descriptionId="local-session-setup-description"
@@ -110,6 +117,7 @@ export function LocalSessionsWelcome({
         />
         <EntryRow
           icon={Laptop}
+          glyph="server"
           title={t("localSessions.addDevice")}
           description={t("localSessions.deviceSetupDescription")}
           descriptionId="remote-session-setup-description"

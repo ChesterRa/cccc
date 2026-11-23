@@ -47,6 +47,7 @@ function DeviceViews({
               <div className="min-w-0 space-y-3">
                 <SessionNodePreparation
                   invitation={invitation}
+                  ticketError={ticketError}
                   busy={busy}
                   onChooseDeviceSessions={() => {
                     setQuery("");
@@ -59,11 +60,6 @@ function DeviceViews({
                     );
                   }}
                 />
-                {ticketError && (
-                  <p role="alert" className="text-sm text-[var(--color-danger)]">
-                    {ticketError}
-                  </p>
-                )}
               </div>
             ),
           },

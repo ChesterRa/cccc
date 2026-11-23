@@ -90,7 +90,7 @@ export function ComposerRecipientsRow({
             {unavailableRecipients.map((token) => (
               <button
                 key={`unavailable:${token}`}
-                className={`${chipBaseClass} border-[var(--color-danger)] text-[var(--color-danger)]`}
+                className={`${chipBaseClass} border-[var(--color-accent-danger)] text-[var(--color-accent-danger)]`}
                 onClick={() => onToggleRecipient(token)}
                 disabled={actorChipDisabled}
                 aria-label={t("removeUnavailableRecipient", { name: token })}

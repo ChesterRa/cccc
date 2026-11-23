@@ -250,6 +250,7 @@ fn safe_action(value: &str) -> bool {
             | "actor_activity"
             | "ledger_decode"
             | "memory_trim"
+            | "read_session_nodes_state"
     )
 }
 

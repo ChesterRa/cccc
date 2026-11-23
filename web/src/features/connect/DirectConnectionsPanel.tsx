@@ -42,7 +42,7 @@ export function DirectConnectionsPanel({
       className={fill ? "flex min-h-full flex-col gap-4 text-sm" : "space-y-4 text-sm"}
     >
       {(error || pollFailed) && (
-        <p role="alert" className="break-words text-[var(--color-danger)]">
+        <p role="alert" className="break-words text-[var(--color-accent-danger)]">
           {error || t("direct.statusUnavailable")}
         </p>
       )}

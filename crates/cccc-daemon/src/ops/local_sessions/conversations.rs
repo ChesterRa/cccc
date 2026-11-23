@@ -19,7 +19,21 @@ fn selected_source_ids(request: &DaemonRequest) -> Result<Vec<String>, OpError> 
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if let Some(caller) = string_arg(request, "source_id") {
+    let caller = string_arg(request, "source_id");
+    let is_native = caller.is_some()
+        || request.args.contains_key("_cccc_native_binding")
+        || request.args.contains_key("_cccc_native_source_binding");
+    if is_native
+        && source_ids
+            .iter()
+            .any(|id| cccc_core::session_nodes::is_remote_source(id))
+    {
+        return Err(OpError::new(
+            "permission_denied",
+            "Only the administrator can select sessions from paired devices",
+        ));
+    }
+    if let Some(caller) = caller {
         source_ids.insert(0, caller);
     }
     let mut ids = BTreeSet::new();

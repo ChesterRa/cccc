@@ -1,6 +1,7 @@
 import { useId } from "react";
 import { Laptop } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { LcdIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import type { SessionNodeDevice } from "../../services/api/sessionNodes";
 
@@ -35,7 +36,9 @@ export function SessionNodeDevices({
         return (
           <li key={device.node_id} className="min-w-0 space-y-2.5 py-3">
             <div className="flex min-w-0 items-start gap-2.5">
-              <Laptop
+              <LcdIcon
+                icon={Laptop}
+                glyph="server"
                 size={18}
                 aria-hidden="true"
                 className="mt-0.5 shrink-0 text-[var(--color-text-secondary)]"

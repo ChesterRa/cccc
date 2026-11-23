@@ -14,10 +14,18 @@ fn path(home: &HomeLayout, source_id: &str) -> io::Result<PathBuf> {
 }
 
 pub fn state(home: &HomeLayout, source_id: &str) -> io::Result<SourceControl> {
-    match fs::read_json(&path(home, source_id)?) {
+    let path = path(home, source_id)?;
+    match fs::read_json(&path) {
         Ok(state) => Ok(state),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(SourceControl::default()),
-        Err(error) => Err(error),
+        Err(error) => Err(io::Error::new(
+            error.kind(),
+            format!(
+                "Could not read state/source_controls/{} ({:?})",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                error.kind()
+            ),
+        )),
     }
 }
 

@@ -27,11 +27,7 @@ pub struct ClientDescriptor {
 }
 
 pub fn saved_client(home: &HomeLayout) -> io::Result<Option<ClientDescriptor>> {
-    let path = store::directory(home).join("client.json");
-    if !path.exists() {
-        return Ok(None);
-    }
-    fs::read_json(&path).map(Some)
+    store::read_file(home, "client.json")
 }
 
 pub fn client(home: &HomeLayout) -> io::Result<Option<ClientDescriptor>> {

@@ -1,5 +1,6 @@
 //! Native source routing is explicit and never falls back across machines.
 use super::*;
+use cccc_contracts::local_session::LocalSessionRuntime;
 
 pub(super) async fn route(
     home: &HomeLayout,
@@ -8,18 +9,33 @@ pub(super) async fn route(
     name: &str,
     args: &Map<String, Value>,
 ) -> std::result::Result<Option<Value>, ToolCallError> {
-    let Some(saved) =
-        cccc_core::session_nodes::saved_client(home).map_err(|error| error.to_string())?
-    else {
+    let group_id = args
+        .get("group_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if hub.is_none()
+        && (group_id.is_empty()
+            || !matches!(
+                source.runtime,
+                LocalSessionRuntime::Codex | LocalSessionRuntime::Claude
+            ))
+    {
+        return Ok(None);
+    }
+    let Some(saved) = cccc_core::session_nodes::saved_client(home).map_err(|error| {
+        ToolCallError::new(
+            "session_node_connector_state_unreadable",
+            format!(
+                "{error}. Check its permissions or restore the saved device connector state before retrying"
+            ),
+            Map::new(),
+        )
+    })? else {
         if hub.is_some() {
             return Err("This native host has no remote-session connector".into());
         }
         return Ok(None);
     };
-    let group_id = args
-        .get("group_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
     let remote = saved
         .memberships
         .iter()
@@ -175,4 +191,73 @@ pub(super) async fn session(
     Ok(router::tool_result(Value::Object(
         router::daemon(client, op, args).await?,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cccc_core::local_sessions::{NativeHost, NativeSession};
+
+    #[tokio::test]
+    async fn unreadable_connector_preserves_only_routes_known_to_be_local() {
+        let temp = tempfile::tempdir().expect("isolated home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let path = home.root().join("state/session_nodes/client.json");
+        std::fs::create_dir_all(path.parent().expect("connector directory")).expect("directory");
+        std::fs::write(&path, "{").expect("unreadable connector");
+
+        let mut source = NativeSession {
+            source_id: "codex:thread".into(),
+            runtime: LocalSessionRuntime::Codex,
+            native_session_id: "thread".into(),
+            host: NativeHost::capture(std::process::id()).expect("fixture host"),
+            cwd: temp.path().to_string_lossy().into_owned(),
+            title: "Local fixture".into(),
+            origin: None,
+            revision: "fixture".into(),
+            context_epoch: 0,
+            codex_home: None,
+            codex_can_receive: false,
+            codex_program: None,
+            claude_config_dir: None,
+            pi_agent_dir: None,
+            opencode_config_dir: None,
+            opencode_server: None,
+            retired: None,
+        };
+        let group = json!({"group_id":"g_fixture"});
+        let arguments = group.as_object().expect("Group arguments");
+        for runtime in [LocalSessionRuntime::Pi, LocalSessionRuntime::Opencode] {
+            source.runtime = runtime;
+            assert!(
+                route(&home, &source, None, "cccc_message_history", arguments)
+                    .await
+                    .expect("local-only runtime")
+                    .is_none()
+            );
+        }
+        for runtime in [LocalSessionRuntime::Codex, LocalSessionRuntime::Claude] {
+            source.runtime = runtime;
+            assert!(
+                route(&home, &source, None, "cccc_session", &Map::new())
+                    .await
+                    .expect("local action without a Group")
+                    .is_none()
+            );
+            for hub in [None, Some("remote-hub")] {
+                let error = route(&home, &source, hub, "cccc_message_history", arguments)
+                    .await
+                    .expect_err("cannot determine the target machine");
+                let error = error.error_value();
+                assert_eq!(error["code"], "session_node_connector_state_unreadable");
+                assert!(
+                    error["message"]
+                        .as_str()
+                        .expect("message")
+                        .contains("state/session_nodes/client.json")
+                );
+            }
+        }
+    }
 }
