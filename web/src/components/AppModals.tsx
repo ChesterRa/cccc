@@ -24,6 +24,7 @@ import {
 import { findPresentationSlot } from "../utils/presentation";
 import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
+import { formatDaemonError } from "../utils/daemonErrorText";
 import { appendQuotedOriginalPerspective, getMessageInsight } from "../utils/messagePerspective";
 import { installedRuntimeFor } from "../utils/installedRuntime";
 import { sameActorConfiguration } from "../utils/actorIdentity";
@@ -849,7 +850,7 @@ export function AppModals({
         const resp = await api.deliverMessage(targetGroupId, eventId, [actorId], forceAmbiguous);
         if (!resp.ok) {
           if (useGroupStore.getState().selectedGroupId === targetGroupId) {
-            showError(`${resp.error.code}: ${resp.error.message}`);
+            showError(formatDaemonError(resp.error));
           }
           return;
         }

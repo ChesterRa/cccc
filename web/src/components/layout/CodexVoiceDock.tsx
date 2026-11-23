@@ -31,6 +31,7 @@ export function CodexVoiceDock({
     controller.playbackBlocked ||
     controller.analyst?.warning ||
     controller.analyst?.phase === "needs_attention" ||
+    (controller.analyst?.permissions?.length ?? 0) > 0 ||
     // Unattended copies wait for a Chet that cannot run; the panel says why.
     (unattended && controller.readiness?.analyst_runtime_available === false),
   );

@@ -7777,6 +7777,11 @@ Args:
 { group_id: string; actor_id: string; by?: string; max_chars?: number; strip_ansi?: boolean; compact?: boolean }
 ```
 
+MCP `cccc_terminal` with `action="tail"` names the terminal in `target_actor_id`.
+The MCP port maps it to IPC `actor_id` and keeps the authenticated caller in
+`by`, including for native sessions. The Group's transcript visibility checks
+use that caller and the selected terminal.
+
 `max_chars` limits the final returned Unicode text. Implementations MUST render the complete
 retained PTY backlog before applying this limit; truncating the raw ANSI/VT byte stream first can
 start replay inside an escape sequence or incremental screen update and produce corrupt snapshots.

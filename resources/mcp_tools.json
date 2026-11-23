@@ -2997,17 +2997,13 @@
   },
   {
     "name": "cccc_terminal",
-    "description": "Terminal diagnostics: action=tail.",
+    "description": "Read a member's retained terminal output within the Group's transcript visibility settings.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "group_id": {
           "type": "string",
           "description": "Working group ID (optional if CCCC_GROUP_ID is set)"
-        },
-        "actor_id": {
-          "type": "string",
-          "description": "Actor whose terminal to inspect; leave it out for your own."
         },
         "action": {
           "type": "string",
@@ -3017,7 +3013,8 @@
           "default": "tail"
         },
         "target_actor_id": {
-          "type": "string"
+          "type": "string",
+          "description": "Actor ID of the member whose terminal output to read."
         },
         "max_chars": {
           "type": "integer",

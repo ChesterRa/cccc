@@ -43,5 +43,11 @@
   "chooseFile": "选择文件",
   "noFileChosen": "未选择文件",
   "help": "帮助",
-  "noResults": "无匹配结果"
+  "noResults": "无匹配结果",
+  "daemonErrors": {
+    "delivery_in_progress": "已经在投递中，不用再点；结果会在收件人状态里更新（{{code}}）。",
+    "delivery_ambiguous": "消息可能已经送到。先看成员终端或等回复；需要再发时，重新打开收件人状态，再用「仍然重试」（{{code}}）。",
+    "already_delivered": "这条消息已交给 Runtime，不用再发（{{code}}）。",
+    "shutdown_in_progress": "CCCC 正在重启或停止，请稍后再试（{{code}}）。"
+  }
 }

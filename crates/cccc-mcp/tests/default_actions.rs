@@ -51,6 +51,9 @@ async fn optional_actions_use_the_published_default_before_routing() {
     ] {
         for explicit in [false, true] {
             let mut args = json!({"query":"audit", "key":"fixture-key", "target_actor_id":"lead"});
+            if tool == "cccc_terminal" {
+                args["target_actor_id"] = json!("worker");
+            }
             if explicit && !action.is_empty() {
                 args["action"] = json!(action);
             }
@@ -61,6 +64,11 @@ async fn optional_actions_use_the_published_default_before_routing() {
                 response["result"]["structuredContent"]["observed_op"], op,
                 "{tool}, explicit action={explicit}: {response}"
             );
+            if tool == "cccc_terminal" {
+                let args = &response["result"]["structuredContent"]["observed_args"];
+                assert_eq!(args["actor_id"], "worker");
+                assert_eq!(args["by"], "lead");
+            }
         }
     }
     let invalid = cccc_mcp::handle_request_for_actor(&home,

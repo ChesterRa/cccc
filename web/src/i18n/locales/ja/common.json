@@ -43,5 +43,11 @@
   "chooseFile": "ファイルを選択",
   "noFileChosen": "ファイルが選択されていません",
   "help": "ヘルプ",
-  "noResults": "一致する結果はありません"
+  "noResults": "一致する結果はありません",
+  "daemonErrors": {
+    "delivery_in_progress": "すでに配信中です。もう一度送る必要はありません。結果は受信者ステータスに反映されます（{{code}}）。",
+    "delivery_ambiguous": "すでに届いている可能性があります。メンバーの端末を見るか返信を待ってください。再送が必要な場合は、受信者ステータスを開き直して「それでも再試行」を使ってください（{{code}}）。",
+    "already_delivered": "このメッセージはすでに Runtime に渡されています。再送する必要はありません（{{code}}）。",
+    "shutdown_in_progress": "CCCC は再起動または停止中です。少し待ってからもう一度お試しください（{{code}}）。"
+  }
 }

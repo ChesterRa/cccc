@@ -123,7 +123,17 @@ pub fn daemon_call(
         "cccc_presentation" => return action(args, actions::presentation),
         "cccc_space" => return space(args),
         "cccc_headless" => return action(args, actions::headless),
-        "cccc_terminal" => return action(args, actions::terminal),
+        "cccc_terminal" => {
+            let (op, mut args) = action(args, actions::terminal)?;
+            if op == "terminal_tail"
+                && let Some(target) = args.remove("target_actor_id")
+            {
+                // The port has already bound the caller in `by`. The IPC actor_id
+                // selects the terminal that caller wants to read.
+                args.insert("actor_id".into(), target);
+            }
+            return Ok((op, args));
+        }
         "cccc_debug" => return action(args, actions::debug),
         "cccc_im_bind" => "im_bind_chat",
         "cccc_runtime_wait_next_turn" => {
@@ -626,13 +636,33 @@ mod tests {
     }
 
     #[test]
+    fn terminal_tail_maps_the_explicit_target_and_preserves_the_caller() {
+        let args = json!({
+            "action":"tail", "group_id":"g_test", "by":"lead",
+            "actor_id":"lead", "target_actor_id":"worker"
+        })
+        .as_object()
+        .cloned()
+        .expect("args");
+        let (op, args) = daemon_call("cccc_terminal", args).expect("mapping");
+        assert_eq!(op, "terminal_tail");
+        assert_eq!(args["actor_id"], "worker");
+        assert_eq!(args["by"], "lead");
+        assert!(!args.contains_key("target_actor_id"));
+    }
+
+    #[test]
     fn terminal_resize_maps_to_standard_daemon_operation() {
-        let args = json!({"action":"resize","group_id":"g_test","actor_id":"peer1"})
-            .as_object()
-            .cloned()
-            .unwrap_or_else(Map::new);
+        let args = json!({
+            "action":"resize", "group_id":"g_test", "actor_id":"peer1",
+            "target_actor_id":"peer2"
+        })
+        .as_object()
+        .cloned()
+        .unwrap_or_else(Map::new);
         let (op, args) = daemon_call("cccc_terminal", args).expect("mapping");
         assert_eq!(op, "term_resize");
+        assert_eq!(args["actor_id"], "peer1");
         assert!(!args.contains_key("action"));
     }
 

@@ -8,6 +8,7 @@ import { beginActorAction, endActorAction } from "./actorActionInFlight";
 import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
 import { useShallow } from "zustand/react/shallow";
 import i18n from "../i18n";
+import { formatDaemonError } from "../utils/daemonErrorText";
 import { revealRuntimeConfirmation } from "./runtimeConfirmation";
 import { noticeRuntimeSessionReplaced } from "./runtimeSessionReplacedNotice";
 
@@ -75,7 +76,7 @@ export function useActorActions(groupId: string) {
             isRunning ||
             !latestActorHasResumeFailure(groupId, actor.id)
           ) {
-            showError(`${resp.error.code}: ${resp.error.message}`);
+            showError(formatDaemonError(resp.error));
           }
           return;
         }
@@ -114,7 +115,7 @@ export function useActorActions(groupId: string) {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
           const awaitingConfirmation = revealRuntimeConfirmation(groupId, actor.id, expectedTab);
           if (awaitingConfirmation || !latestActorHasResumeFailure(groupId, actor.id)) {
-            showError(`${resp.error.code}: ${resp.error.message}`);
+            showError(formatDaemonError(resp.error));
           }
         } else {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
@@ -143,7 +144,7 @@ export function useActorActions(groupId: string) {
         if (!resp.ok) {
           await Promise.all([refreshActors(groupId), refreshGroups()]);
           revealRuntimeConfirmation(groupId, actor.id, expectedTab);
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
         } else {
           clearStreamingEventsForActor(actor.id, groupId);
           await Promise.all([refreshActors(groupId), refreshGroups()]);
@@ -187,7 +188,7 @@ export function useActorActions(groupId: string) {
           showError(
             resp.error.code === "actor_browser_busy"
               ? i18n.t("actors:runtimeSwitch.browserBusy")
-              : `${resp.error.code}: ${resp.error.message}`,
+              : formatDaemonError(resp.error),
           );
           return;
         }
@@ -229,7 +230,7 @@ export function useActorActions(groupId: string) {
         const resp = await api.fetchInbox(groupId, actor.id);
         if (useInboxStore.getState().inboxTarget !== target) return;
         if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
           return;
         }
         setInboxMessages(target, resp.result.messages || []);

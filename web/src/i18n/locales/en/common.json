@@ -43,5 +43,11 @@
   "chooseFile": "Choose File",
   "noFileChosen": "No file chosen",
   "help": "Help",
-  "noResults": "No matching results"
+  "noResults": "No matching results",
+  "daemonErrors": {
+    "delivery_in_progress": "Delivery is already in progress. No need to send again; recipient status will update when it finishes ({{code}}).",
+    "delivery_ambiguous": "Delivery may already have occurred. Check the member's terminal or wait for a reply; if you need to send it again, reopen recipient status and use \"Retry anyway\" ({{code}}).",
+    "already_delivered": "This message was already handed to the runtime. No need to send it again ({{code}}).",
+    "shutdown_in_progress": "CCCC is restarting or stopping. Try again in a moment ({{code}})."
+  }
 }

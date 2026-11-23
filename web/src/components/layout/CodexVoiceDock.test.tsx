@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
+import type { AcpPermission } from "../../services/api/codexVoice";
 import { CodexVoiceDock } from "./CodexVoiceDock";
 
 const unattended = vi.hoisted(() => ({ enabled: false, refresh: vi.fn(async () => undefined) }));
@@ -281,6 +282,57 @@ describe("CodexVoiceDock", () => {
     expect(html).toContain("modals:chet.state.working");
     expect(html).toContain('data-chet-head="working"');
   });
+
+  it.each(["sidebar", "mobile", "collapsed"] as const)(
+    "marks %s dock as needing attention when Analyst is working but waiting on a permission approval",
+    (surface) => {
+      const renderDock = (permissions: AcpPermission[]) =>
+        renderToStaticMarkup(
+          <CodexVoiceDock
+            controller={controller({
+              analystWorking: true,
+              analyst: {
+                generation: "analyst-perm",
+                tui_ready: false,
+                phase: "working",
+                last_result: "",
+                warning: "",
+                structured: true,
+                permissions,
+              },
+            })}
+            chetWorking
+            variant={surface === "mobile" ? "mobile" : "sidebar"}
+            collapsed={surface === "collapsed"}
+            onOpen={vi.fn()}
+            onStart={vi.fn()}
+          />,
+        );
+
+      unattended.enabled = true;
+      try {
+        const waiting = renderDock([
+          { request_id: "perm-1", kind: "permission", title: "Run command" },
+        ]);
+        expect(waiting).toContain("modals:chet.unattendedOn · layout:codexVoiceAttention");
+        expect(waiting).not.toContain("modals:chet.state.working");
+        expect(waiting).not.toContain("data-chet-head");
+
+        const resumed = renderDock([]);
+        expect(resumed).toContain("modals:chet.unattendedOn · modals:chet.state.working");
+        expect(resumed).not.toContain("layout:codexVoiceAttention");
+        expect(resumed).toContain('data-chet-head="working"');
+      } finally {
+        unattended.enabled = false;
+      }
+
+      const waitingWithoutUnattended = renderDock([
+        { request_id: "perm-1", kind: "permission", title: "Run command" },
+      ]);
+      expect(waitingWithoutUnattended).toContain("layout:codexVoiceAttention");
+      expect(waitingWithoutUnattended).not.toContain("data-chet-head");
+    },
+  );
 
   it("keeps two stable global actions: open console and start voice", () => {
     const html = renderToStaticMarkup(

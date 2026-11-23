@@ -165,3 +165,14 @@ it.each(["start", "restart"] as const)(
     expect(useUIStore.getState().actorBusy).toEqual({});
   },
 );
+
+it("maps shutdown_in_progress on actor actions to localized guidance with original code", async () => {
+  vi.mocked(api.startActor).mockResolvedValue({
+    ok: false,
+    error: { code: "shutdown_in_progress", message: "a daemon shutdown has already been selected" },
+  });
+  await act(async () => actions.toggleActorEnabled(actor));
+  expect(useUIStore.getState().errorMsg).toBe(
+    "CCCC is restarting or stopping. Try again in a moment (shutdown_in_progress).",
+  );
+});

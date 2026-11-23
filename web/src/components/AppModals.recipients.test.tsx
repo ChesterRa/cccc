@@ -40,6 +40,7 @@ vi.mock("./modals/RecipientsModal", () => ({
 }));
 
 import { AppModals } from "./AppModals";
+import { i18nReady } from "../i18n";
 import { useGroupStore, useModalStore, useUIStore } from "../stores";
 
 function deferred<T>() {
@@ -146,6 +147,7 @@ describe("AppModals RecipientsModal status refresh", () => {
     await act(async () => root.unmount());
     host.remove();
     useModalStore.setState({ recipientsEventId: null });
+    useUIStore.getState().dismissError();
   });
 
   it("refreshes single-event ledger_statuses on open for SSE send messages and on group resume", async () => {
@@ -547,5 +549,65 @@ describe("AppModals RecipientsModal status refresh", () => {
       await refreshB2.promise;
     });
     expect(latestRecipientsProps().entries[0]?.waitingReason).toBe("group_paused");
+  });
+
+  it("maps actionable Send Now errors to localized text with original code and keeps unmapped errors raw", async () => {
+    await i18nReady;
+    await act(async () => {
+      useGroupStore.setState({ actors: [workerActor({ enabled: true })] });
+      useGroupStore.getState().setEvents([sendEvent()], "g_a");
+      useModalStore.getState().setRecipientsModal("evt-send-1");
+    });
+
+    mocks.deliverMessage.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "delivery_in_progress",
+        message: "delivery is already in progress for actor: worker",
+      },
+    });
+    await act(async () => {
+      await latestRecipientsProps().onDeliver("worker", false);
+    });
+    expect(useUIStore.getState().errorMsg).toBe(
+      "Delivery is already in progress. No need to send again; recipient status will update when it finishes (delivery_in_progress).",
+    );
+
+    mocks.deliverMessage.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "delivery_ambiguous",
+        message: "delivery may already have occurred for actor: worker",
+      },
+    });
+    await act(async () => {
+      await latestRecipientsProps().onDeliver("worker", false);
+    });
+    expect(useUIStore.getState().errorMsg).toBe(
+      'Delivery may already have occurred. Check the member\'s terminal or wait for a reply; if you need to send it again, reopen recipient status and use "Retry anyway" (delivery_ambiguous).',
+    );
+
+    mocks.deliverMessage.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "already_delivered",
+        message: "message was already accepted for actor: worker",
+      },
+    });
+    await act(async () => {
+      await latestRecipientsProps().onDeliver("worker", false);
+    });
+    expect(useUIStore.getState().errorMsg).toBe(
+      "This message was already handed to the runtime. No need to send it again (already_delivered).",
+    );
+
+    mocks.deliverMessage.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "actor_not_found", message: "Actor missing" },
+    });
+    await act(async () => {
+      await latestRecipientsProps().onDeliver("worker", false);
+    });
+    expect(useUIStore.getState().errorMsg).toBe("actor_not_found: Actor missing");
   });
 });
