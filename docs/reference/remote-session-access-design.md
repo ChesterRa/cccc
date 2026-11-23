@@ -239,7 +239,7 @@ cccc sessions node connect --server https://cccc.example.com
 - 当票据或保存的路由同时包含 IP 和可用中继时，连接器先尝试常规拨号。QUIC 建连失败后，连接器用同一设备密钥重建本地端点，仅向中继拨这一次。失败会退避并恢复完整路由。已建立的会话继续运行，设备授权只在原生握手中确认。
 - 管理员在工作组「添加智能体 → 接入已有会话 → 配对电脑」（或「设置 → 会话接入 → 配对电脑」）选择原生应用并复制命令。远端运行 `cccc sessions node connect --runtime codex --ticket-stdin`。终端提示输入时，管理员在主机生成一次性配对码。远端粘贴后通过原生握手取得独立设备授权。每个码可登记一台新电脑，十分钟有效。Claude Code 使用 `--runtime claude`。
 - 再次连接时，同一 `CCCC_HOME` 运行 `cccc sessions node connect` 即可复用已保存的设备密钥和授权。撤销后需重新发码。
-- 连接成功后终端显示 `Session node connected`。Ctrl-C 只关闭前台桥接。网关恢复时复用已保存的 UDP 端口，设备只导出该用户、该 `CCCC_HOME` 已登记的 Codex 和 Claude 会话。
+- 连接成功后终端显示 `Session node connected`。Ctrl-C 只关闭前台桥接。网关恢复时复用已保存的 UDP 端口，设备只导出该用户、该 `CCCC_HOME` 已登记且两端都支持的运行时的会话（Codex、Claude Code、Pi、OpenCode）。
 - 中心仍由管理员在工作组「添加智能体 → 接入已有会话」的同一列表里选择来源并加入组。来源使用节点公钥、授权代次与原生来源摘要组成命名空间；远端 PID 不作为中心机器上的进程验证，远端 cwd 不登记为中心物理工作区。
 - 中心复用现有接收租约、逐条投递、账本 claim/accepted/ambiguous 处理；节点在原生提交前持久化交接屏障。未知结果和重用同一交接 ID 的不同负载均不自动重放。活跃账本与完成回执的保留策略见下文。
 - Codex 使用原生 queue/steer，Claude 使用原有 Monitor。模型调用先在来源机器验证实际原生来源，再经私有 loopback broker 和加密通道返回中心；中心重查来源版本、组成员代次与角色，复用现有 MCP/Daemon 授权路径。

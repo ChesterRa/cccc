@@ -28,6 +28,8 @@ export function LocalSourceDiagnostic({
     );
   const timestamp = state?.diagnostic.checked_at;
   const checked = timestamp && Number.isFinite(Date.parse(timestamp));
+  // Never checked is not a finding: say nothing until a check has an answer.
+  if (!state?.control.access_blocked && known === "unknown" && !checked) return null;
   return (
     <div className="min-w-0 space-y-1 text-xs leading-relaxed text-[var(--color-text-secondary)]">
       <p role="status">

@@ -2,7 +2,6 @@ import { useTranslation } from "react-i18next";
 import type { LocalSessionSource } from "../../types";
 import { ActorAvatar } from "../../components/ActorAvatar";
 import { Button } from "../../components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "../../components/ui/popover";
 import { LocalSessionOrigin, LocalSessionStatus } from "./LocalSessionOrigin";
 import { LocalSourceActions } from "./LocalSourceActions";
 import { LocalSourceDiagnostic } from "./LocalSourceDiagnostic";
@@ -11,6 +10,12 @@ import {
   MAX_SELECTED_SESSIONS,
   type useLocalSessionsConnection,
 } from "./useLocalSessionsConnection";
+
+const RECEIVE_PROBLEMS = new Set([
+  "shared_backend_missing",
+  "thread_not_loaded",
+  "receive_check_failed",
+]);
 
 export function LocalSessionsList({
   sources,
@@ -32,8 +37,13 @@ export function LocalSessionsList({
         const local = !isDeviceSessionSource(source);
         const state = directory.source_states?.[source.source_id];
         const diagnostics = local && Boolean(directory.capabilities?.source_diagnostics);
+        // Only a found problem on a session that cannot be chosen is worth a line here:
+        // "not checked yet" is not a problem, and an older check must not outweigh a
+        // session that can receive now.
         const showReason =
-          !source.connected || (diagnostics && state?.diagnostic.state !== "ready");
+          diagnostics &&
+          (!!state?.control.access_blocked ||
+            (!source.connected && RECEIVE_PROBLEMS.has(state?.diagnostic.state ?? "")));
         const disabled =
           busy ||
           (!checked &&
@@ -43,7 +53,6 @@ export function LocalSessionsList({
               selected.length >= MAX_SELECTED_SESSIONS ||
               (local && (directory.loading || directory.error)),
             ));
-        const diagnostic = <LocalSourceDiagnostic state={state} supported={diagnostics} />;
         return (
           <div
             key={source.source_id}
@@ -76,42 +85,32 @@ export function LocalSessionsList({
                     {source.title}
                   </span>
                   <LocalSessionOrigin source={source} />
-                  {member && (
-                    <span className="block text-xs text-[var(--color-text-muted)]">
-                      {t(
-                        member.enabled === false
-                          ? "localSessions.memberPaused"
-                          : "localSessions.memberJoined",
-                      )}
-                    </span>
-                  )}
                 </span>
+                {member && (
+                  <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
+                    {t(
+                      member.enabled === false
+                        ? "localSessions.memberPaused"
+                        : "localSessions.memberJoined",
+                    )}
+                  </span>
+                )}
               </label>
-              {diagnostics && !showReason ? (
-                <Popover>
-                  <PopoverTrigger
-                    className="flex min-h-11 min-w-9 shrink-0 items-center justify-center"
-                    aria-label={t("sourceControls.showReceiveStatus", { title: source.title })}
-                  >
-                    <LocalSessionStatus connected compact />
-                  </PopoverTrigger>
-                  <PopoverContent align="end" className="w-52 p-3">
-                    {diagnostic}
-                  </PopoverContent>
-                </Popover>
-              ) : (
-                <LocalSessionStatus connected={source.connected} compact={source.connected} />
-              )}
+              {!source.connected && <LocalSessionStatus connected={false} />}
             </div>
-            {showReason && diagnostic}
-            {local && showReason && (
-              <LocalSourceActions
-                source={source}
-                directory={directory}
-                management={management}
-                busy={busy}
-                recheckOnly
-              />
+            {showReason && (
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-1 pl-[4.5rem]">
+                <div className="min-w-0 flex-1">
+                  <LocalSourceDiagnostic state={state} supported={diagnostics} />
+                </div>
+                <LocalSourceActions
+                  source={source}
+                  directory={directory}
+                  management={management}
+                  busy={busy}
+                  recheckOnly
+                />
+              </div>
             )}
             {member?.enabled === false && (
               <Button

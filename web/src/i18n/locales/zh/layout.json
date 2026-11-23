@@ -342,7 +342,6 @@
     "selectedCount": "已选会话：{{count}} / {{limit}}",
     "newGroupDefaults": "新工作组默认设置",
     "unavailable": "暂不可接收消息",
-    "showTroubleshooting": "查看排查方法",
     "selectionUnavailable": "所选会话中有 {{count}} 个暂不可接收消息。请取消选择，或等待重新连接。",
     "loadFailed": "无法刷新原生会话，正在自动重试。",
     "empty": "还没有会话",
@@ -424,9 +423,9 @@
     "deviceId": "电脑 ID",
     "prepareTitle": "配对一台电脑",
     "prepareHint": "在目标电脑的终端运行以下命令，保持终端打开并等待配对码输入提示。",
-    "scopeHint": "其他电脑只支持接入 Codex 和 Claude Code 会话；Pi、OpenCode 请在本机接入。要和另一个 CCCC 的工作组互通，请用组菜单里的「工作组连接」。",
+    "scopeHint": "这里接入的是另一台电脑上的会话。要和另一个 CCCC 的工作组互通，请用组菜单里的「工作组连接」。",
     "enableApp": "本次启用的应用",
-    "runtimeHint": "此选项只启用所选应用，不会排除其它已注册的 Codex 或 Claude Code 会话。",
+    "runtimeHint": "此选项只启用所选应用，不会排除其它已注册的会话。",
     "preparing": "正在生成配对码…",
     "ticketExpired": "配对码已过期，请重新点击“生成并复制配对码”后再连接。",
     "runRemote": "在另一台电脑运行",
@@ -478,7 +477,7 @@
     "actions": "接入管理 · {{title}}",
     "remove": "移除接入",
     "restore": "恢复接入",
-    "recheck": "重新检查接收",
+    "recheck": "重新检查",
     "checkLater": "稍后可重新检查",
     "finishPause": "继续完成 Group 暂停",
     "confirmRemove": "确认移除",
@@ -502,19 +501,18 @@
     "checkFailed": "未能确认接收检查结果，不推测具体原因。",
     "checkedAt": "检查时间 {{time}}",
     "reasons": {
-      "ready": "最近检查：接收通道可用。",
-      "shared_backend_missing": "共享接收后台不可用。",
-      "thread_not_loaded": "共享接收后台未加载此会话。",
-      "receive_check_failed": "接收通道检查失败。",
-      "unknown": "尚无已确认的接收诊断。"
+      "ready": "最近一次检查：可以接收。",
+      "shared_backend_missing": "Codex 的共享后台没在运行，消息送不进这个会话。",
+      "thread_not_loaded": "Codex 的共享后台还没打开这个会话，消息暂时送不进去。",
+      "receive_check_failed": "这次检查没有完成，还无法确认消息能否送达。",
+      "unknown": "无法确认能否接收。"
     },
     "guidance": {
-      "shared_backend_missing": "请检查原应用的共享后台状态；本页面不会代为启动或重启。",
-      "thread_not_loaded": "请在原应用检查该会话；来源标签不能证明会话已加载。",
-      "receive_check_failed": "请查看原应用诊断，再受控重新检查；本页面不会代为信任或重启。",
-      "unknown": "点击“重新检查接收”请求后台诊断；普通目录轮询不会探测会话。"
-    },
-    "showReceiveStatus": "查看 {{title}} 的接收状态"
+      "shared_backend_missing": "请确认 Codex 的共享后台已启动，再重新检查。",
+      "thread_not_loaded": "在 Codex 里打开这个会话，再重新检查。",
+      "receive_check_failed": "稍后再重新检查；仍不行时请看 Codex 里的提示。",
+      "unknown": "稍后可以再检查一次。"
+    }
   },
   "sessionAccess": {
     "intro": "管理哪些已在运行的会话可以加入工作组。加入本身在组里的「添加智能体 → 接入已有会话」完成。",

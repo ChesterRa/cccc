@@ -5,7 +5,17 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn existing_incompatible_daemon_is_not_replaced_or_followed_by_native_setup() {
-    for relay in [false, true] {
+    for (relay, runtime, protocol, expected) in [
+        (false, "codex", 0, "does not support device"),
+        (true, "codex", 1, "does not support relay"),
+        (false, "pi", 1, "does not support pi device sessions"),
+        (
+            false,
+            "opencode",
+            1,
+            "does not support opencode device sessions",
+        ),
+    ] {
         let mut f = Fixture::new();
         f.start_home(f.hub.clone()).await;
         f.node.initialize().expect("node Home");
@@ -35,7 +45,7 @@ async fn existing_incompatible_daemon_is_not_replaced_or_followed_by_native_setu
                 stream.read_line(&mut line).await?;
                 let request: cccc_contracts::DaemonRequest = serde_json::from_str(&line)?;
                 let result = if request.op == "session_node_capabilities" {
-                    json!({"protocol":if relay {1} else {0}})
+                    json!({"protocol":protocol,"runtimes":["codex","claude"]})
                 } else {
                     json!({})
                 };
@@ -53,18 +63,11 @@ async fn existing_incompatible_daemon_is_not_replaced_or_followed_by_native_setu
             Ok(())
         }));
         let response = f
-            .run(&["--runtime", "codex", "--ticket-stdin"], &encoded)
+            .run(&["--runtime", runtime, "--ticket-stdin"], &encoded)
             .await;
         assert!(!response.status.success());
         let error = String::from_utf8_lossy(&response.stderr);
-        assert!(
-            error.contains(if relay {
-                "does not support relay"
-            } else {
-                "does not support device"
-            }),
-            "{error}"
-        );
+        assert!(error.contains(expected), "{error}");
         assert!(
             f.calls().is_empty(),
             "preflight must precede provider setup"

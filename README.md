@@ -115,7 +115,7 @@ daemon_auto_start = true
    - **Pi:** run `/reload`, or start Pi.
    - **OpenCode V2:** reopen the original session; a blank new session needs a first message.
 3. **Check** with `cccc sessions list`. Add `--include-offline` to also see registered sessions that cannot receive right now.
-4. **Add them to a Group.** In the Web UI, open the Group, choose **Add Agent**, switch to **Add existing sessions**, select the sessions and choose **Add *N* sessions**. To start a new Group from them, choose **New** → **Create from existing sessions**; with several sessions, choose the **Foreman** under **New Group defaults**. Setup steps for each app are under **How to connect · 3 steps** in the list, and when a session is marked **Unavailable to receive**, the list offers **See troubleshooting**. **Settings → Session access** manages which sessions and paired computers may join.
+4. **Add them to a Group.** In the Web UI, open the Group, choose **Add Agent**, switch to **Add existing sessions**, select the sessions and choose **Add *N* sessions**. To start a new Group from them, choose **New** → **Create from existing sessions**; with several sessions, choose the **Foreman** under **New Group defaults**. Setup steps for each app are under **How to connect · 3 steps** in the list, and **Troubleshooting** sits beside them. A session marked **Unavailable to receive** cannot be selected; when CCCC knows why, its row shows the reason and **Check again**. **Settings → Session access** manages which sessions and paired computers may join.
 
 You can also ask from inside a session; CCCC creates or reuses a Group for both:
 

@@ -588,6 +588,47 @@ it("retains an action for an unavailable registered source and leaves the empty 
   expect(mocks.resume).not.toHaveBeenCalled();
 });
 
+it("shows receive status only for a session that cannot be chosen", async () => {
+  const claude = {
+    ...source,
+    source_id: "claude:fixture",
+    title: "Claude fixture",
+    runtime: "claude" as const,
+  };
+  const stale = { ...source, source_id: "codex:stale", title: "Stale check" };
+  const control = { supported: true, access_blocked: false, pause_complete: true };
+  mocks.local.mockResolvedValue({
+    ok: true,
+    result: {
+      sources: [claude, stale],
+      capabilities: { source_control: true, source_diagnostics: true },
+      source_states: {
+        // Never checked: the usual state of a Claude session on a real computer.
+        [claude.source_id]: { diagnostic: { state: "unknown" }, control },
+        // An earlier failed check on a session that can receive now.
+        [stale.source_id]: { diagnostic: { state: "receive_check_failed" }, control },
+      },
+    },
+  });
+  await mount();
+  expect(checkbox(claude.title).disabled).toBe(false);
+  expect(checkbox(stale.title).disabled).toBe(false);
+  expect(host.textContent).not.toContain(t("sourceControls.reasons.unknown"));
+  expect(host.textContent).not.toContain(t("sourceControls.reasons.receive_check_failed"));
+  expect(host.textContent).not.toContain(enLayout.localSessions.unavailable);
+  expect(button(t("sourceControls.recheck"))).toBeUndefined();
+  expect(host.querySelector("[data-status-dot]")).toBeNull();
+});
+
+it("tells why a paused member cannot be resumed while its session is unavailable", async () => {
+  mocks.local.mockResolvedValue(okSources([{ ...source, connected: false }]));
+  mocks.members.mockResolvedValue({ ok: true, result: { actors: [paused] } });
+  await mount();
+  expect(row(source.title).textContent).toContain(enLayout.localSessions.memberPaused);
+  expect(host.textContent).toContain(enLayout.localSessions.unavailable);
+  expect(button(t("localSessions.resumeGroupAccess")).disabled).toBe(true);
+});
+
 it("reports a recheck result without joining the source", async () => {
   const state = {
     diagnostic: { state: "thread_not_loaded" },

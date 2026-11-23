@@ -1,6 +1,10 @@
 //! Native source routing is explicit and never falls back across machines.
 use super::*;
-use cccc_contracts::session_node::supports_device_runtime;
+use cccc_contracts::{
+    local_session::LocalSessionRuntime,
+    session_node::{LEGACY_DEVICE_SESSION_RUNTIMES, supports_device_runtime},
+};
+use cccc_core::local_sessions::NativeHost;
 
 pub(super) async fn route(
     home: &HomeLayout,
@@ -13,7 +17,9 @@ pub(super) async fn route(
         .get("group_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if hub.is_none() && (group_id.is_empty() || !supports_device_runtime(source.runtime)) {
+    if hub.is_none()
+        && (group_id.is_empty() || !LEGACY_DEVICE_SESSION_RUNTIMES.contains(&source.runtime))
+    {
         return Ok(None);
     }
     let Some(saved) = cccc_core::session_nodes::saved_client(home).map_err(|error| {
@@ -76,14 +82,23 @@ pub(super) async fn route(
         .ok_or_else(|| "Remote-session tool returned no result".into())
 }
 
-pub(super) fn append_memberships(home: &HomeLayout, source_id: Option<&str>, result: &mut Value) {
+pub(super) fn append_memberships(
+    home: &HomeLayout,
+    source_id: Option<&str>,
+    opencode_server: Option<&NativeHost>,
+    result: &mut Value,
+) {
     let Some(source_id) = source_id else {
         return;
     };
     let Ok(source) = cccc_core::local_sessions::read(home, source_id) else {
         return;
     };
-    if !supports_device_runtime(source.runtime) || !source.host_alive() {
+    if !supports_device_runtime(source.runtime)
+        || !source.host_alive()
+        || (source.runtime == LocalSessionRuntime::Opencode
+            && source.opencode_server.as_ref() != opencode_server)
+    {
         return;
     }
     let client = match cccc_core::session_nodes::saved_client(home) {
@@ -195,24 +210,15 @@ pub(super) async fn session(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cccc_contracts::local_session::LocalSessionRuntime;
-    use cccc_core::local_sessions::{NativeHost, NativeSession};
+    use cccc_core::local_sessions::NativeSession;
 
-    #[tokio::test]
-    async fn unreadable_connector_preserves_only_routes_known_to_be_local() {
-        let temp = tempfile::tempdir().expect("isolated home");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        let path = home.root().join("state/session_nodes/client.json");
-        std::fs::create_dir_all(path.parent().expect("connector directory")).expect("directory");
-        std::fs::write(&path, "{").expect("unreadable connector");
-
-        let mut source = NativeSession {
+    fn fixture_source(home: &HomeLayout) -> NativeSession {
+        NativeSession {
             source_id: "codex:thread".into(),
             runtime: LocalSessionRuntime::Codex,
             native_session_id: "thread".into(),
             host: NativeHost::capture(std::process::id()).expect("fixture host"),
-            cwd: temp.path().to_string_lossy().into_owned(),
+            cwd: home.root().to_string_lossy().into_owned(),
             title: "Local fixture".into(),
             origin: None,
             revision: "fixture".into(),
@@ -225,7 +231,19 @@ mod tests {
             opencode_config_dir: None,
             opencode_server: None,
             retired: None,
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn unreadable_connector_preserves_only_routes_known_to_be_local() {
+        let temp = tempfile::tempdir().expect("isolated home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let path = home.root().join("state/session_nodes/client.json");
+        std::fs::create_dir_all(path.parent().expect("connector directory")).expect("directory");
+        std::fs::write(&path, "{").expect("unreadable connector");
+
+        let mut source = fixture_source(&home);
         let group = json!({"group_id":"g_fixture"});
         let arguments = group.as_object().expect("Group arguments");
         for runtime in [LocalSessionRuntime::Pi, LocalSessionRuntime::Opencode] {
@@ -233,8 +251,21 @@ mod tests {
             assert!(
                 route(&home, &source, None, "cccc_message_history", arguments)
                     .await
-                    .expect("local-only runtime")
+                    .expect("implicit Group routing remains local")
                     .is_none()
+            );
+            let error = route(
+                &home,
+                &source,
+                Some("remote-hub"),
+                "cccc_message_history",
+                arguments,
+            )
+            .await
+            .expect_err("explicit remote routing requires a readable connector");
+            assert_eq!(
+                error.error_value()["code"],
+                "session_node_connector_state_unreadable"
             );
         }
         for runtime in [LocalSessionRuntime::Codex, LocalSessionRuntime::Claude] {
@@ -263,10 +294,71 @@ mod tests {
         let source = cccc_core::local_sessions::write(&home, source).expect("local registration");
         let mut listing = json!({"self_memberships":[{"group_id":"g_local"}]});
         let before = listing.clone();
-        append_memberships(&home, Some(&source.source_id), &mut listing);
+        append_memberships(&home, Some(&source.source_id), None, &mut listing);
         assert_eq!(
             listing, before,
             "unreadable connector retains local memberships"
         );
+    }
+
+    #[test]
+    fn opencode_remote_memberships_require_its_registered_backend() {
+        use cccc_contracts::session_node::{SessionNodeEndpoint, SessionNodeMembership};
+        use cccc_core::session_nodes::{self, ClientDescriptor};
+
+        let temp = tempfile::tempdir().expect("isolated home");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let mut source = fixture_source(&home);
+        source.runtime = LocalSessionRuntime::Opencode;
+        source.native_session_id = "ses_fixture".into();
+        source.source_id = source.runtime.source_id(&source.native_session_id);
+        source.opencode_server = Some(source.host.clone());
+        let source = cccc_core::local_sessions::write(&home, source).expect("native registration");
+        let client = ClientDescriptor {
+            endpoint: SessionNodeEndpoint {
+                endpoint_id: "hub".into(),
+                addresses: vec![],
+                relay_url: None,
+            },
+            node_id: "node".into(),
+            grant_id: "grant".into(),
+            secret: "fixture-secret".into(),
+            owner: source.host.clone(),
+            address: "127.0.0.1:1".parse().expect("loopback"),
+            connected: true,
+            memberships: vec![SessionNodeMembership {
+                hub_id: "hub".into(),
+                source_id: source.source_id.clone(),
+                source_revision: source.revision,
+                group_id: "g_device".into(),
+                group_title: "Device Group".into(),
+                actor_id: "member".into(),
+                actor_generation: "generation".into(),
+                role: "peer".into(),
+                scope_key: String::new(),
+                enabled: true,
+            }],
+        };
+        session_nodes::set_client(&home, &client).expect("connector state");
+        let mut listing = json!({"self_memberships":[{"group_id":"g_local"}]});
+        let local = listing.clone();
+        let other_backend = NativeHost {
+            started: "another-start".into(),
+            ..source.host.clone()
+        };
+        for backend in [None, Some(&other_backend)] {
+            append_memberships(&home, Some(&source.source_id), backend, &mut listing);
+            assert_eq!(listing, local);
+        }
+        append_memberships(
+            &home,
+            Some(&source.source_id),
+            source.opencode_server.as_ref(),
+            &mut listing,
+        );
+        assert_eq!(listing["self_memberships"][0]["group_id"], "g_local");
+        assert_eq!(listing["self_memberships"][1]["group_id"], "g_device");
+        assert_eq!(listing["self_memberships"][1]["hub_id"], "hub");
     }
 }

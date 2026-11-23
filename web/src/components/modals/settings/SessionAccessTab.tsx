@@ -1,5 +1,8 @@
 import { useTranslation } from "react-i18next";
-import { LocalSessionOrigin } from "../../../features/localSessions/LocalSessionOrigin";
+import {
+  LocalSessionOrigin,
+  LocalSessionStatus,
+} from "../../../features/localSessions/LocalSessionOrigin";
 import { LocalSessionsHelp } from "../../../features/localSessions/LocalSessionsHelp";
 import { LocalSourceActions } from "../../../features/localSessions/LocalSourceActions";
 import { LocalSourceDiagnostic } from "../../../features/localSessions/LocalSourceDiagnostic";
@@ -47,8 +50,9 @@ export function SessionAccessTab({ isActive }: { isActive: boolean }) {
                 className="flex min-w-0 flex-wrap items-start justify-between gap-2 py-3"
               >
                 <div className="min-w-0 flex-1 space-y-1">
-                  <p className="break-words text-sm font-semibold [overflow-wrap:anywhere]">
+                  <p className="flex min-w-0 flex-wrap items-center gap-x-2 break-words text-sm font-semibold [overflow-wrap:anywhere]">
                     {source.title}
+                    {!source.connected && <LocalSessionStatus connected={false} />}
                   </p>
                   <LocalSessionOrigin source={source} />
                   <LocalSourceDiagnostic
@@ -71,7 +75,7 @@ export function SessionAccessTab({ isActive }: { isActive: boolean }) {
           </p>
         )}
         <LocalSourceManagement directory={directory} management={management} busy={busy} />
-        <LocalSessionsHelp request={null} onChooseSessions={() => void directory.reload()} />
+        <LocalSessionsHelp onChooseSessions={() => void directory.reload()} />
       </section>
       <section
         aria-labelledby="session-access-computers"

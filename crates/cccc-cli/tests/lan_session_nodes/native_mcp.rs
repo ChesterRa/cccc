@@ -22,7 +22,12 @@ pub async fn mcp_for(
         .stderr(Stdio::null())
         .spawn()
         .expect("real native MCP");
-    process.stdin.take().expect("MCP input").write_all(format!("{}\n", json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args,"_meta":{"threadId":source.native_session_id}}})).as_bytes()).await.expect("MCP request");
+    let metadata = if source.runtime == LocalSessionRuntime::Opencode {
+        json!({"ai.opencode/sessionID": source.native_session_id})
+    } else {
+        json!({"threadId": source.native_session_id})
+    };
+    process.stdin.take().expect("MCP input").write_all(format!("{}\n", json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":args,"_meta":metadata}})).as_bytes()).await.expect("MCP request");
     let output = tokio::time::timeout(Duration::from_secs(20), process.wait_with_output())
         .await
         .expect("MCP completion")

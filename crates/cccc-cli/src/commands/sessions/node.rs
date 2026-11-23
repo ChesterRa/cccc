@@ -85,7 +85,9 @@ async fn manage(
     Ok(response)
 }
 
-async fn ensure_daemon(home: &HomeLayout) -> Result<()> {
+async fn ensure_daemon(
+    home: &HomeLayout,
+) -> Result<Vec<cccc_contracts::local_session::LocalSessionRuntime>> {
     home.initialize()?;
     // Start only a vacant Home. Never take over or restart a running daemon
     // just to add a network connector.

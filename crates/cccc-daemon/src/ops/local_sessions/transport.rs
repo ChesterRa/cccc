@@ -1,5 +1,6 @@
 //! Local transport handoff. Existing delivery workers and the ledger retain ownership.
 use super::store;
+use cccc_contracts::local_session::SessionSourceKind;
 use cccc_core::HomeLayout;
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
@@ -173,9 +174,13 @@ pub(super) fn acknowledge(
     let key = (home.root().to_owned(), receiver.source_id());
     let queue = queues.get_mut(&key).ok_or_else(stale)?;
     let pending = queue.pending.get(id).ok_or_else(stale)?;
+    // The same hub receiver can confirm that an old offer never reached the
+    // native adapter. Let the worker take that event again under a fresh offer.
+    let not_submitted =
+        receiver.kind == SessionSourceKind::Device && outcome == Outcome::Unavailable;
     if !pending.offered
         || pending.connection_id != receiver.connection_id
-        || pending.revision != receiver.revision
+        || (pending.revision != receiver.revision && !not_submitted)
     {
         return Err(stale());
     }

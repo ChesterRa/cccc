@@ -1,15 +1,32 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use cccc_client::DaemonClient;
 use cccc_contracts::{
     DaemonRequest,
-    session_node::{SESSION_NODE_PROTOCOL, SESSION_NODE_RELAY_TICKET},
+    local_session::LocalSessionRuntime,
+    session_node::{
+        DEVICE_SESSION_RUNTIMES, LEGACY_DEVICE_SESSION_RUNTIMES, SESSION_NODE_PROTOCOL,
+        SESSION_NODE_RELAY_TICKET,
+    },
 };
 use cccc_core::HomeLayout;
-use serde_json::json;
+use serde_json::{Value, json};
 
-pub async fn verify(home: &HomeLayout, needs_relay: bool) -> Result<()> {
+pub async fn verify(home: &HomeLayout, needs_relay: bool) -> Result<Vec<LocalSessionRuntime>> {
     let response = response(home).await?;
-    validate(&response, needs_relay)
+    validate(&response, needs_relay)?;
+    advertised_runtimes(response.result.get("runtimes"))
+}
+
+pub(crate) fn advertised_runtimes(value: Option<&Value>) -> Result<Vec<LocalSessionRuntime>> {
+    let Some(value) = value else {
+        return Ok(LEGACY_DEVICE_SESSION_RUNTIMES.to_vec());
+    };
+    let names: Vec<String> = serde_json::from_value(value.clone())
+        .context("Invalid device-session runtime capability list")?;
+    Ok(DEVICE_SESSION_RUNTIMES
+        .into_iter()
+        .filter(|runtime| names.iter().any(|name| name == runtime.as_str()))
+        .collect())
 }
 
 async fn response(home: &HomeLayout) -> Result<cccc_contracts::DaemonResponse> {

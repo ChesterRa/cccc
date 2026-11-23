@@ -42,4 +42,4 @@ Use this section based on what you are trying to do next.
 - **Daemon**: single writer and source of operational truth
 - **CCCC Connect**: same-account collaboration with independent instance state
 
-- [Native sessions](./local-sessions): connect existing Codex and Claude sessions without importing history.
+- [Native sessions](./local-sessions): connect existing Codex, Claude Code, Pi and OpenCode sessions without importing history.

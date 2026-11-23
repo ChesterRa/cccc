@@ -194,10 +194,16 @@ impl Fixture {
         connection: &iroh::endpoint::Connection,
         send: &mut iroh::endpoint::SendStream,
     ) {
-        deadline(protocol::write(send, &json!({"peer":SessionNodePeer {
+        deadline(protocol::write(send, &self.hello_response(connection)))
+            .await
+            .expect("Hello response");
+    }
+
+    fn hello_response(&self, connection: &iroh::endpoint::Connection) -> Value {
+        json!({"peer":SessionNodePeer {
             node_id:connection.remote_id().to_string(), name:"node".into(), grant_id:"new-grant".into(), enabled:true,
             connected:true, granted_at:"now".into(), last_seen_at:"now".into(),
-        },"memberships":[membership(&self.hub.id().to_string())] }))).await.expect("Hello response");
+        },"memberships":[membership(&self.hub.id().to_string())] })
     }
 }
 impl Drop for Fixture {
@@ -224,6 +230,92 @@ async fn finished(task: AbortTask<Result<()>>) -> Result<()> {
         .await
         .expect("exit deadline")
         .expect("task")
+}
+
+#[tokio::test]
+async fn source_sync_uses_runtime_capabilities_and_keeps_old_hubs_connected() {
+    use cccc_contracts::local_session::LocalSessionRuntime;
+    use cccc_core::local_sessions::{self, NativeSession};
+
+    for (supported, expected) in [
+        (None, &LEGACY_DEVICE_SESSION_RUNTIMES[..]),
+        (
+            Some(json!([
+                "codex",
+                "claude",
+                "pi",
+                "opencode",
+                "future-runtime"
+            ])),
+            &DEVICE_SESSION_RUNTIMES[..],
+        ),
+    ] {
+        let f = Fixture::new().await;
+        let owner = NativeHost::capture(std::process::id()).expect("owner");
+        for runtime in DEVICE_SESSION_RUNTIMES {
+            let native_id = "fixture-session";
+            let key = if matches!(
+                runtime,
+                LocalSessionRuntime::Claude | LocalSessionRuntime::Pi
+            ) {
+                owner.key()
+            } else {
+                native_id.into()
+            };
+            let source = NativeSession {
+                source_id: runtime.source_id(&key),
+                runtime,
+                native_session_id: native_id.into(),
+                host: owner.clone(),
+                cwd: f.home.root().to_string_lossy().into_owned(),
+                title: "Fixture session".into(),
+                origin: None,
+                revision: "original-revision".into(),
+                context_epoch: 0,
+                codex_home: None,
+                codex_can_receive: false,
+                codex_program: None,
+                claude_config_dir: None,
+                pi_agent_dir: None,
+                opencode_config_dir: None,
+                opencode_server: (runtime == LocalSessionRuntime::Opencode).then(|| owner.clone()),
+                retired: None,
+            };
+            local_sessions::write(&f.home, source).expect("native registration");
+        }
+
+        let (task, connection, mut hello) = f.hello().await;
+        let mut result = f.hello_response(&connection);
+        if let Some(supported) = supported {
+            result["supported_runtimes"] = supported;
+        }
+        deadline(protocol::write(&mut hello, &result))
+            .await
+            .expect("Hello response");
+        let (mut send, mut recv) = deadline(connection.accept_bi()).await.expect("sync stream");
+        let Request::Sync { sources } = deadline(protocol::read(&mut recv))
+            .await
+            .expect("source sync")
+        else {
+            panic!("expected a source sync");
+        };
+        let mut exported = sources
+            .into_iter()
+            .map(|item| item.source.runtime.as_str())
+            .collect::<Vec<_>>();
+        exported.sort_unstable();
+        let mut expected = expected
+            .iter()
+            .map(|runtime| runtime.as_str())
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(exported, expected);
+        deadline(protocol::write(&mut send, &json!({"memberships":[]})))
+            .await
+            .expect("sync accepted");
+        task.abort();
+        assert!(deadline(task).await.expect_err("cancelled").is_cancelled());
+    }
 }
 
 #[tokio::test]

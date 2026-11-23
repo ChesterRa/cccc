@@ -103,7 +103,8 @@ it("manages this computer's sources from settings: recheck, remove with confirma
       (li) => !li.closest("details") && li.textContent?.includes(source.title),
     );
   expect(sourceRow()).toBeDefined();
-  expect(document.body.textContent).toContain(labels.reasons.unknown);
+  // A source that was never checked shows no receive status until a check answers.
+  expect(document.body.textContent).not.toContain(labels.reasons.unknown);
   expect(fixture.request).not.toHaveBeenCalled();
   await click(button(labels.recheck));
   expect(document.body.textContent).toContain(labels.reasons.thread_not_loaded);
@@ -186,12 +187,25 @@ it("manages this computer's sources from settings: recheck, remove with confirma
   );
 });
 
+it("marks only a session that is not connected", async () => {
+  mocks.fetch.mockResolvedValue({
+    ok: true,
+    result: { sources: [{ ...source, connected: true }] },
+  });
+  await mount(true);
+  await tick(0);
+  expect(host.textContent).toContain(source.title);
+  expect(host.textContent).not.toContain(enLayout.localSessions.unavailable);
+  expect(host.querySelector("[data-status-dot]")).toBeNull();
+});
+
 it("stops reading while the tab is hidden and reads again when shown", async () => {
   mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
   await mount(true);
   await tick(0);
   expect(host.textContent).toContain(source.title);
   expect(host.textContent).toContain(enLayout.sessionAccess.otherComputers);
+  expect(host.textContent).toContain(enLayout.localSessions.unavailable);
   const shownReads = mocks.fetch.mock.calls.length;
   const shownNodeReads = mocks.nodes.mock.calls.length;
   expect(shownReads).toBeGreaterThan(0);

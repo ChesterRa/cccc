@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 // leaving room for the newline. The ledger remains the full-content authority.
 const MONITOR_LINE_BYTES: usize = 480;
 const PREVIEW_CHARS: usize = 80;
+const ELLIPSIS: &str = "…";
 
 /// The Monitor notice, and whether it carries `instructions`. An ordinary
 /// message from a member arrives whole as `rendered`. Otherwise a short notice
@@ -75,8 +76,18 @@ pub(crate) fn claude_notice(
     if !preamble_due {
         text.extend(preview.chars().take(PREVIEW_CHARS));
     }
-    while encoded_len(&text) > MONITOR_LINE_BYTES && text.len() > header_len {
+    let shown = text.len() - header_len;
+    // A shortened preview ends in an ellipsis: a cut that lands on a sentence
+    // boundary otherwise reads as the whole message.
+    let mut cut = shown < preview.len();
+    while encoded_len(&text) + if cut { ELLIPSIS.len() } else { 0 } > MONITOR_LINE_BYTES
+        && text.len() > header_len
+    {
         text.pop();
+        cut = true;
+    }
+    if cut && text.len() > header_len {
+        text.push_str(ELLIPSIS);
     }
     Some((text, included))
 }
@@ -204,6 +215,45 @@ mod tests {
         assert!(!included, "the line waits; the message still goes out");
         assert!(!notice.contains("xxx"));
         assert!(notice.contains("mode=send.\n界"), "{notice}");
+    }
+
+    #[test]
+    fn a_shortened_preview_ends_in_an_ellipsis_and_a_whole_one_does_not() {
+        let temp = tempfile::tempdir().expect("fixture");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let mut group = store.create("g", "").expect("group");
+        let actor = Actor::new("lead");
+        group.actors.push(actor.clone());
+        let notice = |text: &str| {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = "user".into();
+            event.data = json!({"text":text,"to":["lead"],"message_mode":"send"})
+                .as_object()
+                .expect("data")
+                .clone();
+            claude_notice(&group, &actor, &event, None, "unused", false)
+                .expect("notice")
+                .0
+        };
+        // A cut that lands after a full stop still shows it was cut.
+        let long = format!("{}。{}", "界".repeat(PREVIEW_CHARS - 1), "后半段");
+        let cut = notice(&long);
+        assert!(cut.ends_with(&format!("界。{ELLIPSIS}")), "{cut}");
+        assert!(!cut.contains("后半段"));
+        assert!(encoded_len(&cut) <= MONITOR_LINE_BYTES);
+        // Trimmed by bytes rather than characters: still marked, still in budget.
+        let wide = notice(&"\"\\\n界😀".repeat(200));
+        assert!(wide.ends_with(ELLIPSIS), "{wide}");
+        assert!(encoded_len(&wide) <= MONITOR_LINE_BYTES);
+        // Within the character limit but over the byte budget once escaped.
+        let escaped = "\u{1}".repeat(60);
+        assert!(escaped.chars().count() <= PREVIEW_CHARS);
+        let bytes_only = notice(&escaped);
+        assert!(bytes_only.ends_with(ELLIPSIS), "{bytes_only}");
+        assert!(encoded_len(&bytes_only) <= MONITOR_LINE_BYTES);
+        let whole = notice("short and complete");
+        assert!(whole.ends_with("short and complete"), "{whole}");
     }
 
     fn member_message(data: Value) -> (GroupDoc, Actor, Event, tempfile::TempDir) {

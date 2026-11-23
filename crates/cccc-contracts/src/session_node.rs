@@ -6,8 +6,15 @@ pub const SESSION_NODE_PROTOCOL: u32 = 1;
 pub const SESSION_NODE_RELAY_TICKET: u32 = 2;
 pub const SESSION_NODE_ALPN: &[u8] = b"cccc/session-node/1";
 pub const REMOTE_SOURCE_PREFIX: &str = "remote:";
-pub const DEVICE_SESSION_RUNTIMES: [LocalSessionRuntime; 2] =
+/// Protocol-1 hubs before runtime advertisement supported these two runtimes.
+pub const LEGACY_DEVICE_SESSION_RUNTIMES: [LocalSessionRuntime; 2] =
     [LocalSessionRuntime::Codex, LocalSessionRuntime::Claude];
+pub const DEVICE_SESSION_RUNTIMES: [LocalSessionRuntime; 4] = [
+    LocalSessionRuntime::Codex,
+    LocalSessionRuntime::Claude,
+    LocalSessionRuntime::Pi,
+    LocalSessionRuntime::Opencode,
+];
 
 pub fn supports_device_runtime(runtime: LocalSessionRuntime) -> bool {
     DEVICE_SESSION_RUNTIMES.contains(&runtime)

@@ -36,11 +36,16 @@ impl ConnectTarget {
         }
     }
 
-    pub async fn connect(self, ticket: Option<SessionNodeTicket>, name: &str) -> Result<()> {
+    pub async fn connect(
+        self,
+        ticket: Option<SessionNodeTicket>,
+        name: &str,
+        requested_runtime: Option<&str>,
+    ) -> Result<()> {
         ensure!(
             ticket.is_some() || self.can_resume(),
             "A device pairing ticket is required"
         );
-        client::connect_observed(&self.home, ticket, name, self.previous).await
+        client::connect_observed(&self.home, ticket, name, self.previous, requested_runtime).await
     }
 }

@@ -9,9 +9,9 @@ pub enum SessionNodeAction {
         #[arg(long, default_value_t = 0)]
         port: u16,
     },
-    /// Connect this computer's existing Codex/Claude sessions to a hub.
+    /// Connect this computer's existing native sessions to a hub.
     #[command(
-        after_help = "To pair Codex, run cccc sessions node connect --runtime codex --ticket-stdin. For Claude Code, use --runtime claude. To reconnect, run cccc sessions node connect."
+        after_help = "To pair, run cccc sessions node connect --runtime <RUNTIME> --ticket-stdin with codex, claude, pi or opencode. Pi and OpenCode also need a hub that supports them. To reconnect, run cccc sessions node connect."
     )]
     Connect {
         /// Read one pairing ticket from stdin; omit to resume the saved pairing.

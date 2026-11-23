@@ -342,7 +342,6 @@
     "selectedCount": "Selected sessions: {{count}} / {{limit}}",
     "newGroupDefaults": "New Group defaults",
     "unavailable": "Unavailable to receive",
-    "showTroubleshooting": "See troubleshooting",
     "selectionUnavailable": "Selected sessions unavailable to receive: {{count}}. Deselect them or wait for reconnection.",
     "loadFailed": "Could not refresh native sessions. Retrying automatically.",
     "empty": "No sessions yet",
@@ -424,9 +423,9 @@
     "deviceId": "Computer ID",
     "prepareTitle": "Pair a computer",
     "prepareHint": "Run this command in the other computer’s terminal. Keep it open and wait for the ticket prompt.",
-    "scopeHint": "Other computers support Codex and Claude Code sessions; connect Pi and OpenCode on this computer. To link with another CCCC's Working Group, use Group connections in the group menu.",
+    "scopeHint": "This connects sessions on another computer. To link with another CCCC's Working Group, use Group connections in the group menu.",
     "enableApp": "App to enable this time",
-    "runtimeHint": "This choice enables the selected app; it does not exclude other registered Codex or Claude Code sessions.",
+    "runtimeHint": "This choice enables the selected app; it does not exclude other registered sessions.",
     "preparing": "Generating ticket…",
     "ticketExpired": "This ticket has expired. Generate and copy a new one before connecting.",
     "runRemote": "Run on the other computer",
@@ -478,7 +477,7 @@
     "actions": "Access controls · {{title}}",
     "remove": "Remove access",
     "restore": "Restore access",
-    "recheck": "Recheck receiving",
+    "recheck": "Check again",
     "checkLater": "Recheck available shortly",
     "finishPause": "Finish pausing Groups",
     "confirmRemove": "Confirm removal",
@@ -502,19 +501,18 @@
     "checkFailed": "Receive check could not be confirmed; no specific cause has been inferred.",
     "checkedAt": "Checked at {{time}}",
     "reasons": {
-      "ready": "Last check: receive channel available.",
-      "shared_backend_missing": "Shared receive backend is unavailable.",
-      "thread_not_loaded": "This thread is not loaded in the shared receive backend.",
-      "receive_check_failed": "The receive-channel check failed.",
-      "unknown": "No confirmed receive diagnosis yet."
+      "ready": "Last check: can receive.",
+      "shared_backend_missing": "Codex's shared backend isn't running, so messages can't reach this session.",
+      "thread_not_loaded": "Codex's shared backend hasn't opened this session yet, so messages can't reach it.",
+      "receive_check_failed": "The check didn't finish, so delivery can't be confirmed yet.",
+      "unknown": "Couldn't confirm whether it can receive."
     },
     "guidance": {
-      "shared_backend_missing": "Inspect the original app’s shared backend. This page does not start or restart it.",
-      "thread_not_loaded": "Check the session in its original app. A source label alone does not prove it is loaded.",
-      "receive_check_failed": "Inspect the original app’s diagnostics, then request a controlled recheck. No trust or restart is performed here.",
-      "unknown": "Use Recheck receiving to request a backend diagnosis. Ordinary directory polling does not probe sessions."
-    },
-    "showReceiveStatus": "Show receive status for {{title}}"
+      "shared_backend_missing": "Make sure Codex's shared backend is running, then check again.",
+      "thread_not_loaded": "Open this session in Codex, then check again.",
+      "receive_check_failed": "Check again later; if it still fails, look at Codex's own messages.",
+      "unknown": "You can check again later."
+    }
   },
   "sessionAccess": {
     "intro": "Manage which running sessions may join Groups. Adding them happens in a Group under Add Agent → Add existing sessions.",

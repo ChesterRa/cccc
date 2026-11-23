@@ -18,14 +18,22 @@ pub(super) async fn run(
     let ticket = read_ticket(ticket_stdin).await?;
     ensure!(
         ticket.is_some() || target.can_resume(),
-        "Pairing ticket required for the first connection. Run cccc sessions node connect --runtime codex --ticket-stdin (use claude for Claude Code) and paste a ticket from the hub administrator"
+        "Pairing ticket required for the first connection. Run cccc sessions node connect --runtime <codex|claude|pi|opencode> --ticket-stdin and paste a ticket from the hub administrator"
     );
     target.check_current()?;
-    ensure_daemon(home).await?;
+    let daemon_runtimes = ensure_daemon(home).await?;
     if let Some(runtime) = runtime {
-        if target.needs_relay(ticket.as_ref()) {
-            cccc_session_node::verify_daemon(home, true).await?;
-        }
+        let daemon_runtimes = if target.needs_relay(ticket.as_ref()) {
+            cccc_session_node::verify_daemon(home, true).await?
+        } else {
+            daemon_runtimes
+        };
+        ensure!(
+            daemon_runtimes
+                .iter()
+                .any(|supported| supported.as_str() == runtime),
+            "The running daemon on this computer does not support {runtime} device sessions. Update CCCC and restart the daemon before enabling this integration"
+        );
         setup::enable(home, runtime)
             .await
             .context("Native setup failed; device pairing was not attempted. Inspect native configuration before retrying")?
@@ -35,7 +43,7 @@ pub(super) async fn run(
         );
     }
     eprintln!("Connecting to the hub. Keep this terminal running.");
-    let result = target.connect(ticket, &name).await;
+    let result = target.connect(ticket, &name, runtime).await;
     if let Some(runtime) = runtime {
         result.with_context(|| format!(
             "Native {runtime} integration remains enabled; device connection did not complete. No automatic disable was performed. Resolve the connection error before retrying"

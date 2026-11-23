@@ -3,7 +3,7 @@ use super::{
     protocol::{self, Request},
 };
 use anyhow::Result;
-use cccc_contracts::session_node::SESSION_NODE_PROTOCOL;
+use cccc_contracts::session_node::{DEVICE_SESSION_RUNTIMES, SESSION_NODE_PROTOCOL};
 use cccc_core::session_nodes;
 use iroh::endpoint::{Connection, SendStream};
 use serde_json::json;
@@ -97,7 +97,7 @@ impl Hub {
         drop(connections);
         protocol::write(
             &mut send,
-            &json!({"peer":peer,"memberships":session_nodes::memberships(&self.home, &node_id)?}),
+            &json!({"peer":peer,"memberships":session_nodes::memberships(&self.home, &node_id)?,"supported_runtimes":DEVICE_SESSION_RUNTIMES}),
         )
         .await?;
         let receivers = Arc::new(Mutex::new(HashMap::new()));

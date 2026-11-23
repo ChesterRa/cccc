@@ -45,8 +45,10 @@ pub fn update_sources(
             || !source
                 .source_id
                 .starts_with(&format!("{}:", source.runtime.as_str()))
-            || (source.runtime == LocalSessionRuntime::Codex
-                && source.source_id != source.runtime.source_id(&source.native_session_id))
+            || (matches!(
+                source.runtime,
+                LocalSessionRuntime::Codex | LocalSessionRuntime::Opencode
+            ) && source.source_id != source.runtime.source_id(&source.native_session_id))
             || source.source_id.len() > 512
             || source.native_session_id.is_empty()
             || source.cwd.len() > 4096

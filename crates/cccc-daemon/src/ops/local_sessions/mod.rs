@@ -440,7 +440,13 @@ fn next(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         &required_arg(request, "source_id")?,
         &required_arg(request, "connection_id")?,
     )?;
-    let handoff = transport::next(home, &receiver)?;
+    let handoff = transport::next(home, &receiver)?.map(|handoff| {
+        let mut offer = json!(handoff);
+        if receiver.kind == SessionSourceKind::Device {
+            offer["source_revision"] = json!(receiver.revision);
+        }
+        offer
+    });
     object(json!({"source":receiver.source(),"handoff":handoff}))
 }
 

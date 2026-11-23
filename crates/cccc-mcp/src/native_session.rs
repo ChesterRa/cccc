@@ -99,7 +99,7 @@ impl Context {
                             .is_some_and(|name| name == "cccc_session" || names.contains(name))
                     })
                     .map(|mut tool| {
-                        tool["inputSchema"]["properties"]["hub_id"] = json!({"type":"string","description":"Remote hub ID from self_memberships, required when local and remote Group IDs collide"});
+                        tool["inputSchema"]["properties"]["hub_id"] = json!({"type":"string","description":"Remote hub ID from the message or self_memberships. Required for remote Pi and OpenCode calls and when local and remote Group IDs collide"});
                         if tool["name"] != "cccc_session" {
                             let schema = &mut tool["inputSchema"];
                             // Native calls require an explicit group_id rather than the shared environment fallback.
@@ -206,7 +206,12 @@ impl Context {
             if sources.get("self_memberships").is_none() {
                 sources["self_memberships"] = json!([]);
             }
-            crate::remote_native::append_memberships(home, source_id.as_deref(), &mut sources);
+            crate::remote_native::append_memberships(
+                home,
+                source_id.as_deref(),
+                self.opencode_server.as_ref(),
+                &mut sources,
+            );
             return Ok(result(sources));
         }
         let source_id =

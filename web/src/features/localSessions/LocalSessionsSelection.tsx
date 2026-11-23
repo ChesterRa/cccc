@@ -1,7 +1,7 @@
-import { useRef, useState, type RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "../../components/ui/button";
-import { LocalSessionsHelp, type LocalSessionsHelpRequest } from "./LocalSessionsHelp";
+import { LocalSessionsHelp } from "./LocalSessionsHelp";
 import { LocalSessionsList } from "./LocalSessionsList";
 import { isDeviceSessionSource } from "./remoteSessionPolicy";
 import type { useLocalSessionsConnection } from "./useLocalSessionsConnection";
@@ -24,7 +24,6 @@ export function LocalSessionsSelection({
 }) {
   const { t } = useTranslation("layout");
   const ownHeading = useRef<HTMLHeadingElement>(null);
-  const [helpRequest, setHelpRequest] = useState<LocalSessionsHelpRequest | null>(null);
   const { directory, selected, members } = connection;
   const localSources = directory.sources.filter((source) => !isDeviceSessionSource(source));
   const localSelected = selected.filter((source) => !isDeviceSessionSource(source));
@@ -60,8 +59,6 @@ export function LocalSessionsSelection({
   const allInGroup =
     localRows.length > 0 && localRows.every((source) => members.has(source.source_id));
   const unpaired = remoteReadable && devices.length === 0;
-  const showHelp = (section: LocalSessionsHelpRequest["section"]) =>
-    setHelpRequest((previous) => ({ section, sequence: (previous?.sequence || 0) + 1 }));
   const jump = (ref: RefObject<HTMLHeadingElement | null>) => {
     ref.current?.focus({ preventScroll: true });
     ref.current?.scrollIntoView?.({ block: "start" });
@@ -153,12 +150,7 @@ export function LocalSessionsSelection({
         )}
         {!!localRows.length && !directory.loading && !directory.error && (
           <div className="border-t border-[var(--glass-border)] px-3 py-2">
-            {localRows.some((row) => !row.connected) && (
-              <Button variant="ghost" size="sm" onClick={() => showHelp("troubleshooting")}>
-                {t("localSessions.showTroubleshooting")}
-              </Button>
-            )}
-            <LocalSessionsHelp request={helpRequest} />
+            <LocalSessionsHelp />
           </div>
         )}
       </section>

@@ -10,6 +10,10 @@ use serde_json::{Value, json};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::{sync::Mutex, task::JoinHandle};
 
+#[cfg(test)]
+#[path = "hub_delivery_tests.rs"]
+mod tests;
+
 pub(crate) async fn daemon(hub: &Hub, op: &str, args: Value) -> Result<Value> {
     let response = hub
         .daemon
@@ -127,6 +131,9 @@ async fn transfer(
     let group_id = handoff["group_id"]
         .as_str()
         .context("Handoff Group missing")?;
+    let source_revision = handoff["source_revision"]
+        .as_str()
+        .context("Handoff source revision missing")?;
     let membership = session_nodes::memberships(&hub.home, node_id)?
         .into_iter()
         .find(|membership| {
@@ -138,6 +145,9 @@ async fn transfer(
                 && membership.enabled
         })
         .context("Membership changed before native handoff")?;
+    if membership.source_revision != source_revision {
+        return Ok(SessionNodeDeliveryOutcome::Unavailable);
+    }
     let hub_id = membership.hub_id.clone();
     let text = format!(
         "[CCCC remote session · hub_id={hub_id}]\nUse this hub_id and the explicit group_id for CCCC tools. Work in your original native session on this machine; files, commands, credentials and approvals remain here.\n\n{}",
@@ -149,7 +159,7 @@ async fn transfer(
             .context("Handoff ID missing")?
             .into(),
         source_id: source.native_source_id.clone(),
-        source_revision: membership.source_revision.clone(),
+        source_revision: source_revision.into(),
         membership,
         event_ids: serde_json::from_value(handoff["event_ids"].clone())?,
         text,

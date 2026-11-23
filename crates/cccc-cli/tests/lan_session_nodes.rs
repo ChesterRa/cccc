@@ -3,6 +3,8 @@
 #![cfg(unix)]
 #[path = "lan_session_nodes/codex.rs"]
 mod codex;
+#[path = "lan_session_nodes/extensions.rs"]
+mod extensions;
 #[path = "lan_session_nodes/fixture.rs"]
 mod fixture;
 #[path = "lan_session_nodes/native_mcp.rs"]
@@ -144,6 +146,7 @@ async fn lan_native_session_receives_replies_and_loses_authority_on_revoke() {
     );
 
     codex::verify(&f, &group.group_id, &hub_id).await;
+    extensions::verify(&f, &group.group_id, &hub_id).await;
     recovery::verify(&mut f, &group.group_id, &hub_id, &alias).await;
     let peer = session_nodes::peers(&f.hub).expect("peers").remove(0);
     cccc_session_node::revoke(&f.hub, &peer.node_id)

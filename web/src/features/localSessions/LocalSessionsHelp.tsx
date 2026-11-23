@@ -1,51 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LocalSessionsSetup } from "./LocalSessionsSetup";
 
-export type LocalSessionsHelpRequest = { section: "setup" | "troubleshooting"; sequence: number };
-
 export function LocalSessionsHelp({
-  request,
   onChooseSessions,
   defaultSetupOpen = false,
 }: {
-  request?: LocalSessionsHelpRequest | null;
   onChooseSessions?: () => void;
   defaultSetupOpen?: boolean;
 }) {
   const { t } = useTranslation("layout");
   const [setupOpen, setSetupOpen] = useState(defaultSetupOpen);
   const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
-  const setupRef = useRef<HTMLDetailsElement>(null);
-  const troubleshootingRef = useRef<HTMLDetailsElement>(null);
-  useEffect(() => {
-    if (request?.section === "setup") setSetupOpen(true);
-    if (request?.section === "troubleshooting") setTroubleshootingOpen(true);
-  }, [request]);
-  // Scroll to a requested section once, when it has opened; opening or closing either
-  // section later leaves the view where the reader put it.
-  const scrolledFor = useRef(0);
-  useEffect(() => {
-    if (!request || scrolledFor.current === request.sequence) return;
-    const target = request.section === "setup" ? setupRef.current : troubleshootingRef.current;
-    if (!target?.open) return;
-    scrolledFor.current = request.sequence;
-    target.scrollIntoView?.({ block: "nearest" });
-  }, [request, setupOpen, troubleshootingOpen]);
   return (
     <div className="space-y-2 text-sm text-[var(--color-text-secondary)]">
-      <details
-        ref={setupRef}
-        open={setupOpen}
-        onToggle={(event) => setSetupOpen(event.currentTarget.open)}
-      >
+      <details open={setupOpen} onToggle={(event) => setSetupOpen(event.currentTarget.open)}>
         <summary className="cursor-pointer py-2 font-medium text-[var(--color-text-primary)]">
           {t("localSessions.setup")}
         </summary>
         <LocalSessionsSetup onChooseSessions={onChooseSessions} />
       </details>
       <details
-        ref={troubleshootingRef}
         open={troubleshootingOpen}
         onToggle={(event) => setTroubleshootingOpen(event.currentTarget.open)}
       >

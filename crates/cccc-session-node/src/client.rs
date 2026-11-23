@@ -2,7 +2,7 @@
 pub(crate) mod pairing_state;
 
 use super::{
-    broker,
+    broker, capabilities,
     client_dial::Dialer,
     client_receive::run_session,
     network,
@@ -25,7 +25,7 @@ pub async fn connect(
     name: &str,
 ) -> Result<()> {
     let saved = available_client(home)?;
-    connect_observed(home, ticket, name, saved).await
+    connect_observed(home, ticket, name, saved, None).await
 }
 
 pub(crate) fn available_client(home: &HomeLayout) -> Result<Option<ClientDescriptor>> {
@@ -43,6 +43,7 @@ pub(crate) async fn connect_observed(
     ticket: Option<SessionNodeTicket>,
     name: &str,
     saved: Option<ClientDescriptor>,
+    requested_runtime: Option<&str>,
 ) -> Result<()> {
     let endpoint_address = match &ticket {
         Some(ticket) => SessionNodeEndpoint {
@@ -56,7 +57,7 @@ pub(crate) async fn connect_observed(
             .endpoint
             .clone(),
     };
-    super::capabilities::verify(home, endpoint_address.relay_url.is_some()).await?;
+    let local_runtimes = capabilities::verify(home, endpoint_address.relay_url.is_some()).await?;
     // Preserve route validation before creating or updating the local identity.
     network::destination(&endpoint_address)?;
     // Reserve before opening a second Hello: the hub replaces an older connection for the same key.
@@ -111,6 +112,7 @@ pub(crate) async fn connect_observed(
     // and backoff; dropping it between phases can lose a user's single Ctrl-C.
     let mut stop = std::pin::pin!(stop_signal());
     let mut announced_handshake = false;
+    let mut announced_unsupported_runtime = false;
     let result = loop {
         let configure =
             || network::connect_builder(key.clone(), &descriptor.endpoint, relay_token.as_deref());
@@ -140,6 +142,13 @@ pub(crate) async fn connect_observed(
                         peer.node_id == descriptor.node_id,
                         "Paired node identity mismatch"
                     );
+                    let hub_runtimes =
+                        capabilities::advertised_runtimes(hello.get("supported_runtimes"))?;
+                    let runtimes = local_runtimes
+                        .iter()
+                        .copied()
+                        .filter(|runtime| hub_runtimes.contains(runtime))
+                        .collect::<Vec<_>>();
                     let mut current = descriptor.clone();
                     current.grant_id = peer.grant_id;
                     current.connected = true;
@@ -152,7 +161,24 @@ pub(crate) async fn connect_observed(
                     eprintln!(
                         "Session node connected. Press Ctrl-C to disconnect. To reconnect later, run cccc sessions node connect."
                     );
-                    let session = run_session(home, &daemon, &descriptor.secret, &connection);
+                    if !announced_unsupported_runtime
+                        && let Some(runtime) = requested_runtime
+                        && !runtimes
+                            .iter()
+                            .any(|supported| supported.as_str() == runtime)
+                    {
+                        eprintln!(
+                            "This device connection does not support {runtime} sessions. Update CCCC on both computers and reconnect to share that runtime."
+                        );
+                        announced_unsupported_runtime = true;
+                    }
+                    let session = run_session(
+                        home,
+                        &daemon,
+                        &descriptor.secret,
+                        &connection,
+                        runtimes.into(),
+                    );
                     tokio::select! { _ = &mut stop => { connection.close(0u32.into(), b"connector stopped"); break Ok(()); }, result = session => { if result.is_err() { eprintln!("Session node disconnected; pending writes will not be replayed."); } } }
                     connection.close(0u32.into(), b"connector reconnecting");
                     *link.write().await = None;
