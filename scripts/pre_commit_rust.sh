@@ -161,6 +161,25 @@ rust_lint_command=()
 rust_test_command=()
 rust_runtime_test_command=()
 rust_daemon_test_command=()
+rust_daemon_doc_test_command=()
+
+# Git exports repository-local variables to hooks. Tests create their own
+# repositories, so those variables must not redirect fixture Git commands
+# back into the committing repository (especially in linked worktrees).
+clean_env=(env)
+while IFS= read -r variable; do
+  clean_env+=(-u "$variable")
+done < <(git rev-parse --local-env-vars)
+
+# CI runs the daemon suite through nextest, one process per test, on 4-core
+# runners. When nextest is installed the hook does the same; it is chosen
+# before anything runs, so a failing nextest run fails the hook and never
+# falls back to cargo test. nextest skips doctests, so they run separately.
+daemon_nextest_threads=4
+nextest_available=0
+if "${clean_env[@]}" cargo nextest --version >/dev/null 2>&1; then
+  nextest_available=1
+fi
 if [[ "$full" == "1" ]]; then
   rust_lint_command=(cargo clippy --workspace --all-targets --locked --jobs "$cargo_jobs" -- -D warnings)
 elif [[ ${#rust_source_scope_args[@]} -gt 0 ]]; then
@@ -169,7 +188,12 @@ fi
 if [[ "$full" == "1" || "$rust_workspace" == "1" || "$daemon_impacted" == "1" || "$runtime_impacted" == "1" ]]; then
   rust_test_command=(cargo test --workspace --exclude cccc-pair-daemon --exclude cccc-pair-runtime --locked --jobs "$cargo_jobs")
   rust_runtime_test_command=(cargo test --package cccc-pair-runtime --locked --jobs "$cargo_jobs" -- --test-threads=1)
-  rust_daemon_test_command=(cargo test --package cccc-pair-daemon --locked --jobs "$cargo_jobs" -- --test-threads=1)
+  if [[ "$nextest_available" == "1" ]]; then
+    rust_daemon_test_command=(cargo nextest run --package cccc-pair-daemon --locked --build-jobs "$cargo_jobs" --test-threads "$daemon_nextest_threads")
+    rust_daemon_doc_test_command=(cargo test --package cccc-pair-daemon --doc --locked --jobs "$cargo_jobs")
+  else
+    rust_daemon_test_command=(cargo test --package cccc-pair-daemon --locked --jobs "$cargo_jobs" -- --test-threads=1)
+  fi
 elif [[ ${#rust_source_scope_args[@]} -gt 0 ]]; then
   rust_test_command=(cargo test "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs")
 fi
@@ -208,6 +232,7 @@ print_plan() {
   print_command rust_test "${rust_test_command[@]}"
   print_command rust_runtime_test "${rust_runtime_test_command[@]}"
   print_command rust_daemon_test "${rust_daemon_test_command[@]}"
+  print_command rust_daemon_doc_test ${rust_daemon_doc_test_command[@]+"${rust_daemon_doc_test_command[@]}"}
   if [[ ${#rust_test_specs[@]} -gt 0 ]]; then
     for test_spec in "${rust_test_specs[@]}"; do
       plan_changed_test "$test_spec"
@@ -226,14 +251,6 @@ run_timed() {
   local label="$1"
   shift
   local started=$SECONDS
-  # Git exports repository-local variables to hooks. Tests create their own
-  # repositories, so those variables must not redirect fixture Git commands
-  # back into the committing repository (especially in linked worktrees).
-  local clean_env=(env)
-  local variable
-  while IFS= read -r variable; do
-    clean_env+=(-u "$variable")
-  done < <(git rev-parse --local-env-vars)
   "${clean_env[@]}" "$@"
   echo "✓ $label completed in $((SECONDS - started))s"
 }
@@ -253,6 +270,9 @@ if [[ ${#rust_runtime_test_command[@]} -gt 0 ]]; then
 fi
 if [[ ${#rust_daemon_test_command[@]} -gt 0 ]]; then
   run_timed "Rust daemon tests" "${rust_daemon_test_command[@]}"
+fi
+if [[ ${#rust_daemon_doc_test_command[@]} -gt 0 ]]; then
+  run_timed "Rust daemon doctests" "${rust_daemon_doc_test_command[@]}"
 fi
 
 if [[ ${#rust_test_specs[@]} -gt 0 ]]; then
