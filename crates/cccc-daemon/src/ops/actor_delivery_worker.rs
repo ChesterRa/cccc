@@ -1252,6 +1252,7 @@ mod tests {
             .expect("mail");
         cccc_core::ledger::append(&ledger_path, &mail).expect("Mail");
         let mut notice = Event::new("system.notify", &group.group_id);
+        notice.by = "system".into();
         notice.data = serde_json::json!({
             "kind":"mail_notice","target_actor_id":"peer1",
             "context":{"actor_id":"peer1","source_event_ids":[mail.id]}
@@ -1285,6 +1286,11 @@ mod tests {
         // The actor reads the Mail before the retry: the notice is withdrawn and
         // the retry finishes without starting or writing to the actor.
         cccc_core::inbox::consume_unread(&home, &group, "peer1", "peer1", 50).expect("read");
+        let mut ordinary = notice.clone();
+        ordinary.by = "user".into();
+        assert!(!crate::ops::runtime_delivery::is_stale_mail_notice(
+            &home, &group, &actor.id, &ordinary
+        ));
         let mut batch = vec![job.clone()];
         assert_eq!(
             process_batch(&mut batch, &mut String::new(), &AtomicBool::new(false)),
@@ -1310,24 +1316,27 @@ mod tests {
         group.actors.push(actor.clone());
         store.save(&group).expect("save group");
         let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
-        let event = |kind: &str, data: serde_json::Value| {
+        let event = |kind: &str, by: &str, data: serde_json::Value| {
             let mut event = Event::new(kind, &group.group_id);
-            event.by = "user".into();
+            event.by = by.into();
             event.data = data.as_object().cloned().expect("data");
             cccc_core::ledger::append(&ledger_path, &event).expect("append");
             event
         };
         let mail = event(
             "chat.message",
+            "user",
             serde_json::json!({"to":["peer1"],"text":"review","message_mode":"mail"}),
         );
         let notice = event(
             "system.notify",
+            "system",
             serde_json::json!({"kind":"mail_notice","target_actor_id":"peer1",
                 "context":{"source_event_ids":[mail.id]}}),
         );
         let send = event(
             "chat.message",
+            "user",
             serde_json::json!({"to":["peer1"],"text":"work","message_mode":"send"}),
         );
         cccc_core::inbox::consume_unread(&home, &group, "peer1", "peer1", 50).expect("read");
@@ -1388,6 +1397,7 @@ mod tests {
             .clone();
         cccc_core::ledger::append(&ledger_path, &mail).expect("append fixture event");
         let mut notice = Event::new("system.notify", &group.group_id);
+        notice.by = "system".into();
         notice.data = serde_json::json!({"kind":"mail_notice","target_actor_id":"peer1",
             "context":{"source_event_ids":[mail.id]}})
         .as_object()

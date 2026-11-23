@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use cccc_contracts::Event;
-use cccc_core::{GroupDoc, actors, automation::reply_sender_notice};
+use cccc_core::{GroupDoc, actors, automation::reply_sender_notice, inbox::targeted_prompt_kind};
 use chrono::DateTime;
 use serde_json::Value;
 
@@ -133,7 +133,7 @@ fn fallback(event: &Event) -> String {
 }
 
 fn due_replies(event: &Event) -> Vec<&str> {
-    if event.data.get("kind").and_then(Value::as_str) != Some("reply_notice") {
+    if targeted_prompt_kind(event) != Some("reply_notice") {
         return Vec::new();
     }
     event
@@ -154,6 +154,7 @@ mod tests {
 
     fn notice(kind: &str) -> Event {
         let mut event = Event::new("system.notify", "g_test");
+        event.by = "system".into();
         event.data = json!({
             "kind":kind,
             "title":"Reply requested",
@@ -177,12 +178,14 @@ mod tests {
     #[test]
     fn other_notices_keep_their_text() {
         assert!(!body(&notice("mail_notice")).contains("event-a"));
+        let mut ordinary = notice("reply_notice");
+        ordinary.by = "peer".into();
+        assert!(!body(&ordinary).contains("event-a"));
     }
 
     #[test]
     fn a_sender_notice_uses_its_ledger_time_and_names_every_request() {
         let mut event = notice("reply_sender_notice");
-        event.by = "system".into();
         event.ts = "2026-11-20T10:20:00Z".into();
         event.data["context"] = json!({"obligations":[
             {"recipient_actor_id":"native","recipient_actor_created_at":"generation-a",

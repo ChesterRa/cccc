@@ -373,13 +373,26 @@ pub fn is_mail_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> boo
         && is_for_actor(group, event, actor_id)
 }
 
+/// Only system-authored reminders have special targeting and claim semantics.
+pub fn targeted_prompt_kind(event: &Event) -> Option<&str> {
+    if event.kind != "system.notify" || event.by != "system" {
+        return None;
+    }
+    event
+        .data
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|kind| {
+            matches!(
+                *kind,
+                "mail_notice" | "reply_notice" | crate::automation::reply_sender_notice::KIND
+            )
+        })
+}
+
 /// Internal prompts are delivered and read by their explicit target only.
 pub fn is_targeted_prompt(event: &Event) -> bool {
-    event.kind == "system.notify"
-        && matches!(
-            event.data.get("kind").and_then(Value::as_str),
-            Some("mail_notice" | "reply_notice" | crate::automation::reply_sender_notice::KIND)
-        )
+    targeted_prompt_kind(event).is_some()
 }
 
 pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {

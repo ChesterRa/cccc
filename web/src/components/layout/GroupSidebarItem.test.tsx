@@ -46,6 +46,10 @@ describe("GroupSidebarItem mobile actions", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(host.querySelector('[role="button"]')?.getAttribute("aria-current")).toBe("page");
     expect(host.querySelector('[aria-label^="Reorder"]')).toBeNull();
+    // The row starts with the name; the status symbol sits at the row end.
+    const row = host.querySelector('[role="button"]')!;
+    expect(row.firstElementChild?.textContent).toBe("Alpha");
+    expect(row.lastElementChild?.classList.contains("lcd-group-symbol")).toBe(true);
 
     await act(async () => trigger?.click());
     expect(trigger?.getAttribute("aria-expanded")).toBe("true");

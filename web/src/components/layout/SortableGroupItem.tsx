@@ -212,7 +212,6 @@ export function SortableGroupItem({
           onFocus={onWarm}
         >
           <div className="flex items-center gap-2 min-w-0">
-            <GroupStatusIndicator status={status} />
             <span
               className={classNames(
                 "text-sm truncate",
@@ -225,6 +224,9 @@ export function SortableGroupItem({
               {group.title || gid}
             </span>
           </div>
+          {/* At the row end, so the row starts with the name and the symbol is not taken
+              for an expand or collapse control. */}
+          <GroupStatusIndicator status={status} />
         </button>
         <GroupPendingIndicator groupId={gid} groupName={group.title || gid} />
         {connection?.count && onOpenConnections ? (

@@ -17,6 +17,7 @@
 //! notice; that window is accepted for simplicity.
 
 use cccc_contracts::Event;
+use cccc_core::inbox::targeted_prompt_kind;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -24,8 +25,7 @@ use super::{BatchSubmission, Session};
 
 /// An early Mail notice whose `deliver_by` has not passed yet.
 fn held_notice(event: &Event, now: DateTime<Utc>) -> bool {
-    event.kind == "system.notify"
-        && event.data.get("kind").and_then(Value::as_str) == Some("mail_notice")
+    targeted_prompt_kind(event) == Some("mail_notice")
         && event
             .data
             .get("context")

@@ -6981,6 +6981,11 @@ Sender notices never enter the member `events_stream`, including its replay.
 Neither notice repeats. Once a recipient notice is issued, a sender skipped at
 that check receives no later sender notice for the obligation.
 
+Only `system.notify` events authored by `system` establish automatic Mail or
+reply notice claims. Ordinary notifications use the normal routing rules
+and do not affect reminder eligibility, even when their `data.kind` matches
+one of the three automatic notice kinds.
+
 Paused, stopped, or disabled actors are never woken for these notices. Pending
 Mail is surfaced at the next start/resume bootstrap and begins a fresh notice
 window. Explicit start/resume may recover only blocked Push work from the

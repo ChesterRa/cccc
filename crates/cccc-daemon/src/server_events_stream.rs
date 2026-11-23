@@ -492,12 +492,13 @@ mod tests {
     }
 
     #[test]
-    fn reply_sender_notice_and_other_prompts_stay_out_of_member_event_stream() {
+    fn only_system_authored_reminders_stay_out_of_member_event_stream() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home).expect("store");
         let mut group = store.create("stream", "").expect("group");
         group.actors.push(Actor::new("lead"));
+        group.actors.push(Actor::new("peer"));
         let kinds = BTreeSet::from(["system.notify".to_owned()]);
         let mut notice = Event::new("system.notify", &group.group_id);
         notice.by = "system".into();
@@ -507,6 +508,14 @@ mod tests {
             assert!(!inbox::is_for_actor(&group, &notice, "lead"), "{kind}");
             assert!(!visible(&group, "lead", &kinds, &notice), "{kind}");
             assert!(visible(&group, "user", &kinds, &notice), "{kind}");
+
+            let mut ordinary = notice.clone();
+            ordinary.by = "peer".into();
+            ordinary.data.remove("target_actor_id");
+            ordinary.data.insert("to".into(), json!(["lead"]));
+            assert!(inbox::is_for_actor(&group, &ordinary, "lead"), "{kind}");
+            assert!(visible(&group, "lead", &kinds, &ordinary), "{kind}");
+            assert!(!visible(&group, "peer", &kinds, &ordinary), "{kind}");
         }
         notice.data.insert("kind".into(), json!("info"));
         assert!(visible(&group, "lead", &kinds, &notice));

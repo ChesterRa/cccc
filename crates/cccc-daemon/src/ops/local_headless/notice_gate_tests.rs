@@ -47,10 +47,12 @@ fn event(kind: &str, data: serde_json::Value) -> Event {
 
 fn notice_due_in(seconds: i64) -> Event {
     let deliver_by = chrono::Utc::now() + chrono::Duration::seconds(seconds);
-    event(
+    let mut notice = event(
         "system.notify",
         json!({"kind":"mail_notice","context":{"deliver_by":deliver_by.to_rfc3339()}}),
-    )
+    );
+    notice.by = "system".into();
+    notice
 }
 
 /// An early notice still within its hold window.
@@ -97,8 +99,15 @@ async fn only_early_notices_are_held_and_never_with_real_messages() {
     let (session, _control) = session(temp.path());
     session.set_status("waiting", None);
     assert_eq!(accept(&session, &[notice()]), BatchSubmission::Withheld);
+    let mut ordinary = notice();
+    ordinary.by = "user".into();
+    assert_eq!(
+        accept(&session, &[ordinary]),
+        BatchSubmission::Accepted(None)
+    );
     // A notice sent at the busy delay carries no hold window.
-    let busy_notice = event("system.notify", json!({"kind":"mail_notice","context":{}}));
+    let mut busy_notice = event("system.notify", json!({"kind":"mail_notice","context":{}}));
+    busy_notice.by = "system".into();
     assert_eq!(
         accept(&session, &[busy_notice]),
         BatchSubmission::Accepted(None)

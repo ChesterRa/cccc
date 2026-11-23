@@ -884,9 +884,7 @@ pub fn is_stale_mail_notice(
     actor_id: &str,
     event: &Event,
 ) -> bool {
-    if event.kind != "system.notify"
-        || event.data.get("kind").and_then(Value::as_str) != Some("mail_notice")
-    {
+    if inbox::targeted_prompt_kind(event) != Some("mail_notice") {
         return false;
     }
     let mail = event

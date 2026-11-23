@@ -130,6 +130,44 @@ fn reply_sender_notice_batches_by_sender_and_retries_partial_append() {
 }
 
 #[test]
+fn ordinary_notifications_do_not_claim_automatic_reminders() {
+    let fixture = Fixture::new();
+    fixture.accepted_request("lead", &["worker"]);
+    fixture.append(
+        "chat.message",
+        "lead",
+        json!({"message_mode":"mail","to":["worker"]}),
+    );
+    let reminders = fixture.due(&ACTORS);
+    assert_eq!(
+        reminders
+            .iter()
+            .map(inbox::targeted_prompt_kind)
+            .collect::<Vec<_>>(),
+        [
+            Some("reply_sender_notice"),
+            Some("mail_notice"),
+            Some("reply_notice")
+        ]
+    );
+
+    for reminder in &reminders {
+        fixture.append(
+            "system.notify",
+            "reviewer",
+            Value::Object(reminder.data.clone()),
+        );
+    }
+    let due = fixture.due(&ACTORS);
+    assert_eq!(due.len(), reminders.len());
+    for (actual, expected) in due.iter().zip(&reminders) {
+        assert_eq!(actual.data, expected.data);
+    }
+    fixture.save(&due);
+    assert!(fixture.due(&ACTORS).is_empty());
+}
+
+#[test]
 fn reply_sender_notice_skips_unavailable_members_and_does_not_backfill() {
     let fixture = Fixture::new();
     let open = fixture.accepted_request("lead", &["worker"]);

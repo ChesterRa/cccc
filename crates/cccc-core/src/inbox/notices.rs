@@ -409,22 +409,18 @@ impl NoticeState {
                 }
             }
             "system.notify" => {
-                if reply_sender_notice::is_notice(event) {
-                    self.sender_reply_claims.extend(
-                        reply_sender_notice::obligations(event)
-                            .into_iter()
-                            .map(Obligation::into_claim),
-                    );
-                    return;
-                }
-                let kind = event
-                    .data
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if !matches!(kind, "mail_notice" | "reply_notice") {
-                    return;
-                }
+                let kind = match targeted_prompt_kind(event) {
+                    Some(reply_sender_notice::KIND) => {
+                        self.sender_reply_claims.extend(
+                            reply_sender_notice::obligations(event)
+                                .into_iter()
+                                .map(Obligation::into_claim),
+                        );
+                        return;
+                    }
+                    Some(kind @ ("mail_notice" | "reply_notice")) => kind,
+                    _ => return,
+                };
                 let context = event.data.get("context");
                 let actor = context
                     .and_then(|v| v.get("actor_id"))

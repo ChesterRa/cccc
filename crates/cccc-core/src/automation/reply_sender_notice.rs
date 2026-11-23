@@ -10,9 +10,7 @@ use crate::{GroupDoc, actors};
 pub(crate) const KIND: &str = "reply_sender_notice";
 
 pub fn is_notice(event: &Event) -> bool {
-    event.kind == "system.notify"
-        && event.by == "system"
-        && event.data.get("kind").and_then(Value::as_str) == Some(KIND)
+    crate::inbox::targeted_prompt_kind(event) == Some(KIND)
 }
 
 #[derive(Debug, Deserialize, Serialize)]

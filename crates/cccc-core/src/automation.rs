@@ -848,22 +848,18 @@ fn unread_notices(
                 }
             }
             "system.notify" => {
-                if reply_sender_notice::is_notice(event) {
-                    sender_reply_claims.extend(
-                        reply_sender_notice::obligations(event)
-                            .into_iter()
-                            .map(reply_sender_notice::Obligation::into_claim),
-                    );
-                    continue;
-                }
-                let kind = event
-                    .data
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if !matches!(kind, "mail_notice" | "reply_notice") {
-                    continue;
-                }
+                let kind = match inbox::targeted_prompt_kind(event) {
+                    Some(reply_sender_notice::KIND) => {
+                        sender_reply_claims.extend(
+                            reply_sender_notice::obligations(event)
+                                .into_iter()
+                                .map(reply_sender_notice::Obligation::into_claim),
+                        );
+                        continue;
+                    }
+                    Some(kind @ ("mail_notice" | "reply_notice")) => kind,
+                    _ => continue,
+                };
                 let context = event.data.get("context").and_then(Value::as_object);
                 let actor_id = context
                     .and_then(|value| value.get("actor_id"))
