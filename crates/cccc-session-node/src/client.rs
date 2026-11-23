@@ -208,7 +208,15 @@ pub(crate) async fn connect_observed(
                 }
             }
         } else if backoff == 1 {
-            eprintln!("The encrypted connection to the hub could not be established. Retrying.");
+            if descriptor.endpoint.relay_url.is_some() {
+                eprintln!(
+                    "The encrypted connection to the hub could not be established. Retrying. If this continues, check that this computer can reach the hub's public HTTPS address and that its proxy settings are supported."
+                );
+            } else {
+                eprintln!(
+                    "The encrypted connection to the hub could not be established. Retrying. If this continues, a firewall may be blocking UDP between the two computers: allow it, or enable Public cross-network relay on the hub and use a new pairing ticket."
+                );
+            }
         }
         tokio::select! { _ = &mut stop => break Ok(()), _ = tokio::time::sleep(Duration::from_secs(backoff)) => {} }
         backoff = (backoff * 2).min(15);
