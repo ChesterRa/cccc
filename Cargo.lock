@@ -686,6 +686,7 @@ dependencies = [
  "cccc-pair-daemon",
  "cccc-pair-mcp",
  "cccc-pair-runtime",
+ "cccc-pair-session-node",
  "cccc-pair-web",
  "cccc-windows-console",
  "cccc-windows-process",
@@ -890,6 +891,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "cccc-pair-session-node"
+version = "0.4.60"
+dependencies = [
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "cccc-pair-client",
+ "cccc-pair-contracts",
+ "cccc-pair-core",
+ "cccc-pair-daemon",
+ "cccc-pair-mcp",
+ "cccc-system-proxy",
+ "chrono",
+ "futures-util",
+ "http-body-util",
+ "hyper-util",
+ "iroh",
+ "iroh-relay",
+ "rustls 0.23.46",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-rustls 0.26.4",
+ "tokio-tungstenite 0.29.0",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "cccc-pair-sherpa-onnx"
 version = "1.13.4-cccc.1"
 dependencies = [
@@ -927,8 +959,8 @@ dependencies = [
  "cccc-pair-daemon",
  "cccc-pair-mcp",
  "cccc-pair-runtime",
+ "cccc-pair-session-node",
  "cccc-pair-sherpa-onnx",
- "cccc-system-proxy",
  "chromiumoxide",
  "chrono",
  "crc32fast",
@@ -941,8 +973,6 @@ dependencies = [
  "hound",
  "http-body-util",
  "hyper-util",
- "iroh",
- "iroh-relay",
  "lark-channel",
  "md-5",
  "mime_guess",

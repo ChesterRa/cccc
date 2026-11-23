@@ -1,5 +1,6 @@
 import { useLocalSessionSources } from "./useLocalSessionSources";
 import { useLocalSourceControls } from "./useLocalSourceControls";
+import { isDeviceSessionSource } from "./remoteSessionPolicy";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Actor, LocalSessionSource } from "../../types";
@@ -112,9 +113,9 @@ export function useLocalSessionsConnection({
       alive.current = false;
     };
   }, []);
-  // The hub namespaces remote source aliases by node ID. Display names can coincide.
+  // Device sources carry an explicit node_id namespace. Display names can coincide.
   const fromDevice = (source: LocalSessionSource) =>
-    source.source_id.startsWith(`remote:${deviceId}:`);
+    isDeviceSessionSource(source) && source.node_id === deviceId;
   const directory = deviceId
     ? {
         ...allSources,
@@ -239,6 +240,7 @@ export function useLocalSessionsConnection({
     displayedSources,
     loading,
     error,
+    deviceError: allSources.deviceError,
     busy: busy || management.busy,
     directory,
     management,

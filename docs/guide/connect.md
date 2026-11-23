@@ -227,20 +227,21 @@ provide a relay, discover devices or change firewall/router settings.
    needed after the port becomes ready. Failure shows a corrective next step;
    nothing creates invitations later from background polling. Receiving is shared
    across this instance's Groups, while each Group pair needs its own approval.
-   New invitations are permanent and reusable until deleted. The Web and `cccc direct invite GROUP_ID` request a v3 key and require compatible builds. Previously issued finite or single-use invitations retain their original terms.
-   The invitation appears under **Invitation keys**, with a short management ID and a **Uses** count and the connection address stored in that invitation. Changing the receiving settings leaves existing keys pointing to their original address. To share a different endpoint, create a new key after updating the settings. If a saved private IPv4 address no longer appears on the receiver’s interfaces, **Change** lets you pick another. A reachable forwarded or VPN address can still be used. Copy the invitation and send it through
-   a trusted channel. Each joining Group still requires separate approval.
-   You can copy it again after reopening the panel. The request count counts each
-   joining Group once, including requests still awaiting your approval.
-   Deleting a key requires confirmation, cancels pending requests and disconnects all Group pairs created with that key. Its old grants cannot reconnect. A fresh key can request new approval for the same pair after the client learns the revocation. Expiry alone does not disconnect already approved pairs.
-   Invitation cards show their type and deadline, with **Copy invitation** as the
-   primary action. The long code stays collapsed under **Show invitation code**.
-   Both instances must support reusable invitations; permanent creation and key-wide revocation have separate backend capabilities. If the running backend has
-   not loaded this capability, the Web explains that it must be updated and
-   restarted, and disables creation rather than silently issuing a single-use
-   invitation. Reloading the browser or updating source files alone does not
-   replace a running backend. Existing invitations marked **Single-use · Legacy**
-   still connect only one Group and cannot be retrieved after closing the panel.
+   A new invitation is valid for 30 minutes by default and admits one Group.
+   The same default applies to `cccc direct invite GROUP_ID`. Choose a permanent
+   invitation explicitly in the Web or use `cccc direct invite GROUP_ID --permanent`
+   when you need one reusable key for several Groups. Copy the invitation and
+   share it through a trusted channel. Each joining Group still requires approval.
+   Copy a single-use invitation before closing the panel. Previously issued
+   invitations retain their original terms. Expiry preserves approved pairs.
+   Reusable invitations appear under **Invitation keys** with a short management
+   ID, **Uses** count, and the address saved when the key was issued. They can be
+   copied again after reopening the panel. Changing the receiving address takes
+   effect for new invitations. Deleting a reusable key cancels its pending
+   requests and disconnects all Group pairs created with it. Both instances
+   must support reusable keys, and permanent creation requires a running daemon
+   with permanent-key capability. If needed, update and restart the daemon
+   before choosing a permanent invitation.
 4. On the joining instance, open the intended Group's **Direct connection** panel,
    choose **I have an invitation**, paste it and check the displayed instance,
    Group and expiry, then click **Request connection**. The preview separates your

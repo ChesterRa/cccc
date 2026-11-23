@@ -18,6 +18,8 @@ export function DirectReceiveForm({
   name: initialName,
   busy,
   unavailable = false,
+  reusableSupported = false,
+  permanentSupported = false,
   onSave,
   onStop,
 }: {
@@ -28,7 +30,14 @@ export function DirectReceiveForm({
   name: string;
   busy: boolean;
   unavailable?: boolean;
-  onSave: (listener: DirectListener, name: string, previous: DirectListener | null) => void;
+  reusableSupported?: boolean;
+  permanentSupported?: boolean;
+  onSave: (
+    listener: DirectListener,
+    name: string,
+    previous: DirectListener | null,
+    permanent: boolean,
+  ) => void;
   onStop: () => void;
 }) {
   const { t } = useTranslation("layout");
@@ -40,8 +49,10 @@ export function DirectReceiveForm({
     !inviteMode || (!listener && !addresses.length),
   );
   const [name, setName] = useState(initialName);
+  const [permanent, setPermanent] = useState(false);
   const [stopping, setStopping] = useState(false);
   const addressInput = useRef<HTMLInputElement>(null);
+  const effectivePermanent = permanentSupported && permanent;
   useEffect(() => {
     if (changingAddress && inviteMode) addressInput.current?.focus();
   }, [changingAddress, inviteMode]);
@@ -54,7 +65,12 @@ export function DirectReceiveForm({
       }}
       onSubmit={(e) => {
         e.preventDefault();
-        onSave({ bind: bind.trim(), address: address.trim() }, name.trim(), savedListener);
+        onSave(
+          { bind: bind.trim(), address: address.trim() },
+          name.trim(),
+          savedListener,
+          effectivePermanent,
+        );
       }}
     >
       <fieldset disabled={busy || unavailable} className="space-y-4 min-w-0">
@@ -145,6 +161,31 @@ export function DirectReceiveForm({
               </p>
             )}
         </div>
+        {inviteMode && (
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-[var(--glass-border-subtle)] p-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-text-primary)]"
+              checked={effectivePermanent}
+              disabled={!permanentSupported}
+              onChange={(event) => setPermanent(event.target.checked)}
+            />
+            <span className="min-w-0 space-y-1">
+              <span className="block font-medium">{t("direct.permanentOption")}</span>
+              <span className="block text-xs leading-relaxed text-[var(--color-text-secondary)]">
+                {t(
+                  !permanentSupported
+                    ? reusableSupported
+                      ? "direct.permanentUpgrade"
+                      : "direct.reusableUpgrade"
+                    : effectivePermanent
+                      ? "direct.permanentOptionHint"
+                      : "direct.singleUseOptionHint",
+                )}
+              </span>
+            </span>
+          </label>
+        )}
         <details className="space-y-3">
           <summary className="cursor-pointer text-xs text-[var(--color-text-secondary)]">
             {t("direct.advanced")}

@@ -7,23 +7,25 @@ import zhCommon from "../../i18n/locales/zh/common.json";
 import jaLayout from "../../i18n/locales/ja/layout.json";
 import jaActors from "../../i18n/locales/ja/actors.json";
 import jaCommon from "../../i18n/locales/ja/common.json";
-import type { GroupDoc, LocalSessionSource } from "../../types";
+import type { DeviceSessionSource, GroupDoc, LocalSessionSource } from "../../types";
 
 export const source: LocalSessionSource = {
   source_id: "codex:native",
+  source_kind: "local",
   runtime: "codex",
   native_session_id: "native",
   title: "Codex · workspace",
   cwd: "/synthetic/project",
   connected: true,
 };
-export const second: LocalSessionSource = {
-  source_id: "claude:second",
+export const second: DeviceSessionSource = {
+  source_id: "remote:laptop:grant:second",
+  source_kind: "device",
   runtime: "claude",
-  native_session_id: "second",
+  node_id: "laptop",
+  node_name: "laptop",
   title: "Claude · other workspace",
   cwd: "/synthetic/other",
-  origin: "remote:laptop",
   connected: true,
 };
 export const existingGroup: GroupDoc = {

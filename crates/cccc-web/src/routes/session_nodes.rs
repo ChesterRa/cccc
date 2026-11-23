@@ -1,23 +1,29 @@
-//! Administrator-only device pairing, separate from Group invitation links.
+//! Administrator-only device pairing, separate from Group invitation links. The gateway lives in
+//! the daemon; these routes only authorize the administrator and forward the operation.
 use crate::{
     AppState,
-    api::{ApiError, ApiResult},
+    api::{ApiError, ApiResult, body_object, object},
     auth::Principal,
-    session_node,
 };
 use axum::{
     Json, Router,
-    extract::{Extension, Path, State},
-    routing::{get, post},
+    extract::{Extension, Path, Request, State},
+    http::{HeaderValue, header},
+    middleware::{self, Next},
+    response::Response,
+    routing::{get, post, put},
 };
-use serde_json::json;
+use serde_json::{Value, json};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/session_nodes", get(status))
         .route("/api/v1/session_nodes/invitations", post(invite))
         .route("/api/v1/session_nodes/{node_id}/revoke", post(revoke))
-        .merge(super::session_node_join::routes())
+        .route("/api/v1/session_nodes/stop", post(stop))
+        .route("/api/v1/session_nodes/relay", put(relay))
+        .route("/api/v1/session_nodes/sources", get(sources))
+        .layer(middleware::from_fn(no_store))
 }
 
 pub(super) fn authorize(state: &AppState, principal: &Principal) -> Result<(), ApiError> {
@@ -29,24 +35,43 @@ pub(super) fn authorize(state: &AppState, principal: &Principal) -> Result<(), A
     Ok(())
 }
 
+/// Forward one management operation. A daemon from before device-session management answers
+/// `unknown_op`, and one that is stopping refuses new work; both are temporary for this page.
+async fn call(state: &AppState, op: &str, args: serde_json::Map<String, Value>) -> ApiResult {
+    crate::api::call(state, op, args)
+        .await
+        .map_err(|error| match error.code() {
+            "unknown_op" => ApiError::unavailable(
+                "session_node_upgrade_required",
+                "The running CCCC daemon is older than this page; restart CCCC to manage devices",
+            ),
+            "shutdown_in_progress" => {
+                ApiError::unavailable("shutdown_in_progress", error.message())
+            }
+            _ => error,
+        })
+}
+
+/// Pairing tickets and device directories are private; never let a cache keep them.
+async fn no_store(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 async fn status(
     State(state): State<AppState>,
     Extension(principal): Extension<Principal>,
 ) -> ApiResult {
     authorize(&state, &principal)?;
-    let mut endpoint = cccc_core::session_nodes::endpoint(&state.home).map_err(unavailable)?;
-    if let Some(endpoint) = &mut endpoint
-        && cccc_core::session_nodes::relay_address(&state.home)
-            .map_err(unavailable)?
-            .is_some()
-    {
-        endpoint.relay_url =
-            cccc_core::session_nodes::relay_public_url(&state.home).map_err(unavailable)?;
+    let Json(mut response) =
+        call(&state, "session_node_status", object(json!({"by":"user"}))).await?;
+    if let Some(result) = response.get_mut("result").and_then(Value::as_object_mut) {
+        result.insert("supported".into(), Value::Bool(true));
     }
-    let devices = cccc_core::session_nodes::peers(&state.home).map_err(unavailable)?;
-    Ok(Json(
-        json!({"ok":true,"result":{"supported":true,"join_supported":false,"join_url":null,"transport":"iroh","endpoint":endpoint,"devices":devices}}),
-    ))
+    Ok(Json(response))
 }
 
 async fn invite(
@@ -54,14 +79,10 @@ async fn invite(
     Extension(principal): Extension<Principal>,
 ) -> ApiResult {
     authorize(&state, &principal)?;
-    let ticket = session_node::create_invitation(&state.home, 0)
-        .await
-        .map_err(unavailable)?;
+    let response = call(&state, "session_node_invite", object(json!({"by":"user"}))).await?;
+    // The ticket is private: release it only if the caller is still the administrator.
     authorize(&state, &principal)?;
-    let encoded = session_node::encode_ticket(&ticket).map_err(unavailable)?;
-    Ok(Json(
-        json!({"ok":true,"result":{"ticket":encoded,"expires_at":ticket.expires_at}}),
-    ))
+    Ok(response)
 }
 
 async fn revoke(
@@ -70,12 +91,52 @@ async fn revoke(
     Path(node_id): Path<String>,
 ) -> ApiResult {
     authorize(&state, &principal)?;
-    session_node::revoke(&state.home, &node_id)
-        .await
-        .map_err(unavailable)?;
-    Ok(Json(json!({"ok":true,"result":{"revoked":true}})))
+    call(
+        &state,
+        "session_node_revoke",
+        object(json!({"by":"user","node_id":node_id})),
+    )
+    .await
 }
 
-pub(super) fn unavailable(error: impl std::fmt::Display) -> ApiError {
-    ApiError::unavailable("session_node_unavailable", error.to_string())
+async fn stop(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+) -> ApiResult {
+    authorize(&state, &principal)?;
+    call(&state, "session_node_stop", object(json!({"by":"user"}))).await
+}
+
+async fn relay(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    authorize(&state, &principal)?;
+    let body = body_object(body)?;
+    let enabled = body
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| ApiError::bad("enabled must be a boolean"))?;
+    call(
+        &state,
+        "session_node_relay_set",
+        object(json!({"by":"user","enabled":enabled})),
+    )
+    .await
+}
+
+async fn sources(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+) -> ApiResult {
+    authorize(&state, &principal)?;
+    let response = call(
+        &state,
+        "session_node_source_list",
+        object(json!({"by":"user","include_offline":true})),
+    )
+    .await?;
+    authorize(&state, &principal)?;
+    Ok(response)
 }

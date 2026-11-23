@@ -26,14 +26,6 @@ pub fn pair(
     store::update(home, |state| {
         store::check_gateway(state, gateway)?;
         let now = Utc::now();
-        if let Some((id, _)) = invite
-            && state
-                .invites
-                .get(id)
-                .is_some_and(|pending| !bound_to(pending, node_id))
-        {
-            return Err(store::denied());
-        }
         if state.peers.get(node_id).is_some_and(|peer| peer.enabled) {
             // A resumed enrollment may carry a consumed ticket after a lost reply.
             // Consume a valid fresh ticket without replacing the existing grant.
@@ -41,7 +33,7 @@ pub fn pair(
                 && state
                     .invites
                     .get(id)
-                    .is_some_and(|pending| valid_invite(pending, secret, node_id))
+                    .is_some_and(|pending| valid_invite(pending, secret))
             {
                 state.invites.remove(id);
             }
@@ -54,7 +46,7 @@ pub fn pair(
         }
         let (id, secret) = invite.ok_or_else(store::denied)?;
         let pending = state.invites.get(id).ok_or_else(store::denied)?;
-        if !valid_invite(pending, secret, node_id) {
+        if !valid_invite(pending, secret) {
             return Err(store::denied());
         }
         if state.peers.values().filter(|peer| peer.enabled).count() >= MAX_ACTIVE_DEVICES {
@@ -98,13 +90,13 @@ pub fn set_connected(
 
 pub fn revoke(home: &HomeLayout, node_id: &str) -> io::Result<()> {
     store::update(home, |state| {
-        let peer = state.peers.get_mut(node_id).ok_or_else(store::denied)?;
-        peer.enabled = false;
-        peer.connected = false;
+        if let Some(peer) = state.peers.get_mut(node_id) {
+            peer.enabled = false;
+            peer.connected = false;
+        }
         state
             .invites
-            .retain(|_, invite| invite.expected_node_id.as_deref() != Some(node_id));
-        super::join_authority::revoked(state, node_id);
+            .retain(|_, invite| invite.relay_node_id.as_deref() != Some(node_id));
         prune_revoked_history(state);
         Ok(())
     })
@@ -136,17 +128,8 @@ fn prune_revoked_history(state: &mut store::State) {
         .retain(|_, source| state.peers.contains_key(&source.node_id));
 }
 
-fn bound_to(invite: &Invitation, node_id: &str) -> bool {
-    invite
-        .expected_node_id
-        .as_deref()
-        .is_none_or(|expected| expected == node_id)
-}
-
-fn valid_invite(invite: &Invitation, secret: &str, node_id: &str) -> bool {
-    bound_to(invite, node_id)
-        && invite.secret_hash
-            == store::invitation_hash(invite.expected_node_id.as_deref(), "application", secret)
+fn valid_invite(invite: &Invitation, secret: &str) -> bool {
+    invite.secret_hash == store::hash(secret)
         && invite
             .expires_at
             .parse::<chrono::DateTime<Utc>>()

@@ -265,6 +265,7 @@ fn logout(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             Ok(())
         })
         .map_err(OpError::io)?;
+        crate::session_node_host::remote_access_changed(home);
     }
     membership::clear(home).map_err(OpError::io)?;
     let mut payload = status_payload(home)?;
@@ -426,6 +427,7 @@ fn commit_reach_start(
         }
         return Err(OpError::io(error));
     }
+    crate::session_node_host::remote_access_changed(home);
     Ok(())
 }
 
@@ -446,7 +448,7 @@ pub(super) fn reach_off(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
 }
 
 fn save_reach_disabled(home: &HomeLayout) -> Result<(), OpError> {
-    settings::update(home, |global| {
+    let saved = settings::update(home, |global| {
         global
             .remote_access
             .insert("enabled".into(), Value::Bool(false));
@@ -456,7 +458,9 @@ fn save_reach_disabled(home: &HomeLayout) -> Result<(), OpError> {
         );
         Ok(())
     })
-    .map_err(OpError::io)
+    .map_err(OpError::io);
+    crate::session_node_host::remote_access_changed(home);
+    saved
 }
 
 fn status_payload(home: &HomeLayout) -> Result<Value, OpError> {
@@ -614,6 +618,7 @@ fn mark_cut(
             Ok(())
         })
         .map_err(OpError::io)?;
+        crate::session_node_host::remote_access_changed(home);
     }
     Ok(())
 }

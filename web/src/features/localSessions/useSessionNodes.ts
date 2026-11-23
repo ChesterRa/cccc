@@ -1,19 +1,44 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { LocalSessionSource } from "../../types";
 import {
   fetchSessionNodes,
   revokeSessionNode,
+  setSessionNodeRelay,
+  stopSessionNodeGateway,
   type SessionNodeDevice,
+  type SessionNodeEndpoint,
+  type SessionNodeRelayStatus,
 } from "../../services/api/sessionNodes";
 
+type ReadyDirectory = {
+  status: "ready";
+  devices: SessionNodeDevice[];
+  endpoint: SessionNodeEndpoint | null;
+  relay: SessionNodeRelayStatus;
+  supportedRuntimes: LocalSessionSource["runtime"][];
+};
+
 type Directory =
-  | { status: "ready"; devices: SessionNodeDevice[] }
+  | ReadyDirectory
   | { status: "loading" | "rechecking" | "unsupported" | "forbidden" | "failed" };
+
+export type RelayToggleError = "" | "unavailable" | "upgrade" | "failed";
+
+const DEFAULT_RELAY: SessionNodeRelayStatus = {
+  enabled: false,
+  effective: false,
+  public_url: null,
+};
 
 export function useSessionNodes(active = true) {
   const [directory, setDirectory] = useState<Directory>({ status: "loading" });
   const [revokeId, setRevokeId] = useState("");
   const [revoking, setRevoking] = useState(false);
   const [revokeError, setRevokeError] = useState(false);
+  const [relayBusy, setRelayBusy] = useState(false);
+  const [relayError, setRelayError] = useState<RelayToggleError>("");
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState(false);
   const alive = useRef(false);
   const mutation = useRef(0);
   const inFlight = useRef(false);
@@ -21,6 +46,8 @@ export function useSessionNodes(active = true) {
     mutation.current++;
     setRevokeId("");
     setRevokeError(false);
+    setRelayError("");
+    setStopError(false);
     setDirectory({ status: "forbidden" });
   }, []);
   useEffect(() => {
@@ -49,7 +76,15 @@ export function useSessionNodes(active = true) {
           const result = response.result;
           if (result?.supported === false) setDirectory({ status: "unsupported" });
           else if (result?.supported === true && Array.isArray(result.devices))
-            setDirectory({ status: "ready", devices: result.devices });
+            setDirectory({
+              status: "ready",
+              devices: result.devices,
+              endpoint: result.endpoint ?? null,
+              relay: result.relay ?? DEFAULT_RELAY,
+              supportedRuntimes: Array.isArray(result.supported_runtimes)
+                ? result.supported_runtimes
+                : [],
+            });
           else setDirectory({ status: "failed" });
         }
       } catch {
@@ -106,5 +141,101 @@ export function useSessionNodes(active = true) {
       if (alive.current) setRevoking(false);
     }
   }
-  return { directory, revokeId, setRevokeId, revoking, revokeError, revoke, forbid };
+
+  async function toggleRelay(enabled: boolean): Promise<boolean> {
+    if (inFlight.current || directory.status !== "ready") return false;
+    inFlight.current = true;
+    setRelayBusy(true);
+    setRelayError("");
+    try {
+      const response = await setSessionNodeRelay(enabled);
+      if (!alive.current) return false;
+      if (response.ok && response.result?.relay) {
+        mutation.current++;
+        const nextRelay = response.result.relay;
+        setDirectory((previous) =>
+          previous.status === "ready"
+            ? {
+                ...previous,
+                relay: nextRelay,
+                endpoint: previous.endpoint
+                  ? {
+                      ...previous.endpoint,
+                      relay_url: nextRelay.effective ? nextRelay.public_url : null,
+                    }
+                  : null,
+              }
+            : previous,
+        );
+        return true;
+      }
+      if (!response.ok) {
+        const status = response.error.httpStatus;
+        if (status === 401 || status === 403) forbid();
+        else if (status === 404 || response.error.code === "session_node_upgrade_required")
+          setRelayError("upgrade");
+        else if (response.error.code === "session_node_relay_unavailable")
+          setRelayError("unavailable");
+        else setRelayError("failed");
+      } else setRelayError("failed");
+      return false;
+    } catch {
+      if (alive.current) setRelayError("failed");
+      return false;
+    } finally {
+      inFlight.current = false;
+      if (alive.current) setRelayBusy(false);
+    }
+  }
+
+  async function stopGateway(): Promise<boolean> {
+    if (inFlight.current || directory.status !== "ready") return false;
+    inFlight.current = true;
+    setStopping(true);
+    setStopError(false);
+    try {
+      const response = await stopSessionNodeGateway();
+      if (!alive.current) return false;
+      if (response.ok && response.result?.stopped === true) {
+        mutation.current++;
+        setDirectory((previous) =>
+          previous.status === "ready"
+            ? {
+                ...previous,
+                endpoint: null,
+                relay: { ...previous.relay, effective: false },
+                devices: previous.devices.map((device) => ({ ...device, connected: false })),
+              }
+            : previous,
+        );
+        return true;
+      }
+      if (!response.ok && (response.error.httpStatus === 401 || response.error.httpStatus === 403))
+        forbid();
+      else setStopError(true);
+      return false;
+    } catch {
+      if (alive.current) setStopError(true);
+      return false;
+    } finally {
+      inFlight.current = false;
+      if (alive.current) setStopping(false);
+    }
+  }
+
+  return {
+    directory,
+    revokeId,
+    setRevokeId,
+    revoking,
+    revokeError,
+    revoke,
+    relayBusy,
+    relayError,
+    toggleRelay,
+    stopping,
+    stopError,
+    stopGateway,
+    forbid,
+  };
 }

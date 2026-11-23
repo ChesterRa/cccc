@@ -48,12 +48,14 @@ fn connect_cli_preserves_actor_scope_qualified_address_and_reply_defaults() {
         cccc_core::direct::shared::create(&issuer, &group, None, 0).expect("fixture permanent key");
     let finite = cccc_core::direct::shared::create(&issuer, &group, None, 86_400)
         .expect("fixture finite key");
-    let real_key = permanent.clone();
+    let single_use = cccc_core::direct::invite(&issuer, &group).expect("fixture single-use key");
+    let expected_default = single_use.clone();
+    let expected_permanent = permanent.clone();
     let requested_group = group.clone();
     let server = std::thread::spawn(move || {
         let mut checks = 0;
         let mut issued = 0;
-        for stream in listener.incoming().take(9) {
+        for stream in listener.incoming().take(10) {
             let stream = stream.expect("accept");
             stream
                 .set_read_timeout(Some(std::time::Duration::from_secs(5)))
@@ -73,12 +75,18 @@ fn connect_cli_preserves_actor_scope_qualified_address_and_reply_defaults() {
                     }
                 }
                 "connect_direct_invite" => {
-                    assert_eq!(request.args["reusable"], true);
-                    assert_eq!(request.args["expires_in_seconds"], 0);
                     assert_eq!(request.args["by"], "user");
                     assert_eq!(request.args["group_id"], requested_group);
-                    issued += 1;
-                    json!({"invitation":if issued==1 {&permanent} else {&finite}})
+                    if request.args["reusable"] == false {
+                        assert_eq!(checks, 0, "the default needs no permanent capability read");
+                        assert!(!request.args.contains_key("expires_in_seconds"));
+                        json!({"invitation":&single_use})
+                    } else {
+                        assert_eq!(request.args["reusable"], true);
+                        assert_eq!(request.args["expires_in_seconds"], 0);
+                        issued += 1;
+                        json!({"invitation":if issued==1 {&permanent} else {&finite}})
+                    }
                 }
                 _ => json!({"op":request.op,"args":request.args}),
             };
@@ -147,23 +155,27 @@ fn connect_cli_preserves_actor_scope_qualified_address_and_reply_defaults() {
     let local = invoke(&["send", "local", "--group", "g_explicit", "--to", "user"]);
     assert_eq!(local["op"], "message_send");
     assert_eq!(local["args"]["group_id"], "g_explicit");
-    let invite = || {
-        command(&home)
-            .env_remove("CCCC_GROUP_ID")
+    let invite = |permanent| {
+        let mut cmd = command(&home);
+        cmd.env_remove("CCCC_GROUP_ID")
             .env_remove("CCCC_ACTOR_ID")
-            .args(["direct", "invite", &group])
-            .output()
-            .expect("direct CLI")
+            .args(["direct", "invite", &group]);
+        if permanent {
+            cmd.arg("--permanent");
+        }
+        cmd.output().expect("direct CLI")
     };
-    let created = invite();
-    assert!(created.status.success());
-    let result = serde_json::from_slice::<Value>(&created.stdout).expect("invitation result");
-    assert!(result["invitation"].as_str() == Some(real_key.as_str()));
+    for (permanent, expected) in [(false, expected_default), (true, expected_permanent)] {
+        let created = invite(permanent);
+        assert!(created.status.success());
+        let result = serde_json::from_slice::<Value>(&created.stdout).expect("invitation result");
+        assert!(result["invitation"].as_str() == Some(expected.as_str()));
+    }
     for message in [
         "did not return a permanent invitation",
         "Update and restart the daemon",
     ] {
-        let refused = invite();
+        let refused = invite(true);
         assert!(!refused.status.success());
         assert!(refused.stdout.is_empty());
         let error = String::from_utf8_lossy(&refused.stderr);

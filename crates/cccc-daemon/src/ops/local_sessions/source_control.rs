@@ -196,16 +196,6 @@ pub(super) fn project(
             removed.push(record.source(false));
         }
     }
-    if let Some(sources) = result.get("sources").and_then(Value::as_array) {
-        for source in sources {
-            if let Some(id) = source["source_id"]
-                .as_str()
-                .filter(|id| cccc_core::session_nodes::is_remote_source(id))
-            {
-                states.insert(id.into(), json!({"control":SourceControl {supported:false,reason_code:Some("remote_source_control_unsupported".into()),..SourceControl::default()},"diagnostic":cccc_contracts::source_control::SourceDiagnostic::default()}));
-            }
-        }
-    }
     result.insert(
         "capabilities".into(),
         json!({"source_control":true,"source_diagnostics":true,"source_control_requires_mcp_reload":true}),

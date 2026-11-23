@@ -262,16 +262,39 @@ export function LocalSessionsDialog({
             </div>
           )}
           <div hidden={view !== "sessions"}>
-            {empty && deviceScope ? null : empty && deviceBrowser === "all" ? (
-              <p role="status" className="py-3 text-sm text-[var(--color-text-secondary)]">
-                {t("localSessions.empty")}
-              </p>
+            {empty && deviceScope ? (
+              connection.deviceError ? (
+                <p role="alert" className="break-words text-sm text-[var(--color-accent-danger)]">
+                  {t("sessionNodes.deviceSourcesFailed")}
+                  <span className="block">{connection.deviceError}</span>
+                </p>
+              ) : null
+            ) : empty && deviceBrowser === "all" ? (
+              <div className="space-y-3 py-3">
+                {connection.deviceError && (
+                  <p role="alert" className="break-words text-sm text-[var(--color-accent-danger)]">
+                    {t("sessionNodes.deviceSourcesFailed")}
+                    <span className="block">{connection.deviceError}</span>
+                  </p>
+                )}
+                <p role="status" className="text-sm text-[var(--color-text-secondary)]">
+                  {t("localSessions.empty")}
+                </p>
+              </div>
             ) : empty ? (
-              <LocalSessionsWelcome
-                isDark={isDark}
-                onLocalSetup={() => showHelp("setup")}
-                onAddDevice={() => navigate("device")}
-              />
+              <div className="space-y-4">
+                {connection.deviceError && (
+                  <p role="alert" className="break-words text-sm text-[var(--color-accent-danger)]">
+                    {t("sessionNodes.deviceSourcesFailed")}
+                    <span className="block">{connection.deviceError}</span>
+                  </p>
+                )}
+                <LocalSessionsWelcome
+                  isDark={isDark}
+                  onLocalSetup={() => showHelp("setup")}
+                  onAddDevice={() => navigate("device")}
+                />
+              </div>
             ) : (
               <LocalSessionsSelection
                 connection={connection}

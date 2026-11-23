@@ -8,6 +8,7 @@ import { LcdIcon } from "../../components/Icons";
 import { Laptop, Monitor } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { LocalSessionOrigin, LocalSessionStatus } from "./LocalSessionOrigin";
+import { isDeviceSessionSource } from "./remoteSessionPolicy";
 
 export function LocalSessionsList({
   sources,
@@ -54,25 +55,31 @@ export function LocalSessionsList({
     );
   if (!sources.length) return null;
   const selectedIds = selected.map((source) => source.source_id);
-  const devices = new Map<string, LocalSessionSource[]>();
+  const devices = new Map<
+    string,
+    { label: string; isDevice: boolean; sessions: LocalSessionSource[] }
+  >();
   for (const source of sources) {
-    const device = source.origin?.startsWith("remote:")
-      ? source.origin.slice(7)
-      : t("localSessions.thisDevice");
-    const group = devices.get(device) || [];
-    group.push(source);
-    devices.set(device, group);
+    const isDevice = isDeviceSessionSource(source);
+    const key = isDevice ? `device:${source.node_id}` : "local";
+    const group = devices.get(key) || {
+      label: isDevice ? source.node_name : t("localSessions.thisDevice"),
+      isDevice,
+      sessions: [],
+    };
+    group.sessions.push(source);
+    devices.set(key, group);
   }
   return (
     <div className="space-y-5">
-      {[...devices].map(([device, sessions]) => (
+      {[...devices].map(([key, { label, isDevice, sessions }]) => (
         <section
-          key={device}
-          aria-label={device}
+          key={key}
+          aria-label={label}
           className="min-w-0 border border-[var(--glass-border)]"
         >
           <h3 className="flex min-w-0 items-center gap-2 border-b border-[var(--glass-border)] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
-            {device === t("localSessions.thisDevice") ? (
+            {!isDevice ? (
               <LcdIcon
                 icon={Monitor}
                 glyph="monitor"
@@ -89,8 +96,8 @@ export function LocalSessionsList({
                 aria-hidden="true"
               />
             )}
-            <span className="min-w-0 flex-1 truncate normal-case tracking-normal" title={device}>
-              {device}
+            <span className="min-w-0 flex-1 truncate normal-case tracking-normal" title={label}>
+              {label}
             </span>
             <span className="font-normal tabular-nums text-[var(--color-text-muted)]">
               {sessions.length}
@@ -149,18 +156,20 @@ export function LocalSessionsList({
                       ) : null}
                     </span>
                   </label>
-                  <div className="min-w-0 w-full space-y-2">
-                    <LocalSourceDiagnostic
-                      state={directory.source_states?.[source.source_id]}
-                      supported={!!directory.capabilities?.source_diagnostics}
-                    />
-                    <LocalSourceActions
-                      source={source}
-                      directory={directory}
-                      management={management}
-                      busy={busy}
-                    />
-                  </div>
+                  {!isDeviceSessionSource(source) && (
+                    <div className="min-w-0 w-full space-y-2">
+                      <LocalSourceDiagnostic
+                        state={directory.source_states?.[source.source_id]}
+                        supported={!!directory.capabilities?.source_diagnostics}
+                      />
+                      <LocalSourceActions
+                        source={source}
+                        directory={directory}
+                        management={management}
+                        busy={busy}
+                      />
+                    </div>
+                  )}
                   {member?.enabled === false ? (
                     <Button
                       type="button"

@@ -14,6 +14,7 @@ import enActors from "../../i18n/locales/en/actors.json";
 
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
+  deviceSources: vi.fn(),
   create: vi.fn(),
   join: vi.fn(),
   members: vi.fn(),
@@ -28,6 +29,10 @@ vi.mock("../../services/api/localSessions", () => ({
   joinLocalSessions: mocks.join,
   resumeLocalSessionAccess: mocks.resume,
 }));
+vi.mock("../../services/api/sessionNodes", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../services/api/sessionNodes")>();
+  return { ...actual, fetchDeviceSessionSources: mocks.deviceSources };
+});
 vi.mock("../../services/api/actors", async (original) => ({
   ...(await original<typeof import("../../services/api/actors")>()),
   fetchActors: mocks.members,
@@ -71,6 +76,7 @@ beforeEach(async () => {
       interpolation: { escapeValue: false },
     });
   mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+  mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [] } });
   mocks.members.mockResolvedValue({ ok: true, result: { actors: [] } });
   mocks.resume.mockResolvedValue({ ok: true, result: { actor: { enabled: true } } });
   mocks.create.mockResolvedValue({ ok: true, result: { group_id: "g-created", reused: false } });
@@ -233,7 +239,8 @@ it("explains an empty directory without creating a Group or enabling an empty su
 
 it("shows first-selected defaults only for a new Group", async () => {
   useGroupStore.setState({ groups: [], selectedGroupId: "", groupDoc: null });
-  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+  mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
   await open();
   expect(target()).toBeNull();
   expect(row(second.title).closest("section")?.textContent).toContain("laptop");
@@ -272,10 +279,8 @@ it("submits the explicitly chosen Foreman first, keeping the other selections an
     cwd: "/synthetic/third",
   };
   const unselected = { ...source, source_id: "codex:unselected", title: "Unselected workspace" };
-  mocks.fetch.mockResolvedValue({
-    ok: true,
-    result: { sources: [source, second, third, unselected] },
-  });
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, third, unselected] } });
+  mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
   await open();
   await click(checkbox(second.title));
   expect(foreman()).toBeNull();
@@ -297,10 +302,7 @@ it("submits the explicitly chosen Foreman first, keeping the other selections an
   expect([source, second, third].every((item) => checkbox(item.title).checked)).toBe(true);
   expect(checkbox(unselected.title).checked).toBe(false);
   expect(mocks.create).not.toHaveBeenCalled();
-  mocks.fetch.mockResolvedValue({
-    ok: true,
-    result: { sources: [unselected, third, source, second] },
-  });
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [unselected, third, source] } });
   await act(async () => vi.advanceTimersByTimeAsync(3000));
   expect(foreman()?.dataset.value).toBe(third.source_id);
   await submitSelection();
@@ -314,14 +316,15 @@ it("submits the explicitly chosen Foreman first, keeping the other selections an
 
 it("retains an unavailable chosen Foreman until explicitly deselected, then uses the remaining session", async () => {
   vi.useFakeTimers();
-  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+  mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
   await open();
   await click(checkbox(source.title));
   await click(checkbox(second.title));
   await chooseForeman(second.source_id);
-  mocks.fetch.mockResolvedValue({
+  mocks.deviceSources.mockResolvedValue({
     ok: true,
-    result: { sources: [source, { ...second, connected: false }] },
+    result: { sources: [{ ...second, connected: false }] },
   });
   await act(async () => vi.advanceTimersByTimeAsync(3000));
   expect(foreman()?.dataset.value).toBe(second.source_id);
@@ -347,7 +350,8 @@ it("retains an unavailable chosen Foreman until explicitly deselected, then uses
 
 it("preserves selection order across targets and offline polls, then joins the explicit Group", async () => {
   vi.useFakeTimers();
-  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+  mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
   const select = vi.fn();
   await open(select);
   await click(checkbox(second.title));
@@ -385,7 +389,7 @@ it("preserves selection order across targets and offline polls, then joins the e
   expect(document.querySelector("section dd")?.textContent).toBe(second.title);
   expect(primary().disabled).toBe(false);
   await chooseTarget(existingGroup.group_id);
-  mocks.fetch.mockResolvedValueOnce({ ok: true, result: { sources: [source] } });
+  mocks.deviceSources.mockResolvedValueOnce({ ok: true, result: { sources: [] } });
   await act(async () => vi.advanceTimersByTimeAsync(3000));
   expect(checkbox(second.title).checked).toBe(true);
   expect(checkbox(second.title).disabled).toBe(false);
@@ -470,6 +474,8 @@ it("shows registered but unready sources without allowing their admission", asyn
     open,
     source,
     publish: (directory) => mocks.fetch.mockResolvedValue({ ok: true, result: directory }),
+    publishDevice: (sources) =>
+      mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources } }),
     delayNextRead: () => deferDirectoryRead(mocks.fetch),
   });
   expect(mocks.resume).not.toHaveBeenCalled();
@@ -585,16 +591,15 @@ it.each(["missing", "disconnected"])(
   "keeps both selections and the multi-Group action during a %s poll, then submits both after recovery",
   async (unavailable) => {
     vi.useFakeTimers();
-    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
+    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+    mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
     await open();
     await click(checkbox(source.title));
     await click(checkbox(second.title));
     await chooseTarget("");
-    mocks.fetch.mockResolvedValueOnce({
+    mocks.deviceSources.mockResolvedValueOnce({
       ok: true,
-      result: {
-        sources: unavailable === "missing" ? [source] : [source, { ...second, connected: false }],
-      },
+      result: { sources: unavailable === "missing" ? [] : [{ ...second, connected: false }] },
     });
     await act(async () => vi.advanceTimersByTimeAsync(3000));
     expect(checkbox(source.title).checked).toBe(true);
@@ -635,11 +640,13 @@ it("retains a single unavailable selection when the entire connected directory b
 
 it("allows explicit removal of an unavailable selection without silently changing the remaining selection", async () => {
   vi.useFakeTimers();
-  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+  mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
   await open();
   await click(checkbox(second.title));
   await click(checkbox(source.title));
   mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+  mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [] } });
   await act(async () => vi.advanceTimersByTimeAsync(3000));
   expect(primary().disabled).toBe(true);
   await click(checkbox(second.title));
@@ -780,7 +787,8 @@ it.each([
     const pendingLabel = joining ? enLayout.localSessions.joining : enLayout.localSessions.creating;
     vi.useFakeTimers();
     let resolve!: (value: unknown) => void;
-    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
+    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+    mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
     const mutate = joining ? mocks.join : mocks.create;
     mutate.mockReturnValue(
       new Promise((r) => {
@@ -837,7 +845,8 @@ it.each(["new", "existing"])(
     const mutate = joining ? mocks.join : mocks.create;
     const action = joining ? enLayout.localSessions.join : enLayout.localSessions.create;
     mutate.mockResolvedValueOnce({ ok: false, error: { message: "Synthetic mutation failure" } });
-    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
+    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+    mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
     const select = vi.fn();
     await open(select);
     await click(checkbox(second.title));
@@ -934,7 +943,8 @@ it.each(flowLabels)(
   "keeps native-session names, actions and counts aligned in %s",
   async (language, entry, title, single, multiple, count, join) => {
     await i18n.changeLanguage(language);
-    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source, second] } });
+    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+    mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [second] } });
     await mount(vi.fn(), true);
     const entryButton = host.querySelector<HTMLButtonElement>(`button[aria-label="${entry}"]`)!;
     expect(entryButton.title).toBe(entry);
@@ -961,3 +971,102 @@ it.each(flowLabels)(
     expect(target().textContent).toContain(existingGroup.title);
   },
 );
+
+it.each([
+  { name: "empty", response: { ok: true as const, result: { sources: [] } }, expectsAlert: false },
+  {
+    name: "404 unavailable",
+    response: { ok: false as const, error: { httpStatus: 404, message: "Not found" } },
+    expectsAlert: false,
+  },
+  {
+    name: "503 unreadable",
+    response: {
+      ok: false as const,
+      error: {
+        httpStatus: 503,
+        code: "session_node_state_unreadable",
+        message: "Corrupted device state",
+      },
+    },
+    expectsAlert: true,
+  },
+])(
+  "isolates device directory state ($name) without blocking local selection or group admission",
+  async ({ response, expectsAlert }) => {
+    mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+    mocks.deviceSources.mockResolvedValue(response);
+    await open();
+    expect(checkbox(source.title).disabled).toBe(false);
+    if (expectsAlert) {
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+        enLayout.sessionNodes.deviceSourcesFailed,
+      );
+      expect(document.querySelector('[role="alert"]')?.textContent).toContain(
+        "Corrupted device state",
+      );
+    } else {
+      expect(document.querySelector('[role="alert"]')).toBeNull();
+    }
+    await click(checkbox(source.title));
+    await chooseTarget(existingGroup.group_id);
+    expect(primary().disabled).toBe(false);
+    await submitSelection();
+    expect(mocks.join).toHaveBeenCalledWith(existingGroup.group_id, [source.source_id]);
+  },
+);
+
+it("loads local sessions, allows admission, and continues local polling while device discovery is pending", async () => {
+  vi.useFakeTimers();
+  let resolveDevice!: (value: unknown) => void;
+  mocks.fetch.mockResolvedValue({ ok: true, result: { sources: [source] } });
+  mocks.deviceSources.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveDevice = resolve;
+      }),
+  );
+  mocks.deviceSources.mockResolvedValue({ ok: true, result: { sources: [] } });
+  await open();
+  expect(checkbox(source.title).disabled).toBe(false);
+  expect(document.body.textContent).not.toContain(second.title);
+  await click(checkbox(source.title));
+  const localPollsAfterOpen = mocks.fetch.mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  expect(mocks.fetch.mock.calls.length).toBeGreaterThan(localPollsAfterOpen);
+  const sameNameDevice = {
+    ...second,
+    source_id: "remote:laptop-2:grant:second",
+    node_id: "laptop-2",
+    title: "Duplicate name laptop workspace",
+  };
+  const spoofedLocalNameDevice = {
+    ...second,
+    source_id: "remote:laptop-3:grant:third",
+    node_id: "laptop-3",
+    node_name: enLayout.localSessions.thisDevice,
+    title: "Spoofed local-name workspace",
+  };
+  await act(async () =>
+    resolveDevice({
+      ok: true,
+      result: { sources: [second, sameNameDevice, spoofedLocalNameDevice] },
+    }),
+  );
+  expect(checkbox(second.title).disabled).toBe(false);
+  expect(checkbox(sameNameDevice.title).disabled).toBe(false);
+  expect(checkbox(spoofedLocalNameDevice.title).disabled).toBe(false);
+  expect(checkbox(source.title).checked).toBe(true);
+  const groupedSections = [
+    ...document.querySelectorAll('[role="dialog"] section[aria-label] > h3'),
+  ].map((heading) => heading.parentElement!);
+  expect(groupedSections.map((section) => section.getAttribute("aria-label"))).toEqual([
+    enLayout.localSessions.thisDevice,
+    "laptop",
+    "laptop",
+    enLayout.localSessions.thisDevice,
+  ]);
+  await chooseTarget(existingGroup.group_id);
+  await submitSelection();
+  expect(mocks.join).toHaveBeenCalledWith(existingGroup.group_id, [source.source_id]);
+});

@@ -17,7 +17,12 @@ use std::time::Duration;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn lan_native_session_receives_replies_and_loses_authority_on_revoke() {
     let mut f = Fixture::start().await;
-    let directory = call(&f.hub_client, "local_session_list", json!({})).await;
+    let directory = call(
+        &f.hub_client,
+        "session_node_source_list",
+        json!({"by":"user"}),
+    )
+    .await;
     let alias = directory["sources"][0]["source_id"]
         .as_str()
         .expect("remote alias")
@@ -141,7 +146,7 @@ async fn lan_native_session_receives_replies_and_loses_authority_on_revoke() {
     codex::verify(&f, &group.group_id, &hub_id).await;
     recovery::verify(&mut f, &group.group_id, &hub_id, &alias).await;
     let peer = session_nodes::peers(&f.hub).expect("peers").remove(0);
-    cccc_web::session_node::revoke(&f.hub, &peer.node_id)
+    cccc_session_node::revoke(&f.hub, &peer.node_id)
         .await
         .expect("revoke device");
     assert!(session_nodes::source(&f.hub, &alias).is_err());

@@ -68,6 +68,7 @@ fn configure(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         Ok(latest.remote_access.clone())
     })
     .map_err(OpError::io)?;
+    crate::session_node_host::remote_access_changed(home);
     let mut result = payload(home, &remote_access);
     if restart_required
         && let Some(remote) = result
@@ -133,6 +134,7 @@ fn set_running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpR
         Ok(latest.remote_access.clone())
     })
     .map_err(OpError::io)?;
+    crate::session_node_host::remote_access_changed(home);
     object(payload(home, &remote_access))
 }
 

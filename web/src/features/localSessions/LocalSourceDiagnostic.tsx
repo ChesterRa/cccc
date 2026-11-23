@@ -23,11 +23,7 @@ export function LocalSourceDiagnostic({
   if (state?.control.supported === false)
     return (
       <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-        {t(
-          state.control.reason_code === "remote_source_control_unsupported"
-            ? "sourceControls.remoteUnsupported"
-            : "sourceControls.unsupported",
-        )}
+        {t("sourceControls.unsupported")}
       </p>
     );
   const timestamp = state?.diagnostic.checked_at;

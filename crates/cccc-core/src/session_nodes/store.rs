@@ -5,8 +5,6 @@ use std::{collections::BTreeMap, io, path::PathBuf};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Hub {
-    #[serde(default)]
-    pub bound_invites: bool,
     pub endpoint: SessionNodeEndpoint,
     pub owner: NativeHost,
     pub token_hash: String,
@@ -16,8 +14,6 @@ pub(super) struct Hub {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Invitation {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_node_id: Option<String>,
     pub secret_hash: String,
     pub expires_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -32,8 +28,12 @@ pub(super) struct State {
     pub keys: BTreeMap<String, String>,
     pub hub: Option<Hub>,
     pub saved_endpoint: Option<SessionNodeEndpoint>,
+    pub gateway_stopped: bool,
+    pub relay_enabled: bool,
+    // Expire development tickets written before browser approval was removed.
+    // A previously identity-bound ticket must never become a bearer ticket.
+    #[serde(rename = "pairing_tickets")]
     pub invites: BTreeMap<String, Invitation>,
-    pub revocations: BTreeMap<String, super::join_authority::Revocation>,
     pub peers: BTreeMap<String, SessionNodePeer>,
     pub sources: BTreeMap<String, RemoteSessionSource>,
 }
@@ -46,9 +46,28 @@ pub(super) fn read(home: &HomeLayout) -> io::Result<State> {
     Ok(read_file(home, "state.json")?.unwrap_or_default())
 }
 
+/// Safe diagnostic context for device state reads, separate from authority failures.
+#[derive(Debug)]
+pub struct StateReadError {
+    name: &'static str,
+    kind: io::ErrorKind,
+}
+
+impl std::fmt::Display for StateReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Could not read state/session_nodes/{} ({:?})",
+            self.name, self.kind
+        )
+    }
+}
+
+impl std::error::Error for StateReadError {}
+
 pub(super) fn read_file<T: serde::de::DeserializeOwned>(
     home: &HomeLayout,
-    name: &str,
+    name: &'static str,
 ) -> io::Result<Option<T>> {
     let path = directory(home).join(name);
     match fs::read_json(&path) {
@@ -63,10 +82,7 @@ pub(super) fn read_file<T: serde::de::DeserializeOwned>(
             } else {
                 error.kind()
             };
-            Err(io::Error::new(
-                kind,
-                format!("Could not read state/session_nodes/{name} ({kind:?})"),
-            ))
+            Err(io::Error::new(kind, StateReadError { name, kind }))
         }
     }
 }
@@ -138,6 +154,30 @@ pub fn saved_endpoint(home: &HomeLayout) -> io::Result<Option<SessionNodeEndpoin
     Ok(read(home)?.saved_endpoint)
 }
 
+pub fn gateway_stopped(home: &HomeLayout) -> io::Result<bool> {
+    Ok(read(home)?.gateway_stopped)
+}
+
+pub fn relay_enabled(home: &HomeLayout) -> io::Result<bool> {
+    Ok(read(home)?.relay_enabled)
+}
+
+pub fn set_relay_enabled(home: &HomeLayout, enabled: bool) -> io::Result<()> {
+    update(home, |state| {
+        state.relay_enabled = enabled;
+        if !enabled {
+            if let Some(hub) = &mut state.hub {
+                hub.relay_address = None;
+            }
+            for invite in state.invites.values_mut() {
+                invite.relay_node_id = None;
+                invite.relay_secret_hash = None;
+            }
+        }
+        Ok(())
+    })
+}
+
 pub fn register_endpoint(
     home: &HomeLayout,
     endpoint: SessionNodeEndpoint,
@@ -157,7 +197,6 @@ pub fn register_endpoint(
         }
         state.saved_endpoint = Some(endpoint.clone());
         state.hub = Some(Hub {
-            bound_invites: false,
             endpoint,
             owner,
             token_hash: hash(token),
@@ -177,13 +216,32 @@ pub fn clear_endpoint(home: &HomeLayout, token: &str) -> io::Result<()> {
             .as_ref()
             .is_some_and(|hub| hub.token_hash == hash(token))
         {
-            state.hub = None;
-            for peer in state.peers.values_mut() {
-                peer.connected = false;
-            }
+            clear_live_gateway(state);
         }
         Ok(())
     })
+}
+
+/// Persist an administrator stop while retaining all existing device grants.
+pub fn stop_gateway(home: &HomeLayout, token: Option<&str>) -> io::Result<()> {
+    update(home, |state| {
+        if state.hub.as_ref().is_some_and(|hub| {
+            hub.owner.alive() && token.is_none_or(|token| hub.token_hash != hash(token))
+        }) {
+            return Err(denied());
+        }
+        state.gateway_stopped = true;
+        state.invites.clear();
+        clear_live_gateway(state);
+        Ok(())
+    })
+}
+
+fn clear_live_gateway(state: &mut State) {
+    state.hub = None;
+    for peer in state.peers.values_mut() {
+        peer.connected = false;
+    }
 }
 
 pub fn peers(home: &HomeLayout) -> io::Result<Vec<SessionNodePeer>> {
@@ -197,15 +255,4 @@ pub fn peers(home: &HomeLayout) -> io::Result<Vec<SessionNodePeer>> {
             peer
         })
         .collect())
-}
-
-pub(super) fn invitation_hash(expected: Option<&str>, purpose: &str, secret: &str) -> String {
-    expected.map_or_else(
-        || hash(secret),
-        |node| {
-            hash(&format!(
-                "cccc/session-node/bound/{purpose}\0{node}\0{secret}"
-            ))
-        },
-    )
 }

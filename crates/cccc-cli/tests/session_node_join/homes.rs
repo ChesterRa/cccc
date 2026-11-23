@@ -120,7 +120,7 @@ impl Homes {
     }
 
     pub async fn close(&mut self) {
-        cccc_web::session_node::stop(&self.hub).await;
+        cccc_session_node::stop(&self.hub).await;
         for h in [&self.node, &self.hub] {
             let _ = DaemonClient::new(h.clone())
                 .call(&DaemonRequest {

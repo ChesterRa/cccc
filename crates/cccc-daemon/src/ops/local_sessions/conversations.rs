@@ -1,6 +1,6 @@
 use super::*;
 use cccc_contracts::{Event, local_session::LocalSessionSource};
-use cccc_core::{actors, ledger};
+use cccc_core::{actors, ledger, session_nodes::source_kind};
 use serde_json::Map;
 use std::collections::BTreeSet;
 
@@ -26,7 +26,7 @@ fn selected_source_ids(request: &DaemonRequest) -> Result<Vec<String>, OpError> 
     if is_native
         && source_ids
             .iter()
-            .any(|id| cccc_core::session_nodes::is_remote_source(id))
+            .any(|id| source_kind(id) == SessionSourceKind::Device)
     {
         return Err(OpError::new(
             "permission_denied",
@@ -51,20 +51,36 @@ fn resolve_sources(
     home: &HomeLayout,
     source_ids: &[String],
 ) -> Result<Vec<LocalSessionSource>, OpError> {
-    let directory = super::store::sources(home)?;
+    let mut kinds = source_ids.iter().map(|id| source_kind(id));
+    let local = kinds
+        .clone()
+        .any(|kind| kind == SessionSourceKind::Local)
+        .then(|| super::store::local_sources(home))
+        .transpose()?
+        .unwrap_or_default();
+    let devices = kinds
+        .any(|kind| kind == SessionSourceKind::Device)
+        .then(|| super::store::device_sources(home, false))
+        .transpose()?
+        .unwrap_or_default();
     source_ids
         .iter()
         .map(|id| {
-            directory
-                .iter()
-                .find(|source| &source.source_id == id && source.connected)
-                .cloned()
-                .ok_or_else(|| {
-                    OpError::new(
-                        "local_session_offline",
-                        format!("The selected source is not connected: {id}"),
-                    )
-                })
+            let source = match source_kind(id) {
+                SessionSourceKind::Local => local
+                    .iter()
+                    .find(|source| &source.source_id == id && source.connected),
+                SessionSourceKind::Device => devices
+                    .iter()
+                    .map(|remote| &remote.source)
+                    .find(|source| &source.source_id == id),
+            };
+            source.cloned().ok_or_else(|| {
+                OpError::new(
+                    "local_session_offline",
+                    format!("The selected source is not connected: {id}"),
+                )
+            })
         })
         .collect()
 }
@@ -76,7 +92,7 @@ fn resolve_scopes(
     let mut scopes = Vec::<cccc_core::Scope>::new();
     for source in sources {
         // A remote cwd is display metadata, never a path on this machine.
-        if cccc_core::session_nodes::is_remote_source(&source.source_id) {
+        if source_kind(&source.source_id) == SessionSourceKind::Device {
             continue;
         }
         let scope =
@@ -279,7 +295,7 @@ fn initialize_added_foremen(home: &HomeLayout, group: &GroupDoc, added: &[Actor]
     }
     for added_actor in added {
         if let Some(actor) = actors::find(group, &added_actor.id) {
-            if cccc_core::session_nodes::is_remote_source(&actor.external_session_id) {
+            if source_kind(&actor.external_session_id) == SessionSourceKind::Device {
                 continue;
             }
             super::super::capabilities::apply_native_foreman_startup_baseline(home, group, actor);
@@ -295,7 +311,7 @@ fn add_sources(
     let mut added = Vec::new();
     let mut local_scopes = scopes.iter();
     for source in sources {
-        let scope = if cccc_core::session_nodes::is_remote_source(&source.source_id) {
+        let scope = if source_kind(&source.source_id) == SessionSourceKind::Device {
             None
         } else {
             Some(local_scopes.next().ok_or_else(|| {

@@ -66,11 +66,6 @@ export function DirectConnectionTask({
         />
       ) : (
         <>
-          {task === "invite" && reusable && !status?.capabilities?.permanent_invitations && (
-            <p role="status" className="text-[var(--color-text-secondary)]">
-              {t("direct.permanentUpgrade")}
-            </p>
-          )}
           <DirectReceiveForm
             key={task}
             listener={status?.listener || null}
@@ -79,14 +74,14 @@ export function DirectConnectionTask({
             addressesCurrent={!!status && !actions.pollFailed}
             name={status?.display_name || ""}
             busy={busy}
-            unavailable={
-              task === "invite" && (!reusable || !status?.capabilities?.permanent_invitations)
-            }
-            onSave={(listener, name, previous) =>
+            reusableSupported={reusable}
+            permanentSupported={reusable && !!status?.capabilities?.permanent_invitations}
+            onSave={(listener, name, previous, permanent) =>
               void act(task === "invite" ? "invite" : "configure", {
                 listener,
                 display_name: name,
                 expected_listener: previous,
+                ...(task === "invite" ? { permanent } : {}),
               })
             }
             onStop={() =>

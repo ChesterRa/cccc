@@ -47,7 +47,6 @@ mod remote_access;
 mod remote_access_projection;
 #[cfg(test)]
 mod remote_maintenance_test_daemon;
-mod session_node_join;
 mod session_nodes;
 mod settings;
 mod streams;

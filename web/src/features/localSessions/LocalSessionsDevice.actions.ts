@@ -18,7 +18,10 @@ export async function verifyEmptyDeviceFlow(open: () => Promise<void>) {
       return new Promise<Response>((resolve) => {
         complete = resolve;
       });
-    return Response.json({ ok: true, result: { supported: true, devices: [] } });
+    return Response.json({
+      ok: true,
+      result: { supported: true, devices: [], supported_runtimes: ["codex", "claude"] },
+    });
   });
   vi.stubGlobal("fetch", request);
   const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -114,13 +117,13 @@ export async function verifyEmptyDeviceFlow(open: () => Promise<void>) {
     await click(button(labels.copyConnectCommand));
     expect(write).toHaveBeenLastCalledWith(command);
     expect(write.mock.calls[0][0]).not.toContain(ticket);
-    const legacy = Array.from(preparation.querySelectorAll("details")).find(
-      (x) => x.querySelector("summary")?.textContent === labels.legacyTitle,
+    const codexNotes = Array.from(preparation.querySelectorAll("details")).find(
+      (x) => x.querySelector("summary")?.textContent === labels.codexRequirements,
     )!;
-    await click(legacy.querySelector("summary"));
-    expect(legacy.open).toBe(true);
+    await click(codexNotes.querySelector("summary"));
+    expect(codexNotes.open).toBe(true);
     expect(preparation.querySelectorAll("pre")).toHaveLength(1);
-    expect(legacy.textContent).toContain(labels.legacyHint);
+    expect(codexNotes.textContent).toContain(labels.codexRequirementHint);
     await click(button(labels.enableApp));
     await click(document.querySelector('[role="menuitemradio"][data-value="claude"]'));
     await click(button(labels.copyConnectCommand));

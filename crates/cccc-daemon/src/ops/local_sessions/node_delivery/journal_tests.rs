@@ -46,7 +46,7 @@ fn completing_attempts_releases_slots_but_retains_exact_results_and_payload_fenc
 }
 
 #[test]
-fn migration_keeps_in_flight_and_unknown_fences_and_bounds_each_admission_batch() {
+fn reopening_preserves_in_flight_and_unknown_fences() {
     let (_temp, home) = home();
     begin(&home, "in-flight", "pending").expect("begin pending");
     begin(&home, "unknown", "uncertain").expect("begin unknown");
@@ -59,26 +59,10 @@ fn migration_keeps_in_flight_and_unknown_fences_and_bounds_each_admission_batch(
         },
     )
     .expect("unknown result");
-    mutate(&home, |_, state| {
-        for index in 0..MIGRATION_BATCH + 1 {
-            state.insert(
-                format!("legacy-{index}"),
-                Attempt {
-                    fingerprint: fingerprint("old"),
-                    outcome: Outcome::Accepted,
-                },
-            );
-        }
-        Ok(())
-    })
-    .expect("legacy fixture");
+    let home = HomeLayout::from_path(home.root()).expect("reopen");
     assert!(begin(&home, "new", "new payload").expect("admit").is_none());
     let retained = active(&home);
-    assert_eq!(
-        retained.len(),
-        4,
-        "one batch migrated, one legacy completion left"
-    );
+    assert_eq!(retained.len(), 3);
     for (id, payload) in [("in-flight", "pending"), ("unknown", "uncertain")] {
         assert!(matches!(
             begin(&home, id, payload).expect("fenced"),
@@ -87,11 +71,6 @@ fn migration_keeps_in_flight_and_unknown_fences_and_bounds_each_admission_batch(
         assert!(retained.contains_key(id));
         assert!(!receipt_path(&root(&home), id).exists());
     }
-    assert!(matches!(
-        begin(&home, "legacy-0", "old").expect("legacy replay"),
-        Some(Outcome::Accepted)
-    ));
-    assert!(begin(&home, "legacy-0", "changed").is_err());
 }
 
 #[test]
@@ -222,7 +201,7 @@ fn unknown_results_cannot_be_misread_as_completed_receipts() {
 }
 
 #[test]
-fn old_readers_and_unknown_future_formats_fail_closed() {
+fn unversioned_journals_old_readers_and_future_formats_fail_closed() {
     let (_temp, home) = home();
     begin(&home, "delivery", "payload").expect("pending");
     finish(&home, "delivery", "payload", &Outcome::Accepted).expect("complete");
@@ -231,6 +210,8 @@ fn old_readers_and_unknown_future_formats_fail_closed() {
         fs::read_json::<BTreeMap<String, Attempt>>(&path).is_err(),
         "old reader must not ignore receipts and admit a duplicate"
     );
+    fs::write_secret_json(&path, &BTreeMap::<String, Attempt>::new()).expect("unversioned fixture");
+    assert!(begin(&home, "new", "new payload").is_err());
     fs::write_secret_json(
         &path,
         &Journal {

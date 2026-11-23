@@ -102,6 +102,51 @@ fn invitations_enroll_one_identity_and_revocation_requires_a_new_grant() {
 }
 
 #[test]
+fn explicit_stop_invalidates_pending_tickets_and_preserves_paired_devices() {
+    let f = Fixture::new();
+    assert!(!gateway_stopped(&f.home).expect("running gateway"));
+    let peer = f.pair("existing");
+    let pending = create_invite(&f.home).expect("unconsumed ticket");
+    assert!(stop_gateway(&f.home, Some("different-owner")).is_err());
+    stop_gateway(&f.home, Some("gateway")).expect("explicit stop");
+    stop_gateway(&f.home, None).expect("idempotent stop");
+    assert!(gateway_stopped(&f.home).expect("persisted stop"));
+    assert!(endpoint(&f.home).expect("live endpoint").is_none());
+    let saved = saved_endpoint(&f.home)
+        .expect("saved endpoint")
+        .expect("restore address");
+    assert_eq!(saved.endpoint_id, "hub");
+    let stored = peers(&f.home).expect("paired devices").remove(0);
+    assert!(stored.enabled && !stored.connected);
+    assert_eq!(stored.grant_id, peer.grant_id);
+
+    register_endpoint(
+        &f.home,
+        saved,
+        NativeHost::capture(std::process::id()).expect("owner"),
+        "reopened",
+    )
+    .expect("prepare explicit reopening");
+    assert!(gateway_stopped(&f.home).expect("register alone does not reopen"));
+    assert!(
+        !store::read(&f.home)
+            .expect("read grants")
+            .invites
+            .contains_key(&pending.invite_id)
+    );
+    create_invite(&f.home).expect("fresh ticket reopens");
+    assert!(!gateway_stopped(&f.home).expect("open again"));
+    assert_eq!(
+        pair(&f.home, "reopened", "existing", "Laptop", None)
+            .expect("resume paired device")
+            .grant_id,
+        peer.grant_id
+    );
+    clear_endpoint(&f.home, "reopened").expect("ordinary cleanup");
+    assert!(!gateway_stopped(&f.home).expect("shutdown leaves restore intent"));
+}
+
+#[test]
 fn sources_are_namespaced_and_bad_or_missing_advertisements_cannot_retain_authority() {
     let f = Fixture::new();
     f.pair("node-a");
@@ -289,6 +334,3 @@ mod relay_tests;
 
 #[path = "grants_tests.rs"]
 mod grants_tests;
-
-#[path = "join_tests.rs"]
-mod join_tests;

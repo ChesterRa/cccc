@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { createSessionNodeInvitation } from "../../services/api/sessionNodes";
 import { copyTextToClipboard } from "../../utils/copy";
@@ -39,6 +39,7 @@ export function useSessionNodeTicket(setError: (message: string) => void, onForb
   const [copied, setCopied] = useState(false);
   const alive = useRef(true);
   const pending = useRef(false);
+  const clearGeneration = useRef(0);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -61,11 +62,22 @@ export function useSessionNodeTicket(setError: (message: string) => void, onForb
     return () => clearTimeout(timer);
   }, [ticket]);
 
-  const copyTicket = async (current: Ticket) => {
-    if (!alive.current || !valid(current)) return;
+  const clear = useCallback(() => {
+    clearGeneration.current += 1;
+    pending.current = false;
+    setCreating(false);
+    setCopying(false);
+    setTicket(null);
+    setTicketExpired(false);
+    setCopied(false);
+    setError("");
+  }, [setError]);
+
+  const copyTicket = async (current: Ticket, gen = clearGeneration.current) => {
+    if (!alive.current || clearGeneration.current !== gen || !valid(current)) return;
     setCopying(true);
     const success = await copyTextToClipboard(current.ticket);
-    if (!alive.current) return;
+    if (!alive.current || clearGeneration.current !== gen) return;
     const usable = valid(current);
     setCopied(success && usable);
     setTicketExpired(!usable);
@@ -74,13 +86,14 @@ export function useSessionNodeTicket(setError: (message: string) => void, onForb
 
   const create = async () => {
     if (pending.current || !alive.current) return;
+    const gen = clearGeneration.current;
     pending.current = true;
     setCreating(true);
     setCopied(false);
     setError("");
     const prepared = (async (): Promise<Ticket | null> => {
       const response = await createSessionNodeInvitation();
-      if (!alive.current) return null;
+      if (!alive.current || clearGeneration.current !== gen) return null;
       if (!response.ok) {
         if (response.error.httpStatus === 401 || response.error.httpStatus === 403) onForbidden();
         else setError(t("sessionNodes.ticketFailed"));
@@ -98,20 +111,24 @@ export function useSessionNodeTicket(setError: (message: string) => void, onForb
       setTicketExpired(!valid(response.result));
       return response.result;
     })().catch(() => {
-      if (alive.current) setError(t("sessionNodes.ticketFailed"));
+      if (alive.current && clearGeneration.current === gen)
+        setError(t("sessionNodes.ticketFailed"));
       return null;
     });
     // Reserve the clipboard during this click; only its bytes wait for the hub.
-    const writing = writePendingTicket(prepared, (current) => alive.current && valid(current));
+    const writing = writePendingTicket(
+      prepared,
+      (current) => alive.current && clearGeneration.current === gen && valid(current),
+    );
     try {
       const current = await prepared;
-      if (!current || !alive.current || !valid(current)) return;
+      if (!current || !alive.current || clearGeneration.current !== gen || !valid(current)) return;
       setCreating(false);
       setCopying(true);
       const success = writing ? await writing : false;
-      if (!alive.current || !valid(current)) return;
+      if (!alive.current || clearGeneration.current !== gen || !valid(current)) return;
       if (success) setCopied(true);
-      else await copyTicket(current);
+      else await copyTicket(current, gen);
     } finally {
       pending.current = false;
       if (alive.current) {
@@ -137,5 +154,5 @@ export function useSessionNodeTicket(setError: (message: string) => void, onForb
     }
   };
 
-  return { ticket, ticketExpired, creating, copying, copied, create, copy };
+  return { ticket, ticketExpired, creating, copying, copied, create, copy, clear };
 }

@@ -1,6 +1,6 @@
 //! Native source routing is explicit and never falls back across machines.
 use super::*;
-use cccc_contracts::local_session::LocalSessionRuntime;
+use cccc_contracts::session_node::supports_device_runtime;
 
 pub(super) async fn route(
     home: &HomeLayout,
@@ -13,13 +13,7 @@ pub(super) async fn route(
         .get("group_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if hub.is_none()
-        && (group_id.is_empty()
-            || !matches!(
-                source.runtime,
-                LocalSessionRuntime::Codex | LocalSessionRuntime::Claude
-            ))
-    {
+    if hub.is_none() && (group_id.is_empty() || !supports_device_runtime(source.runtime)) {
         return Ok(None);
     }
     let Some(saved) = cccc_core::session_nodes::saved_client(home).map_err(|error| {
@@ -89,11 +83,16 @@ pub(super) fn append_memberships(home: &HomeLayout, source_id: Option<&str>, res
     let Ok(source) = cccc_core::local_sessions::read(home, source_id) else {
         return;
     };
-    if !source.host_alive() {
+    if !supports_device_runtime(source.runtime) || !source.host_alive() {
         return;
     }
-    let Ok(Some(client)) = cccc_core::session_nodes::saved_client(home) else {
-        return;
+    let client = match cccc_core::session_nodes::saved_client(home) {
+        Ok(Some(client)) => client,
+        Ok(None) => return,
+        Err(error) => {
+            cccc_runtime::diagnostic(format_args!("Device memberships unavailable: {error}"));
+            return;
+        }
     };
     let online = client.owner.alive() && client.connected;
     if let Some(memberships) = result
@@ -196,6 +195,7 @@ pub(super) async fn session(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cccc_contracts::local_session::LocalSessionRuntime;
     use cccc_core::local_sessions::{NativeHost, NativeSession};
 
     #[tokio::test]
@@ -259,5 +259,14 @@ mod tests {
                 );
             }
         }
+        source.runtime = LocalSessionRuntime::Codex;
+        let source = cccc_core::local_sessions::write(&home, source).expect("local registration");
+        let mut listing = json!({"self_memberships":[{"group_id":"g_local"}]});
+        let before = listing.clone();
+        append_memberships(&home, Some(&source.source_id), &mut listing);
+        assert_eq!(
+            listing, before,
+            "unreadable connector retains local memberships"
+        );
     }
 }

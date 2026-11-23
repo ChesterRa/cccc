@@ -78,6 +78,11 @@ pub(in crate::ops) fn actor_response(
     actor: &Actor,
 ) -> serde_json::Value {
     let mut value = serde_json::json!(actor);
+    if !actor.external_session_id.is_empty() {
+        value["external_session_kind"] = serde_json::json!(cccc_core::session_nodes::source_kind(
+            &actor.external_session_id
+        ));
+    }
     if actor.external_session_id.is_empty()
         && crate::session_owner::require_available(home, Some(group_id), Some(&actor.id)).is_err()
     {

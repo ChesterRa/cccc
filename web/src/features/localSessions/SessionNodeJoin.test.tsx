@@ -85,11 +85,12 @@ it("switches within the add-device dialog, filters sessions by device, and revok
   let memberEnabled: boolean | undefined;
   const source = (node: string, title: string) => ({
     source_id: `remote:${node}:grant:source`,
-    native_session_id: title,
+    source_kind: "device" as const,
+    node_id: node,
+    node_name: name,
     title,
     cwd: "/fixture",
-    runtime: "codex",
-    origin: "remote:" + name,
+    runtime: "codex" as const,
     connected: true,
   });
   vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
@@ -109,14 +110,21 @@ it("switches within the add-device dialog, filters sessions by device, and revok
       });
     }
     if (path === apiRoot)
-      return forbidden ? fail(403) : ok({ supported: true, devices: registered ? devices : [] });
-    if (path === "/api/v1/local_sessions")
+      return forbidden
+        ? fail(403)
+        : ok({
+            supported: true,
+            devices: registered ? devices : [],
+            supported_runtimes: ["codex", "claude"],
+          });
+    if (path === apiRoot + "/sources")
       return ok({
         sources: [
           source("alpha", "First workspace"),
           ...(secondSession ? [source("beta", "Second workspace")] : []),
         ],
       });
+    if (path === "/api/v1/local_sessions") return ok({ sources: [] });
     if (path === apiRoot + "/beta/revoke" && init?.method === "POST") {
       devices[1] = { ...devices[1], enabled: false, connected: false };
       return ok({ revoked: true });
@@ -322,52 +330,137 @@ it("switches within the add-device dialog, filters sessions by device, and revok
   ]);
 });
 
-it("shows terminal-pairing instructions for old links without loading authentication or device APIs", async () => {
+it("supports switching the independent public relay toggle, stopping the gateway, and reading backend runtimes", async () => {
   history.replaceState(
     { retained: true },
     "",
     "/?group=fixture&session_node_join=private-fixture-id#chat",
   );
-  const calls: string[] = [];
-  vi.stubGlobal("fetch", async (input: unknown) => {
+  const status = {
+    supported: true,
+    transport: "iroh",
+    endpoint: {
+      endpoint_id: "hub-1",
+      addresses: ["127.0.0.1:4123"],
+      relay_url: null as string | null,
+    },
+    relay: { enabled: false, effective: false, public_url: null as string | null },
+    devices: [],
+    supported_runtimes: ["codex"] as string[],
+  };
+  const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+  let issueCount = 0;
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  const clipboard = vi.fn(async (_value: string) => {});
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: clipboard },
+  });
+  vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
     const path = String(input);
-    calls.push(path);
+    const method = init?.method ?? "GET";
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ method, path, body });
+    if (path === apiRoot && method === "GET") return ok(status);
+    if (path === apiRoot + "/relay" && method === "PUT") {
+      status.relay = {
+        enabled: Boolean(body?.enabled),
+        effective: Boolean(body?.enabled && status.relay.public_url),
+        public_url: status.relay.public_url,
+      };
+      if (status.endpoint)
+        status.endpoint.relay_url = status.relay.effective ? status.relay.public_url : null;
+      return ok({ relay: status.relay });
+    }
+    if (path === apiRoot + "/invitations" && method === "POST") {
+      issueCount += 1;
+      return ok({
+        ticket: `synthetic-ticket-${issueCount}`,
+        expires_at: new Date(Date.now() + 600000).toISOString(),
+      });
+    }
+    if (path === apiRoot + "/stop" && method === "POST") {
+      status.endpoint = null as unknown as typeof status.endpoint;
+      status.relay.effective = false;
+      return ok({ stopped: true });
+    }
     if (path.startsWith("/api/v1/web_access/session")) return fail(401, "auth_required");
-    throw Error("Unexpected legacy-link request");
+    throw Error(`Unexpected endpoint: ${method} ${path}`);
   });
-  const initialize = vi.fn();
-  await mount(<WebRoot pathname="/" onWorkbenchEntry={initialize} />);
-  expect(host.textContent).toContain(labels.oldLinkHelp);
-  expect(host.textContent).not.toContain("private-fixture-id");
-  expect(host.textContent).not.toContain("Fixture sign-in");
-  await act(async () => vi.advanceTimersByTimeAsync(16000));
-  history.pushState(
-    { retained: true },
-    "",
-    "/?group=fixture&session_node_join=&section=devices#chat",
-  );
-  await act(async () => {
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
-  expect(host.textContent).toContain(labels.oldLinkTitle);
-  expect(calls).toEqual([]);
-  expect(initialize).not.toHaveBeenCalled();
-  expect(host.querySelector("button, a, input, form")).toBeNull();
-  expect(location.search).toBe("?group=fixture&session_node_join=&section=devices");
-  expect(location.hash).toBe("#chat");
-  expect(history.state).toEqual({ retained: true });
-  // Independently visiting a normal workbench URL retains its ordinary authentication flow.
-  history.pushState({ retained: true }, "", "/?group=fixture&section=devices#chat");
-  await act(async () => {
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  });
-  expect(initialize).toHaveBeenCalledOnce();
-  expect(location.search).toBe("?group=fixture&section=devices");
-  expect(location.hash).toBe("#chat");
-  expect(history.state).toEqual({ retained: true });
-  expect(host.textContent).toContain("Fixture sign-in");
-  expect(calls.length).toBeGreaterThan(0);
-  expect(calls.every((path) => path.startsWith("/api/v1/web_access/session"))).toBe(true);
+  try {
+    // Removed ?session_node_join query fallback no longer intercepts normal workbench entry.
+    const initialize = vi.fn();
+    await mount(<WebRoot pathname="/" onWorkbenchEntry={initialize} />);
+    expect(initialize).toHaveBeenCalledOnce();
+    expect(host.textContent).toContain("Fixture sign-in");
+
+    await mount(<SessionNodesPanel onChooseSessions={vi.fn()} />);
+    expect(button(labels.enableApp)).toBeDefined();
+    await click(labels.enableApp);
+    expect(
+      [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].map(
+        (item) => item.dataset.value,
+      ),
+    ).toEqual(["codex"]);
+    await click(labels.enableApp);
+
+    const relaySwitch = () =>
+      host.querySelector<HTMLButtonElement>(
+        `button[role="switch"][aria-label="${labels.publicRelayToggle}"]`,
+      )!;
+    expect(relaySwitch().getAttribute("aria-checked")).toBe("false");
+    expect(relaySwitch().disabled).toBe(true);
+    expect(host.textContent).toContain(labels.publicRelayRequiresRemoteAccess);
+
+    status.relay = { enabled: false, effective: false, public_url: "https://hub.example.com/" };
+    await refresh();
+    expect(relaySwitch().disabled).toBe(false);
+    expect(host.textContent).toContain("https://hub.example.com/");
+    expect(host.textContent).toContain(labels.publicRelayOffHint);
+
+    await click(labels.create);
+    expect(clipboard).toHaveBeenLastCalledWith("synthetic-ticket-1");
+
+    await act(async () => relaySwitch().click());
+    expect(calls.at(-1)).toEqual({
+      method: "PUT",
+      path: apiRoot + "/relay",
+      body: { enabled: true },
+    });
+    expect(relaySwitch().getAttribute("aria-checked")).toBe("true");
+    expect(host.textContent).toContain(labels.publicRelayActiveHint);
+    // Toggling relay invalidates any cached ticket so the next copy issues a fresh one.
+    expect(button(labels.create)).toBeDefined();
+    await click(labels.create);
+    expect(clipboard).toHaveBeenLastCalledWith("synthetic-ticket-2");
+
+    expect(button(labels.stopGateway)).toBeDefined();
+    await click(labels.stopGateway);
+    expect(calls.some((call) => call.method === "POST" && call.path === apiRoot + "/stop")).toBe(
+      false,
+    );
+    expect(host.textContent).toContain(labels.stopGatewayConfirm);
+    await click(enCommon.cancel);
+    expect(host.textContent).not.toContain(labels.stopGatewayConfirm);
+    expect(host.textContent).toContain(labels.gatewayRunning);
+
+    await click(labels.stopGateway);
+    await click(labels.stopGateway);
+    expect(calls.some((call) => call.method === "POST" && call.path === apiRoot + "/stop")).toBe(
+      true,
+    );
+    expect(button(labels.stopGateway)).toBeUndefined();
+    expect(button(labels.create)).toBeDefined();
+    expect(host.textContent).toContain(labels.publicRelayPendingHint);
+
+    status.supported_runtimes = [];
+    await refresh();
+    expect(button(labels.enableApp)).toBeUndefined();
+    expect(button(labels.create)?.disabled).toBe(true);
+  } finally {
+    if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+    else Reflect.deleteProperty(navigator, "clipboard");
+  }
 });
 
 it("offers tickets only with verified access and clears a cached ticket after access is lost", async () => {
@@ -389,6 +482,7 @@ it("offers tickets only with verified access and clears a cached ticket after ac
       return ok({
         supported: mode === "ready",
         devices: [{ node_id: "elsewhere", name: "Already paired", enabled: true, connected: true }],
+        supported_runtimes: ["codex", "claude"],
       });
     }
     if (path === apiRoot + "/invitations" && init?.method === "POST") {

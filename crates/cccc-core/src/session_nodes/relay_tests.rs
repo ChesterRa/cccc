@@ -20,7 +20,52 @@ pub(super) fn configured() -> Fixture {
         "127.0.0.1:3456".parse().expect("local relay"),
     )
     .expect("owned relay");
+    set_relay_enabled(&f.home, true).expect("explicit relay opt-in");
     f
+}
+
+#[test]
+fn relay_opt_out_stops_announcing_without_invalidating_direct_grants_or_tickets() {
+    let f = configured();
+    let peer = f.pair("existing");
+    let prior = create_invite(&f.home).expect("relay ticket");
+    let relay_token = prior.relay_token.as_deref().expect("relay capability");
+    let relay_proof = Some((prior.invite_id.as_str(), relay_token));
+    authorize_relay(&f.home, "gateway", "pending", relay_proof).expect("pending relay");
+    set_relay_enabled(&f.home, false).expect("disable");
+    let status = relay_status(&f.home).expect("relay status");
+    assert!(!status.enabled && !status.effective);
+    assert_eq!(
+        status.public_url.as_deref(),
+        Some("https://relay.example.test/")
+    );
+    assert!(
+        relay_address(&f.home)
+            .expect("no published address")
+            .is_none()
+    );
+    assert!(relay_authorities(&f.home, "gateway").is_err());
+    assert!(authorize_relay(&f.home, "gateway", "existing", None).is_err());
+    assert_eq!(
+        create_invite(&f.home).expect("direct ticket").v,
+        SESSION_NODE_PROTOCOL
+    );
+
+    register_relay(&f.home, "gateway", "127.0.0.1:3456".parse().expect("relay"))
+        .expect("prepare loopback relay for activation");
+    assert!(!relay_status(&f.home).expect("disabled").effective);
+    set_relay_enabled(&f.home, true).expect("enable");
+    assert!(relay_status(&f.home).expect("enabled").effective);
+    assert!(authorize_relay(&f.home, "gateway", "pending", relay_proof).is_err());
+    let direct_proof = Some((prior.invite_id.as_str(), prior.secret.as_str()));
+    pair(&f.home, "gateway", "pending", "Direct device", direct_proof)
+        .expect("switch leaves the end-to-end ticket usable");
+    assert_eq!(
+        pair(&f.home, "gateway", "existing", "Existing", None)
+            .expect("resume existing direct grant")
+            .grant_id,
+        peer.grant_id
+    );
 }
 
 #[test]
@@ -105,6 +150,23 @@ fn public_relay_addresses_require_a_secure_origin_and_transport_disable_keeps_de
     );
     assert!(authorize_relay(&f.home, "gateway", "node", None).is_err());
     assert!(relay_authorities(&f.home, "gateway").is_err());
+    assert!(unregister_relay(&f.home, "wrong-owner").is_err());
+    unregister_relay(&f.home, "gateway").expect("release stopped loopback relay");
+    crate::settings::update(&f.home, |settings| {
+        settings
+            .remote_access
+            .insert("enabled".into(), serde_json::json!(true));
+        Ok(())
+    })
+    .expect("restore public route before starting a new loopback relay");
+    let status = relay_status(&f.home).expect("waiting for relay");
+    assert!(status.enabled && status.public_url.is_some() && !status.effective);
+    assert!(relay_address(&f.home).expect("no stale address").is_none());
+    assert!(relay_authorities(&f.home, "gateway").is_err());
+    assert_eq!(
+        create_invite(&f.home).expect("direct ticket").v,
+        SESSION_NODE_PROTOCOL
+    );
     assert_eq!(
         pair(&f.home, "gateway", "node", "Laptop", None)
             .expect("direct grant remains valid")

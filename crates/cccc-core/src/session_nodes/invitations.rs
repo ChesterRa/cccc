@@ -15,7 +15,7 @@ pub fn create_invite(home: &HomeLayout) -> io::Result<SessionNodeTicket> {
             .filter(|hub| hub.owner.alive())
             .ok_or_else(store::denied)?;
         let endpoint = hub.endpoint.clone();
-        let relay_url = hub.relay_address.and(public_relay);
+        let relay_url = super::relay::enabled_address(state).and(public_relay);
         let now = Utc::now();
         state.invites.retain(|_, invite| {
             invite
@@ -24,7 +24,10 @@ pub fn create_invite(home: &HomeLayout) -> io::Result<SessionNodeTicket> {
                 .is_ok_and(|deadline| deadline > now)
         });
         if state.invites.len() >= 32 {
-            return Err(io::Error::other("Too many pending device invitations"));
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Too many pending device invitations",
+            ));
         }
         let invite_id = uuid::Uuid::new_v4().to_string();
         let secret = format!(
@@ -47,10 +50,10 @@ pub fn create_invite(home: &HomeLayout) -> io::Result<SessionNodeTicket> {
                 secret_hash: store::hash(&secret),
                 expires_at: expires_at.clone(),
                 relay_node_id: None,
-                expected_node_id: None,
                 relay_secret_hash: relay_token.as_deref().map(store::hash),
             },
         );
+        state.gateway_stopped = false;
         Ok(SessionNodeTicket {
             v: if relay_url.is_some() {
                 SESSION_NODE_RELAY_TICKET

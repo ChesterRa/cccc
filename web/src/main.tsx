@@ -35,7 +35,6 @@ window.addEventListener("unhandledrejection", (event) => {
   }
 });
 
-// The legacy device-link notice needs only local appearance and translation assets.
 function startWorkbench() {
   // Keep removing old page-controlling workers: their caches can serve stale UI.
   // The narrowly scoped push worker handles no fetches and is retained.

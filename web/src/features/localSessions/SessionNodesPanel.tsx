@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ActorConfigTabs } from "../../components/modals/ActorConfigTabs";
+import { Button } from "../../components/ui/button";
 import type { SessionNodeDevice } from "../../services/api/sessionNodes";
 import { SessionNodeDirectoryNotice } from "./SessionNodeDirectoryNotice";
 import { SessionNodeManagement } from "./SessionNodeManagement";
@@ -17,18 +18,40 @@ function DeviceViews({
 }: PanelProps & { actions: ReturnType<typeof useSessionNodes> }) {
   const { t } = useTranslation("layout");
   const [view, setView] = useState("pair");
+  const [confirmStop, setConfirmStop] = useState(false);
+  const endpointLive = actions.directory.status === "ready" && !!actions.directory.endpoint;
+  useEffect(() => {
+    if (!endpointLive) setConfirmStop(false);
+  }, [endpointLive]);
   const switcher = useRef<HTMLFieldSetElement>(null);
   const [query, setQuery] = useState("");
   const [ticketError, setTicketError] = useState("");
   const invitation = useSessionNodeTicket(setTicketError, actions.forbid);
-  const busy = actions.revoking || invitation.creating || invitation.copying;
+  const busy =
+    actions.revoking ||
+    actions.relayBusy ||
+    actions.stopping ||
+    invitation.creating ||
+    invitation.copying;
   if (actions.directory.status !== "ready")
     return <SessionNodeDirectoryNotice status={actions.directory.status} />;
+  const { directory } = actions;
+  const handleToggleRelay = async (enabled: boolean) => {
+    const ok = await actions.toggleRelay(enabled);
+    if (ok) invitation.clear();
+  };
+  const handleStopGateway = async () => {
+    const ok = await actions.stopGateway();
+    if (ok) {
+      setConfirmStop(false);
+      invitation.clear();
+    }
+  };
   return (
     <fieldset
       ref={switcher}
       disabled={busy}
-      className="min-w-0 border-0 p-0 [&_[role=tab]]:min-h-10 [&_[role=tab]]:flex-1 max-sm:[&_[role=tab]]:min-h-11"
+      className="min-w-0 space-y-3 border-0 p-0 [&_[role=tab]]:min-h-10 [&_[role=tab]]:flex-1 max-sm:[&_[role=tab]]:min-h-11"
     >
       <ActorConfigTabs
         ariaLabel={t("localSessions.addDevice")}
@@ -36,6 +59,7 @@ function DeviceViews({
         onChange={(next) => {
           if (!busy) {
             actions.setRevokeId("");
+            setConfirmStop(false);
             setView(next);
           }
         }}
@@ -47,6 +71,11 @@ function DeviceViews({
               <div className="min-w-0 space-y-3">
                 <SessionNodePreparation
                   invitation={invitation}
+                  relay={directory.relay}
+                  supportedRuntimes={directory.supportedRuntimes}
+                  relayBusy={actions.relayBusy}
+                  relayError={actions.relayError}
+                  onToggleRelay={(enabled) => void handleToggleRelay(enabled)}
                   ticketError={ticketError}
                   busy={busy}
                   onChooseDeviceSessions={() => {
@@ -69,7 +98,7 @@ function DeviceViews({
             panel:
               view === "devices" ? (
                 <SessionNodeManagement
-                  devices={actions.directory.devices}
+                  devices={directory.devices}
                   actions={actions}
                   query={query}
                   onSearch={setQuery}
@@ -79,6 +108,60 @@ function DeviceViews({
           },
         ]}
       />
+      {directory.endpoint && (
+        <div className="space-y-2 border-t border-[var(--glass-border-subtle)] pt-3">
+          {confirmStop ? (
+            <div className="space-y-2 rounded-lg border border-[var(--color-border-primary)] p-2.5">
+              <p className="text-sm">{t("sessionNodes.stopGatewayConfirm")}</p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="max-sm:min-h-11"
+                  disabled={busy}
+                  onClick={() => setConfirmStop(false)}
+                >
+                  {t("common:cancel")}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  className="max-sm:min-h-11"
+                  disabled={busy}
+                  onClick={() => void handleStopGateway()}
+                >
+                  {t(
+                    actions.stopping ? "sessionNodes.stoppingGateway" : "sessionNodes.stopGateway",
+                  )}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-[var(--color-text-secondary)]">
+                {t("sessionNodes.gatewayRunning")}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-9 max-sm:min-h-11 text-xs"
+                disabled={busy}
+                onClick={() => setConfirmStop(true)}
+              >
+                {t("sessionNodes.stopGateway")}
+              </Button>
+            </div>
+          )}
+          {actions.stopError && (
+            <p role="alert" className="text-sm text-[var(--color-accent-danger)]">
+              {t("sessionNodes.stopGatewayFailed")}
+            </p>
+          )}
+        </div>
+      )}
     </fieldset>
   );
 }

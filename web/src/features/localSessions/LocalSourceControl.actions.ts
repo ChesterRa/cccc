@@ -2,7 +2,7 @@ import { act } from "react";
 import { expect, vi } from "vite-plus/test";
 import enLayout from "../../i18n/locales/en/layout.json";
 import enCommon from "../../i18n/locales/en/common.json";
-import type { LocalSessionSource } from "../../types";
+import type { DeviceSessionSource, LocalSessionSource } from "../../types";
 import type { LocalSessionDirectory } from "../../services/api/localSessionControls";
 import { sessionPickerActions } from "./LocalSessionsButton.actions";
 import { sourceControlFixture } from "./LocalSourceControl.fixtures";
@@ -11,12 +11,13 @@ export async function verifySourceControls(
   source: LocalSessionSource,
   publish: (directory: LocalSessionDirectory) => void,
   delayNextRead: () => (directory: LocalSessionDirectory) => void,
+  publishDevice?: (sources: DeviceSessionSource[]) => void,
 ) {
   const labels = enLayout.sourceControls;
   const translate = (key: string) =>
     key.split(".").reduce<unknown>((v, k) => (v as Record<string, unknown>)[k], enLayout) as string;
   const { click, button, row, checkbox, primary } = sessionPickerActions(translate);
-  const fixture = sourceControlFixture(source, publish);
+  const fixture = sourceControlFixture(source, publish, publishDevice);
   vi.stubGlobal("fetch", fixture.request);
   fixture.refresh();
   await act(async () => vi.advanceTimersByTimeAsync(3000));
@@ -114,13 +115,15 @@ export async function verifySourceControls(
   });
   fixture.addRemote();
   await act(async () => vi.advanceTimersByTimeAsync(3000));
-  expect(document.body.textContent).toContain(labels.remoteUnsupported);
+  expect(row(fixture.remote.title).closest("section")?.textContent).toContain(
+    fixture.remote.node_name,
+  );
   const remoteRow = row(fixture.remote.title).parentElement!;
   expect(
-    Array.from(remoteRow.querySelectorAll("button"))
-      .filter((x) => x.textContent === labels.remove || x.textContent === labels.recheck)
-      .every((x) => x.disabled),
-  ).toBe(true);
+    Array.from(remoteRow.querySelectorAll("button")).filter(
+      (x) => x.textContent === labels.remove || x.textContent === labels.recheck,
+    ),
+  ).toHaveLength(0);
   expect(fixture.request.mock.calls.every(([url]) => !String(url).includes("session_nodes"))).toBe(
     true,
   );

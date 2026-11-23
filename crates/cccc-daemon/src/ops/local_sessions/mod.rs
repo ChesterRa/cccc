@@ -6,6 +6,10 @@ use super::operation::{
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 use cccc_contracts::local_session::{
     LocalSessionRecovery, LocalSessionRecoveryState, LocalSessionRuntime, LocalSessionShell,
+    SessionSourceKind,
+};
+use cccc_contracts::session_node::{
+    DEVICE_SESSION_RUNTIMES, DeviceSessionSource, SESSION_NODE_PROTOCOL, SESSION_NODE_RELAY_TICKET,
 };
 use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, GroupState};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
@@ -30,11 +34,14 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "local_session_control" => Operation::new(GlobalWrite, source_control::control),
         "local_session_recheck" => Operation::new(ResourceOwned, diagnostics::recheck),
         "session_node_incoming" => Operation::new(ResourceOwned, node_delivery::receive),
+        "session_node_source_list" => Operation::new(Read, device_source_list),
         "session_node_capabilities" => Operation::new(Read, |_, request| {
             local(request)?;
-            object(
-                json!({"protocol":cccc_contracts::session_node::SESSION_NODE_PROTOCOL,"relay_ticket_version":cccc_contracts::session_node::SESSION_NODE_RELAY_TICKET,"join_identity_binding":false,"runtimes":["codex","claude"]}),
-            )
+            object(json!({
+                "protocol": SESSION_NODE_PROTOCOL,
+                "relay_ticket_version": SESSION_NODE_RELAY_TICKET,
+                "runtimes": DEVICE_SESSION_RUNTIMES,
+            }))
         }),
         "local_session_recovery" => Operation::new(Read, recovery),
         "local_session_refresh" => Operation::new(ResourceOwned, refresh),
@@ -91,7 +98,7 @@ fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let mut result = object(
-        json!({"sources":store::sources(home)?.into_iter().filter(|s| include_offline || s.connected).collect::<Vec<_>>()}),
+        json!({"sources":store::local_sources(home)?.into_iter().filter(|s| include_offline || s.connected).collect::<Vec<_>>()}),
     )?;
     source_control::project(home, &mut result)?;
     if let Some(source_id) = string_arg(request, "source_id") {
@@ -124,6 +131,30 @@ fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         result.insert("self_memberships".into(), json!(memberships));
     }
     Ok(result)
+}
+
+fn device_source_list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    source_control::administrator(request)?;
+    let include_offline = match request.args.get("include_offline") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| OpError::new("invalid_args", "include_offline must be a boolean"))?,
+    };
+    let sources = store::device_sources(home, include_offline)?
+        .into_iter()
+        .map(|remote| DeviceSessionSource {
+            source_id: remote.source.source_id,
+            source_kind: SessionSourceKind::Device,
+            runtime: remote.source.runtime,
+            node_id: remote.node_id,
+            node_name: remote.node_name,
+            title: remote.source.title,
+            cwd: remote.source.cwd,
+            connected: remote.source.connected,
+        })
+        .collect::<Vec<_>>();
+    object(json!({"sources": sources}))
 }
 
 fn recovery_actor(
@@ -361,7 +392,7 @@ fn attach(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         &required_arg(request, "source_id")?,
         &native_id(request, "connection_id")?,
     )?;
-    if !cccc_core::session_nodes::is_remote_source(&receiver.source_id)
+    if receiver.kind == SessionSourceKind::Local
         && let Err(error) = resume::restore_memberships(home, &receiver)
     {
         // Recovery is an additional lifecycle action, not the receive lease.
@@ -425,7 +456,7 @@ fn acknowledge(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "accepted" => transport::Outcome::Accepted,
         "failed" => transport::Outcome::Rejected(reason),
         "ambiguous" => transport::Outcome::Ambiguous(reason),
-        "unavailable" if cccc_core::session_nodes::is_remote_source(&receiver.source_id) => {
+        "unavailable" if receiver.kind == SessionSourceKind::Device => {
             transport::Outcome::Unavailable
         }
         _ => {

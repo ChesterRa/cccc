@@ -44,7 +44,14 @@ describe("useSelectedGroupRuntime", () => {
   });
 
   it("keeps an unobserved remote-only Group unknown without prompting to start or attach", () => {
-    const actors = [{ id: "a1", running: true, external_session_id: "remote:fixture" }];
+    const actors = [
+      {
+        id: "a1",
+        running: true,
+        external_session_id: "remote:fixture",
+        external_session_kind: "device" as const,
+      },
+    ];
     const result = computeSelectedGroupRuntime({
       groups: [
         {

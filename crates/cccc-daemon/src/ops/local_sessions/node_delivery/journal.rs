@@ -13,9 +13,6 @@ use std::{
 };
 
 const MAX_UNRESOLVED: usize = 8192;
-// Bound migration work per admission instead of rewriting thousands of receipts
-// while holding the cross-process lock on the first request after an upgrade.
-const MIGRATION_BATCH: usize = 128;
 const MAX_RECEIPT_BYTES: u64 = 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -31,13 +28,6 @@ struct Attempt {
 struct Journal {
     version: u32,
     attempts: BTreeMap<String, Attempt>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StoredJournal {
-    Current(Journal),
-    Legacy(BTreeMap<String, Attempt>),
 }
 
 fn completed(outcome: &Outcome) -> bool {
@@ -141,18 +131,15 @@ fn mutate<T>(
     std::fs::create_dir_all(&root)?;
     fs::with_exclusive_lock(&root.join("deliveries.lock"), || {
         let path = root.join("deliveries.json");
-        let mut state = if path.exists() {
-            match fs::read_json(&path)? {
-                StoredJournal::Current(journal) if journal.version == 2 => journal.attempts,
-                StoredJournal::Current(_) => {
-                    return Err(io::Error::other(
-                        "Unsupported remote delivery journal version",
-                    ));
-                }
-                StoredJournal::Legacy(attempts) => attempts,
+        let mut state = match fs::read_json::<Journal>(&path) {
+            Ok(journal) if journal.version == 2 => journal.attempts,
+            Ok(_) => {
+                return Err(io::Error::other(
+                    "Unsupported remote delivery journal version",
+                ));
             }
-        } else {
-            BTreeMap::new()
+            Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
+            Err(error) => return Err(error),
         };
         let result = action(&root, &mut state)?;
         fs::write_secret_json(
@@ -183,16 +170,6 @@ pub(super) fn begin(home: &HomeLayout, id: &str, payload: &str) -> io::Result<Op
         if let Some(attempt) = state.get(id) {
             check_fingerprint(attempt, &expected)?;
             return Ok(Some(attempt.outcome.clone()));
-        }
-        let completed_ids: Vec<_> = state
-            .iter()
-            .filter(|(_, attempt)| completed(&attempt.outcome))
-            .take(MIGRATION_BATCH)
-            .map(|(id, _)| id.clone())
-            .collect();
-        for old_id in completed_ids {
-            archive(root, &old_id, &state[&old_id])?;
-            state.remove(&old_id);
         }
         if state.len() >= MAX_UNRESOLVED {
             return Err(io::Error::other(

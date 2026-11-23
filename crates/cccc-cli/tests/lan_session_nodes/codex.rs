@@ -24,7 +24,12 @@ pub async fn verify(f: &Fixture, group_id: &str, hub_id: &str) {
     let mut alias = String::new();
     tokio::time::timeout(std::time::Duration::from_secs(20), async {
         loop {
-            let directory = call(&f.hub_client, "local_session_list", json!({})).await;
+            let directory = call(
+                &f.hub_client,
+                "session_node_source_list",
+                json!({"by":"user"}),
+            )
+            .await;
             if let Some(found) = directory["sources"]
                 .as_array()
                 .expect("sources")

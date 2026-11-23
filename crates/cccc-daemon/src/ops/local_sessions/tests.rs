@@ -682,7 +682,11 @@ fn extension_receive_lease_context_replacement_and_disable_preserve_authority() 
             )
             .is_err()
         );
-        assert!(store::sources(&fixture.home).expect("directory").is_empty());
+        assert!(
+            store::local_sources(&fixture.home)
+                .expect("directory")
+                .is_empty()
+        );
     }
 }
 
@@ -842,7 +846,7 @@ fn group_controls_preserve_native_hosts_and_independent_membership_access() {
 fn discovery_and_conversation_do_not_steal_active_group_or_project_defaults() {
     let fixture = Fixture::new();
     assert!(
-        store::sources(&fixture.home)
+        store::local_sources(&fixture.home)
             .expect("fixture should succeed")
             .iter()
             .all(|s| !s.connected)
@@ -1005,7 +1009,7 @@ fn recovery_survives_end_without_restoring_authority_and_quotes_the_original_env
         assert!(session_marker(&fixture.home, &fixture.source.source_id).is_none());
         assert!(native::read(&fixture.home, &fixture.source.source_id).is_err());
         assert!(
-            store::sources(&fixture.home)
+            store::local_sources(&fixture.home)
                 .expect("directory")
                 .iter()
                 .all(|source| source.source_id != fixture.source.source_id)
@@ -1587,7 +1591,7 @@ fn one_corrupt_source_does_not_hide_other_sources_or_accept_cloud_control() {
     )
     .expect("fixture should succeed");
     assert_eq!(
-        store::sources(&fixture.home)
+        store::local_sources(&fixture.home)
             .expect("fixture should succeed")
             .len(),
         1
@@ -1630,10 +1634,114 @@ fn unreadable_device_directory_preserves_local_discovery_and_admission() {
     let listing = fixture.call("local_session_list", json!({"include_offline":true}));
     assert_eq!(listing["sources"].as_array().expect("sources").len(), 1);
     assert_eq!(listing["sources"][0]["source_id"], fixture.source.source_id);
+    let device_response = crate::dispatch::dispatch(
+        &fixture.home,
+        &req("session_node_source_list", json!({"by":"user"})),
+    );
+    let error = device_response
+        .error
+        .expect("explicit device directory failure");
+    assert_eq!(error.code, "session_node_state_unreadable");
+    assert!(error.message.contains("state/session_nodes/state.json"));
     let group = fixture.conversation();
     assert_eq!(
         group.actors[0].external_session_id,
         fixture.source.source_id
+    );
+}
+
+#[test]
+fn device_directory_keeps_separate_authority_and_requires_a_live_receiver() {
+    use cccc_contracts::session_node::{SessionNodeEndpoint, SessionNodeSource};
+    use cccc_core::session_nodes;
+
+    let fixture = Fixture::new();
+    fixture.attach();
+    let home = &fixture.home;
+    let list = "session_node_source_list";
+    assert_eq!(
+        fixture.call(list, json!({"by":"user"}))["sources"],
+        json!([])
+    );
+    for arguments in [json!({}), json!({"by":"user","_cccc_native_binding":{}})] {
+        let response = crate::dispatch::dispatch(home, &req(list, arguments));
+        assert_eq!(
+            response.error.expect("administrator required").code,
+            "permission_denied"
+        );
+    }
+    session_nodes::register_endpoint(
+        home,
+        SessionNodeEndpoint {
+            endpoint_id: "fixture-hub".into(),
+            addresses: vec!["127.0.0.1:2345".into()],
+            relay_url: None,
+        },
+        fixture.source.host.clone(),
+        "fixture-gateway",
+    )
+    .expect("gateway");
+    let ticket = session_nodes::create_invite(home).expect("pairing ticket");
+    session_nodes::pair(
+        home,
+        "fixture-gateway",
+        "fixture-device",
+        "Laptop",
+        Some((&ticket.invite_id, &ticket.secret)),
+    )
+    .expect("paired device");
+    let mut source = fixture.source.source(true);
+    source.cwd = "/only/on/device".into();
+    let remote = session_nodes::update_sources(
+        home,
+        "fixture-gateway",
+        "fixture-device",
+        vec![SessionNodeSource {
+            source,
+            session_revision: "device-revision".into(),
+            alive: true,
+        }],
+    )
+    .expect("advertised sources")
+    .remove(0);
+    let device_source_id = &remote.source.source_id;
+    assert_eq!(
+        fixture.call(list, json!({"by":"user"}))["sources"],
+        json!([])
+    );
+    assert_eq!(
+        fixture.call(list, json!({"by":"user","include_offline":true}))["sources"][0]["connected"],
+        false
+    );
+    store::attach(home, device_source_id, "device-receiver").expect("bridge receiver");
+    let remote_row = fixture.call(list, json!({"by":"user"}))["sources"][0].clone();
+    assert_eq!(
+        remote_row,
+        json!({
+            "source_id":device_source_id,"source_kind":"device","runtime":"claude",
+            "node_id":"fixture-device","node_name":"Laptop","title":fixture.source.title,
+            "cwd":"/only/on/device","connected":true,
+        })
+    );
+    let local = fixture.call("local_session_list", json!({"include_offline":true}));
+    assert_eq!(local["sources"].as_array().expect("local sources").len(), 1);
+    assert_eq!(local["sources"][0]["source_id"], fixture.source.source_id);
+    assert!(local["source_states"].get(device_source_id).is_none());
+
+    let created = fixture.call(
+        "local_session_conversation",
+        json!({
+            "by":"user","source_ids":[fixture.source.source_id,device_source_id],
+        }),
+    );
+    let actors = fixture.call("actor_list", json!({"group_id":created["group_id"]}));
+    let actors = actors["actors"].as_array().expect("actors");
+    assert_eq!(actors[0]["external_session_kind"], "local");
+    assert_eq!(actors[1]["external_session_kind"], "device");
+    session_nodes::revoke(home, "fixture-device").expect("revoke device");
+    assert_eq!(
+        fixture.call(list, json!({"by":"user","include_offline":true}))["sources"],
+        json!([])
     );
 }
 

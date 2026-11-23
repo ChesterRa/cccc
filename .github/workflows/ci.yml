@@ -149,11 +149,11 @@ jobs:
         shell: pwsh
         run: |
           $filters = @(
-            'session_node::relay_proxy_system::windows::tests::'
-            'session_node::relay_tests::proxy_system::environment_precedes_destination_system_policy'
+            'relay_proxy_system::windows::tests::'
+            'relay_tests::proxy_system::environment_precedes_destination_system_policy'
           )
           foreach ($filter in $filters) {
-            $result = cargo test --package cccc-pair-web --lib --locked $filter -- --test-threads=1 --color never
+            $result = cargo test --package cccc-pair-session-node --lib --locked $filter -- --test-threads=1 --color never
             $exitCode = $LASTEXITCODE
             $result
             if ($exitCode -ne 0) { exit $exitCode }
@@ -199,7 +199,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          $result = cargo test --package cccc --test session_node_join --locked ticket_connect_and_legacy_resume_stay_in_the_terminal -- --exact --test-threads=1 --color never
+          $result = cargo test --package cccc --test session_node_join --locked ticket_connect_and_saved_resume_stay_in_the_terminal -- --exact --test-threads=1 --color never
           $exitCode = $LASTEXITCODE
           $result
           if ($exitCode -ne 0) { exit $exitCode }

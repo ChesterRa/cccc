@@ -16,7 +16,6 @@ mod readonly;
 mod request_origin;
 mod routes;
 mod security_headers;
-pub mod session_node;
 mod shutdown;
 mod update_hook;
 mod web_banner;
@@ -400,7 +399,7 @@ fn router_for_state(state: AppState) -> Router {
     if let Some(cors) = configured_cors_layer() {
         app = app.layer(cors);
     }
-    let relay_routes = session_node::relay_routes(
+    let relay_routes = cccc_session_node::relay_routes(
         state.home.clone(),
         state.web_mode.is_read_only(),
         state.shutdown.clone(),
@@ -738,11 +737,6 @@ where
         });
     }
     routes::spawn_web_model_supervisor(app_state.clone());
-    if !web_mode.is_read_only()
-        && let Err(error) = session_node::restore(&app_state.home).await
-    {
-        tracing::warn!(%error, "Could not restore the paired LAN session gateway");
-    }
     routes::spawn_grok_webhooks(app_state.clone());
     // An exhibit never installs voice models; the full Web clears what installs left behind.
     if !web_mode.is_read_only() {
@@ -790,7 +784,6 @@ where
         let _ = shutdown_after_server.send(());
     }
     let other_shutdown = async {
-        session_node::stop(&runtime_home).await;
         if tokio::time::timeout(COMPONENT_SHUTDOWN_TIMEOUT, im_workers.shutdown())
             .await
             .is_err()

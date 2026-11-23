@@ -28,6 +28,7 @@ export async function prepareDirectInvitation(
   listener: DirectListener,
   name: string,
   signal: AbortSignal,
+  permanent = false,
 ): Promise<ApiResponse<{ invitation?: string }>> {
   const post = (body: Record<string, unknown>) =>
     apiJson<{ invitation?: string }>("/api/v1/connect/direct", {
@@ -35,12 +36,18 @@ export async function prepareDirectInvitation(
       signal,
       body: JSON.stringify({ group_id: groupId, ...body }),
     });
+  const checkPermanentCapabilities = (status: DirectStatus) => {
+    if (!permanent) return null;
+    if (!status.capabilities?.reusable_invitations) return fail("direct_upgrade_required");
+    if (!status.capabilities?.permanent_invitations)
+      return fail("direct_permanent_upgrade_required");
+    return null;
+  };
   const statusUrl = `/api/v1/connect/direct?group_id=${encodeURIComponent(groupId)}`;
   const initial = await apiJson<DirectStatus>(statusUrl, { signal });
   if (!initial.ok) return initial;
-  if (!initial.result.capabilities?.reusable_invitations) return fail("direct_upgrade_required");
-  if (!initial.result.capabilities?.permanent_invitations)
-    return fail("direct_permanent_upgrade_required");
+  const capabilityError = checkPermanentCapabilities(initial.result);
+  if (capabilityError) return capabilityError;
   if (signal.aborted) return fail("direct_action_aborted");
   const current = initial.result.listener;
   if (!sameDirectListener(current, previous) && !sameDirectListener(current, listener))
@@ -58,27 +65,27 @@ export async function prepareDirectInvitation(
   while (!signal.aborted) {
     const check = await apiJson<DirectStatus>(statusUrl, { signal });
     if (!check.ok) return check;
-    if (!check.result.capabilities?.reusable_invitations) return fail("direct_upgrade_required");
-    if (!check.result.capabilities?.permanent_invitations)
-      return fail("direct_permanent_upgrade_required");
+    const pollCapabilityError = checkPermanentCapabilities(check.result);
+    if (pollCapabilityError) return pollCapabilityError;
     if (!sameDirectListener(check.result.listener, listener))
       return fail("direct_settings_changed");
     if (check.result.runtime?.error) return fail("direct_listener_failed");
     if (check.result.runtime?.listener) {
       if (signal.aborted) break;
-      const invited = await post({
-        action: "invite",
-        expected_listener: listener,
-        reusable: true,
-        expires_in_seconds: 0,
-      });
+      const invited = await post(
+        permanent
+          ? { action: "invite", expected_listener: listener, reusable: true, expires_in_seconds: 0 }
+          : { action: "invite", expected_listener: listener, reusable: false },
+      );
       if (!invited.ok) return invited;
-      // A server replaced between the status read and POST must not silently
-      // return a single-use or finite key for this permanent-key request.
-      const preview = invited.result.invitation
-        ? readDirectInvitation(invited.result.invitation)
-        : null;
-      if (!preview?.permanent) return fail("direct_permanent_upgrade_required");
+      if (permanent) {
+        // A server replaced between the status read and POST must not silently
+        // return a single-use or finite key for this permanent-key request.
+        const preview = invited.result.invitation
+          ? readDirectInvitation(invited.result.invitation)
+          : null;
+        if (!preview?.permanent) return fail("direct_permanent_upgrade_required");
+      }
       return invited;
     }
     if (Date.now() >= deadline) return fail("direct_listener_timeout");

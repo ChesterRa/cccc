@@ -78,7 +78,6 @@ fi
         session_nodes::set_client(
             &home,
             &session_nodes::ClientDescriptor {
-                join_binding: None,
                 endpoint: SessionNodeEndpoint {
                     endpoint_id: membership.hub_id.clone(),
                     addresses: vec!["127.0.0.1:12345".into()],
@@ -136,7 +135,11 @@ fi
                 )
             })
             .collect();
-        fs::write_secret_json(&self.journal_path(), &records).expect("legacy journal");
+        fs::write_secret_json(
+            &self.journal_path(),
+            &json!({"version":2,"attempts":records}),
+        )
+        .expect("unresolved attempts");
     }
 
     fn submissions(&self) -> usize {
@@ -148,9 +151,8 @@ fi
 }
 
 #[test]
-fn full_completed_legacy_journal_accepts_new_work_and_replays_receipts_without_resubmission() {
+fn completed_delivery_replays_its_receipt_without_resubmission() {
     let f = Fixture::new();
-    f.seed(8192, json!({"status":"accepted"}));
     let response = f.receive(&f.delivery);
     assert!(response.ok, "{:?}", response.error);
     assert_eq!(response.result["outcome"]["status"], "accepted");
@@ -165,7 +167,7 @@ fn full_completed_legacy_journal_accepts_new_work_and_replays_receipts_without_r
     assert_eq!(f.submissions(), 1);
     let state: Value = fs::read_json(&f.journal_path()).expect("active journal");
     assert!(
-        state["attempts"].as_object().expect("attempts").len() < 8192,
+        state["attempts"].as_object().expect("attempts").is_empty(),
         "completed entries release active slots"
     );
 }

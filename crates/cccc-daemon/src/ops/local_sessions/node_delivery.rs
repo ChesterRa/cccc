@@ -4,7 +4,9 @@ use super::{codex, transport};
 use crate::dispatch::{OpError, OpResult, object, required_arg};
 use cccc_contracts::{
     DaemonRequest,
-    session_node::{RemoteSessionDelivery, SessionNodeDeliveryOutcome as Outcome},
+    session_node::{
+        RemoteSessionDelivery, SessionNodeDeliveryOutcome as Outcome, supports_device_runtime,
+    },
 };
 use cccc_core::{HomeLayout, local_sessions, session_nodes};
 use journal::{begin, finish};
@@ -40,11 +42,7 @@ pub(super) fn receive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let session =
         local_sessions::validate_source(home, &delivery.source_id, &delivery.source_revision)
             .map_err(OpError::io)?;
-    if !matches!(
-        session.runtime,
-        cccc_contracts::local_session::LocalSessionRuntime::Codex
-            | cccc_contracts::local_session::LocalSessionRuntime::Claude
-    ) {
+    if !supports_device_runtime(session.runtime) {
         return Err(denied());
     }
     let identity = format!(

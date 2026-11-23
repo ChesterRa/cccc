@@ -69,10 +69,10 @@ impl Fixture {
     }
 
     pub async fn ticket(&self) -> String {
-        let ticket = cccc_web::session_node::create_invitation(&self.hub, 0)
+        let ticket = cccc_session_node::create_invitation(&self.hub, 0)
             .await
             .expect("isolated invitation");
-        cccc_web::session_node::encode_ticket(&ticket).expect("encode test invitation")
+        cccc_session_node::encode_ticket(&ticket).expect("encode test invitation")
     }
 
     pub fn saved(&self, live: bool) -> ClientDescriptor {
@@ -81,7 +81,6 @@ impl Fixture {
             owner.started.push_str("-old-process");
         }
         ClientDescriptor {
-            join_binding: None,
             endpoint: SessionNodeEndpoint {
                 endpoint_id: "previous-hub".into(),
                 addresses: vec!["127.0.0.1:12345".into()],
@@ -150,7 +149,7 @@ impl Fixture {
     }
 
     pub async fn close(&mut self) {
-        cccc_web::session_node::stop(&self.hub).await;
+        cccc_session_node::stop(&self.hub).await;
         for home in [&self.node, &self.hub] {
             let _ = cccc_client::DaemonClient::new(home.clone())
                 .call(&DaemonRequest {

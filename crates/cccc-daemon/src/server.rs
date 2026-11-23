@@ -145,6 +145,7 @@ async fn serve_tcp(
     let reach_restore = crate::ops::ReachRestore::start(paths.home.clone(), dispatch_locks.clone());
     let connect_service =
         crate::ops::ConnectService::start(paths.home.clone(), dispatch_locks.clone());
+    crate::session_node_host::spawn_restore(&paths.home);
     let mut connections = ConnectionTasks::default();
     let signal = shutdown_signal();
     tokio::pin!(signal);
@@ -170,6 +171,7 @@ async fn serve_tcp(
     begin_runtime_shutdown(&paths.home);
     drop(reach_restore);
     drop(connect_service);
+    crate::session_node_host::shutdown(&paths.home).await;
     automation.finish().await;
     connections.finish().await;
     Ok(())
@@ -217,6 +219,7 @@ async fn serve_platform_default(
     let reach_restore = crate::ops::ReachRestore::start(paths.home.clone(), dispatch_locks.clone());
     let connect_service =
         crate::ops::ConnectService::start(paths.home.clone(), dispatch_locks.clone());
+    crate::session_node_host::spawn_restore(&paths.home);
     let mut connections = ConnectionTasks::default();
     let signal = shutdown_signal();
     tokio::pin!(signal);
@@ -242,6 +245,7 @@ async fn serve_platform_default(
     begin_runtime_shutdown(&paths.home);
     drop(reach_restore);
     drop(connect_service);
+    crate::session_node_host::shutdown(&paths.home).await;
     automation.finish().await;
     connections.finish().await;
     Ok(())

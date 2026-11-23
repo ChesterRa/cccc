@@ -70,6 +70,8 @@ impl Fixture {
         hub.initialize().expect("hub initialize");
         node.initialize().expect("node initialize");
         std::fs::create_dir(temp.path().join("provider")).expect("provider fixture");
+        // The `cccc` binary registers the gateway before starting a daemon; this process does too.
+        cccc_daemon::session_node_host::register(std::sync::Arc::new(cccc_session_node::Host));
         let mut daemons = Vec::new();
         for home in [hub.clone(), node.clone()] {
             daemons.push(tokio::spawn(async move { cccc_daemon::run(home).await }));
@@ -123,9 +125,11 @@ impl Fixture {
                 .is_some_and(|sources| sources.iter().any(|s| s["source_id"] == source.source_id))
         })
         .await;
-        let ticket = cccc_web::session_node::create_invitation(&hub, 0)
-            .await
-            .expect("LAN gateway");
+        let invited = call(&hub_client, "session_node_invite", json!({"by":"user"})).await;
+        let encoded = invited["ticket"]
+            .as_str()
+            .expect("pairing ticket")
+            .to_owned();
         let mut bridge = command(temp.path(), &node)
             .args([
                 "sessions",
@@ -140,7 +144,6 @@ impl Fixture {
             .stderr(Stdio::null())
             .spawn()
             .expect("native node bridge");
-        let encoded = cccc_web::session_node::encode_ticket(&ticket).expect("ticket");
         bridge
             .stdin
             .take()
@@ -149,17 +152,22 @@ impl Fixture {
             .await
             .expect("pairing input");
         until(async || {
-            call(&hub_client, "local_session_list", json!({})).await["sources"]
+            call(
+                &hub_client,
+                "session_node_source_list",
+                json!({"by":"user"}),
+            )
+            .await["sources"]
                 .as_array()
-                .is_some_and(|sources| {
-                    sources.iter().any(|s| {
-                        s["source_id"]
-                            .as_str()
-                            .is_some_and(|id| id.starts_with("remote:"))
-                    })
-                })
+                .is_some_and(|sources| !sources.is_empty())
         })
         .await;
+        // Device sessions never appear in the hub's own native directory.
+        assert!(
+            call(&hub_client, "local_session_list", json!({})).await["sources"]
+                .as_array()
+                .is_some_and(|sources| sources.is_empty())
+        );
         Self {
             _temp: temp,
             hub,
@@ -191,7 +199,7 @@ impl Fixture {
             self.monitor.start_kill().expect("stop fixture Monitor");
         }
         self.monitor.wait().await.expect("Monitor exit");
-        cccc_web::session_node::stop(&self.hub).await;
+        cccc_session_node::stop(&self.hub).await;
         for client in [&self.hub_client, &self.node_client] {
             call(client, "shutdown", json!({})).await;
         }

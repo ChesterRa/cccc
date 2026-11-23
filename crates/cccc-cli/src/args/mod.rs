@@ -254,10 +254,13 @@ pub enum DirectAction {
     },
     /// Stop the standalone collaboration listener.
     Stop,
-    /// Create a permanent invitation. Each joining Group requires approval.
+    /// Create a single-use invitation valid for 30 minutes.
     Invite {
         /// Target Group ID.
         group_id: String,
+        /// Create a reusable invitation with no expiry. Each joining Group requires approval.
+        #[arg(long)]
+        permanent: bool,
     },
     /// Read the invitation from standard input, keeping it out of shell history.
     Join {

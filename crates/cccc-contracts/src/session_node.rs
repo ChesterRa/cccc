@@ -1,11 +1,17 @@
 //! Versioned session-node protocol; endpoint identity is not Group authority.
-use crate::local_session::LocalSessionSource;
+use crate::local_session::{LocalSessionRuntime, LocalSessionSource, SessionSourceKind};
 use serde::{Deserialize, Serialize};
 
 pub const SESSION_NODE_PROTOCOL: u32 = 1;
 pub const SESSION_NODE_RELAY_TICKET: u32 = 2;
 pub const SESSION_NODE_ALPN: &[u8] = b"cccc/session-node/1";
 pub const REMOTE_SOURCE_PREFIX: &str = "remote:";
+pub const DEVICE_SESSION_RUNTIMES: [LocalSessionRuntime; 2] =
+    [LocalSessionRuntime::Codex, LocalSessionRuntime::Claude];
+
+pub fn supports_device_runtime(runtime: LocalSessionRuntime) -> bool {
+    DEVICE_SESSION_RUNTIMES.contains(&runtime)
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -92,4 +98,33 @@ pub struct SessionNodePeer {
     pub connected: bool,
     pub granted_at: String,
     pub last_seen_at: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SessionNodeRelayStatus {
+    pub enabled: bool,
+    pub effective: bool,
+    pub public_url: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionNodeStatus {
+    pub transport: String,
+    pub endpoint: Option<SessionNodeEndpoint>,
+    pub relay: SessionNodeRelayStatus,
+    pub devices: Vec<SessionNodePeer>,
+    pub supported_runtimes: Vec<LocalSessionRuntime>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceSessionSource {
+    pub source_id: String,
+    pub source_kind: SessionSourceKind,
+    pub runtime: LocalSessionRuntime,
+    pub node_id: String,
+    pub node_name: String,
+    pub title: String,
+    /// Display metadata from the device, with no meaning as a local path.
+    pub cwd: String,
+    pub connected: bool,
 }

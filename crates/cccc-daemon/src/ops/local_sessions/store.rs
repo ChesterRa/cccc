@@ -1,8 +1,11 @@
 //! Receive leases are ephemeral. Current conversation identity comes from the
 //! native lifecycle adapter's CCCC-owned metadata, including while the daemon is down.
 use crate::dispatch::OpError;
-use cccc_contracts::local_session::{LocalSessionRuntime, LocalSessionSource};
-use cccc_core::{HomeLayout, local_sessions as native};
+use cccc_contracts::{
+    local_session::{LocalSessionRuntime, LocalSessionSource, SessionSourceKind},
+    session_node::RemoteSessionSource,
+};
+use cccc_core::{HomeLayout, local_sessions as native, session_nodes};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -13,6 +16,7 @@ type Key = (PathBuf, String);
 
 #[derive(Clone)]
 pub(super) struct Receiver {
+    pub kind: SessionSourceKind,
     pub source_id: String,
     pub runtime: LocalSessionRuntime,
     pub native_session_id: String,
@@ -50,14 +54,16 @@ fn leases() -> &'static Mutex<HashMap<Key, Lease>> {
 }
 
 struct Metadata {
+    kind: SessionSourceKind,
     source: LocalSessionSource,
     revision: String,
 }
 
 fn metadata(home: &HomeLayout, source_id: &str) -> Result<Metadata, OpError> {
-    if cccc_core::session_nodes::is_remote_source(source_id) {
-        let remote = cccc_core::session_nodes::source(home, source_id).map_err(OpError::io)?;
+    if session_nodes::source_kind(source_id) == SessionSourceKind::Device {
+        let remote = session_nodes::source(home, source_id).map_err(OpError::io)?;
         return Ok(Metadata {
+            kind: SessionSourceKind::Device,
             source: remote.source,
             revision: remote.session_revision,
         });
@@ -70,6 +76,7 @@ fn metadata(home: &HomeLayout, source_id: &str) -> Result<Metadata, OpError> {
         ));
     }
     Ok(Metadata {
+        kind: SessionSourceKind::Local,
         source: session.source(session.codex_can_receive),
         revision: session.revision,
     })
@@ -77,6 +84,7 @@ fn metadata(home: &HomeLayout, source_id: &str) -> Result<Metadata, OpError> {
 
 fn make_receiver(session: Metadata, connection_id: &str) -> Receiver {
     Receiver {
+        kind: session.kind,
         source_id: session.source.source_id,
         runtime: session.source.runtime,
         native_session_id: session.source.native_session_id,
@@ -93,8 +101,8 @@ pub(super) fn attach(
     connection_id: &str,
 ) -> Result<Receiver, OpError> {
     let session = metadata(home, source_id)?;
-    if session.source.runtime == LocalSessionRuntime::Codex
-        && !cccc_core::session_nodes::is_remote_source(source_id)
+    if session.kind == SessionSourceKind::Local
+        && session.source.runtime == LocalSessionRuntime::Codex
     {
         return Err(OpError::new(
             "invalid_args",
@@ -164,60 +172,68 @@ pub(super) fn by_source(home: &HomeLayout, source_id: &str) -> Result<Option<Rec
         .map(|lease| make_receiver(session, &lease.connection_id)))
 }
 
-pub(super) fn sources(home: &HomeLayout) -> Result<Vec<LocalSessionSource>, OpError> {
+pub(super) fn local_sources(home: &HomeLayout) -> Result<Vec<LocalSessionSource>, OpError> {
     let (sessions, errors) = native::scan(home).map_err(OpError::io)?;
     for error in errors {
         tracing::warn!(%error,"Native session metadata is unavailable");
     }
-    let remote_sources = cccc_core::session_nodes::list_sources(home).unwrap_or_else(|error| {
-        tracing::warn!(
-            diagnostic_action = "read_session_nodes_state",
-            diagnostic_code = crate::diagnostic_log::io_code(&error),
-            %error,
-            "Device-session directory is unavailable"
-        );
-        Vec::new()
-    });
     let leases = leases().lock().map_err(|_| unavailable())?;
-    let mut sources = sessions
+    Ok(sessions
         .into_iter()
         .map(|session| {
             let connected = match session.runtime {
                 LocalSessionRuntime::Codex => session.codex_can_receive,
                 LocalSessionRuntime::Claude
                 | LocalSessionRuntime::Pi
-                | LocalSessionRuntime::Opencode => leases
-                    .get(&(home.root().to_owned(), session.source_id.clone()))
-                    .is_some_and(|lease| lease.at.elapsed() < LEASE),
+                | LocalSessionRuntime::Opencode => lease_active(&leases, home, &session.source_id),
             };
             session.source(connected)
         })
-        .collect::<Vec<_>>();
-    for remote in remote_sources {
-        let mut source = remote.source;
-        source.connected &= remote.alive
-            && leases
-                .get(&(home.root().to_owned(), source.source_id.clone()))
-                .is_some_and(|lease| lease.at.elapsed() < LEASE);
-        sources.push(source);
-    }
-    Ok(sources)
+        .collect())
+}
+
+pub(super) fn device_sources(
+    home: &HomeLayout,
+    include_offline: bool,
+) -> Result<Vec<RemoteSessionSource>, OpError> {
+    let sources = session_nodes::list_device_sources(home, include_offline).map_err(|error| {
+        tracing::warn!(
+            diagnostic_action = "read_session_nodes_state",
+            diagnostic_code = crate::diagnostic_log::io_code(&error),
+            %error,
+            "Device-session directory is unavailable"
+        );
+        OpError::new("session_node_state_unreadable", error.to_string())
+    })?;
+    let leases = leases().lock().map_err(|_| unavailable())?;
+    Ok(sources
+        .into_iter()
+        .filter_map(|mut remote| {
+            remote.source.connected &= lease_active(&leases, home, &remote.source.source_id);
+            (include_offline || remote.source.connected).then_some(remote)
+        })
+        .collect())
+}
+
+fn lease_active(leases: &HashMap<Key, Lease>, home: &HomeLayout, source_id: &str) -> bool {
+    leases
+        .get(&(home.root().to_owned(), source_id.to_owned()))
+        .is_some_and(|lease| lease.at.elapsed() < LEASE)
 }
 
 pub(super) fn connected(home: &HomeLayout, source_id: &str) -> bool {
     let Ok(session) = metadata(home, source_id) else {
         return false;
     };
-    if cccc_core::session_nodes::is_remote_source(source_id) {
-        return session.source.connected
-            && by_source(home, source_id).is_ok_and(|value| value.is_some());
+    if session.kind == SessionSourceKind::Local
+        && session.source.runtime == LocalSessionRuntime::Codex
+    {
+        return session.source.connected;
     }
-    match session.source.runtime {
-        LocalSessionRuntime::Codex => session.source.connected,
-        LocalSessionRuntime::Claude | LocalSessionRuntime::Pi | LocalSessionRuntime::Opencode => {
-            by_source(home, source_id).is_ok_and(|value| value.is_some())
-        }
-    }
+    (session.kind == SessionSourceKind::Local || session.source.connected)
+        && leases()
+            .lock()
+            .is_ok_and(|leases| lease_active(&leases, home, source_id))
 }
 
 pub(super) fn detach(

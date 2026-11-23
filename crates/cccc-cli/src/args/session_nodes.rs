@@ -1,8 +1,9 @@
+use cccc_contracts::session_node::DEVICE_SESSION_RUNTIMES;
 use clap::Subcommand;
 
 #[derive(Debug, Subcommand)]
 pub enum SessionNodeAction {
-    /// Host an encrypted device-session gateway and print one pairing ticket.
+    /// Open the daemon's encrypted device-session gateway and print one pairing ticket.
     Host {
         /// UDP port. Omit to let the OS choose an available port.
         #[arg(long, default_value_t = 0)]
@@ -17,33 +18,22 @@ pub enum SessionNodeAction {
         #[arg(long)]
         ticket_stdin: bool,
         /// Enable this native integration before pairing; does not filter exported sessions.
-        #[arg(long, value_parser = ["codex", "claude"], requires = "ticket_stdin")]
+        #[arg(
+            long,
+            value_parser = clap::builder::PossibleValuesParser::new(
+                DEVICE_SESSION_RUNTIMES.map(|runtime| runtime.as_str()),
+            ),
+            requires = "ticket_stdin"
+        )]
         runtime: Option<String>,
         /// Name shown on the hub (defaults to this computer's hostname).
         #[arg(long)]
         name: Option<String>,
     },
-    /// Reconnect an existing hub binding or paste a device pairing ticket in this terminal.
-    #[command(hide = true)]
-    Join {
-        /// Previously paired hub origin (HTTPS, or HTTP on loopback).
-        #[arg(value_name = "HUB_URL")]
-        hub: String,
-        /// Device name shown to the hub administrator (defaults to this computer's hostname).
-        #[arg(long)]
-        name: Option<String>,
-        /// Enable this native integration before connecting.
-        #[arg(long, value_parser = ["codex", "claude"])]
-        runtime: Option<String>,
-        /// Accepted for compatibility. Pairing takes place in the terminal.
-        #[arg(long, hide = true)]
-        no_browser: bool,
-        /// Read a fresh pairing ticket even when this hub has a saved binding.
-        #[arg(long)]
-        reauthorize: bool,
-    },
     /// Inspect paired devices without exposing keys or pairing secrets.
     Status,
+    /// Stop the device-session gateway until the next pairing ticket. Paired devices stay enrolled.
+    Stop,
     /// Revoke a device. Existing sessions keep running but lose hub access.
     Revoke {
         #[arg(long)]

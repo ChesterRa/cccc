@@ -9,8 +9,7 @@ async fn existing_incompatible_daemon_is_not_replaced_or_followed_by_native_setu
         let mut f = Fixture::new();
         f.start_home(f.hub.clone()).await;
         f.node.initialize().expect("node Home");
-        let mut ticket =
-            cccc_web::session_node::decode_ticket(&f.ticket().await).expect("test ticket");
+        let mut ticket = cccc_session_node::decode_ticket(&f.ticket().await).expect("test ticket");
         if relay {
             ticket.v = 2;
             ticket.relay_url = Some("https://127.0.0.1:1/".into());
@@ -20,7 +19,7 @@ async fn existing_incompatible_daemon_is_not_replaced_or_followed_by_native_setu
                 uuid::Uuid::new_v4().simple()
             ));
         }
-        let encoded = cccc_web::session_node::encode_ticket(&ticket).expect("encoded test ticket");
+        let encoded = cccc_session_node::encode_ticket(&ticket).expect("encoded test ticket");
         // Only this legacy IPC boundary is stubbed. The real CLI/daemon client,
         // capability validation and native setup ordering remain exercised.
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

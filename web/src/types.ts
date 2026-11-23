@@ -353,6 +353,8 @@ export type RuntimeMode = "default" | "acp";
 export type Actor = {
   /** User-owned native runtime; CCCC manages collaboration access only. */
   external_session_id?: string;
+  /** Read-only provenance classification for externally owned native Actors. */
+  external_session_kind?: "local" | "device";
   id: string;
   generation?: string;
   created_at?: string;
@@ -1840,13 +1842,29 @@ export function supportsAcpMode(runtime?: string | null): boolean {
   ].includes(runtime || "");
 }
 
+export type SessionSourceKind = "local" | "device";
+
 export interface LocalSessionSource {
   source_id: string;
+  source_kind?: SessionSourceKind;
   runtime: "codex" | "claude" | "pi" | "opencode";
-  native_session_id: string;
+  native_session_id?: string;
   cwd: string;
   title: string;
   origin?: string | null;
+  node_id?: string;
+  node_name?: string;
+  connected: boolean;
+}
+
+export interface DeviceSessionSource {
+  source_id: string;
+  source_kind: "device";
+  runtime: LocalSessionSource["runtime"];
+  node_id: string;
+  node_name: string;
+  title: string;
+  cwd: string;
   connected: boolean;
 }
 

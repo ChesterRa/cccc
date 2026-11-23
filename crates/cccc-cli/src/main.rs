@@ -44,6 +44,8 @@ fn main() -> Result<()> {
 #[tokio::main]
 async fn run() -> Result<()> {
     cccc_core::build_info::initialize(env!("CCCC_SOURCE_ID"));
+    // A daemon started by this process owns the device-session gateway.
+    cccc_daemon::session_node_host::register(std::sync::Arc::new(cccc_session_node::Host));
     #[cfg(windows)]
     let _console_encoding = console_encoding::use_utf8();
     // rustls refuses to choose a crypto backend once the graph enables both of

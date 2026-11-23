@@ -4,23 +4,18 @@ use crate::commands::sessions::setup;
 use anyhow::{Context, Result, ensure};
 use cccc_contracts::session_node::SessionNodeTicket;
 use cccc_core::HomeLayout;
-use cccc_web::session_node::JoinTarget;
+use cccc_session_node::ConnectTarget;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 
 pub(super) async fn run(
     home: &HomeLayout,
-    legacy_hub: Option<&str>,
     ticket_stdin: bool,
     name: Option<String>,
     runtime: Option<&str>,
 ) -> Result<()> {
     let name = device_name(name)?;
-    let target = match legacy_hub {
-        Some(hub) => JoinTarget::prepare(home, hub)?,
-        None => JoinTarget::local(home)?,
-    };
-    let ticket =
-        read_ticket(ticket_stdin || (legacy_hub.is_some() && !target.can_resume())).await?;
+    let target = ConnectTarget::load(home)?;
+    let ticket = read_ticket(ticket_stdin).await?;
     ensure!(
         ticket.is_some() || target.can_resume(),
         "Pairing ticket required for the first connection. Run cccc sessions node connect --runtime codex --ticket-stdin (use claude for Claude Code) and paste a ticket from the hub administrator"
@@ -29,7 +24,7 @@ pub(super) async fn run(
     ensure_daemon(home).await?;
     if let Some(runtime) = runtime {
         if target.needs_relay(ticket.as_ref()) {
-            cccc_web::session_node::verify_daemon(home, true).await?;
+            cccc_session_node::verify_daemon(home, true).await?;
         }
         setup::enable(home, runtime)
             .await
@@ -66,7 +61,7 @@ async fn read_ticket(requested: bool) -> Result<Option<SessionNodeTicket>> {
     };
     // Deserialization diagnostics can include invalid field values. Never echo
     // any part of the supplied capability through an error chain or a log.
-    cccc_web::session_node::decode_ticket(&line)
+    cccc_session_node::decode_ticket(&line)
         .map(Some)
         .map_err(|_| anyhow::anyhow!("Invalid or missing session-node pairing ticket; paste a fresh device ticket at the prompt"))
 }

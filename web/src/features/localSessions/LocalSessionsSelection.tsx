@@ -22,6 +22,12 @@ export function LocalSessionsSelection({
           <span className="block">{connection.error}</span>
         </p>
       )}
+      {connection.deviceError && (
+        <p role="alert" className="break-words text-sm text-[var(--color-accent-danger)]">
+          {t("sessionNodes.deviceSourcesFailed")}
+          <span className="block">{connection.deviceError}</span>
+        </p>
+      )}
       {connection.notice && <p role="status">{connection.notice}</p>}
       {connection.unavailableCount > 0 && (
         <p role="alert" className="text-amber-700 dark:text-amber-300" data-status-tone="warning">

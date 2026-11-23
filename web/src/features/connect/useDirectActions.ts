@@ -91,6 +91,7 @@ export function useDirectActions(groupId: string) {
             extra.listener as DirectListener,
             String(extra.display_name || ""),
             controller.signal,
+            Boolean(extra.permanent),
           )
         : await apiJson<{ invitation?: string; id?: string }>("/api/v1/connect/direct", {
             method: "POST",

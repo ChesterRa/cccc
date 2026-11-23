@@ -16,7 +16,10 @@ pub async fn run(client: &DaemonClient, action: DirectAction) -> Result<()> {
             json!({"listener":{"bind":bind,"address":address},"display_name":name}),
         ),
         DirectAction::Stop => ("configure", json!({"listener":null})),
-        DirectAction::Invite { group_id } => return invite(client, &group_id).await,
+        DirectAction::Invite {
+            group_id,
+            permanent,
+        } => return invite(client, &group_id, permanent).await,
         DirectAction::Join { group_id } => {
             use tokio::io::AsyncReadExt;
             let mut input = String::new();
@@ -38,7 +41,17 @@ pub async fn run(client: &DaemonClient, action: DirectAction) -> Result<()> {
     print(call(client, &format!("connect_direct_{action}"), args).await?)
 }
 
-async fn invite(client: &DaemonClient, group_id: &str) -> Result<()> {
+async fn invite(client: &DaemonClient, group_id: &str, permanent: bool) -> Result<()> {
+    if !permanent {
+        return print(
+            call(
+                client,
+                "connect_direct_invite",
+                json!({"group_id":group_id,"by":"user","reusable":false}),
+            )
+            .await?,
+        );
+    }
     let status = call(
         client,
         "connect_direct_status",

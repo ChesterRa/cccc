@@ -8,12 +8,12 @@ pub async fn verify(f: &mut Fixture, group_id: &str, hub_id: &str, alias: &str) 
         .expect("endpoint")
         .expect("live gateway");
     let peer = session_nodes::peers(&f.hub).expect("peers").remove(0);
-    cccc_web::session_node::stop(&f.hub).await;
+    cccc_session_node::stop(&f.hub).await;
     assert!(
         session_nodes::source(&f.hub, alias).is_err(),
         "No gateway means no live remote authority"
     );
-    cccc_web::session_node::restore(&f.hub)
+    cccc_session_node::restore(&f.hub)
         .await
         .expect("restore paired gateway");
     let after = session_nodes::endpoint(&f.hub)
@@ -74,7 +74,12 @@ pub async fn verify(f: &mut Fixture, group_id: &str, hub_id: &str, alias: &str) 
         .spawn()
         .expect("resume connector with its saved key");
     until(async || {
-        call(&f.hub_client, "local_session_list", json!({})).await["sources"]
+        call(
+            &f.hub_client,
+            "session_node_source_list",
+            json!({"by":"user"}),
+        )
+        .await["sources"]
             .as_array()
             .is_some_and(|sources| sources.iter().any(|source| source["source_id"] == alias))
     })

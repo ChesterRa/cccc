@@ -1,77 +1,137 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Dispatch,
   type SetStateAction,
 } from "react";
-import type { LocalSessionSource } from "../../types";
+import type { DeviceSessionSource, LocalSessionSource } from "../../types";
 import { fetchLocalSessions } from "../../services/api/localSessions";
+import { fetchDeviceSessionSources } from "../../services/api/sessionNodes";
 import type {
   LocalSessionDirectory,
   SourceControlResult,
   SourceDiagnostic,
 } from "../../services/api/localSessionControls";
+import { isDeviceSessionSource } from "./remoteSessionPolicy";
 
 export function useLocalSessionSources(
   setSelected: Dispatch<SetStateAction<LocalSessionSource[]>>,
 ) {
-  const [directory, setDirectory] = useState<LocalSessionDirectory>({ sources: [] });
+  const [localDirectory, setLocalDirectory] = useState<LocalSessionDirectory>({ sources: [] });
+  const [deviceSources, setDeviceSources] = useState<DeviceSessionSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deviceError, setDeviceError] = useState("");
   const alive = useRef(false);
-  const sequence = useRef(0);
-  const reload = useCallback(async () => {
-    const request = ++sequence.current;
+  const localSequence = useRef(0);
+  const deviceSequence = useRef(0);
+
+  const reloadLocal = useCallback(async () => {
+    const request = ++localSequence.current;
     try {
       const response = await fetchLocalSessions();
-      if (!alive.current || request !== sequence.current) return;
+      if (!alive.current || request !== localSequence.current) return;
       if (response.ok) {
         setError("");
-        setDirectory(response.result);
+        setLocalDirectory(response.result);
+        const nextLocalSources = response.result.sources;
+        const nextLocalStates = response.result.source_states;
         setSelected((previous) =>
           previous
-            .filter(
-              (source) =>
-                !response.result.source_states?.[source.source_id]?.control.access_blocked,
+            .filter((source) =>
+              isDeviceSessionSource(source)
+                ? true
+                : !nextLocalStates?.[source.source_id]?.control.access_blocked,
             )
-            .map(
-              (source) =>
-                response.result.sources.find((latest) => latest.source_id === source.source_id) || {
+            .map((source) => {
+              if (isDeviceSessionSource(source)) return source;
+              return (
+                nextLocalSources.find((latest) => latest.source_id === source.source_id) || {
                   ...source,
                   connected: false,
-                },
-            ),
+                }
+              );
+            }),
         );
-      } else setError(response.error.message);
-    } catch (error) {
-      if (alive.current && request === sequence.current) setError(String(error));
+      } else {
+        setError(response.error.message);
+      }
+    } catch (reason) {
+      if (alive.current && request === localSequence.current) setError(String(reason));
     } finally {
-      if (alive.current && request === sequence.current) setLoading(false);
+      if (alive.current && request === localSequence.current) setLoading(false);
     }
   }, [setSelected]);
+
+  const reloadDevice = useCallback(async () => {
+    const request = ++deviceSequence.current;
+    try {
+      const response = await fetchDeviceSessionSources();
+      if (!alive.current || request !== deviceSequence.current) return;
+      let nextDeviceSources: DeviceSessionSource[] | null = null;
+      if (response.ok) {
+        setDeviceError("");
+        nextDeviceSources = Array.isArray(response.result?.sources) ? response.result.sources : [];
+        setDeviceSources(nextDeviceSources);
+      } else if (response.error.httpStatus === 404) {
+        setDeviceError("");
+        nextDeviceSources = [];
+        setDeviceSources([]);
+      } else {
+        setDeviceError(response.error.message);
+      }
+      if (nextDeviceSources !== null) {
+        const latestSources = nextDeviceSources;
+        setSelected((previous) =>
+          previous.map((source) => {
+            if (!isDeviceSessionSource(source)) return source;
+            return (
+              latestSources.find((latest) => latest.source_id === source.source_id) || {
+                ...source,
+                connected: false,
+              }
+            );
+          }),
+        );
+      }
+    } catch (reason) {
+      if (alive.current && request === deviceSequence.current) setDeviceError(String(reason));
+    }
+  }, [setSelected]);
+
   useEffect(() => {
     alive.current = true;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const load = async () => {
-      await reload();
-      if (!cancelled) timer = setTimeout(() => void load(), 3000);
+    let localTimer: ReturnType<typeof setTimeout> | undefined;
+    let deviceTimer: ReturnType<typeof setTimeout> | undefined;
+    const loadLocal = async () => {
+      await reloadLocal();
+      if (!cancelled) localTimer = setTimeout(() => void loadLocal(), 3000);
     };
-    void load();
+    const loadDevice = async () => {
+      await reloadDevice();
+      if (!cancelled) deviceTimer = setTimeout(() => void loadDevice(), 3000);
+    };
+    void loadLocal();
+    void loadDevice();
     return () => {
       cancelled = true;
       alive.current = false;
-      sequence.current += 1;
-      clearTimeout(timer);
+      localSequence.current += 1;
+      deviceSequence.current += 1;
+      clearTimeout(localTimer);
+      clearTimeout(deviceTimer);
     };
-  }, [reload]);
+  }, [reloadLocal, reloadDevice]);
+
   const apply = (source: LocalSessionSource, result: SourceControlResult) => {
-    sequence.current += 1;
+    localSequence.current += 1;
     if (result.access_blocked)
       setSelected((previous) => previous.filter((item) => item.source_id !== source.source_id));
-    setDirectory((previous) => {
+    setLocalDirectory((previous) => {
       const state = previous.source_states?.[source.source_id];
       return {
         ...previous,
@@ -105,9 +165,10 @@ export function useLocalSessionSources(
       };
     });
   };
+
   const diagnose = (sourceId: string, diagnostic: SourceDiagnostic) => {
-    sequence.current += 1;
-    setDirectory((previous) => {
+    localSequence.current += 1;
+    setLocalDirectory((previous) => {
       const state = previous.source_states?.[sourceId];
       return state
         ? {
@@ -117,15 +178,24 @@ export function useLocalSessionSources(
         : previous;
     });
   };
+
+  const sources = useMemo(
+    () => [...localDirectory.sources, ...deviceSources],
+    [localDirectory.sources, deviceSources],
+  );
+
   return {
-    ...directory,
+    ...localDirectory,
+    sources,
     loading,
     error,
-    reload,
+    deviceError,
+    reload: reloadLocal,
     apply,
     diagnose,
     invalidate: () => {
-      sequence.current += 1;
+      localSequence.current += 1;
+      deviceSequence.current += 1;
     },
   };
 }

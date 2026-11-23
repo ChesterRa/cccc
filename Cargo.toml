@@ -12,6 +12,7 @@ members = [
   "crates/cccc-web",
   "crates/cccc-linux-memory",
   "crates/cccc-system-proxy",
+  "crates/cccc-session-node",
   "crates/cccc-windows-console",
   "crates/cccc-windows-process",
   "crates/cccc-cli",

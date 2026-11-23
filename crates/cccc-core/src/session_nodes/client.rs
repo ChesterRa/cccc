@@ -4,19 +4,10 @@ use cccc_contracts::session_node::{SessionNodeEndpoint, SessionNodeMembership};
 use serde::{Deserialize, Serialize};
 use std::{io, net::SocketAddr};
 
-/// Approval origin paired with the hub's authenticated iroh identity.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct JoinBinding {
-    pub origin: String,
-    pub hub_id: String,
-}
-
 /// Local-only descriptor. The broker secret never crosses the iroh connection.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ClientDescriptor {
     pub endpoint: SessionNodeEndpoint,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub join_binding: Option<JoinBinding>,
     pub node_id: String,
     pub grant_id: String,
     pub owner: NativeHost,

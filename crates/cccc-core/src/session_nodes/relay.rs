@@ -1,6 +1,7 @@
 //! Device-key access to the private relay; browser administrator tokens are not relay grants.
 use super::store;
 use crate::{HomeLayout, settings};
+use cccc_contracts::session_node::SessionNodeRelayStatus;
 use chrono::Utc;
 use std::{collections::BTreeSet, io, net::SocketAddr};
 
@@ -62,21 +63,50 @@ pub fn register(home: &HomeLayout, gateway: &str, address: SocketAddr) -> io::Re
     if !address.ip().is_loopback() || address.port() == 0 {
         return Err(store::denied());
     }
+    set_address(home, gateway, Some(address))
+}
+
+pub fn unregister(home: &HomeLayout, gateway: &str) -> io::Result<()> {
+    set_address(home, gateway, None)
+}
+
+fn set_address(home: &HomeLayout, gateway: &str, address: Option<SocketAddr>) -> io::Result<()> {
     store::update(home, |state| {
         store::check_gateway(state, gateway)?;
         let hub = state.hub.as_mut().ok_or_else(store::denied)?;
-        hub.relay_address = Some(address);
-        hub.bound_invites = false;
+        hub.relay_address = address;
         Ok(())
     })
 }
 
 pub fn address(home: &HomeLayout) -> io::Result<Option<SocketAddr>> {
-    Ok(store::read(home)?
+    let state = store::read(home)?;
+    if public_url(home)?.is_none() {
+        return Ok(None);
+    }
+    Ok(enabled_address(&state))
+}
+
+pub fn status(home: &HomeLayout) -> io::Result<SessionNodeRelayStatus> {
+    let state = store::read(home)?;
+    let public_url = public_url(home)?;
+    Ok(SessionNodeRelayStatus {
+        enabled: state.relay_enabled,
+        effective: public_url.is_some() && enabled_address(&state).is_some(),
+        public_url,
+    })
+}
+
+pub(super) fn enabled_address(state: &store::State) -> Option<SocketAddr> {
+    if !state.relay_enabled {
+        return None;
+    }
+    state
         .hub
+        .as_ref()
         .filter(|hub| hub.owner.alive())
         .and_then(|hub| hub.relay_address)
-        .filter(|address| address.ip().is_loopback() && address.port() != 0))
+        .filter(|address| address.ip().is_loopback() && address.port() != 0)
 }
 
 pub fn authorities(home: &HomeLayout, gateway: &str) -> io::Result<BTreeSet<String>> {
@@ -85,6 +115,9 @@ pub fn authorities(home: &HomeLayout, gateway: &str) -> io::Result<BTreeSet<Stri
     }
     let state = store::read(home)?;
     store::check_gateway(&state, gateway)?;
+    if enabled_address(&state).is_none() {
+        return Err(store::denied());
+    }
     let mut nodes = state
         .peers
         .into_values()
@@ -114,23 +147,21 @@ pub fn authorize(
     }
     let state = store::read(home)?;
     store::check_gateway(&state, gateway)?;
+    if enabled_address(&state).is_none() {
+        return Err(store::denied());
+    }
     if state.peers.get(node_id).is_some_and(|peer| peer.enabled) {
         return Ok(());
     }
     let (id, secret) = invite.ok_or_else(store::denied)?;
     store::update(home, |state| {
         store::check_gateway(state, gateway)?;
+        if enabled_address(state).is_none() {
+            return Err(store::denied());
+        }
         let pending = state.invites.get_mut(id).ok_or_else(store::denied)?;
-        if pending.relay_secret_hash.as_deref()
-            != Some(
-                store::invitation_hash(pending.expected_node_id.as_deref(), "relay", secret)
-                    .as_str(),
-            )
+        if pending.relay_secret_hash.as_deref() != Some(store::hash(secret).as_str())
             || !valid_deadline(&pending.expires_at)
-            || pending
-                .expected_node_id
-                .as_deref()
-                .is_some_and(|expected| expected != node_id)
             || pending
                 .relay_node_id
                 .as_deref()

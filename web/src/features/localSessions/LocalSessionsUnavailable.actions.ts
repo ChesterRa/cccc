@@ -1,7 +1,7 @@
 import { act } from "react";
 import { expect, vi } from "vite-plus/test";
 import enLayout from "../../i18n/locales/en/layout.json";
-import type { LocalSessionSource } from "../../types";
+import type { DeviceSessionSource, LocalSessionSource } from "../../types";
 import type { LocalSessionDirectory } from "../../services/api/localSessionControls";
 import { sessionPickerActions } from "./LocalSessionsButton.actions";
 import { verifySourceControls } from "./LocalSourceControl.actions";
@@ -12,11 +12,13 @@ export async function verifyUnavailableSource({
   source,
   publish,
   delayNextRead,
+  publishDevice,
 }: {
   open: () => Promise<void>;
   source: LocalSessionSource;
   publish: (directory: LocalSessionDirectory) => void;
   delayNextRead: () => (directory: LocalSessionDirectory) => void;
+  publishDevice?: (sources: DeviceSessionSource[]) => void;
 }) {
   vi.useFakeTimers();
   const translate = (key: string) =>
@@ -73,5 +75,5 @@ export async function verifyUnavailableSource({
   );
   expect(button(enLayout.sourceControls.recheck).disabled).toBe(true);
   expect(button(enLayout.sourceControls.remove).disabled).toBe(false);
-  await verifySourceControls(source, publish, delayNextRead);
+  await verifySourceControls(source, publish, delayNextRead, publishDevice);
 }

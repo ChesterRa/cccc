@@ -169,6 +169,9 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
         || error.0.ends_with("_lease_lost")
     {
         StatusCode::CONFLICT
+    } else if error.0.starts_with("session_node_") {
+        // Device-session state, gateway or relay that this computer cannot provide right now.
+        StatusCode::SERVICE_UNAVAILABLE
     } else {
         StatusCode::BAD_REQUEST
     };

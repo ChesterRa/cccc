@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import type { LocalSessionSource } from "../../types";
+import { isDeviceSessionSource } from "./remoteSessionPolicy";
 
 const runtimeNames: Record<string, string> = {
   codex: "Codex",
@@ -16,7 +17,7 @@ export function LocalSessionOrigin({
   showDevice?: boolean;
 }) {
   const { t } = useTranslation("layout");
-  const remote = source.origin?.startsWith("remote:") ? source.origin.slice(7) : null;
+  const remote = isDeviceSessionSource(source) ? source.node_name : null;
   const location = showDevice ? remote || t("localSessions.thisDevice") : source.cwd;
   const origin =
     !showDevice && !remote && source.runtime === "codex"

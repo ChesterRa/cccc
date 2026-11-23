@@ -1,17 +1,22 @@
 import { vi } from "vite-plus/test";
-import type { LocalSessionSource } from "../../types";
+import type { DeviceSessionSource, LocalSessionSource } from "../../types";
 import type { LocalSessionDirectory, SourceState } from "../../services/api/localSessionControls";
 
 /** Synthetic backend boundary only; no UI stores or management hooks are replaced. */
 export function sourceControlFixture(
   source: LocalSessionSource,
   publish: (directory: LocalSessionDirectory) => void,
+  publishDevice?: (sources: DeviceSessionSource[]) => void,
 ) {
-  const remote: LocalSessionSource = {
-    ...source,
-    source_id: "remote:qa:source",
+  const remote: DeviceSessionSource = {
+    source_id: "remote:qa:grant:source",
+    source_kind: "device",
+    runtime: source.runtime,
+    node_id: "qa",
+    node_name: "QA laptop",
     title: "Remote QA source",
-    origin: "remote:QA laptop",
+    cwd: source.cwd,
+    connected: source.connected,
   };
   const state: SourceState = {
     control: {
@@ -28,31 +33,17 @@ export function sourceControlFixture(
   let finish!: (response: Response) => void;
   let serial = 0;
   const directory = (): LocalSessionDirectory => ({
-    sources: [
-      ...(state.control.access_blocked ? [] : [{ ...source, connected }]),
-      ...(includeRemote ? [remote] : []),
-    ],
+    sources: state.control.access_blocked ? [] : [{ ...source, connected }],
     removed_sources: state.control.access_blocked ? [{ ...source, connected: false }] : [],
     capabilities: { source_control: true, source_diagnostics: true },
-    source_states: {
-      [source.source_id]: state,
-      ...(includeRemote
-        ? {
-            [remote.source_id]: {
-              control: {
-                supported: false,
-                management_revision: "0",
-                access_blocked: false,
-                pause_complete: true,
-                reason_code: "remote_source_control_unsupported",
-              },
-              diagnostic: { state: "unknown" as const, checked_at: null },
-            },
-          }
-        : {}),
-    },
+    source_states: { [source.source_id]: state },
   });
-  const refresh = () => publish(JSON.parse(JSON.stringify(directory())) as LocalSessionDirectory);
+  const refresh = () => {
+    publish(JSON.parse(JSON.stringify(directory())) as LocalSessionDirectory);
+    publishDevice?.(
+      includeRemote ? [JSON.parse(JSON.stringify(remote)) as DeviceSessionSource] : [],
+    );
+  };
   const result = () => ({
     source_id: source.source_id,
     ...state.control,

@@ -2,21 +2,31 @@ use super::store;
 use crate::{GroupStore, HomeLayout, actors};
 use cccc_contracts::{
     local_session::{LocalSessionBinding, LocalSessionRuntime},
-    session_node::{RemoteSessionSource, SessionNodeMembership, SessionNodeSource},
+    session_node::{
+        REMOTE_SOURCE_PREFIX, RemoteSessionSource, SessionNodeMembership, SessionNodeSource,
+        supports_device_runtime,
+    },
 };
 use chrono::Utc;
 use std::{collections::BTreeSet, io};
 
 fn available(state: &store::State, source: &RemoteSessionSource) -> bool {
     state.hub.as_ref().is_some_and(|hub| hub.owner.alive())
-        && state
-            .peers
-            .get(&source.node_id)
-            .is_some_and(|peer| peer.enabled && peer.connected && peer.grant_id == source.grant_id)
+        && current_grant(state, source).is_some_and(|peer| peer.connected)
         && source
             .updated_at
             .parse::<chrono::DateTime<Utc>>()
             .is_ok_and(|at| Utc::now().signed_duration_since(at).num_seconds() < 30)
+}
+
+fn current_grant<'a>(
+    state: &'a store::State,
+    source: &RemoteSessionSource,
+) -> Option<&'a cccc_contracts::session_node::SessionNodePeer> {
+    state
+        .peers
+        .get(&source.node_id)
+        .filter(|peer| peer.enabled && peer.grant_id == source.grant_id)
 }
 
 pub fn update_sources(
@@ -31,12 +41,10 @@ pub fn update_sources(
     let mut ids = BTreeSet::new();
     for item in &sources {
         let source = &item.source;
-        if !matches!(
-            source.runtime,
-            LocalSessionRuntime::Codex | LocalSessionRuntime::Claude
-        ) || !source
-            .source_id
-            .starts_with(&format!("{}:", source.runtime.as_str()))
+        if !supports_device_runtime(source.runtime)
+            || !source
+                .source_id
+                .starts_with(&format!("{}:", source.runtime.as_str()))
             || (source.runtime == LocalSessionRuntime::Codex
                 && source.source_id != source.runtime.source_id(&source.native_session_id))
             || source.source_id.len() > 512
@@ -69,7 +77,7 @@ pub fn update_sources(
             let native_source_id = item.source.source_id.clone();
             let mut source = item.source;
             source.source_id = format!(
-                "remote:{}:{}:{}",
+                "{REMOTE_SOURCE_PREFIX}{}:{}:{}",
                 peer.node_id,
                 peer.grant_id,
                 store::hash(&native_source_id)
@@ -105,6 +113,27 @@ pub fn list_sources(home: &HomeLayout) -> io::Result<Vec<RemoteSessionSource>> {
         .collect())
 }
 
+/// Administrator projection. The live bridge uses `list_sources` separately.
+pub fn list_device_sources(
+    home: &HomeLayout,
+    include_offline: bool,
+) -> io::Result<Vec<RemoteSessionSource>> {
+    let state = store::read(home)?;
+    Ok(state
+        .sources
+        .values()
+        .filter(|source| current_grant(&state, source).is_some())
+        .filter_map(|source| {
+            let connected = source.alive && source.source.connected && available(&state, source);
+            (include_offline || connected).then(|| {
+                let mut source = source.clone();
+                source.source.connected = connected;
+                source
+            })
+        })
+        .collect())
+}
+
 pub fn source(home: &HomeLayout, source_id: &str) -> io::Result<RemoteSessionSource> {
     let state = store::read(home)?;
     state
@@ -123,16 +152,8 @@ pub fn binding_valid(home: &HomeLayout, binding: &LocalSessionBinding) -> io::Re
         || !actor.enabled
         || actor.external_session_id != binding.source_id
         || actors::generation_identity(actor) != binding.actor_generation
-        || !matches!(
-            (actor.runtime, source.source.runtime),
-            (
-                cccc_contracts::ActorRuntime::Codex,
-                LocalSessionRuntime::Codex
-            ) | (
-                cccc_contracts::ActorRuntime::Claude,
-                LocalSessionRuntime::Claude
-            )
-        )
+        || !supports_device_runtime(source.source.runtime)
+        || actor.runtime.wire_name() != source.source.runtime.as_str()
     {
         return Err(store::denied());
     }
