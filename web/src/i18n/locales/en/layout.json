@@ -454,8 +454,6 @@
     "deviceSourcesFailed": "Could not read paired computers' sessions (sessions on this computer are unaffected):",
     "publicRelayTitle": "Public cross-network relay",
     "publicRelayToggle": "Allow public relay via Remote Access",
-    "publicRelayEnabledState": "Enabled",
-    "publicRelayDisabledState": "Disabled",
     "publicRelayAddressLabel": "Remote Access public address:",
     "publicRelayRequiresRemoteAccess": "When UDP direct connection is unavailable and a public relay is needed, enable Remote Access with an HTTPS root URL first.",
     "publicRelayOffHint": "Currently using UDP direct connection only. Pairing tickets omit the public relay address, and the Web does not forward /relay traffic.",

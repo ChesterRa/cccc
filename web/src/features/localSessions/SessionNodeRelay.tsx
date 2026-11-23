@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Button } from "../../components/ui/button";
+import { Switch } from "../../components/ui/switch";
 import type { SessionNodeRelayStatus } from "../../services/api/sessionNodes";
 import type { RelayToggleError } from "./useSessionNodes";
 
@@ -33,24 +33,14 @@ export function SessionNodeRelay({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="text-sm font-medium">{t("sessionNodes.publicRelayTitle")}</h4>
-        <Button
-          type="button"
-          role="switch"
+        <Switch
+          checked={relay.enabled}
           aria-checked={relay.enabled}
           aria-label={t("sessionNodes.publicRelayToggle")}
           aria-busy={relayBusy}
-          size="sm"
-          variant={relay.enabled ? "default" : "outline"}
-          className="min-h-9 max-sm:min-h-11 text-xs"
           disabled={busy || (!relay.enabled && !canEnableRelay)}
-          onClick={() => onToggleRelay(!relay.enabled)}
-        >
-          {t(
-            relay.enabled
-              ? "sessionNodes.publicRelayEnabledState"
-              : "sessionNodes.publicRelayDisabledState",
-          )}
-        </Button>
+          onChange={(event) => onToggleRelay(event.currentTarget.checked)}
+        />
       </div>
       {relay.public_url && (
         <p className="break-all text-xs text-[var(--color-text-secondary)]">

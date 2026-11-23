@@ -454,8 +454,6 @@
     "deviceSourcesFailed": "无法读取已配对电脑的会话列表（本机会话不受影响）：",
     "publicRelayTitle": "跨网公网中继",
     "publicRelayToggle": "允许经远程访问使用公网中继",
-    "publicRelayEnabledState": "已开启",
-    "publicRelayDisabledState": "已关闭",
     "publicRelayAddressLabel": "远程访问公开地址：",
     "publicRelayRequiresRemoteAccess": "无法经 UDP 直连、需要公网中继时，请先在「设置 → 远程访问」启用包含 HTTPS 根地址的远程访问后再打开。",
     "publicRelayOffHint": "当前仅使用 UDP 直连。生成配对码不附带公网中继地址，网页不转发 /relay 流量。",

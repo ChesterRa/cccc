@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import enLayout from "../../i18n/locales/en/layout.json";
 import enCommon from "../../i18n/locales/en/common.json";
 import { useGroupStore } from "../../stores";
-import { existingGroup } from "./LocalSessionsButton.fixtures";
+import { existingGroup } from "./LocalSessionsPicker.fixtures";
 import { setAuthToken } from "../../services/api/base";
 import { SessionNodesPanel } from "./SessionNodesPanel";
 import { WebRoot } from "../../WebRoot";
@@ -257,8 +257,8 @@ it("shares one relay switch between pairing and settings, stops only from settin
     await click(labels.enableApp);
 
     const relaySwitch = () =>
-      host.querySelector<HTMLButtonElement>(
-        `button[role="switch"][aria-label="${labels.publicRelayToggle}"]`,
+      host.querySelector<HTMLInputElement>(
+        `input[role="switch"][aria-label="${labels.publicRelayToggle}"]`,
       )!;
     expect(relaySwitch().getAttribute("aria-checked")).toBe("false");
     expect(relaySwitch().disabled).toBe(true);

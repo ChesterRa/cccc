@@ -17,23 +17,28 @@ these ceilings before publishing. Counts include comments and blank lines.
 
 | File | Baseline → current lines | Reason | Allowed scope | Expiry / removal condition | Split plan |
 | --- | --- | --- | --- | --- | --- |
-| `web/src/features/connect/DirectConnectionsPanel.test.tsx` | 555 → 541 | Existing interaction suite; rewriting its lifecycle would exceed this release's focused structural scope. Invitation/relation builders have been extracted without changing cases or assertions. | Necessary existing-case updates and helper extraction only; preserve isolation, assertions and test behavior. | Before the next change adds a Direct interaction scenario or grows this file. | Further move reusable DOM/lifecycle helpers to focused suite helpers; keep existing cases in place during this release. Future suite reorganization needs its own approved scope. |
-| `web/src/features/localSessions/LocalSessionsButton.test.tsx` | 999 → 945 | Existing picker suite; interaction helpers were extracted. The existing empty-directory case now also verifies the merged device flow through real controls with network/clipboard boundaries; existing cases, visibility checks and admission assertions remain intact. T897 extends the existing unready-source case through focused control fixtures/actions without adding cases; the source-control suite also verifies partial readback, stale polls, revisions and exact heading focus. | Necessary existing-case updates and helper/fixture extraction only; do not weaken hidden-element checks or state assertions. | Before the next change adds a picker scenario or grows this file. | Continue separating picker actions and fixtures from mounting/lifecycle setup into focused helpers. Any future case-file split is outside this release's prohibition on new Web tests. |
+| `web/src/features/connect/DirectConnectionsPanel.test.tsx` | 555 → 541 (registered ceiling); 663 measured | Existing interaction suite; rewriting its lifecycle would exceed this release's focused structural scope. Invitation/relation builders have been extracted without changing cases or assertions. Over its ceiling: +87 lines arrived with the device-session merge and +35 with the time-limited Direct invitation default. | Necessary existing-case updates and helper extraction only; preserve isolation, assertions and test behavior. | Before the next change adds a Direct interaction scenario or grows this file. | Further move reusable DOM/lifecycle helpers to focused suite helpers; keep existing cases in place during this release. Future suite reorganization needs its own approved scope. |
+| `web/src/features/localSessions/LocalSessionsPicker.test.tsx` | 999 → 750 | Existing picker suite, formerly `LocalSessionsButton.test.tsx` (948 lines at the device-session merge and 1,072 immediately before the move). Picker interaction tests moved here and source-management tests moved to Settings. | Necessary existing-case updates and helper/fixture extraction only; do not weaken hidden-element checks or state assertions. | Before the next change adds a picker scenario or grows this file. | Continue separating picker actions and fixtures from mounting/lifecycle setup into focused helpers. Any future case-file split is outside this release's prohibition on new Web tests. |
 | `web/src/features/runtimeSwitch/RuntimeSwitchControls.tsx` | 696 → 695 | Existing runtime-switch container; remote eligibility and current-directory derivation now delegate to `remoteSessionPolicy.ts`. A full form rewrite is outside this release. | Delegate remote session policy and retain existing load/save wiring; no additional business responsibility. | Before the next runtime-switch feature or any growth. | Separate native-source loading into a dedicated hook, then extract native/managed/Web form sections beside the existing container. |
 | `web/src/hooks/useChatTab.ts` | 1533 → 1529 | Existing chat orchestration; setup and project-scope derivation now delegate to `chat/chatSetupRequirements.ts`. Unrelated composer/scroll refactoring is outside this release. | Delegate setup policy and preserve existing chat orchestration; no additional feature logic in this hook. | Before the next chat orchestration feature or any growth. | Continue existing `hooks/chat` decomposition: move setup, recipient derivation and composer lifecycle into focused hooks/helpers, leaving composition in `useChatTab`. |
 | `web/src/components/messageBubble/PendingReplySlot.test.tsx` | 517 → 502 | Existing answer lifecycle suite. The scope-removal test now receives a valid matching success receipt; its request fixture was extracted to `PendingReplySlot.fixtures.ts` without adding cases. A full suite reorganization is outside this cleanup. | Correct existing protocol fixtures and extract helpers; preserve retry, scope isolation and receipt-validation assertions. | Before the next pending-answer scenario or any growth. | Move shared mounting/lifecycle and request/receipt fixtures into focused helpers; reorganize protocol and scope-isolation cases only in a separately approved scope. |
 
-All five entries move toward decomposition and remain below their baseline line
-counts. They are temporary, file-specific exceptions, not precedent for other
+Four entries remain below their baseline line counts;
+`DirectConnectionsPanel.test.tsx` is over its registered ceiling, as recorded in
+its row, and is split by case responsibility before its next Direct scenario.
+They are temporary, file-specific exceptions, not precedent for other
 legacy files. No tests are added by this registration.
 
 ## Soft-limit split plan
 
-`web/src/features/localSessions/useLocalSessionsConnection.ts`: **223 → 201 lines**;
-owner **CCCC frontend maintainers**. T897 completed the source-poll extraction
-into `useLocalSessionSources.ts`; mutations and controlled receive checks live in
+`web/src/features/localSessions/useLocalSessionsConnection.ts`: **223 → 201 lines**
+at registration, 223 measured now (242 after the device-session merge, reduced
+when joining moved into a Group's Add Agent);
+owner **CCCC frontend maintainers**. Source polling lives in
+`useLocalSessionSources.ts`; mutations and controlled receive checks live in
 `useLocalSourceControls.ts`. The existing facade composes these hooks and keeps
-its selection/Group submission contract. It is now below the soft limit.
+its selection/Group submission contract. It is again just over the 220-line soft
+limit; the membership split below brings it back under.
 
 The remaining membership split plan is unchanged in intent: before the next
 membership behavior expansion, extract `useTargetSessionMembership.ts` for target

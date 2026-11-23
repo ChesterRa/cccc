@@ -16,7 +16,7 @@ import jaModals from "../../i18n/locales/ja/modals.json";
 import { verifyPairingTicketFlow } from "./LocalSessionsDevice.actions";
 import { sessionPickerActions } from "./LocalSessionsPicker.actions";
 import { LocalSessionsPicker } from "./LocalSessionsPicker";
-import { source, second, existingGroup, resources } from "./LocalSessionsButton.fixtures";
+import { source, second, existingGroup, resources } from "./LocalSessionsPicker.fixtures";
 import { pairedComputerStates } from "./sessionNodeStatus.fixtures";
 
 const mocks = vi.hoisted(() => ({

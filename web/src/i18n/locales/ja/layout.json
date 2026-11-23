@@ -454,8 +454,6 @@
     "deviceSourcesFailed": "ペアリング済みコンピューターのセッション一覧を読み取れませんでした（このコンピューターのセッションには影響ありません）：",
     "publicRelayTitle": "インターネット経由の公開リレー",
     "publicRelayToggle": "リモートアクセス経由の公開リレーを許可",
-    "publicRelayEnabledState": "有効",
-    "publicRelayDisabledState": "無効",
     "publicRelayAddressLabel": "リモートアクセスの公開アドレス：",
     "publicRelayRequiresRemoteAccess": "UDP で直接接続できず公開リレーが必要な場合は、先に HTTPS ルート URL のリモートアクセスを有効にしてください。",
     "publicRelayOffHint": "現在は UDP 直接接続のみを使用します。接続コードに公開リレーアドレスは含まれず、Web は /relay 通信を転送しません。",
