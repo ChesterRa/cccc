@@ -607,7 +607,7 @@ async fn notification_levels_are_per_browser_and_skipped_messages_are_not_replay
 
     let early = f.write(&group, to_user("progress before the notifier wakes"));
     f.notifier.activate().await;
-    assert_eq!(all.received(), [early.id.clone()]);
+    assert_eq!(all.received(), std::slice::from_ref(&early.id));
     assert!(requests.received().is_empty());
 
     let progress = f.write(&group, to_user("progress while following"));
@@ -632,7 +632,7 @@ async fn notification_levels_are_per_browser_and_skipped_messages_are_not_replay
         all.received(),
         [early.id.clone(), progress.id.clone(), prompt.id.clone()]
     );
-    assert_eq!(requests.received(), [prompt.id.clone()]);
+    assert_eq!(requests.received(), std::slice::from_ref(&prompt.id));
     assert!(f.notifier.pending.is_empty());
 
     f.notifier
@@ -640,7 +640,7 @@ async fn notification_levels_are_per_browser_and_skipped_messages_are_not_replay
         .set_level(&requests.endpoint, &Owner::Local, NotificationLevel::All)
         .expect("restore all");
     f.notifier.sweep().await;
-    assert_eq!(requests.received(), [prompt.id.clone()]);
+    assert_eq!(requests.received(), std::slice::from_ref(&prompt.id));
     let next = f.write(&group, to_user("progress after switching back"));
     f.notifier.changed(&next).await;
     assert_eq!(requests.received(), [prompt.id, next.id]);
