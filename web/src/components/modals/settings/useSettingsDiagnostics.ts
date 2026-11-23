@@ -48,8 +48,9 @@ export function useSettingsDiagnostics(args: {
   const [tailBusy, setTailBusy] = useState(false);
   const [tailCopyInfo, setTailCopyInfo] = useState("");
 
-  // Global observability (developer mode)
+  // Global observability (developer mode: draft vs saved daemon state)
   const [developerMode, setDeveloperMode] = useState(false);
+  const [savedDeveloperMode, setSavedDeveloperMode] = useState(false);
   const [terminalBacklogMiB, setTerminalBacklogMiB] = useState(10);
   const [terminalScrollbackLines, setTerminalScrollbackLines] = useState(8000);
   const [peerRuntimeVisibility, setPeerRuntimeVisibility] =
@@ -122,6 +123,7 @@ export function useSettingsDiagnostics(args: {
   useEffect(() => {
     if (!isOpen) {
       observabilityLoaded.current = false;
+      setSavedDeveloperMode(false);
     }
   }, [isOpen]);
 
@@ -131,7 +133,9 @@ export function useSettingsDiagnostics(args: {
       if (resp.ok && resp.result?.observability) {
         const obs = resp.result.observability;
         useObservabilityStore.getState().setFromObs(obs);
-        setDeveloperMode(Boolean(obs.developer_mode));
+        const saved = Boolean(obs.developer_mode);
+        setSavedDeveloperMode(saved);
+        setDeveloperMode(saved);
         const perActorBytes = Number(obs.terminal_transcript?.per_actor_bytes || 0);
         if (Number.isFinite(perActorBytes) && perActorBytes > 0) {
           setTerminalBacklogMiB(Math.max(1, Math.round(perActorBytes / (1024 * 1024))));
@@ -291,11 +295,11 @@ export function useSettingsDiagnostics(args: {
   }, [isOpen, scope, globalTab]);
 
   useEffect(() => {
-    if (!isOpen || !developerMode) return;
+    if (!isOpen || !savedDeveloperMode) return;
     if (scope !== "global" || globalTab !== "developer") return;
     void loadLogTail();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Keep refresh tied to modal/view controls; callback identity is not meaningful here.
-  }, [developerMode, globalTab, groupId, isOpen, logComponent, logLines, scope]);
+  }, [globalTab, groupId, isOpen, logComponent, logLines, savedDeveloperMode, scope]);
 
   const copyTailLastLines = async (lineCount: number) => {
     const n = Math.max(1, Math.min(200, Number(lineCount || 0) || 50));
@@ -390,7 +394,9 @@ export function useSettingsDiagnostics(args: {
       if (resp.ok && resp.result?.observability) {
         const obs = resp.result.observability;
         useObservabilityStore.getState().setFromObs(obs);
-        setDeveloperMode(Boolean(obs.developer_mode));
+        const saved = Boolean(obs.developer_mode);
+        setSavedDeveloperMode(saved);
+        setDeveloperMode(saved);
         const bytes = Number(obs.terminal_transcript?.per_actor_bytes || 0);
         if (Number.isFinite(bytes) && bytes > 0) {
           setTerminalBacklogMiB(Math.max(1, Math.round(bytes / (1024 * 1024))));
@@ -453,7 +459,7 @@ export function useSettingsDiagnostics(args: {
   };
 
   const handleClearLogs = async () => {
-    if (!developerMode) return;
+    if (!savedDeveloperMode) return;
     if (logComponent === "im" && !groupId) {
       setLogErr(t("developer.imLogsRequireGroup"));
       return;
@@ -524,6 +530,7 @@ export function useSettingsDiagnostics(args: {
     clearTail,
     devActors,
     developerMode,
+    savedDeveloperMode,
     setDeveloperMode,
     terminalBacklogMiB,
     setTerminalBacklogMiB,

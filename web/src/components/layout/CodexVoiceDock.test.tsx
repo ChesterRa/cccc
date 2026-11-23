@@ -133,7 +133,7 @@ describe("CodexVoiceDock", () => {
   );
 
   it.each(["sidebar", "mobile", "collapsed"] as const)(
-    "names unattended mode in the %s dock beside Chet's own state",
+    "names unattended mode in the %s dock on its own line beside Chet's own state",
     (surface) => {
       const markup = (chetWorking = false, overrides: Partial<CodexVoiceSessionController> = {}) =>
         renderToStaticMarkup(
@@ -148,12 +148,13 @@ describe("CodexVoiceDock", () => {
         );
       unattended.enabled = true;
       try {
-        expect(markup()).toContain("modals:chet.unattendedOn");
-        expect(markup(true)).toContain("modals:chet.state.working · modals:chet.unattendedOn");
+        const idle = markup();
+        expect(idle).toContain("modals:chet.unattendedOn");
+        const working = markup(true);
+        expect(working).toContain("modals:chet.unattendedOn · modals:chet.state.working");
         // A call or something that needs a look keeps the mode named beside it.
-        expect(markup(false, { error: "Needs attention" })).toContain(
-          "layout:codexVoiceAttention · modals:chet.unattendedOn",
-        );
+        const attention = markup(false, { error: "Needs attention" });
+        expect(attention).toContain("modals:chet.unattendedOn · layout:codexVoiceAttention");
         expect(markup(false, { phase: "listening", owned: true, isEngaged: true })).toContain(
           "modals:chet.unattendedOn",
         );
@@ -161,13 +162,24 @@ describe("CodexVoiceDock", () => {
         const cannotRun = {
           readiness: { ...controller().readiness!, analyst_runtime_available: false },
         };
-        expect(markup(false, cannotRun)).toContain(
-          "layout:codexVoiceAttention · modals:chet.unattendedOn",
-        );
+        const runtimeAttention = markup(false, cannotRun);
+        expect(runtimeAttention).toContain("modals:chet.unattendedOn · layout:codexVoiceAttention");
+        if (surface !== "collapsed") {
+          // Visible docks keep unattended on its own non-truncated row so states never clip it.
+          expect(runtimeAttention).toMatch(
+            /<span data-chet-unattended="true" class="[^"]*">modals:chet\.unattendedOn<\/span>/,
+          );
+          expect(runtimeAttention).not.toMatch(
+            /<span data-chet-unattended="true" class="[^"]*truncate[^"]*">/,
+          );
+          expect(runtimeAttention).toMatch(/>layout:codexVoiceAttention<\/span>/);
+          expect(idle).not.toContain("modals:chet.subtitle");
+        }
       } finally {
         unattended.enabled = false;
       }
       expect(markup()).not.toContain("modals:chet.unattendedOn");
+      expect(markup()).not.toContain("data-chet-unattended");
       // Without the mode, a Runtime problem stays inside Chet's panel as before.
       expect(
         markup(false, {

@@ -11,6 +11,10 @@ const api = vi.hoisted(() => ({
   logs: vi.fn(),
   clearTail: vi.fn(),
   clearLogs: vi.fn(),
+  fetchObservability: vi.fn(),
+  updateObservability: vi.fn(),
+  fetchPing: vi.fn(),
+  previewRegistryReconcile: vi.fn(),
 }));
 vi.mock("../../../services/api", async (original) => ({
   ...(await original<typeof import("../../../services/api")>()),
@@ -23,17 +27,31 @@ vi.mock("../../../services/api", async (original) => ({
   fetchLogTail: api.logs,
   clearTerminalTail: api.clearTail,
   clearLogs: api.clearLogs,
+  fetchObservability: api.fetchObservability,
+  updateObservability: api.updateObservability,
+  fetchPing: api.fetchPing,
+  previewRegistryReconcile: api.previewRegistryReconcile,
 }));
 
 const t = ((key: string) => key) as TFunction<"settings">;
 let current: ReturnType<typeof useSettingsDiagnostics>;
-function Probe({ group = "A", open = true }: { group?: string; open?: boolean }) {
+function Probe({
+  group = "A",
+  open = true,
+  scope = "group",
+  globalTab = "account",
+}: {
+  group?: string;
+  open?: boolean;
+  scope?: "group" | "global";
+  globalTab?: "account" | "developer";
+}) {
   current = useSettingsDiagnostics({
     isOpen: open,
     groupId: group,
-    scope: "group",
+    scope,
     groupTab: "transcript",
-    globalTab: "account",
+    globalTab,
     hasSettingsTarget: false,
     canAccessGlobalSettings: true,
     t,
@@ -88,8 +106,15 @@ const response = (channel: Channel, value: string) => ({
 describe("settings diagnostics request ownership", () => {
   let host: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
-  const render = (group = "A", open = true) =>
-    act(async () => root.render(<Probe group={group} open={open} />));
+  const render = (
+    group = "A",
+    open = true,
+    scope: "group" | "global" = "group",
+    globalTab: "account" | "developer" = "account",
+  ) =>
+    act(async () =>
+      root.render(<Probe group={group} open={open} scope={scope} globalTab={globalTab} />),
+    );
   const start = async (channel: Channel) => {
     let pending!: Promise<void>;
     await act(async () => {
@@ -104,6 +129,26 @@ describe("settings diagnostics request ownership", () => {
       api[channel].mockResolvedValue(response(channel, "current result"));
     api.clearTail.mockResolvedValue({ ok: true, result: {} });
     api.clearLogs.mockResolvedValue({ ok: true, result: {} });
+    api.fetchObservability.mockResolvedValue({
+      ok: true,
+      result: { observability: { developer_mode: false } },
+    });
+    api.updateObservability.mockImplementation(async (args: { developerMode: boolean }) => ({
+      ok: true,
+      result: { observability: { developer_mode: args.developerMode } },
+    }));
+    api.fetchPing.mockResolvedValue({ ok: true, result: { version: "0.4.60" } });
+    api.previewRegistryReconcile.mockResolvedValue({
+      ok: true,
+      result: {
+        dry_run: true,
+        scanned_groups: 1,
+        missing_group_ids: [],
+        corrupt_group_ids: [],
+        removed_group_ids: [],
+        removed_default_scope_keys: [],
+      },
+    });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -273,6 +318,7 @@ describe("settings diagnostics request ownership", () => {
     async (channel) => {
       await render();
       await act(async () => current.setDeveloperMode(true));
+      await act(async () => current.handleSaveObservability());
       const old = deferred();
       (channel === "tail" ? api.clearTail : api.clearLogs).mockReturnValueOnce(old.promise);
       let pending!: Promise<void>;
@@ -289,4 +335,38 @@ describe("settings diagnostics request ownership", () => {
       expect(busy(channel)).toBe(false);
     },
   );
+
+  it("does not fetch log tail when developer mode is toggled in draft before saving", async () => {
+    await render("A", true, "global", "developer");
+    expect(api.fetchObservability).toHaveBeenCalledTimes(1);
+    expect(api.logs).not.toHaveBeenCalled();
+    expect(current.developerMode).toBe(false);
+    expect(current.savedDeveloperMode).toBe(false);
+
+    // Flipping the toggle in the draft must not trigger tail_logs or clearLogs yet.
+    await act(async () => current.setDeveloperMode(true));
+    expect(current.developerMode).toBe(true);
+    expect(current.savedDeveloperMode).toBe(false);
+    expect(api.logs).not.toHaveBeenCalled();
+
+    await act(async () => current.setLogComponent("web"));
+    expect(api.logs).not.toHaveBeenCalled();
+
+    await act(async () => current.handleClearLogs());
+    expect(api.clearLogs).not.toHaveBeenCalled();
+
+    // Once saved, daemon developer_mode is on and log tail loads automatically.
+    await act(async () => current.handleSaveObservability());
+    expect(current.savedDeveloperMode).toBe(true);
+    expect(api.logs).toHaveBeenCalledTimes(1);
+    expect(api.logs).toHaveBeenLastCalledWith("web", "A", 200);
+
+    // Turning it off and saving disables automatic tail_logs again.
+    api.logs.mockClear();
+    await act(async () => current.setDeveloperMode(false));
+    await act(async () => current.handleSaveObservability());
+    expect(current.savedDeveloperMode).toBe(false);
+    await act(async () => current.setLogComponent("daemon"));
+    expect(api.logs).not.toHaveBeenCalled();
+  });
 });

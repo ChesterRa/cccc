@@ -24,6 +24,7 @@ interface DeveloperTabProps {
   daemonVersion: string;
   runtimeInfoErr: string;
   developerMode: boolean;
+  savedDeveloperMode: boolean;
   setDeveloperMode: (v: boolean) => void;
   terminalBacklogMiB: number;
   setTerminalBacklogMiB: (v: number) => void;
@@ -73,6 +74,7 @@ export function DeveloperTab({
   daemonVersion,
   runtimeInfoErr,
   developerMode,
+  savedDeveloperMode,
   setDeveloperMode,
   terminalBacklogMiB,
   setTerminalBacklogMiB,
@@ -326,7 +328,7 @@ export function DeveloperTab({
             <button
               type="button"
               onClick={onLoadDebugSnapshot}
-              disabled={!developerMode || !groupId || debugSnapshotBusy}
+              disabled={!savedDeveloperMode || !groupId || debugSnapshotBusy}
               className={ghost}
             >
               {debugSnapshotBusy ? t("common:loading") : t("developer.refresh")}
@@ -356,7 +358,7 @@ export function DeveloperTab({
           <button
             type="button"
             onClick={onLoadLogTail}
-            disabled={!developerMode || logBusy}
+            disabled={!savedDeveloperMode || logBusy}
             className={ghost}
           >
             {logBusy ? t("common:loading") : t("developer.refresh")}
@@ -400,7 +402,7 @@ export function DeveloperTab({
           <button
             type="button"
             onClick={onClearLogs}
-            disabled={!developerMode || logBusy}
+            disabled={!savedDeveloperMode || logBusy}
             className={dangerButtonClass("sm")}
           >
             {t("developer.clearTruncate")}

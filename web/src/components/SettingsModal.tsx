@@ -183,6 +183,7 @@ export function SettingsModal({
     clearTail,
     devActors,
     developerMode,
+    savedDeveloperMode,
     setDeveloperMode,
     terminalBacklogMiB,
     setTerminalBacklogMiB,
@@ -909,6 +910,7 @@ export function SettingsModal({
                     daemonVersion={daemonVersion}
                     runtimeInfoErr={runtimeInfoErr}
                     developerMode={developerMode}
+                    savedDeveloperMode={savedDeveloperMode}
                     setDeveloperMode={setDeveloperMode}
                     terminalBacklogMiB={terminalBacklogMiB}
                     setTerminalBacklogMiB={setTerminalBacklogMiB}

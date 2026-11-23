@@ -48,8 +48,7 @@ export function CodexVoiceDock({
   }, [refreshUnattended]);
   const unattendedLabel = unattended ? t("modals:chet.unattendedOn") : "";
   // A call names its own state; otherwise Chet's work, then what needs a look. Unattended
-  // mode stays named after whichever of these shows, so the user always sees that Chet
-  // acts for them.
+  // mode sits on its own unwrapped line in the dock so long states never clip it.
   const chetState = controller.isEngaged
     ? [providerLabel, identity.voice, phaseLabel].filter(Boolean).join(" · ")
     : controller.refreshError
@@ -61,7 +60,7 @@ export function CodexVoiceDock({
           : unattendedLabel
             ? ""
             : t("modals:chet.subtitle");
-  const statusLabel = [chetState, unattendedLabel].filter(Boolean).join(" · ");
+  const statusLabel = [unattendedLabel, chetState].filter(Boolean).join(" · ");
   const stopLabel = t(
     controller.externalCall ? "modals:codexVoiceStopExisting" : "modals:codexVoiceStop",
   );
@@ -108,7 +107,8 @@ export function CodexVoiceDock({
           working={working}
           unread={chetUnread}
           title={identityTitle}
-          status={statusLabel}
+          unattended={unattendedLabel}
+          status={chetState}
           label={openLabel}
         />
         {callControl}
@@ -149,7 +149,8 @@ export function CodexVoiceDock({
           working={working}
           unread={chetUnread}
           title={identityTitle}
-          status={statusLabel}
+          unattended={unattendedLabel}
+          status={chetState}
           label={openLabel}
         />
         {callControl}
@@ -179,6 +180,7 @@ function ConsoleButton({
   working,
   unread,
   title,
+  unattended,
   status,
   label,
 }: {
@@ -188,6 +190,7 @@ function ConsoleButton({
   working: boolean;
   unread: boolean;
   title: string;
+  unattended: string;
   status: string;
   label: string;
 }) {
@@ -210,9 +213,19 @@ function ConsoleButton({
         <span className="block truncate text-xs font-semibold text-[var(--color-text-primary)]">
           Chet
         </span>
-        <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">
-          {status}
-        </span>
+        {unattended ? (
+          <span
+            data-chet-unattended
+            className="mt-0.5 block text-xs text-[var(--color-text-secondary)]"
+          >
+            {unattended}
+          </span>
+        ) : null}
+        {status ? (
+          <span className="mt-0.5 block truncate text-xs text-[var(--color-text-muted)]">
+            {status}
+          </span>
+        ) : null}
       </span>
     </button>
   );

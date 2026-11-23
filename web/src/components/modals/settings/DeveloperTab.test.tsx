@@ -14,6 +14,7 @@ const baseProps = (): Props => ({
   daemonVersion: "1.0.0",
   runtimeInfoErr: "",
   developerMode: false,
+  savedDeveloperMode: false,
   setDeveloperMode: vi.fn(),
   terminalBacklogMiB: 10,
   setTerminalBacklogMiB: vi.fn(),
@@ -66,7 +67,7 @@ const card = (title: string) =>
     (node) => node.querySelector("h3")?.textContent === title,
   )!;
 
-it("switches developer mode and gates the diagnostics on it", async () => {
+it("switches developer mode and gates the diagnostics on the saved state", async () => {
   const props = baseProps();
   await render(props);
   const toggle = host.querySelector('[role="switch"]')!;
@@ -76,9 +77,16 @@ it("switches developer mode and gates the diagnostics on it", async () => {
   expect(button("developer.refresh", card("developer.debugSnapshot")).disabled).toBe(true);
   expect(button("developer.refresh", card("developer.logTail")).disabled).toBe(true);
 
-  await render({ ...props, developerMode: true });
+  // Flipping the switch in the draft does not unlock daemon-gated diagnostics before Save.
+  await render({ ...props, developerMode: true, savedDeveloperMode: false });
+  expect(host.querySelector('[role="switch"]')!.getAttribute("aria-checked")).toBe("true");
+  expect(button("developer.refresh", card("developer.debugSnapshot")).disabled).toBe(true);
+  expect(button("developer.refresh", card("developer.logTail")).disabled).toBe(true);
+
+  await render({ ...props, developerMode: true, savedDeveloperMode: true });
   expect(button("developer.refresh", card("developer.debugSnapshot")).disabled).toBe(false);
-  await render({ ...props, developerMode: true, groupId: undefined });
+  expect(button("developer.refresh", card("developer.logTail")).disabled).toBe(false);
+  await render({ ...props, developerMode: true, savedDeveloperMode: true, groupId: undefined });
   // The snapshot is group scoped; without a group it cannot load.
   expect(button("developer.refresh", card("developer.debugSnapshot")).disabled).toBe(true);
   expect(host.textContent).toContain("developer.openFromGroup");
@@ -141,6 +149,7 @@ it("keeps destructive maintenance in danger cards with their guards", async () =
   await render({
     ...props,
     developerMode: true,
+    savedDeveloperMode: true,
     registryResult: {
       dry_run: true,
       scanned_groups: 3,

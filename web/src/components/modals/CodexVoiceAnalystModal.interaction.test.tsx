@@ -3,7 +3,9 @@
 import { act, createRef } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { useChetConversation } from "../../features/chet/useChetConversation";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
+import { fetchChetUnattended } from "../../services/api/chet";
 import { useModalStore } from "../../stores";
 import { CodexVoiceAnalystModal } from "./CodexVoiceAnalystModal";
 import { chetConversationStub } from "../../features/chet/chetTestSupport";
@@ -248,4 +250,112 @@ describe("CodexVoiceAnalystModal settings navigation", () => {
       await act(async () => root.unmount());
     },
   );
+});
+
+it("shows a saved unattended copy again after turning the mode off and reopening history", async () => {
+  const createdAt = "2026-11-01T10:00:00Z";
+  const copyText = "Please check the release notes.";
+  const history = {
+    records: [
+      {
+        kind: "group_input",
+        id: "copy-1",
+        created_at: createdAt,
+        input: {
+          group_id: "g1",
+          group_generation: "generation",
+          event_id: "source-1",
+          sender: { kind: "actor", actor_id: "peer" },
+        },
+      },
+    ],
+    after: "1",
+    sources: {
+      "copy-1": {
+        status: "available",
+        group_title: "Release",
+        sender_title: "Peer",
+        text: copyText,
+        sent_at: createdAt,
+        has_attachments: false,
+        truncated: false,
+        reply_event_id: null,
+        copy: true,
+      },
+    },
+  };
+  vi.mocked(fetchChetUnattended)
+    .mockResolvedValueOnce({ ok: true, result: { enabled: true, since: "2026-11-01T09:00:00Z" } })
+    .mockResolvedValueOnce({ ok: true, result: { enabled: false, since: null } });
+  const reads: boolean[] = [];
+  let unattendedEnabled = true;
+  const respond = (result: unknown) => new Response(JSON.stringify({ ok: true, result }));
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = new URL(String(input), "http://localhost").pathname;
+    if (path === "/api/v1/chet/status") {
+      return respond({
+        generation: null,
+        preparing: [],
+        queued: [],
+        working: [],
+        history_write_failed: false,
+        start_problem: null,
+      });
+    }
+    if (path === "/api/v1/chet/history") {
+      reads.push(unattendedEnabled);
+      return respond(history);
+    }
+    if (path === "/api/v1/chet/unattended" && init?.method === "PUT") {
+      expect(init.body).toBe(JSON.stringify({ enabled: false }));
+      unattendedEnabled = false;
+      return respond({ unattended: { enabled: false } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  const voice = controller();
+  const close = vi.fn();
+  function Panel() {
+    const chet = useChetConversation({ enabled: true, open: true, currentContext: null });
+    return (
+      <CodexVoiceAnalystModal
+        isOpen
+        isDark={false}
+        isSmallScreen={false}
+        controller={voice}
+        chet={chet}
+        onClose={close}
+      />
+    );
+  }
+
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  const openHistory = async () => {
+    await act(async () => root.render(<Panel />));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    const quote = host.querySelector('[data-chet-group-message="available"]');
+    expect(quote?.textContent).toContain(copyText);
+    expect(quote?.textContent).toContain("chet.groupMessageCopy");
+    return host.querySelector<HTMLInputElement>('[role="switch"][aria-label="chet.unattended"]')!;
+  };
+
+  vi.useFakeTimers();
+  try {
+    const toggle = await openHistory();
+    expect(toggle.checked).toBe(true);
+    await act(async () => toggle.click());
+    expect(toggle.checked).toBe(false);
+    expect(unattendedEnabled).toBe(false);
+    // Remount so the second view depends on a fresh history response.
+    await act(async () => root.render(null));
+    expect((await openHistory()).checked).toBe(false);
+    expect(reads).toEqual([true, false]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.useRealTimers();
+  }
 });
