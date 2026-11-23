@@ -1,11 +1,11 @@
 //! The user's reply requests: answering one in place, and reading the open
-//! ones of a Group or a summary across Groups. Each acts only as the user;
-//! a call made under an Actor identity is refused.
+//! ones of a Group or a summary across Groups. Chet's authenticated reply
+//! path also uses this writer for unattended answers.
 
 use cccc_contracts::reply_question::{self, Answer, FieldError, Stored};
 use cccc_contracts::{DaemonRequest, Event, utc_now};
 use cccc_core::user_requests::{self, PageError};
-use cccc_core::{HomeLayout, ledger};
+use cccc_core::{HomeLayout, actors, ledger, unattended, voice_notifications};
 use serde_json::{Map, Value, json};
 
 use super::messaging::InPlace;
@@ -37,18 +37,46 @@ fn require_user(request: &DaemonRequest) -> Result<(), OpError> {
 }
 
 pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    record_answer(home, request, false)
+}
+
+pub(super) fn answer_as_chet(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let source = required_arg(request, "reply_to")?;
+    let mut forwarded = request.clone();
+    forwarded.args.remove("actor_id");
+    forwarded.args.remove("message_mode");
+    forwarded.args.remove("reply_to");
+    forwarded.args.remove("require_peer_insight");
+    forwarded
+        .args
+        .insert("source_event_id".into(), json!(source));
+    record_answer(home, &forwarded, true)
+}
+
+fn record_answer(home: &HomeLayout, request: &DaemonRequest, via_chet: bool) -> OpResult {
     super::messaging::reject_chet_provenance(&request.args)?;
     require_user(request)?;
-    if let Some(key) = request
-        .args
-        .keys()
-        .find(|key| !ANSWER_ARGS.contains(&key.as_str()))
-    {
+    if let Some(key) = request.args.keys().find(|key| {
+        !(ANSWER_ARGS.contains(&key.as_str())
+            || (via_chet && key.as_str() == voice_notifications::ORIGIN_ARG))
+    }) {
         return Err(OpError::new(
             "invalid_args",
             format!("unexpected argument: {key}"),
         ));
     }
+    let author = if via_chet {
+        let author = super::messaging::effective_message_author(home, request, "user")?;
+        if author != actors::CHET_SERVICE_PRINCIPAL {
+            return Err(OpError::new(
+                "invalid_args",
+                "a structured reply is available to Chet in unattended mode",
+            ));
+        }
+        author
+    } else {
+        "user".to_owned()
+    };
     let group = super::messaging::load(home, request)?;
     let source_event_id = required_arg(request, "source_event_id")?;
     let client_id = string_arg(request, "client_id")
@@ -76,7 +104,7 @@ pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .ledger_path(&group.group_id)
         .map_err(OpError::io)?;
     let existing =
-        ledger::find_idempotent(&path, "chat.message", "user", &client_id).map_err(|error| {
+        ledger::find_idempotent(&path, "chat.message", &author, &client_id).map_err(|error| {
             OpError::new(
                 "idempotency_unavailable",
                 format!("cannot check client_id: {error}"),
@@ -85,7 +113,12 @@ pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let state = messaging_status::user_request(home, &group.group_id, &source_event_id);
     if let Some(existing) = existing {
         return match state {
-            Ok(Some(state)) if same_answer(&existing, &state.target, &answer) => {
+            Ok(Some(state))
+                if (!via_chet
+                    || (user_requests::is_chet_answer(&existing)
+                        && actors::has_current_chet_provenance(&group, &existing)))
+                    && same_answer(&existing, &state.target, &answer) =>
+            {
                 object(json!({"event": existing, "message_mode": "send", "duplicate": true}))
             }
             // The source was read, so the earlier message is another one.
@@ -149,6 +182,18 @@ pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
     }
     let target = state.target;
+    if via_chet
+        && !unattended::copies(
+            &unattended::load(home).map_err(OpError::io)?,
+            &group,
+            &target,
+        )
+    {
+        return Err(OpError::new(
+            "unattended_unavailable",
+            "this request is outside the current unattended period",
+        ));
+    }
     super::messaging::reject_retired_reply(home, &target)?;
     let service_reply = target.by == cccc_core::actors::CHET_SERVICE_PRINCIPAL;
     if service_reply
@@ -195,6 +240,9 @@ pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             admission.clone(),
         );
     }
+    if let Some(origin) = request.args.get(voice_notifications::ORIGIN_ARG) {
+        args.insert(voice_notifications::ORIGIN_ARG.into(), origin.clone());
+    }
     args.insert("message_mode".into(), json!("send"));
     args.insert("reply_to".into(), json!(target.id));
     args.insert("client_id".into(), json!(client_id));
@@ -216,8 +264,8 @@ pub(super) fn answer(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     super::messaging::send_answer(home, &forwarded, in_place, service_reply)
 }
 
-/// Whether `existing` is the reply this answer sends: the user's send to the
-/// Actor that asked, replying to `request`, in the form `answer` takes there.
+/// Whether `existing` is the reply this answer sends to the Actor that asked,
+/// replying to `request`, in the form `answer` takes there.
 /// A valid question is answered with a stored `answer`, which only this
 /// operation writes; any other request with the user's words alone.
 fn same_answer(existing: &Event, request: &Event, answer: &Answer) -> bool {

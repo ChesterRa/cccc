@@ -5,6 +5,7 @@ use super::{
     BatchSubmission, HeadlessStatus, Session, managed_reader, poisoned, provider_cli,
     run_managed_launch,
 };
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, json};
@@ -578,20 +579,24 @@ pub fn submit_batch(
         source_events,
         cancelled,
         &AtomicBool::new(false),
+        None,
     )
 }
 
 /// As [`submit_batch`], setting `started` right before input is handed to the
 /// managed session or written to its terminal. Input may have arrived even
 /// when the submission then reports `Deferred`.
-pub fn submit_batch_marked(
+pub(crate) fn submit_batch_marked(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
     source_events: &[Event],
     cancelled: &AtomicBool,
     started: &AtomicBool,
+    target: Option<&crate::session_owner::OwnedTarget>,
 ) -> BatchSubmission {
+    #[cfg(not(unix))]
+    let _ = target;
     #[cfg(unix)]
     if crate::session_owner::enabled(home) {
         let Some(text) = super::super::actor_delivery_render::render_batch_with_mail_context(
@@ -610,6 +615,7 @@ pub fn submit_batch_marked(
             &text,
             cancelled,
             started,
+            target,
         ) {
             Ok(result) => {
                 let reached_input = result
@@ -617,17 +623,8 @@ pub fn submit_batch_marked(
                     .and_then(serde_json::Value::as_bool)
                     .unwrap_or(true);
                 started.store(reached_input, Ordering::Release);
-                match result
-                    .get("outcome")
-                    .cloned()
-                    .and_then(|value| serde_json::from_value::<BatchSubmission>(value).ok())
-                {
-                    Some(BatchSubmission::Deferred) if reached_input => {
-                        BatchSubmission::Unconfirmed
-                    }
-                    Some(outcome) => outcome,
-                    None => BatchSubmission::Unconfirmed,
-                }
+                let outcome = BatchSubmission::from_owner_result(&result);
+                reconcile_owner_submission(outcome, reached_input)
             }
             Err(error)
                 if !started.load(Ordering::Acquire)
@@ -698,10 +695,12 @@ fn submit_admitted(
 
 /// The controller renders authorized input. The existing session alone admits
 /// it, consumes its startup prompt and owns the actual provider operation.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn submit_prepared(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
+    generation: &str,
     source_events: &[Event],
     delivery: &str,
     cancelled: &AtomicBool,
@@ -710,7 +709,10 @@ pub(crate) fn submit_prepared(
     let Some(item) = lookup(&(group.group_id.clone(), actor.id.clone())) else {
         return BatchSubmission::Deferred;
     };
-    if !item.running() || cancelled.load(Ordering::Acquire) {
+    if item.managed.generation() != generation
+        || !item.running()
+        || cancelled.load(Ordering::Acquire)
+    {
         return BatchSubmission::Deferred;
     }
     item.admit_batch(source_events, || {
@@ -793,7 +795,7 @@ fn submit_prepared_admitted(
                 }
             }) {
                 Ok(_) => {
-                    outcome = BatchSubmission::Accepted;
+                    outcome = BatchSubmission::Accepted(Some(DeliveryEvidence::ChannelAccepted));
                     true
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -840,40 +842,31 @@ fn submit_prepared_admitted(
                 }
             }
         });
-        if outcome == BatchSubmission::Accepted
+        if outcome.is_accepted()
             && let Some(notice) = instruction_notice.take()
         {
             notice.delivered();
         }
         return outcome;
     }
-    if let Err(error) = item.reattach_viewer() {
-        tracing::warn!(
-            %error,
-            group_id = %group.group_id,
-            actor_id = %actor.id,
-            "failed to re-attach managed Actor viewer for delivery"
-        );
-        return BatchSubmission::Deferred;
-    }
-    if item.has_terminal() {
+    let viewer = match item.delivery_viewer() {
+        Ok(viewer) => viewer,
+        Err(error) => {
+            tracing::warn!(%error, group_id = %group.group_id, actor_id = %actor.id,
+                "failed to re-attach managed Actor viewer for delivery");
+            return BatchSubmission::Deferred;
+        }
+    };
+    if let Some(viewer) = viewer {
         let launched = item.launched(actor);
         let mut outcome = BatchSubmission::Deferred;
         let accepted = submit_with_startup_prompt(&item.startup_prompt, &delivery, |prepared| {
             if launched.runtime == ActorRuntime::Kilo {
-                outcome = submit_kilo_input(item, &launched, prepared, cancelled, started);
+                outcome = submit_kilo_input(item, &viewer, &launched, prepared, cancelled, started);
             } else {
-                started.store(true, Ordering::Release);
-                if super::super::actor_delivery::submit_terminal_text(
-                    &group.group_id,
-                    &launched,
-                    prepared,
-                    cancelled,
-                ) {
-                    outcome = BatchSubmission::Accepted;
-                }
+                outcome = submit_managed_viewer(&viewer, &launched, prepared, cancelled, started);
             }
-            outcome == BatchSubmission::Accepted
+            outcome.is_accepted()
         });
         if accepted && let Some(notice) = instruction_notice.take() {
             notice.delivered();
@@ -903,19 +896,83 @@ fn submit_with_startup_prompt(
     accepted
 }
 
-/// Kilo enables terminal paste before its composer can receive a message.
-/// The bound session's user-message event can confirm a write independently
-/// of when the provider starts work.
-fn submit_kilo_input(
-    item: &Session,
+/// Reconcile a managed terminal write using exact byte evidence:
+/// - `Accepted`: full payload and submit keys written.
+/// - `NotWritten`: proven 0 bytes written; resets `started` so neither non-owner
+///   nor Unix session-owner treats a pre-write deferral as unconfirmed.
+/// - `Uncertain`: at least 1 byte written before failure/cancellation; keeps
+///   `started = true` and settles `Unconfirmed` so it is never auto-retried.
+pub(super) fn classify_terminal_handoff(
+    started: &AtomicBool,
+    submit: impl FnOnce() -> cccc_runtime::PtyHandoff,
+) -> BatchSubmission {
+    started.store(true, Ordering::Release);
+    match submit() {
+        cccc_runtime::PtyHandoff::Accepted => {
+            BatchSubmission::Accepted(Some(DeliveryEvidence::TerminalWritten))
+        }
+        cccc_runtime::PtyHandoff::NotWritten(_) => {
+            started.store(false, Ordering::Release);
+            BatchSubmission::Deferred
+        }
+        cccc_runtime::PtyHandoff::Uncertain(_) => BatchSubmission::Unconfirmed,
+    }
+}
+
+#[cfg(any(unix, test))]
+pub(super) fn reconcile_owner_submission(
+    outcome: Option<BatchSubmission>,
+    reached_input: bool,
+) -> BatchSubmission {
+    match outcome {
+        Some(BatchSubmission::Deferred) if reached_input => BatchSubmission::Unconfirmed,
+        Some(outcome) => outcome,
+        None => BatchSubmission::Unconfirmed,
+    }
+}
+
+#[cfg(test)]
+pub(super) fn submit_managed_terminal_input(
+    group_id: &str,
     actor: &Actor,
     text: &str,
     cancelled: &AtomicBool,
     started: &AtomicBool,
 ) -> BatchSubmission {
-    let Ok(viewer) = crate::session_owner::runtime::status(&item.group_id, &actor.id) else {
+    let Ok(viewer) = crate::session_owner::runtime::status(group_id, &actor.id) else {
         return BatchSubmission::Deferred;
     };
+    submit_managed_viewer(&viewer, actor, text, cancelled, started)
+}
+
+fn submit_managed_viewer(
+    viewer: &cccc_runtime::SessionStatus,
+    actor: &Actor,
+    text: &str,
+    cancelled: &AtomicBool,
+    started: &AtomicBool,
+) -> BatchSubmission {
+    if !viewer.running {
+        return BatchSubmission::Deferred;
+    }
+    classify_terminal_handoff(started, || {
+        super::super::actor_delivery::submit_terminal_text_for_session(
+            viewer, actor, text, cancelled,
+        )
+    })
+}
+
+/// Kilo enables terminal paste before its composer can receive a message.
+/// The bound session's user-message event can confirm a write independently
+/// of when the provider starts work.
+fn submit_kilo_input(
+    item: &Session,
+    viewer: &cccc_runtime::SessionStatus,
+    actor: &Actor,
+    text: &str,
+    cancelled: &AtomicBool,
+    started: &AtomicBool,
+) -> BatchSubmission {
     let Some(pid) = viewer.pid.filter(|_| viewer.running) else {
         return BatchSubmission::Deferred;
     };
@@ -927,7 +984,7 @@ fn submit_kilo_input(
         None
     } else {
         if !cccc_runtime::wait_for_new_kilo_composer(
-            &viewer,
+            viewer,
             std::time::Duration::from_secs(15),
             cancelled,
         )
@@ -942,7 +999,7 @@ fn submit_kilo_input(
     };
     started.store(true, Ordering::Release);
     let write = super::super::actor_delivery::submit_viewer_text(
-        &viewer,
+        viewer,
         receipt.is_some(),
         actor,
         text,
@@ -954,7 +1011,9 @@ fn submit_kilo_input(
     }
     let Some(receipt) = receipt else {
         return match write {
-            cccc_runtime::PtyHandoff::Accepted => BatchSubmission::Accepted,
+            cccc_runtime::PtyHandoff::Accepted => {
+                BatchSubmission::Accepted(Some(DeliveryEvidence::TerminalWritten))
+            }
             _ => BatchSubmission::Unconfirmed,
         };
     };
@@ -969,7 +1028,7 @@ fn submit_kilo_input(
     {
         viewer.confirmed_input = Some(generation);
     }
-    BatchSubmission::Accepted
+    BatchSubmission::Accepted(Some(DeliveryEvidence::ChannelAccepted))
 }
 
 #[cfg(test)]

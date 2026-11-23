@@ -1,4 +1,4 @@
-use super::deliveries::DeliveryState;
+use super::deliveries::{DeliveryState, PendingFilter};
 use super::notices::NoticeState;
 use super::*;
 use crate::ledger::snapshot::{Location, Snapshot, Source};
@@ -497,7 +497,7 @@ pub(super) fn pending_deliveries(
     group: &GroupDoc,
     actor: &str,
     limit: usize,
-    only_unclaimed: bool,
+    filter: PendingFilter,
     bounds: Option<(&str, &str)>,
 ) -> io::Result<Vec<Event>> {
     let state = load(home, &group.group_id)?;
@@ -530,12 +530,12 @@ pub(super) fn pending_deliveries(
                 (Some(start), Some(end)) if start <= end => start..=end,
                 _ => {
                     tracing::warn!(group_id = %group.group_id, %actor, %first, %last,
-                        "delivery range unavailable; checking all unclaimed sources for this member");
+                        "delivery range unavailable; checking all eligible sources for this member");
                     0..=usize::MAX
                 }
             };
         }
-        snapshot.events(&deliveries.pending(group, actor, limit, only_unclaimed, range))
+        snapshot.events(&deliveries.pending(group, actor, limit, filter, range))
     })
 }
 pub(super) fn delivery_retry_closed(
@@ -547,6 +547,17 @@ pub(super) fn delivery_retry_closed(
     let state = load(home, &group.group_id)?;
     with_projection(home, group, &[], &state, |projection, _| {
         Ok(projection.deliveries.retry_closed(actor, source))
+    })
+}
+pub(super) fn delivery_is_unsubmitted(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    source: &str,
+) -> io::Result<bool> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, _| {
+        Ok(projection.deliveries.is_unsubmitted(actor, source))
     })
 }
 pub(super) fn delivery_states(
@@ -566,6 +577,21 @@ pub(super) fn delivery_states(
                     .map(|state| (actor.clone(), state))
             })
             .collect())
+    })
+}
+
+pub(super) fn latest_delivery_receipt(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    source: &str,
+) -> io::Result<Option<Event>> {
+    let state = load(home, &group.group_id)?;
+    with_projection(home, group, &[], &state, |projection, snapshot| {
+        let Some(location) = projection.deliveries.latest_location(actor, source) else {
+            return Ok(None);
+        };
+        Ok(snapshot.events(&[location])?.pop())
     })
 }
 

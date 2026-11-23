@@ -1,6 +1,81 @@
-import type { ConnectDeliveryStatus, LedgerEvent, ObligationStatus } from "../types";
+import type {
+  ConnectDeliveryStatus,
+  LedgerEvent,
+  LedgerEventStatusPayload,
+  ObligationStatus,
+  UserReplyRequestStatus,
+} from "../types";
 
 const CROSS_GROUP_RECEIPT_KIND = "chat.cross_group_receipt";
+
+function keepLiveFields<T extends object>(
+  snapshot: T | undefined,
+  before: T | undefined,
+  live: T | undefined,
+): T | undefined {
+  if (!live) return snapshot;
+  const next = { ...(snapshot ?? live) };
+  for (const key of Object.keys(live) as (keyof T)[])
+    if (live[key] !== before?.[key]) next[key] = live[key];
+  return next;
+}
+
+/** Keep status fields changed by newer live events while a ledger snapshot was in flight. */
+export function keepLiveReceipts(
+  snapshot: LedgerEventStatusPayload,
+  before: LedgerEvent,
+  live: LedgerEvent,
+): LedgerEventStatusPayload {
+  return {
+    ...snapshot,
+    user_request:
+      snapshot.user_request &&
+      keepLiveFields(snapshot.user_request, before._user_request, live._user_request),
+    connect_delivery: keepLiveFields(
+      snapshot.connect_delivery,
+      before._connect_delivery,
+      live._connect_delivery,
+    ),
+    connect_cancellation: keepLiveFields(
+      snapshot.connect_cancellation,
+      before._connect_cancellation,
+      live._connect_cancellation,
+    ),
+    obligation_status:
+      snapshot.obligation_status &&
+      Object.fromEntries(
+        Object.entries(snapshot.obligation_status).map(([actor, status]) => {
+          const prior = before._obligation_status?.[actor];
+          const current = live._obligation_status?.[actor];
+          const next = keepLiveFields(status, prior, current)!;
+          if (
+            current &&
+            (current.delivery_state !== prior?.delivery_state ||
+              current.delivery_reason !== prior?.delivery_reason ||
+              current.delivery_evidence !== prior?.delivery_evidence ||
+              current.waiting_reason !== prior?.waiting_reason)
+          ) {
+            next.delivery_state = current.delivery_state;
+            next.delivery_reason = current.delivery_reason;
+            next.delivery_evidence = current.delivery_evidence;
+            next.waiting_reason = current.waiting_reason;
+          }
+          if (
+            current &&
+            (current.replied !== prior?.replied || current.cancelled !== prior?.cancelled)
+          ) {
+            next.replied = current.replied;
+            next.cancelled = current.cancelled;
+            if (next.replied || next.cancelled) next.waiting_reason = undefined;
+          }
+          if (live._read_status?.[actor] === true && before._read_status?.[actor] !== true) {
+            next.waiting_reason = undefined;
+          }
+          return [actor, next];
+        }),
+      ),
+  };
+}
 
 export function mergeReadStatus(
   incoming?: Record<string, boolean>,
@@ -26,11 +101,31 @@ export function mergeObligationStatus(
       return [
         actor,
         previous && !status.replied && !status.cancelled && (previous.replied || previous.cancelled)
-          ? { ...status, replied: previous.replied, cancelled: previous.cancelled }
+          ? {
+              ...status,
+              replied: previous.replied,
+              cancelled: previous.cancelled,
+              waiting_reason: undefined,
+            }
           : status,
       ];
     }),
   );
+}
+
+export function mergeUserRequestStatus(
+  incoming: UserReplyRequestStatus | undefined,
+  obligations: Record<string, ObligationStatus> | undefined,
+  existing: UserReplyRequestStatus | undefined,
+): UserReplyRequestStatus | undefined {
+  if (!obligations) return incoming ?? existing;
+  const user = obligations.user;
+  // Keep the closing reply with the completed obligation when a stale pending
+  // snapshot arrives. A terminal snapshot owns the outcome and its author.
+  if (incoming && user && !user.replied && !user.cancelled && existing?.reply_event_id) {
+    return { ...incoming, reply_event_id: existing.reply_event_id, reply_by: existing.reply_by };
+  }
+  return incoming;
 }
 
 export function mergeConnectDelivery(
@@ -56,9 +151,11 @@ export function mergeEventWithExistingStatus(
       incoming._obligation_status,
       existing._obligation_status,
     ),
-    _user_request:
-      incoming._user_request ??
-      (incoming._obligation_status === undefined ? existing._user_request : undefined),
+    _user_request: mergeUserRequestStatus(
+      incoming._user_request,
+      incoming._obligation_status,
+      existing._user_request,
+    ),
     _connect_delivery: mergeConnectDelivery(incoming._connect_delivery, existing._connect_delivery),
     _connect_cancellation: mergeConnectDelivery(
       incoming._connect_cancellation,

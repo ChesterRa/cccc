@@ -1,4 +1,5 @@
 use crate::session_owner::runtime as cccc_runtime;
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_contracts::{Actor, ActorRuntime, GroupState};
 use cccc_core::GroupStore;
 use cccc_runtime::PtyHandoff;
@@ -7,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::ops::actor_delivery::{
-    CompletedDelivery, DeliveryJob, complete_job, finish_job, tell_sender,
+    CompletedDelivery, DeliveryJob, append_job_state, complete_job, finish_job, tell_sender,
 };
 use crate::ops::actor_runtime;
 use crate::ops::deepseek_runtime::TurnDelivery;
@@ -102,7 +103,7 @@ pub(super) fn process_batch_tracked(
     else {
         return BatchOutcome::Retry;
     };
-    if !current_actor.enabled {
+    if !current_actor.enabled || current_actor.created_at != job.actor.created_at {
         return BatchOutcome::Retry;
     }
     // A job queued from an older snapshot can outlive a switch's fence. Until
@@ -144,8 +145,34 @@ pub(super) fn process_batch_tracked(
     {
         return outcome;
     }
+    let target = match crate::session_owner::running_target(
+        &job.home,
+        &current_group.group_id,
+        &current_actor,
+    ) {
+        Ok(target) => target,
+        Err(_) => return BatchOutcome::Retry,
+    };
+    if let Some(target) = &target
+        && target
+            .observe(|| {
+                actor_runtime::confirmation_pause_applies(
+                    &job.home,
+                    &current_group.group_id,
+                    &current_actor,
+                )
+            })
+            .unwrap_or(true)
+    {
+        return BatchOutcome::Retry;
+    }
     // What runs now takes the work, whatever was saved for the next launch.
-    let owner = match actor_runtime::delivery_owner(&current_group.group_id, &current_actor.id) {
+    let observe_owner =
+        || actor_runtime::delivery_owner(&current_group.group_id, &current_actor.id);
+    let owner = match target
+        .as_ref()
+        .map_or_else(observe_owner, |target| target.observe(observe_owner))
+    {
         Ok(owner) => owner,
         Err(error) => {
             tracing::warn!(
@@ -167,7 +194,7 @@ pub(super) fn process_batch_tracked(
     );
     if jobs.iter().any(|job| job.transport != transport) {
         return_to_queue(jobs, attempted);
-        super::actor_delivery::dispatch_unread(&job.home, &current_group, &current_actor.id);
+        refill_released_jobs(&job.home, &current_group, &current_actor);
         return BatchOutcome::Delivered;
     }
     if !refresh_claims(jobs, &current_group, &current_actor) {
@@ -185,10 +212,11 @@ pub(super) fn process_batch_tracked(
             cancelled,
             attempted,
             wakes,
+            target.as_ref(),
         );
     }
     let jobs = jobs.as_slice();
-    if crate::ops::local_headless::uses_managed_delivery(&current_group.group_id, &current_actor) {
+    if transport == "managed_session" {
         return process_managed_batch(
             jobs,
             &job.home,
@@ -197,9 +225,21 @@ pub(super) fn process_batch_tracked(
             cancelled,
             attempted,
             wakes,
+            target.as_ref(),
         );
     }
-    let status = match ensure_running(&job.home, &current_group, &current_actor, wakes) {
+    let observed = if let Some(target) = &target {
+        target.observe(|| {
+            Ok(
+                cccc_runtime::status(&current_group.group_id, &current_actor.id)
+                    .ok()
+                    .filter(|status| status.running),
+            )
+        })
+    } else {
+        ensure_running(&job.home, &current_group, &current_actor, wakes)
+    };
+    let status = match observed {
         Ok(Some(status)) => status,
         Ok(None) => return BatchOutcome::Retry,
         Err(reason) => return BatchOutcome::Terminal(reason),
@@ -218,6 +258,7 @@ pub(super) fn process_batch_tracked(
             &status,
             cancelled,
             attempted,
+            target.as_ref(),
         );
     }
     let first_delivery = *preamble_session != status.started_at;
@@ -305,7 +346,7 @@ pub(super) fn process_batch_tracked(
                 pending.delivered();
             }
             preamble_session.clone_from(&status.started_at);
-            finish_jobs(jobs);
+            finish_jobs(jobs, Some(DeliveryEvidence::TerminalWritten));
             BatchOutcome::Delivered
         }
         PtyHandoff::NotWritten(_) => {
@@ -336,6 +377,7 @@ fn process_owned_pty_batch(
     status: &cccc_runtime::SessionStatus,
     cancelled: &AtomicBool,
     attempted: &mut HashSet<String>,
+    target: Option<&crate::session_owner::OwnedTarget>,
 ) -> BatchOutcome {
     let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
     let Some(mut payload) = super::actor_delivery_render::render_batch_with_mail_context(
@@ -354,8 +396,9 @@ fn process_owned_pty_batch(
         payload.push_str(&format!("\n\n{}", notice.delivery_line()));
     }
     let started = AtomicBool::new(false);
-    let result =
-        crate::session_owner::submit(home, group, actor, &events, &payload, cancelled, &started);
+    let result = crate::session_owner::submit(
+        home, group, actor, &events, &payload, cancelled, &started, target,
+    );
     if started.load(Ordering::Acquire) {
         attempted.extend(events.iter().map(|event| event.id.clone()));
     }
@@ -366,7 +409,10 @@ fn process_owned_pty_batch(
             if let Some(notice) = instructions {
                 notice.delivered();
             }
-            finish_jobs(jobs);
+            finish_jobs(
+                jobs,
+                DeliveryEvidence::from_json(&result["delivery_evidence"]),
+            );
             BatchOutcome::Delivered
         }
         Ok(result)
@@ -419,6 +465,14 @@ fn return_to_queue(jobs: &mut Vec<DeliveryJob>, attempted: &HashSet<String>) {
                 ),
             );
         }
+    }
+}
+
+fn refill_released_jobs(home: &cccc_core::HomeLayout, group: &cccc_core::GroupDoc, actor: &Actor) {
+    if crate::session_owner::enabled(home) && actor.external_session_id.is_empty() {
+        super::actor_delivery::record_member_catchup(group, actor);
+    } else {
+        super::actor_delivery::dispatch_unread(home, group, &actor.id);
     }
 }
 
@@ -582,7 +636,7 @@ fn process_external_batch(
                 if includes_preamble {
                     complete_preamble.given();
                 }
-                finish_job(job, CompletedDelivery::Accepted);
+                complete_job(job, Some(DeliveryEvidence::ChannelAccepted));
                 *preamble_session = marker;
                 if let Some(pending) = instructions {
                     pending.delivered();
@@ -655,19 +709,14 @@ fn refresh_claims(jobs: &mut Vec<DeliveryJob>, group: &cccc_core::GroupDoc, acto
             continue;
         }
         job.claimed = false;
-        match super::runtime_delivery::claim(
-            &job.home,
-            group,
-            actor,
-            &job.event.id,
-            job.transport,
-            false,
-        ) {
-            Ok(super::runtime_delivery::ClaimResult::Claimed) => {
+        use super::runtime_delivery::{ClaimResult, claim_current_attempt};
+        let result = claim_current_attempt(&job.home, group, actor, &job.event.id, job.transport);
+        match result {
+            Ok(ClaimResult::Claimed) => {
                 job.claimed = true;
                 index += 1;
             }
-            Ok(super::runtime_delivery::ClaimResult::Terminal(_)) => {
+            Ok(ClaimResult::Terminal(_)) => {
                 super::actor_delivery::release_in_flight(job);
                 jobs.remove(index);
             }
@@ -709,21 +758,22 @@ fn settle_deepseek_attempts(
         && attempted.contains(&job.event.id)
     {
         use crate::session_owner::RetainedDelivery;
-        let fact = crate::session_owner::observe_delivery(
+        let fact = crate::session_owner::observe_attempt(
             home,
             &group.group_id,
             &actor.id,
             &actor.created_at,
             &job.event.id,
+            false,
         );
         match fact {
             Ok(RetainedDelivery::Pending) => return Some(BatchOutcome::Retry),
             Ok(RetainedDelivery::Failed(reason)) => return Some(BatchOutcome::Rejected(reason)),
-            Ok(RetainedDelivery::Accepted) => complete_job(&jobs.remove(0)),
+            Ok(RetainedDelivery::Accepted(evidence)) => complete_job(&jobs.remove(0), evidence),
             Ok(RetainedDelivery::Unsubmitted) => {
                 attempted.remove(&job.event.id);
                 return_to_queue(jobs, attempted);
-                super::actor_delivery::dispatch_unread(home, group, &actor.id);
+                refill_released_jobs(home, group, actor);
                 return Some(BatchOutcome::Delivered);
             }
             _ => {
@@ -745,6 +795,7 @@ fn settle_deepseek_attempts(
 }
 
 /// Delivered jobs leave `jobs`, so a rejected batch starts with the failed turn.
+#[allow(clippy::too_many_arguments)]
 fn process_deepseek_batch(
     jobs: &mut Vec<DeliveryJob>,
     home: &cccc_core::HomeLayout,
@@ -753,11 +804,15 @@ fn process_deepseek_batch(
     cancelled: &AtomicBool,
     attempted: &mut HashSet<String>,
     wakes: &mut WakeBudget,
+    target: Option<&crate::session_owner::OwnedTarget>,
 ) -> BatchOutcome {
     if let Some(outcome) = settle_deepseek_attempts(jobs, home, group, actor, attempted) {
         return outcome;
     }
-    let running = match push_owner_running(&group.group_id, &actor.id, true) {
+    let running = match target.map_or_else(
+        || push_owner_running(&group.group_id, &actor.id, true),
+        |_| Ok(true),
+    ) {
         Ok(running) => running,
         Err(_) => return BatchOutcome::Retry,
     };
@@ -791,13 +846,15 @@ fn process_deepseek_batch(
         }
         let started = AtomicBool::new(false);
         let delivery = crate::ops::deepseek_runtime::deliver_marked(
-            home, group, actor, &job.event, cancelled, &started,
+            home, group, actor, &job.event, cancelled, &started, target,
         );
         if started.load(Ordering::Acquire) {
             attempted.insert(job.event.id.clone());
         }
         match delivery {
-            TurnDelivery::Completed => complete_job(&jobs.remove(0)),
+            TurnDelivery::Completed => {
+                complete_job(&jobs.remove(0), Some(DeliveryEvidence::ChannelAccepted));
+            }
             TurnDelivery::Failed(reason) => return BatchOutcome::Rejected(reason),
             TurnDelivery::Incomplete => return BatchOutcome::Retry,
         }
@@ -805,6 +862,7 @@ fn process_deepseek_batch(
     BatchOutcome::Delivered
 }
 
+#[allow(clippy::too_many_arguments)]
 fn process_managed_batch(
     jobs: &[DeliveryJob],
     home: &cccc_core::HomeLayout,
@@ -813,8 +871,12 @@ fn process_managed_batch(
     cancelled: &AtomicBool,
     attempted: &mut HashSet<String>,
     wakes: &mut WakeBudget,
+    target: Option<&crate::session_owner::OwnedTarget>,
 ) -> BatchOutcome {
-    let running = match push_owner_running(&group.group_id, &actor.id, false) {
+    let running = match target.map_or_else(
+        || push_owner_running(&group.group_id, &actor.id, false),
+        |_| Ok(true),
+    ) {
         Ok(running) => running,
         Err(_) => return BatchOutcome::Retry,
     };
@@ -869,12 +931,12 @@ fn process_managed_batch(
     let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
     let started = AtomicBool::new(false);
     let outcome = crate::ops::local_headless::submit_batch_marked(
-        home, group, actor, &events, cancelled, &started,
+        home, group, actor, &events, cancelled, &started, target,
     );
     if started.load(Ordering::Acquire) {
         attempted.extend(jobs.iter().map(|job| job.event.id.clone()));
     }
-    settle_managed_batch(jobs, home, group, actor, outcome)
+    settle_managed_batch(jobs, outcome)
 }
 
 /// Withdraw stale notices, preserving attempted DeepSeek input for settlement.
@@ -904,13 +966,12 @@ fn withdraw_stale_mail_notices(
 /// the one outcome that enters automatic retry.
 fn settle_managed_batch(
     jobs: &[DeliveryJob],
-    home: &cccc_core::HomeLayout,
-    group: &cccc_core::GroupDoc,
-    actor: &Actor,
     outcome: crate::ops::local_headless::BatchSubmission,
 ) -> BatchOutcome {
     match outcome {
-        crate::ops::local_headless::BatchSubmission::Accepted => finish_jobs(jobs),
+        crate::ops::local_headless::BatchSubmission::Accepted(evidence) => {
+            finish_jobs(jobs, evidence);
+        }
         crate::ops::local_headless::BatchSubmission::Deferred => return BatchOutcome::Retry,
         crate::ops::local_headless::BatchSubmission::Withheld => {
             super::actor_delivery::withdraw_jobs(
@@ -921,13 +982,8 @@ fn settle_managed_batch(
         crate::ops::local_headless::BatchSubmission::Unconfirmed => {
             let reason = "Managed input receipt was not confirmed; inspect the Actor before an explicit retry";
             for job in jobs {
-                if let Err(error) = crate::ops::runtime_delivery::append_state(
-                    home,
-                    &group.group_id,
-                    &actor.id,
-                    &actor.created_at,
-                    &job.event.id,
-                    job.transport,
+                if let Err(error) = append_job_state(
+                    job,
                     crate::ops::runtime_delivery::DeliveryOutcome::Ambiguous(reason),
                 ) {
                     // The original durable claim remains unretryable and is
@@ -947,7 +1003,17 @@ fn settle_managed_batch(
 /// and DeepSeek sessions take their messages one turn at a time.
 pub(super) fn merges_batches(job: &DeliveryJob) -> bool {
     use actor_runtime::{OwnerIdentity, RegisteredOwner};
-    let actor = match actor_runtime::delivery_owner(&job.group.group_id, &job.actor.id) {
+    if !job.actor.external_session_id.is_empty() {
+        return false;
+    }
+    let observe = || actor_runtime::delivery_owner(&job.group.group_id, &job.actor.id);
+    let owner = crate::session_owner::running_target(&job.home, &job.group.group_id, &job.actor)
+        .and_then(|target| {
+            target
+                .as_ref()
+                .map_or_else(observe, |target| target.observe(observe))
+        });
+    let actor = match owner {
         Ok(None) => job.actor.clone(),
         Ok(Some(RegisteredOwner {
             identity: OwnerIdentity::Pty { launch, .. },
@@ -960,9 +1026,9 @@ pub(super) fn merges_batches(job: &DeliveryJob) -> bool {
         && !crate::ops::local_headless::supports(&actor)
 }
 
-fn finish_jobs(jobs: &[DeliveryJob]) {
+fn finish_jobs(jobs: &[DeliveryJob], evidence: Option<DeliveryEvidence>) {
     for job in jobs {
-        complete_job(job);
+        complete_job(job, evidence);
     }
 }
 
@@ -1417,13 +1483,7 @@ mod tests {
 
         let held = notice("mail_notice");
         assert_eq!(
-            settle_managed_batch(
-                std::slice::from_ref(&held),
-                &home,
-                &group,
-                &actor,
-                BatchSubmission::Withheld
-            ),
+            settle_managed_batch(std::slice::from_ref(&held), BatchSubmission::Withheld),
             BatchOutcome::Delivered,
             "a withheld notice leaves the retry lane"
         );
@@ -1431,13 +1491,7 @@ mod tests {
 
         let deferred = notice("mail_notice");
         assert_eq!(
-            settle_managed_batch(
-                std::slice::from_ref(&deferred),
-                &home,
-                &group,
-                &actor,
-                BatchSubmission::Deferred
-            ),
+            settle_managed_batch(std::slice::from_ref(&deferred), BatchSubmission::Deferred),
             BatchOutcome::Retry,
             "Deferred still retries"
         );

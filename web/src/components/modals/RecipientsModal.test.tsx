@@ -6,6 +6,8 @@ import { beforeAll, describe, expect, it } from "vite-plus/test";
 import chatEn from "../../i18n/locales/en/chat.json";
 import commonEn from "../../i18n/locales/en/common.json";
 import modalsEn from "../../i18n/locales/en/modals.json";
+import modalsJa from "../../i18n/locales/ja/modals.json";
+import modalsZh from "../../i18n/locales/zh/modals.json";
 import { RecipientsModal, type RecipientEntry, type RecipientsModalProps } from "./RecipientsModal";
 
 const i18n = createInstance();
@@ -192,4 +194,115 @@ it("shows Chet by name with only its reply state, and nothing to deliver", () =>
   // Chet takes messages in its own panel; the Group cannot deliver to it or report delivery.
   expect(markup).not.toContain(modalsEn.recipients.sendNow);
   expect(markup).not.toContain(modalsEn.recipients.notDelivered);
+});
+
+describe("delivery evidence and waiting reasons", () => {
+  it("distinguishes terminal_written, channel_accepted, and legacy accepted without guessing", () => {
+    const markup = renderModal(
+      [
+        entry({
+          id: "pty",
+          cleared: true,
+          deliveryState: "accepted",
+          deliveryEvidence: "terminal_written",
+        }),
+        entry({
+          id: "channel",
+          cleared: true,
+          deliveryState: "accepted",
+          deliveryEvidence: "channel_accepted",
+        }),
+        entry({ id: "legacy", cleared: true, deliveryState: "accepted" }),
+      ],
+      { statusKind: "delivery", messageMode: "send" },
+    );
+
+    expect(statusCells(markup)).toEqual([
+      ["img", "Written to terminal (execution unconfirmed)", "✓", true],
+      ["img", "Accepted by the runtime", "✓", true],
+      ["img", "Sent to runtime", "✓", true],
+    ]);
+    expect(markup).not.toContain("Send now");
+    expect(markup).not.toContain("Retry");
+  });
+
+  it("shows waiting reasons for unsubmitted or paused recipients instead of terminal failure", () => {
+    const markup = renderModal(
+      [
+        entry({ id: "a", waitingReason: "group_paused" }),
+        entry({ id: "b", waitingReason: "group_stopped" }),
+        entry({ id: "c", waitingReason: "member_disabled" }),
+        entry({ id: "d", waitingReason: "runtime_switch" }),
+        entry({
+          id: "e",
+          deliveryState: "failed",
+          waitingReason: "not_submitted",
+          deliveryReason: "held while switching",
+        }),
+        entry({ id: "f", waitingReason: "future_reason" }),
+        entry({ id: "g", waitingReason: "toString" }),
+      ],
+      { statusKind: "delivery", messageMode: "send" },
+    );
+
+    expect(statusCells(markup)).toEqual([
+      ["img", "Waiting · Group paused", "○", false],
+      ["img", "Waiting · Group stopped", "○", false],
+      ["img", "Waiting · Member disabled", "○", false],
+      ["img", "Waiting · Switching runtime", "○", false],
+      ["img", "Waiting · Not submitted yet", "○", false],
+      ["img", "Waiting", "○", false],
+      ["img", "Waiting", "○", false],
+    ]);
+    expect(markup).toContain("held while switching");
+    expect(markup).not.toContain("Delivery failed");
+    expect(markup).not.toContain("Retry");
+    expect(markup).toContain("Send now");
+
+    const disabledOnly = renderModal(
+      [
+        entry({ id: "c", waitingReason: "member_disabled" }),
+        entry({ id: "h", deliveryState: "failed", waitingReason: "member_disabled" }),
+      ],
+      { statusKind: "delivery", messageMode: "send" },
+    );
+    expect(disabledOnly).toContain("Waiting · Member disabled");
+    expect(disabledOnly).not.toContain("Send now");
+    expect(disabledOnly).not.toContain("Retry");
+
+    // Read Mail does not show a waiting or failure label even if a stale delivery state lingers.
+    const readMail = renderModal(
+      [
+        entry({
+          id: "m",
+          cleared: true,
+          read: true,
+          deliveryState: "failed",
+          waitingReason: "not_submitted",
+        }),
+      ],
+      { statusKind: "read", messageMode: "mail" },
+    );
+    expect(readMail).not.toContain("Waiting");
+    expect(readMail).not.toContain("Delivery failed");
+    expect(readMail).toContain("In Inbox");
+  });
+
+  it("keeps en, zh, and ja delivery evidence and waiting reason keys in parity", () => {
+    const waitingKeys = [
+      "groupPaused",
+      "groupStopped",
+      "memberDisabled",
+      "runtimeSwitch",
+      "notSubmitted",
+    ] as const;
+    for (const locale of [modalsEn, modalsZh, modalsJa]) {
+      expect(locale.recipients.deliveryTerminalWritten).toBeTruthy();
+      expect(locale.recipients.deliveryChannelAccepted).toBeTruthy();
+      expect(locale.recipients.deliveryWaiting).toBeTruthy();
+      for (const key of waitingKeys) {
+        expect(locale.recipients.waitingReason[key]).toBeTruthy();
+      }
+    }
+  });
 });

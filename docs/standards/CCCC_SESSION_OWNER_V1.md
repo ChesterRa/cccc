@@ -96,6 +96,17 @@ owner before admitting its first member or browser. If replacing the program
 at its launch path starts another build, the controller reaps that unused child
 and reports that CCCC must restart before a new launch.
 
+After taking the exclusive home lock, a controller seals each retained owner's
+previous control epoch and checks every registration before establishing which
+owner holds a member. Conflicting registrations and unavailable owners prevent
+takeover. The controller reserves the member and original operation identity
+before writing a Start frame. An unresolved Start cannot establish a routing
+target. The controller resolves that reservation after fenced non-admission or
+after the same owner proves the completed operation and its current registration.
+Maintenance may do this for the original operation without retrying the launch.
+A failed Start that still holds a registration remains occupied after its
+completed operation is acknowledged.
+
 Once a replacement factory is ready, non-default owners may retire when their
 last member and execution fact have been released. For an owner still accepting
 Start, Retire MUST check both an empty member backend and no unsettled operations
@@ -188,6 +199,11 @@ the actual terminal execution result; it does not create a second Inbox or
 durable input journal. A daemon reconnects by member/source references and
 queries facts instead of reconstructing a lost sequence or resending input.
 
+An accepted Submit result may carry `delivery_evidence` alongside the existing
+outcome. It records the handoff boundary defined in CCCS §6.5, not provider
+execution. A daemon can settle an older result without evidence as generic
+acceptance.
+
 Query returns one of:
 
 | Result | Meaning |
@@ -214,6 +230,13 @@ retry journal or automatic replay policy belongs to the owner. Between attempts,
 the visible delivery state can briefly be Failed; the in-memory retry budget
 does not survive a daemon restart during that backoff.
 
+When recovery prepares a retry before taking the Group write permit, it must
+recheck the exact ledger receipt before claiming the source. A receipt from an
+earlier attempt does not authorize another attempt against a later claim. The
+periodic maintenance pass observes owners outside the Group write permit and
+revalidates identities and ledger state before applying the results. One owner's
+unavailability must not erase observations already obtained from another owner.
+
 Ordinary operation retention is bounded to 4,096 slots and 32 MiB of admission
 reservations/results. Completed records release the input reservation in favor
 of their retained result/reference size. Closed-epoch metadata is bounded to
@@ -232,10 +255,10 @@ replay authority.
 
 ## Observations, exit and recovery
 
-Finite synchronous list projections may explicitly share one snapshot per
-owner instance within that request. Outside that scope, observations read the
-owner directly. Writes invalidate the current request's projection. Wait/follow
-loops and delivery decisions must not retain a scoped or time-based cache.
+Finite synchronous list projections and the read phase of a lifecycle request
+may share one snapshot per owner instance. Outside that scope, observations
+read the owner directly. Writes invalidate the current request's projection.
+Wait/follow loops and delivery decisions must not retain a scoped or time-based cache.
 
 A member getter failure is retained with its identity as a private per-member
 observation error. Other members can still be observed and reattached. Public
@@ -251,6 +274,38 @@ member need not inherit a member-specific observation error.
 Owner unavailability is not evidence of member exit. Lists and successful
 configuration responses preserve unknown observations explicitly. Missing
 fields and an unavailable Group projection must not trigger automatic Start.
+When a successful member Stop recomputes the saved Group running intent from
+the remaining processes, an unknown observation cannot clear that intent.
+An observed running member still counts, and the existing rules for
+structured members that need no process continue to apply.
+Start, Stop, Restart, New Session, Remove and edits to Enabled check owner
+availability before changing delivery workers, resume eligibility or the
+current process. The execution checks still apply if availability changes
+after that observation. Rollback requires a known runtime effect before
+stopping or restoring a process.
+After takeover, the controller may route a newly appended message or notification,
+an eligible delivery claimed by this controller, and an explicit member Stop to
+the unique owner of an observed running member.
+The operation is scoped to the home, holder instance, member creation identity
+and launch generation. Its confirmation and ledger settlement use that holder
+and the original execution fact. A retained execution from before takeover must
+still be resolved against the instance that took it. A recovered delivery with
+an explicit no-handoff receipt may reclaim a matching completed fact at its
+next target before taking a new claim. An unsettled claim alone does not
+authorize another attempt. Start, replacement and
+initial takeover still require complete ownership observation. The controller
+preserves the existing Group running intent when it cannot confirm the state of
+another enabled member. It may use the exact same generation's known PTY exit
+without contacting that owner again. A starting member or a member held for
+recovery is not confirmed stopped.
+
+The owner binds a Submit to the PTY identity or managed session generation
+verified for that operation. A stopped or replaced generation cannot receive
+the old operation. The targeted path can use a retained owner from a different
+known build for a PTY covered by the existing generation checks. Managed and
+DeepSeek inputs on the targeted path require matching execution code with the
+same-generation checks at the writer. Partial or uncertain input retains its
+normal non-replay semantics.
 
 The public maintenance request and final shutdown report are specified in
 [CCCC_DAEMON_IPC_V1.md](CCCC_DAEMON_IPC_V1.md). Reports distinguish confirmed

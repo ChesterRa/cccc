@@ -21,6 +21,7 @@ fn subscription(endpoint: &str, key: &str) -> NewSubscription {
         auth: URL_SAFE_NO_PAD.encode([7_u8; 16]),
         application_server_key: key.into(),
         origin: "https://cccc.example".into(),
+        level: None,
     }
 }
 
@@ -97,7 +98,7 @@ fn a_binding_needs_the_current_key_and_belongs_to_its_owner() {
         .expect("padded key is the same key");
     assert_eq!(
         store.owned(&Owner::Local).expect("owned"),
-        [endpoint_hash(FCM)]
+        [(endpoint_hash(FCM), NotificationLevel::All)]
     );
     assert!(store.owned(&token("ana")).expect("owned").is_empty());
     assert_eq!(endpoint_hash(FCM).len(), 64);
@@ -121,7 +122,7 @@ fn a_binding_with_a_damaged_origin_is_not_shown_as_enabled() {
     cccc_core::fs::write_secret_json(&store.path(), &document).expect("damage");
     assert_eq!(
         store.owned(&Owner::Local).expect("owned"),
-        [endpoint_hash(MOZILLA)]
+        [(endpoint_hash(MOZILLA), NotificationLevel::All)]
     );
     // Binding the same browser again repairs it.
     store
@@ -135,12 +136,47 @@ fn since(event: &str) -> BTreeMap<String, String> {
 }
 
 #[test]
-fn every_binding_starts_where_the_ledgers_stand_and_old_sends_cannot_touch_it() {
+fn an_existing_subscription_defaults_to_all_and_level_changes_keep_its_place() {
     let (_temp, store) = home();
     let key = store.ensure_key().expect("key");
     store
         .bind(subscription(FCM, &key), token("ana"), since("e1"))
         .expect("bind");
+    let before = stored(&store).remove(0);
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(store.path()).expect("read")).expect("json");
+    document["subscriptions"][0]
+        .as_object_mut()
+        .expect("subscription")
+        .remove("level");
+    cccc_core::fs::write_secret_json(&store.path(), &document).expect("write old format");
+    assert_eq!(stored(&store)[0].level, NotificationLevel::All);
+
+    assert!(matches!(
+        store.set_level(FCM, &token("ben"), NotificationLevel::RequestsOnly),
+        Err(SetLevelError::NotFound)
+    ));
+    let still_old: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(store.path()).expect("read")).expect("json");
+    assert_eq!(still_old, document, "a refused change writes nothing");
+
+    store
+        .set_level(FCM, &token("ana"), NotificationLevel::RequestsOnly)
+        .expect("set level");
+    let changed = stored(&store).remove(0);
+    assert_eq!(changed.level, NotificationLevel::RequestsOnly);
+    assert_eq!(changed.binding, before.binding);
+    assert_eq!(changed.since, before.since);
+    assert_eq!(changed.updated_at, before.updated_at);
+}
+
+#[test]
+fn every_binding_starts_where_the_ledgers_stand_and_old_sends_cannot_touch_it() {
+    let (_temp, store) = home();
+    let key = store.ensure_key().expect("key");
+    let mut new = subscription(FCM, &key);
+    new.level = Some(NotificationLevel::RequestsOnly);
+    store.bind(new, token("ana"), since("e1")).expect("bind");
     let first = stored(&store).remove(0);
     assert_eq!(first.since, since("e1"));
 
@@ -153,6 +189,7 @@ fn every_binding_starts_where_the_ledgers_stand_and_old_sends_cannot_touch_it() 
         (kept.binding.as_str(), &kept.since),
         (first.binding.as_str(), &since("e1"))
     );
+    assert_eq!(kept.level, NotificationLevel::RequestsOnly);
 
     // New keys start it again, for its owner or another.
     store
@@ -161,6 +198,7 @@ fn every_binding_starts_where_the_ledgers_stand_and_old_sends_cannot_touch_it() 
     let refreshed = stored(&store).remove(0);
     assert_eq!(refreshed.since, since("e2"));
     assert_ne!(refreshed.binding, first.binding);
+    assert_eq!(refreshed.level, NotificationLevel::All);
     store
         .bind(subscription(FCM, &key), token("ben"), since("e3"))
         .expect("move");
@@ -244,8 +282,11 @@ fn an_owner_keeps_the_most_recently_bound_subscriptions() {
         .expect("other owner");
     let owned = store.owned(&token("ana")).expect("owned");
     assert_eq!(owned.len(), MAX_PER_OWNER);
-    assert!(!owned.contains(&endpoint_hash(&format!("{FCM}-0"))));
-    assert!(owned.contains(&endpoint_hash(&format!("{FCM}-{MAX_PER_OWNER}"))));
+    assert!(!owned.contains(&(endpoint_hash(&format!("{FCM}-0")), NotificationLevel::All)));
+    assert!(owned.contains(&(
+        endpoint_hash(&format!("{FCM}-{MAX_PER_OWNER}")),
+        NotificationLevel::All,
+    )));
     assert_eq!(store.owned(&token("ben")).expect("owned").len(), 1);
 }
 
@@ -276,6 +317,6 @@ fn a_browser_just_bound_is_kept_even_when_the_others_look_newer() {
         .expect("bind now");
     let owned = store.owned(&token("ana")).expect("owned");
     assert_eq!(owned.len(), MAX_PER_OWNER);
-    assert!(owned.contains(&endpoint_hash(MOZILLA)));
-    assert!(!owned.contains(&endpoint_hash(&format!("{FCM}-0"))));
+    assert!(owned.contains(&(endpoint_hash(MOZILLA), NotificationLevel::All)));
+    assert!(!owned.contains(&(endpoint_hash(&format!("{FCM}-0")), NotificationLevel::All)));
 }

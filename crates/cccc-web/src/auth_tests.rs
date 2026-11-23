@@ -49,11 +49,12 @@ fn attended_update_requires_an_administrator() {
 
 #[test]
 fn chet_history_and_inputs_require_administrator_authority() {
-    for method in [Method::GET, Method::HEAD, Method::POST] {
+    for method in [Method::GET, Method::HEAD, Method::POST, Method::PUT] {
         for path in [
             "/api/v1/chet/history",
             "/api/v1/chet/status",
             "/api/v1/chet/inputs",
+            "/api/v1/chet/unattended",
         ] {
             assert!(requires_admin(&method, path));
             assert!(!is_public(&method, path));

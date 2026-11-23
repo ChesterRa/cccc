@@ -193,7 +193,9 @@ async fn a_reaped_viewer_detaches_without_stopping_the_provider_job() {
     .expect("delivery task");
     assert_eq!(
         delivered,
-        super::super::BatchSubmission::Accepted,
+        super::super::BatchSubmission::Accepted(Some(
+            cccc_contracts::event::DeliveryEvidence::TerminalWritten
+        )),
         "delivery reconnects the same provider's input channel"
     );
     // The terminal echoes the payload byte for byte; only the submit key ends a line.

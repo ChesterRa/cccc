@@ -72,7 +72,10 @@ export function MessageFooter({
   // its own delivery above, with its way to recover.
   const isMail = (event.data as ChatMessageData | undefined)?.message_mode === "mail";
   const undelivered = Object.entries(isMail ? {} : (event._obligation_status ?? {})).filter(
-    ([id, status]) => status.delivery_state === "failed" && id !== webModelDeliveryStatus?.actorId,
+    ([id, status]) =>
+      status.delivery_state === "failed" &&
+      !status.waiting_reason &&
+      id !== webModelDeliveryStatus?.actorId,
   );
   // Chet is addressed alone. CCCC proved this request never reached it, so the
   // whole outcome is shown, not only a reason on hover.

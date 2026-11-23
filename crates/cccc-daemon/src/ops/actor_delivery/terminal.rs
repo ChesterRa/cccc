@@ -6,30 +6,8 @@ use cccc_contracts::Actor;
 use cccc_runtime::{PtyHandoff, PtyHandoffReason, SessionStatus};
 use std::sync::atomic::AtomicBool;
 
-/// Managed viewers retain their native terminal submission path.
-pub(in crate::ops) fn submit_terminal_text(
-    group_id: &str,
-    actor: &Actor,
-    text: &str,
-    cancelled: &AtomicBool,
-) -> bool {
-    let Some(input) = terminal_input(group_id, actor, text, cancelled) else {
-        return false;
-    };
-    cccc_runtime::submit_sequence_interruptible(
-        group_id,
-        &actor.id,
-        input.payload.as_bytes(),
-        input.submits,
-        input.delay,
-        TERMINAL_REPEAT_SUBMIT_DELAY,
-        cancelled,
-    )
-    .unwrap_or(false)
-}
-
-/// Ordinary delivery may write only to the PTY instance already classified by its
-/// worker, and learns whether a failed attempt left anything in that terminal.
+/// Ordinary delivery and managed viewers may write only to the observed PTY
+/// instance, and learn whether a failed attempt left anything in that terminal.
 pub(crate) fn submit_terminal_text_for_session(
     expected: &SessionStatus,
     actor: &Actor,

@@ -47,15 +47,17 @@ When several coding agents share work, you need to know who owns a task, whether
 - **CCCC Connect** links Groups across machines and teams; each instance keeps its own state.
 - **Local-first.** Runtime state stays in `CCCC_HOME` (default `~/.cccc/`), outside your repository.
 
-## What's new in 0.4.59
+## What's new in 0.4.60
 
-- **Keep agents running while you maintain CCCC.** On Linux and native Apple Silicon Macs, restart CCCC or install a compatible update while managed agents keep working. Choose **Keep agents running** in **Settings > This instance > Update**, the keep option under `/update` or `/restart` in the terminal interface, or run `cccc daemon stop --keep-agents` and `cccc daemon start`. CCCC reconnects to the same processes and reports which members it found, restarted or could not confirm.
-- **Update from CCCC itself.** Web and the terminal interface check for a release when you ask, update a website installation in place, or restart into a locally rebuilt executable.
-- **Clearer results when something goes wrong.** A stop that cannot confirm an agent gives a next step that works, and a message sent while CCCC briefly cannot reach a member is delivered once it can.
+- **Let Chet act for you while you are away (Experimental).** Turn on **Unattended** in Chet's title bar (off by default) and each new message a member on this instance sends you with Send or Send + Reply also goes to Chet, which can reply, answer question cards for you, or flag a risk; it is instructed to leave to you what only you can do. You still get every message; a card Chet answered says so, and you can correct it by replying.
+- **Choose which messages notify you.** In **Settings > Notifications**, each browser can notify you for **All messages to me** or **Only when a reply is requested**, so a phone can stay quiet until someone needs your answer.
+- **See where a message went.** When CCCC has the evidence, the recipient list says whether a message was written to a member's terminal or accepted by its runtime, and it can show why a message is still waiting. For a plain message, open it from **Show recipient status** in the message's action menu.
+- **Recover missed deliveries.** Messages not yet handed to the runtime, or known not to have been submitted, during a short disconnection are delivered when the member is back. A partial terminal write stays unconfirmed and is not replayed automatically.
+- **One unresponsive session owner no longer holds up the others.** While CCCC is running, if one session owner stops responding, new messages can still reach running members whose healthy owner CCCC can verify. Those members can also be stopped individually.
 
-**Upgrade notes.** The first upgrade from 0.4.58 still stops managed agents, so let active turns finish first. Later compatible updates can keep them running. Windows updates restart agents.
+**Upgrade notes.** On Linux and native Apple Silicon Macs, a compatible update from 0.4.59 can keep agents running; Windows updates restart agents. A member kept running from 0.4.59 can still show **Sent to runtime** until it is restarted. Managed and DeepSeek members kept running from 0.4.59 need a restart of that member for the delivery and individual-stop fix above. If a session owner is already unresponsive when CCCC starts, startup can still fail; see the release notes for recovery.
 
-Details: [0.4.59 release notes](https://chesterra.github.io/cccc/release/v0.4.59_release_notes).
+Details: [0.4.60 release notes](https://chesterra.github.io/cccc/release/v0.4.60_release_notes).
 
 ## Quick start
 
@@ -162,6 +164,7 @@ Chet is one assistant for the whole CCCC instance, outside every Group's member 
 - **Runtime:** set it under **Settings → This instance → Voice → Chet → Runtime**. CCCC keeps Chet's history of inputs, transcripts and results on the machine running CCCC; what you send still goes to the model and voice providers you configure.
 - **Voice (experimental):** **Codex Voice** uses `codex login`; **Grok Voice** uses `grok login` and needs `grok` on CCCC's PATH. Neither needs an extra API key. Reported Grok Voice pitch and timbre drift is not confirmed fixed.
 - **In Groups:** members reach Chet by choosing `@chet` as the only recipient, with Send or Send + Reply but not Mail.
+- **Unattended (experimental):** while the switch in Chet's title bar is on, messages members send you with Send or Send + Reply also go to Chet, which can reply and answer question cards for you. See [Unattended mode](https://chesterra.github.io/cccc/guide/web-ui#unattended-mode).
 - **Limits:** messages from every Group enter Chet's one session, and keeping them apart is an instruction to the model, not isolation. Chet does not forward between Groups or send through CCCC Connect.
 
 **Voice Secretary**, under **Settings → This instance → Voice → Voice Secretary**, is a separate global service that turns recordings into documents, prompt drafts or answers for each Group; all Groups share its conversation. See [Chet](https://chesterra.github.io/cccc/guide/web-ui#chet-global-assistant-experimental) and the [Voice Secretary guide](https://chesterra.github.io/cccc/guide/voice-secretary).

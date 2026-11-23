@@ -23,6 +23,11 @@ pub struct GlobalSettings {
         skip_serializing_if = "cccc_contracts::voice_secretary::VoiceSecretarySettings::is_default"
     )]
     pub voice_secretary: cccc_contracts::voice_secretary::VoiceSecretarySettings,
+    #[serde(
+        default,
+        skip_serializing_if = "cccc_contracts::chet::UnattendedSettings::is_default"
+    )]
+    pub unattended: cccc_contracts::chet::UnattendedSettings,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

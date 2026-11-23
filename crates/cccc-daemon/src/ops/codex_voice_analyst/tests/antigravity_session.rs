@@ -968,7 +968,9 @@ fn antigravity_admitted_failure_exposes_provider_error_in_headless_journal() {
             &[failed],
             &std::sync::atomic::AtomicBool::new(false)
         ),
-        supervisor::BatchSubmission::Accepted
+        supervisor::BatchSubmission::Accepted(Some(
+            cccc_contracts::event::DeliveryEvidence::ChannelAccepted
+        ))
     );
     let journal = store
         .state_dir(&group.group_id)

@@ -29,9 +29,12 @@ pub(crate) use owner::{
     hold_group_browser_work, registered_owner,
 };
 pub use persistence::persist_lifecycle;
-pub(crate) use reconcile::reconcile_provider_exits;
+pub(super) use persistence::persist_target_stop;
+#[cfg(test)]
+pub use reconcile::reap_exited;
+pub use reconcile::reconcile_exited;
 pub(crate) use reconcile::record_process_exit;
-pub use reconcile::{reap_exited, reconcile_exited};
+pub(crate) use reconcile::{reap_local_exits, reconcile_observed_exits};
 pub(crate) use workspace::LaunchWorkspace;
 pub(super) use workspace::{caller_scope, displayed_scope, effective_scope, session_prompt};
 
@@ -46,6 +49,16 @@ pub fn apply(
     group: &GroupDoc,
     actor_id: &str,
     kind: &str,
+) -> Result<Option<SessionStatus>, OpError> {
+    apply_with_stop_target(home, group, actor_id, kind, None)
+}
+
+pub(super) fn apply_with_stop_target(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    kind: &str,
+    target: Option<&crate::session_owner::OwnedTarget>,
 ) -> Result<Option<SessionStatus>, OpError> {
     let stored_actor = group
         .actors
@@ -73,10 +86,26 @@ pub fn apply(
         .map_err(OpError::io)?;
     }
     if kind == "actor.stop" {
+        if let Some(target) = target {
+            return target.stop().map_err(OpError::io);
+        }
         return stop_registered(group, actor_id);
     }
     let actor = actor_profile_runtime::resolve(home, stored_actor)?;
     apply_resolved(home, group, &actor, kind)
+}
+
+pub(super) fn require_owner_observation(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+) -> Result<(), OpError> {
+    #[cfg(unix)]
+    if actor.external_session_id.is_empty() && crate::session_owner::enabled(home) {
+        crate::session_owner::snapshot(&group.group_id, &actor.id).map_err(OpError::io)?;
+    }
+    let _ = (home, group, actor);
+    Ok(())
 }
 
 /// Restore policy and startup must use the same effective Profile snapshot.
@@ -94,12 +123,8 @@ pub(super) fn apply_resolved(
         return Ok(result);
     }
     let actor_id = &actor.id;
-    #[cfg(unix)]
-    if crate::session_owner::enabled(home) {
-        // An unavailable owner is not an absent one. In particular, automatic
-        // restore must not launch a replacement on a failed read.
-        crate::session_owner::snapshot(&group.group_id, actor_id).map_err(OpError::io)?;
-    }
+    // Recheck at execution in case an owner became unavailable after the caller's preflight.
+    require_owner_observation(home, group, actor)?;
     if actor_id == "voice-secretary" || actor.internal_kind.as_deref() == Some("voice_secretary") {
         return Err(OpError::new(
             "global_secretary_owner",

@@ -225,6 +225,7 @@ export type UserReplyRequestStatus = {
   question: "valid" | "none" | "unavailable";
   requester: "available" | "unavailable" | "unknown" | "unsupported";
   reply_event_id?: string;
+  reply_by?: "user" | "svc:chet";
   reply_route?: "composer";
 };
 
@@ -269,12 +270,23 @@ export type ChatMessageData = {
   attachments?: MessageAttachment[];
 };
 
+export type DeliveryEvidence = "terminal_written" | "channel_accepted";
+
+export type DeliveryWaitingReason =
+  | "group_paused"
+  | "group_stopped"
+  | "member_disabled"
+  | "runtime_switch"
+  | "not_submitted";
+
 export type ObligationStatus = {
   replied: boolean;
   reply_requested: boolean;
   cancelled: boolean;
   delivery_state: "" | "claimed" | "accepted" | "failed" | "ambiguous" | string;
   delivery_reason?: string;
+  delivery_evidence?: DeliveryEvidence | string;
+  waiting_reason?: DeliveryWaitingReason | string;
 };
 
 // Mail read receipt payload

@@ -71,7 +71,12 @@ fn search_forwards_every_filter_and_prints_the_result() {
         &home,
         json!({"v":1,"ok":true,"result":{
             "count":1,
-            "events":[{"id":"evt-1","kind":"chat.message"}],
+            "events":[{
+                "id":"evt-1","kind":"chat.message",
+                "_obligation_status":{"recipient":{
+                    "delivery_state":"accepted","delivery_evidence":"terminal_written"
+                }}
+            }],
             "has_more":false
         }}),
     );
@@ -97,6 +102,7 @@ fn search_forwards_every_filter_and_prints_the_result() {
             "2026-11-02T00:00:00Z",
             "--kind",
             "chat",
+            "--with-obligation-status",
             "-q",
             "deploy",
             "--before",
@@ -124,6 +130,7 @@ fn search_forwards_every_filter_and_prints_the_result() {
             "since_ts":"2026-11-01T00:00:00Z",
             "until_ts":"2026-11-02T00:00:00Z",
             "kind":"chat",
+            "with_obligation_status":true,
             "q":"deploy",
             "before":"evt-before",
             "limit":25u64
@@ -132,6 +139,10 @@ fn search_forwards_every_filter_and_prints_the_result() {
     let stdout = String::from_utf8(output.stdout).expect("stdout");
     assert!(stdout.contains("\"count\": 1"), "{stdout}");
     assert!(stdout.contains("\"id\": \"evt-1\""), "{stdout}");
+    assert!(
+        stdout.contains("\"delivery_evidence\": \"terminal_written\""),
+        "{stdout}"
+    );
     assert!(stdout.contains("\"has_more\": false"), "{stdout}");
 }
 

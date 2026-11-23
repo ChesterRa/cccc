@@ -67,12 +67,31 @@ pub fn is_request(event: &Event) -> bool {
         && event.data.get("message_mode").and_then(Value::as_str) == Some("request_reply")
 }
 
-/// The request a ledger event closes for the user, if any. Only a reply the
-/// user wrote, or a cancellation, closes it; the first one after the request
-/// is terminal.
+/// Host-owned marker written only on Chet's answers on behalf of the user.
+pub const CHET_ANSWER_FOR_FIELD: &str = "_cccc_chet_on_behalf_of";
+
+/// A historical answer in a ledger. This preserves the outcome on Group copy;
+/// callers routing to a live service must separately verify its Group origin.
+pub fn is_chet_answer(event: &Event) -> bool {
+    event.kind == "chat.message"
+        && event.by == crate::actors::CHET_SERVICE_PRINCIPAL
+        && event
+            .data
+            .get(CHET_ANSWER_FOR_FIELD)
+            .and_then(Value::as_str)
+            == Some("user")
+        && event
+            .data
+            .get(cccc_contracts::chet::GROUP_AUTHOR_GENERATION_FIELD)
+            .and_then(Value::as_str)
+            .is_some_and(|generation| !generation.is_empty() && generation != "legacy:")
+}
+
+/// The request a ledger event closes for the user, if any. The first user
+/// reply, recorded Chet answer, or cancellation after the request is terminal.
 pub fn closes(event: &Event) -> Option<&str> {
     match event.kind.as_str() {
-        "chat.message" if event.by == "user" => event.data.get("reply_to"),
+        "chat.message" if event.by == "user" || is_chet_answer(event) => event.data.get("reply_to"),
         "chat.reply_request.cancelled" => event.data.get("source_event_id"),
         _ => None,
     }

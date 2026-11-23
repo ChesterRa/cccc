@@ -106,6 +106,8 @@
     "tooLong": "Answer is {{count}} characters; the limit is {{limit}}. Your text is kept.",
     "answered": "Answered",
     "answeredChoice": "Answered: {{choice}}",
+    "chetAnswered": "Chet answered for you",
+    "chetAnsweredChoice": "Chet chose {{choice}} for you",
     "withdrawn": "This request was withdrawn.",
     "unavailable": "The original requester has left or been replaced. Contact them before replying.",
     "requesterUnknown": "Cannot verify the original requester. Contact them before replying.",

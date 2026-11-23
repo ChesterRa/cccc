@@ -362,6 +362,71 @@ async fn a_browser_binds_and_unbinds_only_for_its_own_principal() {
 }
 
 #[tokio::test]
+async fn notification_level_is_visible_and_editable_only_for_the_current_owner() {
+    let f = fixture(WebMode::Normal).await;
+    let path = "/api/v1/push/subscription";
+    let config = "/api/v1/push/config";
+    let (_, key) = f.call("POST", "/api/v1/push/key", &f.admin, None).await;
+    let key = key["result"]["vapid_public_key"].as_str().expect("key");
+    let subscription = subscription(ENDPOINT, key);
+    let (status, _) = f
+        .call("PUT", path, &f.admin, Some(subscription.clone()))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = f.call("GET", config, &f.admin, None).await;
+    assert_eq!(
+        body["result"]["subscriptions"],
+        json!([endpoint_hash(ENDPOINT)])
+    );
+    assert_eq!(
+        body["result"]["subscription_levels"],
+        json!({(endpoint_hash(ENDPOINT)): "all"})
+    );
+
+    let change = json!({"endpoint": ENDPOINT, "level": "requests_only"});
+    for (token, change) in [
+        (&f.member, change.clone()),
+        (
+            &f.admin,
+            json!({"endpoint": "https://fcm.googleapis.com/fcm/send/missing", "level": "requests_only"}),
+        ),
+    ] {
+        let (status, body) = f.call("PATCH", path, token, Some(change)).await;
+        assert_eq!(
+            (status, code(&body)),
+            (StatusCode::NOT_FOUND, "push_subscription_not_found")
+        );
+    }
+    let (status, _) = f
+        .call(
+            "PATCH",
+            path,
+            &f.admin,
+            Some(json!({"endpoint": ENDPOINT, "level": "unsupported"})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let (status, body) = f.call("PATCH", path, &f.admin, Some(change)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["result"],
+        json!({"updated": true, "level": "requests_only"})
+    );
+
+    let (status, _) = f.call("PUT", path, &f.admin, Some(subscription)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body) = f.call("GET", config, &f.admin, None).await;
+    assert_eq!(
+        body["result"]["subscription_levels"],
+        json!({(endpoint_hash(ENDPOINT)): "requests_only"})
+    );
+    let (_, body) = f.call("GET", config, &f.member, None).await;
+    assert_eq!(body["result"]["subscriptions"], json!([]));
+    assert_eq!(body["result"]["subscription_levels"], json!({}));
+}
+
+#[tokio::test]
 async fn a_member_binds_with_a_deleted_group_still_in_its_token() {
     let f = fixture(WebMode::Normal).await;
     let (_, body) = f.call("POST", "/api/v1/push/key", &f.member, None).await;
@@ -389,6 +454,7 @@ async fn an_exhibit_neither_shows_nor_changes_notification_settings() {
         ("GET", "/api/v1/push/config"),
         ("POST", "/api/v1/push/key"),
         ("PUT", "/api/v1/push/subscription"),
+        ("PATCH", "/api/v1/push/subscription"),
         ("DELETE", "/api/v1/push/subscription"),
     ] {
         let (status, body) = f.call(method, path, &f.admin, Some(json!({}))).await;

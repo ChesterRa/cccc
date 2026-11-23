@@ -844,7 +844,10 @@ and rejects exhibit access.
   proof of deletion. `chet_source_unavailable` means the inspected ledger
   confirms that the source is missing, no longer matches its reference,
   imported from an earlier Group, or its member was removed or replaced after
-  the source message. An inconsistent
+  the source message. The recipient is Chet alone, or, for an unattended copy,
+  the user under the rule `unattended_get` describes; a copy that the current
+  unattended period no longer covers is also `chet_source_unavailable`, and
+  unreadable unattended settings are `invalid_chet_source`. An inconsistent
   Group document without a committed membership event is not proof of member
   retirement and remains `invalid_chet_source`. For a previously recorded,
   unclaimed Group input, the Web owner records `not_started` with
@@ -876,8 +879,10 @@ and rejects exhibit access.
 - When `resolve_sources` is true, either read also returns `sources`, an object
   keyed by Group input IDs present in, or referenced by, records in that response. A source is
   `{ status: "available", group_title, sender_title, text, sent_at,
-  has_attachments, truncated, reply_event_id }` or `{ status: "unavailable" }`.
-  `reply_event_id` is null or a later Chet-authored message in this Group that
+  has_attachments, truncated, copy, reply_event_id }` or `{ status: "unavailable" }`.
+  `copy` is true when the source was sent to the user and registered as an
+  unattended copy (`unattended_update`); it stays available after the mode is
+  turned off. `reply_event_id` is null or a later Chet-authored message in this Group that
   replies to the source and explicitly addresses its sender. Its presence means
   that a reply was recorded, not that a recipient received it; its absence does
   not prove a failed attempt. Available text
@@ -973,8 +978,11 @@ the same registration, one system notice to that member. Both are written before
 returns, so an identical retry completes whatever a previous call left out.
 
 The result is `{ registration: "inserted" | "existing", delivery: "recorded" |
-"existing" | "source_unavailable" }`. `source_unavailable` means the Group, its
-generation or the source message is gone; nothing is shown in the Group.
+"existing" | "source_unavailable" | "copy" }`. `source_unavailable` means the Group, its
+generation or the source message is gone; nothing is shown in the Group. `copy`
+means the source message was sent to the user and Chet held an unattended copy
+of it (`unattended_update`): only the private fact is written, with no delivery
+on the message and no notice to its sender.
 `chet_history_outcome_conflict` means the input already has another outcome:
 nothing is written, and the caller MUST NOT report the request as unsent.
 Other errors leave the expiry to be retried with the same arguments.
@@ -1037,6 +1045,42 @@ Result:
 }
 ```
 
+#### `unattended_get`
+
+Args: none
+
+Result:
+```ts
+{ unattended: { enabled: boolean; since?: string } }
+```
+
+Unattended mode belongs to this instance's user, not to a Group, and is not
+recorded in any Group ledger. While it is on, Chet also receives each Group
+`chat.message` that a visible member sent to the user with `send` or
+`request_reply` (not IM, not addressed to Chet) at or after `since`, and may
+answer a `request_reply` for the user through `reply` with `answer`. Only
+`request_reply` creates a reply obligation; Chet may also reply to an ordinary
+`send`.
+
+#### `unattended_update`
+
+Args:
+```ts
+{ by: "user"; enabled: boolean }
+```
+
+Result: same as `unattended_get`.
+
+Only the user may call it; a call that carries an Actor or session binding is
+refused with `permission_denied`. Turning the mode on sets `since` to the
+current time when it was off; turning it on again keeps the current `since`.
+Turning it off clears `since`: Chet receives no new copies. A registered copy
+that is no longer eligible at the final check before handoff is recorded as not
+started; a copy that has already passed that check may still be processed and
+get an ordinary reply. New card answers are refused. Messages and answers already written stay in their threads. A copy
+whose wait expires is recorded only in Chet history, without a delivery on the
+source message or a notice to its sender.
+
 #### `debug_snapshot`
 
 Developer-mode diagnostic snapshot (global + optional group context).
@@ -1049,18 +1093,44 @@ Args:
 Result:
 ```ts
 {
-  developer_mode: true
+  implementation: "rust"
+  version: string
+  build: Record<string, unknown>
+  executable: string | null
+  pid: number
+  home: string
   observability: Record<string, unknown>
-  daemon: { pid: number; version: string; ts: string }
-  group?: { group_id: string; state: string; active_scope_key: string; title: string }
-  actors?: Array<{ id: string; role: string; runtime: string; runner: string; runner_effective: string; enabled: boolean; running: boolean; unread_count: number }>
-  delivery?: Record<string, unknown>
+  memory: {
+    ledger_index: {
+      entries: number
+      budget_bytes: number
+      budget_limit_bytes: number
+      largest_budget_bytes: number
+      pinned: number
+      hits: number
+      entries_created: number
+      index_rebuilds: number
+      evictions: number
+      invalidations: number
+    }
+    process: { vm_rss_kib: number | null; rss_anon_kib: number | null; vm_swap_kib: number | null }
+  }
+  group?: { group_id: string; title: string; state: string; running: boolean; active_scope_key: string }
+  actors?: Array<{ id: string; role: string; runtime: string; runner: string; enabled: boolean; running: boolean | null; runtime_owner_available: boolean; pid: number | null }>
 }
 ```
 
 Notes:
 - Requires developer mode.
 - Permission is `user`, or `foreman` when `group_id` is provided.
+- `memory` is diagnostic only and never authorizes or gates an operation.
+  `ledger_index` budgets are the cache's eviction weights (the larger of the
+  source file bytes and the estimated event memory), not measured memory; the
+  counters count since daemon start, and `index_rebuilds` counts every
+  completed full index build, cold reads included. `process` comes from one
+  read of `/proc/self/status` in KiB and is `null` where a platform does not
+  report a field. Compare budgets and process memory only within one snapshot.
+  The result names no Group in `memory`.
 
 ### 8.3 Groups and Scopes
 
@@ -4745,6 +4815,14 @@ Result:
 
 #### `actor_start` / `actor_stop` / `actor_restart`
 
+After successful session-owner takeover, an explicit `actor_stop` can stop an
+observed running member of a verified unique owner while a different owner is
+unavailable. The operation and confirmation stay bound to the selected member
+generation. The Group running intent is preserved when there is no confirmed
+running member and a remaining enabled member's state is unknown. See the session owner contract
+for the targeted Send and Stop conditions and retained-generation boundaries.
+[Session owner observations and recovery](CCCC_SESSION_OWNER_V1.md#observations-exit-and-recovery)
+
 Daemon-owned runtime resources MUST be retired after owner exit, including abrupt exit.
 On Unix, a daemon MAY use an EOF watchdog and a durable owned-process-group ledger
 to recover groups missed by graceful shutdown. Recovery MUST start only after acquiring
@@ -5882,7 +5960,8 @@ For a `request_reply` message that gives the user an obligation,
 user_request: {
   question: "valid" | "none" | "unavailable" // CCCS §6.4 reading rule
   requester: "available" | "unavailable" | "unknown" | "unsupported"
-  reply_event_id?: string     // the user's reply, once it closed the request
+  reply_event_id?: string     // the reply that closed the user's request
+  reply_by?: "user" | "svc:chet" // that reply's recorded author
   reply_route?: "composer"    // with "unsupported": answer with an ordinary reply
 }
 ```
@@ -5893,6 +5972,24 @@ Each recipient in `obligation_status` also carries `delivery_state` and an optio
 `delivery_reason`: the `state` and `reason` of that recipient's latest
 `runtime.delivery`. The reason is daemon diagnostic text, not localized, and is empty
 or absent when that event has none.
+
+For an accepted delivery, `delivery_evidence` is the recognized evidence from
+that same receipt (CCCS §6.5). Retained and historical receipts without this
+field keep generic acceptance.
+
+`waiting_reason` is an optional read-time observation. For a local recipient
+whose message has no receipt yet, or whose latest receipt is explicitly
+`failed` with `retryable: true`, it reports the first applicable reason in the
+following order.
+`group_paused`, `group_stopped`, `member_disabled`, `runtime_switch`, then
+`not_submitted` for the retryable receipt. It is omitted for ordinary Mail
+without a delivery attempt, Mail the recipient has already read, closed reply
+requests, and other receipt states or failures without `retryable: true`.
+Reading a status does not schedule or retry
+delivery.
+
+`cccc ledger search --with-obligation-status` exposes this projection on its
+matching messages.
 
 #### `message_pins_list`
 
@@ -6401,7 +6498,8 @@ Args:
 {
   group_id: string
   reply_to: string
-  text: string
+  text?: string                  // required for an ordinary text reply
+  answer?: ReplyAnswerV1 | ReplyAnswerV2 // unattended Chet answer only
   by?: string
   to?: string[]                 // local: original sender; Connect: original remote participant
   message_mode?: "send" | "mail" // default: "send"
@@ -6424,9 +6522,21 @@ the full ID before any idempotency check, routing decision or ledger write, so
 callers must pass the full ID.
 
 `reply`, `send_files`, `send_cross_group` and `connect_send` reject a non-null
-`question` with `invalid_question` and a non-null `answer` with `invalid_args`
-before any write (`send_files` also before reading any file); a question is
-sent with `send`, and the user answers it with `reply_request_answer`.
+`question` before any write. The user answers a question with
+`reply_request_answer`. For an authenticated unattended Chet answer, `reply`
+accepts `group_id`, `reply_to`, `client_id` and `answer`, using Send and the
+host-supplied Chet origin. The daemon applies the same answer and requester
+checks as `reply_request_answer`. It checks the current unattended period
+before a new append and runs the idempotency check for `svc:chet`. An
+identical accepted retry returns the earlier answer even after unattended
+mode turns off. A member submitting `answer` through `reply` receives
+`permission_denied`. A user reply with `answer` and no Chet origin receives
+`invalid_args`, as do non-null answers on the file, cross-group and Connect
+send paths.
+
+For replies to a verified Chet answer on behalf of the user, a member's
+default recipient is `user`. The user's default recipient is the original
+requester (CCCS §6.4).
 
 Local cross-group replies route qualified recipients back to the parent message's
 source Group. Both ledger copies MUST reference their own Group's parent event:
@@ -6675,7 +6785,8 @@ Result:
 }
 ```
 
-A request is open until the user replies to it or it is cancelled (CCCS §6.3).
+A request is open until the user replies, a Chet answer on the user's behalf
+is recorded, or it is cancelled (CCCS §§6.3–6.4).
 Pages and totals come from one projection of the ledger kept from committed
 byte offsets, so a request that closes or arrives between pages neither shifts
 nor hides another. Unlike ordinary ledger reads, which skip records that do not
@@ -6748,10 +6859,13 @@ Args:
 
 Only the source sender or `user` may request delivery. Recipients MUST be
 explicit concrete recipients of the source event. Existing `accepted` evidence
-is never retried. Existing `claimed` evidence reports `delivery_in_progress`.
+is never retried. Existing `claimed` evidence or work already in a delivery
+worker's queue reports `delivery_in_progress`. Waiting work keeps its existing
+queue slot and takes its own claim when ready.
 Existing `ambiguous` evidence is rejected unless `force_ambiguous=true`.
-Disabled recipients return `delivery_blocked` without creating a delivery
-claim. A request that reserves new claims while the Group is paused or stopped
+Disabled recipients and recipients switching runtimes return
+`delivery_blocked` without creating a delivery claim. A request that reserves
+new claims while the Group is paused or stopped
 explicitly resumes the Group before handoff. A conflicting, already accepted,
 or otherwise no-op request MUST NOT change lifecycle state. A successful
 request records all claims before returning:
@@ -7030,6 +7144,7 @@ Args:
   sender?: string // only messages from this Actor ID or "user"
   before_event_id?: string
   event_id?: string // exact visible message/notice; exclusive with filters/pagination
+  with_obligation_status?: boolean // include recipient status for an exact chat.message
   limit?: number
   _cccc_mcp_identity?: { version: string; source_id: string } // diagnostic only
 }
@@ -7037,7 +7152,12 @@ Args:
 
 Result:
 ```ts
-{ messages: CCCSEventV1[]; has_more: boolean; delivery_text?: string | null }
+{
+  messages: CCCSEventV1[]
+  has_more: boolean
+  delivery_text?: string | null
+  obligation_status?: Record<string, object>
+}
 ```
 
 Results are newest-first, limited to the actor's current generation, and MUST
@@ -7069,6 +7189,13 @@ Actor cannot read never match. Exact reads cannot be combined with `mode`,
 `query`, `sender`, `before_event_id` or `limit`. They remain non-consuming and
 do not acknowledge execution, create a delivery or replay a handoff.
 
+An exact visible chat read with `with_obligation_status: true` includes
+`obligation_status` as defined by `ledger_statuses`. For an Agent reading a
+message it received, only that Agent's entry is exposed. For its own outgoing
+message, it can see its recipients' entries. Agent results omit
+`delivery_reason`. A visibility failure returns the same `event_not_found`
+as an exact history read without status.
+
 For a successful exact read by a native Actor of its own message, the daemon
 MAY prepend a diagnostic when the client does not report `_cccc_mcp_identity`.
 Missing metadata does not prove that the caller is an MCP server or that its
@@ -7081,7 +7208,7 @@ both are self-reported diagnostics, never authentication. The warning does not
 cover agents that never make an exact history read.
 
 The MCP `cccc_message_history` tool presents an exact read as
-`{ delivery_text, message }`, where `message` is the single returned event. From
+`{ delivery_text, message, obligation_status? }`, where `message` is the single returned event. From
 a `chat.message`, it omits `data.text` (compared without trailing line breaks)
 and the normalized `data.insight` only when that complete value appears in
 `delivery_text`. From a `system.notify`, it omits a non-empty `data.message`

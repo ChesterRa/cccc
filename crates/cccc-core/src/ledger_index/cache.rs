@@ -1,6 +1,7 @@
 use super::LedgerIndex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 const MAX_ENTRIES: usize = 32;
@@ -18,6 +19,37 @@ struct IndexCache {
     clock: u64,
     max_entries: usize,
     max_source_bytes: u64,
+    counters: Counters,
+}
+
+/// Process-lifetime counts for diagnostics; they never influence caching.
+#[derive(Clone, Copy, Default)]
+struct Counters {
+    hits: u64,
+    entries_created: u64,
+    evictions: u64,
+    invalidations: u64,
+}
+
+/// Completed full index builds, cold reads included. Counted outside the cache
+/// lock because a build runs under the index lock only.
+static INDEX_REBUILDS: AtomicU64 = AtomicU64::new(0);
+
+/// A diagnostic view of the ledger index cache. Budget figures are the
+/// eviction weights (the larger of source file bytes and the estimated event
+/// memory), not measured process memory.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    pub entries: u64,
+    pub budget_bytes: u64,
+    pub budget_limit_bytes: u64,
+    pub largest_budget_bytes: u64,
+    pub pinned: u64,
+    pub hits: u64,
+    pub entries_created: u64,
+    pub index_rebuilds: u64,
+    pub evictions: u64,
+    pub invalidations: u64,
 }
 
 impl IndexCache {
@@ -28,6 +60,31 @@ impl IndexCache {
             clock: 0,
             max_entries,
             max_source_bytes,
+            counters: Counters::default(),
+        }
+    }
+
+    fn stats(&self) -> Stats {
+        Stats {
+            entries: self.entries.len() as u64,
+            budget_bytes: self.source_bytes,
+            budget_limit_bytes: self.weight_limit(),
+            largest_budget_bytes: self
+                .entries
+                .values()
+                .map(|cached| cached.source_bytes)
+                .max()
+                .unwrap_or_default(),
+            pinned: self
+                .entries
+                .values()
+                .filter(|cached| Arc::strong_count(&cached.index) > 1)
+                .count() as u64,
+            hits: self.counters.hits,
+            entries_created: self.counters.entries_created,
+            index_rebuilds: INDEX_REBUILDS.load(Ordering::Relaxed),
+            evictions: self.counters.evictions,
+            invalidations: self.counters.invalidations,
         }
     }
 
@@ -45,6 +102,7 @@ impl IndexCache {
                 .saturating_add(source_bytes);
             cached.source_bytes = source_bytes;
             cached.last_used = self.clock;
+            self.counters.hits += 1;
             Arc::clone(&cached.index)
         } else {
             let index = Arc::new(RwLock::new(LedgerIndex::default()));
@@ -57,6 +115,7 @@ impl IndexCache {
                 },
             );
             self.source_bytes = self.source_bytes.saturating_add(source_bytes);
+            self.counters.entries_created += 1;
             index
         };
         let retired = self.evict(path);
@@ -113,6 +172,7 @@ impl IndexCache {
                 .map(|(path, _)| path.clone());
             let Some(candidate) = candidate else { break };
             if let Some(removed) = self.remove(&candidate) {
+                self.counters.evictions += 1;
                 retired.push(removed);
             }
         }
@@ -166,11 +226,28 @@ pub(super) fn update_weight(path: &Path, source_bytes: u64, expected: &Arc<RwLoc
 }
 
 pub(super) fn invalidate(path: &Path) {
-    let retired = cache()
+    let retired = {
+        let mut cache = cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let retired = cache.remove(path);
+        if retired.is_some() {
+            cache.counters.invalidations += 1;
+        }
+        retired
+    };
+    drop(retired);
+}
+
+pub(super) fn note_rebuild() {
+    INDEX_REBUILDS.fetch_add(1, Ordering::Relaxed);
+}
+
+pub(super) fn stats() -> Stats {
+    cache()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .remove(path);
-    drop(retired);
+        .stats()
 }
 
 #[cfg(test)]
@@ -263,6 +340,28 @@ mod tests {
         }
         assert_eq!(cache.entries.len(), 2);
         assert_eq!(cache.source_bytes, 14);
+    }
+
+    #[test]
+    fn counts_hits_creations_evictions_and_pinned_entries() {
+        let mut cache = IndexCache::new(1, 10);
+        let first = Path::new("first");
+        let second = Path::new("second");
+        drop(cache.entry(first, 4));
+        drop(cache.entry(first, 4));
+        let active = cache.entry(second, 6).0;
+
+        let stats = cache.stats();
+        assert_eq!(stats.entries, 1);
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.entries_created, 2);
+        assert_eq!(stats.evictions, 1);
+        assert_eq!(stats.pinned, 1);
+        assert_eq!(stats.budget_bytes, 6);
+        assert_eq!(stats.largest_budget_bytes, 6);
+        assert_eq!(stats.budget_limit_bytes, 12);
+        drop(active);
+        assert_eq!(cache.stats().pinned, 0);
     }
 
     #[test]

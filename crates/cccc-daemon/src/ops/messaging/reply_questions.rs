@@ -9,10 +9,7 @@ use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, store};
 
-/// Paths that cannot carry a question or write an answer reject both rather
-/// than store or drop them silently. Only `reply_request_answer` writes an
-/// answer, and it passes it out of band.
-pub(crate) fn reject_fields(args: &Map<String, Value>, path: &str) -> Result<(), OpError> {
+pub(super) fn reject_question(args: &Map<String, Value>, path: &str) -> Result<(), OpError> {
     if args.get("question").is_some_and(|value| !value.is_null()) {
         return Err(OpError::new(
             "invalid_question",
@@ -21,10 +18,16 @@ pub(crate) fn reject_fields(args: &Map<String, Value>, path: &str) -> Result<(),
             ),
         ));
     }
+    Ok(())
+}
+
+/// Paths that do not write structured questions or answers reject those fields.
+pub(crate) fn reject_fields(args: &Map<String, Value>, path: &str) -> Result<(), OpError> {
+    reject_question(args, path)?;
     if args.get("answer").is_some_and(|value| !value.is_null()) {
         return Err(OpError::new(
             "invalid_args",
-            "answers are written only by reply_request_answer",
+            "use reply_request_answer or an authenticated unattended Chet reply to answer",
         ));
     }
     Ok(())

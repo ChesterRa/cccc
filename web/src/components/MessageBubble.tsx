@@ -59,7 +59,14 @@ import { effectiveReplyTemplates } from "../features/quickReplies/effective";
 import { PinIcon } from "./Icons";
 import { messageBlobAttachments } from "./messageBubble/attachmentPreviewItems";
 import { useGroupStore, useUIStore } from "../stores";
-import { CHET_NAME, CHET_PRINCIPAL, chetGeneration, isChetMessage } from "../utils/chetIdentity";
+import {
+  CHET_NAME,
+  CHET_PRINCIPAL,
+  chetGeneration,
+  isChetAnswer,
+  isChetMessage,
+} from "../utils/chetIdentity";
+import { mergeObligationStatus, mergeUserRequestStatus } from "../utils/mergeLedgerEvents";
 import {
   localizedAnswerReceipt,
   pendingReplyView,
@@ -134,6 +141,7 @@ export const MessageBubble = memo(
     onOpenReplyTarget,
   }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
+    const isChetAnswerMessage = isChetAnswer(ev);
     const isOptimistic = !!(ev.data as Record<string, unknown> | undefined)?._optimistic;
     const isStreaming = !!ev._streaming;
     // A filtered view's way into the whole conversation; a message still being sent or
@@ -160,17 +168,24 @@ export const MessageBubble = memo(
     const liveStatuses = useContext(LivePendingStatusContext);
     const liveEntry = ev.id && liveStatuses ? liveStatuses[ev.id] : undefined;
     const liveStatus = liveEntry?.status;
-    const replyEvent = useMemo(
-      () =>
-        liveEntry === undefined
-          ? ev
-          : {
-              ...ev,
-              _user_request: liveStatus?.user_request,
-              _obligation_status: liveStatus?.obligation_status,
-            },
-      [ev, liveEntry, liveStatus],
-    );
+    const replyEvent = useMemo(() => {
+      if (liveEntry === undefined) return ev;
+      if (!liveStatus && ev._user_request?.reply_event_id && ev._obligation_status?.user?.replied)
+        return ev;
+      return {
+        ...ev,
+        _user_request: liveStatus
+          ? mergeUserRequestStatus(
+              liveStatus.user_request,
+              liveStatus.obligation_status,
+              ev._user_request,
+            )
+          : undefined,
+        _obligation_status: liveStatus?.obligation_status
+          ? mergeObligationStatus(liveStatus.obligation_status, ev._obligation_status)
+          : undefined,
+      };
+    }, [ev, liveEntry, liveStatus]);
     // Whether this is a request to the user follows from the event alone, so it
     // holds while the reply store is not available yet.
     const userRequest = readOnly ? null : pendingReplyView(replyEvent);
@@ -233,7 +248,9 @@ export const MessageBubble = memo(
       state.groupDoc?.group_id === groupId ? chetGeneration(state.groupDoc) : "",
     );
     const senderSnapshotTitle = isChetMessage(ev, groupGeneration)
-      ? CHET_NAME
+      ? isChetAnswerMessage
+        ? t("pendingReply.chetAnswered")
+        : CHET_NAME
       : typeof msgData?.sender_title === "string"
         ? String(msgData.sender_title || "").trim()
         : "";
@@ -303,18 +320,20 @@ export const MessageBubble = memo(
           return recordedQuestionText(replyView.question, t("pendingReply.recommended"));
       }
       if (delegationSourceOutbound) return t("delegationOutboundStatus");
-      const receipt = isUserMessage
-        ? localizedAnswerReceipt(ev.data, displayMessageText, {
-            selected: (optionId) => t("answerReceiptSelected", { id: optionId }),
-            other: t("answerReceiptOther"),
-            note: t("answerReceiptNote"),
-          })
-        : null;
+      const receipt =
+        isUserMessage || isChetAnswerMessage
+          ? localizedAnswerReceipt(ev.data, displayMessageText, {
+              selected: (optionId) => t("answerReceiptSelected", { id: optionId }),
+              other: t("answerReceiptOther"),
+              note: t("answerReceiptNote"),
+            })
+          : null;
       return receipt ?? getDelegationDisplayText(displayMessageText);
     }, [
       delegationSourceOutbound,
       displayMessageText,
       ev.data,
+      isChetAnswerMessage,
       isUserMessage,
       replyView?.state,
       replyView?.question,
@@ -696,6 +715,13 @@ export const MessageBubble = memo(
       />
     );
 
+    // Without a reply count or read receipts in the footer, the action menu opens the recipient
+    // list, so a plain Send's delivery and waiting state are always within reach. A final failure
+    // also keeps its footer mark: that one is a status, the menu item the steady way in.
+    const recipientStatusInMenu =
+      !obligationSummary &&
+      visibleReadStatusEntries.length === 0 &&
+      Object.keys(ev._obligation_status ?? {}).some((id) => id !== "user");
     const showAgentState = canShowAgentState && !collapseHeader;
     const messageActionProps = {
       readOnly,
@@ -712,6 +738,7 @@ export const MessageBubble = memo(
       onQuickReplyOpen,
       pinned,
       onTogglePin: pinnableId && onTogglePin ? () => onTogglePin(pinnableId, !pinned) : undefined,
+      onShowRecipients: recipientStatusInMenu ? onShowRecipients : undefined,
     };
     return (
       <div

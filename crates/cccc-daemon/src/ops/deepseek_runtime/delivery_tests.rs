@@ -213,6 +213,72 @@ done"#;
 
 #[cfg(unix)]
 #[test]
+fn prepared_deepseek_input_does_not_follow_a_replaced_generation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store
+        .create("generation-bound delivery", "")
+        .expect("group");
+    let mut actor = Actor::new("deepseek");
+    actor.runtime = ActorRuntime::Deepseek;
+    actor.command = vec!["sh".into(), "-c".into(), r#"while IFS= read -r line; do
+case "$line" in
+ *'"method":"initialize"'*) printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentInfo":{"name":"fixture"}}}' ;;
+ *'"method":"session/new"'*) printf '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"fixture-%s"}}\n' "$$" ;;
+ *'"method":"session/prompt"'*)
+     printf '%s\n' "$line" >> submitted.jsonl
+     rid=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+     printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$rid" ;;
+esac
+done"#.into()];
+    group.actors.push(actor.clone());
+    store.save(&group).expect("save group");
+    let generation = || {
+        registered_generation(&group.group_id, &actor.id)
+            .expect("registered DeepSeek holder")
+            .0
+    };
+    start(&home, &group, &actor, temp.path()).expect("start original");
+    let old = generation();
+    stop_confirmed(&group.group_id, &actor.id).expect("stop original");
+    start(&home, &group, &actor, temp.path()).expect("start replacement");
+    let current = generation();
+    assert_ne!(old, current);
+
+    let cancelled = AtomicBool::new(false);
+    let started = AtomicBool::new(false);
+    let event = Event::new("chat.message", &group.group_id);
+    let submit = |generation| {
+        deliver_prepared(
+            &home,
+            &group,
+            &actor,
+            generation,
+            &event,
+            "GENERATION_BOUND_INPUT",
+            &cancelled,
+            &started,
+        )
+    };
+    let path = temp.path().join("submitted.jsonl");
+    assert_eq!(submit(&old), TurnDelivery::Incomplete);
+    assert!(!started.load(std::sync::atomic::Ordering::Acquire));
+    assert!(!path.exists());
+
+    assert_eq!(submit(&current), TurnDelivery::Completed);
+    assert_eq!(
+        std::fs::read_to_string(path)
+            .expect("provider input")
+            .matches("GENERATION_BOUND_INPUT")
+            .count(),
+        1
+    );
+    stop_confirmed(&group.group_id, &actor.id).expect("stop replacement");
+}
+
+#[cfg(unix)]
+#[test]
 fn failed_attempt_output_does_not_hide_successful_retry() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

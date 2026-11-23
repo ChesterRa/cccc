@@ -19,6 +19,16 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/chet/status", get(status))
         .route("/api/v1/chet/inputs", post(submit))
         .route("/api/v1/chet/inputs/{id}", get(find))
+        .route(
+            "/api/v1/chet/unattended",
+            get(unattended).put(update_unattended),
+        )
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnattendedUpdate {
+    enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -62,6 +72,24 @@ async fn find(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult 
         &state,
         "chet_history_find",
         object(json!({"by":"user","id":id,"resolve_sources":true})),
+    )
+    .await
+}
+
+async fn unattended(State(state): State<AppState>) -> ApiResult {
+    require_interactive_web(&state)?;
+    api::call(&state, "unattended_get", Default::default()).await
+}
+
+async fn update_unattended(
+    State(state): State<AppState>,
+    Json(update): Json<UnattendedUpdate>,
+) -> ApiResult {
+    require_interactive_web(&state)?;
+    api::call(
+        &state,
+        "unattended_update",
+        object(json!({"by":"user","enabled":update.enabled})),
     )
     .await
 }

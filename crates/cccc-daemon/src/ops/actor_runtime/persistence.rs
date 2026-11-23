@@ -7,23 +7,29 @@ pub fn persist_lifecycle(
     enabled: bool,
     target_status: Option<&SessionStatus>,
 ) -> Result<Actor, OpError> {
+    persist(home, group, actor_id, enabled, target_status, None)
+}
+
+pub(in crate::ops) fn persist_target_stop(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    target: &crate::session_owner::OwnedTarget,
+) -> Result<Actor, OpError> {
+    persist(home, group, actor_id, false, None, Some(target))
+}
+
+fn persist(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    enabled: bool,
+    target_status: Option<&SessionStatus>,
+    stop: Option<&crate::session_owner::OwnedTarget>,
+) -> Result<Actor, OpError> {
     GroupStore::new(home.clone())
         .map_err(OpError::io)?
         .mutate(&group.group_id, |doc| {
-            // From the stored document: this launch may have adopted a Profile
-            // snapshot, and with it a runtime that needs no process.
-            let running = doc.actors.iter().any(|actor| {
-                let enabled = if actor.id == actor_id {
-                    enabled
-                } else {
-                    actor.enabled
-                };
-                enabled
-                    && (actor_is_running(doc, actor)
-                        || is_structured(actor)
-                        || (actor.id == actor_id
-                            && target_status.is_some_and(|status| status.running)))
-            });
             let mut patch = serde_json::Map::new();
             patch.insert("enabled".into(), serde_json::Value::Bool(enabled));
             let actor = cccc_core::actors::update(doc, actor_id, &patch)?;
@@ -38,8 +44,29 @@ pub fn persist_lifecycle(
                 ) {
                     doc.running = true;
                 }
+            } else if let Some(stop) = stop {
+                if let Some(running) =
+                    group_running(doc, |member| stop.member_running(&doc.group_id, member))
+                {
+                    doc.running = running;
+                }
             } else {
-                doc.running = running;
+                // The stored configuration may include a Profile's current launch fields.
+                // Preserve the group's desired state if any required observation failed.
+                if let Some(running) = crate::session_owner::read_scope(|| {
+                    group_running(doc, |member| {
+                        if member.id == actor_id
+                            && target_status.is_some_and(|status| status.running)
+                        {
+                            Some(true)
+                        } else {
+                            require_owner_observation(home, doc, member).ok()?;
+                            Some(actor_is_running(doc, member))
+                        }
+                    })
+                }) {
+                    doc.running = running;
+                }
                 if enabled && doc.state == cccc_contracts::GroupState::Stopped {
                     doc.state = cccc_contracts::GroupState::Active;
                 }
@@ -47,6 +74,21 @@ pub fn persist_lifecycle(
             Ok(actor)
         })
         .map_err(OpError::invalid)
+}
+
+fn group_running(doc: &GroupDoc, mut observe: impl FnMut(&Actor) -> Option<bool>) -> Option<bool> {
+    let mut all_observed = true;
+    for member in doc.actors.iter().filter(|member| member.enabled) {
+        if is_structured(member) {
+            return Some(true);
+        }
+        match observe(member) {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => all_observed = false,
+        }
+    }
+    all_observed.then_some(false)
 }
 
 /// A linked Profile takes effect at the launch that replaces the owner. Its

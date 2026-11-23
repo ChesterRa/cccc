@@ -298,10 +298,9 @@ pub(super) async fn launch(
         )),
         _ => None,
     };
+    let inherited_config = std::env::var("OPENCODE_CONFIG_CONTENT").ok();
     let content = configuration(
-        environment
-            .get("OPENCODE_CONFIG_CONTENT")
-            .map(String::as_str),
+        existing_config_content(&environment, inherited_config.as_deref()),
         mcp,
         agent,
     )?;
@@ -545,6 +544,16 @@ pub(super) async fn launch(
     }
 }
 
+fn existing_config_content<'a>(
+    environment: &'a BTreeMap<String, String>,
+    inherited: Option<&'a str>,
+) -> Option<&'a str> {
+    environment
+        .get("OPENCODE_CONFIG_CONTENT")
+        .map(String::as_str)
+        .or_else(|| inherited.filter(|value| !value.trim().is_empty()))
+}
+
 fn configuration(
     existing: Option<&str>,
     mcp: Value,
@@ -701,5 +710,49 @@ async fn observe(
     inner.running.store(false, Ordering::Release);
     if result.is_err() {
         inner.publish(json!({"method":"cccc/managedAgent/disconnected","params":{"threadId":inner.session_id,"reason":"OpenCode V2 lifecycle was lost; pending input will not be replayed"}}),None);
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn opencode_v2_merges_inherited_config_content_when_actor_env_omits_it() {
+        let empty = BTreeMap::new();
+        let mcp = json!({"command":"cccc","args":["mcp"],"env":[]});
+
+        // Falls back to host-inherited OPENCODE_CONFIG_CONTENT when not set in actor env.
+        let merged = configuration(
+            existing_config_content(
+                &empty,
+                Some(r#"{"theme":"dark","mcp":{"servers":{"other":{"type":"local"}}}}"#),
+            ),
+            mcp.clone(),
+            None,
+        )
+        .expect("merge inherited config");
+        assert_eq!(merged["theme"], "dark");
+        assert_eq!(merged["mcp"]["servers"]["other"]["type"], "local");
+        assert_eq!(merged["mcp"]["servers"]["cccc"]["type"], "local");
+
+        // Explicit actor/profile env takes precedence over inherited config.
+        let mut explicit = BTreeMap::new();
+        explicit.insert(
+            "OPENCODE_CONFIG_CONTENT".into(),
+            r#"{"theme":"light"}"#.into(),
+        );
+        let overridden = configuration(
+            existing_config_content(&explicit, Some(r#"{"theme":"dark"}"#)),
+            mcp.clone(),
+            None,
+        )
+        .expect("explicit overrides inherited");
+        assert_eq!(overridden["theme"], "light");
+
+        // Blank inherited value is treated as unset rather than invalid JSON.
+        let blank = configuration(existing_config_content(&empty, Some("   ")), mcp, None)
+            .expect("blank inherited config ignored");
+        assert_eq!(blank["mcp"]["servers"]["cccc"]["type"], "local");
     }
 }

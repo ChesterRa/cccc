@@ -51,6 +51,8 @@ export type ChetGroupSource =
       has_attachments: boolean;
       /** The text stops at a size limit; the Group holds the rest. */
       truncated: boolean;
+      /** Sent to the user; Chet held it as an unattended copy. */
+      copy?: boolean;
       /** Chet's reply to the sender that this Group's ledger shows, if any. */
       reply_event_id: string | null;
     }
@@ -160,6 +162,7 @@ function isGroupSource(value: unknown): value is ChetGroupSource {
     ["group_title", "sender_title", "text", "sent_at"].every((key) => isString(value[key])) &&
     typeof value.has_attachments === "boolean" &&
     typeof value.truncated === "boolean" &&
+    (value.copy === undefined || typeof value.copy === "boolean") &&
     (value.reply_event_id === null || isString(value.reply_event_id))
   );
 }
@@ -373,3 +376,32 @@ export function chetSubmissionRefused(code: string): boolean {
 
 /** The ID already names a different request; the original must be reviewed, not replaced. */
 export const CHET_ID_CONFLICT = "chet_history_id_conflict";
+
+/** Unattended mode: while on, Group messages to the user are also given to Chet to handle. */
+export type ChetUnattended = { enabled: boolean; since: string | null };
+
+function unattended(result: unknown): ApiResponse<ChetUnattended> {
+  const value = isObject(result) ? result.unattended : undefined;
+  if (!isObject(value) || typeof value.enabled !== "boolean") {
+    return invalid("Unattended mode response is malformed");
+  }
+  return {
+    ok: true,
+    result: { enabled: value.enabled, since: isString(value.since) ? value.since : null },
+  };
+}
+
+export async function fetchChetUnattended(
+  signal?: AbortSignal,
+): Promise<ApiResponse<ChetUnattended>> {
+  const response = await apiJson<unknown>("/api/v1/chet/unattended", { signal });
+  return response.ok ? unattended(response.result) : response;
+}
+
+export async function updateChetUnattended(enabled: boolean): Promise<ApiResponse<ChetUnattended>> {
+  const response = await apiJson<unknown>("/api/v1/chet/unattended", {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+  return response.ok ? unattended(response.result) : response;
+}

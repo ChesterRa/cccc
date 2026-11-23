@@ -1,7 +1,8 @@
 //! The one visible fact that a Group request to Chet was never sent: the host
 //! still held it when its wait expired. Chet history keeps the private fact;
 //! the source Group gets a single `failed` delivery on the original message,
-//! which says nothing about what Chet was doing instead.
+//! which says nothing about what Chet was doing instead. An unattended copy of
+//! a message to the user keeps only the private fact.
 use super::chet_history::{map_error, registration};
 use super::operation::{Operation, Policy::Write};
 use crate::dispatch::{OpError, OpResult, object};
@@ -78,11 +79,15 @@ fn wait_expired(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         Err(error) => return Err(OpError::io(error)),
     };
     let ledger_path = groups.ledger_path(group_id).map_err(OpError::io)?;
-    if cccc_core::ledger::find_event(&ledger_path, &input.event_id)
-        .map_err(OpError::io)?
-        .is_none()
-    {
+    let Some(source) =
+        cccc_core::ledger::find_event(&ledger_path, &input.event_id).map_err(OpError::io)?
+    else {
         return source_unavailable(recorded);
+    };
+    // An unattended copy was sent to the user, not to Chet: its message gets
+    // no Chet delivery and its sender no notice.
+    if !addresses_chet(&source) {
+        return object(json!({"registration":registration(recorded),"delivery":"copy"}));
     }
     let (delivery_id, appended) = super::runtime_delivery::record_unsent_service_delivery(
         home,
@@ -107,6 +112,14 @@ fn wait_expired(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "registration":registration(recorded),
         "delivery":if appended { "recorded" } else { "existing" },
     }))
+}
+
+fn addresses_chet(event: &cccc_contracts::Event) -> bool {
+    event
+        .data
+        .get("to")
+        .and_then(Value::as_array)
+        .is_some_and(|to| to.contains(&json!(actors::CHET_SERVICE_PRINCIPAL)))
 }
 
 fn source_unavailable(recorded: chet_history::Registration) -> OpResult {
@@ -141,6 +154,12 @@ mod tests {
     impl Fixture {
         /// A member asks Chet in a Group, and the host registers that input.
         fn new() -> Self {
+            Self::with(false)
+        }
+
+        /// With `copy`, the member writes to the user while unattended mode is
+        /// on, and the host registers Chet's copy instead.
+        fn with(copy: bool) -> Self {
             let temp = tempfile::tempdir().expect("home");
             let home = HomeLayout::from_path(temp.path()).expect("home layout");
             let groups = GroupStore::new(home.clone()).expect("groups");
@@ -157,11 +176,20 @@ mod tests {
                 &added,
             )
             .expect("actor.add");
+            if copy {
+                let on = call(
+                    &home,
+                    "unattended_update",
+                    json!({"by":"user","enabled":true}),
+                );
+                assert!(on.ok, "{on:?}");
+            }
             let sent = call(
                 &home,
                 "send",
                 json!({"group_id":group.group_id,"by":"worker",
-                "to":["@chet"],"text":"Please review","message_mode":"send"}),
+                "to":[if copy { "user" } else { "@chet" }],
+                "text":"Please review","message_mode":"send"}),
             );
             assert!(sent.ok, "{sent:?}");
             let event_id = sent.result["event"]["id"]
@@ -282,6 +310,21 @@ mod tests {
             notices[0].data["title"],
             "Your request to Chet was not sent"
         );
+    }
+
+    #[test]
+    fn an_expired_unattended_copy_keeps_only_the_private_fact() {
+        let fixture = Fixture::with(true);
+        let first = fixture.expire();
+        assert!(first.ok, "{first:?}");
+        assert_eq!(first.result["registration"], "inserted");
+        assert_eq!(first.result["delivery"], "copy");
+        assert_eq!(fixture.expire().result["registration"], "existing");
+        assert_eq!(fixture.not_started(), 1);
+        // The member wrote to the user, not to Chet: no Chet delivery on the
+        // message and no notice to the member.
+        assert!(fixture.events("runtime.delivery").is_empty());
+        assert!(fixture.events("system.notify").is_empty());
     }
 
     #[test]

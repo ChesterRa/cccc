@@ -11,10 +11,29 @@ export interface RecipientEntry {
   cleared: boolean;
   deliveryState: string;
   deliveryReason?: string;
+  deliveryEvidence?: string;
+  waitingReason?: string;
   read: boolean;
   replied: boolean;
   replyRequested: boolean;
   cancelled: boolean;
+}
+
+function waitingReasonKey(reason: string): string {
+  switch (reason) {
+    case "group_paused":
+      return "recipients.waitingReason.groupPaused";
+    case "group_stopped":
+      return "recipients.waitingReason.groupStopped";
+    case "member_disabled":
+      return "recipients.waitingReason.memberDisabled";
+    case "runtime_switch":
+      return "recipients.waitingReason.runtimeSwitch";
+    case "not_submitted":
+      return "recipients.waitingReason.notSubmitted";
+    default:
+      return "recipients.deliveryWaiting";
+  }
 }
 
 export interface RecipientsModalProps {
@@ -62,16 +81,29 @@ export function RecipientsModal({
 
   const deliveryLabel = (entry: RecipientEntry): string => {
     if (remoteDelivery) return t(`chat:connectDelivery.${remoteDelivery.state}`);
-    if (entry.deliveryState === "accepted") return t("recipients.deliveryAccepted");
+    if (entry.deliveryState === "accepted") {
+      if (entry.deliveryEvidence === "terminal_written") {
+        return t("recipients.deliveryTerminalWritten");
+      }
+      if (entry.deliveryEvidence === "channel_accepted") {
+        return t("recipients.deliveryChannelAccepted");
+      }
+      return t("recipients.deliveryAccepted");
+    }
     if (entry.deliveryState === "claimed") return t("recipients.deliveryClaimed");
-    if (entry.deliveryState === "failed") return t("recipients.deliveryFailed");
     if (entry.deliveryState === "ambiguous") return t("recipients.deliveryAmbiguous");
+    if (entry.waitingReason && !(messageMode === "mail" && entry.read)) {
+      return t(waitingReasonKey(entry.waitingReason));
+    }
+    if (entry.deliveryState === "failed" && !(messageMode === "mail" && entry.read)) {
+      return t("recipients.deliveryFailed");
+    }
     if (messageMode === "mail") return t("recipients.inInbox");
     return t("recipients.notDelivered");
   };
 
   const deliverLabel = (entry: RecipientEntry): string => {
-    if (entry.deliveryState === "failed") return t("recipients.retry");
+    if (entry.deliveryState === "failed" && !entry.waitingReason) return t("recipients.retry");
     if (entry.deliveryState === "ambiguous") return t("recipients.retryAnyway");
     return t("recipients.sendNow");
   };
@@ -115,6 +147,7 @@ export function RecipientsModal({
                 (messageMode !== "mail" || !entry.read) &&
                 !entry.replied &&
                 !entry.cancelled &&
+                entry.waitingReason !== "member_disabled" &&
                 !["accepted", "claimed"].includes(entry.deliveryState);
               const actionKey = `deliver:${entry.id}`;
               // An ambiguous delivery counts as handled, but it is not a confirmed success.

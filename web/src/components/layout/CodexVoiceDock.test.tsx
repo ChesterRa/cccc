@@ -1,9 +1,19 @@
-import { createRef } from "react";
+// @vitest-environment happy-dom
+import { act, createRef } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { CodexVoiceSessionController } from "../../features/codexVoice/useCodexVoiceSessionController";
 import { CodexVoiceDock } from "./CodexVoiceDock";
 
+const unattended = vi.hoisted(() => ({ enabled: false, refresh: vi.fn(async () => undefined) }));
+vi.mock("../../stores/useUnattendedStore", () => ({
+  useUnattendedStore: (select: (state: unknown) => unknown) =>
+    select({
+      unattended: unattended.enabled ? { enabled: true, since: "t" } : null,
+      refresh: unattended.refresh,
+    }),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 function controller(
@@ -119,6 +129,51 @@ describe("CodexVoiceDock", () => {
       expect(html).not.toContain("modals:codexVoiceProviders.grok");
       expect(html).not.toContain("Eve");
       if (surface !== "collapsed") expect(html).toMatch(/>Chet<\/span>/);
+    },
+  );
+
+  it.each(["sidebar", "mobile", "collapsed"] as const)(
+    "names unattended mode in the %s dock beside Chet's own state",
+    (surface) => {
+      const markup = (chetWorking = false, overrides: Partial<CodexVoiceSessionController> = {}) =>
+        renderToStaticMarkup(
+          <CodexVoiceDock
+            controller={controller(overrides)}
+            chetWorking={chetWorking}
+            variant={surface === "mobile" ? "mobile" : "sidebar"}
+            collapsed={surface === "collapsed"}
+            onOpen={vi.fn()}
+            onStart={vi.fn()}
+          />,
+        );
+      unattended.enabled = true;
+      try {
+        expect(markup()).toContain("modals:chet.unattendedOn");
+        expect(markup(true)).toContain("modals:chet.state.working · modals:chet.unattendedOn");
+        // A call or something that needs a look keeps the mode named beside it.
+        expect(markup(false, { error: "Needs attention" })).toContain(
+          "layout:codexVoiceAttention · modals:chet.unattendedOn",
+        );
+        expect(markup(false, { phase: "listening", owned: true, isEngaged: true })).toContain(
+          "modals:chet.unattendedOn",
+        );
+        // Copies would wait for a Chet that cannot run, so the entry asks for a look.
+        const cannotRun = {
+          readiness: { ...controller().readiness!, analyst_runtime_available: false },
+        };
+        expect(markup(false, cannotRun)).toContain(
+          "layout:codexVoiceAttention · modals:chet.unattendedOn",
+        );
+      } finally {
+        unattended.enabled = false;
+      }
+      expect(markup()).not.toContain("modals:chet.unattendedOn");
+      // Without the mode, a Runtime problem stays inside Chet's panel as before.
+      expect(
+        markup(false, {
+          readiness: { ...controller().readiness!, analyst_runtime_available: false },
+        }),
+      ).not.toContain("layout:codexVoiceAttention");
     },
   );
 
@@ -271,5 +326,23 @@ describe("CodexVoiceDock", () => {
     expect(html).toContain("modals:chet.subtitle");
     expect(html).not.toContain("Alpha");
     expect(html).not.toContain("g_beta");
+  });
+
+  it("reads unattended mode again when the page becomes visible", () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    unattended.refresh.mockClear();
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() =>
+      root.render(<CodexVoiceDock controller={controller()} onOpen={vi.fn()} onStart={vi.fn()} />),
+    );
+    expect(unattended.refresh).toHaveBeenCalledTimes(1);
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(unattended.refresh).toHaveBeenCalledTimes(2);
+    act(() => root.unmount());
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(unattended.refresh).toHaveBeenCalledTimes(2);
+    host.remove();
   });
 });

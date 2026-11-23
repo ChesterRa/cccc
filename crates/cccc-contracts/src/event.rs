@@ -4,6 +4,22 @@ use uuid::Uuid;
 
 use crate::utc_now;
 
+/// The observed handoff boundary for an accepted runtime delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryEvidence {
+    TerminalWritten,
+    ChannelAccepted,
+}
+
+impl DeliveryEvidence {
+    /// Older records can omit the evidence, and future records can add values.
+    #[must_use]
+    pub fn from_json(value: &Value) -> Option<Self> {
+        Self::deserialize(value).ok()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Event {

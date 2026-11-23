@@ -1,5 +1,8 @@
 use super::*;
-use cccc_contracts::DaemonRequest;
+use crate::ops::runtime_delivery::{
+    PreparedRetainedClaims, apply_retained_claims, prepare_retained_claims,
+};
+use crate::session_owner::OwnerObservations;
 use cccc_core::{GroupStore, ledger};
 use serde_json::json;
 
@@ -16,35 +19,33 @@ pub(crate) fn pending_group_ids() -> Vec<String> {
     if let Ok(notices) = sender_notices().lock() {
         groups.extend(notices.iter().map(|notice| notice.group_id.clone()));
     }
-    if let Ok(workers) = workers().lock() {
-        groups.extend(
-            workers
-                .iter()
-                .filter(|(_, worker)| worker.needs_refill)
-                .map(|((group_id, _), _)| group_id.clone()),
-        );
-    }
+    collect_refill_groups(&mut groups);
+    collect_group_catchup_groups(&mut groups);
     gaps::collect_groups(&mut groups);
     groups.extend(crate::session_owner::recovery_groups());
     groups.into_iter().collect()
 }
 
-pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
-    if let Err(error) = crate::ops::runtime_delivery::settle_retained_claims(home, group_id) {
-        tracing::warn!(code = %error.code, "retained delivery result is not yet settled");
+/// Commit queued local receipts before polling any session owners.
+pub(crate) fn drain_local_completions(home: &HomeLayout, group_id: &str) {
+    if GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    {
+        clear_refills(|(group, _)| group == group_id);
+        gaps::clear(|(group, _)| group == group_id);
+        clear_group_catchup(group_id);
+        if let Ok(mut notices) = sender_notices().lock() {
+            notices.retain(|notice| notice.group_id != group_id);
+        }
+        take_group_completions(group_id);
+        clear_in_flight(|item| item.0 == group_id);
+        return;
     }
     let pending = take_group_completions(group_id);
     let mut deferred = VecDeque::new();
     for completion in pending {
-        match crate::ops::runtime_delivery::append_state(
-            home,
-            &completion.group_id,
-            &completion.actor_id,
-            &completion.actor_created_at,
-            &completion.event_id,
-            &completion.transport,
-            completion.outcome.ledger_outcome(),
-        ) {
+        match completion.persist(home) {
             Ok(_) => clear_in_flight(|item| {
                 item.0 == completion.group_id
                     && item.1 == completion.actor_id
@@ -63,32 +64,56 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
     if let Ok(mut completions) = completions().lock() {
         completions.extend(deferred);
     }
-    tell_senders(home, group_id);
+    resolve_group_catchup(home, group_id);
+}
 
-    gaps::recover_group(home, group_id);
+pub(crate) struct PreparedDrain {
+    retained: PreparedRetainedClaims,
+    gaps: Vec<gaps::PreparedGap>,
+}
 
-    let actors = workers()
-        .lock()
-        .map(|workers| {
-            workers
-                .iter()
-                .filter(|((id, _), worker)| id == group_id && worker.needs_refill)
-                .map(|((_, actor_id), _)| actor_id.clone())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if actors.is_empty() {
-        return;
+pub(crate) fn prepare_drain(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    observed: &OwnerObservations,
+) -> PreparedDrain {
+    let retained = prepare_retained_claims(home, &group.group_id).unwrap_or_else(|error| {
+        tracing::warn!(code = %error.code, "retained delivery result is not yet settled");
+        PreparedRetainedClaims::default()
+    });
+    PreparedDrain {
+        retained,
+        gaps: gaps::prepare_group(home, group, observed),
     }
-    let group =
-        match cccc_core::GroupStore::new(home.clone()).and_then(|store| store.load(group_id)) {
-            Ok(group) => group,
-            Err(error) => {
-                tracing::warn!(%error, %group_id, "failed to reload pending native deliveries");
-                return;
-            }
-        };
+}
+
+pub(crate) fn apply_drain(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    observed: &OwnerObservations,
+    prepared: PreparedDrain,
+    current: bool,
+) {
+    let group_id = &group.group_id;
+    if let Err(error) = apply_retained_claims(home, group_id, prepared.retained) {
+        tracing::warn!(code = %error.code, "retained delivery result is not yet settled");
+    }
+    if current {
+        gaps::apply_group(home, group, prepared.gaps);
+    }
+    tell_senders(home, group_id, observed);
+    let actors = pending_refill_actors(group_id);
     for actor_id in actors {
+        // Refills belong to external receivers. A changed route has to use the
+        // ordinary, prepared owner catch-up before it can claim this work.
+        let member = group.actors.iter().find(|member| member.id == actor_id);
+        if member.is_none_or(|member| member.external_session_id.is_empty()) {
+            set_refill(group_id, &actor_id, false);
+            if let Some(member) = member {
+                record_member_catchup(group, member);
+            }
+            continue;
+        }
         // Offline workers keep their bounded slots. Wait for space rather than
         // repeatedly loading the same full page or probing the native provider.
         let has_capacity = in_flight()
@@ -102,14 +127,57 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
             })
             .unwrap_or(false);
         if has_capacity {
-            dispatch_unread(home, &group, &actor_id);
+            dispatch_unread(home, group, &actor_id);
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
+    drain_local_completions(home, group_id);
+    let Ok(group) = GroupStore::new(home.clone()).and_then(|store| store.load(group_id)) else {
+        return;
+    };
+    let observed = crate::session_owner::observe_owners_for_maintenance(home)
+        .expect("maintenance observation");
+    apply_drain(
+        home,
+        &group,
+        &observed,
+        prepare_drain(home, &group, &observed),
+        true,
+    );
+}
+
+fn resolve_group_catchup(home: &HomeLayout, group_id: &str) {
+    let Some(revision) = active_group_catchup_revision(group_id) else {
+        return;
+    };
+    let group = match cccc_core::GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+    {
+        Ok(group) => group,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            clear_group_catchup(group_id);
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(%error, %group_id, "failed to reload group for pending delivery catch-up");
+            return;
+        }
+    };
+    complete_group_catchup(group_id, revision);
+    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        return;
+    }
+    for actor in &group.actors {
+        record_member_catchup(&group, actor);
     }
 }
 
 /// Runs under the Group's write permit, so the member checked here is the one
 /// the notice reaches. Best effort: what fails is logged and dropped.
-fn tell_senders(home: &HomeLayout, group_id: &str) {
+fn tell_senders(home: &HomeLayout, group_id: &str, observed: &OwnerObservations) {
     let notices = sender_notices()
         .lock()
         .map(|mut queue| {
@@ -121,12 +189,11 @@ fn tell_senders(home: &HomeLayout, group_id: &str) {
         })
         .unwrap_or_default();
     for notice in notices {
-        if let Err(error) = notify_sender(home, &notice) {
-            tracing::warn!(
-                message = %error.message,
-                event_id = %notice.event_id,
-                "could not tell the sender how its delivery ended"
-            );
+        match persist_sender_notice(home, &notice) {
+            Ok(Some((group, event))) => dispatch_observed_notice(home, &group, &event, observed),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(message = %error.message, event_id = %notice.event_id,
+                "could not tell the sender how its delivery ended"),
         }
     }
 }
@@ -135,6 +202,16 @@ pub(super) fn notify_sender(
     home: &HomeLayout,
     notice: &SenderNotice,
 ) -> Result<(), crate::dispatch::OpError> {
+    if let Some((group, event)) = persist_sender_notice(home, notice)? {
+        dispatch(home, &group, &event);
+    }
+    Ok(())
+}
+
+fn persist_sender_notice(
+    home: &HomeLayout,
+    notice: &SenderNotice,
+) -> Result<Option<(GroupDoc, Event)>, crate::dispatch::OpError> {
     use crate::dispatch::OpError;
     use crate::ops::messaging_status::{Requester, requester_for_event};
     let (group_id, recipient) = (&notice.group_id, &notice.recipient);
@@ -142,7 +219,7 @@ pub(super) fn notify_sender(
     let group = store.load(group_id).map_err(OpError::io)?;
     let path = store.ledger_path(group_id).map_err(OpError::io)?;
     let Some(source) = ledger::find_event(&path, &notice.event_id).map_err(OpError::io)? else {
-        return Ok(());
+        return Ok(None);
     };
     // A member added since under the same name did not send this.
     if !cccc_core::actors::visible(&group).any(|actor| actor.id == source.by)
@@ -151,7 +228,7 @@ pub(super) fn notify_sender(
             Requester::Available
         )
     {
-        return Ok(());
+        return Ok(None);
     }
     let client_id = |state: &str| format!("delivery:{state}:{}", notice.delivery_id);
     // The host proved this one was never sent, so it is final and says so.
@@ -173,24 +250,21 @@ pub(super) fn notify_sender(
         .map_err(OpError::io)?
         .is_some()
     {
-        return Ok(());
+        return Ok(None);
     }
-    let request = DaemonRequest {
-        v: 1,
-        op: "system_notify".into(),
-        args: json!({
-            "group_id":group_id,"by":"system","client_id":client_id,"kind":"error",
-            "title":title,
-            "message":message,
-            "to":[source.by],"target_actor_id":source.by,"im_visibility":"internal",
-            "related_event_id":source.id,
-            "context":{"delivery_id":notice.delivery_id,"state":state,"actor_id":recipient},
-        })
-        .as_object()
-        .cloned()
-        .expect("sender notice"),
-    };
-    crate::ops::messaging::send(home, &request, "system.notify").map(|_| ())
+    let data = json!({
+        "client_id":client_id,"kind":"error",
+        "title":title,
+        "message":message,
+        "to":[source.by],"target_actor_id":source.by,"im_visibility":"internal",
+        "related_event_id":source.id,
+        "context":{"delivery_id":notice.delivery_id,"state":state,"actor_id":recipient},
+    })
+    .as_object()
+    .cloned()
+    .expect("sender notice");
+    let event = crate::ops::messaging::append(home, group_id, "system.notify", "system", data)?;
+    Ok(Some((group, event)))
 }
 
 /// A notice can arrive late, and a daemon restart can pick failed work up
@@ -276,7 +350,9 @@ mod tests {
             actor_created_at: actor.created_at.clone(),
             event_id: source.id.clone(),
             transport: "pty".into(),
-            outcome: CompletedDelivery::Accepted,
+            outcome: CompletedDelivery::Accepted(Some(
+                cccc_contracts::event::DeliveryEvidence::TerminalWritten,
+            )),
         });
 
         drain_group(&home, &group.group_id);
@@ -292,6 +368,7 @@ mod tests {
             event.kind == "runtime.delivery"
                 && event.data["source_event_id"] == source.id
                 && event.data["state"] == "accepted"
+                && event.data["delivery_evidence"] == "terminal_written"
         }));
     }
 

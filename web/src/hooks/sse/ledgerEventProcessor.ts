@@ -167,7 +167,13 @@ export function processLedgerEvent(
     if (data) {
       deps.updateObligationStatus(
         data.eventId,
-        { actorId: data.actorId, deliveryState: data.state, deliveryReason: data.reason },
+        {
+          actorId: data.actorId,
+          deliveryState: data.state,
+          deliveryReason: data.reason,
+          deliveryEvidence: data.evidence,
+          waitingReason: data.waitingReason,
+        },
         groupId,
       );
     }

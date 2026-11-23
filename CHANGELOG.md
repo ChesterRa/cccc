@@ -6,6 +6,59 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.60]
+
+### Added
+
+- **Unattended** mode (experimental, off by default): an instance-wide switch in Chet's title
+  bar. While it is on, each new message a member of a Group on this instance sends to the user
+  with Send or Send + Reply also goes to Chet,
+  which can reply, answer the user's question cards (recorded as Chet's answer on the user's
+  behalf and closing the card everywhere), or point out a risk. Chet's history shows each copy;
+  Chet's entry asks for attention when its Runtime is not ready. New daemon operations
+  `unattended_get` and `unattended_update`; `cccc_message_reply` takes a structured `answer`
+  for Chet in this mode.
+- Each browser can choose **All messages to me** or **Only when a reply is requested** in
+  **Settings > Notifications**. Both options include messages requesting a reply or
+  decision, including choice cards.
+- When CCCC has the evidence, the recipient list says whether a message was **Written to
+  terminal (execution unconfirmed)** or **Accepted by the runtime**, and can show why an
+  undelivered message is waiting. **Show recipient status** in a plain message's action menu
+  opens it; the list refreshes each time it opens and offers **Send now** for eligible deliveries.
+  `cccc ledger search --with-obligation-status`, and an agent reading one visible
+  message with `with_obligation_status`, see the same delivery facts, projected by direction.
+- In developer mode, `debug_snapshot` reports ledger-index cache counters and, on Linux, the
+  daemon's process memory.
+
+### Changed
+
+- Switches have a smaller knob with a margin and keep the track's color, so on and off are told
+  apart by the knob's side and fill.
+- A delivery that can still be retried, including one hitting a full delivery queue, shows
+  its waiting reason instead of failing; **Delivery failed** is kept for final failures. Mail
+  the member has already read is not shown as waiting.
+- For a member kept running by its session process, Start, Stop, Restart, New session,
+  Remove and enabling or disabling it first check that CCCC can reach that process; if the
+  check fails, the request is refused before any state changes.
+- OpenCode members keep an `OPENCODE_CONFIG_CONTENT` configuration inherited from CCCC's
+  environment; a member's own setting still wins.
+
+### Fixed
+
+- While CCCC is running, if one of two session owners stops responding, new messages can
+  still reach running members whose healthy owner CCCC can verify, and those members can be
+  stopped individually. Managed and DeepSeek members kept running from v0.4.59 need a
+  restart of that member. Resending an older message and views that read the whole Group
+  can still wait for the unresponsive owner. An owner already unresponsive at startup can
+  still fail startup.
+- Messages not yet handed to the runtime, or known not to have been submitted, during a short
+  disconnection are delivered when the member is back. A partial terminal write stays
+  unconfirmed and is not replayed automatically.
+- Stopping one member no longer marks the whole Group stopped when another member's process
+  is briefly unreachable; input for a just-replaced terminal is not typed into the new one.
+- Uploaded SVG attachments up to 4 MiB preview; on a phone, closing the last resource tab
+  closes the panel; DeepSeek setup reports the managed-session mode.
+
 ## [0.4.59]
 
 ### Added

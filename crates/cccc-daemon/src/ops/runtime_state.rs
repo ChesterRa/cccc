@@ -542,7 +542,9 @@ pub(super) fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpRe
                 &actor.created_at,
                 event_id,
                 &transport,
-                crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
+                crate::ops::runtime_delivery::DeliveryOutcome::Accepted(Some(
+                    cccc_contracts::event::DeliveryEvidence::ChannelAccepted,
+                )),
             )?;
         }
     }
@@ -923,7 +925,9 @@ fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResu
     let runtime_outcome = match browser_delivery["state"].as_str().unwrap_or_default() {
         "submitted" | "bound" => Some((
             "accepted",
-            crate::ops::runtime_delivery::DeliveryOutcome::Accepted,
+            crate::ops::runtime_delivery::DeliveryOutcome::Accepted(Some(
+                cccc_contracts::event::DeliveryEvidence::ChannelAccepted,
+            )),
         )),
         "ambiguous" => Some((
             "ambiguous",

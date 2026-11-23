@@ -7,6 +7,8 @@ use tokio::sync::Semaphore;
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::dispatch_concurrency::DispatchLocks;
+use crate::ops::{actor_delivery, automation_runtime};
+use crate::session_owner::OwnerObservations;
 
 const GROUP_CONCURRENCY: usize = 4;
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_millis(250);
@@ -73,7 +75,29 @@ async fn run(
     if cancelled.load(Ordering::Acquire) {
         return;
     }
-    let exited = prepare_exited().await;
+    let pending = automation_runtime::pending_delivery_group_ids();
+    drain_local_completions(&home, &locks, &pending, &cancelled).await;
+    if cancelled.load(Ordering::Acquire) {
+        return;
+    }
+    let observed_home = home.clone();
+    let observation = tokio::task::spawn_blocking(move || {
+        let local = automation_runtime::prepare_local_exited(&observed_home);
+        let owners = crate::session_owner::observe_owners_for_maintenance(&observed_home)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "maintenance owner observation failed");
+                OwnerObservations::unavailable(&observed_home)
+            });
+        (local, owners)
+    })
+    .await;
+    let (local, observed) = match observation {
+        Ok(observation) => observation,
+        Err(error) => {
+            tracing::warn!(%error, "maintenance owner observation task failed");
+            (BTreeMap::new(), OwnerObservations::unavailable(&home))
+        }
+    };
     if cancelled.load(Ordering::Acquire) {
         return;
     }
@@ -81,9 +105,47 @@ async fn run(
         .await
         .into_iter()
         .collect::<BTreeSet<_>>();
-    group_ids.extend(crate::ops::automation_runtime::pending_delivery_group_ids());
-    group_ids.extend(exited.keys().cloned());
-    run_groups(home, locks, include_unread, group_ids, exited, cancelled).await;
+    group_ids.extend(automation_runtime::pending_delivery_group_ids());
+    group_ids.extend(local.keys().cloned());
+    group_ids.extend(observed.exit_group_ids());
+    run_groups(
+        home,
+        locks,
+        include_unread,
+        group_ids,
+        local,
+        Arc::new(observed),
+        cancelled,
+    )
+    .await;
+}
+
+async fn drain_local_completions(
+    home: &HomeLayout,
+    locks: &DispatchLocks,
+    groups: &[String],
+    cancelled: &AtomicBool,
+) {
+    let semaphore = Arc::new(Semaphore::new(GROUP_CONCURRENCY));
+    let mut tasks = JoinSet::new();
+    for group_id in groups {
+        let Ok(permit) = semaphore.clone().acquire_owned().await else {
+            break;
+        };
+        if cancelled.load(Ordering::Acquire) {
+            break;
+        }
+        let (home, locks, group_id) = (home.clone(), locks.clone(), group_id.clone());
+        tasks.spawn(async move {
+            let lock = locks.group_write(&group_id).await;
+            let _ = tokio::task::spawn_blocking(move || {
+                let (_permit, _lock) = (permit, lock);
+                actor_delivery::drain_local_completions(&home, &group_id);
+            })
+            .await;
+        });
+    }
+    while tasks.join_next().await.is_some() {}
 }
 
 async fn run_groups(
@@ -92,6 +154,7 @@ async fn run_groups(
     include_unread: bool,
     group_ids: BTreeSet<String>,
     mut exited: BTreeMap<String, Vec<cccc_runtime::SessionStatus>>,
+    observed: Arc<OwnerObservations>,
     cancelled: Arc<AtomicBool>,
 ) {
     let semaphore = Arc::new(Semaphore::new(GROUP_CONCURRENCY));
@@ -108,7 +171,24 @@ async fn run_groups(
         let home = home.clone();
         let locks = locks.clone();
         let task_cancelled = Arc::clone(&cancelled);
+        let observed = Arc::clone(&observed);
         tasks.spawn(async move {
+            let (prepare_home, prepare_group, prepare_observed) =
+                (home.clone(), group_id.clone(), observed.clone());
+            let prepared = tokio::task::spawn_blocking(move || {
+                automation_runtime::prepare_maintenance(
+                    &prepare_home,
+                    &prepare_group,
+                    include_unread,
+                    &prepare_observed,
+                )
+            })
+            .await
+            .ok()
+            .flatten();
+            if task_cancelled.load(Ordering::Acquire) {
+                return;
+            }
             let lock = locks.group_write(&group_id).await;
             if task_cancelled.load(Ordering::Acquire) {
                 return;
@@ -119,27 +199,23 @@ async fn run_groups(
                 if task_cancelled.load(Ordering::Acquire) {
                     return;
                 }
-                crate::ops::automation_runtime::maintain_group(&home, &group_id, group_exits);
+                automation_runtime::maintain_group(&home, &group_id, group_exits, &observed);
                 if task_cancelled.load(Ordering::Acquire) {
                     return;
                 }
-                crate::ops::automation_runtime::tick_group(
-                    &home,
-                    &group_id,
-                    include_unread,
-                    &task_cancelled,
-                );
+                if let Some(prepared) = prepared {
+                    automation_runtime::apply_maintenance(
+                        &home,
+                        prepared,
+                        &observed,
+                        &task_cancelled,
+                    );
+                }
             })
             .await;
         });
     }
     while tasks.join_next().await.is_some() {}
-}
-
-async fn prepare_exited() -> BTreeMap<String, Vec<cccc_runtime::SessionStatus>> {
-    tokio::task::spawn_blocking(crate::ops::automation_runtime::prepare_exited)
-        .await
-        .unwrap_or_default()
 }
 
 async fn discover_groups(home: HomeLayout, locks: DispatchLocks) -> Vec<String> {
@@ -186,6 +262,7 @@ mod tests {
             false,
             BTreeSet::from([group.group_id]),
             BTreeMap::new(),
+            Arc::new(OwnerObservations::default()),
             Arc::new(AtomicBool::new(false)),
         ));
         tokio::time::sleep(Duration::from_millis(20)).await;

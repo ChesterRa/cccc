@@ -1,6 +1,6 @@
 //! The browser's side of Web Push: read the state, make the key, bind and
-//! unbind a subscription. Each acts for the signed-in principal only, and
-//! endpoints come back only as hashes.
+//! update or unbind a subscription. Each acts for the signed-in principal
+//! only, and endpoints come back only as hashes.
 
 use axum::extract::{DefaultBodyLimit, Extension, State};
 use axum::http::{HeaderMap, header};
@@ -10,12 +10,14 @@ use axum::{Json, Router};
 use cccc_core::access_tokens::{AccessTokenStore, token_id};
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use super::crypto::{CryptoError, ReceiverKeys};
 use super::endpoint;
 use super::notifier::{SenderState, starting_points};
-use super::store::{BindError, NewSubscription, Owner, PushStore};
+use super::store::{
+    BindError, NewSubscription, NotificationLevel, Owner, PushStore, SetLevelError,
+};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 use crate::auth::Principal;
@@ -29,7 +31,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/api/v1/push/key", post(key))
         .route(
             "/api/v1/push/subscription",
-            axum::routing::put(bind).delete(unbind),
+            axum::routing::put(bind).patch(set_level).delete(unbind),
         )
         .layer(DefaultBodyLimit::max(MAX_SUBSCRIPTION_BODY))
 }
@@ -39,6 +41,7 @@ struct SubscriptionBody {
     endpoint: String,
     keys: SubscriptionKeys,
     application_server_key: String,
+    level: Option<NotificationLevel>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +53,12 @@ struct SubscriptionKeys {
 #[derive(Deserialize)]
 struct EndpointBody {
     endpoint: String,
+}
+
+#[derive(Deserialize)]
+struct LevelBody {
+    endpoint: String,
+    level: NotificationLevel,
 }
 
 fn store(state: &AppState) -> PushStore {
@@ -95,12 +104,16 @@ async fn config(
     let owner = owner(&state, &principal)?;
     let store = store(&state);
     let vapid_public_key = store.public_key().map_err(unavailable)?;
-    let subscriptions = store.owned(&owner).map_err(unavailable)?;
+    let owned = store.owned(&owner).map_err(unavailable)?;
+    let subscriptions: Vec<_> = owned.iter().map(|(hash, _)| hash).collect();
+    let subscription_levels: BTreeMap<_, _> =
+        owned.iter().map(|(hash, level)| (hash, level)).collect();
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
         success(json!({
             "vapid_public_key": vapid_public_key,
             "subscriptions": subscriptions,
+            "subscription_levels": subscription_levels,
             "sender": state.push.state().as_str(),
         })),
     )
@@ -187,6 +200,7 @@ async fn bind(
         auth,
         application_server_key: body.application_server_key,
         origin,
+        level: body.level,
     };
     match store(&state).bind(subscription, owner, since) {
         Ok(()) => {
@@ -199,6 +213,22 @@ async fn bind(
             json!({}),
         )),
         Err(BindError::Io(error)) => Err(unavailable(error)),
+    }
+}
+
+async fn set_level(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Json(body): Json<LevelBody>,
+) -> ApiResult {
+    let owner = owner(&state, &principal)?;
+    match store(&state).set_level(&body.endpoint, &owner, body.level) {
+        Ok(()) => Ok(success(json!({ "updated": true, "level": body.level }))),
+        Err(SetLevelError::NotFound) => Err(ApiError::not_found_code(
+            "push_subscription_not_found",
+            "this browser has no active notification subscription for this account",
+        )),
+        Err(SetLevelError::Io(error)) => Err(unavailable(error)),
     }
 }
 

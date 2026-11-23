@@ -347,6 +347,13 @@ it("quotes a Group message where it was sent and opens it, or its reply, there",
   ]);
 });
 
+it("shows an unattended copy's text and that it was sent to the user", () => {
+  timeline([groupRequest(groupMessage({ copy: true }))], {}, [], null, vi.fn());
+  const entry = host.querySelector('[data-chet-group-message="available"]')!;
+  expect(entry.textContent).toContain("Can you check the release notes?");
+  expect(entry.textContent).toContain("chet.groupMessageCopy");
+});
+
 it("says when a finished Group request shows no reply, and offers no link to a gone message", () => {
   timeline([groupRequest(groupMessage())], {}, [], null, vi.fn());
   expect(host.textContent).toContain("chet.noGroupReply");

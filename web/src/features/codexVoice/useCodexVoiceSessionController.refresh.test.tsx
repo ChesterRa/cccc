@@ -22,6 +22,10 @@ const fixture = vi.hoisted(() => ({
   }>,
   t: (key: string) => key,
 }));
+vi.mock("../../services/api/chet", async (original) => ({
+  ...(await original<typeof import("../../services/api/chet")>()),
+  fetchChetUnattended: vi.fn(async () => ({ ok: true, result: { enabled: false, since: null } })),
+}));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: fixture.t }) }));
 vi.mock("../../services/api", () => ({
   fetchActiveCodexVoiceCall: fixture.active,

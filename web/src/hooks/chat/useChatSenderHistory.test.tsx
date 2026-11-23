@@ -810,3 +810,80 @@ it.each(["unrelated", "connect"])(
     expect(history.events[0]._connect_delivery?.state).toBe(kind === "connect" ? "sent" : "failed");
   },
 );
+
+it("does not mix a stale snapshot waiting_reason onto a newer live receipt", async () => {
+  const row = (id: string): LedgerEvent => ({
+    ...message(id),
+    data: { text: "ping", message_mode: "mail", to: ["worker"] },
+    _read_status: { worker: false },
+    _obligation_status: {
+      worker: { replied: false, reply_requested: false, cancelled: false, delivery_state: "" },
+    },
+  });
+  let resolveOlder!: (value: ReturnType<typeof page>) => void;
+  let resolveStatus!: (value: Awaited<ReturnType<typeof fetchLedgerStatuses>>) => void;
+  vi.mocked(searchChatMessages)
+    .mockResolvedValueOnce(page([row("40")], true))
+    .mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolveOlder = done;
+        }),
+    );
+  vi.mocked(fetchLedgerStatuses).mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolveStatus = done;
+      }),
+  );
+  await render();
+  let pending!: Promise<void | false>;
+  await act(async () => {
+    pending = history.loadMore();
+  });
+  await act(async () => useGroupStore.getState().updateReadStatus("40", "worker", "a"));
+  await act(async () => {
+    resolveOlder(page([row("10")]));
+  });
+  // A live terminal failure arrives before the older paused snapshot returns.
+  await act(async () => {
+    useGroupStore
+      .getState()
+      .updateObligationStatus(
+        "10",
+        {
+          actorId: "worker",
+          deliveryState: "failed",
+          deliveryReason: "scope missing",
+          deliveryEvidence: undefined,
+          waitingReason: undefined,
+        },
+        "a",
+      );
+    resolveStatus({
+      ok: true,
+      result: {
+        statuses: {
+          "10": {
+            obligation_status: {
+              worker: {
+                replied: false,
+                reply_requested: false,
+                cancelled: false,
+                delivery_state: "",
+                waiting_reason: "group_paused",
+              },
+            },
+          },
+        },
+      },
+    });
+    await pending;
+  });
+  expect(history.events[0]._obligation_status?.worker).toMatchObject({
+    delivery_state: "failed",
+    delivery_reason: "scope missing",
+    delivery_evidence: undefined,
+    waiting_reason: undefined,
+  });
+});

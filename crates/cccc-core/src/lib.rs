@@ -47,7 +47,7 @@ pub mod instance_identity;
 pub mod integration_state;
 pub mod ledger;
 pub mod ledger_archive;
-mod ledger_index;
+pub mod ledger_index;
 pub mod local_network;
 pub mod local_sessions;
 pub mod mail_pending;
@@ -68,6 +68,7 @@ pub mod session_nodes;
 pub mod settings;
 pub mod space_credentials;
 pub mod system_prompt;
+pub mod unattended;
 #[cfg(unix)]
 pub mod unix_socket_path;
 pub mod update_capabilities;

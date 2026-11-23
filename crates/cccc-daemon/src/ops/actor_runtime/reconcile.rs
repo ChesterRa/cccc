@@ -7,12 +7,18 @@ use cccc_runtime::SessionStatus;
 use super::runtime_error;
 use crate::dispatch::OpError;
 
+#[cfg(test)]
 pub fn reap_exited() -> Result<Vec<SessionStatus>, OpError> {
     let mut exited = cccc_runtime::reap().map_err(runtime_error)?;
     exited.extend(crate::session_owner::exited_terminals().map_err(OpError::io)?);
     Ok(reconciliable_exits(exited))
 }
 
+pub(crate) fn reap_local_exits() -> Result<Vec<SessionStatus>, OpError> {
+    ::cccc_runtime::reap().map_err(runtime_error)
+}
+
+#[cfg(test)]
 fn reconciliable_exits(exited: Vec<SessionStatus>) -> Vec<SessionStatus> {
     exited
         .into_iter()
@@ -32,10 +38,43 @@ pub fn reconcile_exited(home: &HomeLayout, exited: Vec<SessionStatus>) -> Result
     Ok(())
 }
 
-pub(crate) fn reconcile_provider_exits(home: &HomeLayout, group_id: &str) -> Result<(), OpError> {
+pub(crate) fn reconcile_observed_exits(
+    home: &HomeLayout,
+    group_id: &str,
+    observed: &crate::session_owner::OwnerObservations,
+) -> Result<(), OpError> {
+    if !observed.is_current() {
+        return Ok(());
+    }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let exits = crate::session_owner::provider_exits(home, group_id).map_err(OpError::io)?;
-    reconcile_provider_observations(&store, group_id, exits)
+    let owned = observed
+        .exited_terminals()
+        .iter()
+        .filter(|exit| exit.status.group_id == group_id);
+    let provider = observed.provider_exits(group_id);
+    if owned.clone().next().is_some() {
+        let group = store.load(group_id).map_err(OpError::io)?;
+        for exit in owned {
+            let status = &exit.status;
+            if group.actors.iter().any(|actor| {
+                actor.id == status.actor_id && actor.created_at == exit.actor_created_at
+            }) {
+                append_exit_event(
+                    &store,
+                    group_id,
+                    &status.actor_id,
+                    status.exit_code,
+                    status.exit_detail.as_deref(),
+                    "runtime",
+                    Some(&format!(
+                        "{}:{}",
+                        status.actor_generation, status.started_at
+                    )),
+                )?;
+            }
+        }
+    }
+    reconcile_provider_observations(&store, group_id, provider)
 }
 
 fn reconcile_provider_observations(

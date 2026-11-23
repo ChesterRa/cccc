@@ -10,7 +10,9 @@ vi.mock("react-i18next", () => ({
         ? `已选 ${values?.id}：`
         : key === "answerReceiptOther"
           ? "其他："
-          : key,
+          : key === "answerReceiptNote"
+            ? "备注："
+            : key,
   }),
 }));
 
@@ -46,6 +48,19 @@ describe("answer receipts", () => {
     expect(choice).not.toContain("Selected B:");
     const other = render("user", { text: "Other: Later", answer: { v: 1, text: "Later" } });
     expect(other).toContain("其他：Later");
+  });
+
+  it("localizes the choice and note of a recorded Chet answer", () => {
+    const receipt = {
+      text: "Selected B: There\n\nNote: After review.",
+      answer: { v: 2, option_id: "B", note: "After review." },
+      _cccc_chet_group_generation: "generation-1",
+    };
+    const delegated = render("svc:chet", { ...receipt, _cccc_chet_on_behalf_of: "user" });
+    expect(delegated).toContain("已选 B：There");
+    expect(delegated).toContain("备注：After review.");
+    expect(delegated).not.toContain("Selected B:");
+    expect(render("svc:chet", receipt)).toContain("Selected B: There");
   });
 
   it("leaves other senders and texts that do not match their answer as written", () => {

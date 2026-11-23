@@ -1,7 +1,7 @@
 import type { Actor, ChatMessageData, GroupSettings, LedgerEvent, ReplyTarget } from "../types";
 import { isConnectMessage, isCrossInstanceInboundMessage } from "./crossInstanceMessages";
 import { projectCrossGroupRecipients } from "./crossGroupRecipients";
-import { CHET_NAME, CHET_PRINCIPAL, isChetMessage } from "./chetIdentity";
+import { CHET_NAME, CHET_PRINCIPAL, isChetAnswer, isChetMessage } from "./chetIdentity";
 
 type ReplyComposerState = { destGroupId: string; toText: string; replyTarget: ReplyTarget };
 
@@ -85,15 +85,17 @@ export function buildReplyComposerState(
     typeof data?.dst_group_id === "string" ? String(data.dst_group_id || "").trim() : "";
   const remoteDstTo = remoteDstGroupId ? projectCrossGroupRecipients(data) : [];
   const policy = groupSettings?.default_send_to || "foreman";
-  // A reply to Chet names no recipient: the daemon returns it to Chet once it has
-  // verified that Chet wrote the message in this Group.
+  // Replies to an ordinary Chet message use the daemon's service route. The
+  // user can correct a delegated answer in the same thread with its requester.
+  const currentChet = isChetMessage(event, groupGeneration);
+  const correctsAnswer = currentChet && isChetAnswer(event);
   const defaultTo = remoteDstGroupId
     ? remoteDstTo
-    : by === CHET_PRINCIPAL
-      ? []
-      : authorIsActor
-        ? [by]
-        : authorIsUnavailableActor
+    : correctsAnswer
+      ? originalTo
+      : by === CHET_PRINCIPAL
+        ? []
+        : authorIsActor || authorIsUnavailableActor
           ? [by]
           : originalTo.length > 0
             ? originalTo
@@ -101,7 +103,7 @@ export function buildReplyComposerState(
               ? ["@foreman"]
               : [];
   // Named Chet only where the message row names it; otherwise the bare principal shows.
-  const replyBy = isChetMessage(event, groupGeneration)
+  const replyBy = currentChet
     ? CHET_NAME
     : by === "user" && defaultTo.length > 0
       ? defaultTo.join(", ")
@@ -114,7 +116,7 @@ export function buildReplyComposerState(
       eventId: replyEventId,
       by: replyBy,
       text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
-      ...(by === CHET_PRINCIPAL ? { toChet: true } : {}),
+      ...(by === CHET_PRINCIPAL && !correctsAnswer ? { toChet: true } : {}),
       ...(remoteDstGroupId ? { remoteDstGroupId, remoteDstTo: defaultTo } : {}),
     },
   };

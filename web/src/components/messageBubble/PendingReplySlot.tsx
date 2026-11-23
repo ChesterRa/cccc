@@ -18,6 +18,7 @@ import { answerPendingReply, type PendingReplyAnswer } from "../../services/api/
 import { useGroupStore } from "../../stores";
 import { useUIStore } from "../../stores/useUIStore";
 import type { ChatMessageData, LedgerEvent } from "../../types";
+import { CHET_PRINCIPAL, isChetAnswer } from "../../utils/chetIdentity";
 import { newClientId } from "../../utils/clientId";
 import { PendingReplyCard } from "./PendingReplyCard";
 
@@ -41,13 +42,20 @@ function ReplyEntry({
   const entry = useStore(store, (state) => state.entries[key] ?? EMPTY_REPLY_ENTRY);
   const prompts = useUIStore((state) => state.showPendingPrompts);
   const view = pendingReplyView(event)!;
-  const state = entry.closed ?? (entry.attempt ? "pending" : view.state);
   const replyId = event._user_request?.reply_event_id;
-  const loadedReply = useGroupStore((groupState) =>
-    replyId
-      ? groupState.chatByGroup[groupId]?.events.find((item) => item.id === replyId)
-      : undefined,
-  );
+  const loadedReply = useGroupStore((groupState) => {
+    if (!replyId) return undefined;
+    const bucket = groupState.chatByGroup[groupId];
+    return (
+      bucket?.events.find((item) => item.id === replyId) ??
+      bucket?.chatWindow?.events.find((item) => item.id === replyId) ??
+      bucket?.senderHistory?.events.find((item) => item.id === replyId)
+    );
+  });
+  const answeredByChet =
+    view.state === "answered" &&
+    (event._user_request?.reply_by === CHET_PRINCIPAL || isChetAnswer(loadedReply));
+  const state = entry.closed ?? (entry.attempt && !answeredByChet ? "pending" : view.state);
   const localOptionId =
     entry.confirmed && entry.draft.selection?.kind === "option" ? entry.draft.selection.id : null;
   const localOption = view.question?.options.find((option) => option.id === localOptionId);
@@ -155,7 +163,12 @@ function ReplyEntry({
   // With 'Waiting for you' indicators off, a request without a question reads as an
   // ordinary message, answered with the usual Reply. A question keeps its choices, and
   // an answer already being sent keeps its card so that it can still be retried.
-  if (!prompts && (event.data as ChatMessageData | undefined)?.question == null && !entry.attempt)
+  if (
+    !prompts &&
+    (event.data as ChatMessageData | undefined)?.question == null &&
+    !entry.attempt &&
+    !answeredByChet
+  )
     return null;
   return (
     <PendingReplyCard
@@ -167,6 +180,7 @@ function ReplyEntry({
       checking={checking}
       error={entry.error ? t(`pendingReply.${entry.error}`) : undefined}
       showRetainedDraft={!entry.confirmed}
+      answeredByChet={answeredByChet}
       answeredOption={answeredOption}
       quiet={!prompts}
       onDraftChange={(draft) => store.getState().setDraft(key, draft)}

@@ -9,8 +9,10 @@ import {
   mergeConnectDelivery,
   mergeObligationStatus,
   mergeReadStatus,
+  mergeUserRequestStatus,
 } from "../utils/mergeLedgerEvents";
 import { replyObligationActor } from "../utils/crossInstanceMessages";
+import { CHET_PRINCIPAL, isChetAnswer } from "../utils/chetIdentity";
 import { unobservableGroupRuntime } from "../utils/groupStatus";
 import { isRuntimeUnobservable } from "../utils/terminalWorkingState";
 import type {
@@ -974,9 +976,11 @@ export function mergeLedgerEventStatuses(
           ? mergeReadStatus(patch.read_status, event._read_status)
           : undefined,
       _obligation_status: mergeObligationStatus(patch.obligation_status, event._obligation_status),
-      _user_request:
-        patch.user_request ??
-        (patch.obligation_status === undefined ? event._user_request : undefined),
+      _user_request: mergeUserRequestStatus(
+        patch.user_request,
+        patch.obligation_status,
+        event._user_request,
+      ),
       _retired_bridge: patch.retired_bridge || event._retired_bridge,
       _connect_delivery: mergeConnectDelivery(patch.connect_delivery, event._connect_delivery),
       _connect_cancellation: mergeConnectDelivery(
@@ -1008,7 +1012,12 @@ export function updateReadThroughIndex(messages: LedgerEvent[], endIndex: number
     if (!readStatus || !Object.prototype.hasOwnProperty.call(readStatus, actorId)) continue;
     if (readStatus[actorId] === true) continue;
     readStatus[actorId] = true;
-    next[i] = { ...message, _read_status: readStatus };
+    const obligation = message._obligation_status?.[actorId];
+    const nextObligationStatus =
+      obligation && obligation.waiting_reason !== undefined
+        ? { ...message._obligation_status, [actorId]: { ...obligation, waiting_reason: undefined } }
+        : message._obligation_status;
+    next[i] = { ...message, _read_status: readStatus, _obligation_status: nextObligationStatus };
     changed = true;
   }
   return { next, changed };
@@ -1021,6 +1030,8 @@ export type ObligationStatusPatch = {
   cancelled?: true;
   deliveryState?: string;
   deliveryReason?: string;
+  deliveryEvidence?: string;
+  waitingReason?: string;
 };
 
 export function updateObligationAtIndex(
@@ -1043,6 +1054,7 @@ export function updateObligationAtIndex(
     : String(patch.actorId || "").trim();
   if (patch.reply && !actorId) return { next, changed: false };
   const recipientIds = actorId ? [actorId] : Object.keys(obligationStatus);
+  let userRequest = message._user_request;
   let changed = false;
   for (const recipientId of recipientIds) {
     if (
@@ -1056,22 +1068,46 @@ export function updateObligationAtIndex(
     if (patch.deliveryState !== undefined) {
       updated.delivery_state = patch.deliveryState;
       updated.delivery_reason = patch.deliveryReason;
+      updated.delivery_evidence = patch.deliveryEvidence;
+      updated.waiting_reason =
+        patch.waitingReason === "not_submitted" &&
+        previous.waiting_reason &&
+        previous.waiting_reason !== "not_submitted"
+          ? previous.waiting_reason
+          : patch.waitingReason;
     }
     if ((patch.reply || patch.replied) && !updated.cancelled) updated.replied = true;
     if (patch.cancelled && !updated.replied) updated.cancelled = true;
+    if (updated.replied || updated.cancelled) updated.waiting_reason = undefined;
     if (
       updated.delivery_state === previous.delivery_state &&
       (updated.delivery_reason || "") === (previous.delivery_reason || "") &&
+      (updated.delivery_evidence || "") === (previous.delivery_evidence || "") &&
+      (updated.waiting_reason || "") === (previous.waiting_reason || "") &&
       updated.replied === previous.replied &&
       updated.cancelled === previous.cancelled
     ) {
       continue;
     }
     obligationStatus[recipientId] = updated;
+    if (
+      recipientId === "user" &&
+      userRequest &&
+      updated.reply_requested &&
+      updated.replied &&
+      !previous.replied &&
+      patch.reply?.id
+    ) {
+      userRequest = {
+        ...userRequest,
+        reply_event_id: patch.reply.id,
+        reply_by: isChetAnswer(patch.reply) ? CHET_PRINCIPAL : "user",
+      };
+    }
     changed = true;
   }
   if (!changed) return { next, changed: false };
-  next[index] = { ...message, _obligation_status: obligationStatus };
+  next[index] = { ...message, _obligation_status: obligationStatus, _user_request: userRequest };
   return { next, changed: true };
 }
 

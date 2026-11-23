@@ -71,6 +71,11 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         &actor_id,
     )
     .map_err(OpError::invalid)?;
+    let with_obligation_status = match request.args.get("with_obligation_status") {
+        None => false,
+        Some(Value::Bool(value)) => *value,
+        Some(_) => return Err(OpError::invalid("with_obligation_status must be a boolean")),
+    };
     if request.args.contains_key("event_id") {
         let event_id = required_arg(request, "event_id")?;
         if ["mode", "query", "sender", "before_event_id", "limit"]
@@ -82,7 +87,17 @@ pub fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 "event_id cannot be combined with history filters or pagination",
             ));
         }
-        return history_event(home, &group, &actor_id, &event_id, request);
+        return history_event(
+            home,
+            &group,
+            &actor_id,
+            &event_id,
+            request,
+            with_obligation_status,
+        );
+    }
+    if with_obligation_status {
+        return Err(OpError::invalid("with_obligation_status requires event_id"));
     }
     let mode = string_arg(request, "mode")
         .unwrap_or_else(|| "all".into())
@@ -172,6 +187,7 @@ fn history_event(
     actor_id: &str,
     event_id: &str,
     request: &DaemonRequest,
+    with_obligation_status: bool,
 ) -> OpResult {
     let path = crate::dispatch::store(home)?
         .ledger_path(&group.group_id)
@@ -251,7 +267,32 @@ fn history_event(
             header
         );
     }
-    object(json!({"messages":[event],"has_more":false,"delivery_text":delivery_text}))
+    let mut result = json!({"messages":[event],"has_more":false,"delivery_text":delivery_text});
+    if with_obligation_status && event.kind == "chat.message" {
+        let mut statuses = super::messaging_status::for_events(
+            home,
+            &group.group_id,
+            std::slice::from_ref(&event.id),
+        )?;
+        if let Some(Value::Object(obligations)) = statuses
+            .get_mut(&event.id)
+            .and_then(|status| status.get_mut("obligation_status"))
+        {
+            let user = string_arg(request, "by").is_none_or(|by| by == "user");
+            if !user {
+                if event.by != actor_id {
+                    obligations.retain(|id, _| id == actor_id);
+                }
+                for status in obligations.values_mut() {
+                    if let Some(fields) = status.as_object_mut() {
+                        fields.remove("delivery_reason");
+                    }
+                }
+            }
+            result["obligation_status"] = json!(obligations);
+        }
+    }
+    object(result)
 }
 
 fn limit(request: &DaemonRequest) -> Result<usize, OpError> {
@@ -378,7 +419,7 @@ mod tests {
                     v: 1,
                     op: "message_history".into(),
                     args: json!({"group_id":group.group_id,"actor_id":actor_id,"by":by,
-                        "event_id":event.id})
+                        "event_id":event.id,"with_obligation_status":true})
                     .as_object()
                     .expect("args")
                     .clone(),
@@ -408,6 +449,89 @@ mod tests {
         assert!(found(
             read("lead", "lead").expect("the Foreman's own history")
         ));
+    }
+
+    #[test]
+    fn exact_history_limits_delivery_evidence_to_the_callers_message_direction() {
+        let temp = tempfile::tempdir().expect("home");
+        let home = HomeLayout::from_path(temp.path()).expect("layout");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("receipts", "").expect("group");
+        for id in ["sender", "terminal", "structured", "outside"] {
+            actors::add(&mut group, Actor::new(id)).expect("actor");
+        }
+        store.save(&group).expect("save");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "sender".into();
+        event.data = json!({"to":["terminal","structured"],"text":"hello","message_mode":"send"})
+            .as_object()
+            .expect("message")
+            .clone();
+        ledger::append(&path, &event).expect("append");
+        for (recipient, evidence) in [
+            ("terminal", "terminal_written"),
+            ("structured", "channel_accepted"),
+        ] {
+            let mut receipt = Event::new("runtime.delivery", &group.group_id);
+            receipt.by = "system".into();
+            receipt.data = json!({
+                "actor_id":recipient,"source_event_id":event.id,"state":"accepted",
+                "delivery_evidence":evidence,"reason":"fixture diagnostics"
+            })
+            .as_object()
+            .expect("receipt")
+            .clone();
+            ledger::append(&path, &receipt).expect("append receipt");
+        }
+        let read = |by: &str, actor_id: &str, include: bool| {
+            history(
+                &home,
+                &DaemonRequest {
+                    v: 1,
+                    op: "message_history".into(),
+                    args: json!({
+                        "group_id":group.group_id,"event_id":event.id,
+                        "by":by,"actor_id":actor_id,"with_obligation_status":include
+                    })
+                    .as_object()
+                    .expect("request")
+                    .clone(),
+                },
+            )
+        };
+        let own = read("terminal", "terminal", true).expect("incoming message");
+        let recipients = own["obligation_status"].as_object().expect("recipient map");
+        assert_eq!(recipients.len(), 1);
+        assert_eq!(
+            recipients["terminal"]["delivery_evidence"],
+            "terminal_written"
+        );
+        assert!(recipients["terminal"].get("delivery_reason").is_none());
+
+        let outgoing = read("sender", "sender", true).expect("outgoing message");
+        assert_eq!(
+            outgoing["obligation_status"]["structured"]["delivery_evidence"],
+            "channel_accepted"
+        );
+        assert!(
+            outgoing["obligation_status"]["structured"]
+                .get("delivery_reason")
+                .is_none()
+        );
+
+        let user = read("user", "terminal", true).expect("operator view");
+        assert_eq!(
+            user["obligation_status"]["structured"]["delivery_reason"],
+            "fixture diagnostics"
+        );
+        assert!(read("outside", "outside", true).is_err());
+        assert!(read("terminal", "structured", true).is_err());
+        assert!(
+            !read("terminal", "terminal", false)
+                .expect("normal exact history")
+                .contains_key("obligation_status")
+        );
     }
 
     #[test]

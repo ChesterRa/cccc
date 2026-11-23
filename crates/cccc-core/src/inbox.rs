@@ -65,19 +65,35 @@ pub fn pending_deliveries(
     actor: &str,
     limit: usize,
 ) -> io::Result<Vec<Event>> {
-    projection::pending_deliveries(home, group, actor, limit, false, None)
+    projection::pending_deliveries(
+        home,
+        group,
+        actor,
+        limit,
+        deliveries::PendingFilter::AllPending,
+        None,
+    )
 }
 
-/// Sources with no delivery record, in ledger order. A lifecycle catch-up can
-/// request the whole eligible history instead of a range of newly recorded sends.
-pub fn unclaimed_deliveries(
+/// Sources with no delivery record, or whose latest current-generation delivery
+/// ended with a confirmed pre-submission failure (`failed` with `retryable: true`),
+/// in ledger order. Accepted, claimed, ambiguous, withdrawn, retry-exhausted,
+/// and legacy unflagged failed records are all excluded.
+pub fn unclaimed_or_unsubmitted_deliveries(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &str,
     range: Option<(&str, &str)>,
     limit: usize,
 ) -> io::Result<Vec<Event>> {
-    projection::pending_deliveries(home, group, actor, limit, true, range)
+    projection::pending_deliveries(
+        home,
+        group,
+        actor,
+        limit,
+        deliveries::PendingFilter::UnclaimedOrUnsubmitted,
+        range,
+    )
 }
 
 /// Whether the actor's delivery of this source failed after using up its
@@ -91,6 +107,17 @@ pub fn delivery_retry_closed(
     projection::delivery_retry_closed(home, group, actor, source)
 }
 
+/// Whether the actor's latest current-generation delivery of this source ended
+/// before submission (`failed` with `retryable: true`).
+pub fn delivery_is_unsubmitted(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    source: &str,
+) -> io::Result<bool> {
+    projection::delivery_is_unsubmitted(home, group, actor, source)
+}
+
 /// Latest delivery state and transport, preserving legacy claim semantics.
 pub fn delivery_states(
     home: &HomeLayout,
@@ -99,6 +126,16 @@ pub fn delivery_states(
     source: &str,
 ) -> io::Result<HashMap<String, (String, String)>> {
     projection::delivery_states(home, group, actors, source)
+}
+
+/// The exact last receipt used to revalidate a delivery after an external read.
+pub fn latest_delivery_receipt(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &str,
+    source: &str,
+) -> io::Result<Option<Event>> {
+    projection::latest_delivery_receipt(home, group, actor, source)
 }
 
 pub fn list_unread(
@@ -1184,5 +1221,129 @@ mod tests {
                 .expect("empty summary")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn unclaimed_or_unsubmitted_deliveries_includes_only_unclaimed_and_retryable_failed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("gap delivery filter", "").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        store.save(&group).expect("save group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+
+        let append = |kind: &str, by: &str, data: Value| {
+            let mut event = Event::new(kind, &group.group_id);
+            event.by = by.into();
+            event.data = data.as_object().cloned().expect("event data");
+            ledger::append(&ledger_path, &event).expect("append");
+            event
+        };
+        let send = |text: &str, mode: &str| {
+            append(
+                "chat.message",
+                "user",
+                json!({"text":text,"to":["peer1"],"message_mode":mode}),
+            )
+        };
+        let receipt = |source: &str, state: &str, retryable: Option<bool>| {
+            let mut data = json!({
+                "actor_id":"peer1",
+                "source_event_id":source,
+                "delivery_id":format!("delivery-{source}"),
+                "state":state,
+                "transport":"pty",
+            });
+            if let Some(flag) = retryable {
+                data["retryable"] = json!(flag);
+            }
+            append("runtime.delivery", "system", data);
+        };
+
+        // Pre-generation unsubmitted message must be excluded after actor.add.
+        let pre_readd = send("before readd", "send");
+        receipt(&pre_readd.id, "claimed", None);
+        receipt(&pre_readd.id, "failed", Some(true));
+        append("actor.add", "user", json!({"actor":{"id":"peer1"}}));
+
+        let unclaimed_send = send("unclaimed", "send");
+        let unsubmitted_send = send("unsubmitted", "send");
+        receipt(&unsubmitted_send.id, "claimed", None);
+        receipt(&unsubmitted_send.id, "failed", Some(true));
+
+        let unclaimed_mail = send("untouched mail", "mail");
+        let unsubmitted_mail = send("pushed unsubmitted mail", "mail");
+        receipt(&unsubmitted_mail.id, "claimed", None);
+        receipt(&unsubmitted_mail.id, "failed", Some(true));
+
+        let accepted = send("accepted", "send");
+        receipt(&accepted.id, "claimed", None);
+        receipt(&accepted.id, "accepted", None);
+
+        let claimed = send("claimed", "send");
+        receipt(&claimed.id, "claimed", None);
+
+        let ambiguous = send("ambiguous", "send");
+        receipt(&ambiguous.id, "claimed", None);
+        receipt(&ambiguous.id, "ambiguous", None);
+
+        let withdrawn = append(
+            "system.notify",
+            "system",
+            json!({"kind":"mail_notice","target_actor_id":"peer1","title":"mail"}),
+        );
+        receipt(&withdrawn.id, "claimed", None);
+        receipt(&withdrawn.id, "withdrawn", None);
+
+        let exhausted = send("exhausted", "send");
+        receipt(&exhausted.id, "claimed", None);
+        receipt(&exhausted.id, "failed", Some(false));
+
+        let legacy_failed = send("legacy failed", "send");
+        receipt(&legacy_failed.id, "claimed", None);
+        receipt(&legacy_failed.id, "failed", None);
+
+        let superseded = send("superseded", "send");
+        receipt(&superseded.id, "claimed", None);
+        receipt(&superseded.id, "failed", Some(true));
+        receipt(&superseded.id, "claimed", None);
+        receipt(&superseded.id, "accepted", None);
+
+        let eligible = unclaimed_or_unsubmitted_deliveries(&home, &group, "peer1", None, 20)
+            .expect("gap deliveries");
+        assert_eq!(
+            eligible
+                .iter()
+                .map(|event| event.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                unclaimed_send.id.as_str(),
+                unsubmitted_send.id.as_str(),
+                unsubmitted_mail.id.as_str(),
+            ]
+        );
+
+        for (id, expected) in [
+            (&pre_readd.id, false),
+            (&unclaimed_send.id, false),
+            (&unsubmitted_send.id, true),
+            (&unclaimed_mail.id, false),
+            (&unsubmitted_mail.id, true),
+            (&accepted.id, false),
+            (&claimed.id, false),
+            (&ambiguous.id, false),
+            (&withdrawn.id, false),
+            (&exhausted.id, false),
+            (&legacy_failed.id, false),
+            (&superseded.id, false),
+        ] {
+            assert_eq!(
+                delivery_is_unsubmitted(&home, &group, "peer1", id).expect("is_unsubmitted"),
+                expected,
+                "source {id}"
+            );
+        }
     }
 }

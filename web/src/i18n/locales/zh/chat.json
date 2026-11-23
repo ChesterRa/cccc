@@ -106,6 +106,8 @@
     "tooLong": "答复有 {{count}} 个字符，上限为 {{limit}}。文字已保留。",
     "answered": "已答复",
     "answeredChoice": "已答复：{{choice}}",
+    "chetAnswered": "Chet 代你回答",
+    "chetAnsweredChoice": "Chet 代你选择了 {{choice}}",
     "withdrawn": "这条请求已撤回。",
     "unavailable": "原请求者已离开或被替换，请先联系对方再回复。",
     "requesterUnknown": "无法确认原请求者，请先联系对方再回复。",

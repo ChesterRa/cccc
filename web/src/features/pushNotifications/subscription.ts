@@ -3,10 +3,24 @@ import { isPushWorkerScript, PUSH_WORKER_PATH } from "./navigation";
 
 const scopePath = "/ui/push/";
 
+export type PushNotificationLevel = "all" | "requests_only";
+
 interface PushConfig {
   vapid_public_key: string | null;
   subscriptions: string[];
+  subscription_levels?: Record<string, PushNotificationLevel>;
   sender: "starting" | "here" | "elsewhere" | "unavailable";
+}
+
+function isPushNotificationLevel(value: unknown): value is PushNotificationLevel {
+  return value === "all" || value === "requests_only";
+}
+
+function isValidSubscriptionLevels(value: unknown): value is Record<string, PushNotificationLevel> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.entries(value).every(
+    ([hash, level]) => /^[0-9a-f]{64}$/.test(hash) && isPushNotificationLevel(level),
+  );
 }
 
 export interface BrowserSubscription {
@@ -66,7 +80,9 @@ export async function readPushConfig(): Promise<PushConfig> {
     !Array.isArray(response.result.subscriptions) ||
     !response.result.subscriptions.every(
       (hash) => typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash),
-    )
+    ) ||
+    (response.result.subscription_levels !== undefined &&
+      !isValidSubscriptionLevels(response.result.subscription_levels))
   ) {
     throw new Error("config_unavailable");
   }
@@ -105,6 +121,15 @@ export async function isBoundSubscription(
     subscriptionKeyMatches(browser.subscription, config.vapid_public_key) &&
     config.subscriptions.includes(await endpointHash(browser.subscription.endpoint)),
   );
+}
+
+export async function boundSubscriptionLevel(
+  browser: BrowserSubscription | null,
+  config: PushConfig,
+): Promise<PushNotificationLevel> {
+  if (!browser || !config.subscription_levels) return "all";
+  const level = config.subscription_levels[await endpointHash(browser.subscription.endpoint)];
+  return isPushNotificationLevel(level) ? level : "all";
 }
 
 /** Settings announce each confirmed reading so other views can follow it. */
@@ -244,6 +269,21 @@ export async function bindSubscription(subscription: PushSubscription): Promise<
   });
   if (!response.ok) throw new Error(response.error.code);
   if (response.result?.subscribed !== true) throw new Error("binding_failed");
+}
+
+export async function updateSubscriptionLevel(
+  endpoint: string,
+  level: PushNotificationLevel,
+): Promise<PushNotificationLevel> {
+  const response = await pushRequest<{ updated: boolean; level: PushNotificationLevel }>(
+    "/api/v1/push/subscription",
+    { method: "PATCH", body: JSON.stringify({ endpoint, level }) },
+  );
+  if (!response.ok) throw new Error(response.error.code);
+  if (response.result?.updated !== true || !isPushNotificationLevel(response.result.level)) {
+    throw new Error("update_level_failed");
+  }
+  return response.result.level;
 }
 
 /**

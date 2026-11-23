@@ -1,6 +1,6 @@
 use super::operation::{
     Operation,
-    Policy::{Read, Write},
+    Policy::{GlobalWrite, Read, Write},
 };
 use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::ledger;
@@ -53,6 +53,8 @@ pub(super) fn resolve_operation(request: &DaemonRequest) -> Option<Operation> {
         "branding_update" => Operation::new(Write, |home, request| {
             global_update(home, request, "branding")
         }),
+        "unattended_get" => Operation::new(Read, unattended_get),
+        "unattended_update" => Operation::new(GlobalWrite, unattended_update),
         _ => return None,
     })
 }
@@ -191,6 +193,44 @@ fn global_update(home: &HomeLayout, request: &DaemonRequest, key: &str) -> OpRes
     object(json!({key: result}))
 }
 
+fn unattended_get(home: &HomeLayout, _request: &DaemonRequest) -> OpResult {
+    let unattended = cccc_core::unattended::load(home).map_err(OpError::io)?;
+    object(json!({"unattended": unattended}))
+}
+
+/// Only the user turns unattended mode on or off; an Actor, or a call bound to
+/// an Actor's session, is refused. Turning it on records the moment from which
+/// Chet receives copies; turning it off clears it, and Chet receives no more.
+fn unattended_update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if request.args.get("by").and_then(Value::as_str) != Some("user")
+        || request.args.contains_key("_cccc_native_binding")
+        || request.args.contains_key("_cccc_native_source_binding")
+        || request.args.contains_key("_cccc_web_binding")
+    {
+        return Err(OpError::new(
+            "permission_denied",
+            "only the user turns unattended mode on or off",
+        ));
+    }
+    let enabled = request
+        .args
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| OpError::invalid("enabled must be true or false"))?;
+    let unattended = settings::update(home, |global| {
+        let current = &mut global.unattended;
+        if !enabled {
+            *current = Default::default();
+        } else if !current.enabled || current.since.is_none() {
+            current.enabled = true;
+            current.since = Some(cccc_contracts::utc_now());
+        }
+        Ok(current.clone())
+    })
+    .map_err(OpError::io)?;
+    object(json!({"unattended": unattended}))
+}
+
 fn patch(request: &DaemonRequest) -> Result<Map<String, Value>, OpError> {
     request
         .args
@@ -241,6 +281,57 @@ fn append(
 mod tests {
     use super::*;
     use cccc_core::GroupStore;
+
+    fn unattended(home: &HomeLayout, args: Value) -> OpResult {
+        unattended_update(
+            home,
+            &DaemonRequest {
+                v: 1,
+                op: "unattended_update".into(),
+                args: args.as_object().cloned().expect("request object"),
+            },
+        )
+    }
+
+    #[test]
+    fn only_the_user_turns_unattended_mode_on_and_each_period_has_its_own_start() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        for args in [
+            json!({"enabled":true}),
+            json!({"by":"worker","enabled":true}),
+            json!({"by":"user","enabled":true,"_cccc_native_binding":{}}),
+            json!({"by":"user","enabled":true,"_cccc_web_binding":{}}),
+        ] {
+            let error = unattended(&home, args).expect_err("refused");
+            assert_eq!(error.code, "permission_denied");
+        }
+        assert_eq!(
+            unattended(&home, json!({"by":"user","enabled":"yes"}))
+                .expect_err("not a boolean")
+                .code,
+            "invalid_args"
+        );
+        assert!(!cccc_core::unattended::load(&home).expect("load").enabled);
+
+        let on = unattended(
+            &home,
+            json!({"by":"user","enabled":true,"since":"1970-01-01T00:00:00Z"}),
+        )
+        .expect("on");
+        let since = on["unattended"]["since"]
+            .as_str()
+            .expect("since")
+            .to_owned();
+        assert_ne!(since, "1970-01-01T00:00:00Z", "the host sets the start");
+        // Turning it on again keeps the current period.
+        let again = unattended(&home, json!({"by":"user","enabled":true})).expect("again");
+        assert_eq!(again["unattended"]["since"], json!(since));
+        let off = unattended(&home, json!({"by":"user","enabled":false})).expect("off");
+        assert_eq!(off["unattended"], json!({"enabled":false}));
+        let stored = cccc_core::unattended::load(&home).expect("load");
+        assert!(stored.is_default());
+    }
 
     #[test]
     fn idle_mail_delay_is_stored_where_the_unread_tick_reads_it() {

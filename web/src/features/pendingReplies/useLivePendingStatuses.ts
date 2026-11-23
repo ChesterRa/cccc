@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { fetchLedgerStatuses } from "../../services/api";
+import { useGroupStore } from "../../stores/useGroupStore";
 import type { ChatMessageData, LedgerEvent, LedgerEventStatusPayload } from "../../types";
 import { projectMessageMode } from "../../utils/crossGroupRecipients";
 import { PendingSummaryContext } from "./context";
@@ -53,7 +54,12 @@ export function useLivePendingStatuses(
           if (!response.ok || !response.result?.statuses) throw new Error("status unavailable");
           Object.assign(statuses, response.result.statuses);
         }
-        if (!closed) setState({ groupId, statuses, verified: true });
+        if (!closed) {
+          // Hydrate requests that arrived over SSE so subsequent live replies
+          // can update the same card before the next status read.
+          useGroupStore.getState().mergeEventStatuses(statuses, groupId);
+          setState({ groupId, statuses, verified: true });
+        }
       } catch {
         if (!closed) {
           setState((current) => ({

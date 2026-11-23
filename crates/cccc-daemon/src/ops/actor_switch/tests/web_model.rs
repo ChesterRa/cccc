@@ -626,7 +626,7 @@ fn a_settled_browser_turn_is_reported_for_review_without_releasing_it() {
 
     // Evidence of acceptance or a different transport never authorizes this
     // recovery, even if another event in the batch is ambiguous.
-    append(&first, BROWSER, DeliveryOutcome::Accepted);
+    append(&first, BROWSER, DeliveryOutcome::Accepted(None));
     assert!(
         fixture
             .wait_next(json!({}))

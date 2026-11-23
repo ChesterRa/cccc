@@ -1,5 +1,78 @@
+use cccc_contracts::event::DeliveryEvidence;
 use cccc_core::HomeLayout;
 use std::io;
+
+#[cfg(unix)]
+pub(crate) use super::controller::{OwnedTarget, OwnerObservations};
+
+#[cfg(not(unix))]
+pub(crate) enum OwnedTarget {}
+
+#[cfg(not(unix))]
+impl OwnedTarget {
+    pub(crate) fn observe<T>(&self, _read: impl FnOnce() -> T) -> T {
+        match *self {}
+    }
+    pub(crate) fn stop(&self) -> io::Result<Option<cccc_runtime::SessionStatus>> {
+        match *self {}
+    }
+    pub(crate) fn member_running(&self, _: &str, _: &cccc_contracts::Actor) -> Option<bool> {
+        match *self {}
+    }
+}
+
+#[cfg(not(unix))]
+#[derive(Default)]
+pub(crate) struct OwnerObservations;
+
+pub(crate) struct OwnedTerminalExit {
+    pub status: cccc_runtime::SessionStatus,
+    pub actor_created_at: String,
+}
+
+#[cfg(not(unix))]
+impl OwnerObservations {
+    pub(crate) fn unavailable(_home: &HomeLayout) -> Self {
+        Self
+    }
+    pub(crate) fn is_current(&self) -> bool {
+        true
+    }
+    pub(crate) fn with_scope<T>(&self, read: impl FnOnce() -> T) -> T {
+        read()
+    }
+    pub(crate) fn exited_terminals(&self) -> &[OwnedTerminalExit] {
+        &[]
+    }
+    pub(crate) fn provider_exits(&self, _group_id: &str) -> Vec<super::AgentIdentity> {
+        Vec::new()
+    }
+    pub(crate) fn exit_group_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+pub(crate) fn observe_owners_for_maintenance(home: &HomeLayout) -> io::Result<OwnerObservations> {
+    #[cfg(unix)]
+    if enabled(home) {
+        return super::controller::observe_owners_for_maintenance(home);
+    }
+    let _ = home;
+    Ok(OwnerObservations::default())
+}
+
+pub(crate) fn running_target(
+    home: &HomeLayout,
+    group_id: &str,
+    actor: &cccc_contracts::Actor,
+) -> io::Result<Option<OwnedTarget>> {
+    #[cfg(unix)]
+    if enabled(home) && actor.external_session_id.is_empty() {
+        return super::controller::running_target(home, group_id, actor);
+    }
+    let _ = (home, group_id, actor);
+    Ok(None)
+}
 
 /// Use only for a finite synchronous projection, never a wait/follow loop or
 /// delivery decision. Nested projections share the same observation.
@@ -262,8 +335,9 @@ pub(crate) fn submit(
     text: &str,
     cancelled: &std::sync::atomic::AtomicBool,
     started: &std::sync::atomic::AtomicBool,
+    target: Option<&OwnedTarget>,
 ) -> io::Result<serde_json::Value> {
-    super::controller::submit(home, group, actor, events, text, cancelled, started)
+    super::controller::submit(home, group, actor, events, text, cancelled, started, target)
 }
 
 pub(crate) fn acknowledge_event(
@@ -275,7 +349,62 @@ pub(crate) fn acknowledge_event(
 ) -> io::Result<()> {
     #[cfg(unix)]
     if enabled(home) {
-        return super::controller::acknowledge_event(home, group, actor, created, event);
+        use super::controller::{DeliveryLookup, acknowledge_event};
+        return acknowledge_event(
+            home,
+            group,
+            actor,
+            created,
+            event,
+            DeliveryLookup::AllOwners,
+        );
+    }
+    let _ = (home, group, actor, created, event);
+    Ok(())
+}
+
+pub(crate) fn acknowledge_known_event(
+    home: &HomeLayout,
+    group: &str,
+    actor: &str,
+    created: &str,
+    event: &str,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    if enabled(home) {
+        use super::controller::{DeliveryLookup, acknowledge_event};
+        return acknowledge_event(
+            home,
+            group,
+            actor,
+            created,
+            event,
+            DeliveryLookup::KnownAttempt,
+        );
+    }
+    let _ = (home, group, actor, created, event);
+    Ok(())
+}
+
+/// Only for a durable failed receipt that establishes no native handoff.
+pub(crate) fn acknowledge_retryable_event(
+    home: &HomeLayout,
+    group: &str,
+    actor: &str,
+    created: &str,
+    event: &str,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    if enabled(home) {
+        use super::controller::{DeliveryLookup, acknowledge_event};
+        return acknowledge_event(
+            home,
+            group,
+            actor,
+            created,
+            event,
+            DeliveryLookup::RetryableSource,
+        );
     }
     let _ = (home, group, actor, created, event);
     Ok(())
@@ -283,7 +412,7 @@ pub(crate) fn acknowledge_event(
 
 pub(crate) enum RetainedDelivery {
     Pending,
-    Accepted,
+    Accepted(Option<DeliveryEvidence>),
     Unsubmitted,
     Failed(String),
     Withdrawn,
@@ -301,7 +430,7 @@ pub(crate) fn delivery_fact(
     let fact = observe_delivery(home, group, actor, created, event)?;
     #[cfg(unix)]
     if matches!(fact, RetainedDelivery::Pending) {
-        super::controller::track_recovery(home, group, actor, created, event, transport)?;
+        super::controller::track_recovery(home, group, actor, created, event, transport, false)?;
     }
     let _ = transport;
     Ok(fact)
@@ -316,10 +445,22 @@ pub(crate) fn observe_delivery(
     created: &str,
     event: &str,
 ) -> io::Result<RetainedDelivery> {
+    observe_attempt(home, group, actor, created, event, true)
+}
+
+pub(crate) fn observe_attempt(
+    home: &HomeLayout,
+    group: &str,
+    actor: &str,
+    created: &str,
+    event: &str,
+    allow_lookup: bool,
+) -> io::Result<RetainedDelivery> {
     #[cfg(unix)]
     if enabled(home) {
         use super::protocol::OperationState;
-        let mut facts = super::controller::event_facts(home, group, actor, created, event)?;
+        let mut facts =
+            super::controller::event_facts(home, group, actor, created, event, allow_lookup)?;
         if facts.len() != 1 {
             return Ok(RetainedDelivery::Unknown);
         }
@@ -331,29 +472,30 @@ pub(crate) fn observe_delivery(
                 .get("backend")
                 .and_then(serde_json::Value::as_str)
             {
-                Some("managed") => match result.get("outcome").cloned().and_then(|value| {
-                    serde_json::from_value::<crate::ops::local_headless::BatchSubmission>(value)
-                        .ok()
-                }) {
-                    Some(crate::ops::local_headless::BatchSubmission::Accepted) => {
-                        RetainedDelivery::Accepted
+                Some("managed") => {
+                    match crate::ops::local_headless::BatchSubmission::from_owner_result(&result) {
+                        Some(crate::ops::local_headless::BatchSubmission::Accepted(evidence)) => {
+                            RetainedDelivery::Accepted(evidence)
+                        }
+                        Some(crate::ops::local_headless::BatchSubmission::Withheld) => {
+                            RetainedDelivery::Withdrawn
+                        }
+                        Some(crate::ops::local_headless::BatchSubmission::Deferred)
+                            if result.get("started").and_then(serde_json::Value::as_bool)
+                                == Some(false) =>
+                        {
+                            RetainedDelivery::Unsubmitted
+                        }
+                        _ => RetainedDelivery::Unknown,
                     }
-                    Some(crate::ops::local_headless::BatchSubmission::Withheld) => {
-                        RetainedDelivery::Withdrawn
-                    }
-                    Some(crate::ops::local_headless::BatchSubmission::Deferred)
-                        if result.get("started").and_then(serde_json::Value::as_bool)
-                            == Some(false) =>
-                    {
-                        RetainedDelivery::Unsubmitted
-                    }
-                    _ => RetainedDelivery::Unknown,
-                },
+                }
                 Some("deepseek") => match result.get("outcome").cloned().and_then(|value| {
                     serde_json::from_value::<crate::ops::deepseek_runtime::TurnDelivery>(value).ok()
                 }) {
                     Some(crate::ops::deepseek_runtime::TurnDelivery::Completed) => {
-                        RetainedDelivery::Accepted
+                        RetainedDelivery::Accepted(DeliveryEvidence::from_json(
+                            &result["delivery_evidence"],
+                        ))
                     }
                     Some(crate::ops::deepseek_runtime::TurnDelivery::Failed(reason)) => {
                         RetainedDelivery::Failed(reason)
@@ -367,7 +509,9 @@ pub(crate) fn observe_delivery(
                     _ => RetainedDelivery::Unknown,
                 },
                 Some("pty") => match result.get("outcome").and_then(serde_json::Value::as_str) {
-                    Some("accepted") => RetainedDelivery::Accepted,
+                    Some("accepted") => RetainedDelivery::Accepted(DeliveryEvidence::from_json(
+                        &result["delivery_evidence"],
+                    )),
                     Some("not_written") => RetainedDelivery::Unsubmitted,
                     _ => RetainedDelivery::Unknown,
                 },
@@ -376,7 +520,7 @@ pub(crate) fn observe_delivery(
             _ => RetainedDelivery::Unknown,
         });
     }
-    let _ = (home, group, actor, created, event);
+    let _ = (home, group, actor, created, event, allow_lookup);
     Ok(RetainedDelivery::Unknown)
 }
 
@@ -387,16 +531,34 @@ pub(crate) fn recovery_groups() -> Vec<String> {
     Vec::new()
 }
 
-pub(crate) fn recoveries(
-    home: &HomeLayout,
-    group: &str,
-) -> io::Result<Vec<(String, String, String, String)>> {
+pub(crate) fn recoveries(home: &HomeLayout, group: &str) -> io::Result<Vec<DeliveryRecovery>> {
     #[cfg(unix)]
     if enabled(home) {
         return super::controller::recoveries(home, group);
     }
     let _ = (home, group);
     Ok(Vec::new())
+}
+
+pub(crate) type DeliveryRecovery = (String, String, String, String, bool);
+
+pub(crate) fn track_acknowledgement(
+    home: &HomeLayout,
+    group: &str,
+    actor: &str,
+    created: &str,
+    event: &str,
+    transport: &str,
+    known_only: bool,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    if enabled(home) && matches!(transport, "pty" | "managed_session" | "deepseek") {
+        return super::controller::track_recovery(
+            home, group, actor, created, event, transport, known_only,
+        );
+    }
+    let _ = (home, group, actor, created, event, transport, known_only);
+    Ok(())
 }
 
 pub(crate) fn forget_recovery(
@@ -414,21 +576,10 @@ pub(crate) fn forget_recovery(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn exited_terminals() -> io::Result<Vec<cccc_runtime::SessionStatus>> {
     #[cfg(unix)]
     return super::controller::exited_terminals();
     #[cfg(not(unix))]
-    Ok(Vec::new())
-}
-
-pub(crate) fn provider_exits(
-    home: &HomeLayout,
-    group: &str,
-) -> io::Result<Vec<super::AgentIdentity>> {
-    #[cfg(unix)]
-    if enabled(home) {
-        return super::controller::provider_exits(home, group);
-    }
-    let _ = (home, group);
     Ok(Vec::new())
 }

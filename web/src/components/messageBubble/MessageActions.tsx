@@ -24,6 +24,8 @@ export interface MessageActionsProps {
   /** Whether the message is pinned, with the way to change it; absent where pins are not offered. */
   pinned?: boolean;
   onTogglePin?: () => void;
+  /** Opens the recipient list where the message's footer offers no way to it. */
+  onShowRecipients?: () => void;
   /** "bar" for a pointer, shown beside the message's head on hover or focus; "menu" for touch
    *  or a narrow column, ⋮ at the end of the head. CSS shows the one that fits. */
   part: "bar" | "menu";
@@ -61,6 +63,12 @@ export function MessageActions(props: MessageActionsProps) {
   if (props.copyableMessageText)
     primary.push({ key: "copy", label: t("copyText"), run: props.onCopyMessageText });
   const overflow: MessageAction[] = [];
+  if (props.onShowRecipients)
+    overflow.push({
+      key: "recipients",
+      label: t("showRecipientStatus"),
+      run: props.onShowRecipients,
+    });
   if (props.eventId && props.onTogglePin)
     overflow.push({
       key: "pin",
