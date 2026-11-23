@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::process::{ChildStdin, ChildStdout};
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
@@ -49,11 +49,20 @@ enum Command {
     Close,
 }
 
+struct VisibleInteraction {
+    metadata: Value,
+    expires: Option<Instant>,
+}
+
+fn before_expiry(expires: Option<Instant>, now: Instant) -> bool {
+    expires.is_none_or(|deadline| now < deadline)
+}
+
 pub(super) struct PiRpcClient {
     commands: mpsc::Sender<Command>,
     pub(super) events: broadcast::Sender<AnalystEvent>,
     task: Mutex<Option<JoinHandle<()>>>,
-    permissions: Arc<Mutex<BTreeMap<String, Value>>>,
+    permissions: Arc<Mutex<BTreeMap<String, VisibleInteraction>>>,
     running: Arc<AtomicBool>,
     prompt_receipt: Arc<Mutex<Option<super::super::runtime_session::native_acp::PromptReceipt>>>,
 }
@@ -216,7 +225,11 @@ impl PiRpcClient {
     pub(super) fn permissions(&self) -> Vec<Value> {
         self.permissions
             .lock()
-            .map(|items| items.values().cloned().collect())
+            .map(|mut items| {
+                let now = Instant::now();
+                items.retain(|_, item| before_expiry(item.expires, now));
+                items.values().map(|item| item.metadata.clone()).collect()
+            })
             .unwrap_or_default()
     }
 

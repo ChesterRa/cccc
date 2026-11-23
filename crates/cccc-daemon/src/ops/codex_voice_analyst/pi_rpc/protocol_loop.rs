@@ -1,5 +1,6 @@
 use super::{
-    Command, MANAGED_AGENT_DISCONNECTED_METHOD, Value, closed_error,
+    Command, MANAGED_AGENT_DISCONNECTED_METHOD, Value, VisibleInteraction, before_expiry,
+    closed_error,
     events::{self, Turn},
     framing, interactions, json,
 };
@@ -46,7 +47,7 @@ pub(super) async fn run(
     events: broadcast::Sender<super::AnalystEvent>,
     generation: String,
     session_id: String,
-    permissions: Arc<Mutex<BTreeMap<String, Value>>>,
+    permissions: Arc<Mutex<BTreeMap<String, VisibleInteraction>>>,
     running: Arc<AtomicBool>,
     prompt_receipt: Arc<
         Mutex<Option<super::super::super::runtime_session::native_acp::PromptReceipt>>,
@@ -211,20 +212,22 @@ pub(super) async fn run(
                     reply,
                     response,
                 }) => {
+                    let now = Instant::now();
                     let valid = dialogs.get(&request_id).filter(|dialog| {
                         active
                             .as_ref()
                             .is_some_and(|turn| !turn.cancelling && turn.id == dialog.turn_id)
-                            && dialog
-                                .expires
-                                .is_none_or(|deadline| Instant::now() < deadline)
+                            && before_expiry(dialog.expires, now)
                     });
                     let result = match valid {
                         Some(dialog) => interactions::response(&dialog.record, &reply),
-                        None => Err(io::Error::new(
-                            io::ErrorKind::NotFound,
-                            "Pi interaction is stale or settled",
-                        )),
+                        None => {
+                            retire_expired_dialogs(&mut dialogs, &permissions, now);
+                            Err(io::Error::new(
+                                io::ErrorKind::NotFound,
+                                "Pi interaction is stale or settled",
+                            ))
+                        }
                     };
                     let wire = match result {
                         Ok(wire) => wire,
@@ -429,6 +432,7 @@ pub(super) async fn run(
                         }
                         continue;
                     }
+                    retire_expired_dialogs(&mut dialogs, &permissions, Instant::now());
                     if dialogs.len() >= 64 {
                         break 'protocol "Pi interaction capacity exceeded";
                     }
@@ -454,7 +458,7 @@ pub(super) async fn run(
                         },
                     );
                     if let Ok(mut visible) = permissions.lock() {
-                        visible.insert(token.clone(), metadata);
+                        visible.insert(token.clone(), VisibleInteraction { metadata, expires });
                     }
                     events::publish(
                         &events,
@@ -511,7 +515,22 @@ fn next_id(generation: &str, serial: &mut u64) -> String {
     *serial += 1;
     format!("cccc-pi-{generation}-{serial}")
 }
-fn clear_permissions(permissions: &Mutex<BTreeMap<String, Value>>) {
+
+fn retire_expired_dialogs(
+    dialogs: &mut BTreeMap<String, Interaction>,
+    permissions: &Mutex<BTreeMap<String, VisibleInteraction>>,
+    now: Instant,
+) {
+    let before = dialogs.len();
+    dialogs.retain(|_, dialog| before_expiry(dialog.expires, now));
+    if dialogs.len() != before
+        && let Ok(mut visible) = permissions.lock()
+    {
+        visible.retain(|_, request| before_expiry(request.expires, now));
+    }
+}
+
+fn clear_permissions(permissions: &Mutex<BTreeMap<String, VisibleInteraction>>) {
     if let Ok(mut visible) = permissions.lock() {
         visible.clear();
     }

@@ -191,6 +191,72 @@ async fn pi_pending_acceptance_and_exact_turn_cancellation_clear_queue_before_ab
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pi_read_retires_expired_dialogs() {
+    let f = Fixture::new();
+    let mut events = f.client.subscribe();
+    f.client
+        .start_prompt("fixture-session", "expired", "dialog-expired")
+        .await
+        .expect("admit turn with an already expired dialog");
+    let approval = event(&mut events, "cccc/approvalRequired").await;
+    let expired = approval["params"]["request_id"]
+        .as_str()
+        .expect("expired request token");
+
+    assert!(f.client.permissions().is_empty());
+    assert!(
+        f.client
+            .permissions
+            .lock()
+            .expect("visible dialogs")
+            .is_empty()
+    );
+    assert_eq!(
+        f.client
+            .respond_interaction(expired, json!({"value":"one"}))
+            .await
+            .expect_err("expired request cannot be answered")
+            .kind(),
+        io::ErrorKind::NotFound,
+    );
+    assert!(f.client.running());
+    f.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pi_only_live_dialogs_count_against_identity_and_capacity() {
+    let f = Fixture::new();
+    let mut events = f.client.subscribe();
+    for (prompt, expired_count) in [("dialog-expired-reuse", 1), ("dialog-expired-burst", 65)] {
+        let turn = f
+            .client
+            .start_prompt("fixture-session", prompt, prompt)
+            .await
+            .expect("admit turn with expired dialog history");
+        for _ in 0..expired_count {
+            event(&mut events, "cccc/approvalRequired").await;
+        }
+        let approval = event(&mut events, "cccc/approvalRequired").await;
+        let token = approval["params"]["request_id"]
+            .as_str()
+            .expect("live token");
+        let visible = f.client.permissions();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0]["request_id"], token);
+        assert_eq!(visible[0]["title"], "Fixture choice");
+        f.client
+            .respond_interaction(token, json!({"value":"one"}))
+            .await
+            .expect("no-deadline dialog can still be answered");
+        let done = event(&mut events, "turn/completed").await;
+        assert_eq!(done["params"]["turn"]["id"], turn);
+        assert_eq!(done["params"]["turn"]["status"], "completed");
+        assert!(f.client.permissions().is_empty());
+    }
+    f.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pi_interaction_tokens_reject_cancelled_provider_id_reuse() {
     let f = Fixture::new();
     let mut events = f.client.subscribe();
@@ -366,6 +432,29 @@ async fn pi_actor_and_secretary_share_control_but_not_receipt_authority() {
             .await
             .is_err()
     );
+    let mut resumed_events = resumed.subscribe();
+    resumed
+        .start_turn(resumed.generation(), "restored-choice", "dialog-new")
+        .await
+        .expect("start a timed dialog in the replacement");
+    let approval = event(&mut resumed_events, "cccc/approvalRequired").await;
+    let token = approval["params"]["request_id"]
+        .as_str()
+        .expect("replacement dialog token");
+    assert_eq!(resumed.permissions()[0]["request_id"], token);
+    assert!(
+        resumed
+            .respond_interaction(&old_generation, token, json!({"value":"one"}))
+            .await
+            .is_err()
+    );
+    assert_eq!(resumed.permissions()[0]["request_id"], token);
+    resumed
+        .respond_interaction(resumed.generation(), token, json!({"value":"one"}))
+        .await
+        .expect("answer before the deadline in the current generation");
+    event(&mut resumed_events, "turn/completed").await;
+    assert!(resumed.permissions().is_empty());
     resumed
         .stop(resumed.generation())
         .await

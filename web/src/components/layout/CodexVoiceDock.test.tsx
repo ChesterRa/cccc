@@ -334,6 +334,40 @@ describe("CodexVoiceDock", () => {
     },
   );
 
+  it.each(["sidebar", "mobile", "collapsed"] as const)(
+    "marks %s dock as needing attention when Chet cannot start due to a host problem",
+    (surface) => {
+      const renderDock = (chetAttention: boolean) =>
+        renderToStaticMarkup(
+          <CodexVoiceDock
+            controller={controller()}
+            chetAttention={chetAttention}
+            variant={surface === "mobile" ? "mobile" : "sidebar"}
+            collapsed={surface === "collapsed"}
+            onOpen={vi.fn()}
+            onStart={vi.fn()}
+          />,
+        );
+
+      unattended.enabled = true;
+      try {
+        const blocked = renderDock(true);
+        expect(blocked).toContain("modals:chet.unattendedOn · layout:codexVoiceAttention");
+        expect(blocked).not.toContain("data-chet-head");
+
+        const cleared = renderDock(false);
+        expect(cleared).not.toContain("layout:codexVoiceAttention");
+        expect(cleared).toContain('data-chet-head="idle"');
+      } finally {
+        unattended.enabled = false;
+      }
+
+      const blockedWithoutUnattended = renderDock(true);
+      expect(blockedWithoutUnattended).toContain("layout:codexVoiceAttention");
+      expect(blockedWithoutUnattended).not.toContain("data-chet-head");
+    },
+  );
+
   it("keeps two stable global actions: open console and start voice", () => {
     const html = renderToStaticMarkup(
       <CodexVoiceDock controller={controller()} onOpen={vi.fn()} onStart={vi.fn()} />,

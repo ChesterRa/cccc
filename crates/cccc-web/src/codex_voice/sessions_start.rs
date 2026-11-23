@@ -478,13 +478,47 @@ impl CodexVoiceSessions {
         ),
         ChetSubmitError,
     > {
-        let prepared = self.prepare_analyst_locked(home, state).await;
-        let problem = prepared.as_ref().err().and_then(chet_start_problem);
+        match self.prepare_analyst_locked(home, state).await {
+            Ok((state, analyst)) => {
+                *self
+                    .chet_start_problem
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()) = None;
+                Ok((state, analyst))
+            }
+            Err(error) => {
+                self.record_chet_start_problem(home, chet_start_problem(&error))
+                    .await;
+                Err(ChetSubmitError::NotStarted)
+            }
+        }
+    }
+
+    async fn record_chet_start_problem(
+        &self,
+        home: &HomeLayout,
+        problem: Option<serde_json::Value>,
+    ) {
+        // `prepare_analyst_locked` releases `state` when its worker fails. Re-acquire it so
+        // an intervening Runtime switch cannot be overwritten by the previous Claude failure.
+        let state = self.state.lock().await;
+        let problem =
+            problem.filter(|_| state.analyst.is_none() && Self::saved_analyst_is_claude(home));
         *self
             .chet_start_problem
             .lock()
             .unwrap_or_else(|error| error.into_inner()) = problem;
-        prepared.map_err(|_| ChetSubmitError::NotStarted)
+    }
+
+    fn saved_analyst_is_claude(home: &HomeLayout) -> bool {
+        let Ok(settings) = cccc_core::codex_voice_settings::load(home) else {
+            return false;
+        };
+        let Ok(environment) = cccc_core::codex_voice_settings::private_environment(home) else {
+            return false;
+        };
+        cccc_core::codex_voice_settings::resolve(home, &settings, &environment)
+            .is_ok_and(|resolved| resolved.runtime == cccc_contracts::ActorRuntime::Claude)
     }
 
     pub(crate) async fn current(&self) -> VoiceState {
@@ -812,5 +846,71 @@ mod current_tests {
             with_authoritative_busy(info("needs_attention"), true).phase,
             "needs_attention"
         );
+    }
+
+    #[tokio::test]
+    async fn late_claude_start_problem_does_not_overwrite_intervening_runtime_switch() {
+        use super::CodexVoiceSessions;
+        use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings};
+        use cccc_core::HomeLayout;
+        use serde_json::json;
+        use std::collections::BTreeMap;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let claude = CodexVoiceAnalystSettings {
+            runtime: ActorRuntime::Claude,
+            ..Default::default()
+        };
+        cccc_core::codex_voice_settings::save(&home, &claude).expect("save claude");
+
+        let sessions = CodexVoiceSessions::default();
+        let problem = json!({
+            "code": "claude_workspace_untrusted",
+            "workspace": "/tmp/fixture-untrusted",
+        });
+
+        // While Claude remains configured and stopped, the problem is recorded.
+        sessions
+            .record_chet_start_problem(&home, Some(problem.clone()))
+            .await;
+        assert_eq!(
+            sessions.chet_status().await["start_problem"]["code"],
+            "claude_workspace_untrusted"
+        );
+
+        // A concurrent switch away from Claude clears the problem, and a late publication
+        // from the prior failed Claude start must not write it back.
+        let codex = CodexVoiceAnalystSettings {
+            runtime: ActorRuntime::Codex,
+            ..Default::default()
+        };
+        sessions
+            .apply_analyst_settings(&home, codex.clone(), BTreeMap::new(), vec![], false, false)
+            .await
+            .expect("switch to codex");
+        assert!(sessions.chet_status().await["start_problem"].is_null());
+
+        sessions
+            .record_chet_start_problem(&home, Some(problem.clone()))
+            .await;
+        assert!(sessions.chet_status().await["start_problem"].is_null());
+
+        // Lock serialization: a late error publisher must block on `state` and re-check
+        // the saved effective Runtime once the holder releases `state`.
+        cccc_core::codex_voice_settings::save(&home, &claude).expect("restore claude");
+        let guard = sessions.state.lock().await;
+        let mut publish = std::pin::pin!(sessions.record_chet_start_problem(&home, Some(problem)));
+        let pending = std::future::poll_fn(|cx| {
+            std::task::Poll::Ready(publish.as_mut().poll(cx).is_pending())
+        })
+        .await;
+        assert!(pending, "late publisher must wait for the state lock");
+        assert!(sessions.chet_status().await["start_problem"].is_null());
+        cccc_core::codex_voice_settings::save(&home, &codex).expect("save codex under lock");
+        drop(guard);
+        publish.await;
+        assert!(sessions.chet_status().await["start_problem"].is_null());
     }
 }

@@ -108,6 +108,14 @@ impl CodexVoiceSessions {
             &previous_environment,
         )?;
         let Some(previous) = state.analyst.clone() else {
+            if candidate_runtime.runtime != cccc_contracts::ActorRuntime::Claude {
+                // Only clear `claude_workspace_untrusted` immediately when Chet leaves Claude.
+                // Unrelated Claude tweaks keep the warning until a real start succeeds.
+                self.chet_start_problem
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .take();
+            }
             return Ok(AnalystSettingsOutcome {
                 analyst: None,
                 restarted: false,
@@ -289,7 +297,11 @@ fn validate_replacement(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_replacement;
+    use super::{CodexVoiceSessions, validate_replacement};
+    use cccc_contracts::{ActorRuntime, CodexVoiceAnalystSettings};
+    use cccc_core::HomeLayout;
+    use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn replacement_requires_separate_call_and_work_consent_boundaries() {
@@ -297,5 +309,72 @@ mod tests {
         assert!(validate_replacement(false, true, false).is_err());
         assert!(validate_replacement(false, true, true).is_ok());
         assert!(validate_replacement(true, false, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn changing_settings_while_stopped_clears_stale_start_problem() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let claude = CodexVoiceAnalystSettings {
+            runtime: ActorRuntime::Claude,
+            ..Default::default()
+        };
+        cccc_core::codex_voice_settings::save(&home, &claude).expect("save initial claude");
+
+        let sessions = CodexVoiceSessions::default();
+        *sessions
+            .chet_start_problem
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(json!({
+            "code": "claude_workspace_untrusted",
+            "workspace": "/tmp/fixture-untrusted",
+        }));
+        assert_eq!(
+            sessions.chet_status().await["start_problem"]["code"],
+            "claude_workspace_untrusted"
+        );
+
+        // Saving identical settings keeps the existing startup problem.
+        sessions
+            .apply_analyst_settings(&home, claude.clone(), BTreeMap::new(), vec![], false, false)
+            .await
+            .expect("unchanged settings");
+        assert_eq!(
+            sessions.chet_status().await["start_problem"]["code"],
+            "claude_workspace_untrusted"
+        );
+
+        // Editing unrelated Claude fields (--model / generic env) keeps the workspace trust problem.
+        let claude_tweaked = CodexVoiceAnalystSettings {
+            command: vec!["claude".into(), "--model".into(), "sonnet".into()],
+            ..claude
+        };
+        sessions
+            .apply_analyst_settings(
+                &home,
+                claude_tweaked,
+                BTreeMap::from([("UNRELATED_FLAG".into(), "1".into())]),
+                vec![],
+                false,
+                false,
+            )
+            .await
+            .expect("unrelated claude settings update");
+        assert_eq!(
+            sessions.chet_status().await["start_problem"]["code"],
+            "claude_workspace_untrusted"
+        );
+
+        // Switching away from Claude while Chet is stopped clears the stale problem immediately.
+        let codex = CodexVoiceAnalystSettings {
+            runtime: ActorRuntime::Codex,
+            ..Default::default()
+        };
+        sessions
+            .apply_analyst_settings(&home, codex, BTreeMap::new(), vec![], false, false)
+            .await
+            .expect("switch runtime");
+        assert!(sessions.chet_status().await["start_problem"].is_null());
     }
 }

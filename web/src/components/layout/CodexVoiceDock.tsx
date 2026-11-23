@@ -14,6 +14,7 @@ import { useUnattendedStore } from "../../stores/useUnattendedStore";
 export function CodexVoiceDock({
   controller,
   chetWorking = false,
+  chetAttention = false,
   chetUnread = false,
   collapsed = false,
   variant = "sidebar",
@@ -32,6 +33,7 @@ export function CodexVoiceDock({
     controller.analyst?.warning ||
     controller.analyst?.phase === "needs_attention" ||
     (controller.analyst?.permissions?.length ?? 0) > 0 ||
+    chetAttention ||
     // Unattended copies wait for a Chet that cannot run; the panel says why.
     (unattended && controller.readiness?.analyst_runtime_available === false),
   );

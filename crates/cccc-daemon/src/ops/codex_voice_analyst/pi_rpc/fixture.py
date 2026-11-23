@@ -41,7 +41,21 @@ for line in sys.stdin:
         if text.startswith('dialog'):
             emit({'type':'message_start','message':{'role':'user','content':[{'type':'text','text':text}]}})
             response(r,{'disposition':'started'})
-            emit({'type':'extension_ui_request','id':'reused-provider-id','method':'select','title':'Fixture choice','options':['one','two']});continue
+            dialog = {
+                'type': 'extension_ui_request', 'id': 'reused-provider-id',
+                'method': 'select', 'title': 'Fixture choice', 'options': ['one', 'two'],
+            }
+            if text == 'dialog-expired':
+                dialog['timeout'] = 0
+            elif text == 'dialog-new':
+                dialog['timeout'] = 60000
+            elif text == 'dialog-expired-reuse':
+                emit({**dialog, 'title': 'Expired choice', 'timeout': 0})
+            elif text == 'dialog-expired-burst':
+                for index in range(65):
+                    emit({**dialog, 'id': f'expired-{index}', 'timeout': 0})
+            emit(dialog)
+            continue
         pathlib.Path(session_file).write_text(json.dumps({'type':'session','version':3,'id':sid,'cwd':str(pathlib.Path.cwd())})+'\n')
         emit({'type':'message_start','message':{'role':'user','content':[{'type':'text','text':'not-the-owned-prompt' if text=='foreign' else text}]}})
         response(r,{'disposition':'started'})
