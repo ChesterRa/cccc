@@ -13,7 +13,7 @@
 一条安装命令，无需 Rust 工具链、数据库服务器、消息队列或 Docker。
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
-[![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
+[![Rust 1.91+](https://img.shields.io/badge/Rust-1.91%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/m8wuB7VSJ)
@@ -335,7 +335,7 @@ CCCC 适合这些场景：多个智能体共用一个代码库；混用多种运
 
 **升级**：官网安装脚本装的用 `cccc update`，pip 装的用上面的 pip 命令。`cccc update --check` 会显示最新版本和安装所有者，不做任何更改。用 pip 升级前，请先运行 `cccc daemon stop`，并关闭前台的 CCCC 进程。要从 pip 切换到官网安装脚本，请先运行 `python -m pip uninstall cccc-pair`。如果旧版 `cccc update` 一直停在 0.4.35，请看[升级 FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35)；完整的检查清单见[运维手册](https://chesterra.github.io/cccc/guide/operations)。
 
-**从源码构建**需要 Rust 1.88+、带 npm 的 Node.js 24，以及仅供归档脚本使用的 Python 3.11+：
+**从源码构建**需要 Rust 1.91+、带 npm 的 Node.js 24，以及仅供归档脚本使用的 Python 3.11+：
 
 ```bash
 git clone https://github.com/ChesterRa/cccc

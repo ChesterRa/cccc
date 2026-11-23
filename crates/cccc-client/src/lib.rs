@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 pub mod attended_update;
 mod connection;
 pub mod owned_mcp;
+pub mod session_node;
 use connection::Connection;
 pub use connection::DaemonStream;
 

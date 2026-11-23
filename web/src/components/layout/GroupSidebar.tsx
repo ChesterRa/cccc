@@ -242,8 +242,12 @@ export function GroupSidebar({
   const localSessionsEntry = (collapsed: boolean) =>
     !readOnly && canAccessLocalSessions ? (
       <LocalSessionsButton
+        initialTargetGroupId={selectedGroupId || undefined}
         collapsed={collapsed}
         isDark={isDark}
+        hubName={
+          connect?.ownInstance ? instanceName(connect.ownInstance, connect.instances) : undefined
+        }
         onSelectGroup={(groupId) => {
           onSelectGroup(groupId);
           if (window.matchMedia("(max-width: 767px)").matches) onClose();

@@ -11,6 +11,7 @@ import {
 import { useUIStore } from "../../stores/useUIStore";
 import type { LedgerEvent } from "../../types";
 import { PendingReplySlot } from "./PendingReplySlot";
+import { requestEvent as event } from "./PendingReplySlot.fixtures";
 
 const mocks = vi.hoisted(() => ({
   answer: vi.fn(),
@@ -32,30 +33,6 @@ vi.mock("../../stores", () => ({
     { getState: () => ({ appendEvent: mocks.append, updateObligationStatus: mocks.update }) },
   ),
 }));
-
-const event: LedgerEvent = {
-  id: "r1",
-  group_id: "g1",
-  kind: "chat.message",
-  by: "peer",
-  data: {
-    to: ["user"],
-    message_mode: "request_reply",
-    text: "Question",
-    question: {
-      v: 1,
-      prompt: "Question",
-      options: [
-        { id: "A", label: "Alpha" },
-        { id: "B", label: "Beta" },
-      ],
-    },
-  },
-  _obligation_status: {
-    user: { reply_requested: true, replied: false, cancelled: false, delivery_state: "" },
-  },
-  _user_request: { question: "valid", requester: "available" },
-};
 
 it.each([
   {
@@ -457,8 +434,16 @@ it("ignores a completion after the authenticated scope has been removed", async 
           event: {
             id: "response",
             group_id: "g1",
+            kind: "chat.message",
             by: "user",
-            data: { reply_to: "r1", client_id: clientId },
+            data: {
+              reply_to: "r1",
+              client_id: clientId,
+              to: ["peer"],
+              message_mode: "send",
+              answer: { v: 1, option_id: "A" },
+              text: "Selected A: Alpha",
+            },
           },
         },
       }),

@@ -158,7 +158,9 @@ async fn automatic_pairing_verifies_owned_receipts_and_preserves_drafts_routes_a
     if crate::system_browser_path().is_none() {
         return;
     }
-    let _chrome = crate::browser_surface::chrome_test_guard().await;
+    let Some(_chrome) = crate::browser_surface::chrome_test_guard().await else {
+        return;
+    };
     let temp = tempfile::tempdir().expect("temp");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("init");

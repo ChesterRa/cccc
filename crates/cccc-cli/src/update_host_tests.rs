@@ -906,7 +906,8 @@ async fn an_unconfirmed_cleanup_keeps_its_transaction() {
 
 #[test]
 fn an_unfinished_cleanup_holds_off_the_next_update() {
-    let (_temp, home) = home();
+    let temp = tempfile::tempdir().expect("temp dir");
+    let home = HomeLayout::from_path(temp.path().join("recovery home")).expect("home with a space");
     let coordinator = coordinator(&home);
     let id = uuid::Uuid::new_v4().simple().to_string();
     let transaction = Transaction::create(&home, &id, release(home.root())).expect("transaction");
@@ -924,15 +925,18 @@ fn an_unfinished_cleanup_holds_off_the_next_update() {
     .expect("refused until the cleanup is finished");
     assert_eq!(rejected.code, "update_cleanup_pending");
     // This process created it and still runs, so it has to stop first.
-    assert!(
-        rejected.message.contains(&format!(
-            "stop CCCC, then finish it with `{} update --recover {}`",
-            home.root().join("bin/cccc").display(),
-            transaction.dir.display()
-        )),
-        "{}",
-        rejected.message
-    );
+    let command = rejected
+        .message
+        .split_once("stop CCCC, then finish it with `")
+        .and_then(|(_, command)| command.strip_suffix('`'))
+        .unwrap_or_else(|| panic!("missing recovery command: {}", rejected.message));
+    let args = shell_words::split(command).expect("parse recovery command");
+    assert_eq!(args.len(), 4, "{command}");
+    assert_eq!(Path::new(&args[0]), home.root().join("bin/cccc"));
+    assert_eq!(&args[1..3], ["update", "--recover"]);
+    let recovered =
+        Transaction::open(&home, Path::new(&args[3])).expect("open reported transaction");
+    assert_eq!(recovered.dir, transaction.dir);
     assert!(matches!(&*coordinator.inner.lock(), Slot::Idle));
 }
 

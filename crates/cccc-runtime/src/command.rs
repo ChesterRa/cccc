@@ -844,10 +844,7 @@ mod tests {
         let error = deepseek_preflight(&command, &env).expect_err("incomplete profile bundle");
         assert!(error.contains("ACP profile bundle"), "{error}");
         // npm would keep this package as it is, so setup unpacks it again.
-        assert_eq!(
-            super::deepseek_packages_to_reinstall(&home),
-            [profile.clone()]
-        );
+        assert_eq!(super::deepseek_packages_to_reinstall(&home), [profile]);
         std::fs::write(&patch, "[]\n").expect("restore bundle patch");
         deepseek_preflight(&command, &env).expect("restored installation");
         assert!(super::deepseek_packages_to_reinstall(&home).is_empty());

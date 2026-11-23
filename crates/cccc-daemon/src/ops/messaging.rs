@@ -277,11 +277,10 @@ fn send_cross_group_with_reply(
         source_data.insert("dst_to".into(), destination_recipients);
         source_data.insert("dst_message_mode".into(), destination_message_mode);
         source_data.insert("dst_group_id".into(), json!(destination.group_id));
-        if let Some(local_parent) = source_reply_to {
-            if let Some(remote_parent) = source_data.insert("reply_to".into(), json!(local_parent))
-            {
-                source_data.insert("dst_reply_to".into(), remote_parent);
-            }
+        if let Some(local_parent) = source_reply_to
+            && let Some(remote_parent) = source_data.insert("reply_to".into(), json!(local_parent))
+        {
+            source_data.insert("dst_reply_to".into(), remote_parent);
         }
         append(home, &source.group_id, "chat.message", &by, source_data)?
     };

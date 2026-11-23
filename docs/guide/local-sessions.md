@@ -6,6 +6,8 @@ This is an experimental integration for Linux (including WSL), macOS and native 
 
 Other runtimes, such as the Antigravity App or CLI, cannot be attached yet.
 
+Sessions on another computer can use the [LAN session connector](#connect-sessions-from-another-computer-lan-or-public-relay) below. The ordinary local integration keeps its same-user/same-Home boundary; each computer owns its own native session metadata.
+
 ## Enable once
 
 **From the terminal interface.** If you start CCCC with `cccc` in a terminal, type `/setup` there. It checks which of Codex, Claude Code, Pi and OpenCode are on `PATH`, their versions and whether this CCCC has already set them up. Nothing is picked by default: tick the apps whose sessions may work with each other with Enter, choose Continue, then choose Connect in the confirmation, which starts on Cancel. It runs the same enable step for each app in turn and shows what that app needs next. Reconfiguring Pi or OpenCode disconnects their open sessions until they reload, and the screen says so before you confirm. `configuration written` means only that; open sessions still load it as described below, and setup sends no test messages. Press Esc to cancel a running setup; an interrupted app may be partly configured, so retry with `/setup` or its enable command and resolve any conflict it reports. Once sessions work together, `/sessions` in the same interface lists every session this CCCC knows, with its details, and the main screen lists the Groups they joined: Enter opens one, with each member's state, and can start or stop it.
@@ -92,7 +94,7 @@ If the original host is still open, CCCC does not transfer its memberships.
 Close that instance if you intend to continue elsewhere, then reload the CCCC
 receive integration. A different conversation, unknown configuration directory,
 explicitly disabled integration, or conflicting old/new members requires an
-explicit choice in **Connect existing sessions**. Only the host's last recorded
+explicit choice in **Connect local sessions**. Only the host's last recorded
 conversation can be matched; CCCC does not scan native history. Restarting only
 the daemon or relisting tools from an old MCP process does not update that
 process's tool declarations.
@@ -110,7 +112,11 @@ Update the existing `[features]` table, then use a session connected to the shar
 
 ## Connect sessions to a Group
 
-Choose **Connect sessions** above the Group list in the Web sidebar (an icon under **New** when the sidebar is collapsed); the dialog is titled **Connect existing sessions**. The **Target Group** selector identifies where the selected sessions will participate as agents. Choose an existing Group and **Connect to Group**, or choose **+ New Group** and **Create & connect**. The latter always creates a new ordinary Group, even for one session; it does not automatically reopen an older conversation. Native session-to-session direct messaging still creates or reuses its Group automatically. All Groups remain in the sidebar until removed. Discovery alone creates no Groups or agents and does not change the active Group.
+Choose **Connect sessions** above the Group list in the Web sidebar (an icon under **New** when the sidebar is collapsed); the dialog is titled **Connect sessions**. The dialog identifies the CCCC host as the session source, including when the browser is remote.
+
+The setup guide comes before the picker and separates the system-terminal command, the next action in the original app, and returning to CCCC. The enable command has a Copy control. **Choose Group and sessions** moves focus to the destination picker. Remote collaboration and the terminal `/setup` alternative are separate expandable sections.
+
+The **Target Group** selector identifies where the selected sessions will participate as agents. Choose an existing Group and **Connect to Group**, or choose **+ New Group** and **Create & connect**. The latter always creates a new ordinary Group, even for one session; it does not automatically reopen an older conversation. Native session-to-session direct messaging still creates or reuses its Group automatically. All Groups remain in the sidebar until removed. Discovery alone creates no Groups or agents and does not change the active Group.
 
 The session rows show working directories and, when available, a **CLI** or **VS Code** creation-origin badge for Codex. Origin comes from optional official thread metadata captured during registration, not from process/window guessing or conversation-history scanning. CCCC reads the client recorded when the thread was created, and the thread's source only when no client is recorded: Codex 0.166 records threads from its terminal interface with the source `vscode`. The badge describes where the thread originated, not which application window is currently open. Missing, unknown or unavailable origin metadata leaves a newly registered session with the ordinary runtime label, and an already registered session with the badge it had; it never changes identity, receive readiness or membership. Directory polling only reads the captured metadata.
 
@@ -138,7 +144,7 @@ administrator can switch; the control is unavailable in Exhibit. The agent keeps
 its ID, role, tasks, Mail, reply requests, message history, agent state and
 notes; only the runtime that runs it changes. A new member cannot be created as
 a native session from the add dialog: use **Join from connected sessions**,
-which opens **Connect existing sessions** for the current Group.
+which opens **Connect local sessions** for the current Group.
 
 What a switch does:
 
@@ -285,9 +291,9 @@ Enabling the integration is a one-time configuration step, not a per-conversatio
 - **Start a new Pi conversation or reload within the same native host:** the source and Group memberships remain, while the captured lifecycle revision changes. An old extension cannot act for the replacement context. Exiting retires the source. A replacement Pi process is a new source: when it restores the old host's last recorded conversation, for example with `pi --session <id>`, with the same provider configuration, its receive integration reconnects the previous Group memberships under the recovery rules above. Any other replacement requires explicit admission as a new agent.
 - **Clear Claude's conversation within the same native host:** the source and Group memberships remain; a lifecycle callback with a new native conversation ID updates the revision. Clearing context does not leave those Groups. A replacement Claude host is a new source: when it resumes the old host's last recorded conversation with the same provider configuration after that host exited, its receive integration reconnects the previous Group memberships under the recovery rules above. Any other replacement requires explicit admission as a new agent.
 
-The **Connect existing sessions** directory also shows registered live sessions whose receive channel is not ready; they cannot be selected for admission until ready. With an existing target Group, each source shows whether it is already a member or has paused access. Choose **Resume CCCC access** explicitly to restore a paused member; **Connect to Group** only adds selected new members. Group pause/stop remains independent.
+The **Connect local sessions** directory also shows registered live sessions whose receive channel is not ready; they cannot be selected for admission until ready. With an existing target Group, each source shows whether it is already a member or has paused access. Choose **Resume CCCC access** explicitly to restore a paused member; **Connect to Group** only adds selected new members. Group pause/stop remains independent.
 
-To collaborate from a new source, create a conversation or explicitly join an existing Group through **Connect existing sessions**. Discovery and restoring native history do not join a new identity to old Groups. If you are switching to an unrelated task, explicitly pause CCCC access or leave the old memberships instead of assuming a new or cleared native conversation ends them.
+To collaborate from a new source, create a conversation or explicitly join an existing Group through **Connect local sessions**. Discovery and restoring native history do not join a new identity to old Groups. If you are switching to an unrelated task, explicitly pause CCCC access or leave the old memberships instead of assuming a new or cleared native conversation ends them.
 
 ### Resume a native session locally
 
@@ -332,6 +338,75 @@ After an instruction file such as `AGENTS.md` or `CLAUDE.md` in a connected sess
 
 Receiver presence is ephemeral and reconnects after a daemon restart. Current native identity comes from CCCC-owned lifecycle metadata, including callbacks while the daemon is down. No native conversation database or transcript is scanned. The global directory is restricted to the private Web administrator and is unavailable in Exhibit or through remote model connectors.
 
+## Connect sessions from another computer (LAN or public relay)
+
+The LAN connector supports existing **Codex and Claude Code** sessions. Both computers need a CCCC build with session-node protocol 1 (Rust 1.91); Pi/OpenCode remain local-only. The **Connect sessions** entry opens a **Sessions** overview grouped by device. An empty directory uses a compact, content-sized window with **Set up this computer** and **Add device** action cards; there is no zero-selection action bar. Once sessions are available, device sections become bordered groups and the window grows only up to the viewport limit. It shows session names, applications, directories and receive status with normal-size text. **Set up this computer** and **Add device** open separate views in the same window; configuration instructions do not sit above the directory. Returning restores the overview scroll position and selections. Select sessions first, then choose **Add to Group** to select an existing Group or create a new one. Foreman and directory settings appear only in the new-Group confirmation. Selecting sources does not admit them: the final confirmation still waits for verified Group membership and rejects unavailable sources. Pairing alone creates no Group membership.
+
+### Pair a computer from its terminal
+
+1. On the hub, open **Connect sessions → Add device** and select **Codex** or **Claude Code**. Copy the command and run it on the other computer in the OS account and `CCCC_HOME` that own its native sessions. For Codex, run:
+
+   ```sh
+   cccc sessions node connect --runtime codex --ticket-stdin
+   ```
+
+   Use `--runtime claude` for Claude Code. The device name defaults to its hostname. Add `--name` to choose a different display name.
+
+2. When the other terminal asks for a ticket, choose **Generate and copy pairing ticket** on the hub. As soon as **Copied** appears, paste the ticket at the terminal prompt and press Enter. Each ticket can enroll one new computer and expires after ten minutes. **New ticket for another device** also generates and copies in one click. If the browser refuses the clipboard write, **Copy pairing ticket** retries with the same unexpired ticket. Give the ticket only to the person pairing that device. Keep it out of shell arguments and chat logs.
+
+3. Keep the terminal open until it prints **Session node connected**. **Native integration enabled** confirms the application's local configuration. **Waiting for hub confirmation** means that the encrypted connection is up and device registration is still in progress. Finish its hook or plugin setup as described above and submit a prompt in the original session so it registers. On the hub, switch to **Paired devices** in the same **Add device** dialog. Find the online computer and choose **Choose sessions to add to a Group**. If none are ready, open or resume the original Codex or Claude Code session on that computer, load its integration and send a message. The list refreshes automatically. Select the sessions, choose **Add to Group**, then review and confirm the target Group. When you open **Connect sessions** from a selected Group, that Group is preselected and can be changed before confirmation. If existing Groups are available and none is selected, choose a target. Choose **New Group** explicitly to create one. After confirmation, the workbench opens the Group and displays its name in the success notice. You can also start in a Group from **Add agent → Native session → Choose sessions for this Group**. A paired device can reconnect before any of its sessions have joined a Group.
+
+The connector validates the ticket and checks the running daemon before applying the selected runtime's integration. An invalid ticket leaves the application configuration intact. If native setup itself fails, inspect its error for partial configuration. If the connection fails after setup, the integration stays enabled. The connector starts a daemon only in a vacant Home. An incompatible running daemon requires an explicit upgrade. Hook trust and native application restarts remain under the user's control.
+
+Omit `--runtime` when both applications are already configured. A CLI that does not recognize `--runtime` can run `cccc sessions enable --runtime codex` or `cccc sessions enable --runtime claude` first, followed by `cccc sessions node connect --ticket-stdin`. Current clients pair entirely in the terminal. Previously paired computers reconnect with `cccc sessions node connect` in the same Home.
+
+A new pairing replaces the saved local reconnect route, grant and membership hints only after the hub accepts it and local saving succeeds. Failure or cancellation preserves the current saved reconnect configuration; concurrent changes are not overwritten. A local save failure does not undo a pairing already accepted by the hub.
+
+If the terminal reports **Hub confirmation was interrupted**, the hub may already list the device as authorized. The connector retries with the same device identity. When a Group is still listed in the registry but its configuration file is missing, the hub omits that Group from the device’s memberships during pairing and synchronization.
+
+The original application keeps its account, model, context, cwd, terminal and approvals. The hub owns the Group, agent role, collaboration ledger and message delivery receipts. The connector exports only this Home's registered Codex/Claude sessions, not other remote sources. It does not copy native provider history or credentials.
+
+CCCC supports [remote Web access](web-ui.md#remote-access), including Cloudflare/Reach tunnels. When public access is configured and enabled with an HTTPS `web_public_url`, new pairing tickets also carry a private relay entry. The existing tunnel forwards `/relay` WebSocket traffic and the `/ping` and `/generate_204` discovery probes to this Web runtime. A path-only proxy must forward all three. Loopback HTTP origins are accepted for isolated checks; other cleartext relay URLs, embedded URL credentials, query tokens and arbitrary path prefixes are rejected.
+
+Existing Web access settings that cannot provide a secure relay origin, such as a LAN HTTP URL or a custom path prefix, leave device pairing in direct-only mode. They do not block existing LAN connections or new direct pairing. A relay URL supplied in a device ticket is still validated strictly before connection.
+
+The connector keeps iroh QUIC direct paths. When direct IP/UDP addresses are unreachable, it can use iroh's native WebSocket relay through the public entry. The relay forwards encrypted QUIC packets; provider history, account credentials and the application pairing secret do not pass as relay HTTP credentials. A separate ten-minute bootstrap capability authorizes only the relay connection. The application pairing secret still travels inside the end-to-end encrypted channel. After enrollment, reconnect uses the saved device key; the bootstrap token is not retained in the saved public route or status output.
+
+A device with both direct and relay addresses first tries its normal route. If the encrypted connection cannot be established, the connector tries the authorized relay from a fresh local endpoint using the same device key. This lets pairing proceed when UDP can reach the hub in only one direction. If the relay attempt also fails, the connector backs off and tries the full route again. Its saved route retains all addresses for future connections.
+
+The native connector selects an outbound **HTTP(S) CONNECT proxy** for the relay destination. Process settings take priority: an HTTPS public relay uses `HTTPS_PROXY` / `https_proxy`, then `ALL_PROXY` / `all_proxy`; setting only `HTTP_PROXY` does not configure an HTTPS destination. For an explicit override, set `HTTPS_PROXY=http://127.0.0.1:7890` in the terminal that starts the connector, then use the normal connect command and paste the ticket at its prompt. An explicit `https://proxy` URL uses TLS to the proxy itself.
+
+With no applicable process proxy variable, macOS uses the system's per-destination static HTTP/HTTPS proxy and its Exceptions List / simple-host exclusions. Windows reads the current user's Internet Options for the active connection, including static per-scheme proxy lists and bypass patterns such as `<local>`. A system setting labelled HTTPS or Secure Web Proxy describes the destination scheme; its bare host and port use ordinary HTTP CONNECT, not TLS to the proxy. Other platforms retain environment-only selection. The connector reads the policy when it opens a local endpoint, including a saved-pairing resume or a fresh relay attempt. A working endpoint keeps its selected policy. CCCC does not change system settings, scan local ports or install a proxy watcher.
+
+`NO_PROXY` / `no_proxy` bypasses matching hosts, domain suffixes, IP addresses and CIDR ranges before any system lookup; `*` bypasses all relay destinations, including IP literals. On platforms with case-sensitive environment names, when both cases of a variable exist the uppercase value takes precedence, including an empty value; Windows treats the names as the same variable. Applicable process proxy variables that are present but all empty select direct access instead of system fallback. The hub's loopback relay is always direct. UDP direct paths are unaffected by HTTP proxy settings and follow the operating system's routing, including an existing VPN; CCCC does not create or force a VPN.
+
+SOCKS proxies, visible proxy credentials and unparseable selected proxy settings are not supported by the native relay. System PAC/WPAD policies are also unsupported: CCCC does not execute or fetch their scripts, read Keychain / credential-vault secrets, or treat an automatic policy as permission for bare public-relay access. These settings disable that relay path with a fixed message that does not echo the setting; available direct IP/UDP candidates remain usable, and a relay-only route fails clearly if no usable route remains. An explicit environment proxy or `NO_PROXY` override still takes priority. A successful `/generate_204` HTTP probe alone does not establish a relay WebSocket, device authentication or end-to-end session delivery.
+
+Existing IP-only version-1 tickets and saved direct routes remain readable. New relay tickets use ticket version 2; the application ALPN and hello protocol stay at `cccc/session-node/1`. Both the new hub runtime and relay connector require a daemon that advertises `relay_ticket_version: 2`; an older running daemon or gateway reports an explicit upgrade requirement and is never replaced automatically. To add public fallback to an already paired device whose saved route is IP-only, stop only its connector, issue a fresh ticket, and run `cccc sessions node connect --ticket-stdin` again. The original application stays running, and an already-enabled device retains its grant and memberships. Revoked devices still need a new grant and explicit Group admission.
+
+The gateway binds its native relay only on loopback and publishes that listener through the authenticated device route. The public route does not use Web administrator tokens or browser cookies: iroh proves the device key, then CCCC checks the device grant or scoped bootstrap capability. Exhibits cannot serve the relay. Revocation disconnects existing relay connections and denies re-entry. Turning public access off closes relay access without revoking valid LAN device grants. Unknown application writes are never replayed when a path or connector reconnects.
+
+Direct-only use still needs a reachable hub UDP address. Its first start saves the chosen UDP port, and ordinary gateway restoration reuses that route. For a fixed firewall rule, run `cccc sessions node host --port 42771` on the hub. Public fallback also requires the Web runtime and tunnel to be reachable; enabling a configured address is not proof of external network health. Changing the public address requires a fresh routing ticket on each affected connector.
+
+**Current scope:** text messages/replies, exact message reads, Inbox, bootstrap/help, tasks, agent state and context tools. Files, command execution, capability installation and code-mode are not proxied to the hub. Use the native application's own tools on the original computer. Attachments fail explicitly before native handoff; this connector does not transfer them. Claude may first receive an exact-read notification, then use `cccc_message_history` to fetch the full text and instructions as usual.
+
+Native `cccc_session list` includes remote memberships with `hub_id`. Pass the explicit Group ID to Group tools; when local and remote Group IDs collide, also pass that `hub_id`. No ambiguous call silently switches machines. A disconnected broker reports failure rather than falling back to the local Group.
+
+Ctrl-C closes the bridge without stopping native sessions. Resume a paired computer with:
+
+```sh
+cccc sessions node connect
+cccc sessions node status
+```
+
+A network drop reconnects with the stored node identity and backs off to fifteen seconds. Submitted tools and uncertain native handoffs are not replayed. The node persists delivery fingerprints/outcomes, not message bodies; an unfinished attempt remains ambiguous after restart. Only the active table of pending/ambiguous attempts is capped at 8,192 records and fails closed when full; uncertain work is never evicted to admit more messages. Determinate outcomes are durably archived before releasing active slots, and completed receipts are retained indefinitely to prevent duplicate execution. Total receipt storage grows with delivery history and is not subject to that 8,192-record limit. Do not delete the active table or completed receipts to retry unknown work; reconcile delivery receipts first.
+
+The **Paired devices** tab shows connection status and lets administrators search by device name. Its list scrolls inside the dialog. **Revoke device** asks for confirmation and closes that computer's CCCC access to all admitted Groups. The CLI equivalent is `cccc sessions node revoke --node-id <endpoint-id>`. Native processes keep running, and work already offered at the handoff boundary may continue. Pairing the same computer again requires a new ticket and grant; its old Group memberships do not automatically revive. Pausing one member instead affects only that Group's access.
+
+The hub allows up to **32 active device grants**. Disconnected devices still count; revoking a device immediately frees its slot. Revoked history is separate: the hub retains at most 32 revoked devices, ordered by their original grant time, and removes older records and their cached sources during pairing or revocation. A previously revoked device can pair again using a new ticket from a hub administrator. Successful pairing creates a new grant. Old tickets and Group bindings remain invalid.
+
+Only hub administrators can view the device directory, issue tickets and revoke devices. An old device confirmation link displays instructions for terminal pairing. A previously verified legacy hub URL can still select its matching saved connection on an upgraded client. First-time connections and reauthorization require a ticket from the administrator.
+
 ## Disconnect the integration
 
 ```sh
@@ -350,3 +425,31 @@ Disabling first fences native access for that runtime in this `CCCC_HOME`, inclu
 Claude cleanup reads the effective user configuration without starting MCP servers, then uses the official remove command and checks the resulting file. That CLI has no atomic compare-and-remove operation; avoid concurrent edits to the same user MCP entry during cleanup. Native processes and history are retained. Disabling does not erase Group ledgers or unsent messages.
 
 OpenCode disable closes native authority before removing its unchanged generated plugin files. User modifications are preserved and reported for manual resolution. The plugin's temporary MCP transform is removed on native reload; any pre-existing user MCP configuration remains intact.
+
+
+## Remove CCCC access for one local source
+
+**Remove CCCC access** is a persistent choice for one source in the current `CCCC_HOME`. It does not delete native conversations, provider history or project files, close/restart the native application, disable the whole runtime, or synthesize `SessionEnd`. The source disappears from the ordinary directory; retained metadata remains available in the administrator's removed-source list. Other sources, including other sessions of the same runtime, are unaffected.
+
+Removal first persists an access barrier and then pauses that source's existing Group members. Directory discovery, hook registration, receiver leases, native tool authority and new native submissions honor the barrier. A normal lifecycle hook cannot erase the user choice. If a Group cannot be read or saved, the operation returns `status: "partial"`, `access_blocked: true`, `pause_complete: false` and a safe error code: do not report this as fully completed. The barrier is not rolled back. Already offered native work may still complete; accepted and unknown deliveries keep their existing no-replay rules.
+
+**Restore CCCC access** first confirms that all old Group members are paused, then lifts the source barrier. Old Actors, conversation history, original host identity and lifecycle revision remain intact; restore does not enable Group access or revive an ended lifecycle. Explicitly enable the old member or select the restored source for a new Group when ready. A partial restore stays blocked and can be retried after repairing the reported Group/storage failure. Repeated same-target actions are idempotent; a stale management revision targeting a different state returns `409 source_control_conflict` with the current control state.
+
+The administrator-only API is additive:
+
+- `GET /api/v1/local_sessions` keeps `sources`, adds `capabilities.source_control` / `source_diagnostics`, `removed_sources`, and `source_states[source_id]` with `control` and `diagnostic` projections. A control contains `supported`, `management_revision` (initial `"0"`, then an opaque management UUID), `access_blocked`, `pause_complete`, and an optional `reason_code`. Hook updates and heartbeats do not change that management revision.
+- `POST /api/v1/local_sessions/control` accepts only `{source_id, action: "remove"|"restore", expected_revision}`. The result includes the current control state, `source_id`, `status: "active"|"removed"|"partial"`, optional `error_code`, and `failed_group_ids`. Read back the directory after a partial or interrupted operation; never infer restoration from an HTTP success alone.
+- `POST /api/v1/local_sessions/recheck` accepts `{source_id}` and returns a safe `diagnostic`, `check_status: "checked"|"cached"|"busy"`, and `retry_after_ms`. Checks are read-only toward the native application, bounded to two seconds, limited to one concurrent probe and cached for fifteen seconds in a bounded 128-source cache. Ordinary directory polling never probes a provider.
+
+Codex diagnostics distinguish `ready`, `shared_backend_missing`, `thread_not_loaded`, `receive_check_failed` and `unknown`. A successful queue lookup does not qualify a thread absent from the shared background server's loaded-thread list. Only an exact positive native error identifies a missing background server; generic failures remain unknown/check-failed. Queue elements are discarded during deserialization and raw provider errors are not returned or logged. Origin labels are shown only from already captured reliable origin evidence; unknown readiness never means that ChatGPT/embedded sessions are unsupported. A successful explicit check safely refreshes readiness only for the existing, still-matching source/host/revision; it never creates a source, starts a thread or grants Group permission. Positive not-loaded/backend-missing evidence clears stale readiness; inconclusive failures do not fabricate a lifecycle end.
+
+Exhibit, Group-scoped tokens and model/native bindings cannot manage or recheck sources. IDs are existing opaque native source IDs in JSON bodies, not filesystem paths. Unknown sources fail explicitly. Individual remote-source management is currently unsupported (`source_control_unsupported`); it never substitutes whole-device revocation. Old data without a control marker remains active. An old runtime/API without these capabilities must show an upgrade requirement rather than infer support from the package version. The barrier requires a supporting running backend; do not downgrade to a backend that ignores source controls while relying on removal for access fencing.
+
+
+### Source controls during an upgrade
+
+If the directory response lacks `capabilities.source_control` or `capabilities.source_diagnostics`, the running API/daemon has not provided that capability. Update and run the matching backend build first; reloading the original application's MCP alone cannot add these API capabilities. Once the API supports them, the separate native MCP reload prerequisite below still applies.
+
+Full source fencing requires a matching supporting daemon, Web runtime and native MCP process. Replacing the binary on disk, restarting only CCCC, or seeing the same package version does not update an MCP process already loaded in an original application. Reload/reconnect that application's CCCC MCP integration using its normal native controls after finishing any in-flight work; do not automatically restart the application or trust hooks. `capabilities.source_control_requires_mcp_reload: true` and the control result's `client_requirement: "matching_build_and_reloaded_mcp"` state this prerequisite; they do not attest that every old process has reloaded.
+
+Current local tools obtain their scope from the daemon and revalidate native bindings in their own process; normal native requests also read the persisted Actor enabled state. Successful Group pausing therefore uses the existing permission boundary, while new builds additionally read the independent source barrier. An old MCP may still carry a core implementation that ignores that barrier, particularly for in-flight/local checks. A `partial` response with unsuccessful Group saves must **not** be presented as proof that every legacy client has lost access. Keep the source blocked, repair/retry the pending pauses, and complete the native MCP reload before relying on complete fencing. A capability flag is evidence about the running API implementation, never a version-number-based proof of a fully upgraded mixed process set. No source removal changes the original application's own tools or filesystem permissions.

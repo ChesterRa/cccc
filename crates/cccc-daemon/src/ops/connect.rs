@@ -234,10 +234,9 @@ fn group_connection_summary(home: &HomeLayout) -> Result<serde_json::Value, OpEr
     for relation in direct.relations {
         if let Some(remote) = &relation.remote
             && cccc_core::direct::binding(home, &remote.instance_id, &relation.id).is_ok()
+            && let Some(count) = counts.entry(relation.local.group_id).or_insert(Some(0))
         {
-            if let Some(count) = counts.entry(relation.local.group_id).or_insert(Some(0)) {
-                *count += 1;
-            }
+            *count += 1;
         }
     }
     if counts.is_empty() && links.is_none() {

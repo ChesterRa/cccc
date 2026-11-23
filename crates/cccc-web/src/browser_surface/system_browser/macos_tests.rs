@@ -3,8 +3,41 @@ use crate::browser_surface::{browser_surface_tests::local_page, chrome_test_guar
 use chromiumoxide::cdp::browser_protocol::system_info::GetProcessInfoParams;
 use futures_util::StreamExt;
 
+/// The launcher records subprocess ownership in a process-global guard. Other
+/// web tests run daemons whose temporary guard homes end before these launches.
+async fn run_in_fresh_process(name: &str) -> Result<bool> {
+    const CHILD: &str = "CCCC_TEST_MACOS_BROWSER_LAUNCH_CHILD";
+    if std::env::var(CHILD).as_deref() == Ok(name) {
+        return Ok(false);
+    }
+    let test = format!("browser_surface::system_browser::macos_tests::{name}");
+    let output = cccc_runtime::background_tokio_command(std::env::current_exe()?)
+        .args(["--exact", &test, "--nocapture"])
+        .env(CHILD, name)
+        .kill_on_drop(true)
+        .output()
+        .await?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    anyhow::ensure!(
+        output.status.success()
+            && stdout
+                .lines()
+                .any(|line| line.starts_with("test result: ok. 1 passed;")),
+        "isolated launcher test {name} failed or did not run:\n{stdout}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(true)
+}
+
 #[tokio::test]
 async fn unresponsive_macos_launcher_is_reaped_and_reports_an_unconfirmed_browser() -> Result<()> {
+    if run_in_fresh_process(
+        "unresponsive_macos_launcher_is_reaped_and_reports_an_unconfirmed_browser",
+    )
+    .await?
+    {
+        return Ok(());
+    }
     let profile = tempfile::tempdir()?;
     let mut launch = SystemBrowserLaunch {
         executable: "/bin/sh".into(),
@@ -48,7 +81,12 @@ async fn unresponsive_macos_launcher_is_reaped_and_reports_an_unconfirmed_browse
 
 #[tokio::test]
 async fn system_browser_answers_cdp_and_stops_its_original_process() -> Result<()> {
-    let _guard = chrome_test_guard().await;
+    let Some(_guard) = chrome_test_guard().await else {
+        return Ok(());
+    };
+    if run_in_fresh_process("system_browser_answers_cdp_and_stops_its_original_process").await? {
+        return Ok(());
+    }
     let profile = tempfile::tempdir()?;
     let aliases = tempfile::tempdir()?;
     let profile_alias = aliases.path().join("browser profile");
@@ -98,7 +136,14 @@ async fn system_browser_answers_cdp_and_stops_its_original_process() -> Result<(
 
 #[tokio::test]
 async fn failed_cdp_connection_stops_the_browser_opened_for_its_profile() -> Result<()> {
-    let _guard = chrome_test_guard().await;
+    let Some(_guard) = chrome_test_guard().await else {
+        return Ok(());
+    };
+    if run_in_fresh_process("failed_cdp_connection_stops_the_browser_opened_for_its_profile")
+        .await?
+    {
+        return Ok(());
+    }
     let temp = tempfile::tempdir()?;
     let profile = temp.path().canonicalize()?;
     let mut launch = SystemBrowserLaunch::prepare(

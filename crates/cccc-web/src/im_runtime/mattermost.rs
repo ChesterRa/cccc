@@ -727,9 +727,8 @@ async fn socket_loop(
                                                 api.log_error(&home, &group_id, "recovery", RECOVERY_GAP);
                                                 api.persist_error(&home, &group_id, Some(RECOVERY_GAP));
                                             }
-                                            if field(&event, "event") == "posted" {
-                                                if let Some(capacity) = permit.take() { capacity.send(event); }
-                                            }
+                                            if field(&event, "event") == "posted"
+                                                && let Some(capacity) = permit.take() { capacity.send(event); }
                                         }
                                         Ok(false) => {}
                                         Err(error) => break error,

@@ -548,7 +548,10 @@ async fn failed_initial_scan_keeps_old_and_new_binding_start_points() {
             .map(|(_, event)| event.id.clone())
             .collect::<Vec<_>>()
     };
-    assert_eq!(received(&old_binding), [after_failure.id.clone()]);
+    assert_eq!(
+        received(&old_binding),
+        std::slice::from_ref(&after_failure.id)
+    );
     assert_eq!(
         received(&new_binding),
         [before_failure.id, after_failure.id]
@@ -568,7 +571,7 @@ async fn a_binding_is_sent_what_follows_it_from_the_moment_it_is_saved() {
     // Written after the binding was saved and before the notifier woke.
     let early = f.write(&g, to_user("early"));
     f.notifier.activate().await;
-    assert_eq!(a.received(), [early.id.clone()]);
+    assert_eq!(a.received(), std::slice::from_ref(&early.id));
 
     let later = f.write(&g, request("later?"));
     f.notifier.changed(&later).await;
@@ -583,7 +586,7 @@ async fn a_binding_is_sent_what_follows_it_from_the_moment_it_is_saved() {
     let both = f.write(&g, to_user("both"));
     f.notifier.changed(&both).await;
     assert_eq!(a.received().last(), Some(&both.id));
-    assert_eq!(b.received(), [both.id.clone()]);
+    assert_eq!(b.received(), std::slice::from_ref(&both.id));
 }
 
 #[tokio::test]
@@ -604,7 +607,7 @@ async fn notification_levels_are_per_browser_and_skipped_messages_are_not_replay
 
     let early = f.write(&group, to_user("progress before the notifier wakes"));
     f.notifier.activate().await;
-    assert_eq!(all.received(), [early.id.clone()]);
+    assert_eq!(all.received(), std::slice::from_ref(&early.id));
     assert!(requests.received().is_empty());
 
     let progress = f.write(&group, to_user("progress while following"));
@@ -629,7 +632,7 @@ async fn notification_levels_are_per_browser_and_skipped_messages_are_not_replay
         all.received(),
         [early.id.clone(), progress.id.clone(), prompt.id.clone()]
     );
-    assert_eq!(requests.received(), [prompt.id.clone()]);
+    assert_eq!(requests.received(), std::slice::from_ref(&prompt.id));
     assert!(f.notifier.pending.is_empty());
 
     f.notifier
@@ -637,7 +640,7 @@ async fn notification_levels_are_per_browser_and_skipped_messages_are_not_replay
         .set_level(&requests.endpoint, &Owner::Local, NotificationLevel::All)
         .expect("restore all");
     f.notifier.sweep().await;
-    assert_eq!(requests.received(), [prompt.id.clone()]);
+    assert_eq!(requests.received(), std::slice::from_ref(&prompt.id));
     let next = f.write(&group, to_user("progress after switching back"));
     f.notifier.changed(&next).await;
     assert_eq!(requests.received(), [prompt.id, next.id]);
@@ -657,7 +660,7 @@ async fn a_binding_far_behind_the_newest_events_is_read_forward_from_its_start()
         );
     }
     f.notifier.activate().await;
-    assert_eq!(a.received(), [owed.id.clone()]);
+    assert_eq!(a.received(), std::slice::from_ref(&owed.id));
 }
 
 #[tokio::test]
@@ -673,7 +676,7 @@ async fn after_a_restart_only_what_comes_next_is_announced() {
     assert!(a.received().is_empty());
     let next = f.write(&g, to_user("next"));
     f.notifier.changed(&next).await;
-    assert_eq!(a.received(), [next.id.clone()]);
+    assert_eq!(a.received(), std::slice::from_ref(&next.id));
 }
 
 #[tokio::test]
@@ -695,7 +698,7 @@ async fn bindings_unreadable_at_a_restart_still_begin_with_what_comes_next() {
     assert!(a.received().is_empty());
     let next = f.write(&g, to_user("next"));
     f.notifier.changed(&next).await;
-    assert_eq!(a.received(), [next.id.clone()]);
+    assert_eq!(a.received(), std::slice::from_ref(&next.id));
 }
 
 /// A copy of a Group with `events` of history, imported into `f`'s home.
@@ -753,7 +756,7 @@ async fn a_new_group_is_announced_from_its_start_and_a_long_one_from_its_end() {
     let create = f.write(&created, create);
     let first = f.write(&created, to_user("first"));
     f.notifier.changed(&create).await;
-    assert_eq!(a.received(), [first.id.clone()]);
+    assert_eq!(a.received(), std::slice::from_ref(&first.id));
 
     // One that turns up with a long history was not just created.
     let restored = f.group();
@@ -784,7 +787,7 @@ async fn a_request_closed_before_it_is_read_is_not_announced() {
     f.write(&g, cancel);
     let note = f.write(&g, to_user("note"));
     f.notifier.changed(&note).await;
-    assert_eq!(a.received(), [note.id.clone()]);
+    assert_eq!(a.received(), std::slice::from_ref(&note.id));
 }
 
 #[tokio::test]
@@ -895,7 +898,7 @@ async fn a_group_missing_while_a_browser_subscribes_neither_blocks_it_nor_replay
     std::fs::rename(&away, &dir).expect("restore");
     let new = f.write(&g, to_user("new"));
     f.notifier.changed(&new).await;
-    assert_eq!(b.received(), [new.id.clone()]);
+    assert_eq!(b.received(), std::slice::from_ref(&new.id));
     assert_eq!(a.received(), ids(&[old, new]));
 }
 
@@ -986,7 +989,7 @@ async fn a_binding_whose_origin_gives_no_link_is_sent_nothing() {
     let asked = f.write(&g, request("which?"));
     f.notifier.changed(&asked).await;
     assert_eq!(a.device.tries(), 0);
-    assert_eq!(b.received(), [asked.id.clone()]);
+    assert_eq!(b.received(), std::slice::from_ref(&asked.id));
     // No later try repairs the origin, so none is kept.
     assert!(f.notifier.pending.is_empty());
 }

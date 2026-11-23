@@ -35,7 +35,7 @@ impl PcmRecording {
     }
 
     pub(super) async fn append(&mut self, pcm: &[u8]) -> Result<(), voice_asr::VoiceError> {
-        if pcm.len() % 2 != 0 {
+        if !pcm.len().is_multiple_of(2) {
             return Err(voice_asr::VoiceError::new(
                 "invalid_audio",
                 "PCM16 byte length must be even",

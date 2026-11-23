@@ -262,7 +262,9 @@ mod tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = super::super::chrome_test_guard().await;
+        let Some(_chrome_guard) = super::super::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let (url, server) = super::super::browser_surface_tests::local_page("<main></main>").await;
         let surfaces = BrowserSurfaces::default();

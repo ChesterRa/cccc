@@ -1610,10 +1610,10 @@ fn finish_clients(
                             if let Err(error) = client.acknowledge(&operation) {
                                 tracing::debug!(pid = client.address.pid, kind = ?error.kind(), "stopped owner result acknowledgement is pending");
                             }
-                            if unconfirmed.is_empty() {
-                                if let Err(error) = client.retire() {
-                                    tracing::warn!(pid = client.address.pid, kind = ?error.kind(), "members stopped; empty owner retirement is pending");
-                                }
+                            if unconfirmed.is_empty()
+                                && let Err(error) = client.retire()
+                            {
+                                tracing::warn!(pid = client.address.pid, kind = ?error.kind(), "members stopped; empty owner retirement is pending");
                             }
                         }
                         Err(error) => match before {

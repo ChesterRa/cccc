@@ -11,6 +11,7 @@ members = [
   "crates/cccc-notebooklm",
   "crates/cccc-web",
   "crates/cccc-linux-memory",
+  "crates/cccc-system-proxy",
   "crates/cccc-windows-console",
   "crates/cccc-windows-process",
   "crates/cccc-cli",
@@ -25,7 +26,7 @@ version = "0.4.60"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/ChesterRa/cccc"
-rust-version = "1.88"
+rust-version = "1.91"
 
 [workspace.dependencies]
 anyhow = "1.0"
@@ -58,6 +59,7 @@ flate2 = "1.1"
 futures-util = "0.3"
 globset = "0.4"
 http-body-util = "0.1"
+hyper-util = { version = "0.1.20", default-features = false, features = ["client-proxy"] }
 hmac = "0.12"
 # 0.9.0 unconditionally enables ConPTY cursor inheritance and regresses native
 # Windows streams (wezterm/wezterm#6783). Keep the last stable ConPTY behavior.

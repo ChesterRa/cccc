@@ -1,7 +1,7 @@
-import type { Actor, GroupDoc, LocalSessionRecovery, LocalSessionSource } from "../../types";
+import type { Actor, GroupDoc, LocalSessionRecovery } from "../../types";
+import type { LocalSessionDirectory } from "./localSessionControls";
 import { apiJson, clearActorsReadOnlyRequest, clearGroupsReadRequest } from "./base";
-export const fetchLocalSessions = () =>
-  apiJson<{ sources: LocalSessionSource[] }>("/api/v1/local_sessions");
+export const fetchLocalSessions = () => apiJson<LocalSessionDirectory>("/api/v1/local_sessions");
 
 export const fetchLocalSessionRecovery = (groupId: string, actorId: string) =>
   apiJson<LocalSessionRecovery>(

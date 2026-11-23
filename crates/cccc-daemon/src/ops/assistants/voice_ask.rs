@@ -299,10 +299,10 @@ pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         if request.args.contains_key("source_urls") {
             item["source_urls"] = json!(source_urls);
         }
-        if !reply_text.is_empty() || matches!(status.as_str(), "needs_user" | "failed") {
-            if let Some(item) = item.as_object_mut() {
-                item.remove("cleared_at");
-            }
+        if (!reply_text.is_empty() || matches!(status.as_str(), "needs_user" | "failed"))
+            && let Some(item) = item.as_object_mut()
+        {
+            item.remove("cleared_at");
         }
         if item["first_feedback_at"]
             .as_str()

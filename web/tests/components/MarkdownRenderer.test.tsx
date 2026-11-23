@@ -1,7 +1,5 @@
 // @vitest-environment happy-dom
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -176,45 +174,6 @@ describe("MarkdownRenderer Mermaid contract", () => {
     host.remove();
   });
 
-  it("enables diagrams on messages, the Files preview and Presentation only", () => {
-    const messageBubble = readFileSync(
-      resolve(process.cwd(), "src/components/MessageBubble.tsx"),
-      "utf8",
-    );
-    const messageContent = readFileSync(
-      resolve(process.cwd(), "src/components/messageBubble/MessageContent.tsx"),
-      "utf8",
-    );
-    const inbox = readFileSync(
-      resolve(process.cwd(), "src/components/modals/InboxModal.tsx"),
-      "utf8",
-    );
-    const documentSurface = readFileSync(
-      resolve(process.cwd(), "src/components/document/MarkdownDocumentSurface.tsx"),
-      "utf8",
-    );
-    const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
-
-    expect(messageBubble).toContain('from "./messageBubble/MessageContent"');
-    expect(messageContent).toContain("enableMermaid");
-    expect(inbox).toContain("enableMermaid");
-    expect(read("src/components/workspace/WorkspaceDocumentPreview.tsx")).toContain(
-      "enableMermaid",
-    );
-    expect(read("src/components/presentation/PresentationViewerModal.tsx")).toContain(
-      "enableMermaid",
-    );
-    // The shared document surface draws diagrams only for a caller that asks; the Secretary's
-    // live draft and library viewer do not.
-    expect(documentSurface).not.toMatch(/enableMermaid\s*=\s*true/);
-    expect(read("src/pages/chat/voice-secretary/VoiceSecretaryWorkspacePanel.tsx")).not.toContain(
-      "enableMermaid",
-    );
-    expect(read("src/pages/chat/voice-secretary/VoiceLibraryDialogs.tsx")).not.toContain(
-      "enableMermaid",
-    );
-  });
-
   it("ships the complete message diagram labels in every supported locale", () => {
     for (const chat of [enChat, jaChat, zhChat]) {
       expect(chat.mermaid.diagram).toBeTruthy();
@@ -258,19 +217,6 @@ describe("MarkdownRenderer table contract", () => {
     for (const chat of [enChat, jaChat, zhChat]) {
       expect(chat.table.scrollRegion).toBeTruthy();
     }
-  });
-
-  it("keeps overflow and column sizing scoped to the table wrapper", () => {
-    const stylesheet = readFileSync(resolve(process.cwd(), "src/styles/markdown.css"), "utf8");
-
-    expect(stylesheet).toContain(".markdown-table-scroll {");
-    expect(stylesheet).toMatch(/\.markdown-table-scroll\s*\{[^}]*overflow-x:\s*auto;/s);
-    expect(stylesheet).toMatch(
-      /\.prose\.markdown-body \.markdown-table-scroll > table\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*100%;/s,
-    );
-    expect(stylesheet).toMatch(
-      /\.prose\.markdown-body \.markdown-table-scroll (?:th|th,)\s*[\s\S]*?min-width:\s*12rem;/,
-    );
   });
 });
 

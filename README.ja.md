@@ -14,7 +14,7 @@
 インストールはコマンドひとつ。Rust ツールチェーン、データベースサーバー、メッセージブローカー、Docker は不要です。
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
-[![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
+[![Rust 1.91+](https://img.shields.io/badge/Rust-1.91%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/m8wuB7VSJ)
@@ -336,7 +336,7 @@ CCCC が向いているのは、複数のエージェントが 1 つのコード
 
 **アップグレード**：Web サイトのインストーラーで入れた場合は `cccc update`、pip で入れた場合は pip のコマンドを使います。`cccc update --check` は、何も変更せずに最新のリリースとインストールの管理元を表示します。pip でアップグレードする前に、`cccc daemon stop` を実行し、フォアグラウンドの CCCC プロセスを終了してください。pip から Web サイトのインストーラーに切り替えるときは、先に `python -m pip uninstall cccc-pair` を実行します。古い `cccc update` が 0.4.35 のままの場合は[アップグレードの FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35) を、完全なチェックリストは[運用ランブック](https://chesterra.github.io/cccc/guide/operations)をご覧ください。
 
-**ソースから**：Rust 1.88 以降、npm 付きの Node.js 24、Python 3.11 以降（アーカイブ作成の補助にのみ使用）が必要です：
+**ソースから**：Rust 1.91 以降、npm 付きの Node.js 24、Python 3.11 以降（アーカイブ作成の補助にのみ使用）が必要です：
 
 ```bash
 git clone https://github.com/ChesterRa/cccc

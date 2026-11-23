@@ -27,8 +27,9 @@ pub(super) struct Handoff {
     pub native_session_id: String,
     pub group_id: String,
     pub actor_id: String,
-    #[serde(skip)]
     pub actor_generation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_membership: Option<cccc_contracts::session_node::SessionNodeMembership>,
     pub event_ids: Vec<String>,
     pub text: String,
 }
@@ -184,6 +185,24 @@ pub(super) fn acknowledge(
 }
 
 fn target_enabled(home: &HomeLayout, handoff: &Handoff) -> bool {
+    if let Some(membership) = &handoff.remote_membership {
+        return cccc_core::session_nodes::client(home)
+            .ok()
+            .flatten()
+            .is_some_and(|client| {
+                client.memberships.contains(membership)
+                    && membership.enabled
+                    && membership.source_id == handoff.source_id
+                    && membership.actor_id == handoff.actor_id
+                    && membership.actor_generation == handoff.actor_generation
+                    && cccc_core::local_sessions::validate_source(
+                        home,
+                        &membership.source_id,
+                        &membership.source_revision,
+                    )
+                    .is_ok()
+            });
+    }
     cccc_core::GroupStore::new(home.clone())
         .and_then(|store| store.load(&handoff.group_id))
         .is_ok_and(|group| {

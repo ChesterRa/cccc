@@ -1,17 +1,22 @@
 //! Exercise the real CLI through an OS terminal, including Windows ConPTY.
 //! All state and provider homes are disposable; no provider is invoked.
+#[path = "tui_lifecycle/published.rs"]
+mod published;
+
+#[path = "tui_lifecycle/terminal.rs"]
+mod terminal;
+
 use fs2::FileExt;
-use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+#[cfg(target_os = "linux")]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
-
-const WAIT: Duration = Duration::from_secs(45);
+use terminal::Terminal;
 
 struct Fixture {
+    files: published::PublishedFiles,
     root: tempfile::TempDir,
     home: PathBuf,
     port: u16,
@@ -33,7 +38,16 @@ impl Fixture {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve port");
         let port = listener.local_addr().expect("address").port();
         std::fs::create_dir_all(&home).expect("home");
-        (Self { root, home, port }, listener)
+        let files = published::PublishedFiles::new(root.path());
+        (
+            Self {
+                files,
+                root,
+                home,
+                port,
+            },
+            listener,
+        )
     }
 
     fn env(&self) -> Vec<(String, String)> {
@@ -124,35 +138,8 @@ impl Fixture {
             command.env(key, value);
         }
         command.cwd(self.root.path());
-        let original_modes = format!("{:?}", terminal_modes(pair.master.as_ref()));
-        let launched = SystemTime::now();
-        let child = pair.slave.spawn_command(command).expect("start CCCC");
-        drop(pair.slave);
-        let mut reader = pair.master.try_clone_reader().expect("terminal reader");
-        let writer = pair.master.take_writer().expect("terminal writer");
-        let output = Arc::new(Mutex::new(Vec::new()));
-        let capture = Arc::clone(&output);
-        std::thread::spawn(move || {
-            let mut buffer = [0; 8192];
-            while let Ok(count) = reader.read(&mut buffer) {
-                if count == 0 {
-                    break;
-                }
-                capture
-                    .lock()
-                    .expect("output")
-                    .extend_from_slice(&buffer[..count]);
-            }
-        });
-        Terminal {
-            child,
-            master: pair.master,
-            writer,
-            output,
-            original_modes,
-            home: self.home.clone(),
-            launched,
-        }
+        let on_exit = self.files.on_exit();
+        Terminal::start(pair, command, self.home.clone(), on_exit)
     }
 
     /// The Web lock is held until the process exits, so a free lock proves its
@@ -169,24 +156,48 @@ impl Fixture {
 
     /// Waits for Web to record the port it bound in its runtime descriptor.
     fn web_port(&self) -> u16 {
+        self.published_web_port()
+            .expect("Web host published a valid port")
+    }
+
+    fn published_web_port(&self) -> std::io::Result<u16> {
         let path = self.home.join("daemon/web_runtime.json");
-        let deadline = Instant::now() + WAIT;
-        loop {
-            let port = std::fs::read(&path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                .and_then(|runtime| runtime["port"].as_u64())
-                .and_then(|port| u16::try_from(port).ok())
-                .filter(|port| *port > 0);
-            if let Some(port) = port {
-                return port;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "Web runtime descriptor did not appear"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        let bytes = self.files.read(&path)?;
+        let runtime: serde_json::Value = serde_json::from_slice(&bytes)?;
+        runtime["port"]
+            .as_u64()
+            .and_then(|port| u16::try_from(port).ok())
+            .filter(|port| *port > 0)
+            .ok_or_else(|| std::io::Error::other("Web runtime descriptor has no bound port"))
+    }
+
+    fn external_daemon(
+        &self,
+    ) -> (
+        std::process::Child,
+        std::thread::JoinHandle<std::io::Result<std::io::Sink>>,
+    ) {
+        let mut daemon = self
+            .command(&["daemon", "run"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("isolated external daemon");
+        let reader = self.files.observe_pipe(
+            daemon.stdout.take().expect("external daemon stdout"),
+            std::io::sink(),
+        );
+        (daemon, reader)
+    }
+
+    fn wait_for_daemon_address(&self) {
+        let bytes = self
+            .files
+            .read(&self.home.join("daemon/ccccd.addr.json"))
+            .expect("external daemon published its address");
+        serde_json::from_slice::<cccc_contracts::DaemonAddress>(&bytes)
+            .expect("external daemon address");
     }
 }
 
@@ -200,249 +211,6 @@ fn banner_port(line: &str) -> Option<u16> {
         .parse()
         .ok()
         .filter(|port| *port > 0)
-}
-
-struct Terminal {
-    child: Box<dyn Child + Send + Sync>,
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
-    output: Arc<Mutex<Vec<u8>>>,
-    original_modes: String,
-    home: PathBuf,
-    launched: SystemTime,
-}
-
-impl Terminal {
-    fn text(&self) -> String {
-        String::from_utf8_lossy(&self.output.lock().expect("output")).into_owned()
-    }
-
-    /// The daemon files in the isolated Home, each with its size and when it
-    /// last changed relative to launch, and the end of the content-free
-    /// diagnostics log, so that a stall seen only on a CI runner names the
-    /// stage it stopped in. Paths and the daemon's own output stay out of
-    /// the test output.
-    fn startup_state(&self) -> String {
-        let since = |time: SystemTime| match time.duration_since(self.launched) {
-            Ok(after) => format!("+{after:.1?}"),
-            Err(_) => "before launch".into(),
-        };
-        let daemon = self.home.join("daemon");
-        let mut report = format!("\n--- daemon files at {}:", since(SystemTime::now()));
-        let mut entries: Vec<_> = std::fs::read_dir(&daemon)
-            .map(|entries| entries.flatten().collect())
-            .unwrap_or_default();
-        entries.sort_by_key(std::fs::DirEntry::file_name);
-        for entry in entries {
-            if let Ok(metadata) = entry.metadata() {
-                let changed = metadata.modified().map(since).unwrap_or_default();
-                report.push_str(&format!(
-                    "\n  {} {} bytes, changed {changed}",
-                    entry.file_name().to_string_lossy(),
-                    metadata.len()
-                ));
-            }
-        }
-        if let Ok(mut log) = std::fs::File::open(daemon.join("ccccd-diagnostics.log")) {
-            use std::io::{Seek, SeekFrom};
-            let length = log.seek(SeekFrom::End(0)).unwrap_or(0);
-            let mut tail = Vec::new();
-            if log
-                .seek(SeekFrom::Start(length.saturating_sub(2000)))
-                .is_ok()
-                && log.take(2000).read_to_end(&mut tail).is_ok()
-            {
-                report.push_str(&format!(
-                    "\n--- end of ccccd-diagnostics.log:\n{}",
-                    String::from_utf8_lossy(&tail)
-                ));
-            }
-        }
-        report
-    }
-
-    /// Send `open`, which opens a confirmation, then `keys`, and wait until
-    /// the confirmation has been displayed. Unix terminals pass every frame
-    /// through, so there `keys` stay queued behind `open`. ConPTY repaints
-    /// the console on its own schedule and can merge away a confirmation
-    /// that queued input closes within a millisecond, so on Windows `keys`
-    /// wait until the confirmation is on screen.
-    fn confirm_then(&mut self, open: &[u8], confirmation: &str, keys: &[u8]) {
-        let before = self.output.lock().expect("output").len();
-        if cfg!(windows) {
-            self.send(open);
-            self.until_screen_after(confirmation, before);
-            self.send(keys);
-        } else {
-            self.send(&[open, keys].concat());
-            self.until_screen_after(confirmation, before);
-        }
-    }
-
-    fn until(&mut self, text: &str) {
-        self.until_after(text, 0);
-    }
-
-    fn until_after(&mut self, text: &str, offset: usize) {
-        let deadline = Instant::now() + WAIT;
-        loop {
-            if self
-                .text()
-                .get(offset..)
-                .is_some_and(|output| output.contains(text))
-            {
-                return;
-            }
-            assert!(
-                self.child.try_wait().expect("child status").is_none(),
-                "CCCC exited before {text:?}: {}",
-                self.text()
-            );
-            assert!(
-                Instant::now() < deadline,
-                "CCCC did not show {text:?}: {}{}",
-                self.text(),
-                self.startup_state()
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    fn until_screen(&mut self, text: &str) {
-        let deadline = Instant::now() + WAIT;
-        loop {
-            // Ratatui writes only changed cells; a visible sentence need not
-            // occur contiguously anywhere in the raw terminal byte stream.
-            let mut screen = retach::screen::Screen::new(100, 24, 0);
-            screen.process(&self.output.lock().expect("terminal output"));
-            let visible = screen
-                .visible_rows()
-                .map(|row| row.iter().map(|cell| cell.c).collect::<String>())
-                .collect::<Vec<_>>()
-                .join("\n");
-            if visible.contains(text) {
-                return;
-            }
-            assert!(
-                self.child.try_wait().expect("child status").is_none(),
-                "CCCC exited before {text:?}: {visible}"
-            );
-            assert!(
-                Instant::now() < deadline,
-                "CCCC did not display {text:?}: {visible}{}",
-                self.startup_state()
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    // A confirmation may be painted and replaced before the reader wakes.
-    // Inspect the terminal stream incrementally so ANSI fragments on ConPTY
-    // cannot hide a frame that really appeared between two queued keys.
-    fn until_screen_after(&mut self, text: &str, offset: usize) {
-        let deadline = Instant::now() + WAIT;
-        let mut screen = retach::screen::Screen::new(100, 24, 0);
-        let mut consumed = offset;
-        let needle: Vec<char> = text.chars().collect();
-        assert!(!needle.is_empty(), "a screen marker is required");
-        let contains = |screen: &retach::screen::Screen| {
-            screen.visible_rows().any(|row| {
-                row.windows(needle.len()).any(|cells| {
-                    cells
-                        .iter()
-                        .zip(&needle)
-                        .all(|(cell, expected)| cell.c == *expected)
-                })
-            })
-        };
-        {
-            let output = self.output.lock().expect("terminal output");
-            screen.process(&output[..offset.min(output.len())]);
-        }
-        assert!(
-            !contains(&screen),
-            "{text:?} was already visible before input"
-        );
-        loop {
-            let bytes = {
-                let output = self.output.lock().expect("terminal output");
-                let bytes = output[consumed..].to_vec();
-                consumed = output.len();
-                bytes
-            };
-            for byte in bytes {
-                screen.process(&[byte]);
-                if contains(&screen) {
-                    return;
-                }
-            }
-            assert!(
-                self.child.try_wait().expect("child status").is_none(),
-                "CCCC exited before displaying {text:?}"
-            );
-            assert!(
-                Instant::now() < deadline,
-                "CCCC did not display {text:?}{}",
-                self.startup_state()
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    fn send(&mut self, bytes: &[u8]) {
-        self.writer.write_all(bytes).expect("terminal input");
-        self.writer.flush().expect("flush");
-    }
-
-    fn finish(&mut self) {
-        let deadline = Instant::now() + WAIT;
-        let status = loop {
-            if let Some(status) = self.child.try_wait().expect("child status") {
-                break status;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "CCCC did not exit: {}{}",
-                self.text(),
-                self.startup_state()
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        };
-        assert!(
-            status.success(),
-            "CCCC failed ({status:?}): {}",
-            self.text()
-        );
-        // Receipt output is written before process exit; give the reader its turn.
-        let receipt_deadline = Instant::now() + Duration::from_secs(2);
-        while !self.text().contains("CCCC stopped.") && Instant::now() < receipt_deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(
-            format!("{:?}", terminal_modes(self.master.as_ref())),
-            self.original_modes,
-            "terminal input flags were not restored"
-        );
-    }
-}
-
-impl Drop for Terminal {
-    fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
-
-#[cfg(unix)]
-fn terminal_modes(master: &dyn MasterPty) -> Option<String> {
-    master.get_termios().map(|modes| format!("{modes:?}"))
-}
-
-#[cfg(not(unix))]
-fn terminal_modes(_master: &dyn MasterPty) -> Option<String> {
-    None
 }
 
 #[test]
@@ -513,7 +281,9 @@ fn blocked_terminal_output_still_restores_input_when_closing_times_out() {
     use nix::pty::{Winsize, openpty};
     use nix::sys::signal::{Signal, kill};
     use nix::sys::termios::{FlowArg, LocalFlags, tcflow, tcgetattr};
-    use nix::unistd::Pid;
+    use nix::unistd::{Pid, ttyname};
+    use rustix::event::{PollFd, PollFlags, poll};
+    use std::os::unix::fs::OpenOptionsExt;
 
     let fixture = Fixture::new();
     let pair = openpty(
@@ -527,6 +297,13 @@ fn blocked_terminal_output_still_restores_input_when_closing_times_out() {
     )
     .expect("isolated PTY");
     let original = tcgetattr(&pair.slave).expect("original input mode");
+    // A fresh open has its own file status flags. The child's stdout must stay blocking.
+    let mut probe = OpenOptions::new()
+        .write(true)
+        .custom_flags(nix::libc::O_NONBLOCK | nix::libc::O_NOCTTY)
+        .open(ttyname(&pair.slave).expect("slave device path"))
+        .expect("independent nonblocking writer");
+    let (stderr_closed, mut notify_closed) = std::io::pipe().expect("stderr completion signal");
     let mut child = fixture
         .command(&["--port", "0"])
         .stdin(Stdio::from(pair.slave.try_clone().expect("stdin")))
@@ -534,56 +311,63 @@ fn blocked_terminal_output_still_restores_input_when_closing_times_out() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("isolated host");
-    let output = Arc::new(Mutex::new(Vec::new()));
-    let capture = Arc::clone(&output);
-    std::thread::spawn(move || {
-        let mut reader = std::fs::File::from(pair.master);
-        let mut buffer = [0; 8192];
-        while let Ok(count) = reader.read(&mut buffer) {
-            if count == 0 {
-                break;
-            }
-            capture
-                .lock()
-                .expect("capture")
-                .extend_from_slice(&buffer[..count]);
-        }
+    let mut stderr = child.stderr.take().expect("host stderr");
+    let finished = fixture.files.on_exit();
+    let diagnostics = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let result = std::io::copy(&mut stderr, &mut bytes);
+        finished(result.as_ref().err());
+        // Wake the PTY wait even when the host exits without writing its first frame.
+        let _ = notify_closed.write_all(&[1]);
+        result.map(|_| bytes)
     });
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let deadline = Instant::now() + WAIT;
-        while !String::from_utf8_lossy(&output.lock().expect("output")).contains("Native sessions")
-        {
-            assert!(child.try_wait().expect("host status").is_none());
-            assert!(Instant::now() < deadline, "interface did not start");
-            std::thread::sleep(Duration::from_millis(20));
+        let mut buffer = [0; 8192];
+        let mut output = Vec::new();
+        let marker = b"Native sessions";
+        while !output.windows(marker.len()).any(|data| data == marker) {
+            let mut fds = [
+                PollFd::new(&pair.master, PollFlags::IN),
+                PollFd::new(&stderr_closed, PollFlags::IN),
+            ];
+            rustix::io::retry_on_intr(|| poll(&mut fds, None)).expect("wait for first PTY output");
+            assert!(
+                fds[1].revents().is_empty(),
+                "host closed stderr before its first screen"
+            );
+            assert!(
+                fds[0].revents().contains(PollFlags::IN),
+                "PTY hung up before its first screen"
+            );
+            let count =
+                rustix::io::retry_on_intr(|| rustix::io::read(&pair.master, &mut buffer[..]))
+                    .expect("read first screen");
+            assert_ne!(count, 0, "PTY closed before its first screen");
+            output.extend_from_slice(&buffer[..count]);
         }
         assert!(
             !tcgetattr(&pair.slave)
                 .expect("raw mode")
                 .local_flags
-                .contains(LocalFlags::ICANON)
+                .intersects(LocalFlags::ICANON | LocalFlags::ECHO)
         );
         fixture.web_port();
         tcflow(&pair.slave, FlowArg::TCOOFF).expect("pause terminal output");
-        // Let the drawing thread block in its next output write. The host's
-        // shutdown must still restore input without waiting for that thread.
-        std::thread::sleep(Duration::from_secs(2));
+        // A stopped driver may still queue bytes. The master is no longer drained;
+        // proceed only once even a single byte would block on this slave.
+        let blocked = loop {
+            if let Err(error) = probe.write_all(b".") {
+                break error;
+            }
+        };
+        assert_eq!(blocked.kind(), std::io::ErrorKind::WouldBlock);
+
         kill(
             Pid::from_raw(child.id().try_into().expect("PID")),
             Signal::SIGTERM,
         )
         .expect("terminate only fixture host");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let status = loop {
-            if let Some(status) = child.try_wait().expect("host status") {
-                break status;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "blocked terminal stalled shutdown"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        };
+        let status = child.wait().expect("reap host");
         assert!(!status.success(), "terminal timeout must remain an error");
         let restored = tcgetattr(&pair.slave).expect("restored mode");
         for flag in [LocalFlags::ICANON, LocalFlags::ECHO] {
@@ -600,9 +384,18 @@ fn blocked_terminal_output_still_restores_input_when_closing_times_out() {
         let _ = child.kill();
         let _ = child.wait();
     }
+    let diagnostics = diagnostics.join();
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }
+    let bytes = diagnostics
+        .expect("host stderr reader")
+        .expect("host stderr");
+    let diagnostic = String::from_utf8_lossy(&bytes);
+    assert!(
+        diagnostic.contains("the terminal interface did not close within"),
+        "missing terminal close failure: {diagnostic}"
+    );
 }
 
 fn assert_lock_free(path: &Path) {
@@ -780,33 +573,11 @@ fn failed_web_start_reports_failure_after_stopping_its_daemon() {
     // socket take it in between.
     let (fixture, _occupied) = Fixture::with_reserved_port();
     let mut terminal = fixture.start(&[], &[]);
-    let deadline = Instant::now() + WAIT;
-    let status = loop {
-        if let Some(status) = terminal.child.try_wait().expect("host status") {
-            break status;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "failed Web host did not exit: {}",
-            terminal.text()
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    let status = terminal.finish_output();
     assert!(!status.success());
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !terminal.text().contains("CCCC stopped with problems.") && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(
-        terminal.text().contains("CCCC stopped with problems."),
-        "{}",
-        terminal.text()
-    );
-    assert!(terminal.text().contains("failed:"));
-    assert_eq!(
-        format!("{:?}", terminal_modes(terminal.master.as_ref())),
-        terminal.original_modes
-    );
+    let output = terminal.text();
+    assert!(output.contains("CCCC stopped with problems."), "{output}");
+    assert!(output.contains("failed:"));
     fixture.assert_stopped();
 }
 
@@ -827,18 +598,21 @@ fn redraw_needs_no_cursor_reply_and_keeps_the_host_running() {
     let mut terminal = fixture.start(&["--port", "0"], &[]);
     terminal.until("Native sessions");
     fixture.web_port();
-    let before = terminal.text().len();
+    let before = terminal.mark();
     terminal.send(b"\x0c");
-    // This is a full repaint, so the heading must be written again. The
-    // terminal deliberately never responds to cursor-position queries.
+    // A new repaint arrives even though this terminal never answers cursor-position queries.
     terminal.until_after("Native sessions", before);
-    assert!(terminal.child.try_wait().expect("host status").is_none());
-    assert!(
-        !terminal.text()[before..].contains("\x1b[6n"),
-        "repainting must not request the cursor position"
-    );
+    terminal.send(b"/help\r");
+    terminal.until_screen("On regular screens");
+    terminal.send(b"\x1b");
+    terminal.until_screen("Native sessions");
     terminal.send(b"/quit\r");
     terminal.finish();
+    // Check the complete tail, including any query produced after the heading.
+    assert!(
+        !terminal.text_after(before).contains("\x1b[6n"),
+        "repainting must not request the cursor position"
+    );
     fixture.assert_stopped();
 }
 
@@ -850,7 +624,7 @@ fn hangup_uses_the_same_graceful_cleanup() {
     terminal.until("Native sessions");
     fixture.web_port();
     nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(terminal.child.process_id().expect("host PID") as i32),
+        nix::unistd::Pid::from_raw(terminal.pid as i32),
         nix::sys::signal::Signal::SIGHUP,
     )
     .expect("hangup");
@@ -914,23 +688,30 @@ fn a_small_window_cannot_accept_an_invisible_stop_confirmation() {
     terminal.until_screen("Stop Small confirmation fixture?");
     terminal.send(b"\x1b[B");
     terminal.until_screen("> Stop group");
-    terminal
-        .master
-        .resize(PtySize {
-            rows: 10,
-            cols: 45,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .expect("small window");
+    terminal.resize(PtySize {
+        rows: 10,
+        cols: 45,
+        pixel_width: 0,
+        pixel_height: 0,
+    });
     terminal.send(b"\x0c");
     terminal.until_screen("Terminal too small");
-    terminal.send(b"\r/exit\r");
-    // Allow ten input polls before exiting. After shutdown, the persisted
-    // lifecycle must still prove that no hidden confirmation was accepted.
-    std::thread::sleep(Duration::from_secs(1));
-    terminal.send(&[3]);
+    // Ctrl-C is the one accepted small-screen key. The PTY delivers it after the hidden
+    // Enter and command; shutdown is the acknowledgement that the input queue progressed.
+    terminal.send(b"\r/exit\r\x03");
     terminal.finish();
+    let receipt = terminal.text();
+    assert!(receipt.contains("CCCC stopped."), "{receipt}");
+    assert!(
+        !receipt.contains("had not finished when CCCC stopped"),
+        "invisible action was submitted: {receipt}"
+    );
+    assert!(
+        cccc_core::ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger"))
+            .expect("Group events")
+            .is_empty(),
+        "invisible input committed a Group operation"
+    );
     assert_eq!(
         store.load(&group.group_id).expect("untouched Group").state,
         GroupState::Active
@@ -1014,25 +795,11 @@ fn headless_interrupt_while_the_web_starts_stops_without_the_forced_exit() {
     // listener registers after its banner, so an interrupt sent on the banner
     // line usually arrives before it.
     let fixture = Fixture::new();
-    let mut daemon = fixture
-        .command(&["daemon", "run"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("isolated external daemon");
+    let (mut daemon, daemon_output) = fixture.external_daemon();
     let mut host = None;
     let mut stderr_reader = None;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let deadline = Instant::now() + WAIT;
-        while !fixture.home.join("daemon/ccccd.addr.json").exists() {
-            assert!(Instant::now() < deadline, "external daemon not ready");
-            assert!(
-                daemon.try_wait().expect("status").is_none(),
-                "external daemon failed"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        fixture.wait_for_daemon_address();
         let child = host.insert(
             fixture
                 .command(&["--headless", "--port", "0"])
@@ -1042,8 +809,8 @@ fn headless_interrupt_while_the_web_starts_stops_without_the_forced_exit() {
                 .spawn()
                 .expect("headless host"),
         );
-        // The reader signals the banner the moment it is read, keeping the
-        // interrupt inside the startup window while the wait stays bounded.
+        // The reader signals the banner as soon as it is read; EOF wakes the
+        // receiver when a failed host never prints the banner.
         // The banner names the bound port; the runtime descriptor may not
         // exist yet when the interrupt arrives.
         let stderr = child.stderr.take().expect("host stderr");
@@ -1060,26 +827,17 @@ fn headless_interrupt_while_the_web_starts_stops_without_the_forced_exit() {
             }
         }));
         banner_rx
-            .recv_timeout(WAIT)
-            .expect("headless host did not print its banner")
+            .recv()
+            .expect("headless host exited before printing its banner")
             .expect("the banner names the bound port");
         nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(child.id() as i32),
             nix::sys::signal::Signal::SIGINT,
         )
         .expect("interrupt");
-        // Well inside the 60-second forced exit that an unanswered interrupt reaches.
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let status = loop {
-            if let Some(status) = child.try_wait().expect("host status") {
-                break status;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "the first interrupt did not stop the Web host"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        };
+        // A forced exit returns the interrupt error code. A successful exit
+        // proves that the first interrupt completed the ordinary shutdown.
+        let status = child.wait().expect("host exit after its first interrupt");
         assert!(status.success(), "headless host failed: {status:?}");
         assert!(
             daemon.try_wait().expect("status").is_none(),
@@ -1102,6 +860,10 @@ fn headless_interrupt_while_the_web_starts_stops_without_the_forced_exit() {
         let _ = daemon.kill();
     }
     let _ = daemon.wait();
+    daemon_output
+        .join()
+        .expect("external daemon reader")
+        .expect("drain external daemon output");
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }
@@ -1111,23 +873,9 @@ fn headless_interrupt_while_the_web_starts_stops_without_the_forced_exit() {
 #[test]
 fn quit_preserves_an_existing_daemon() {
     let fixture = Fixture::new();
-    let mut daemon = fixture
-        .command(&["daemon", "run"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("isolated external daemon");
+    let (mut daemon, daemon_output) = fixture.external_daemon();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let deadline = Instant::now() + WAIT;
-        while !fixture.home.join("daemon/ccccd.addr.json").exists() {
-            assert!(Instant::now() < deadline, "external daemon not ready");
-            assert!(
-                daemon.try_wait().expect("status").is_none(),
-                "external daemon failed"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        fixture.wait_for_daemon_address();
         let mut terminal = fixture.start(&["--port", "0"], &[]);
         terminal.until("Native sessions");
         fixture.web_port();
@@ -1152,6 +900,10 @@ fn quit_preserves_an_existing_daemon() {
         let _ = daemon.kill();
     }
     let _ = daemon.wait();
+    daemon_output
+        .join()
+        .expect("external daemon reader")
+        .expect("drain external daemon output");
     if let Err(panic) = result {
         std::panic::resume_unwind(panic);
     }
@@ -1170,27 +922,21 @@ fn redirected_launch_without_a_subcommand_does_not_read_stdin_or_enter_the_inter
         .stderr(Stdio::piped())
         .spawn()
         .expect("plain host");
-    let deadline = Instant::now() + WAIT;
-    let runtime_path = fixture.home.join("daemon/web_runtime.json");
-    while !runtime_path.exists() {
-        if Instant::now() >= deadline || host.try_wait().expect("status").is_some() {
-            let _ = host.kill();
-            let output = host.wait_with_output().expect("output");
-            panic!(
-                "plain host not ready: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-        std::thread::sleep(Duration::from_millis(20));
+    let stderr = fixture
+        .files
+        .observe_pipe(host.stderr.take().expect("host stderr"), Vec::new());
+    if let Err(error) = fixture.published_web_port() {
+        let _ = host.kill();
+        let _ = host.wait();
+        let diagnostic = stderr
+            .join()
+            .expect("host stderr reader")
+            .expect("read host stderr");
+        panic!(
+            "plain host did not publish its port ({error}): {}",
+            String::from_utf8_lossy(&diagnostic)
+        );
     }
-    let runtime: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&runtime_path).expect("read Web runtime descriptor"))
-            .expect("parse Web runtime descriptor");
-    runtime["port"]
-        .as_u64()
-        .and_then(|value| u16::try_from(value).ok())
-        .filter(|value| *value > 0)
-        .expect("Web listener's assigned port");
     let stop = fixture
         .command(&["daemon", "stop"])
         .output()
@@ -1199,6 +945,10 @@ fn redirected_launch_without_a_subcommand_does_not_read_stdin_or_enter_the_inter
         let _ = host.kill();
     }
     let output = host.wait_with_output().expect("plain output");
+    stderr
+        .join()
+        .expect("host stderr reader")
+        .expect("read host stderr");
     assert!(
         stop.status.success(),
         "{}",
@@ -1217,7 +967,7 @@ fn redirected_launch_without_a_subcommand_does_not_read_stdin_or_enter_the_inter
 #[cfg(unix)]
 #[test]
 fn cancelling_each_native_installer_reaps_it_and_reports_an_incomplete_setup() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     for (index, runtime, version) in [
         (0, "codex", "0.163.0"),
         (1, "claude", "2.1.306"),
@@ -1227,6 +977,26 @@ fn cancelling_each_native_installer_reaps_it_and_reports_an_incomplete_setup() {
         let fixture = Fixture::new();
         let bin = fixture.root.path().join("bin");
         std::fs::create_dir(&bin).expect("fixture bin");
+        let user_home = fixture.root.path().join("user");
+        std::fs::create_dir_all(&user_home).expect("fixture user home");
+        let control = user_home.join("install-control");
+        nix::unistd::mkfifo(
+            &control,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .expect("installer control FIFO");
+        // Keep the installer in its read until cancellation. Dropping the
+        // last writer also releases it if the test unwinds.
+        let opening_reader = OpenOptions::new()
+            .read(true)
+            .custom_flags(nix::libc::O_NONBLOCK)
+            .open(&control)
+            .expect("open installer control for the writer");
+        let _release_installer = OpenOptions::new()
+            .write(true)
+            .open(&control)
+            .expect("hold installer control");
+        drop(opening_reader);
         let provider = bin.join(runtime);
         std::fs::write(
             &provider,
@@ -1241,8 +1011,10 @@ if [ "$1" = debug ] && [ ! -f "$HOME/paths-checked" ]; then
     printf 'config %s/opencode\n' "$XDG_CONFIG_HOME"
     exit 0
 fi
-printf '%s' "$$" > "$HOME/install-pid"
-exec /bin/sleep 60
+exec 3<"$HOME/install-control"
+printf '%s' "$$" > "$HOME/install-pid.tmp"
+/bin/mv "$HOME/install-pid.tmp" "$HOME/install-pid"
+IFS= read -r _ <&3
 "#
             ),
         )
@@ -1262,7 +1034,7 @@ exec /bin/sleep 60
         for _ in 0..4 {
             terminal.send(b"\x1b[B");
         }
-        let before = terminal.output.lock().expect("output").len();
+        let before = terminal.mark();
         terminal.send(b"\r\r");
         terminal.until_screen_after("PgUp/PgDn   Enter select", before);
         terminal.until_screen("> Continue");
@@ -1274,17 +1046,12 @@ exec /bin/sleep 60
         terminal.send(b"\r");
         terminal.until_screen("PgUp/PgDn   Enter select");
         terminal.send(b"\x1b[B\r");
-        let deadline = Instant::now() + WAIT;
-        while !pid_file.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "{runtime} installer did not start: {}",
-                terminal.text()
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let pid: i32 = std::fs::read_to_string(&pid_file)
-            .expect("provider PID")
+        let published = fixture
+            .files
+            .read(&pid_file)
+            .expect("installer published its PID");
+        let pid: i32 = std::str::from_utf8(&published)
+            .expect("provider PID text")
             .parse()
             .expect("PID");
         terminal.send(b"b");

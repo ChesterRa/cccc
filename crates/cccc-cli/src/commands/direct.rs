@@ -1,8 +1,8 @@
 use super::common::{call, print};
 use crate::args::DirectAction;
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use cccc_client::DaemonClient;
-use serde_json::json;
+use serde_json::{Value, json};
 
 pub async fn run(client: &DaemonClient, action: DirectAction) -> Result<()> {
     let (action, mut args) = match action {
@@ -16,7 +16,7 @@ pub async fn run(client: &DaemonClient, action: DirectAction) -> Result<()> {
             json!({"listener":{"bind":bind,"address":address},"display_name":name}),
         ),
         DirectAction::Stop => ("configure", json!({"listener":null})),
-        DirectAction::Invite { group_id } => ("invite", json!({"group_id":group_id})),
+        DirectAction::Invite { group_id } => return invite(client, &group_id).await,
         DirectAction::Join { group_id } => {
             use tokio::io::AsyncReadExt;
             let mut input = String::new();
@@ -36,4 +36,46 @@ pub async fn run(client: &DaemonClient, action: DirectAction) -> Result<()> {
     };
     args["by"] = json!("user");
     print(call(client, &format!("connect_direct_{action}"), args).await?)
+}
+
+async fn invite(client: &DaemonClient, group_id: &str) -> Result<()> {
+    let status = call(
+        client,
+        "connect_direct_status",
+        json!({"group_id":group_id,"by":"user"}),
+    )
+    .await?;
+    if !status.ok {
+        return print(status);
+    }
+    let supported = |cap: &str| {
+        status
+            .result
+            .get("capabilities")
+            .and_then(|caps| caps.get(cap))
+            .and_then(Value::as_bool)
+            == Some(true)
+    };
+    ensure!(
+        supported("reusable_invitations") && supported("permanent_invitations"),
+        "Update and restart the daemon to create a permanent direct invitation"
+    );
+    let response = call(
+        client,
+        "connect_direct_invite",
+        json!({"group_id":group_id,"by":"user","reusable":true,"expires_in_seconds":0}),
+    )
+    .await?;
+    if response.ok {
+        let received = response
+            .result
+            .get("invitation")
+            .and_then(Value::as_str)
+            .and_then(|text| cccc_core::direct::decode_invitation(text).ok());
+        ensure!(
+            received.is_some_and(|key| key.permanent() && key.host.group_id == group_id),
+            "The daemon did not return a permanent invitation for this Group. Check existing invitations before trying again"
+        );
+    }
+    print(response)
 }

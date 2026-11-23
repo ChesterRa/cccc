@@ -1,6 +1,7 @@
 import { apiJson, type ApiResponse } from "../../services/api/base";
 import {
   sameDirectListener,
+  readDirectInvitation,
   type DirectListener,
   type DirectStatus,
 } from "./directConnectionModel";
@@ -37,6 +38,9 @@ export async function prepareDirectInvitation(
   const statusUrl = `/api/v1/connect/direct?group_id=${encodeURIComponent(groupId)}`;
   const initial = await apiJson<DirectStatus>(statusUrl, { signal });
   if (!initial.ok) return initial;
+  if (!initial.result.capabilities?.reusable_invitations) return fail("direct_upgrade_required");
+  if (!initial.result.capabilities?.permanent_invitations)
+    return fail("direct_permanent_upgrade_required");
   if (signal.aborted) return fail("direct_action_aborted");
   const current = initial.result.listener;
   if (!sameDirectListener(current, previous) && !sameDirectListener(current, listener))
@@ -54,12 +58,28 @@ export async function prepareDirectInvitation(
   while (!signal.aborted) {
     const check = await apiJson<DirectStatus>(statusUrl, { signal });
     if (!check.ok) return check;
+    if (!check.result.capabilities?.reusable_invitations) return fail("direct_upgrade_required");
+    if (!check.result.capabilities?.permanent_invitations)
+      return fail("direct_permanent_upgrade_required");
     if (!sameDirectListener(check.result.listener, listener))
       return fail("direct_settings_changed");
     if (check.result.runtime?.error) return fail("direct_listener_failed");
     if (check.result.runtime?.listener) {
       if (signal.aborted) break;
-      return post({ action: "invite", expected_listener: listener });
+      const invited = await post({
+        action: "invite",
+        expected_listener: listener,
+        reusable: true,
+        expires_in_seconds: 0,
+      });
+      if (!invited.ok) return invited;
+      // A server replaced between the status read and POST must not silently
+      // return a single-use or finite key for this permanent-key request.
+      const preview = invited.result.invitation
+        ? readDirectInvitation(invited.result.invitation)
+        : null;
+      if (!preview?.permanent) return fail("direct_permanent_upgrade_required");
+      return invited;
     }
     if (Date.now() >= deadline) return fail("direct_listener_timeout");
     await waitForCheck(signal);

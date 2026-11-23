@@ -13,6 +13,9 @@ if "--tui" in sys.argv[1:]:
     # a test can fill its input; raw mode keeps Ctrl+C an ordinary key.
     import tty
     tty.setraw(sys.stdin.fileno())
+    (root / "v3_viewer_process.json").write_text(
+        json.dumps({"pid": os.getpid(), "argv": sys.argv})
+    )
     (root / "v3_viewer_ready").touch()
     while True:
         time.sleep(60)
@@ -28,12 +31,13 @@ if "--setup" in sys.argv[1:]:
     if not (root / "v3_setup_quit").exists():
         (root / "v3_setup_needed").unlink(missing_ok=True)
     sys.exit(0)
-# A provider that stops reading after session/new: a small stdin pipe makes the
-# client's next write block, so its protocol loop answers nothing.
+# A provider that stops reading after session/new blocks the client's large
+# write. Shrink the pipe on systems that offer pipe sizing.
 stall_stdin = (root / "v3_stall_stdin").exists()
 if stall_stdin:
     import fcntl
-    fcntl.fcntl(sys.stdin.fileno(), getattr(fcntl, "F_SETPIPE_SZ", 1031), 4096)
+    if hasattr(fcntl, "F_SETPIPE_SZ"):
+        fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETPIPE_SZ, 4096)
 home = Path(os.environ["HOME"])
 home.mkdir(parents=True, exist_ok=True)
 saved = home / "v3_sessions.json"

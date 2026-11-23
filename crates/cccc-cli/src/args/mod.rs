@@ -4,6 +4,8 @@ mod integrations;
 mod messaging;
 mod sessions;
 pub use sessions::{SessionsAction, SessionsArgs};
+mod session_nodes;
+pub use session_nodes::SessionNodeAction;
 
 pub use actor::{ActorAction, ActorArgs, ActorTarget};
 pub use group::{GroupAction, GroupArgs};
@@ -252,7 +254,7 @@ pub enum DirectAction {
     },
     /// Stop the standalone collaboration listener.
     Stop,
-    /// Create a standalone Group connection invitation.
+    /// Create a permanent invitation. Each joining Group requires approval.
     Invite {
         /// Target Group ID.
         group_id: String,

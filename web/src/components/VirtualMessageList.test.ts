@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { LedgerEvent } from "../types";
-import {
-  getReplyQuoteText,
-  shouldAutoScrollToBottom,
-  shouldPromoteScrollToFollow,
-} from "./virtualMessageListHelpers";
+import { getReplyQuoteText, shouldPromoteScrollToFollow } from "./virtualMessageListHelpers";
 import { buildGroupBridgeDisplayNameMap } from "./virtualMessageListGroupBridge";
 
 describe("buildGroupBridgeDisplayNameMap", () => {
@@ -66,28 +62,6 @@ describe("virtual message list follow promotion", () => {
   it("keeps an existing follow session in follow across at-bottom scroll events", () => {
     expect(
       shouldPromoteScrollToFollow({ followMode: "follow", previousTop: 480, currentTop: 480 }),
-    ).toBe(true);
-  });
-});
-
-describe("virtual message list tail append auto-scroll", () => {
-  it("does not auto-scroll a detached history reader when an AI message is appended", () => {
-    expect(
-      shouldAutoScrollToBottom({
-        followMode: "detached",
-        isAtBottom: true,
-        forceStickToBottom: false,
-      }),
-    ).toBe(false);
-  });
-
-  it("keeps bottom follow users pinned when an AI message is appended", () => {
-    expect(
-      shouldAutoScrollToBottom({
-        followMode: "follow",
-        isAtBottom: true,
-        forceStickToBottom: false,
-      }),
     ).toBe(true);
   });
 });

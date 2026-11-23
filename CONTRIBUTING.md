@@ -97,6 +97,9 @@ Notes:
 - Process-lifecycle tests need explicit serialization. The command above runs
   all Rust tests serially for simplicity; CI separates the affected tests.
   Plain `cargo test --workspace` does not inherit CI's serial settings.
+- Synchronize lifecycle tests on observed output, protocol acknowledgements,
+  file publication, or process exit. Advance a controlled clock when testing a
+  deadline or retry. Keep hang protection outside the behavior assertions.
 - Cargo checks invoked by the quality-gate scripts default to two build jobs.
   Override with `CCCC_CARGO_JOBS=4 scripts/quality_gate.sh fast` on larger
   machines. Direct Cargo commands use Cargo's own `--jobs` setting.

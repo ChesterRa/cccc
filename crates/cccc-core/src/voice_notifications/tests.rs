@@ -423,7 +423,8 @@ fn output_rechecks_viewed_and_preserves_mixed_user_answers() {
             .expect("suppressed")
             .is_none()
     );
-    output_not_submitted(&f.home, &[result.id.clone()], "call").expect("close observation");
+    output_not_submitted(&f.home, std::slice::from_ref(&result.id), "call")
+        .expect("close observation");
     assert!(
         reserve_output(&f.home, &result.id, "later")
             .expect("later")
@@ -533,7 +534,8 @@ fn output_crash_is_not_replay_but_positive_unsent_observation_is_releasable() {
             .is_none()
     );
     assert!(output_submitted(&f.home, &result.id, "call-2").is_err());
-    output_not_submitted(&f.home, &[result.id.clone()], "call-1").expect("known unsent");
+    output_not_submitted(&f.home, std::slice::from_ref(&result.id), "call-1")
+        .expect("known unsent");
     assert!(
         reserve_output(&f.home, &result.id, "call-2")
             .expect("new call")

@@ -135,7 +135,7 @@ jobs:
           path: web/dist
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.91.0
         with:
           components: clippy
 
@@ -143,6 +143,24 @@ jobs:
 
       - name: Check Windows process policy
         run: cargo clippy --workspace --locked -- -D unfulfilled_lint_expectations
+
+      - name: Verify Windows system proxy routing for device relays
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $filters = @(
+            'session_node::relay_proxy_system::windows::tests::'
+            'session_node::relay_tests::proxy_system::environment_precedes_destination_system_policy'
+          )
+          foreach ($filter in $filters) {
+            $result = cargo test --package cccc-pair-web --lib --locked $filter -- --test-threads=1 --color never
+            $exitCode = $LASTEXITCODE
+            $result
+            if ($exitCode -ne 0) { exit $exitCode }
+            if (-not ($result -match '^test result: ok\. [1-9][0-9]* passed;')) {
+              throw "No Windows relay proxy test matched $filter"
+            }
+          }
 
       - name: Verify Windows PTY UTF-8 message delivery
         timeout-minutes: 10
@@ -176,6 +194,18 @@ jobs:
           cargo test --package cccc --test integration --locked
           daemon_self_launch::combined_web_bind_failure_stops_its_owned_daemon
           -- --test-threads=1
+
+      - name: Verify Windows terminal device pairing and saved reconnect
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $result = cargo test --package cccc --test session_node_join --locked ticket_connect_and_legacy_resume_stay_in_the_terminal -- --exact --test-threads=1 --color never
+          $exitCode = $LASTEXITCODE
+          $result
+          if ($exitCode -ne 0) { exit $exitCode }
+          if (-not ($result -match '^test result: ok\. 1 passed;')) {
+            throw 'The Windows terminal pairing and reconnect test did not run'
+          }
 
       - name: Verify foreground terminal lifecycle in ConPTY
         timeout-minutes: 10
@@ -216,7 +246,7 @@ jobs:
         with:
           name: bundled-web
           path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.91.0
       - uses: Swatinem/rust-cache@v2
       - name: Verify foreground terminal lifecycle on macOS
         run: >-
@@ -257,7 +287,7 @@ jobs:
         with:
           name: bundled-web
           path: web/dist
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2

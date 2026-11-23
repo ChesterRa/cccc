@@ -251,10 +251,11 @@ fn commit(home: &HomeLayout, id: &str, candidate: &Value) -> Result<(), OpError>
             }
         }
         for old in superseded {
-            if old != candidate_id && !referenced(&state, &old) {
-                if let Some(artifacts) = state.get_mut("artifacts").and_then(Value::as_object_mut) {
-                    artifacts.remove(&old);
-                }
+            if old != candidate_id
+                && !referenced(&state, &old)
+                && let Some(artifacts) = state.get_mut("artifacts").and_then(Value::as_object_mut)
+            {
+                artifacts.remove(&old);
             }
         }
         state["updated_at"] = json!(utc_now());

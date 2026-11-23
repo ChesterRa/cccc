@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ArrowRight, Clock3, Network } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
-import { readDirectInvitation } from "./directConnectionModel";
+import { readDirectInvitation, directInvitationExpired } from "./directConnectionModel";
 import "./directInvitationInput.css";
 import { LcdIcon } from "../../components/Icons";
 
@@ -23,7 +23,7 @@ export function DirectJoinForm({
   const { t, i18n } = useTranslation("layout");
   const id = useId();
   const preview = readDirectInvitation(incoming);
-  const expired = preview && Date.parse(preview.expires_at) <= Date.now();
+  const expired = preview && directInvitationExpired(preview.expires_at);
   const invalid = !!incoming.trim() && !preview;
   return (
     <form
@@ -113,9 +113,11 @@ export function DirectJoinForm({
               <span>
                 {expired
                   ? t("direct.expiredHint")
-                  : t("direct.expiresAt", {
-                      time: new Date(preview.expires_at).toLocaleString(i18n.language),
-                    })}
+                  : preview.permanent
+                    ? t("direct.neverExpires")
+                    : t("direct.expiresAt", {
+                        time: new Date(preview.expires_at).toLocaleString(i18n.language),
+                      })}
               </span>
             </p>
             <details>

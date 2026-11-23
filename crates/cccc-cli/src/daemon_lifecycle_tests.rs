@@ -5,23 +5,19 @@ use super::{
 use crate::PRODUCT_VERSION;
 use crate::daemon_takeover::{LockState, probe_lock};
 use cccc_client::DaemonClient;
-use cccc_contracts::{DaemonAddress, DaemonResponse, Transport};
+use cccc_contracts::DaemonResponse;
 use cccc_core::HomeLayout;
 use fs2::FileExt;
 use serde_json::json;
 use std::fs::{File, OpenOptions};
+use std::task::Poll;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::watch;
 
-const ISOLATED_DAEMON_CASE: &str = "CCCC_TEST_ISOLATED_DAEMON_CASE";
-
-fn home() -> (tempfile::TempDir, HomeLayout) {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-    home.initialize().expect("initialize home");
-    (temp, home)
-}
+#[path = "daemon_lifecycle_test_io.rs"]
+mod observed;
+use observed::{ISOLATED_DAEMON_CASE, home};
 
 // A daemon installs a process-wide guard that intentionally lasts for the
 // host's lifetime. Keep the test daemon in its own process so its guard cannot
@@ -95,6 +91,12 @@ fn hold_daemon_lock(home: &HomeLayout) -> File {
 
 #[test]
 fn an_owned_daemon_is_announced_as_stopping_with_this_process() {
+    assert_eq!(
+        crate::host_state::DaemonState::for_launch(Some(37), || {
+            panic!("A retained owner must not wait for external process inspection")
+        }),
+        crate::host_state::DaemonState::StartedHere { pid: 37 }
+    );
     let line = ownership_line(true, None);
     assert!(line.contains("started by this process"), "{line}");
     assert!(line.contains("stops when this process exits"), "{line}");
@@ -103,6 +105,15 @@ fn an_owned_daemon_is_announced_as_stopping_with_this_process() {
 
 #[test]
 fn an_external_daemon_is_announced_with_its_pid_and_how_to_stop_it() {
+    let inspected = std::cell::Cell::new(false);
+    assert_eq!(
+        crate::host_state::DaemonState::for_launch(None, || {
+            inspected.set(true);
+            Some(35681)
+        }),
+        crate::host_state::DaemonState::External { pid: Some(35681) }
+    );
+    assert!(inspected.get(), "External identity must still be inspected");
     let line = ownership_line(false, Some(35681));
     assert!(line.contains("external pid 35681"), "{line}");
     assert!(line.contains("keeps running after exit"), "{line}");
@@ -173,32 +184,36 @@ async fn a_running_daemon_is_adopted_rather_than_started_over() {
     {
         return;
     }
+    tokio::time::pause();
     let (_temp, home) = home();
-    let daemon_home = home.clone();
-    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
-    let client = DaemonClient::new(home.clone());
-    // Hold the sender: dropping it reads as "the daemon exited" and cuts
-    // the wait short of what a slow machine needs to start one.
-    let (_alive, mut daemon_exited) = watch::channel(false);
-    assert!(
-        wait_until_ready_or_owner_exits(&client, &mut daemon_exited, Duration::from_secs(30)).await,
-        "the test daemon never became ready"
-    );
+    let mut daemon = Box::pin(cccc_daemon::run(home.clone()));
+    observed::daemon_published(daemon.as_mut(), &home).await;
+    let daemon = tokio::spawn(daemon);
 
+    let mut completed = observed::task(daemon);
+    let client = DaemonClient::new(home.clone());
+    let (_alive, mut daemon_exited) = watch::channel(false);
+    let ready = tokio::select! {
+        _ = &mut completed => panic!("daemon ended before its readiness reply"),
+        ready = wait_until_ready_or_owner_exits(&client, &mut daemon_exited, Duration::from_secs(30)) => ready,
+    };
+    assert!(ready, "the actual daemon must answer compatibly");
     let slot = resolve_slot(&home, &client)
         .await
-        .expect("adopting a running daemon is not a failure");
-
-    daemon.abort();
-    let _ = daemon.await;
-    // The adopted daemon is this test's own process, and its PID must come
-    // from the reply rather than a second round trip.
+        .expect("adopt a responding owner");
+    completed.abort();
+    assert!(
+        completed
+            .await
+            .expect_err("daemon task aborted")
+            .is_cancelled()
+    );
     assert_eq!(
         slot,
         DaemonSlot::Adopted {
             pid: Some(std::process::id())
         },
-        "a daemon that answers must be adopted, not started over"
+        "the adopted PID must come from the actual reply"
     );
 }
 
@@ -207,32 +222,28 @@ async fn a_running_daemon_is_adopted_rather_than_started_over() {
 /// gone and the Web server closed itself while that daemon was still there.
 #[tokio::test]
 async fn a_daemon_too_slow_to_answer_is_not_mistaken_for_a_departed_one() {
+    tokio::time::pause();
     let (_temp, home) = home();
-    // A daemon that holds the lock and answers nothing at all -- the most
-    // extreme version of "slower than any deadline".
     let held_lock = hold_daemon_lock(&home);
-
-    let watched = home.clone();
-    let watcher = tokio::spawn(async move { wait_for_loss(&watched).await });
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    let mut watcher = Box::pin(wait_for_loss(&home));
+    assert!(observed::poll_once(watcher.as_mut()).await.is_pending());
+    observed::advance_past(super::DAEMON_LIVENESS_POLL_INTERVAL).await;
     assert!(
-        !watcher.is_finished(),
-        "a silent daemon that still holds the lock must not read as departed"
+        observed::poll_once(watcher.as_mut()).await.is_pending(),
+        "an unanswered daemon that holds the real lock has not departed"
     );
-
-    // Releasing the lock is what a departing daemon actually does, and the
-    // operating system does it too when a daemon dies.
     FileExt::unlock(&held_lock).expect("release daemon lock");
-    tokio::time::timeout(Duration::from_secs(5), watcher)
-        .await
-        .expect("a released lock must be noticed")
-        .expect("watcher task");
+    observed::advance_past(super::DAEMON_LIVENESS_POLL_INTERVAL).await;
+    assert!(
+        matches!(observed::poll_once(watcher.as_mut()).await, Poll::Ready(())),
+        "the released lock must be observed"
+    );
 }
 
 #[tokio::test]
 async fn an_empty_lock_means_this_process_starts_the_daemon() {
     let (_temp, home) = home();
-    let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_millis(50));
+    let client = DaemonClient::new(home.clone());
 
     assert_eq!(
         resolve_slot(&home, &client)
@@ -246,11 +257,11 @@ async fn an_empty_lock_means_this_process_starts_the_daemon() {
 /// Tests run without a terminal, which is also how an MCP bridge, a service
 /// manager, and CI run. None of them can be asked, and none of them may
 /// have a daemon terminated on their behalf.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn a_held_lock_without_a_daemon_to_ask_is_reported_not_seized() {
     let (_temp, home) = home();
     let _held_lock = hold_daemon_lock(&home);
-    let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_millis(50));
+    let client = DaemonClient::new(home.clone());
 
     let error = resolve_slot(&home, &client)
         .await
@@ -267,67 +278,120 @@ async fn a_held_lock_without_a_daemon_to_ask_is_reported_not_seized() {
 /// not turn a healthy start into a report that it may be stuck.
 #[tokio::test]
 async fn a_daemon_still_starting_is_adopted_once_it_answers() {
+    tokio::time::pause();
     let (_temp, home) = home();
     let _held_lock = hold_daemon_lock(&home);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("daemon listener");
-    let published = DaemonAddress {
-        v: 1,
-        transport: Transport::Tcp,
-        path: String::new(),
-        host: "127.0.0.1".into(),
-        port: listener.local_addr().expect("daemon address").port(),
-        pid: std::process::id(),
-        version: PRODUCT_VERSION.into(),
-        source_id: String::new(),
-        ts: String::new(),
-    };
-    let daemon_home = home.clone();
-    let daemon = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        std::fs::write(
-            daemon_home.daemon_dir().join("ccccd.addr.json"),
-            serde_json::to_vec(&published).expect("address JSON"),
-        )
-        .expect("publish address");
-        let (stream, _) = listener.accept().await.expect("ping connection");
-        let mut stream = BufReader::new(stream);
-        let mut request = String::new();
-        stream.read_line(&mut request).await.expect("ping request");
-        let request = serde_json::from_str(&request).expect("ping JSON");
-        let mut reply = serde_json::to_vec(&cccc_daemon::handle_request(&daemon_home, &request))
-            .expect("ping response");
-        reply.push(b'\n');
-        stream.write_all(&reply).await.expect("ping reply");
-    });
-    let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_millis(500));
-
-    let slot = resolve_slot(&home, &client)
-        .await
-        .expect("a daemon that answers is not stuck");
-
-    daemon.await.expect("starting daemon");
-    assert!(matches!(slot, DaemonSlot::Adopted { .. }), "{slot:?}");
+    let listener = observed::listener(&home).await;
+    let client = DaemonClient::new(home.clone());
+    let mut slot = Box::pin(resolve_slot(&home, &client));
+    let peer = observed::pending_until(slot.as_mut(), observed::ping_read(&listener)).await;
+    observed::advance_past(super::DAEMON_SLOW_PROBE_NOTICE).await;
+    assert!(observed::poll_once(slot.as_mut()).await.is_pending());
+    assert_eq!(probe_lock(&home).expect("owner lock"), LockState::Held);
+    observed::pending_until(slot.as_mut(), observed::reject(peer)).await;
+    let peer = observed::pending_until(slot.as_mut(), observed::ping_read(&listener)).await;
+    assert!(observed::poll_once(slot.as_mut()).await.is_pending());
+    let (written, closed) = observed::reply(peer, compatible_ping(json!({})));
+    written.await.expect("reply written");
+    assert!(matches!(
+        slot.await.expect("adopt the responding daemon"),
+        DaemonSlot::Adopted { .. }
+    ));
+    closed.await.expect("reply connection closed");
+    assert_eq!(probe_lock(&home).expect("same owner lock"), LockState::Held);
 }
 
 #[tokio::test]
 async fn daemon_startup_wait_stops_when_the_embedded_daemon_exits() {
+    tokio::time::pause();
     let (_temp, home) = home();
-    let client = DaemonClient::new(home).with_timeout(Duration::from_millis(20));
+    let listener = observed::listener(&home).await;
+    let client = DaemonClient::new(home).with_timeout(super::DAEMON_READINESS_POLL_TIMEOUT);
     let (exit_tx, mut exit_rx) = watch::channel(false);
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(25)).await;
-        exit_tx.send(true).expect("publish embedded daemon exit");
-    });
+    let budget = super::DAEMON_OWNER_HANDOFF_GRACE + 2 * super::DAEMON_READINESS_POLL_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + budget;
+    let mut ready = Box::pin(wait_until_ready_or_owner_exits(
+        &client,
+        &mut exit_rx,
+        budget,
+    ));
+    let peer = observed::pending_until(ready.as_mut(), observed::ping_read(&listener)).await;
+    exit_tx.send(true).expect("publish the actual exit event");
+    observed::pending_until(ready.as_mut(), observed::reject(peer)).await;
+    drop(listener);
+    assert!(
+        !ready.await,
+        "an exited owner with no competitor cannot become ready"
+    );
+    assert!(
+        tokio::time::Instant::now() < deadline,
+        "the observed owner exit must end the wait before the full startup budget"
+    );
+}
 
-    let ready = tokio::time::timeout(
-        Duration::from_secs(3),
-        wait_until_ready_or_owner_exits(&client, &mut exit_rx, Duration::from_secs(5)),
-    )
-    .await
-    .expect("startup wait ignored the embedded daemon exit signal");
-    assert!(!ready, "an exited embedded daemon cannot become ready");
+#[tokio::test]
+async fn startup_readiness_retries_a_silent_probe_and_rejects_a_late_answer() {
+    tokio::time::pause();
+    let (_temp, home) = home();
+    let listener = observed::listener(&home).await;
+    let client = DaemonClient::new(home);
+    let probe_budget = super::DAEMON_READINESS_POLL_TIMEOUT;
+
+    let deadline = tokio::time::Instant::now() + 3 * probe_budget;
+    let mut silent_probe = Box::pin(super::startup_ping(&client, deadline));
+    let peer = observed::pending_until(silent_probe.as_mut(), observed::ping_read(&listener)).await;
+    assert!(
+        observed::poll_once(silent_probe.as_mut())
+            .await
+            .is_pending()
+    );
+    observed::advance_past(probe_budget).await;
+    assert!(
+        matches!(
+            observed::poll_once(silent_probe.as_mut()).await,
+            Poll::Ready(false)
+        ),
+        "one silent probe must stop at its logical attempt boundary"
+    );
+    observed::closed(peer).await;
+
+    // Supply an actual compatible reply after the logical total deadline,
+    // before polling the client again. Wall-clock scheduling cannot decide it.
+    let deadline = tokio::time::Instant::now() + probe_budget / 2;
+    let mut late = Box::pin(super::startup_ping(&client, deadline));
+    let peer = observed::pending_until(late.as_mut(), observed::ping_read(&listener)).await;
+    assert!(observed::poll_once(late.as_mut()).await.is_pending());
+    observed::advance_past(deadline - tokio::time::Instant::now()).await;
+    let (written, closed) = observed::reply(peer, compatible_ping(json!({})));
+    written.await.expect("late reply written");
+    assert!(
+        !late.await,
+        "a compatible reply delivered after expiry cannot become ready"
+    );
+    closed.await.expect("late connection closed");
+
+    let deadline = tokio::time::Instant::now() + 3 * probe_budget;
+    let mut ready = Box::pin(super::wait_until_ready(&client, deadline));
+    let silent = observed::pending_until(ready.as_mut(), observed::ping_read(&listener)).await;
+    assert!(observed::poll_once(ready.as_mut()).await.is_pending());
+    observed::advance_past(probe_budget).await;
+    assert!(observed::poll_once(ready.as_mut()).await.is_pending());
+    observed::advance_past(probe_budget).await;
+    assert!(observed::poll_once(ready.as_mut()).await.is_pending());
+    // An unbounded first call will accept this response and finish before
+    // a retry exists. A bounded call already closed it and must send again.
+    let (attempted, first_closed) = observed::late_reply(silent, compatible_ping(json!({})));
+    attempted.await.expect("late first reply attempted");
+    let retry = observed::pending_until(ready.as_mut(), observed::ping_read(&listener)).await;
+    first_closed.await.expect("first connection closed");
+    assert!(observed::poll_once(ready.as_mut()).await.is_pending());
+    let (written, closed) = observed::reply(retry, compatible_ping(json!({})));
+    written.await.expect("compatible retry reply written");
+    assert!(
+        ready.await,
+        "the observed retry's compatible answer must be adopted"
+    );
+    closed.await.expect("retry connection closed");
 }
 
 #[tokio::test]
@@ -339,26 +403,43 @@ async fn daemon_startup_wait_adopts_a_competing_owner() {
     {
         return;
     }
+    tokio::time::pause();
     let (_temp, home) = home();
-    let client = DaemonClient::new(home.clone()).with_timeout(Duration::from_millis(50));
+    let listener = observed::listener(&home).await;
+    let client = DaemonClient::new(home.clone());
     let (exit_tx, mut exit_rx) = watch::channel(false);
-    let daemon_home = home.clone();
-    let external = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(75)).await;
-        cccc_daemon::run(daemon_home).await
-    });
-    exit_tx.send(true).expect("publish losing embedded owner");
+    let budget = 3 * super::DAEMON_OWNER_HANDOFF_GRACE;
+    let mut ready = Box::pin(wait_until_ready_or_owner_exits(
+        &client,
+        &mut exit_rx,
+        budget,
+    ));
+    let losing_peer = observed::pending_until(ready.as_mut(), observed::ping_read(&listener)).await;
+    drop(listener);
+    exit_tx.send(true).expect("publish the losing owner's exit");
+    let mut external = Box::pin(cccc_daemon::run(home.clone()));
+    observed::daemon_published(external.as_mut(), &home).await;
+    let external = tokio::spawn(external);
 
-    let ready = tokio::time::timeout(
-        Duration::from_secs(3),
-        wait_until_ready_or_owner_exits(&client, &mut exit_rx, Duration::from_secs(5)),
-    )
-    .await
-    .expect("startup handoff timed out");
-
-    external.abort();
-    let _ = external.await;
-    assert!(ready, "a ready competing daemon should be adopted");
+    let mut completed = observed::task(external);
+    // EOF on the reply side makes the first call fail; waiting for the client
+    // to close its side proves that failure has actually been consumed.
+    observed::pending_until(ready.as_mut(), observed::reject(losing_peer)).await;
+    assert!(observed::poll_once(ready.as_mut()).await.is_pending());
+    observed::advance_past(super::DAEMON_OWNER_HANDOFF_GRACE / 2).await;
+    let adopted = tokio::select! {
+        _ = &mut completed => panic!("competing daemon ended before adoption"),
+        ready = ready.as_mut() => ready,
+    };
+    assert!(adopted, "the real competing owner must be adopted");
+    assert_eq!(probe_lock(&home).expect("external lock"), LockState::Held);
+    completed.abort();
+    assert!(
+        completed
+            .await
+            .expect_err("daemon task aborted")
+            .is_cancelled()
+    );
 }
 
 #[test]
@@ -423,7 +504,6 @@ fn fake_daemon(
     seen
 }
 
-#[cfg(unix)]
 fn compatible_ping(extra: serde_json::Value) -> DaemonResponse {
     let mut result = json!({
         "implementation": "rust",

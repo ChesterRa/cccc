@@ -515,7 +515,7 @@ impl ActorScopeFixture {
             home,
             store,
             group_id: group.group_id,
-            roots,
+            roots: roots.map(|root| root.canonicalize().expect("resolved scope root")),
             daemon,
         }
     }

@@ -249,12 +249,12 @@ fn diagnostic_secrets(command: &[String], env: &Map<String, Value>) -> Vec<Strin
     }));
     let mut secret_argument = false;
     for argument in command.iter().skip(1) {
-        if let Ok(url) = url::Url::parse(argument) {
-            if matches!(url.scheme(), "http" | "https") {
-                secrets.push(url.username().to_owned());
-                secrets.extend(url.password().map(str::to_owned));
-                secrets.extend(url.query_pairs().map(|(_, value)| value.into_owned()));
-            }
+        if let Ok(url) = url::Url::parse(argument)
+            && matches!(url.scheme(), "http" | "https")
+        {
+            secrets.push(url.username().to_owned());
+            secrets.extend(url.password().map(str::to_owned));
+            secrets.extend(url.query_pairs().map(|(_, value)| value.into_owned()));
         }
         if let Some((_, value)) = argument.split_once("Bearer ") {
             secrets.push(value.trim().to_owned());
@@ -263,11 +263,11 @@ fn diagnostic_secrets(command: &[String], env: &Map<String, Value>) -> Vec<Strin
             secrets.push(argument.clone());
         }
         secret_argument = argument.starts_with('-') && sensitive_key(argument);
-        if let Some((key, value)) = argument.split_once('=') {
-            if sensitive_key(key) {
-                secrets.push(value.to_owned());
-                secret_argument = false;
-            }
+        if let Some((key, value)) = argument.split_once('=')
+            && sensitive_key(key)
+        {
+            secrets.push(value.to_owned());
+            secret_argument = false;
         }
     }
     let lines = secrets
