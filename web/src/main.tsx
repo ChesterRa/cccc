@@ -35,26 +35,29 @@ window.addEventListener("unhandledrejection", (event) => {
   }
 });
 
-// Keep removing old page-controlling workers: their caches can serve stale UI.
-// The narrowly scoped push worker handles no fetches and is retained.
-if (
-  "serviceWorker" in navigator &&
-  typeof navigator.serviceWorker.getRegistrations === "function"
-) {
-  void navigator.serviceWorker
-    .getRegistrations()
-    .then(cleanupLegacyWorkers)
-    .catch(() => {});
+// The legacy device-link notice needs only local appearance and translation assets.
+function startWorkbench() {
+  // Keep removing old page-controlling workers: their caches can serve stale UI.
+  // The narrowly scoped push worker handles no fetches and is retained.
+  if (
+    "serviceWorker" in navigator &&
+    typeof navigator.serviceWorker.getRegistrations === "function"
+  ) {
+    void navigator.serviceWorker
+      .getRegistrations()
+      .then(cleanupLegacyWorkers)
+      .catch(() => {});
+  }
+  void useBrandingStore.getState().refreshBranding();
 }
 
 applyBrandingToDocument(DEFAULT_WEB_BRANDING);
 applyTextScale(getStoredTextScale());
 applyUiStylePrefs(getUiStylePrefs());
-void useBrandingStore.getState().refreshBranding();
 
 function renderApp() {
   ReactDOM.createRoot(document.getElementById("root")!).render(
-    <WebRoot pathname={window.location.pathname} />,
+    <WebRoot pathname={window.location.pathname} onWorkbenchEntry={startWorkbench} />,
   );
 }
 

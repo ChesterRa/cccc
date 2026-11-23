@@ -7,7 +7,9 @@ macro_rules! require_chrome {
         if !chrome_available() {
             return;
         }
-        let _chrome_guard = chrome_test_guard().await;
+        let Some(_chrome_guard) = chrome_test_guard().await else {
+            return;
+        };
     };
 }
 

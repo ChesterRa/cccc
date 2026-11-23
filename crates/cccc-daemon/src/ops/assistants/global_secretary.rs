@@ -71,14 +71,13 @@ pub(in crate::ops) fn target(
         document_id = doc["document_id"].as_str().unwrap_or("").to_owned();
         if let Some(saved_scope) = doc["scope_key"].as_str() {
             scope_key = saved_scope.into();
-        } else if let Some(absolute) = doc["absolute_path"].as_str() {
-            if let Some(scope) = group
+        } else if let Some(absolute) = doc["absolute_path"].as_str()
+            && let Some(scope) = group
                 .scopes
                 .iter()
                 .find(|scope| Path::new(&scope.url).join(&path) == Path::new(absolute))
-            {
-                scope_key = scope.scope_key.clone();
-            }
+        {
+            scope_key = scope.scope_key.clone();
         }
     }
     if !scope_key.is_empty() && !group.scopes.iter().any(|s| s.scope_key == scope_key) {
@@ -288,19 +287,18 @@ pub(in crate::ops) fn project_result(home: &HomeLayout, task: &SecretaryTask) ->
                 if let Some(doc) = array(state, "documents")
                     .iter_mut()
                     .find(|doc| doc["document_id"] == task.target.document_id)
+                    && doc["last_secretary_task_id"] != task.task_id
                 {
-                    if doc["last_secretary_task_id"] != task.task_id {
-                        let changed = doc["content_sha256"] != receipt.document_version;
-                        doc["content"] = json!(content);
-                        doc["content_sha256"] = json!(receipt.document_version);
-                        doc["content_chars"] = json!(content.chars().count());
-                        if changed {
-                            doc["revision_count"] =
-                                json!(doc["revision_count"].as_u64().unwrap_or(0) + 1);
-                        }
-                        doc["last_secretary_task_id"] = json!(task.task_id);
-                        doc["updated_at"] = json!(receipt.committed_at);
+                    let changed = doc["content_sha256"] != receipt.document_version;
+                    doc["content"] = json!(content);
+                    doc["content_sha256"] = json!(receipt.document_version);
+                    doc["content_chars"] = json!(content.chars().count());
+                    if changed {
+                        doc["revision_count"] =
+                            json!(doc["revision_count"].as_u64().unwrap_or(0) + 1);
                     }
+                    doc["last_secretary_task_id"] = json!(task.task_id);
+                    doc["updated_at"] = json!(receipt.committed_at);
                 }
                 Ok(())
             })?;

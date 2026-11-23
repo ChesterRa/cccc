@@ -17,41 +17,48 @@ export function LocalSessionsDefaults({
   if (!firstSelected) return null;
   return (
     <section
-      className="space-y-2 rounded-xl border border-[var(--glass-border-subtle)] p-3 text-xs text-[var(--color-text-secondary)]"
+      className="space-y-2 rounded-xl border border-[var(--glass-border-subtle)] p-3 text-sm text-[var(--color-text-secondary)]"
       aria-label={t("localSessions.newGroupDefaults")}
     >
       <h3 className="font-medium text-[var(--color-text-primary)]">
         {t("localSessions.newGroupDefaults")}
       </h3>
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-        <dt className="self-center">{t("actors:groupRoleForeman")}</dt>
-        <dd className="min-w-0 break-words">
-          {selected.length > 1 ? (
-            <SelectMenu
-              ariaLabel={t("actors:groupRoleForeman")}
-              value={firstSelected.source_id}
-              options={selected.map((source) => ({ value: source.source_id, label: source.title }))}
-              onChange={(sourceId) =>
-                setSelected((previous) => {
-                  const foreman = previous.find((source) => source.source_id === sourceId);
-                  return foreman
-                    ? [foreman, ...previous.filter((source) => source.source_id !== sourceId)]
-                    : previous;
-                })
-              }
-              disabled={busy}
-              align="start"
-              className="w-full"
-              contentClassName="w-[var(--radix-popover-trigger-width)]"
-            />
-          ) : (
-            firstSelected.title
-          )}
-        </dd>
-        <dt>{t("actors:workingDirectory")}</dt>
-        <dd className="break-all">{firstSelected.cwd}</dd>
+      <dl className="space-y-3">
+        <div className="space-y-1">
+          <dt>{t("actors:groupRoleForeman")}</dt>
+          <dd className="min-w-0 break-words">
+            {selected.length > 1 ? (
+              <SelectMenu
+                ariaLabel={t("actors:groupRoleForeman")}
+                value={firstSelected.source_id}
+                options={selected.map((source) => ({
+                  value: source.source_id,
+                  label: source.title,
+                }))}
+                onChange={(sourceId) =>
+                  setSelected((previous) => {
+                    const foreman = previous.find((source) => source.source_id === sourceId);
+                    return foreman
+                      ? [foreman, ...previous.filter((source) => source.source_id !== sourceId)]
+                      : previous;
+                  })
+                }
+                disabled={busy}
+                align="start"
+                className="min-h-11 w-full text-sm"
+                contentClassName="w-[var(--radix-popover-trigger-width)] [&_[role=menuitemradio]]:text-sm"
+              />
+            ) : (
+              firstSelected.title
+            )}
+          </dd>
+        </div>
+        <div className="space-y-1">
+          <dt>{t("actors:workingDirectory")}</dt>
+          <dd className="break-all">{firstSelected.cwd}</dd>
+        </div>
       </dl>
-      {selected.length > 1 ? <p>{t("localSessions.foremanDirectoryHint")}</p> : null}
+      <p className="text-xs leading-relaxed">{t("localSessions.foremanDirectoryHint")}</p>
     </section>
   );
 }

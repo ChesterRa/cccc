@@ -522,7 +522,7 @@ impl StreamingSession {
                 "streaming ASR requires 16000 Hz PCM16",
             ));
         }
-        if bytes.len() % 2 != 0 {
+        if !bytes.len().is_multiple_of(2) {
             return Err(VoiceError::new(
                 "invalid_audio",
                 "PCM16 byte length must be even",

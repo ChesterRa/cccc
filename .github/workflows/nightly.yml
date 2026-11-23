@@ -55,7 +55,7 @@ jobs:
           path: web/dist
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.91.0
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -82,7 +82,7 @@ jobs:
           path: web/dist
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.91.0
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -100,6 +100,9 @@ jobs:
           test -x /usr/bin/Xvfb
 
       - name: Test real-Chrome browser surface and Web Model routes
+        env:
+          # Real-Chrome fixtures skip unless opted in, so local runs open no windows.
+          CCCC_TEST_REAL_CHROME: "1"
         run: cargo nextest run --workspace --locked --profile chrome
 
   windows-installer:
@@ -117,7 +120,7 @@ jobs:
           path: web/dist
 
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@1.91.0
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2

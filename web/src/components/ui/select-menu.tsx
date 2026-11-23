@@ -82,7 +82,9 @@ export function SelectMenu<Value extends string | number>({
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           const content = menu.current;
-          const selected = content?.querySelector<HTMLElement>('[aria-checked="true"]');
+          const selected =
+            content?.querySelector<HTMLElement>('[aria-checked="true"]') ??
+            content?.querySelector<HTMLElement>('[role="menuitemradio"]:not(:disabled)');
           selected?.focus();
           // Radix measures the available height after mount. Reveal the focused
           // selection once that height has constrained the scroll region.

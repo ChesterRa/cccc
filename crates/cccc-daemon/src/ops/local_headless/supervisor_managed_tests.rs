@@ -791,11 +791,18 @@ mod structured_admission {
         assert_eq!(state["runtime_mode"], "default");
         let viewer = cccc_runtime::status(&group, "worker").expect("Hermes terminal");
         assert!(viewer.running);
-        let args = std::fs::read(format!("/proc/{}/cmdline", viewer.pid.expect("pid")))
-            .expect("terminal command line")
-            .split(|byte| *byte == 0)
-            .map(|arg| String::from_utf8_lossy(arg).into_owned())
-            .collect::<Vec<_>>();
+        fixture.wait(|| fixture.temp.path().join("v3_viewer_ready").exists());
+        let process: Value = serde_json::from_slice(
+            &std::fs::read(fixture.temp.path().join("v3_viewer_process.json"))
+                .expect("viewer process observation"),
+        )
+        .expect("viewer process record");
+        assert_eq!(
+            process["pid"].as_u64(),
+            Some(u64::from(viewer.pid.expect("viewer pid")))
+        );
+        let args: Vec<String> =
+            serde_json::from_value(process["argv"].clone()).expect("actual viewer arguments");
         assert!(args.iter().any(|arg| arg == "--tui"), "{args:?}");
         assert!(!args.iter().any(|arg| arg == "--yolo"), "{args:?}");
         let resume = args
@@ -843,10 +850,13 @@ mod structured_admission {
     fn stopping_a_hermes_that_stopped_reading_is_bounded_and_unconfirmed() {
         let fixture = Fixture::with_markers(ActorRuntime::Hermes, &["v3_stall_stdin"]);
         let group = fixture.group.group_id.clone();
-        let event = fixture.send(&"STALLED PROMPT ".repeat(1024));
+        // 480 KiB exceeds Darwin's 64 KiB pipe while leaving room for the ACP
+        // JSON envelope below 1 MiB instead of relying on an oversized frame.
+        let event = fixture.send(&"STALLED PROMPT ".repeat(32 * 1024));
         fixture.wait(|| fixture.outcome(&event).as_deref() == Some("claimed"));
         // The prompt write cannot finish; give it time to fill the pipe.
         std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(fixture.outcome(&event).as_deref(), Some("claimed"));
         // A prompt still being written is nothing a cancel could reach yet.
         assert_eq!(
             local_headless::structured_state(&group, "worker").expect("running")["working"],

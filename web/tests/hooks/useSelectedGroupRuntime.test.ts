@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { chatSetupRequirements } from "../../src/hooks/chat/chatSetupRequirements";
 import { computeSelectedGroupRuntime } from "../../src/hooks/useSelectedGroupRuntime";
 import { computeGroupRuntimePatch } from "../../src/utils/groupRuntimeProjection";
 
@@ -42,7 +43,8 @@ describe("useSelectedGroupRuntime", () => {
     });
   });
 
-  it("reports neither running nor stopped while the daemon cannot observe the Group", () => {
+  it("keeps an unobserved remote-only Group unknown without prompting to start or attach", () => {
+    const actors = [{ id: "a1", running: true, external_session_id: "remote:fixture" }];
     const result = computeSelectedGroupRuntime({
       groups: [
         {
@@ -63,7 +65,7 @@ describe("useSelectedGroupRuntime", () => {
           has_running_foreman: true,
         },
       },
-      actors: [{ id: "a1", running: true }],
+      actors,
     });
 
     expect(result.selectedGroupRunning).toBeNull();
@@ -72,6 +74,9 @@ describe("useSelectedGroupRuntime", () => {
       available: false,
     });
     expect(result.orderedSelectedGroupPatch?.running).toBeUndefined();
+    expect(chatSetupRequirements("g1", "", actors, result.selectedGroupRunning).showSetupCard).toBe(
+      false,
+    );
   });
 
   it("produces a sidebar patch for the selected group", () => {

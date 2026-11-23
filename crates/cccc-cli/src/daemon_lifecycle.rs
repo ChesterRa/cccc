@@ -14,6 +14,8 @@ use crate::daemon_takeover::{self, LockState};
 // make shutdown faster -- it just moves the same work to the forced path, which
 // is the one that leaves processes behind.
 pub(crate) const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+// A missed readiness probe is retried; only the shared startup deadline ends the wait.
+pub(crate) const DAEMON_READINESS_POLL_TIMEOUT: Duration = Duration::from_secs(2);
 // Long enough for a daemon that is exiting to drop the lock, or one that is
 // starting to answer, short enough that a lock held by a daemon that does
 // neither still reports its own error fast.
@@ -154,19 +156,35 @@ fn warn_version_difference(response: &cccc_contracts::DaemonResponse) {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
+pub(crate) async fn startup_ping(client: &DaemonClient, deadline: tokio::time::Instant) -> bool {
+    let now = tokio::time::Instant::now();
+    if now >= deadline {
+        return false;
+    }
+    let probe_deadline = deadline.min(now + DAEMON_READINESS_POLL_TIMEOUT);
+    let ready = tokio::time::timeout_at(probe_deadline, ping(client))
+        .await
+        .unwrap_or(false);
+    ready && tokio::time::Instant::now() < probe_deadline
+}
+
+#[cfg(any(windows, test))]
 pub(crate) async fn wait_until_ready(
     client: &DaemonClient,
     deadline: tokio::time::Instant,
 ) -> bool {
     loop {
-        if ping(client).await {
+        if startup_ping(client, deadline).await {
             return true;
         }
         if tokio::time::Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep_until(
+            deadline.min(tokio::time::Instant::now() + Duration::from_millis(100)),
+        )
+        .await;
     }
 }
 

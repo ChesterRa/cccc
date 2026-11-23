@@ -58,7 +58,8 @@ async fn pending_direct_peer_recovers_approval_after_expiry() {
             b.clone(),
             DispatchLocks::default(),
             Channels::default(),
-            joining
+            joining,
+            &mut RetryState::default()
         )
         .await
         .is_err()
@@ -119,7 +120,7 @@ async fn pending_direct_peer_recovers_approval_after_expiry() {
         "receiver approval must survive expiry and a lost/offline response"
     );
 }
-async fn wait(mut condition: impl FnMut() -> bool) {
+pub(super) async fn wait(mut condition: impl FnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(20), async {
         while !condition() {
             tokio::time::sleep(Duration::from_millis(40)).await;

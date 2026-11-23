@@ -26,6 +26,7 @@ mod headless;
 mod headless_store;
 mod im;
 mod im_authorization;
+mod local_session_controls;
 mod local_sessions;
 mod membership;
 mod message_pins;
@@ -46,6 +47,8 @@ mod remote_access;
 mod remote_access_projection;
 #[cfg(test)]
 mod remote_maintenance_test_daemon;
+mod session_node_join;
+mod session_nodes;
 mod settings;
 mod streams;
 mod system;
@@ -100,6 +103,7 @@ pub fn router() -> Router<AppState> {
         .merge(access_tokens::routes())
         .merge(groups::routes())
         .merge(local_sessions::routes())
+        .merge(session_nodes::routes())
         .merge(group_copy::routes())
         .merge(actors::routes())
         .merge(assistants::routes())

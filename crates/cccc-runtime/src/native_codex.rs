@@ -13,6 +13,9 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{WebSocketStream, tungstenite::Message};
 
+mod receive_diagnostic;
+pub use receive_diagnostic::native_codex_receive_state;
+
 pub struct NativeCodexSessionInfo {
     pub can_receive: bool,
     /// Optional creation origin, never receive or identity authority.
@@ -180,6 +183,15 @@ struct NativeProxy {
 
 impl NativeProxy {
     async fn connect(program: &Path, codex_home: &Path, cwd: &Path) -> io::Result<Self> {
+        Self::connect_with_diagnostic(program, codex_home, cwd, false).await
+    }
+
+    async fn connect_with_diagnostic(
+        program: &Path,
+        codex_home: &Path,
+        cwd: &Path,
+        diagnostic: bool,
+    ) -> io::Result<Self> {
         let mut command = crate::background_command(program);
         command
             .args(["app-server", "proxy"])
@@ -187,7 +199,11 @@ impl NativeProxy {
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(if diagnostic {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            });
         let (child, tree) = OwnedProcessTree::spawn(&mut command)?;
         let mut owned = OwnedChild { child, tree };
         let input = tokio::process::ChildStdin::from_std(
@@ -205,10 +221,32 @@ impl NativeProxy {
                 .ok_or_else(|| io::Error::other("Missing native proxy output"))?,
         )?;
         // The public proxy relays WebSocket bytes, not NDJSON.
-        let (mut socket, _) =
-            tokio_tungstenite::client_async("ws://localhost", tokio::io::join(output, input))
-                .await
-                .map_err(io::Error::other)?;
+        let connected =
+            tokio_tungstenite::client_async("ws://localhost", tokio::io::join(output, input)).await;
+        let (mut socket, _) = match connected {
+            Ok(connected) => connected,
+            Err(_) => {
+                if diagnostic && let Some(stderr) = owned.child.stderr.take() {
+                    use tokio::io::AsyncReadExt;
+                    let stderr = tokio::process::ChildStderr::from_std(stderr)?;
+                    let mut bytes = Vec::new();
+                    let _ = tokio::time::timeout(
+                        Duration::from_millis(100),
+                        stderr.take(4096).read_to_end(&mut bytes),
+                    )
+                    .await;
+                    // Exact, positive CLI evidence only. Never forward provider stderr.
+                    if String::from_utf8_lossy(&bytes).contains("background server is not running")
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::NotConnected,
+                            "Shared native background server is not running",
+                        ));
+                    }
+                }
+                return Err(io::Error::other("Native proxy connection unavailable"));
+            }
+        };
         let initialized: Option<IgnoredAny> = request(
             &mut socket,
             1,

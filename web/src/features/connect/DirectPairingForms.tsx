@@ -4,22 +4,30 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 export { DirectInvitationShare } from "./DirectInvitationShare";
 export { DirectJoinForm } from "./DirectJoinForm";
-import type { DirectAddress, DirectListener } from "./directConnectionModel";
+import {
+  savedPrivateAddressMissing,
+  type DirectAddress,
+  type DirectListener,
+} from "./directConnectionModel";
 
 export function DirectReceiveForm({
   listener,
   addresses,
   inviteMode = false,
+  addressesCurrent = false,
   name: initialName,
   busy,
+  unavailable = false,
   onSave,
   onStop,
 }: {
   listener: DirectListener | null;
   addresses: DirectAddress[];
   inviteMode?: boolean;
+  addressesCurrent?: boolean;
   name: string;
   busy: boolean;
+  unavailable?: boolean;
   onSave: (listener: DirectListener, name: string, previous: DirectListener | null) => void;
   onStop: () => void;
 }) {
@@ -49,7 +57,7 @@ export function DirectReceiveForm({
         onSave({ bind: bind.trim(), address: address.trim() }, name.trim(), savedListener);
       }}
     >
-      <fieldset disabled={busy} className="space-y-4 min-w-0">
+      <fieldset disabled={busy || unavailable} className="space-y-4 min-w-0">
         <p className="text-[var(--color-text-secondary)]">
           {t(inviteMode ? "direct.inviteHint" : "direct.setupHint")}
         </p>
@@ -127,6 +135,15 @@ export function DirectReceiveForm({
               {t(savedListener ? "direct.savedAddress" : "direct.suggestedAddress")}
             </p>
           )}
+          {inviteMode &&
+            !changingAddress &&
+            addressesCurrent &&
+            savedListener?.address === address &&
+            savedPrivateAddressMissing(address, addresses) && (
+              <p role="status" className="text-xs text-[var(--color-text-secondary)]">
+                {t("direct.savedPrivateAddressMissing")}
+              </p>
+            )}
         </div>
         <details className="space-y-3">
           <summary className="cursor-pointer text-xs text-[var(--color-text-secondary)]">
@@ -158,7 +175,7 @@ export function DirectReceiveForm({
           </div>
         </details>
         <div className="space-y-2">
-          <Button type="submit" disabled={busy || !address.trim() || !bind.trim()}>
+          <Button type="submit" disabled={busy || unavailable || !address.trim() || !bind.trim()}>
             {t(
               busy
                 ? inviteMode

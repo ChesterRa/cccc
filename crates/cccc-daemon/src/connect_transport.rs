@@ -124,8 +124,8 @@ async fn run_catalogs(home: HomeLayout, client: PeerClient) {
             Some(completed) = work.join_next_with_id(), if !work.is_empty() => {
                 let task_id = completed.as_ref().map_or_else(|error|error.id(),|(id,_)|*id);
                 active.remove(&task_id);
-                if let Ok((_,(instance_id, route, result))) = completed {
-                    if let Some(entry) = schedule.get_mut(&instance_id) {
+                if let Ok((_,(instance_id, route, result))) = completed
+                    && let Some(entry) = schedule.get_mut(&instance_id) {
                         if entry.route != route { continue; }
                         let delay = if let Err(error) = result {
                             tracing::debug!(%instance_id, %error,"Connect peer directory refresh failed");
@@ -134,7 +134,6 @@ async fn run_catalogs(home: HomeLayout, client: PeerClient) {
                         } else { entry.failures=0; 60 };
                         entry.next=Some(Instant::now()+Duration::from_secs(delay));
                     }
-                }
             }
             _ = tick.tick() => {
                 let snapshot=connect::load(&home).ok().flatten();

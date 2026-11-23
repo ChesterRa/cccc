@@ -14,7 +14,7 @@ Connect the Claude Code, Codex, Pi and OpenCode sessions you already run, or let
 One install command. No Rust toolchain, database server, message broker or Docker required.
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=232425)](https://pypi.org/project/cccc-pair/)
-[![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
+[![Rust 1.91+](https://img.shields.io/badge/Rust-1.91%2B-232425?logo=rust&logoColor=white)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-232425)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-232425)](https://chesterra.github.io/cccc/)
 [![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/m8wuB7VSJ)
@@ -336,7 +336,7 @@ CCCC fits several agents sharing a codebase, mixed runtimes such as Claude + Cod
 
 **Upgrade** with `cccc update` for the website installer, or the pip command for pip. `cccc update --check` shows the latest release and the installation owner without changing anything. Before a pip upgrade, run `cccc daemon stop` and close foreground CCCC processes. To switch from pip to the website installer, run `python -m pip uninstall cccc-pair` first. If an older `cccc update` stays on 0.4.35, see the [upgrade FAQ](https://chesterra.github.io/cccc/guide/faq#why-does-an-older-cccc-update-stay-on-0-4-35); the [Operations Runbook](https://chesterra.github.io/cccc/guide/operations) has a full checklist.
 
-**From source**, with Rust 1.88+, Node.js 24 with npm, and Python 3.11+ for the archive helper only:
+**From source**, with Rust 1.91+, Node.js 24 with npm, and Python 3.11+ for the archive helper only:
 
 ```bash
 git clone https://github.com/ChesterRa/cccc

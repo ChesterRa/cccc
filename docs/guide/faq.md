@@ -40,7 +40,7 @@ cd cccc
 ./target/release/cccc --version
 ```
 
-The source package helper requires Rust 1.88+, Node.js 24 with npm, and Python
+The source package helper requires Rust 1.91+, Node.js 24 with npm, and Python
 3.11+ for archive assembly only; the resulting CCCC executable has no Python
 runtime dependency.
 

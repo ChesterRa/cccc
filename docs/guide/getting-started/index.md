@@ -156,7 +156,7 @@ pip-owned files, even when `CCCC_ALLOW_REPLACE_EXISTING=1` is set.
 
 ### From Source
 
-Source packaging requires Rust 1.88+, Node.js 24 with npm, and Python 3.11+
+Source packaging requires Rust 1.91+, Node.js 24 with npm, and Python 3.11+
 only for the archive helper. Python is not included in the built product.
 
 ```bash

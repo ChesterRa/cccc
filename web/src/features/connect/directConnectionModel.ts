@@ -19,17 +19,52 @@ export type DirectStatus = {
   addresses: DirectAddress[];
   runtime: { listener: boolean; error: string | null } | null;
   relations: DirectRelation[];
+  capabilities?: {
+    reusable_invitations?: boolean;
+    permanent_invitations?: boolean;
+    invitation_revocation?: boolean;
+  };
+  shared_invitations?: DirectSharedInvitation[];
+};
+export type DirectSharedInvitation = {
+  id: string;
+  address?: string;
+  expires_at: string;
+  uses: number;
+  current: boolean;
+  expired: boolean;
 };
 
 export function sameDirectListener(a: DirectListener | null, b: DirectListener | null): boolean {
   return a?.address === b?.address && a?.bind === b?.bind;
 }
+/** A saved LAN address may refer to an old VPN. Candidate ports do not establish IP ownership. */
+export function savedPrivateAddressMissing(address: string, candidates: DirectAddress[]): boolean {
+  const ip = /^((?:[0-9]{1,3}\.){3}[0-9]{1,3}):[0-9]+$/.exec(address)?.[1];
+  if (!ip || !candidates.length) return false;
+  const parts = ip.split(".");
+  const octets = parts.map(Number);
+  if (octets.some((value, i) => value > 255 || String(value) !== parts[i])) return false;
+  const [a, b] = octets;
+  const privateIp = a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  return privateIp && !candidates.some((candidate) => candidate.address.startsWith(ip + ":"));
+}
 export type DirectInvitationPreview = {
+  reusable?: boolean;
+  permanent?: boolean;
   id: string;
   host: DirectEndpoint;
   address: string;
   expires_at: string;
 };
+
+export const DIRECT_PERMANENT_EXPIRY = "never";
+export function directInvitationExpired(expiry: string): boolean {
+  return (
+    expiry !== DIRECT_PERMANENT_EXPIRY &&
+    (!Number.isFinite(Date.parse(expiry)) || Date.parse(expiry) <= Date.now())
+  );
+}
 
 /** Display untrusted invitation metadata only. The daemon validates all authority. */
 export function readDirectInvitation(text: string): DirectInvitationPreview | null {
@@ -43,7 +78,8 @@ export function readDirectInvitation(text: string): DirectInvitationPreview | nu
       ),
     );
     if (
-      data?.v !== 1 ||
+      ![1, 2, 3].includes(data?.v) ||
+      (data.v === 3) !== (data.expires_at === DIRECT_PERMANENT_EXPIRY) ||
       typeof data.secret !== "string" ||
       data.secret.length !== 64 ||
       ![data.id, data.address, data.expires_at, data.host?.instance_id, data.host?.group_id].every(
@@ -51,10 +87,12 @@ export function readDirectInvitation(text: string): DirectInvitationPreview | nu
       ) ||
       typeof data.host?.name !== "string" ||
       typeof data.host?.title !== "string" ||
-      !Number.isFinite(Date.parse(data.expires_at))
+      (data.v !== 3 && !Number.isFinite(Date.parse(data.expires_at)))
     )
       return null;
     return {
+      ...(data.v >= 2 ? { reusable: true } : {}),
+      ...(data.v === 3 ? { permanent: true } : {}),
       id: data.id,
       host: {
         ...data.host,

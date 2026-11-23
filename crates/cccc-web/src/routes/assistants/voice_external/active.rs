@@ -99,7 +99,7 @@ impl Active {
                 "Audio received after recording stop",
             ));
         }
-        if bytes.len() > 1_048_576 || bytes.len() % 2 != 0 {
+        if bytes.len() > 1_048_576 || !bytes.len().is_multiple_of(2) {
             return Err(AsrError::new(
                 "invalid_audio",
                 "Send even-length PCM16 frames of at most 1 MiB",

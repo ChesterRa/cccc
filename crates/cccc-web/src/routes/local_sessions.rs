@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .merge(super::local_session_controls::routes())
         .route("/api/v1/local_sessions", get(list))
         .route(
             "/api/v1/local_sessions/recovery/{group_id}/{actor_id}",

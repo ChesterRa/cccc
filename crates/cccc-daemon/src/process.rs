@@ -56,7 +56,10 @@ impl DetachedDaemon {
     /// handle. Owners that must later stop exactly the process they created
     /// should use this instead of relying on a reusable PID.
     pub async fn start_owned(&self, home: &HomeLayout) -> Result<Option<Child>> {
-        Ok(self.start_inner(home, false).await?.map(|(child, _)| child))
+        Ok(self
+            .start_inner(home, false, None)
+            .await?
+            .map(|(child, _)| child))
     }
 
     /// Start a Web-owned daemon with a tree registered before readiness waits.
@@ -64,8 +67,26 @@ impl DetachedDaemon {
         &self,
         home: &HomeLayout,
     ) -> Result<Option<(Child, cccc_runtime::OwnedProcessTree)>> {
+        self.supervised_start(home, None).await
+    }
+
+    /// Share the caller's startup budget without cancelling a future that owns a child.
+    /// Reclaiming a child after that deadline remains a separate lifecycle operation.
+    pub async fn start_supervised_until(
+        &self,
+        home: &HomeLayout,
+        deadline: tokio::time::Instant,
+    ) -> Result<Option<(Child, cccc_runtime::OwnedProcessTree)>> {
+        self.supervised_start(home, Some(deadline)).await
+    }
+
+    async fn supervised_start(
+        &self,
+        home: &HomeLayout,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Option<(Child, cccc_runtime::OwnedProcessTree)>> {
         Ok(self
-            .start_inner(home, true)
+            .start_inner(home, true, deadline)
             .await?
             .map(|(child, tree)| (child, tree.expect("supervised spawn owns a tree"))))
     }
@@ -74,6 +95,7 @@ impl DetachedDaemon {
         &self,
         home: &HomeLayout,
         supervised: bool,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<Option<(Child, Option<cccc_runtime::OwnedProcessTree>)>> {
         home.initialize()?;
         cccc_core::attended_update::check_start(
@@ -81,9 +103,10 @@ impl DetachedDaemon {
             self.update_resume.as_deref(),
             &cccc_core::attended_update::BuildIdentity::current(),
         )?;
-        if ping(home).await {
+        if ping(home, deadline).await {
             return Ok(None);
         }
+        check_startup_deadline(deadline)?;
 
         let paths = DaemonPaths::new(home.clone());
         #[cfg(unix)]
@@ -100,6 +123,7 @@ impl DetachedDaemon {
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(error_log))
             .current_dir(home.root());
+        check_startup_deadline(deadline)?;
         let (mut child, tree) = if supervised {
             #[cfg(unix)]
             let spawned = cccc_runtime::OwnedProcessTree::spawn(&mut command);
@@ -120,9 +144,10 @@ impl DetachedDaemon {
             )
         };
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let ready_deadline =
+            deadline.unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_secs(30));
         loop {
-            if ping(home).await {
+            if ping(home, deadline).await {
                 return Ok(Some((child, tree)));
             }
             let status = match &tree {
@@ -139,10 +164,11 @@ impl DetachedDaemon {
                     paths.log.display()
                 );
             }
-            if tokio::time::Instant::now() >= deadline {
+            if tokio::time::Instant::now() >= ready_deadline {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            let next_probe = tokio::time::Instant::now() + Duration::from_millis(100);
+            tokio::time::sleep_until(deadline.map_or(next_probe, |end| end.min(next_probe))).await;
         }
 
         if let Some(tree) = &tree {
@@ -194,16 +220,29 @@ fn session_recovery_hint(log: &Path, start: u64) -> Option<String> {
     None
 }
 
-async fn ping(home: &HomeLayout) -> bool {
-    DaemonClient::new(home.clone())
-        .with_timeout(Duration::from_millis(300))
-        .call(&DaemonRequest {
-            v: 1,
-            op: "ping".into(),
-            args: Map::new(),
-        })
-        .await
-        .is_ok_and(|response| response.ok)
+fn check_startup_deadline(deadline: Option<tokio::time::Instant>) -> Result<()> {
+    if deadline.is_some_and(|end| tokio::time::Instant::now() >= end) {
+        anyhow::bail!("Rust daemon startup deadline elapsed before process creation");
+    }
+    Ok(())
+}
+
+async fn ping(home: &HomeLayout, deadline: Option<tokio::time::Instant>) -> bool {
+    let now = tokio::time::Instant::now();
+    let probe_deadline = now + Duration::from_millis(300);
+    let probe_deadline = deadline.map_or(probe_deadline, |end| end.min(probe_deadline));
+    if now >= probe_deadline {
+        return false;
+    }
+    let client = DaemonClient::new(home.clone());
+    let request = DaemonRequest {
+        v: 1,
+        op: "ping".into(),
+        args: Map::new(),
+    };
+    matches!(tokio::time::timeout_at(probe_deadline, client.call(&request)).await,
+        Ok(Ok(response)) if response.ok)
+        && tokio::time::Instant::now() < probe_deadline
 }
 
 #[cfg(unix)]

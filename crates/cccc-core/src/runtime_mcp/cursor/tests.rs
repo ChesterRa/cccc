@@ -86,7 +86,7 @@ fn a_project_entry_is_used_only_when_it_matches_and_is_never_rewritten() {
         .expect("project entry");
     assert_eq!(
         ensure(&project, &environment(&home), Path::new("/opt/cccc")).expect("project entry"),
-        project_path
+        project_path.canonicalize().expect("resolved project file")
     );
     assert!(!home.join(".cursor/mcp.json").exists());
 

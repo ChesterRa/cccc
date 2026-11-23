@@ -467,8 +467,9 @@ async fn deliver_once(
             json!({"last_delivery_status":"resolved","last_error":""}),
         )?;
     }
-    if target["kind"] == "existing_chat" && is_chatgpt_url(target_url) {
-        if let Err(error) = state
+    if target["kind"] == "existing_chat"
+        && is_chatgpt_url(target_url)
+        && let Err(error) = state
             .browser_surfaces
             .align_chatgpt_conversation_target(
                 session_key,
@@ -476,25 +477,24 @@ async fn deliver_once(
                 std::time::Duration::from_secs(5),
             )
             .await
-        {
-            let message = error.to_string();
-            update_target(
-                state,
-                group_id,
-                actor_id,
-                json!({
-                    "last_delivery_status":"failed",
-                    "last_submission_evidence":{
-                        "submitted":false,
-                        "submission_evidence":"bound_conversation_unavailable",
-                        "error":message.as_str()
-                    },
-                    "last_error":message.as_str()
-                }),
-            )?;
-            record_connector(state, group_id, actor_id, "failed", "", &message)?;
-            return Ok(DeliveryOutcome::Stopped);
-        }
+    {
+        let message = error.to_string();
+        update_target(
+            state,
+            group_id,
+            actor_id,
+            json!({
+                "last_delivery_status":"failed",
+                "last_submission_evidence":{
+                    "submitted":false,
+                    "submission_evidence":"bound_conversation_unavailable",
+                    "error":message.as_str()
+                },
+                "last_error":message.as_str()
+            }),
+        )?;
+        record_connector(state, group_id, actor_id, "failed", "", &message)?;
+        return Ok(DeliveryOutcome::Stopped);
     }
     // A stopping Web claims nothing more; what it holds finishes first.
     if state.browser_surfaces.stopping() {
@@ -1559,7 +1559,9 @@ mod login_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
@@ -1698,7 +1700,9 @@ mod login_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");

@@ -15,6 +15,7 @@ pub mod message;
 pub mod message_args;
 pub mod message_pins;
 pub mod reply_question;
+pub mod session_node;
 pub mod voice_notifications;
 pub mod voice_secretary;
 
@@ -48,3 +49,5 @@ pub const MCP_DAEMON_ACCEPTED_CONTRACTS: &[u32] = &[1];
 pub fn utc_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
+
+pub mod source_control;

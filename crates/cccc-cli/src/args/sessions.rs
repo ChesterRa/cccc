@@ -9,6 +9,11 @@ pub struct SessionsArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum SessionsAction {
+    /// Pair and connect native sessions from another computer.
+    Node {
+        #[command(subcommand)]
+        action: super::SessionNodeAction,
+    },
     /// Enable same-user native session collaboration once for this runtime.
     Enable {
         /// Native app: codex, claude, pi or opencode.

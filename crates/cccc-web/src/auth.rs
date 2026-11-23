@@ -237,7 +237,13 @@ fn decode_token(value: &str) -> String {
 }
 
 fn is_public(method: &Method, path: &str) -> bool {
-    (*method == Method::GET && path == "/api/v1/connect/identity")
+    // Legacy clients must receive the no-op retirement response before opening a browser.
+    (*method == Method::POST
+        && matches!(
+            path,
+            "/api/v1/session_nodes/join/requests" | "/api/v1/session_nodes/join/poll"
+        ))
+        || (*method == Method::GET && path == "/api/v1/connect/identity")
         || (*method == Method::POST && path == "/api/v1/connect/frame")
         || (*method == Method::POST && path == "/api/v1/connect/peer")
         || (*method == Method::POST && path == "/api/v1/connect/group-check")
@@ -262,7 +268,8 @@ fn accepts_local_principal(method: &Method, path: &str) -> bool {
 }
 
 fn requires_admin(method: &Method, path: &str) -> bool {
-    path.starts_with("/api/v1/local_sessions")
+    path.starts_with("/api/v1/session_nodes")
+        || path.starts_with("/api/v1/local_sessions")
         || path.starts_with("/api/v1/chet/")
         || path.starts_with("/api/v1/process-recovery/")
         || path.starts_with("/api/v1/voice/asr/providers")

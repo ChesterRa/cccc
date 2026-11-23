@@ -39,6 +39,7 @@ impl SocketPath {
         #[cfg(target_os = "macos")]
         {
             use std::os::unix::ffi::OsStrExt;
+            use std::os::unix::fs::PermissionsExt;
             // Darwin's sockaddr_un.sun_path has 104 bytes, including NUL.
             if socket.as_os_str().as_bytes().len() < 104 {
                 return Ok(Self {
@@ -60,6 +61,7 @@ impl SocketPath {
             // the alias. /tmp stays short even under a long TMPDIR.
             let directory = tempfile::Builder::new()
                 .prefix(".cccc-sock-")
+                .permissions(std::fs::Permissions::from_mode(0o700))
                 .tempdir_in("/tmp")?;
             let alias = directory.path().join("d");
             std::os::unix::fs::symlink(parent, &alias)?;
@@ -118,10 +120,12 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn a_darwin_alias_is_private_and_removed_without_removing_its_target() {
-        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let temporary = tempfile::tempdir().expect("isolated socket home");
         let directory = temporary.path().join("x".repeat(90)).join("y".repeat(90));
         std::fs::create_dir_all(&directory).expect("long owner directory");
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o750))
+            .expect("distinct owner directory mode");
         let alias = SocketPath::new(&directory.join("control.sock")).expect("alias");
         let private = alias
             .path
@@ -136,6 +140,8 @@ mod tests {
         );
         drop(alias);
         assert!(!private.exists());
-        assert!(directory.is_dir());
+        let target = std::fs::metadata(directory).expect("durable owner directory");
+        assert!(target.is_dir());
+        assert_eq!(target.mode() & 0o777, 0o750);
     }
 }

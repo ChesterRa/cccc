@@ -80,13 +80,16 @@ impl OwnedDetachedDaemon {
     pub(crate) async fn start(home: &HomeLayout, client: &DaemonClient) -> Result<Option<Self>> {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            if crate::daemon_lifecycle::ping(client).await {
+            if crate::daemon_lifecycle::startup_ping(client, deadline).await {
                 return Ok(None);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!("Rust daemon did not become compatible before the startup deadline");
             }
 
             let executable = std::env::current_exe()?;
             match DetachedDaemon::new(executable, ["daemon", "run"])
-                .start_supervised(home)
+                .start_supervised_until(home, deadline)
                 .await?
             {
                 Some((child, process_tree)) => {
@@ -116,7 +119,12 @@ impl OwnedDetachedDaemon {
                             home.daemon_dir().join("ccccd.log").display()
                         );
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep_until(
+                        deadline.min(
+                            tokio::time::Instant::now() + std::time::Duration::from_millis(100),
+                        ),
+                    )
+                    .await;
                 }
             }
         }

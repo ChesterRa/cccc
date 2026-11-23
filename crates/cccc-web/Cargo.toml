@@ -57,6 +57,10 @@ takecell.workspace = true
 tempfile.workspace = true
 hound.workspace = true
 hmac.workspace = true
+http-body-util.workspace = true
+hyper-util.workspace = true
+iroh = { version = "=1.4.1", default-features = false, features = ["tls-aws-lc-rs"] }
+iroh-relay = { version = "=1.4.1", default-features = false, features = ["server", "tls-aws-lc-rs"] }
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tower-http = { workspace = true, features = ["compression-br", "compression-gzip"] }
@@ -68,8 +72,11 @@ url.workspace = true
 weixin-agent.workspace = true
 
 [dev-dependencies]
-http-body-util.workspace = true
+tokio-rustls.workspace = true
 tower.workspace = true
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+cccc-system-proxy = { version = "=0.4.60", path = "../cccc-system-proxy" }
 
 [build-dependencies]
 sha2.workspace = true

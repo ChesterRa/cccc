@@ -8,6 +8,18 @@ pub(crate) enum DaemonState {
     External { pid: Option<u32> },
 }
 
+impl DaemonState {
+    pub(crate) fn for_launch(
+        owned_pid: Option<u32>,
+        external: impl FnOnce() -> Option<u32>,
+    ) -> Self {
+        match owned_pid {
+            Some(pid) => Self::StartedHere { pid },
+            None => Self::External { pid: external() },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WebState {
     Starting,

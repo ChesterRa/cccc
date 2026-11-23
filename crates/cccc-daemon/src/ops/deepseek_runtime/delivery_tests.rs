@@ -756,7 +756,8 @@ fn launch_workspace_projection_tracks_the_deepseek_owner_not_saved_settings() {
     let mut group = store
         .create("DeepSeek launch workspace", "")
         .expect("group");
-    let roots = [temp.path().join("A"), temp.path().join("B")];
+    let physical_root = temp.path().canonicalize().expect("physical fixture root");
+    let roots = [physical_root.join("A"), physical_root.join("B")];
     for (root, key) in roots.iter().zip(["scope_a", "scope_b"]) {
         std::fs::create_dir(root).expect("scope root");
         std::fs::write(root.join("same.txt"), key).expect("scope bytes");

@@ -58,7 +58,7 @@ jobs:
         run: dnf install -y cmake perl-core
       - name: Select Python 3.14
         run: echo "/opt/python/cp314-cp314/bin" >> "$GITHUB_PATH"
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.91.0
       - uses: Swatinem/rust-cache@v2
         with:
           key: x86_64-unknown-linux-gnu-release
@@ -132,7 +132,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: dtolnay/rust-toolchain@1.91.0
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
