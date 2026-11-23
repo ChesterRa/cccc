@@ -126,7 +126,7 @@ Reordering or archiving Groups does not move an existing selection.
 
 ### Group message and terminal views
 
-Use **Connect sessions** above the Group list to admit user-owned Codex, Claude Code, Pi and OpenCode V2 CLI sessions. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
+Use a Group's **Add Agent → Add existing sessions** to admit user-owned CLI sessions: Codex, Claude Code, Pi and OpenCode V2 on this computer, and Codex or Claude Code on a paired computer; **Settings → Session access** manages which sessions and computers may join. Their native applications retain runtime ownership; the Web shows Group access, receive availability and recovery guidance instead of a mirrored terminal. See [native session setup and lifecycle](./local-sessions).
 
 On desktop, Group editing, search, context and runtime controls stay directly in the header.
 **Group connections** is available under the current Group’s settings and in each Group’s sidebar **⋮** menu, including remote Groups

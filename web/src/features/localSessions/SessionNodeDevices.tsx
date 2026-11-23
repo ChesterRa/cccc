@@ -11,14 +11,12 @@ export function SessionNodeDevices({
   revokeId,
   setRevokeId,
   revoke,
-  onChooseSessions,
 }: {
   devices: SessionNodeDevice[];
   busy: boolean;
   revokeId: string;
   setRevokeId: (id: string) => void;
   revoke: () => Promise<void>;
-  onChooseSessions: (device: SessionNodeDevice) => void;
 }) {
   const { t } = useTranslation("layout");
   const listId = useId();
@@ -103,19 +101,6 @@ export function SessionNodeDevices({
             ) : (
               device.enabled && (
                 <div className="flex flex-wrap gap-1">
-                  {online && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="max-sm:min-h-11"
-                      aria-describedby={identity}
-                      disabled={busy}
-                      onClick={() => onChooseSessions(device)}
-                    >
-                      {t("sessionNodes.chooseSessionsToJoin")}
-                    </Button>
-                  )}
                   <Button
                     type="button"
                     variant="ghost"

@@ -53,12 +53,7 @@ export function LocalSessionsDefaults({
             )}
           </dd>
         </div>
-        <div className="space-y-1">
-          <dt>{t("actors:workingDirectory")}</dt>
-          <dd className="break-all">{firstSelected.cwd}</dd>
-        </div>
       </dl>
-      <p className="text-xs leading-relaxed">{t("localSessions.foremanDirectoryHint")}</p>
     </section>
   );
 }

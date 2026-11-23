@@ -77,7 +77,13 @@
     "pathPlaceholder": "/あなたの/プロジェクト/パス",
     "pathAutoCreateHint": "親ディレクトリが存在する場合、未作成のフォルダだけを自動作成します。",
     "creating": "作成…",
-    "createGroup": "グループの作成"
+    "createGroup": "グループの作成",
+    "blankStart": "最初から作成",
+    "fromExistingSessions": "既存のセッションから作成",
+    "sessionGroupNamePlaceholder": "選択したセッション名から作成",
+    "noLocalProjectDirectory": "セッションは他のコンピューターで実行されています。このグループにローカルのディレクトリはありません",
+    "usingSelectedSessions_one": "選択した {{count}} 件のセッションを使用",
+    "usingSelectedSessions_other": "選択した {{count}} 件のセッションを使用"
   },
   "groupEdit": {
     "title": "グループを編集",

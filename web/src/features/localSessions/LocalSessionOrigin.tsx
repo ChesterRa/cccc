@@ -46,19 +46,30 @@ export function LocalSessionOrigin({
   );
 }
 
-export function LocalSessionStatus({ connected }: { connected: boolean }) {
+export function LocalSessionStatus({
+  connected,
+  compact = false,
+}: {
+  connected: boolean;
+  compact?: boolean;
+}) {
   const { t } = useTranslation("layout");
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs ${connected ? "text-[var(--color-text-muted)]" : "text-amber-700 dark:text-amber-300"}`}
+      className={`relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs ${connected ? "text-[var(--color-text-muted)]" : "text-amber-700 dark:text-amber-300"}`}
       data-status-tone={connected ? undefined : "warning"}
+      title={
+        compact ? t(connected ? "localSessions.ready" : "localSessions.unavailable") : undefined
+      }
     >
       <span
         className="h-1.5 w-1.5 bg-current"
         data-status-dot={connected ? "active" : "attention"}
         aria-hidden="true"
       />
-      {t(connected ? "localSessions.ready" : "localSessions.unavailable")}
+      <span className={compact ? "sr-only" : undefined}>
+        {t(connected ? "localSessions.ready" : "localSessions.unavailable")}
+      </span>
     </span>
   );
 }

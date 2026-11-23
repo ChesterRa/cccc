@@ -14,11 +14,18 @@ export const refreshLocalSessionRecovery = (groupId: string, actorId: string) =>
     { method: "POST" },
   );
 
-export const createLocalConversation = (sourceIds: string[]) => {
+export const createLocalConversation = (sourceIds: string[], title?: string) => {
   clearGroupsReadRequest();
   return apiJson<{ group_id: string; group: GroupDoc; reused: boolean }>(
     "/api/v1/local_sessions/conversations",
-    { method: "POST", body: JSON.stringify({ source_ids: sourceIds, direct: false }) },
+    {
+      method: "POST",
+      body: JSON.stringify({
+        source_ids: sourceIds,
+        direct: false,
+        title: title?.trim() || undefined,
+      }),
+    },
   );
 };
 

@@ -260,6 +260,7 @@ export function AppModals({
     })),
   );
   const editingActorSection = useModalStore((state) => state.editingActorSection);
+  const existingSessionsGroupId = useModalStore((state) => state.existingSessionsGroupId);
   const openSettingsTarget = useModalStore((state) => state.openSettingsTarget);
   const contextTaskId = useModalStore((state) => state.contextTaskId);
   const capabilityCenterGroupId = useModalStore((state) => state.capabilityCenterGroupId);
@@ -1788,6 +1789,7 @@ export function AppModals({
         onFetchDirContents={directoryBrowser.fetchContents}
         onCreateDirectory={directoryBrowser.createDirectory}
         onCreateGroup={handleCreateGroup}
+        onSelectGroup={onSelectGroup ?? setSelectedGroupId}
         onClose={() => closeModal("createGroup")}
         onCancelAndReset={() => {
           closeModal("createGroup");
@@ -1800,6 +1802,7 @@ export function AppModals({
       <ActorConfigModal
         key={`create-actor-${selectedGroupId}`}
         mode="create"
+        initialExistingSessions={!!selectedGroupId && existingSessionsGroupId === selectedGroupId}
         onSelectGroup={onSelectGroup}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
         scopes={groupDoc?.group_id === selectedGroupId ? groupDoc.scopes : undefined}

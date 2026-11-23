@@ -48,7 +48,8 @@
     "webAccess": "Web 访问",
     "webModels": "Web 模型",
     "update": "更新",
-    "voice": "语音"
+    "voice": "语音",
+    "sessionAccess": "会话接入"
   },
   "notifications": {
     "title": "通知",

@@ -34,13 +34,11 @@ import { SidebarMobileOverlay } from "./SidebarMobileOverlay";
 import { ConnectSidebar } from "../../features/connect/ConnectSidebar";
 import type { ConnectWorkbench } from "../../features/connect/useConnectWorkbench";
 
-import { LocalSessionsButton } from "../../features/localSessions/LocalSessionsButton";
 import { useVisiblePendingSummary } from "../../features/pendingReplies/useVisiblePendingSummary";
 import { aggregatePendingIndicator } from "../../features/pendingReplies/indicator";
 import { PendingIndicatorText } from "../../features/pendingReplies/PendingIndicator";
 
 export interface GroupSidebarProps {
-  canAccessLocalSessions?: boolean;
   connect?: ConnectWorkbench;
   orderedGroups: GroupMeta[];
   archivedGroupIds: string[];
@@ -71,7 +69,6 @@ export interface GroupSidebarProps {
 
 export function GroupSidebar({
   connect,
-  canAccessLocalSessions,
   orderedGroups,
   archivedGroupIds,
   selectedGroupId,
@@ -238,22 +235,6 @@ export function GroupSidebar({
     },
     [onDeleteGroup, readOnly, t, controlsBusy],
   );
-
-  const localSessionsEntry = (collapsed: boolean) =>
-    !readOnly && canAccessLocalSessions ? (
-      <LocalSessionsButton
-        initialTargetGroupId={selectedGroupId || undefined}
-        collapsed={collapsed}
-        isDark={isDark}
-        hubName={
-          connect?.ownInstance ? instanceName(connect.ownInstance, connect.instances) : undefined
-        }
-        onSelectGroup={(groupId) => {
-          onSelectGroup(groupId);
-          if (window.matchMedia("(max-width: 767px)").matches) onClose();
-        }}
-      />
-    ) : null;
 
   const renderGroupList = useCallback(
     (groups: GroupMeta[], section: "working" | "archived") => {
@@ -470,7 +451,6 @@ export function GroupSidebar({
                 <PlusIcon size={18} />
               </IconButton>
             )}
-            {localSessionsEntry(true)}
           </div>
         )}
 
@@ -483,7 +463,6 @@ export function GroupSidebar({
                 : undefined
             }
             instanceOrigin={connect?.ownInstance?.public_origin}
-            action={localSessionsEntry(false)}
           />
         )}
         <div className={groupSidebarScrollClass(isCollapsed)}>

@@ -1,29 +1,36 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ActorConfigTabs } from "../../components/modals/ActorConfigTabs";
 import { Button } from "../../components/ui/button";
-import type { SessionNodeDevice } from "../../services/api/sessionNodes";
 import { SessionNodeDirectoryNotice } from "./SessionNodeDirectoryNotice";
 import { SessionNodeManagement } from "./SessionNodeManagement";
 import { SessionNodePreparation } from "./SessionNodePreparation";
+import { SessionNodeRelay } from "./SessionNodeRelay";
 import { useSessionNodes } from "./useSessionNodes";
 import { useSessionNodeTicket } from "./useSessionNodeTicket";
 
-type PanelProps = { onChooseSessions: (device: SessionNodeDevice) => void };
+type PanelMode = "picker" | "settings";
 
-/** Both tabs share one authorized directory and one in-memory ticket. */
+type PanelProps = {
+  mode: PanelMode;
+  /** Picker only: leave the pairing subview and return to the session list. */
+  onBackToSessions?: () => void;
+};
+
+/** One authorized directory and one in-memory ticket per mounted panel. */
 function DeviceViews({
   actions,
-  onChooseSessions,
-}: PanelProps & { actions: ReturnType<typeof useSessionNodes> }) {
+  mode,
+}: {
+  mode: PanelMode;
+  actions: ReturnType<typeof useSessionNodes>;
+}) {
   const { t } = useTranslation("layout");
-  const [view, setView] = useState("pair");
+  const [pairing, setPairing] = useState(mode === "picker");
   const [confirmStop, setConfirmStop] = useState(false);
   const endpointLive = actions.directory.status === "ready" && !!actions.directory.endpoint;
   useEffect(() => {
     if (!endpointLive) setConfirmStop(false);
   }, [endpointLive]);
-  const switcher = useRef<HTMLFieldSetElement>(null);
   const [query, setQuery] = useState("");
   const [ticketError, setTicketError] = useState("");
   const invitation = useSessionNodeTicket(setTicketError, actions.forbid);
@@ -47,67 +54,61 @@ function DeviceViews({
       invitation.clear();
     }
   };
+  const preparation = (
+    <SessionNodePreparation
+      invitation={invitation}
+      supportedRuntimes={directory.supportedRuntimes}
+      ticketError={ticketError}
+      busy={busy}
+      directoryHintKey={
+        mode === "picker"
+          ? "sessionNodes.ticketDirectoryHintPicker"
+          : "sessionNodes.ticketDirectoryHint"
+      }
+    />
+  );
+  const relay = (
+    <SessionNodeRelay
+      relay={directory.relay}
+      relayBusy={actions.relayBusy}
+      relayError={actions.relayError}
+      busy={busy}
+      onToggleRelay={(enabled) => void handleToggleRelay(enabled)}
+    />
+  );
+  if (mode === "picker")
+    return (
+      <fieldset disabled={busy} className="min-w-0 space-y-3 border-0 p-0">
+        {preparation}
+        {relay}
+        <p className="text-xs text-[var(--color-text-secondary)]">
+          {t("sessionNodes.manageInSettings")}
+        </p>
+      </fieldset>
+    );
   return (
-    <fieldset
-      ref={switcher}
-      disabled={busy}
-      className="min-w-0 space-y-3 border-0 p-0 [&_[role=tab]]:min-h-10 [&_[role=tab]]:flex-1 max-sm:[&_[role=tab]]:min-h-11"
-    >
-      <ActorConfigTabs
-        ariaLabel={t("localSessions.addDevice")}
-        activeId={view}
-        onChange={(next) => {
-          if (!busy) {
-            actions.setRevokeId("");
-            setConfirmStop(false);
-            setView(next);
-          }
-        }}
-        tabs={[
-          {
-            id: "pair",
-            label: t("localSessions.addDevice"),
-            panel: (
-              <div className="min-w-0 space-y-3">
-                <SessionNodePreparation
-                  invitation={invitation}
-                  relay={directory.relay}
-                  supportedRuntimes={directory.supportedRuntimes}
-                  relayBusy={actions.relayBusy}
-                  relayError={actions.relayError}
-                  onToggleRelay={(enabled) => void handleToggleRelay(enabled)}
-                  ticketError={ticketError}
-                  busy={busy}
-                  onChooseDeviceSessions={() => {
-                    setQuery("");
-                    actions.setRevokeId("");
-                    setView("devices");
-                    requestAnimationFrame(() =>
-                      switcher.current
-                        ?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')
-                        ?.focus({ preventScroll: true }),
-                    );
-                  }}
-                />
-              </div>
-            ),
-          },
-          {
-            id: "devices",
-            label: t("sessionNodes.devices"),
-            panel:
-              view === "devices" ? (
-                <SessionNodeManagement
-                  devices={directory.devices}
-                  actions={actions}
-                  query={query}
-                  onSearch={setQuery}
-                  onChooseSessions={onChooseSessions}
-                />
-              ) : null,
-          },
-        ]}
+    <fieldset disabled={busy} className="min-w-0 space-y-3 border-0 p-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-medium">{t("sessionNodes.devices")}</h4>
+        <Button
+          type="button"
+          size="sm"
+          variant={pairing ? "outline" : "default"}
+          aria-expanded={pairing}
+          className="min-h-9 max-sm:min-h-11 text-xs"
+          onClick={() => setPairing((open) => !open)}
+        >
+          {t("sessionNodes.pairComputer")}
+        </Button>
+      </div>
+      {pairing && preparation}
+      <SessionNodeManagement
+        devices={directory.devices}
+        actions={actions}
+        query={query}
+        onSearch={setQuery}
       />
+      {relay}
       {directory.endpoint && (
         <div className="space-y-2 border-t border-[var(--glass-border-subtle)] pt-3">
           {confirmStop ? (
@@ -167,17 +168,38 @@ function DeviceViews({
 }
 
 export function SessionNodesPanel({
-  onChooseSessions,
+  mode,
+  onBackToSessions,
   active = true,
 }: PanelProps & { active?: boolean }) {
+  const { t } = useTranslation("layout");
   const actions = useSessionNodes(active);
   const { directory } = actions;
-  // An outage retains the ticket for a retry. Losing access unmounts both tabs and discards it.
-  if (
+  // An outage retains the ticket for a retry. Losing access unmounts the views and discards it.
+  const body =
     directory.status === "ready" ||
     directory.status === "failed" ||
-    directory.status === "rechecking"
-  )
-    return <DeviceViews actions={actions} onChooseSessions={onChooseSessions} />;
-  return <SessionNodeDirectoryNotice status={directory.status} />;
+    directory.status === "rechecking" ? (
+      <DeviceViews actions={actions} mode={mode} />
+    ) : (
+      <SessionNodeDirectoryNotice status={directory.status} />
+    );
+  if (mode !== "picker") return body;
+  // The way back stays available in every directory state, so the subview never traps the picker.
+  return (
+    <div className="min-w-0 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--glass-border-subtle)] pb-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="min-h-10 max-sm:min-h-11 -ml-2 text-sm"
+          onClick={onBackToSessions}
+        >
+          {t("sessionNodes.backToSessionList")}
+        </Button>
+      </div>
+      {body}
+    </div>
+  );
 }

@@ -40,6 +40,32 @@ it("invalidates the existing Groups read when a native conversation is created",
   expect(fetch).toHaveBeenCalledTimes(3);
 });
 
+it.each([
+  { title: "  Review Group  ", expected: { title: "Review Group" } },
+  { title: "", expected: {} },
+])(
+  "sends the optional Group name for a native conversation ($title)",
+  async ({ title, expected }) => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, result: { group_id: "g_native" } })),
+      );
+    vi.stubGlobal("fetch", fetch);
+
+    await createLocalConversation(["codex:fixture"], title);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0]).toBe("/api/v1/local_sessions/conversations");
+    expect(fetch.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      source_ids: ["codex:fixture"],
+      direct: false,
+      ...expected,
+    });
+  },
+);
+
 it("reads the sources directory without changing its public response shape or starting a conversation", async () => {
   const source = {
     source_id: "codex:fixture",

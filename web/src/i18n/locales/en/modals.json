@@ -77,7 +77,13 @@
     "pathPlaceholder": "/path/to/your/project",
     "pathAutoCreateHint": "If the folder is missing, it will be created when its parent exists.",
     "creating": "Creating...",
-    "createGroup": "Create Group"
+    "createGroup": "Create Group",
+    "blankStart": "Start from scratch",
+    "fromExistingSessions": "Create from existing sessions",
+    "sessionGroupNamePlaceholder": "Generated from selected session names",
+    "noLocalProjectDirectory": "The sessions run on other computers; this Group has no local directory",
+    "usingSelectedSessions_one": "Using {{count}} selected session",
+    "usingSelectedSessions_other": "Using {{count}} selected sessions"
   },
   "groupEdit": {
     "title": "Edit Group",

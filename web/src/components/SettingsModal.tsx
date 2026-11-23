@@ -1,5 +1,7 @@
 // SettingsModal renders the settings modal.
 import { GroupConnectionsPanel } from "../features/connect/GroupConnectionsControl";
+import { ExistingSessionsHint } from "../features/connect/ExistingSessionsHint";
+import { canOpenExistingSessions } from "../features/connect/existingSessionsAccess";
 import { lazy, Suspense, useState, useEffect, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { GroupDoc, GroupSettings, WebAccessSession } from "../types";
@@ -64,6 +66,11 @@ const AccountTab = lazy(() =>
 );
 const WebAccessTab = lazy(() =>
   import("./modals/settings/WebAccessTab").then((module) => ({ default: module.WebAccessTab })),
+);
+const SessionAccessTab = lazy(() =>
+  import("./modals/settings/SessionAccessTab").then((module) => ({
+    default: module.SessionAccessTab,
+  })),
 );
 const WebModelConnectorsTab = lazy(() =>
   import("./modals/settings/WebModelConnectorsTab").then((module) => ({ default: module.default })),
@@ -469,6 +476,7 @@ export function SettingsModal({
         ? [
             { id: "branding" as const, label: t("tabs.branding") },
             { id: "webAccess" as const, label: t("tabs.webAccess") },
+            { id: "sessionAccess" as const, label: t("tabs.sessionAccess") },
             {
               id: "webModels" as const,
               label: t("tabs.webModels", { defaultValue: "ChatGPT Web Model" }),
@@ -665,6 +673,14 @@ export function SettingsModal({
                           {t("layout:groupConnections.description")}
                         </p>
                       </div>
+                      <ExistingSessionsHint
+                        onOpen={() => {
+                          if (!canOpenExistingSessions(groupId) || !voiceBeforeLeave.current())
+                            return;
+                          onClose();
+                          useModalStore.getState().openExistingSessions(groupId);
+                        }}
+                      />
                       <GroupConnectionsPanel
                         key={groupId}
                         groupId={groupId}
@@ -882,6 +898,12 @@ export function SettingsModal({
                     isActive={scope === "global" && activeTab === "webAccess"}
                     focusReach={focusReachOnOpen}
                     onOpenAccount={openAccountFromWebAccess}
+                  />
+                )}
+
+                {activeTab === "sessionAccess" && (
+                  <SessionAccessTab
+                    isActive={scope === "global" && activeTab === "sessionAccess"}
                   />
                 )}
 

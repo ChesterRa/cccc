@@ -50,6 +50,7 @@ interface ModalState {
   relaySource: RelaySource | null;
   contextTaskId: string | null;
   groupConnectionsId: string | null;
+  existingSessionsGroupId: string | null;
   /** The Group the capability center was opened for; "" opens it without one, null keeps it closed. */
   capabilityCenterGroupId: string | null;
   presentationViewer: PresentationViewerState | null;
@@ -73,6 +74,7 @@ interface ModalState {
   // Actions
   openModal: (name: keyof ModalState["modals"]) => void;
   closeModal: (name: keyof ModalState["modals"]) => void;
+  openExistingSessions: (groupId: string) => void;
   openSettingsTarget: (target: {
     scope?: "group" | "global";
     tab?: string;
@@ -120,6 +122,7 @@ export const useModalStore = create<ModalState>((set) => ({
   relaySource: null,
   contextTaskId: null,
   groupConnectionsId: null,
+  existingSessionsGroupId: null,
   capabilityCenterGroupId: null,
   presentationViewer: null,
   presentationPin: null,
@@ -129,13 +132,24 @@ export const useModalStore = create<ModalState>((set) => ({
   editingActorSection: null,
   settingsTarget: null,
 
-  openModal: (name) => set((state) => ({ modals: { ...state.modals, [name]: true } })),
+  openModal: (name) =>
+    set((state) => ({
+      modals: { ...state.modals, [name]: true },
+      ...(name === "addActor" ? { existingSessionsGroupId: null } : {}),
+    })),
 
   closeModal: (name) =>
     set((state) => ({
       modals: { ...state.modals, [name]: false },
       ...(name === "context" ? { contextTaskId: null } : {}),
       ...(name === "settings" ? { settingsTarget: null } : {}),
+      ...(name === "addActor" ? { existingSessionsGroupId: null } : {}),
+    })),
+
+  openExistingSessions: (groupId) =>
+    set((state) => ({
+      modals: { ...state.modals, addActor: true },
+      existingSessionsGroupId: groupId,
     })),
 
   openSettingsTarget: (target) =>

@@ -5,17 +5,18 @@ export function RuntimeCategoryPicker({
   value,
   current,
   canSwitch,
+  choices = ["managed", "native", "web"],
   disabled,
   onChange,
 }: {
   value: RuntimeCategory;
   current: RuntimeCategory;
   canSwitch: boolean;
+  choices?: readonly RuntimeCategory[];
   disabled?: boolean;
   onChange: (value: RuntimeCategory) => void;
 }) {
   const { t } = useTranslation("actors");
-  const choices: RuntimeCategory[] = ["managed", "native", "web"];
   const unavailable = (choice: RuntimeCategory) =>
     !canSwitch && choice !== current && (choice === "native" || current === "native");
   return (
@@ -24,7 +25,7 @@ export function RuntimeCategoryPicker({
         {t("runtimeSwitch.category")}
       </div>
       <div
-        className="grid grid-cols-3 gap-1.5"
+        className={`grid gap-1.5 ${choices.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}
         role="group"
         aria-label={t("runtimeSwitch.category")}
       >

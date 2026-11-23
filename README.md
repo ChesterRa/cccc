@@ -93,7 +93,7 @@ On servers, in containers and in scripts, use `cccc --headless` (the same as `cc
 | Who starts it | You, in Codex, Claude Code, Pi or OpenCode V2 | CCCC, with the Runtime you choose |
 | Who owns it | The app keeps its process, conversation, account, model, approvals and terminal | CCCC starts, stops and restarts it; most runtimes show their terminal in the Web UI |
 | Approval prompts | The app's own prompts still apply | Many runtimes start with them bypassed |
-| Set up with | `/setup` or `cccc sessions enable`, then **Connect sessions** | **New** and **Add an agent** in the Web UI, or `cccc attach` and `cccc actor add` |
+| Set up with | `/setup` or `cccc sessions enable`, then **Add Agent → Add existing sessions** | **New** and **Add an agent** in the Web UI, or `cccc attach` and `cccc actor add` |
 
 Both kinds can work in the same Group. Steps: [Connect the sessions you already run](#connect-the-sessions-you-already-run) or [Let CCCC run agents](#let-cccc-run-agents).
 
@@ -115,7 +115,7 @@ daemon_auto_start = true
    - **Pi:** run `/reload`, or start Pi.
    - **OpenCode V2:** reopen the original session; a blank new session needs a first message.
 3. **Check** with `cccc sessions list`. Add `--include-offline` to also see registered sessions that cannot receive right now.
-4. **Connect them to a Group.** In the Web UI, choose **Connect sessions** above the Group list (an icon under **New** when the sidebar is collapsed). In **Connect existing sessions**, pick a **Target Group** and choose **Connect to Group**, or pick **+ New Group** and choose **Create & connect**. For a new Group with several sessions, choose the **Foreman** under **New Group defaults**. Setup steps for each app are under **App to connect**, and when a session is marked **Unavailable to receive**, the dialog offers **See troubleshooting**.
+4. **Add them to a Group.** In the Web UI, open the Group, choose **Add Agent**, switch to **Add existing sessions**, select the sessions and choose **Add *N* sessions**. To start a new Group from them, choose **New** → **Create from existing sessions**; with several sessions, choose the **Foreman** under **New Group defaults**. Setup steps for each app are under **How to connect · 3 steps** in the list, and when a session is marked **Unavailable to receive**, the list offers **See troubleshooting**. **Settings → Session access** manages which sessions and paired computers may join.
 
 You can also ask from inside a session; CCCC creates or reuses a Group for both:
 
@@ -179,7 +179,7 @@ Chet is one assistant for the whole CCCC instance, outside every Group's member 
 | Send, Send + Reply, Mail | Send delivers now; Send + Reply also tracks a reply; Mail waits in an agent's Inbox without interrupting. A message goes to you or to agents, not both |
 | Waiting for you | Requests from agents that need your answer |
 | `CCCC_HOME` | Where runtime state lives, `~/.cccc/` by default |
-| Connect sessions, CCCC Connect | **Connect sessions** adds sessions on this machine to a Group; CCCC Connect links Groups across instances |
+| Add existing sessions, CCCC Connect | **Add existing sessions** makes running sessions, on this machine or a paired one, members of a Group; CCCC Connect links Groups across instances |
 
 Use Mail for updates that can wait, Send when the recipient should know now, and Send + Reply when you need an answer. Use `tracked-send` for delegated work that needs an owner, an outcome and evidence.
 
@@ -235,7 +235,7 @@ Telegram, Slack, Discord, Mattermost, Feishu/Lark, DingTalk, WeCom and Weixin (d
 
 ### CCCC Connect
 
-CCCC Connect links Groups across CCCC instances; it is separate from **Connect sessions**. "Account" means your CCCC account, not a provider login. With an account, each instance also needs a reachable HTTPS address, such as the one **Remote Access** sets up; linking the account alone does not make it reachable.
+CCCC Connect links Groups across CCCC instances; it is separate from **Add existing sessions**. "Account" means your CCCC account, not a provider login. With an account, each instance also needs a reachable HTTPS address, such as the one **Remote Access** sets up; linking the account alone does not make it reachable.
 
 | Method | Scope and setup |
 |---|---|

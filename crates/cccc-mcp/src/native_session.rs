@@ -313,7 +313,7 @@ impl Context {
                 } else {String::new()};
                 ToolCallError::new(
                     "native_membership_missing",
-                    format!("Native source {source_id} is not a member of Group {group_id}. {next}If membership is still missing, ask the user to open Connect existing sessions, select this existing Group, and Connect to Group."),
+                    format!("Native source {source_id} is not a member of Group {group_id}. {next}If membership is still missing, ask the user to open this Group in the Web UI, choose Add Agent → Add existing sessions, select this session and add it."),
                     json!({"group_id":group_id,"source_id":source_id}).as_object().expect("membership details").clone(),
                 )
             })?

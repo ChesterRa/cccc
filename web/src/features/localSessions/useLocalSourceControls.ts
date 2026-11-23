@@ -7,7 +7,7 @@ import type { useLocalSessionSources } from "./useLocalSessionSources";
 
 export function useLocalSourceControls(
   directory: ReturnType<typeof useLocalSessionSources>,
-  groupBusy: RefObject<boolean>,
+  groupBusy?: RefObject<boolean>,
 ) {
   const { t } = useTranslation("layout");
   const [target, setTarget] = useState<{
@@ -39,13 +39,13 @@ export function useLocalSourceControls(
     return () => clearTimeout(timer);
   }, [cooldowns]);
   const open = (source: LocalSessionSource, action: "remove" | "restore") => {
-    if (pending.current || groupBusy.current) return;
+    if (pending.current || groupBusy?.current) return;
     setError("");
     setNotice("");
     setTarget({ source, action });
   };
   const confirm = async () => {
-    if (!target || pending.current || groupBusy.current) return;
+    if (!target || pending.current || groupBusy?.current) return;
     const control = directory.source_states?.[target.source.source_id]?.control;
     if (!directory.capabilities?.source_control || !control?.supported) return;
     pending.current = true;
@@ -108,7 +108,7 @@ export function useLocalSourceControls(
     }
   };
   const recheck = async (source: LocalSessionSource) => {
-    if (pending.current || groupBusy.current || cooldowns[source.source_id] > Date.now()) return;
+    if (pending.current || groupBusy?.current || cooldowns[source.source_id] > Date.now()) return;
     if (
       !directory.capabilities?.source_diagnostics ||
       !directory.source_states?.[source.source_id]?.control.supported

@@ -69,10 +69,8 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-it("switches within the add-device dialog, filters sessions by device, and revokes only the selected computer", async () => {
+it("keeps no sidebar entry and manages paired computers only in settings mode", async () => {
   const name = "Office Mac";
-  const otherGroup = { ...existingGroup, group_id: "g-alternate", title: "Alternate workspace" };
-  useGroupStore.setState({ groups: [existingGroup, otherGroup] });
   const devices = [
     { node_id: "alpha", name, enabled: true, connected: false },
     { node_id: "beta", name, enabled: true, connected: true },
@@ -81,34 +79,9 @@ it("switches within the add-device dialog, filters sessions by device, and revok
   const calls: string[] = [];
   let forbidden = false;
   let registered = false;
-  let secondSession = false;
-  let memberEnabled: boolean | undefined;
-  const source = (node: string, title: string) => ({
-    source_id: `remote:${node}:grant:source`,
-    source_kind: "device" as const,
-    node_id: node,
-    node_name: name,
-    title,
-    cwd: "/fixture",
-    runtime: "codex" as const,
-    connected: true,
-  });
   vi.stubGlobal("fetch", async (input: unknown, init?: RequestInit) => {
     const path = String(input);
     calls.push((init?.method ?? "GET") + " " + path);
-    if (path.startsWith("/api/v1/groups/") && path.endsWith("/actors")) {
-      const member = {
-        id: "fixture-member",
-        external_session_id: source("beta", "Second workspace").source_id,
-        enabled: memberEnabled,
-      };
-      return ok({
-        actors:
-          path === `/api/v1/groups/${existingGroup.group_id}/actors` && memberEnabled !== undefined
-            ? [member]
-            : [],
-      });
-    }
     if (path === apiRoot)
       return forbidden
         ? fail(403)
@@ -117,14 +90,6 @@ it("switches within the add-device dialog, filters sessions by device, and revok
             devices: registered ? devices : [],
             supported_runtimes: ["codex", "claude"],
           });
-    if (path === apiRoot + "/sources")
-      return ok({
-        sources: [
-          source("alpha", "First workspace"),
-          ...(secondSession ? [source("beta", "Second workspace")] : []),
-        ],
-      });
-    if (path === "/api/v1/local_sessions") return ok({ sources: [] });
     if (path === apiRoot + "/beta/revoke" && init?.method === "POST") {
       devices[1] = { ...devices[1], enabled: false, connected: false };
       return ok({ revoked: true });
@@ -132,39 +97,35 @@ it("switches within the add-device dialog, filters sessions by device, and revok
     throw Error("Unexpected device operation");
   });
   const noop = () => {};
-  const defaults: GroupSidebarProps = {
-    orderedGroups: [existingGroup, otherGroup],
-    archivedGroupIds: [],
-    selectedGroupId: existingGroup.group_id,
-    isOpen: true,
-    isCollapsed: false,
-    sidebarWidth: 248,
-    isDark: false,
-    onSelectGroup: noop,
-    onClose: noop,
-    onToggleCollapse: noop,
-    onResizeWidth: noop,
-    onReorderSection: noop,
-    onArchiveGroup: noop,
-    onRestoreGroup: noop,
-  };
-  const sidebar = (extra: Partial<GroupSidebarProps>) =>
-    mount(<GroupSidebar {...defaults} {...extra} />);
-  const dialog = () => document.querySelector<HTMLElement>('[role="dialog"]')!;
-  const activeTab = (label: string) =>
-    [...dialog().querySelectorAll<HTMLElement>('[role="tab"]')].find(
-      (tab) => !tab.closest("[hidden]") && tab.textContent === label,
-    )!;
-  const visibleDevicePanel = () =>
-    [...dialog().querySelectorAll<HTMLElement>('[role="tabpanel"]')].find(
-      (panel) => !panel.closest("[hidden]"),
-    )!;
-  const rows = () => [
-    ...visibleDevicePanel().querySelectorAll(`ul[aria-label="${labels.devices}"] > li`),
-  ];
+  useGroupStore.setState({ groups: [existingGroup] });
+  // Session entry moved into a Group's Add Agent and Settings, so the sidebar offers none.
+  await mount(
+    <GroupSidebar
+      orderedGroups={[existingGroup]}
+      archivedGroupIds={[]}
+      selectedGroupId={existingGroup.group_id}
+      isOpen
+      isCollapsed={false}
+      sidebarWidth={248}
+      isDark={false}
+      onSelectGroup={noop}
+      onClose={noop}
+      onToggleCollapse={noop}
+      onResizeWidth={noop}
+      onReorderSection={noop}
+      onArchiveGroup={noop}
+      onRestoreGroup={noop}
+    />,
+  );
+  // The former sidebar entry is gone; adding sessions now starts from a Group's Add Agent.
+  expect(button("Connect sessions")).toBeUndefined();
+  await refresh();
+  expect(calls).toEqual([]);
+
+  const rows = () => [...host.querySelectorAll(`ul[aria-label="${labels.devices}"] > li`)];
   const directoryReads = () => calls.filter((call) => call === "GET " + apiRoot).length;
   const setSearch = async (value: string) => {
-    const search = visibleDevicePanel().querySelector<HTMLInputElement>('input[type="search"]')!;
+    const search = host.querySelector<HTMLInputElement>('input[type="search"]')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
         search,
@@ -173,164 +134,55 @@ it("switches within the add-device dialog, filters sessions by device, and revok
       search.dispatchEvent(new Event("input", { bubbles: true }));
     });
   };
-  await sidebar({ canAccessLocalSessions: true, readOnly: true });
-  expect(button(enLayout.localSessions.connectShort)).toBeUndefined();
-  await sidebar({ canAccessLocalSessions: true });
-  expect(button(labels.devices, host)).toBeUndefined();
-  const trigger = button(enLayout.localSessions.connectShort)!;
-  await refresh();
-  expect(calls).toEqual([]);
-  trigger.focus();
-  await click(enLayout.localSessions.connectShort);
-  let original = dialog();
-  expect(directoryReads()).toBe(0);
-  const firstChoice = () =>
-    [...original.querySelectorAll("label")]
-      .find((label) => label.textContent?.includes("First workspace"))
-      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
-  await act(async () => firstChoice()!.click());
-  expect(firstChoice()?.checked).toBe(true);
-  await click(enLayout.localSessions.addDevice, original);
-  expect(dialog()).toBe(original);
-  expect(activeTab(enLayout.localSessions.addDevice)?.getAttribute("aria-selected")).toBe("true");
-  expect(visibleDevicePanel().querySelector("pre")).not.toBeNull();
+  const settings = (active: boolean) =>
+    mount(<SessionNodesPanel mode="settings" active={active} />);
+  await settings(true);
   expect(directoryReads()).toBe(1);
-  await act(async () => {
-    activeTab(enLayout.localSessions.addDevice).dispatchEvent(
-      new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }),
-    );
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(32);
-  });
-  expect(activeTab(labels.devices).getAttribute("aria-selected")).toBe("true");
-  expect(document.activeElement).toBe(activeTab(labels.devices));
-  expect(visibleDevicePanel().querySelector("pre")).toBeNull();
-  expect(button(labels.create, original)).toBeUndefined();
-  expect(visibleDevicePanel().textContent).toContain(labels.noPairedDevices);
-  expect(directoryReads()).toBe(1);
+  expect(host.textContent).toContain(labels.noPairedDevices);
+  // Pairing stays folded in settings until asked for; the list and its management come first.
+  expect(button(labels.create)).toBeUndefined();
+  expect(button(labels.backToSessionList)).toBeUndefined();
   registered = true;
   await refresh();
   const [offline, online, revoked] = rows();
   expect(offline.textContent).toContain(labels.offline);
-  expect(button(labels.chooseSessionsToJoin, offline)).toBeUndefined();
   expect(revoked.textContent).toContain(labels.revoked);
-  expect(button(labels.chooseSessionsToJoin, revoked)).toBeUndefined();
   expect(online.textContent).toContain("beta");
   await setSearch("  STU ");
   expect(rows()).toHaveLength(1);
   expect(rows()[0].textContent).toContain("Studio");
   await setSearch("missing-device");
-  expect(dialog().textContent).toContain(labels.noMatchingDevices);
+  expect(host.textContent).toContain(labels.noMatchingDevices);
   await setSearch("office");
   expect(rows()).toHaveLength(2);
-  await click(labels.chooseSessionsToJoin, rows()[1]);
-  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
-  expect(dialog().textContent).toContain(i18n.t("sessionNodes.noDeviceSessions", { device: name }));
-  expect(dialog().textContent).not.toContain("First workspace");
-  const beforeSourceRefresh = directoryReads();
-  secondSession = true;
-  await act(async () => vi.advanceTimersByTimeAsync(5000));
-  expect(directoryReads()).toBe(beforeSourceRefresh);
-  expect(dialog().textContent).toContain("Second workspace");
-  expect(dialog().textContent).not.toContain("First workspace");
-  expect(dialog().textContent).toContain(
-    i18n.t("sessionNodes.deviceSessionsHint", { action: enLayout.localSessions.continue }),
-  );
-  const enabledSession = [...original.querySelectorAll("label")]
-    .find((label) => label.textContent?.includes("Second workspace"))!
-    .querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-  await act(async () => enabledSession.click());
-  await click(enLayout.localSessions.continue, original);
-  const target = () =>
-    original.querySelector<HTMLButtonElement>(
-      `section[aria-label="${enLayout.localSessions.target}"] button[aria-haspopup="menu"]`,
-    )!;
-  expect(target().dataset.value).toBe(existingGroup.group_id);
-  const selection = original.querySelector(
-    `section[aria-label="${enLayout.localSessions.selectedSessions}"]`,
-  );
-  expect(selection?.textContent).toContain("Second workspace");
-  expect(selection?.textContent).not.toContain("First workspace");
-  await act(async () => target().click());
-  const alternate = document.querySelector<HTMLElement>(
-    `[role="menuitemradio"][data-value="${otherGroup.group_id}"]`,
-  )!;
-  await act(async () => alternate.click());
-  expect(target().dataset.value).toBe(otherGroup.group_id);
-  expect(button(enLayout.localSessions.join, original)?.disabled).toBe(false);
-  expect(calls.every((call) => call.startsWith("GET "))).toBe(true);
-  await click(enLayout.localSessions.backToSessions, original);
-  await click(labels.allSessions, dialog());
-  expect(dialog().textContent).toContain("First workspace");
-  expect(firstChoice()?.checked).toBe(true);
-  await click(labels.devices, dialog());
-  expect(visibleDevicePanel().querySelector<HTMLInputElement>('input[type="search"]')?.value).toBe(
-    "office",
-  );
-  // On a later visit the current Group already owns this source. Looking at it only reads the roster.
-  await click(enCommon.close, original);
-  memberEnabled = true;
-  const rosterReads = () =>
-    calls.filter((call) => call === `GET /api/v1/groups/${existingGroup.group_id}/actors`).length;
-  const beforeReopen = rosterReads();
-  await click(enLayout.localSessions.connectShort);
-  original = dialog();
-  expect(rosterReads()).toBe(beforeReopen + 1);
-  await click(enLayout.localSessions.addDevice, original);
-  await click(labels.devices, original);
-  expect(rosterReads()).toBe(beforeReopen + 1);
-  await click(labels.chooseSessionsToJoin, rows()[1]);
-  const memberRow = () =>
-    [...original.querySelectorAll("label")].find((label) =>
-      label.textContent?.includes("Second workspace"),
-    );
-  expect(memberRow()?.textContent).toContain(enLayout.localSessions.memberJoined);
-  expect(rosterReads()).toBe(beforeReopen + 2);
-  expect(original.textContent).not.toContain(
-    i18n.t("sessionNodes.deviceSessionsHint", { action: enLayout.localSessions.continue }),
-  );
-  expect(original.textContent).not.toContain(
-    i18n.t("sessionNodes.noDeviceSessions", { device: name }),
-  );
-  memberEnabled = false;
-  await act(async () => vi.advanceTimersByTimeAsync(3000));
-  expect(memberRow()?.textContent).toContain(enLayout.localSessions.memberPaused);
-  expect(button(enLayout.localSessions.continue, original)?.disabled).toBe(true);
-  expect(calls.every((call) => call.startsWith("GET "))).toBe(true);
-  await click(labels.devices, original);
   await click(labels.revoke, rows()[1]);
   expect(rows()[1].textContent).toContain(labels.revokeConfirm);
   expect(calls.every((call) => call.startsWith("GET "))).toBe(true);
   await click(labels.revoke, rows()[1]);
   expect(rows()[1].textContent).toContain(labels.revoked);
-  expect(button(labels.chooseSessionsToJoin, rows()[1])).toBeUndefined();
-  devices[0] = { ...devices[0], connected: true };
-  await refresh();
-  expect(button(labels.chooseSessionsToJoin, rows()[0])).toBeDefined();
+  const pair = button(labels.pairComputer)!;
+  expect(pair.getAttribute("aria-expanded")).toBe("false");
+  await click(labels.pairComputer);
+  expect(pair.getAttribute("aria-expanded")).toBe("true");
+  expect(button(labels.create)).toBeDefined();
+  expect(host.querySelector("pre")).not.toBeNull();
   forbidden = true;
   await refresh();
-  expect(dialog().textContent).toContain(labels.adminRequired);
-  expect(original.querySelector('[role="tablist"]')).toBeNull();
-  expect(button(labels.chooseSessionsToJoin, original)).toBeUndefined();
-  expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  });
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(32);
-  });
-  expect(dialog()).toBeNull();
-  expect(document.activeElement).toBe(trigger);
-  const afterClose = directoryReads();
+  expect(host.textContent).toContain(labels.adminRequired);
+  expect(rows()).toHaveLength(0);
+  expect(button(labels.create)).toBeUndefined();
+  forbidden = false;
+  await settings(false);
+  const hidden = directoryReads();
   await refresh();
-  expect(directoryReads()).toBe(afterClose);
+  await refresh();
+  expect(directoryReads()).toBe(hidden);
   expect(calls.filter((call) => call.startsWith("POST "))).toEqual([
     "POST " + apiRoot + "/beta/revoke",
   ]);
 });
 
-it("supports switching the independent public relay toggle, stopping the gateway, and reading backend runtimes", async () => {
+it("shares one relay switch between pairing and settings, stops only from settings, and reads backend runtimes", async () => {
   history.replaceState(
     { retained: true },
     "",
@@ -394,7 +246,7 @@ it("supports switching the independent public relay toggle, stopping the gateway
     expect(initialize).toHaveBeenCalledOnce();
     expect(host.textContent).toContain("Fixture sign-in");
 
-    await mount(<SessionNodesPanel onChooseSessions={vi.fn()} />);
+    await mount(<SessionNodesPanel mode="picker" onBackToSessions={vi.fn()} />);
     expect(button(labels.enableApp)).toBeDefined();
     await click(labels.enableApp);
     expect(
@@ -434,6 +286,13 @@ it("supports switching the independent public relay toggle, stopping the gateway
     await click(labels.create);
     expect(clipboard).toHaveBeenLastCalledWith("synthetic-ticket-2");
 
+    // Pairing in the session list offers the relay but leaves revoking and stopping to settings.
+    expect(button(labels.stopGateway)).toBeUndefined();
+    expect(button(labels.revoke)).toBeUndefined();
+    expect(host.textContent).toContain(labels.manageInSettings);
+    await mount(<SessionNodesPanel mode="settings" />);
+    // Settings shows the same instance-wide relay switch, already on.
+    expect(relaySwitch().getAttribute("aria-checked")).toBe("true");
     expect(button(labels.stopGateway)).toBeDefined();
     await click(labels.stopGateway);
     expect(calls.some((call) => call.method === "POST" && call.path === apiRoot + "/stop")).toBe(
@@ -450,8 +309,9 @@ it("supports switching the independent public relay toggle, stopping the gateway
       true,
     );
     expect(button(labels.stopGateway)).toBeUndefined();
-    expect(button(labels.create)).toBeDefined();
     expect(host.textContent).toContain(labels.publicRelayPendingHint);
+    await click(labels.pairComputer);
+    expect(button(labels.create)).toBeDefined();
 
     status.supported_runtimes = [];
     await refresh();
@@ -494,10 +354,15 @@ it("offers tickets only with verified access and clears a cached ticket after ac
     throw Error("Unexpected endpoint");
   });
   try {
-    await mount(<SessionNodesPanel onChooseSessions={vi.fn()} />);
+    const back = vi.fn();
+    const picker = (active: boolean) =>
+      mount(<SessionNodesPanel mode="picker" active={active} onBackToSessions={back} />);
+    await picker(true);
     expect(host.textContent).toContain(labels.adminRequired);
     expect(button(labels.create)).toBeUndefined();
-    expect(button(labels.selectDeviceSessions)).toBeUndefined();
+    // The way back to the session list stays available even without access.
+    await click(labels.backToSessionList);
+    expect(back).toHaveBeenCalledOnce();
     mode = "failure";
     await refresh();
     expect(host.textContent).toContain(labels.directoryFailed);
@@ -507,26 +372,27 @@ it("offers tickets only with verified access and clears a cached ticket after ac
       await refresh();
       expect(host.textContent).toContain(labels.upgradeRequired);
       expect(button(labels.create)).toBeUndefined();
+      expect(button(labels.backToSessionList)).toBeDefined();
     }
     expect(posts).toBe(0);
     mode = "ready";
     await refresh();
     expect(host.textContent).not.toContain("Already paired");
-    expect(button(labels.chooseSessionsToJoin)).toBeUndefined();
     expect(button(labels.revoke)).toBeUndefined();
     await click(labels.create);
     expect(clipboard).toHaveBeenLastCalledWith(ticket);
     expect(host.textContent).not.toContain(ticket);
     expect(host.textContent).toContain(labels.ticketCopiedHint);
-    await click(labels.selectDeviceSessions, host);
-    const manager = host.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])');
-    expect(manager?.textContent).toContain("Already paired");
-    expect(host.textContent).not.toContain(ticket);
-    expect(button(labels.create, host)).toBeUndefined();
+    // Copying is not pairing: no shortcut claims the computer's sessions are ready.
+    expect(host.textContent).toContain(labels.ticketDirectoryHintPicker);
+    // Hidden while the list shows, the ticket stays mounted but is not shown until access is rechecked.
+    await picker(false);
     expect(button(enCommon.copied, host)).toBeUndefined();
+    expect(host.textContent).not.toContain(ticket);
     expect(clipboard).toHaveBeenCalledTimes(1);
     expect(posts).toBe(1);
-    await click(enLayout.localSessions.addDevice, host);
+    await picker(true);
+    await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(button(enCommon.copied, host)).toBeDefined();
     expect(clipboard).toHaveBeenCalledTimes(1);
     expect(posts).toBe(1);

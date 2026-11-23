@@ -51,7 +51,8 @@
     "webAccess": "Web アクセス",
     "webModels": "Web モデル",
     "update": "アップデート",
-    "voice": "音声"
+    "voice": "音声",
+    "sessionAccess": "セッション接続"
   },
   "notifications": {
     "title": "通知",

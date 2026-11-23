@@ -7,12 +7,14 @@ export type LocalSessionsHelpRequest = { section: "setup" | "troubleshooting"; s
 export function LocalSessionsHelp({
   request,
   onChooseSessions,
+  defaultSetupOpen = false,
 }: {
-  request: LocalSessionsHelpRequest | null;
-  onChooseSessions: () => void;
+  request?: LocalSessionsHelpRequest | null;
+  onChooseSessions?: () => void;
+  defaultSetupOpen?: boolean;
 }) {
   const { t } = useTranslation("layout");
-  const [setupOpen, setSetupOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(defaultSetupOpen);
   const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
   const setupRef = useRef<HTMLDetailsElement>(null);
   const troubleshootingRef = useRef<HTMLDetailsElement>(null);

@@ -18,11 +18,10 @@ export function LocalSourceManagement({
   );
   return (
     <>
-      {!directory.loading && !directory.error && (
+      {/* Only a backend without these operations needs a note; the remove confirmation covers the MCP reload. */}
+      {!directory.loading && !directory.error && !!missing.length && (
         <p role="status" className="text-sm leading-relaxed text-[var(--color-text-secondary)]">
-          {missing.length
-            ? t("sourceControls.upgrade", { capabilities: missing.join(", ") })
-            : t("sourceControls.requirements")}
+          {t("sourceControls.upgrade", { capabilities: missing.join(", ") })}
         </p>
       )}
       {!management.target && management.error && (

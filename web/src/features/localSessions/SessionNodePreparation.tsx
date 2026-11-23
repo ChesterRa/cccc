@@ -5,12 +5,10 @@ import { LcdIcon } from "../../components/Icons";
 import { Button } from "../../components/ui/button";
 import { SelectMenu } from "../../components/ui/select-menu";
 import { Textarea } from "../../components/ui/textarea";
-import type { SessionNodeRelayStatus } from "../../services/api/sessionNodes";
 import type { LocalSessionSource } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { SessionCommand } from "./SessionCommand";
 import { SessionNodeProgress } from "./SessionNodeProgress";
-import type { RelayToggleError } from "./useSessionNodes";
 import type { useSessionNodeTicket } from "./useSessionNodeTicket";
 
 const RUNTIME_LABELS: Record<LocalSessionSource["runtime"], string> = {
@@ -22,24 +20,17 @@ const RUNTIME_LABELS: Record<LocalSessionSource["runtime"], string> = {
 
 export function SessionNodePreparation({
   invitation,
-  relay,
   supportedRuntimes,
-  relayBusy,
-  relayError,
-  onToggleRelay,
   ticketError = "",
   busy,
-  onChooseDeviceSessions,
+  directoryHintKey,
 }: {
   invitation: ReturnType<typeof useSessionNodeTicket>;
-  relay: SessionNodeRelayStatus;
   supportedRuntimes: LocalSessionSource["runtime"][];
-  relayBusy: boolean;
-  relayError: RelayToggleError;
-  onToggleRelay: (enabled: boolean) => void;
   ticketError?: string;
   busy: boolean;
-  onChooseDeviceSessions: () => void;
+  /** Where the paired computer's sessions appear next: the picker list or a group's Add Agent. */
+  directoryHintKey: string;
 }) {
   const { t, i18n } = useTranslation("layout");
   const runtimes = supportedRuntimes;
@@ -53,14 +44,6 @@ export function SessionNodePreparation({
   const { ticket, ticketExpired, creating, copying, copied, copy, create } = invitation;
   const hasCurrentTicket = !!ticket && !ticketExpired;
   const ticketVisible = hasCurrentTicket && revealedTicket === ticket.ticket;
-  const canEnableRelay = !!relay.public_url;
-  const relayHintKey = !relay.enabled
-    ? canEnableRelay
-      ? "sessionNodes.publicRelayOffHint"
-      : "sessionNodes.publicRelayRequiresRemoteAccess"
-    : relay.effective
-      ? "sessionNodes.publicRelayActiveHint"
-      : "sessionNodes.publicRelayPendingHint";
 
   return (
     <section aria-label={t("sessionNodes.prepareTitle")} aria-busy={busy} className="min-w-0">
@@ -181,21 +164,9 @@ export function SessionNodePreparation({
             />
           )}
           {copied && hasCurrentTicket && (
-            <div className="space-y-1.5">
-              <p role="status" className="text-xs text-[var(--color-text-secondary)]">
-                {t("sessionNodes.ticketCopiedHint")}
-              </p>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="min-h-10 max-sm:min-h-11"
-                disabled={busy}
-                onClick={onChooseDeviceSessions}
-              >
-                {t("sessionNodes.selectDeviceSessions")}
-              </Button>
-            </div>
+            <p role="status" className="text-xs text-[var(--color-text-secondary)]">
+              {t("sessionNodes.ticketCopiedHint")}
+            </p>
           )}
           {ticket && (
             <p role="status" className="text-xs text-[var(--color-text-secondary)]">
@@ -207,59 +178,9 @@ export function SessionNodePreparation({
             </p>
           )}
           {ticket && (
-            <p className="text-xs text-[var(--color-text-secondary)]">
-              {t("sessionNodes.ticketDirectoryHint")}
-            </p>
+            <p className="text-xs text-[var(--color-text-secondary)]">{t(directoryHintKey)}</p>
           )}
         </div>
-        <section
-          aria-label={t("sessionNodes.publicRelayTitle")}
-          className="space-y-2 border-t border-[var(--glass-border-subtle)] pt-3"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-sm font-medium">{t("sessionNodes.publicRelayTitle")}</h4>
-            <Button
-              type="button"
-              role="switch"
-              aria-checked={relay.enabled}
-              aria-label={t("sessionNodes.publicRelayToggle")}
-              aria-busy={relayBusy}
-              size="sm"
-              variant={relay.enabled ? "default" : "outline"}
-              className="min-h-9 max-sm:min-h-11 text-xs"
-              disabled={busy || (!relay.enabled && !canEnableRelay)}
-              onClick={() => onToggleRelay(!relay.enabled)}
-            >
-              {t(
-                relay.enabled
-                  ? "sessionNodes.publicRelayEnabledState"
-                  : "sessionNodes.publicRelayDisabledState",
-              )}
-            </Button>
-          </div>
-          {relay.public_url && (
-            <p className="break-all text-xs text-[var(--color-text-secondary)]">
-              {t("sessionNodes.publicRelayAddressLabel")}{" "}
-              <bdi dir="ltr" className="font-mono text-[var(--color-text-primary)]">
-                {relay.public_url}
-              </bdi>
-            </p>
-          )}
-          <p className="text-xs leading-relaxed text-[var(--color-text-secondary)]">
-            {t(relayHintKey)}
-          </p>
-          {relayError && (
-            <p role="alert" className="text-sm text-[var(--color-accent-danger)]">
-              {t(
-                relayError === "upgrade"
-                  ? "sessionNodes.upgradeRequired"
-                  : relayError === "unavailable"
-                    ? "sessionNodes.relayUnavailable"
-                    : "sessionNodes.relayToggleFailed",
-              )}
-            </p>
-          )}
-        </section>
         {runtime === "codex" && (
           <details className="border-t border-[var(--glass-border-subtle)] pt-1">
             <summary className="cursor-pointer py-2 text-sm text-[var(--color-text-secondary)]">

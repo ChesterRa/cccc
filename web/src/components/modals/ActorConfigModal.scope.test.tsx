@@ -258,16 +258,57 @@ async function stageFixtureSecret() {
   await act(async () => button("secretManager.addVariable")!.click());
 }
 
-it("offers the existing session join flow instead of an unused create form for native sessions", async () => {
+it("opens the existing-session page for the fixed Group without mounting a second dialog", async () => {
   const { isWebAdmin, webReadOnly } = useUIStore.getState();
+  const { groups } = useGroupStore.getState();
+  const fetch = vi.fn(async (path: string) => {
+    if (path === "/api/v1/local_sessions" || path === "/api/v1/session_nodes/sources")
+      return respond({ sources: [] });
+    if (path === "/api/v1/session_nodes")
+      return respond({ supported: true, devices: [], supported_runtimes: ["codex"] });
+    if (path.startsWith("/api/v1/groups/g_a/actors")) return respond({ actors: [] });
+    throw new Error(`Unexpected request ${path}`);
+  });
+  vi.stubGlobal("fetch", fetch);
   try {
     useUIStore.setState({ isWebAdmin: true, webReadOnly: false });
+    useGroupStore.setState({ groups: [{ group_id: "g_a", title: "Group A" }] });
     props = { ...props, groupId: "g_a" };
     await render();
-    await act(async () => button("runtimeSwitch.native")!.click());
-    expect(button("runtimeSwitch.joinNative")).toBeDefined();
+    expect(button("runtimeSwitch.native")).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
+    await act(async () => button("layout:localSessions.existingSessionsTab")!.click());
+    expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/v1/groups/g_a/actors");
     expect(button("addAgent")).toBeUndefined();
+    await act(async () => button("localSessions.addDevice")!.click());
+    expect(button("layout:localSessions.newSessionTab")).toBeUndefined();
+    expect(host.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    await act(async () => button("sessionNodes.backToSessionList")!.click());
+    expect(button("layout:localSessions.newSessionTab")).toBeDefined();
     expect(props.onCreate).not.toHaveBeenCalled();
+  } finally {
+    useUIStore.setState({ isWebAdmin, webReadOnly });
+    useGroupStore.setState({ groups });
+  }
+});
+
+it.each([
+  { isWebAdmin: true, webReadOnly: true },
+  { isWebAdmin: false, webReadOnly: false },
+])("does not read existing sessions without write-capable admin access", async (access) => {
+  const { isWebAdmin, webReadOnly } = useUIStore.getState();
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  try {
+    useUIStore.setState(access);
+    props = { ...props, groupId: "g_a", initialExistingSessions: true };
+    await render();
+    const tab = button("layout:localSessions.existingSessionsTab")!;
+    expect(tab.getAttribute("aria-disabled")).toBe("true");
+    await act(async () => tab.click());
+    expect(tab.getAttribute("aria-selected")).toBe("false");
+    expect(fetch).not.toHaveBeenCalled();
   } finally {
     useUIStore.setState({ isWebAdmin, webReadOnly });
   }
@@ -1160,7 +1201,6 @@ it("keeps separate create drafts when moving among managed, Web Model, and nativ
       select.value = actorProfileIdentityKey(webProfile);
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    await act(async () => button("runtimeSwitch.native")!.click());
     await act(async () => button("runtimeSwitch.managed")!.click());
     expect(
       document.querySelector<HTMLSelectElement>('select[aria-label="actorProfile"]')?.value,

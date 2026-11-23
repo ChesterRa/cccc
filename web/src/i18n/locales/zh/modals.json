@@ -77,7 +77,13 @@
     "pathPlaceholder": "/项目/路径",
     "pathAutoCreateHint": "如果文件夹不存在且父目录已存在，将自动创建该文件夹。",
     "creating": "创建中…",
-    "createGroup": "创建工作组"
+    "createGroup": "创建工作组",
+    "blankStart": "空白开始",
+    "fromExistingSessions": "从已有会话创建",
+    "sessionGroupNamePlaceholder": "按所选会话名称生成",
+    "noLocalProjectDirectory": "会话在其他电脑上运行，本组没有本机目录",
+    "usingSelectedSessions_one": "使用已选的 {{count}} 个会话",
+    "usingSelectedSessions_other": "使用已选的 {{count}} 个会话"
   },
   "groupEdit": {
     "title": "编辑工作组",

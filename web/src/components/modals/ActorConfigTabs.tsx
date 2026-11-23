@@ -5,6 +5,7 @@ export interface ActorConfigTab {
   id: string;
   label: string;
   panel: ReactNode;
+  disabledReason?: string;
 }
 
 interface ActorConfigTabsProps {
@@ -12,11 +13,21 @@ interface ActorConfigTabsProps {
   tabs: readonly ActorConfigTab[];
   activeId: string;
   onChange: (id: string) => void;
+  fill?: boolean;
+  hideTabs?: boolean;
 }
 
-export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorConfigTabsProps) {
+export function ActorConfigTabs({
+  ariaLabel,
+  tabs,
+  activeId,
+  onChange,
+  fill,
+  hideTabs,
+}: ActorConfigTabsProps) {
   const baseId = useId();
-  const activeTab = tabs.find((tab) => tab.id === activeId) ?? tabs[0];
+  const available = tabs.filter((tab) => !tab.disabledReason);
+  const activeTab = available.find((tab) => tab.id === activeId) ?? available[0];
 
   if (!activeTab) return null;
 
@@ -30,7 +41,7 @@ export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorCo
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const nextId = nextActorConfigTabId(
-      tabs.map((tab) => tab.id),
+      available.map((tab) => tab.id),
       activeTab.id,
       event.key,
     );
@@ -42,8 +53,8 @@ export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorCo
   };
 
   return (
-    <div className="min-w-0">
-      <div className="overflow-x-auto scrollbar-hide">
+    <div className={fill ? "flex min-h-0 min-w-0 flex-1 flex-col" : "min-w-0"}>
+      <div hidden={hideTabs} className="shrink-0 overflow-x-auto scrollbar-hide">
         <div
           role="tablist"
           aria-label={ariaLabel}
@@ -58,11 +69,13 @@ export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorCo
                 type="button"
                 role="tab"
                 aria-selected={selected}
+                aria-disabled={tab.disabledReason ? true : undefined}
+                title={tab.disabledReason}
                 aria-controls={`${baseId}-panel-${tab.id}`}
                 tabIndex={selected ? 0 : -1}
                 className={`shrink-0 border-b-2 px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-border-focus)]/45 ${selected ? "border-[var(--color-accent-primary)] text-[var(--color-text-primary)]" : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"}`}
-                onClick={() => onChange(tab.id)}
-                onKeyDown={handleKeyDown}
+                onClick={tab.disabledReason ? undefined : () => onChange(tab.id)}
+                onKeyDown={tab.disabledReason ? undefined : handleKeyDown}
               >
                 {tab.label}
               </button>
@@ -78,7 +91,7 @@ export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorCo
             id={`${baseId}-panel-${tab.id}`}
             role="tabpanel"
             aria-labelledby={`${baseId}-tab-${tab.id}`}
-            className="min-w-0 pt-4"
+            className={fill && selected ? "flex min-h-0 min-w-0 flex-1 flex-col" : "min-w-0 pt-4"}
             hidden={!selected}
           >
             {tab.panel}

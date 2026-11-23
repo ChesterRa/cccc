@@ -17,12 +17,19 @@ import type {
 } from "../../services/api/localSessionControls";
 import { isDeviceSessionSource } from "./remoteSessionPolicy";
 
-export function useLocalSessionSources(
-  setSelected: Dispatch<SetStateAction<LocalSessionSource[]>>,
-) {
+export function useLocalSessionSources({
+  active,
+  includeDeviceSources,
+  setSelected,
+}: {
+  active: boolean;
+  includeDeviceSources: boolean;
+  setSelected?: Dispatch<SetStateAction<LocalSessionSource[]>>;
+}) {
   const [localDirectory, setLocalDirectory] = useState<LocalSessionDirectory>({ sources: [] });
   const [deviceSources, setDeviceSources] = useState<DeviceSessionSource[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deviceLoading, setDeviceLoading] = useState(true);
   const [error, setError] = useState("");
   const [deviceError, setDeviceError] = useState("");
   const alive = useRef(false);
@@ -30,6 +37,7 @@ export function useLocalSessionSources(
   const deviceSequence = useRef(0);
 
   const reloadLocal = useCallback(async () => {
+    if (!alive.current) return;
     const request = ++localSequence.current;
     try {
       const response = await fetchLocalSessions();
@@ -39,7 +47,7 @@ export function useLocalSessionSources(
         setLocalDirectory(response.result);
         const nextLocalSources = response.result.sources;
         const nextLocalStates = response.result.source_states;
-        setSelected((previous) =>
+        setSelected?.((previous) =>
           previous
             .filter((source) =>
               isDeviceSessionSource(source)
@@ -85,7 +93,7 @@ export function useLocalSessionSources(
       }
       if (nextDeviceSources !== null) {
         const latestSources = nextDeviceSources;
-        setSelected((previous) =>
+        setSelected?.((previous) =>
           previous.map((source) => {
             if (!isDeviceSessionSource(source)) return source;
             return (
@@ -99,11 +107,16 @@ export function useLocalSessionSources(
       }
     } catch (reason) {
       if (alive.current && request === deviceSequence.current) setDeviceError(String(reason));
+    } finally {
+      if (alive.current && request === deviceSequence.current) setDeviceLoading(false);
     }
   }, [setSelected]);
 
   useEffect(() => {
+    if (!active) return;
     alive.current = true;
+    setLoading(true);
+    if (includeDeviceSources) setDeviceLoading(true);
     let cancelled = false;
     let localTimer: ReturnType<typeof setTimeout> | undefined;
     let deviceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -116,7 +129,7 @@ export function useLocalSessionSources(
       if (!cancelled) deviceTimer = setTimeout(() => void loadDevice(), 3000);
     };
     void loadLocal();
-    void loadDevice();
+    if (includeDeviceSources) void loadDevice();
     return () => {
       cancelled = true;
       alive.current = false;
@@ -125,12 +138,12 @@ export function useLocalSessionSources(
       clearTimeout(localTimer);
       clearTimeout(deviceTimer);
     };
-  }, [reloadLocal, reloadDevice]);
+  }, [active, includeDeviceSources, reloadLocal, reloadDevice]);
 
   const apply = (source: LocalSessionSource, result: SourceControlResult) => {
     localSequence.current += 1;
     if (result.access_blocked)
-      setSelected((previous) => previous.filter((item) => item.source_id !== source.source_id));
+      setSelected?.((previous) => previous.filter((item) => item.source_id !== source.source_id));
     setLocalDirectory((previous) => {
       const state = previous.source_states?.[source.source_id];
       return {
@@ -180,14 +193,16 @@ export function useLocalSessionSources(
   };
 
   const sources = useMemo(
-    () => [...localDirectory.sources, ...deviceSources],
-    [localDirectory.sources, deviceSources],
+    () =>
+      includeDeviceSources ? [...localDirectory.sources, ...deviceSources] : localDirectory.sources,
+    [localDirectory.sources, deviceSources, includeDeviceSources],
   );
 
   return {
     ...localDirectory,
     sources,
     loading,
+    deviceLoading: includeDeviceSources && deviceLoading,
     error,
     deviceError,
     reload: reloadLocal,

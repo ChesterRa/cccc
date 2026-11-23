@@ -23,6 +23,7 @@ const globalTabIds = new Set<GlobalTabId>([
   "quickReplies",
   "branding",
   "webAccess",
+  "sessionAccess",
   "webModels",
   "voice",
   "update",

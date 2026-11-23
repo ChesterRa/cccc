@@ -11,11 +11,13 @@ export function LocalSourceActions({
   directory,
   management,
   busy,
+  recheckOnly = false,
 }: {
   source: LocalSessionSource;
   directory: SourceDirectory;
   management: SourceManager;
   busy: boolean;
+  recheckOnly?: boolean;
 }) {
   const { t } = useTranslation("layout");
   const control = directory.source_states?.[source.source_id]?.control;
@@ -47,7 +49,7 @@ export function LocalSourceActions({
           )}
         </Button>
       )}
-      {blocked && !control.pause_complete && (
+      {!recheckOnly && blocked && !control.pause_complete && (
         <Button
           size="sm"
           variant="outline"
@@ -61,18 +63,20 @@ export function LocalSourceActions({
           {t("sourceControls.finishPause")}
         </Button>
       )}
-      <Button
-        size="sm"
-        variant="outline"
-        className="min-h-11 text-sm"
-        disabled={unavailable || (!!blocked && !control.pause_complete)}
-        onClick={(event) => {
-          event.currentTarget.focus();
-          management.open(source, blocked ? "restore" : "remove");
-        }}
-      >
-        {t(blocked ? "sourceControls.restore" : "sourceControls.remove")}
-      </Button>
+      {!recheckOnly && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="min-h-11 text-sm"
+          disabled={unavailable || (!!blocked && !control.pause_complete)}
+          onClick={(event) => {
+            event.currentTarget.focus();
+            management.open(source, blocked ? "restore" : "remove");
+          }}
+        >
+          {t(blocked ? "sourceControls.restore" : "sourceControls.remove")}
+        </Button>
+      )}
     </div>
   );
 }

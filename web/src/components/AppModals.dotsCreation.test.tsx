@@ -31,12 +31,14 @@ vi.mock("./modals/ActorConfigModal", () => ({
     onSave,
     scopes,
     activeScopeKey,
+    initialExistingSessions,
   }: {
     mode: string;
     isOpen: boolean;
     onCreate?: (avatar?: File | null, mode?: "default", scope?: string) => Promise<boolean>;
     scopes?: Array<{ scope_key?: string }>;
     activeScopeKey?: string;
+    initialExistingSessions?: boolean;
     onSave?: (payload: {
       mode: "custom";
       setVars: {};
@@ -52,7 +54,10 @@ vi.mock("./modals/ActorConfigModal", () => ({
         <button onClick={() => void onCreate?.(null, "default", scopes?.[1]?.scope_key)}>
           Create in second scope
         </button>
-        <span data-active-scope={activeScopeKey} />
+        <span
+          data-active-scope={activeScopeKey}
+          data-add-entry={initialExistingSessions ? "existing" : "new"}
+        />
       </>
     ) : mode === "edit" && isOpen && mocks.editSaveTarget ? (
       <button
@@ -110,6 +115,7 @@ beforeEach(() => {
   useModalStore.setState({
     modals: { ...useModalStore.getState().modals, addActor: true },
     editingActor: null,
+    existingSessionsGroupId: null,
   });
   useUIStore.setState({ activeTab: "chat", chatSessions: {}, busy: "", isSmallScreen: true });
   useWorkspaceNavigation.setState({ owners: new Set(), pending: null });
@@ -175,6 +181,23 @@ async function render() {
 const submit = async () => {
   await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
 };
+it("opens the existing-session page for a requested Group and clears it on a normal reopen", async () => {
+  await render();
+  const entry = () => host.querySelector("[data-add-entry]")?.getAttribute("data-add-entry");
+  expect(entry()).toBe("new");
+  await act(async () => {
+    const modals = useModalStore.getState();
+    modals.closeModal("addActor");
+    useGroupStore.setState({ selectedGroupId: "g_b" });
+    modals.openExistingSessions("g_b");
+  });
+  expect(entry()).toBe("existing");
+  await act(async () => useModalStore.getState().closeModal("addActor"));
+  expect(useModalStore.getState().existingSessionsGroupId).toBeNull();
+  await act(async () => useModalStore.getState().openModal("addActor"));
+  expect(entry()).toBe("new");
+});
+
 it("opens the actual newly created enabled Dot's pane after Actors hydrate, without connecting or starting it", async () => {
   await render();
   await submit();

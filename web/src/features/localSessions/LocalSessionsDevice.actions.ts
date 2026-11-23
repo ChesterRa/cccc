@@ -2,10 +2,10 @@ import { act } from "react";
 import { expect, vi } from "vite-plus/test";
 import enLayout from "../../i18n/locales/en/layout.json";
 import enCommon from "../../i18n/locales/en/common.json";
-import { sessionPickerActions } from "./LocalSessionsButton.actions";
+import { sessionPickerActions } from "./LocalSessionsPicker.actions";
 
 /** Network and clipboard are boundaries; real dialog, hook, timer and controls run. */
-export async function verifyEmptyDeviceFlow(open: () => Promise<void>) {
+export async function verifyPairingTicketFlow(open: () => Promise<void>) {
   vi.useFakeTimers();
   const labels = enLayout.sessionNodes;
   const t = (key: string) =>
@@ -56,34 +56,6 @@ export async function verifyEmptyDeviceFlow(open: () => Promise<void>) {
   };
   try {
     await open();
-    const statuses = Array.from(
-      document.querySelectorAll('[role="status"]'),
-      (el) => el.textContent,
-    );
-    expect(statuses).toContain(enLayout.localSessions.listening);
-    const apps = document.querySelector(`ul[aria-label="${enLayout.localSessions.setupRuntime}"]`);
-    expect(Array.from(apps?.querySelectorAll("li") || [], (li) => li.textContent)).toEqual([
-      "Codex",
-      "Claude Code",
-      "Pi",
-      "OpenCode",
-    ]);
-    for (const [title, description] of [
-      [enLayout.localSessions.localSetup, enLayout.localSessions.localSetupDescription],
-      [enLayout.localSessions.addDevice, enLayout.localSessions.deviceSetupDescription],
-    ]) {
-      const entry = button(title);
-      expect(document.getElementById(entry.getAttribute("aria-describedby")!)?.textContent).toBe(
-        description,
-      );
-    }
-    await click(button(enLayout.localSessions.addDevice));
-    expect(document.querySelector("[data-modal-header] bdi")).toBeNull();
-    expect(button(enLayout.localSessions.backToSessions)).toBeDefined();
-    await click(button(enLayout.localSessions.backToSessions));
-    expect(document.getElementById("local-sessions-title")?.textContent).toBe(
-      enLayout.localSessions.overviewTitle,
-    );
     await click(button(enLayout.localSessions.addDevice));
     const preparation = document.querySelector(`section[aria-label="${labels.prepareTitle}"]`)!;
     expect(preparation).not.toBeNull();

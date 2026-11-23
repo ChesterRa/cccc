@@ -22,6 +22,7 @@ export type GlobalTabId =
   | "quickReplies"
   | "branding"
   | "webAccess"
+  | "sessionAccess"
   | "webModels"
   | "voice"
   | "update"

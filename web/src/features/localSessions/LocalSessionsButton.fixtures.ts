@@ -48,33 +48,3 @@ export const resources = {
   zh: { layout: zhLayout, actors: zhActors, common: zhCommon },
   ja: { layout: jaLayout, actors: jaActors, common: jaCommon },
 };
-
-export const flowLabels = [
-  [
-    "en",
-    "Connect sessions",
-    "Sessions",
-    enLayout.localSessions.create,
-    enLayout.localSessions.create,
-    "Selected sessions: 2 / 16",
-    enLayout.localSessions.join,
-  ],
-  [
-    "zh",
-    "接入会话",
-    "会话总览",
-    zhLayout.localSessions.create,
-    zhLayout.localSessions.create,
-    "已选会话：2 / 16",
-    zhLayout.localSessions.join,
-  ],
-  [
-    "ja",
-    "セッションを接続",
-    "セッション",
-    jaLayout.localSessions.create,
-    jaLayout.localSessions.create,
-    "選択したセッション：2 / 16",
-    jaLayout.localSessions.join,
-  ],
-];

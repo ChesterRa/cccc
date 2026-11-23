@@ -37,7 +37,8 @@ export function LocalSourceConfirmation({ management }: { management: SourceMana
           )
             opener.focus();
           if (document.activeElement === document.body || !opener?.isConnected)
-            document.querySelector<HTMLElement>('#local-sessions-title h2[tabindex="-1"]')?.focus();
+            // The opener row can disappear after a removal; return to the section that lists sources.
+            document.querySelector<HTMLElement>("[data-source-control-return]")?.focus();
         }}
         onEscapeKeyDown={(event) => {
           if (management.busy) event.preventDefault();

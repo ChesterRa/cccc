@@ -11,7 +11,7 @@ const runtimes = [
   { value: "opencode", label: "OpenCode V2", instruction: "setupOpencode" },
 ];
 
-export function LocalSessionsSetup({ onChooseSessions }: { onChooseSessions: () => void }) {
+export function LocalSessionsSetup({ onChooseSessions }: { onChooseSessions?: () => void }) {
   const { t } = useTranslation("layout");
   const [runtime, setRuntime] = useState("codex");
   const current = runtimes.find((item) => item.value === runtime) || runtimes[0];
@@ -47,14 +47,18 @@ export function LocalSessionsSetup({ onChooseSessions }: { onChooseSessions: () 
           <h4 className="font-medium text-[var(--color-text-primary)]">
             {t("localSessions.setupFinishHeading")}
           </h4>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-11 text-sm"
-            onClick={onChooseSessions}
-          >
-            {t("localSessions.showSessions")}
-          </Button>
+          {onChooseSessions ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 text-sm"
+              onClick={onChooseSessions}
+            >
+              {t("localSessions.showSessions")}
+            </Button>
+          ) : (
+            <p>{t("localSessions.setupFinish")}</p>
+          )}
         </li>
       </ol>
       <div className="space-y-1 border-t border-[var(--glass-border-subtle)] pt-2">

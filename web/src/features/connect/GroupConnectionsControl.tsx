@@ -1,4 +1,5 @@
 import { GroupConnectionsPanel } from "./GroupConnectionsPanel";
+import { ExistingSessionsHint } from "./ExistingSessionsHint";
 export { GroupConnectionsPanel } from "./GroupConnectionsPanel";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,11 +14,14 @@ export function GroupConnectionsControl({
   groupId,
   groups,
   onOpenAccount,
+  onOpenExistingSessions,
 }: {
   enabled: boolean;
   groupId: string;
   groups: GroupMeta[];
   onOpenAccount: () => void;
+  /** Leaves this dialog for the target Group's Add Agent → existing sessions page. */
+  onOpenExistingSessions: (groupId: string, closeConnections: () => void) => void;
 }) {
   const requestedGroup = useModalStore((state) => state.groupConnectionsId);
   const setGroupConnections = useModalStore((state) => state.setGroupConnections);
@@ -43,6 +47,7 @@ export function GroupConnectionsControl({
       invitation={invitation}
       onClose={close}
       onOpenAccount={onOpenAccount}
+      onOpenExistingSessions={(target) => onOpenExistingSessions(target, close)}
     />
   );
 }
@@ -53,12 +58,14 @@ function GroupConnectionsDialog({
   invitation,
   onClose,
   onOpenAccount,
+  onOpenExistingSessions,
 }: {
   groupId: string;
   groups: GroupMeta[];
   invitation: string;
   onClose: () => void;
   onOpenAccount: () => void;
+  onOpenExistingSessions: (groupId: string) => void;
 }) {
   const { t } = useTranslation("layout");
   useChatObscuringView(true);
@@ -90,6 +97,10 @@ function GroupConnectionsDialog({
         <DialogDescription className="shrink-0 text-sm leading-relaxed">
           {t("groupConnections.description")}
         </DialogDescription>
+        {/* Leaving clears connect_invite, so the invitation review keeps its own flow without the link. */}
+        {!invitation && current && (
+          <ExistingSessionsHint onOpen={() => onOpenExistingSessions(current)} />
+        )}
         {/* One scrolling body keeps actions reachable even with long names on short screens. */}
         <div
           role="region"

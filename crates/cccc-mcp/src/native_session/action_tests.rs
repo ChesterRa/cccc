@@ -325,7 +325,7 @@ async fn native_membership_errors_identify_paused_access_and_the_original_group(
     assert!(
         missing_response["result"]
             .to_string()
-            .contains("Connect existing sessions")
+            .contains("Add Agent → Add existing sessions")
     );
 }
 

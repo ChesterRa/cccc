@@ -1,4 +1,5 @@
 import { requestWorkspaceNavigation } from "../../stores/workspaceNavigation";
+import { canOpenExistingSessions } from "../../features/connect/existingSessionsAccess";
 import { WorkspaceNavigationDialog } from "../workspace/WorkspaceNavigationDialog";
 import { useCallback, useState, type CSSProperties } from "react";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -276,7 +277,6 @@ export function AppShell({
             sidebarWidth={sidebarWidth}
             isDark={isDark}
             readOnly={webReadOnly}
-            canAccessLocalSessions={canAccessAccount}
             codexVoice={canUseVoice ? codexVoice : undefined}
             onSelectGroup={(groupId) => {
               if (!remoteWorkspace && groupId === selectedGroupId) onSelectGroup(groupId);
@@ -431,6 +431,15 @@ export function AppShell({
           groupId={selectedGroupId}
           groups={orderedGroups}
           onOpenAccount={onOpenAccount}
+          onOpenExistingSessions={(targetGroupId, closeConnections) =>
+            // A pending edit may hold the workbench; on cancel the connections dialog stays open.
+            requestWorkspaceNavigation(() => {
+              if (!canOpenExistingSessions(targetGroupId)) return;
+              closeConnections();
+              onSelectGroup(targetGroupId);
+              useModalStore.getState().openExistingSessions(targetGroupId);
+            })
+          }
         />
         <CodexVoiceOverlays
           voice={codexVoice}

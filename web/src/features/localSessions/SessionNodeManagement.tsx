@@ -12,13 +12,11 @@ export function SessionNodeManagement({
   actions,
   query,
   onSearch,
-  onChooseSessions,
 }: {
   devices: SessionNodeDevice[];
   actions: ReturnType<typeof useSessionNodes>;
   query: string;
   onSearch: (query: string) => void;
-  onChooseSessions: (device: SessionNodeDevice) => void;
 }) {
   const { t, i18n } = useTranslation("layout");
   const scroller = useRef<HTMLDivElement>(null);
@@ -75,7 +73,6 @@ export function SessionNodeManagement({
             revokeId={actions.revokeId}
             setRevokeId={actions.setRevokeId}
             revoke={actions.revoke}
-            onChooseSessions={onChooseSessions}
           />
         </div>
       ) : (

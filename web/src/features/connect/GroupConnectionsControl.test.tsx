@@ -7,7 +7,7 @@ import { useModalStore } from "../../stores/useModalStore";
 import { groupMessagesVisible, useUIStore } from "../../stores/useUIStore";
 import type { GroupMeta } from "../../types";
 
-const mocks = vi.hoisted(() => ({ request: vi.fn(), t: (key: string) => key }));
+const mocks = vi.hoisted(() => ({ request: vi.fn(), t: (key: string) => key, existing: vi.fn() }));
 vi.mock("../../services/api/base", () => ({ apiJson: mocks.request }));
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: mocks.t, i18n: { language: "ja", resolvedLanguage: "ja" } }),
@@ -50,6 +50,7 @@ async function render(enabled = true, groupId = "a") {
         groupId={groupId}
         groups={groups}
         onOpenAccount={() => {}}
+        onOpenExistingSessions={mocks.existing}
       />,
     ),
   );
@@ -62,6 +63,7 @@ beforeEach(() => {
   document.body.append(host);
   root = createRoot(host);
   mocks.request.mockReset().mockResolvedValue({ ok: true, result: status });
+  mocks.existing.mockReset();
   vi.spyOn(window, "open").mockReturnValue(null);
 });
 afterEach(async () => {
@@ -198,6 +200,34 @@ it("expires a displayed confirmation even while the next GET is waiting", async 
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("links the menu's Group to its existing-session page, but not from an invitation review", async () => {
+  // Only an administrator can add members, so others do not see a sentence that ends in the link.
+  useUIStore.setState({ isWebAdmin: false, webReadOnly: false });
+  await render(true, "a");
+  await openConnections("b");
+  expect(document.body.textContent).not.toContain("groupConnections.membersStaySeparate");
+  await act(async () => useUIStore.setState({ isWebAdmin: true }));
+  expect(document.body.textContent).toContain("groupConnections.membersStaySeparate");
+  await act(async () => button("groupConnections.useExistingSessions").click());
+  expect(mocks.existing).toHaveBeenCalledOnce();
+  const [target, closeConnections] = mocks.existing.mock.calls[0];
+  // The menu's Group wins over the selected chat; the dialog stays until navigation is allowed.
+  expect(target).toBe("b");
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  await act(async () => closeConnections());
+  expect(document.querySelector('[role="dialog"]')).toBeNull();
+  expect(useModalStore.getState().groupConnectionsId).toBeNull();
+
+  const invitation = "11111111-1111-4111-8111-111111111111";
+  window.history.replaceState(null, "", `/?connect_invite=${invitation}`);
+  await act(async () => root.unmount());
+  root = createRoot(host);
+  await render();
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  expect(button("groupConnections.useExistingSessions")).toBeUndefined();
+  expect(window.location.search).toContain("connect_invite");
 });
 
 it("binds management to the menu's Group without following the selected chat", async () => {

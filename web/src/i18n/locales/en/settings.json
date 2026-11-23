@@ -51,7 +51,8 @@
     "webAccess": "Web Access",
     "webModels": "Web Models",
     "update": "Update",
-    "voice": "Voice"
+    "voice": "Voice",
+    "sessionAccess": "Session access"
   },
   "notifications": {
     "title": "Notifications",

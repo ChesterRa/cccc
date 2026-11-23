@@ -1,6 +1,3 @@
-import { useLocalSessionSources } from "./useLocalSessionSources";
-import { useLocalSourceControls } from "./useLocalSourceControls";
-import { isDeviceSessionSource } from "./remoteSessionPolicy";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Actor, LocalSessionSource } from "../../types";
@@ -10,182 +7,149 @@ import {
   resumeLocalSessionAccess,
 } from "../../services/api/localSessions";
 import { fetchActors } from "../../services/api/actors";
+import type { SessionNodeDevice } from "../../services/api/sessionNodes";
 import { useGroupStore, useUIStore } from "../../stores";
+import { isDeviceSessionSource } from "./remoteSessionPolicy";
+import { useLocalSessionSources } from "./useLocalSessionSources";
+import { useLocalSourceControls } from "./useLocalSourceControls";
 
 export const MAX_SELECTED_SESSIONS = 16;
 
 export function useLocalSessionsConnection({
+  active,
+  groupId,
+  devices,
   onClose,
   onSelectGroup,
-  initialTargetGroupId,
-  deviceId,
-  browsingDeviceSessions = false,
-  viewingSessions = false,
-  reviewing = true,
 }: {
+  active: boolean;
+  groupId: string | null;
+  devices?: readonly SessionNodeDevice[];
   onClose: () => void;
   onSelectGroup: (id: string) => void;
-  initialTargetGroupId?: string;
-  deviceId?: string;
-  browsingDeviceSessions?: boolean;
-  viewingSessions?: boolean;
-  reviewing?: boolean;
 }) {
   const { t } = useTranslation("layout");
-  const groups = useGroupStore((state) => state.groups);
-  const [chosenTarget, setTargetGroupId] = useState<string | undefined>(
-    initialTargetGroupId || undefined,
-  );
-  // A directory that has not loaded yet must not permanently select "new Group".
-  const targetGroupId = chosenTarget ?? (groups.length === 0 ? "" : undefined);
-  const [allSelected, setSelected] = useState<LocalSessionSource[]>([]);
-  const [busy, setBusy] = useState(false);
+  const target = useGroupStore((state) => state.groups.find((group) => group.group_id === groupId));
+  const [selected, setSelected] = useState<LocalSessionSource[]>([]);
+  const [action, setAction] = useState<"submit" | "resume" | null>(null);
+  const busy = action !== null;
   const [notice, setNotice] = useState("");
   const [membership, setMembership] = useState<{
     groupId: string;
     actors: Actor[];
-    loaded: boolean;
     failed: boolean;
-  }>({ groupId: "", actors: [], loaded: false, failed: false });
-  const targetRef = useRef(targetGroupId);
-  targetRef.current = targetGroupId;
+  } | null>(null);
   const membersRequest = useRef(0);
-  const fetchedOverviewTarget = useRef("");
   const submitting = useRef(false);
   const alive = useRef(true);
-  const allSources = useLocalSessionSources(setSelected);
-  const hasVisibleSources = allSources.sources.length > 0;
-  const loadMembers = useCallback(async (groupId: string, reconcileSelection = true) => {
+  const targetUnavailable = groupId !== null && !target;
+  const reading = active && !targetUnavailable;
+  const directory = useLocalSessionSources({
+    active: reading,
+    includeDeviceSources: true,
+    setSelected,
+  });
+  const management = useLocalSourceControls(directory, submitting);
+
+  const loadMembers = useCallback(async (id: string) => {
     const request = ++membersRequest.current;
     try {
-      const response = await fetchActors(groupId, false, { noCache: true });
-      if (!alive.current || targetRef.current !== groupId || membersRequest.current !== request)
-        return;
+      const response = await fetchActors(id, false, { noCache: true });
+      if (!alive.current || membersRequest.current !== request) return;
       const actors = response.ok ? response.result.actors : [];
-      setMembership({ groupId, actors, loaded: true, failed: !response.ok });
-      if (response.ok && reconcileSelection)
-        setSelected((previous) =>
-          previous.filter(
-            (source) => !actors.some((actor) => actor.external_session_id === source.source_id),
-          ),
-        );
+      setMembership({ groupId: id, actors, failed: !response.ok });
+      if (response.ok) {
+        const joined = new Set(actors.map((actor) => actor.external_session_id));
+        setSelected((previous) => previous.filter((source) => !joined.has(source.source_id)));
+      }
     } catch {
-      if (alive.current && targetRef.current === groupId && membersRequest.current === request) {
-        setMembership({ groupId, actors: [], loaded: true, failed: true });
+      if (alive.current && membersRequest.current === request) {
+        setMembership({ groupId: id, actors: [], failed: true });
       }
     }
   }, []);
+
   useEffect(() => {
-    setNotice("");
-    if (!targetGroupId) return;
-    const poll = reviewing || browsingDeviceSessions;
-    const annotateOverview = viewingSessions && hasVisibleSources;
-    if (!poll && !annotateOverview) return;
-    if (!poll && fetchedOverviewTarget.current === targetGroupId) return;
+    if (!reading || !groupId) return;
+    setMembership(null);
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
-    fetchedOverviewTarget.current = targetGroupId;
-    if (poll) {
-      setMembership({ groupId: targetGroupId, actors: [], loaded: false, failed: false });
-    }
     const load = async () => {
-      // Overview annotates once without polling; review and device views stay fresh until submitted.
-      await loadMembers(targetGroupId, reviewing);
-      if (poll && !cancelled) timer = setTimeout(() => void load(), 3000);
+      await loadMembers(groupId);
+      if (!cancelled) timer = setTimeout(() => void load(), 3000);
     };
     void load();
     return () => {
       cancelled = true;
-      if (poll) membersRequest.current += 1;
+      membersRequest.current += 1;
       clearTimeout(timer);
     };
-  }, [
-    targetGroupId,
-    loadMembers,
-    reviewing,
-    browsingDeviceSessions,
-    viewingSessions,
-    hasVisibleSources,
-  ]);
+  }, [groupId, reading, loadMembers]);
+
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
     };
   }, []);
-  // Device sources carry an explicit node_id namespace. Display names can coincide.
-  const fromDevice = (source: LocalSessionSource) =>
-    isDeviceSessionSource(source) && source.node_id === deviceId;
-  const directory = deviceId
-    ? {
-        ...allSources,
-        sources: allSources.sources.filter(fromDevice),
-        removed_sources: allSources.removed_sources?.filter(fromDevice),
-      }
-    : allSources;
-  // Preserve choices elsewhere without including hidden devices in this scoped submission.
-  const selected = deviceId ? allSelected.filter(fromDevice) : allSelected;
-  const selectionLimit = MAX_SELECTED_SESSIONS - (allSelected.length - selected.length);
-  const management = useLocalSourceControls(directory, submitting);
-  const { sources, loading, error } = directory;
-  const selectedIds = selected.map((source) => source.source_id);
-  const unavailableCount = selected.filter((source) => !source.connected).length;
-  const displayedSources = [
-    ...sources,
-    ...selected.filter((source) => !sources.some((item) => item.source_id === source.source_id)),
-  ];
-  const anyUnavailable = displayedSources.some((source) => !source.connected);
-  const firstSelected = selected[0];
-  const targetPending = targetGroupId === undefined;
-  const creatingGroup = targetGroupId === "";
-  const joining = !!targetGroupId;
-  const membersReady =
-    !joining || (membership.groupId === targetGroupId && membership.loaded && !membership.failed);
+
+  const currentMembership = membership?.groupId === groupId ? membership : null;
   const members = new Map(
-    (joining && membership.groupId === targetGroupId ? membership.actors : [])
+    (currentMembership?.actors || [])
       .filter((actor) => actor.external_session_id)
       .map((actor) => [actor.external_session_id!, actor]),
   );
-  const targetUnavailable = joining && !groups.some((group) => group.group_id === targetGroupId);
+  const membersReady =
+    groupId === null || (currentMembership !== null && !currentMembership.failed);
+  const unavailableCount = selected.filter(
+    (source) =>
+      !source.connected ||
+      (isDeviceSessionSource(source) &&
+        devices &&
+        !devices.some(
+          (device) => device.node_id === source.node_id && device.enabled && device.connected,
+        )),
+  ).length;
+  const hasDeviceSelection = selected.some(isDeviceSessionSource);
+  const hasLocalSelection = selected.some((source) => !isDeviceSessionSource(source));
   const canSubmit =
-    reviewing &&
+    reading &&
     !busy &&
     !management.busy &&
-    !loading &&
-    !error &&
-    !targetPending &&
-    !targetUnavailable &&
+    (!hasLocalSelection || (!directory.loading && !directory.error)) &&
+    (!hasDeviceSelection || (!!devices && !directory.deviceLoading && !directory.deviceError)) &&
     membersReady &&
     selected.length > 0 &&
-    selected.length <= selectionLimit &&
+    selected.length <= MAX_SELECTED_SESSIONS &&
     unavailableCount === 0 &&
     !selected.some((source) => members.has(source.source_id));
-  const start = async () => {
+
+  const start = async (title?: string) => {
+    if (!canSubmit || submitting.current || management.pending.current) return;
     if (
-      !canSubmit ||
-      targetGroupId === undefined ||
-      submitting.current ||
-      management.pending.current
-    )
+      groupId !== null &&
+      !useGroupStore.getState().groups.some((group) => group.group_id === groupId)
+    ) {
       return;
+    }
     submitting.current = true;
-    setBusy(true);
+    setAction("submit");
+    const selectedIds = selected.map((source) => source.source_id);
     try {
-      const response = joining
-        ? await joinLocalSessions(targetGroupId, selectedIds)
-        : await createLocalConversation(selectedIds);
+      const response = groupId
+        ? await joinLocalSessions(groupId, selectedIds)
+        : await createLocalConversation(selectedIds, title);
       if (!response.ok) {
         useUIStore.getState().showError(response.error.message);
         return;
       }
-      // A completed user mutation still refreshes Groups if the dialog was closed.
+      // The write may finish after its dialog closes. Refresh state without navigating back.
       await useGroupStore.getState().refreshGroups();
-      if (joining) {
+      if (groupId) {
         const store = useGroupStore.getState();
         if (store.selectedGroupId === response.result.group_id) {
           store.setGroupDoc(response.result.group);
         }
-        // Re-selecting the current Group does not reload its actors.
         await store.refreshActors(response.result.group_id);
       }
       if (alive.current) {
@@ -196,28 +160,36 @@ export function useLocalSessionsConnection({
               group: response.result.group?.title || response.result.group_id,
             }),
           });
-        onSelectGroup(response.result.group_id);
         onClose();
+        onSelectGroup(response.result.group_id);
       }
     } catch (error) {
       useUIStore.getState().showError(error instanceof Error ? error.message : String(error));
     } finally {
       submitting.current = false;
-      if (alive.current) setBusy(false);
+      if (alive.current) setAction(null);
     }
   };
+
   const resume = async (actor: Actor, source: LocalSessionSource) => {
-    if (busy || submitting.current || management.pending.current || !targetGroupId) return;
-    const groupId = targetGroupId;
+    if (
+      !reading ||
+      !groupId ||
+      !source.connected ||
+      submitting.current ||
+      management.pending.current
+    ) {
+      return;
+    }
     submitting.current = true;
-    setBusy(true);
+    setAction("resume");
     setNotice("");
     try {
       const response = await resumeLocalSessionAccess(groupId, actor.id, source.source_id);
       if (!response.ok) useUIStore.getState().showError(response.error.message);
-      else if (alive.current && targetRef.current === groupId)
+      else if (alive.current)
         setNotice(t("localSessions.accessRestored", { name: actor.title || actor.id }));
-      await loadMembers(groupId);
+      if (alive.current) await loadMembers(groupId);
       await Promise.all([
         useGroupStore.getState().refreshActors(groupId),
         useGroupStore.getState().refreshGroups(),
@@ -226,35 +198,24 @@ export function useLocalSessionsConnection({
       useUIStore.getState().showError(error instanceof Error ? error.message : String(error));
     } finally {
       submitting.current = false;
-      if (alive.current) setBusy(false);
+      if (alive.current) setAction(null);
     }
   };
+
   return {
-    groups,
-    targetGroupId,
-    setTargetGroupId,
+    target,
+    targetUnavailable,
     selected,
     setSelected,
-    selectedIds,
-    selectionLimit,
-    displayedSources,
-    loading,
-    error,
-    deviceError: allSources.deviceError,
     busy: busy || management.busy,
+    admitting: action === "submit",
     directory,
     management,
     notice,
-    membership,
     membersReady,
+    membersFailed: currentMembership?.failed === true,
     members,
-    targetUnavailable,
     unavailableCount,
-    anyUnavailable,
-    firstSelected,
-    targetPending,
-    creatingGroup,
-    joining,
     canSubmit,
     start,
     resume,
