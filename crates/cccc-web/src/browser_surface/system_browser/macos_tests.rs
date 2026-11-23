@@ -81,7 +81,9 @@ async fn unresponsive_macos_launcher_is_reaped_and_reports_an_unconfirmed_browse
 
 #[tokio::test]
 async fn system_browser_answers_cdp_and_stops_its_original_process() -> Result<()> {
-    let _guard = chrome_test_guard().await;
+    let Some(_guard) = chrome_test_guard().await else {
+        return Ok(());
+    };
     if run_in_fresh_process("system_browser_answers_cdp_and_stops_its_original_process").await? {
         return Ok(());
     }
@@ -134,7 +136,9 @@ async fn system_browser_answers_cdp_and_stops_its_original_process() -> Result<(
 
 #[tokio::test]
 async fn failed_cdp_connection_stops_the_browser_opened_for_its_profile() -> Result<()> {
-    let _guard = chrome_test_guard().await;
+    let Some(_guard) = chrome_test_guard().await else {
+        return Ok(());
+    };
     if run_in_fresh_process("failed_cdp_connection_stops_the_browser_opened_for_its_profile")
         .await?
     {

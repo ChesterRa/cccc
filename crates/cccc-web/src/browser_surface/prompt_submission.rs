@@ -1720,7 +1720,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let (url, server) = super::super::browser_surface_tests::local_page(
             "<textarea id=prompt-textarea></textarea>",
@@ -1769,7 +1771,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let (url, server) = super::super::browser_surface_tests::local_page(
             r#"<main><input type=search><form data-chatgpt-composer><div data-composer-body><div class=ProseMirror data-composer-markdown role=textbox contenteditable=true style="width:400px;height:40px"></div></div><button type=button aria-label="Start Voice">Voice</button></form></main>"#,
@@ -1834,7 +1838,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let (url, server) = super::super::browser_surface_tests::local_page(
             "<main><textarea id=prompt-textarea></textarea><div data-content-search-unit-key><h4 data-conversation-role=assistant>Assistant</h4><div id=answer></div></div></main>",
@@ -1880,7 +1886,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let (url, server) = super::super::browser_surface_tests::local_page(r#"
             <main><form data-chatgpt-composer><div data-composer-body>
@@ -1944,7 +1952,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let image = temp.path().join("compat.png");
         std::fs::write(&image, base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAKUlEQVR42u3OIQEAAAACIP+f1hkWWEB6FgEBAQEBAQEBAQEBAQEBgXdgl/rw4tnPBf0AAAAASUVORK5CYII=").expect("PNG")).expect("image");
@@ -1996,7 +2006,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let manager = BrowserSurfaces::default();
         let (url, server) = super::super::browser_surface_tests::local_page("<main></main>").await;
@@ -2096,7 +2108,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let manager = BrowserSurfaces::default();
         let (url, server) = super::super::browser_surface_tests::local_page(
@@ -2148,7 +2162,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let manager = BrowserSurfaces::default();
         let (url, server) = super::super::browser_surface_tests::local_page(r#"<main><form onsubmit="event.preventDefault();window.sends++"><textarea id="prompt-textarea"></textarea><button id="composer-submit-button" type="submit" style="position:absolute;left:20px;top:200px;width:80px;height:30px">Send</button></form><div id="cover" style="position:absolute;left:20px;top:200px;width:80px;height:30px;background:white" onclick="window.wrongClicks++"></div></main><script>window.sends=0;window.wrongClicks=0;</script>"#).await;
@@ -2212,7 +2228,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let manager = BrowserSurfaces::default();
         let (url, server) = super::super::browser_surface_tests::local_page("<main></main>").await;
@@ -2336,7 +2354,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let manager = BrowserSurfaces::default();
         let (url, server) = super::super::browser_surface_tests::local_page(
@@ -2416,7 +2436,9 @@ mod readiness_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("tempdir");
         let manager = BrowserSurfaces::default();
         let (url, server) = super::super::browser_surface_tests::local_page("<main></main>").await;

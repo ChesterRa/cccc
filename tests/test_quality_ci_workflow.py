@@ -204,6 +204,9 @@ def test_nightly_runs_the_real_chrome_fixtures_ci_leaves_out() -> None:
     assert runs.index("google-chrome") < runs.index("--profile chrome")
     assert runs.index("Xvfb") < runs.index("--profile chrome")
     assert "cargo nextest run --workspace --locked --profile chrome" in runs
+    # Fixtures skip unless opted in, so only the nightly test step may opt in.
+    chrome_step = next(step for step in job["steps"] if "--profile chrome" in step.get("run", ""))
+    assert chrome_step["env"]["CCCC_TEST_REAL_CHROME"] == "1"
 
 
 def test_nightly_failure_reaches_the_team_without_committing_the_webhook() -> None:

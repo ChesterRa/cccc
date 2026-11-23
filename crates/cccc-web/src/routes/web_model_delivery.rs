@@ -1559,7 +1559,9 @@ mod login_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("fixture");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
@@ -1698,7 +1700,9 @@ mod login_tests {
         if crate::system_browser_path().is_none() {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");

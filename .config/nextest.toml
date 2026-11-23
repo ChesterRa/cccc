@@ -5,6 +5,8 @@
 # `chrome` profile runs those) and the process lifecycle tests, which CI runs
 # serially in a later step. CI also sets CCCC_TEST_FORBID_REAL_CHROME, so a new
 # fixture that launches Chrome fails until it is listed in both filters here.
+# Outside CI the fixtures skip unless CCCC_TEST_REAL_CHROME=1 (the nightly job
+# sets it), so a local cargo test never opens browser windows.
 [profile.ci]
 fail-fast = false
 failure-output = "immediate-final"

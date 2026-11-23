@@ -74,7 +74,9 @@ async fn settled_browser_turns_are_reviewed_without_resubmitting_their_drafts() 
     if crate::system_browser_path().is_none() {
         return;
     }
-    let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+    let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+        return;
+    };
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
@@ -380,7 +382,9 @@ async fn verified_legacy_draft_recovers_through_rebuilt_prompt_once() {
     if crate::system_browser_path().is_none() {
         return;
     }
-    let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+    let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+        return;
+    };
     let temp = tempfile::tempdir().expect("fixture");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
@@ -557,7 +561,9 @@ async fn contended_worker_recovers_manual_send_and_only_delivers_later_work() {
     if crate::system_browser_path().is_none() {
         return;
     }
-    let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+    let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+        return;
+    };
     let temp = tempfile::tempdir().expect("fixture");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
@@ -974,7 +980,9 @@ async fn preserved_browser_keeps_the_same_conversation_across_restarts() {
     {
         return;
     }
-    let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+    let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+        return;
+    };
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
@@ -1437,7 +1445,9 @@ async fn a_stopping_web_records_claimed_work_and_claims_no_more() {
     {
         return;
     }
-    let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+    let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+        return;
+    };
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");

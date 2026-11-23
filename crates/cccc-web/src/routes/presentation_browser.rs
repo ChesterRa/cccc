@@ -227,7 +227,9 @@ mod tests {
         {
             return;
         }
-        let _chrome_guard = crate::browser_surface::chrome_test_guard().await;
+        let Some(_chrome_guard) = crate::browser_surface::chrome_test_guard().await else {
+            return;
+        };
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let group = GroupStore::new(home.clone())
