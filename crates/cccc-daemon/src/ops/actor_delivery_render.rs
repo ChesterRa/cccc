@@ -22,7 +22,7 @@ mod system_notify;
 
 fn render_message(group: &GroupDoc, event: &Event) -> Option<String> {
     if event.kind == "system.notify" {
-        return render_system(event);
+        return render_system(group, event);
     }
     let mut body = super::messaging::install_command::delivery_text(event).unwrap_or_else(|| {
         event
@@ -243,15 +243,25 @@ fn format_envelope(group: &GroupDoc, event: &Event, body: &str) -> String {
     }
 }
 
-fn render_system(event: &Event) -> Option<String> {
+fn render_system(group: &GroupDoc, event: &Event) -> Option<String> {
     let kind = text(event, "kind");
-    let body = system_notify::body(event);
+    let sender_notice = cccc_core::automation::reply_sender_notice::is_notice(event);
+    let body = if sender_notice {
+        system_notify::sender_reply_body(group, event)
+    } else {
+        system_notify::body(event)
+    };
     (!body.is_empty()).then(|| {
         let sent = sent_at(event)
             .map(|sent| format!(" [sent={sent}]"))
             .unwrap_or_default();
+        let id = if sender_notice {
+            format!(" [event_id={}]", event.id)
+        } else {
+            String::new()
+        };
         format!(
-            "[cccc] SYSTEM ({}){sent}: {body}",
+            "[cccc] SYSTEM ({}){id}{sent}: {body}",
             if kind.is_empty() { "info" } else { &kind }
         )
     })

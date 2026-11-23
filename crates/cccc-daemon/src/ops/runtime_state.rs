@@ -1,3 +1,4 @@
+use super::actor_delivery::event_targets_actor;
 use super::operation::{
     Operation,
     Policy::{Read, Write},
@@ -633,7 +634,7 @@ fn recover_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 "turn event kind must be chat.message or system.notify",
             ));
         }
-        if !turn_event_targets_actor(&group, event, &actor_id) {
+        if !event_targets_actor(&group, event, &actor_id) {
             return Err(OpError::new(
                 "event_not_for_actor",
                 format!("event is not addressed to actor: {actor_id}"),
@@ -899,7 +900,7 @@ fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResu
                 ));
             };
             if !matches!(event.kind.as_str(), "chat.message" | "system.notify")
-                || !turn_event_targets_actor(&group, event, &actor_id)
+                || !event_targets_actor(&group, event, &actor_id)
             {
                 return Err(OpError::new(
                     "event_not_for_actor",
@@ -1307,18 +1308,6 @@ pub(super) fn settle_active_turn(
         )?;
     }
     set_runtime_status(home, group, &actor.id, "waiting", "", "", &[])
-}
-
-fn turn_event_targets_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
-    if event.kind == "system.notify"
-        && matches!(
-            event.data.get("kind").and_then(Value::as_str),
-            Some("mail_notice" | "reply_notice")
-        )
-    {
-        return event.data.get("target_actor_id").and_then(Value::as_str) == Some(actor_id);
-    }
-    inbox::is_for_actor(group, event, actor_id)
 }
 
 fn turn_id(group_id: &str, actor_id: &str, event_ids: &[String]) -> String {

@@ -988,17 +988,7 @@ fn legacy_pending_sources(
                 if legacy_read_watermark.covers_notification(event) {
                     continue;
                 }
-                let notice_kind = event
-                    .data
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if matches!(notice_kind, "mail_notice" | "reply_notice") {
-                    event.data.get("target_actor_id").and_then(Value::as_str)
-                        == Some(actor.id.as_str())
-                } else {
-                    inbox::is_for_actor(group, event, &actor.id)
-                }
+                super::actor_delivery::event_targets_actor(group, event, &actor.id)
             } else {
                 false
             };

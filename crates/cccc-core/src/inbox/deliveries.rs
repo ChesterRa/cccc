@@ -95,11 +95,7 @@ impl DeliveryState {
                         .map(|(index, actor)| (actor.id.clone(), index)),
                 );
             }
-            let targeted_notice = notification
-                && matches!(
-                    event.data.get("kind").and_then(Value::as_str),
-                    Some("mail_notice" | "reply_notice")
-                );
+            let targeted_notice = is_targeted_prompt(event);
             let recipients = group
                 .actors
                 .iter()

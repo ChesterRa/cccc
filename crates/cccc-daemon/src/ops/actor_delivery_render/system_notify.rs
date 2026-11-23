@@ -1,4 +1,8 @@
+use std::fmt::Write;
+
 use cccc_contracts::Event;
+use cccc_core::{GroupDoc, actors, automation::reply_sender_notice};
+use chrono::DateTime;
 use serde_json::Value;
 
 pub(super) fn body(event: &Event) -> String {
@@ -11,6 +15,43 @@ pub(super) fn body(event: &Event) -> String {
         "voice_secretary_action_request" => voice_action(event, context),
         _ => fallback(event),
     }
+}
+
+pub(super) fn sender_reply_body(group: &GroupDoc, event: &Event) -> String {
+    let mut text = fallback(event);
+    let issued_at = DateTime::parse_from_rfc3339(&event.ts).ok();
+    for obligation in reply_sender_notice::obligations(event) {
+        let age = issued_at
+            .zip(DateTime::parse_from_rfc3339(&obligation.accepted_at).ok())
+            .map(|(issued, accepted)| issued.signed_duration_since(accepted).num_seconds())
+            .filter(|seconds| *seconds >= 0)
+            .map(|seconds| {
+                let (amount, unit) = if seconds >= 60 {
+                    (seconds / 60, "minute")
+                } else {
+                    (seconds, "second")
+                };
+                let suffix = if amount == 1 { "" } else { "s" };
+                format!(" {amount} {unit}{suffix} after delivery")
+            })
+            .unwrap_or_default();
+        write!(
+            text,
+            "\n- {} had no linked reply{age} (source {}).",
+            obligation.recipient_actor_id, obligation.source_event_id,
+        )
+        .expect("format notice item");
+        if actors::find(group, &obligation.recipient_actor_id).is_some_and(|recipient| {
+            recipient.created_at == obligation.recipient_actor_created_at
+                && recipient.external_session_id.is_empty()
+                && super::super::actor_runtime::has_primary_pty(&group.group_id, &recipient.id)
+        }) {
+            text.push_str(
+                " If you have access to this member’s terminal, use cccc_terminal to review it.",
+            );
+        }
+    }
+    text
 }
 
 fn voice_action(event: &Event, context: Option<&serde_json::Map<String, Value>>) -> String {
@@ -136,6 +177,41 @@ mod tests {
     #[test]
     fn other_notices_keep_their_text() {
         assert!(!body(&notice("mail_notice")).contains("event-a"));
+    }
+
+    #[test]
+    fn a_sender_notice_uses_its_ledger_time_and_names_every_request() {
+        let mut event = notice("reply_sender_notice");
+        event.by = "system".into();
+        event.ts = "2026-11-20T10:20:00Z".into();
+        event.data["context"] = json!({"obligations":[
+            {"recipient_actor_id":"native","recipient_actor_created_at":"generation-a",
+             "source_event_id":"request-a","accepted_at":"2026-11-20T10:04:29Z"},
+            {"recipient_actor_id":"headless","recipient_actor_created_at":"generation-b",
+             "source_event_id":"request-b","accepted_at":"2026-11-20T10:18:25Z"}
+        ]});
+        let mut group = super::super::test_group();
+        let mut native = cccc_contracts::Actor::new("native");
+        native.created_at = "generation-a".into();
+        native.external_session_id = "claude:fixture".into();
+        let mut headless = cccc_contracts::Actor::new("headless");
+        headless.created_at = "generation-b".into();
+        headless.runner = cccc_contracts::RunnerKind::Headless;
+        group.actors.extend([native, headless]);
+
+        let text = super::super::render_system(&group, &event).expect("sender notice");
+        assert!(text.contains(&format!("[event_id={}]", event.id)));
+        assert!(
+            text.contains(
+                "native had no linked reply 15 minutes after delivery (source request-a)"
+            )
+        );
+        assert!(
+            text.contains(
+                "headless had no linked reply 1 minute after delivery (source request-b)"
+            )
+        );
+        assert!(!text.contains("cccc_terminal"));
     }
 
     #[test]

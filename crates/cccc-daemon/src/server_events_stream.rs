@@ -490,4 +490,25 @@ mod tests {
         assert!(!visible(&group, "peer1", &kinds, &delivery));
         assert!(visible(&group, "user", &kinds, &delivery));
     }
+
+    #[test]
+    fn reply_sender_notice_and_other_prompts_stay_out_of_member_event_stream() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let mut group = store.create("stream", "").expect("group");
+        group.actors.push(Actor::new("lead"));
+        let kinds = BTreeSet::from(["system.notify".to_owned()]);
+        let mut notice = Event::new("system.notify", &group.group_id);
+        notice.by = "system".into();
+        notice.data.insert("target_actor_id".into(), json!("lead"));
+        for kind in ["mail_notice", "reply_notice", "reply_sender_notice"] {
+            notice.data.insert("kind".into(), json!(kind));
+            assert!(!inbox::is_for_actor(&group, &notice, "lead"), "{kind}");
+            assert!(!visible(&group, "lead", &kinds, &notice), "{kind}");
+            assert!(visible(&group, "user", &kinds, &notice), "{kind}");
+        }
+        notice.data.insert("kind".into(), json!("info"));
+        assert!(visible(&group, "lead", &kinds, &notice));
+    }
 }

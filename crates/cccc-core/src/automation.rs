@@ -12,6 +12,9 @@ use crate::automation_render::notify_events;
 use crate::automation_schedule::is_due;
 use crate::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
 
+pub mod reply_sender_notice;
+#[cfg(test)]
+mod reply_sender_notice_tests;
 mod state;
 use state::{RunRecord, RuntimeState};
 
@@ -775,6 +778,7 @@ fn unread_notices(
     reply_after: i64,
 ) -> Vec<Event> {
     let mut notices = Vec::new();
+    let mut sender_notices = reply_sender_notice::Batch::default();
     let generations = inbox::actor_generation_positions(events);
     let now = Utc::now().timestamp();
     let mail_repeat = delivery_timing_value(group, "mail_notice_repeat_seconds", 0);
@@ -791,13 +795,16 @@ fn unread_notices(
     let mut mail_reads = HashMap::<String, Vec<(usize, usize)>>::new();
     let mut replies = HashMap::<(String, String), usize>::new();
     let mut cancelled = HashSet::<String>::new();
-    let mut deliveries = HashMap::<(String, String), (String, i64, usize)>::new();
+    let mut deliveries = HashMap::<(String, String), (String, &str, usize)>::new();
     let mut actor_resumes = HashMap::<String, i64>::new();
     // Each Mail notice, keyed by its own event id: a withdrawn notice was never
     // sent and must not stop the next one.
     let mut mail_claims = ReferenceMailClaims::new();
     let mut reply_claims = HashSet::<(String, String, String)>::new();
+    let mut sender_reply_claims = HashSet::new();
+    let mut sender_registrations = reply_sender_notice::SenderRegistrations::default();
     for (position, event) in events.iter().enumerate() {
+        sender_registrations.note(event, position);
         match event.kind.as_str() {
             "actor.start" | "actor.restart" | "actor.new_session" => {
                 if let Some(actor_id) = event.data.get("actor_id").and_then(Value::as_str) {
@@ -836,11 +843,19 @@ fn unread_notices(
                 ) {
                     deliveries.insert(
                         (source.to_owned(), actor_id.to_owned()),
-                        (state.to_owned(), timestamp(&event.ts, now), position),
+                        (state.to_owned(), event.ts.as_str(), position),
                     );
                 }
             }
             "system.notify" => {
+                if reply_sender_notice::is_notice(event) {
+                    sender_reply_claims.extend(
+                        reply_sender_notice::obligations(event)
+                            .into_iter()
+                            .map(reply_sender_notice::Obligation::into_claim),
+                    );
+                    continue;
+                }
                 let kind = event
                     .data
                     .get("kind")
@@ -953,26 +968,39 @@ fn unread_notices(
                 }
                 continue;
             }
-            if mode != "request_reply"
-                || replied
-                || cancelled.contains(&source.id)
-                || reply_claims.contains(&(
-                    actor.id.clone(),
-                    actor.created_at.clone(),
-                    source.id.clone(),
-                ))
-            {
+            if mode != "request_reply" || replied || cancelled.contains(&source.id) {
                 continue;
             }
-            let Some(started_at) = delivery
+            let claim = (
+                actor.id.clone(),
+                actor.created_at.clone(),
+                source.id.clone(),
+            );
+            if reply_claims.contains(&claim) {
+                continue;
+            }
+            let Some(accepted_at) = delivery
                 .filter(|(state, _, _)| state == "accepted")
                 .map(|(_, at, _)| *at)
             else {
                 continue;
             };
+            let started_at = timestamp(accepted_at, now);
             let started_at = resume_at.map_or(started_at, |resume| started_at.max(resume));
             if reply_after > 0 && now - started_at >= reply_after {
                 reply_due.push(source);
+                if !sender_reply_claims.contains(&claim)
+                    && let Some(sender) = sender_registrations.eligible(
+                        reply_sender_notice::local_sender(source),
+                        position,
+                        eligible,
+                    )
+                {
+                    sender_notices.add(
+                        sender,
+                        reply_sender_notice::Obligation::new(actor, &source.id, accepted_at),
+                    );
+                }
             }
         }
 
@@ -1065,7 +1093,7 @@ fn unread_notices(
             notices.push(event);
         }
     }
-    notices
+    sender_notices.finish(group, notices)
 }
 
 pub(crate) fn delivery_timing_value(group: &GroupDoc, key: &str, default: i64) -> i64 {

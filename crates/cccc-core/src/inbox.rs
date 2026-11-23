@@ -373,8 +373,20 @@ pub fn is_mail_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> boo
         && is_for_actor(group, event, actor_id)
 }
 
+/// Internal prompts are delivered and read by their explicit target only.
+pub fn is_targeted_prompt(event: &Event) -> bool {
+    event.kind == "system.notify"
+        && matches!(
+            event.data.get("kind").and_then(Value::as_str),
+            Some("mail_notice" | "reply_notice" | crate::automation::reply_sender_notice::KIND)
+        )
+}
+
 pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
-    if event.by == actor_id || !matches!(event.kind.as_str(), "chat.message" | "system.notify") {
+    if event.by == actor_id
+        || !matches!(event.kind.as_str(), "chat.message" | "system.notify")
+        || is_targeted_prompt(event)
+    {
         return false;
     }
     let to: Vec<_> = event
@@ -385,12 +397,6 @@ pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
         .unwrap_or_default();
     let internal = find(group, actor_id).is_some_and(|actor| actor.internal_kind.is_some());
     if event.kind == "system.notify" {
-        if matches!(
-            event.data.get("kind").and_then(Value::as_str),
-            Some("mail_notice" | "reply_notice")
-        ) {
-            return false;
-        }
         let direct_target = ["target_actor_id", "actor_id"].iter().find_map(|key| {
             event
                 .data

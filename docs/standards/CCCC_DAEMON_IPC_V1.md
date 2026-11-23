@@ -6959,13 +6959,29 @@ promote Mail to Push, advance an Inbox cursor, or create a new Mail obligation. 
 responses MAY carry a passive `mail_pending` count without writing a notice.
 
 A `request_reply` obligation starts its timer only after an accepted runtime
-delivery. If no matching `reply_to`
-message or cancellation has closed it by `reply_notice_after_seconds`, an
-active/idle enabled actor may receive one content-free
-`system.notify(kind="reply_notice")`. It never repeats or escalates. Failed,
-blocked, or ambiguous delivery does not nudge the recipient.
+delivery. If no matching `reply_to` message or cancellation has closed it by
+`reply_notice_after_seconds`, an enabled Actor with a running receive path may
+receive one `system.notify(kind="reply_notice")`. On that same check CCCC may
+send one `system.notify(kind="reply_sender_notice")` to the original sender.
+The sender must be an enabled, running Actor in the same Group with evidence
+that the current registration authored the request. Human senders, relayed or
+imported requests, and senders whose registration or availability cannot be
+confirmed are skipped. Setting `reply_notice_after_seconds` to zero disables
+both. Failed, blocked, or ambiguous delivery is ineligible.
 
-Paused, stopped, or disabled actors are never woken for either notice. Pending
+The sender notice groups all newly due obligations for that sender in the
+check. Each obligation is deduplicated independently by the original recipient's
+Actor registration and the source event ID. Its `context.obligations` items
+record `recipient_actor_id`, `recipient_actor_created_at`, `source_event_id`
+and the durable receipt's `accepted_at`. Its `context.source_event_ids` lists
+the distinct original requests. The notice carries no message content and its
+rendered age is relative to the notice's `ts`. Each notice reaches only its
+`target_actor_id` through existing runtime delivery and exact message history.
+Sender notices never enter the member `events_stream`, including its replay.
+Neither notice repeats. Once a recipient notice is issued, a sender skipped at
+that check receives no later sender notice for the obligation.
+
+Paused, stopped, or disabled actors are never woken for these notices. Pending
 Mail is surfaced at the next start/resume bootstrap and begins a fresh notice
 window. Explicit start/resume may recover only blocked Push work from the
 current actor generation that has no accepted/ambiguous delivery evidence;

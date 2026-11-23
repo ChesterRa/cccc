@@ -3,6 +3,7 @@
 //! Pending handoffs retain their original delivery ownership.
 //! Other historical relations still grow with history; no payload is retained.
 use super::*;
+use crate::automation::reply_sender_notice::{self, Obligation};
 use std::collections::HashSet;
 
 type MailClaims = HashMap<(String, String), Vec<MailClaim>>;
@@ -230,12 +231,15 @@ pub(crate) struct NoticeState {
     actor_resumes: HashMap<String, String>,
     mail_claims: MailClaims,
     reply_claims: HashSet<(String, String, String)>,
+    sender_reply_claims: HashSet<(String, String, String)>,
+    sender_registrations: reply_sender_notice::SenderRegistrations,
     resume_at: Option<String>,
 }
 struct Source {
     id: String,
     ts: String,
     position: usize,
+    sender: Option<String>,
     mail: bool,
     notice: bool,
     recipients: Vec<String>,
@@ -279,6 +283,7 @@ impl NoticeState {
     pub fn note(&mut self, group: &GroupDoc, event: &Event) {
         let position = self.next_position;
         self.next_position += 1;
+        self.sender_registrations.note(event, position);
         let mode = event
             .data
             .get("message_mode")
@@ -368,6 +373,10 @@ impl NoticeState {
                             id: event.id.clone(),
                             ts: event.ts.clone(),
                             position,
+                            sender: (mode == "request_reply")
+                                .then(|| reply_sender_notice::local_sender(event))
+                                .flatten()
+                                .map(str::to_owned),
                             mail: mode == "mail",
                             notice: mode != "mail" || !broadcast,
                             recipients,
@@ -400,6 +409,14 @@ impl NoticeState {
                 }
             }
             "system.notify" => {
+                if reply_sender_notice::is_notice(event) {
+                    self.sender_reply_claims.extend(
+                        reply_sender_notice::obligations(event)
+                            .into_iter()
+                            .map(Obligation::into_claim),
+                    );
+                    return;
+                }
                 let kind = event
                     .data
                     .get("kind")
@@ -593,6 +610,7 @@ impl NoticeState {
         let now = Utc::now().timestamp();
         let resume_at = self.resume_at.as_deref().map(|ts| timestamp(ts, now));
         let mut notices = Vec::new();
+        let mut sender_notices = reply_sender_notice::Batch::default();
         let resolution = |actor: &str, id: &str| {
             let source = self.positions.get(id)?;
             let read = self.mail_reads.get(actor).and_then(|facts| {
@@ -642,17 +660,29 @@ impl NoticeState {
                     }
                 } else if !replied
                     && !self.cancelled.contains(&source.id)
-                    && !self.reply_claims.contains(&(
+                    && let Some((_, at, _)) = delivery.filter(|v| v.0 == "accepted")
+                {
+                    let claim = (
                         actor.id.clone(),
                         actor.created_at.clone(),
                         source.id.clone(),
-                    ))
-                    && let Some((_, at, _)) = delivery.filter(|v| v.0 == "accepted")
-                {
+                    );
+                    if self.reply_claims.contains(&claim) {
+                        continue;
+                    }
                     let started = timestamp(at, now);
                     let started = resume_at.map_or(started, |resume| started.max(resume));
                     if reply_after > 0 && now - started >= reply_after {
                         replies.push(source);
+                        if !self.sender_reply_claims.contains(&claim)
+                            && let Some(sender) = self.sender_registrations.eligible(
+                                source.sender.as_deref(),
+                                source.position,
+                                eligible,
+                            )
+                        {
+                            sender_notices.add(sender, Obligation::new(actor, &source.id, at));
+                        }
                     }
                 }
             }
@@ -724,6 +754,6 @@ impl NoticeState {
                     replies.iter().map(|source| source.id.clone()).collect()));
             }
         }
-        notices
+        sender_notices.finish(group, notices)
     }
 }
