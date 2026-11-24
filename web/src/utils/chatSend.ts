@@ -1,4 +1,5 @@
 import type { Actor, LedgerEvent } from "../types";
+import { formatDaemonError } from "./daemonErrorText";
 
 export type ChatTFunction = (key: string, options?: Record<string, unknown>) => string;
 
@@ -25,7 +26,6 @@ export function formatSendMessageError(args: {
     return args.t("sendResultUnknown");
   }
   if (code === "attachment_too_large") return args.t("attachmentsTooLarge");
-  if (!code) return message || args.t("sendFailed", { defaultValue: "Failed to send message." });
-  if (!message) return code;
-  return `${code}: ${message}`;
+  const formatted = formatDaemonError({ code, message });
+  return formatted || args.t("sendFailed", { defaultValue: "Failed to send message." });
 }

@@ -884,7 +884,7 @@ export function AppModals({
       const resp = await api.cancelReplyRequest(targetGroupId, eventId);
       if (!resp.ok) {
         if (useGroupStore.getState().selectedGroupId === targetGroupId) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
         }
         return;
       }
@@ -974,7 +974,7 @@ export function AppModals({
       const resp = await api.readInbox(groupId, actorId, inboxMessages.length);
       if (!resp.ok) {
         if (useInboxStore.getState().inboxTarget === inboxTarget) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
         }
         return;
       }
@@ -998,7 +998,7 @@ export function AppModals({
       const resp = await api.updateGroup(targetGroupId, editGroupTitle, editGroupTopic);
       if (!resp.ok) {
         if (useGroupStore.getState().selectedGroupId === targetGroupId) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
         }
         return;
       }
@@ -1025,11 +1025,7 @@ export function AppModals({
     try {
       const resp = await api.resetGroup(oldGroupId);
       if (!resp.ok) {
-        showError(
-          resp.error.code === "actor_browser_busy"
-            ? t("runtimeSwitch.browserBusy")
-            : `${resp.error.code}: ${resp.error.message}`,
-        );
+        showError(formatDaemonError(resp.error));
         return;
       }
       const result = resp.result || {};
@@ -1064,8 +1060,9 @@ export function AppModals({
     try {
       const resp = await api.createGroupWithScope(title, path);
       if (!resp.ok) {
-        directoryBrowser.setError(`${resp.error.code}: ${resp.error.message}`);
-        showError(`${resp.error.code}: ${resp.error.message}`);
+        const message = formatDaemonError(resp.error);
+        directoryBrowser.setError(message);
+        showError(message);
         return;
       }
       const groupId = resp.result.group_id;
@@ -1162,7 +1159,7 @@ export function AppModals({
         srcQuoteText,
       );
       if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
+        showError(formatDaemonError(resp.error));
         return;
       }
       setRelayModal(null);
@@ -1180,7 +1177,7 @@ export function AppModals({
       try {
         const resp = await api.publishPresentationUrl(gid, payload);
         if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
           return;
         }
         setGroupPresentation(resp.result.presentation);
@@ -1212,7 +1209,7 @@ export function AppModals({
       try {
         const resp = await api.publishPresentationUpload(gid, payload);
         if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
           return;
         }
         setGroupPresentation(resp.result.presentation);
@@ -1244,7 +1241,7 @@ export function AppModals({
       try {
         const resp = await api.publishPresentationWorkspace(gid, payload);
         if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
           return;
         }
         setGroupPresentation(resp.result.presentation);
@@ -1284,7 +1281,7 @@ export function AppModals({
       try {
         const resp = await api.clearPresentationSlot(gid, normalizedSlotId);
         if (!resp.ok) {
-          showError(`${resp.error.code}: ${resp.error.message}`);
+          showError(formatDaemonError(resp.error));
           return;
         }
         setGroupPresentation(resp.result.presentation);

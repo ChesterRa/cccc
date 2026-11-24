@@ -9,6 +9,7 @@ import {
 import { fetchActors } from "../../services/api/actors";
 import type { SessionNodeDevice } from "../../services/api/sessionNodes";
 import { useGroupStore, useUIStore } from "../../stores";
+import { formatDaemonError } from "../../utils/daemonErrorText";
 import { isDeviceSessionSource } from "./remoteSessionPolicy";
 import { useLocalSessionSources } from "./useLocalSessionSources";
 import { useLocalSourceControls } from "./useLocalSourceControls";
@@ -140,7 +141,7 @@ export function useLocalSessionsConnection({
         ? await joinLocalSessions(groupId, selectedIds)
         : await createLocalConversation(selectedIds, title);
       if (!response.ok) {
-        useUIStore.getState().showError(response.error.message);
+        useUIStore.getState().showError(formatDaemonError(response.error));
         return;
       }
       // The write may finish after its dialog closes. Refresh state without navigating back.
@@ -186,7 +187,7 @@ export function useLocalSessionsConnection({
     setNotice("");
     try {
       const response = await resumeLocalSessionAccess(groupId, actor.id, source.source_id);
-      if (!response.ok) useUIStore.getState().showError(response.error.message);
+      if (!response.ok) useUIStore.getState().showError(formatDaemonError(response.error));
       else if (alive.current)
         setNotice(t("localSessions.accessRestored", { name: actor.title || actor.id }));
       if (alive.current) await loadMembers(groupId);

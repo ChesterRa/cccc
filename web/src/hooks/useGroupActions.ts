@@ -5,6 +5,7 @@ import * as api from "../services/api";
 import type { GroupControl } from "../utils/groupControls";
 import i18n from "../i18n";
 import { getCachedGroupActors } from "../stores/groupStoreCore";
+import { formatDaemonError } from "../utils/daemonErrorText";
 import { noticeGroupSessionsReplaced } from "./runtimeSessionReplacedNotice";
 
 export function useGroupActions() {
@@ -26,10 +27,7 @@ export function useGroupActions() {
     try {
       if (control === "delete") {
         const response = await api.deleteGroup(gid);
-        if (!response.ok)
-          showError(
-            `${title}: ${response.error.code === "actor_browser_busy" ? i18n.t("actors:runtimeSwitch.browserBusy") : response.error.message}`,
-          );
+        if (!response.ok) showError(`${title}: ${formatDaemonError(response.error)}`);
         else if (useGroupStore.getState().selectedGroupId === gid) {
           // This setter already clears the selected view and handles its draft.
           useGroupStore.getState().setSelectedGroupId("");
@@ -51,7 +49,7 @@ export function useGroupActions() {
         ) {
           response = await api.startGroup(gid);
         }
-        if (!response.ok) showError(`${title}: ${response.error.message}`);
+        if (!response.ok) showError(`${title}: ${formatDaemonError(response.error)}`);
         else if (control === "launch" || control === "activate") {
           const current = useGroupStore.getState();
           const actors =

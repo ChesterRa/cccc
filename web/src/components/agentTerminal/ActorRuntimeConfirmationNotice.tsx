@@ -4,6 +4,7 @@ import { useStartupInputWaiting, startupInputGeneration } from "../../hooks/useS
 import * as api from "../../services/api";
 import { useGroupStore, useUIStore } from "../../stores";
 import type { Actor } from "../../types";
+import { formatDaemonError } from "../../utils/daemonErrorText";
 import { runtimeConfirmationKeys } from "../../utils/runtimeConfirmationKeys";
 import { Button } from "../ui/button";
 
@@ -49,7 +50,7 @@ export function ActorRuntimeConfirmationNotice({
       setReleasing(true);
       try {
         const resp = await api.releaseActorStartupInput(groupId, actor.id, generation);
-        if (!resp.ok) showError(`${resp.error.code}: ${resp.error.message}`);
+        if (!resp.ok) showError(formatDaemonError(resp.error));
         await refreshActors(groupId);
       } finally {
         setReleasing(false);

@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import i18n, { i18nReady } from "../i18n";
 import { useGroupActions } from "./useGroupActions";
 import { useGroupStore, useUIStore } from "../stores";
 import * as api from "../services/api";
@@ -194,12 +195,47 @@ describe("Group run actions", () => {
     });
     await act(async () => result.handleGroupControl("g2", "activate"));
     expect(api.startGroup).not.toHaveBeenCalled();
-    expect(showError).toHaveBeenCalledExactlyOnceWith("Background: Access denied");
+    expect(showError).toHaveBeenCalledExactlyOnceWith("Background: forbidden: Access denied");
     vi.mocked(api.stopGroup).mockRejectedValueOnce(new Error("Network disconnected"));
     await act(async () => result.handleGroupControl("g2", "stop"));
     expect(showError).toHaveBeenCalledTimes(2);
     expect(useUIStore.getState().busy).toBe("");
     await act(async () => result.handleGroupControl("g2", "launch"));
     expect(api.startGroup).toHaveBeenCalledWith("g2");
+  });
+
+  it("formats mapped daemon errors with the Group title prefix across launch and delete", async () => {
+    await i18nReady;
+    await i18n.changeLanguage("zh");
+    try {
+      vi.mocked(api.startGroup).mockResolvedValueOnce({
+        ok: false,
+        error: { code: "invalid_project_root", message: "project root path does not exist: /gone" },
+      });
+      await act(async () => result.handleGroupControl("g2", "launch"));
+      expect(showError).toHaveBeenCalledTimes(1);
+      const launchMessage = showError.mock.calls[0]?.[0] as string;
+      expect(launchMessage.startsWith("Background: ")).toBe(true);
+      expect(launchMessage).not.toContain("project root path does not exist");
+      expect(launchMessage).toContain("（invalid_project_root）");
+
+      vi.stubGlobal(
+        "confirm",
+        vi.fn(() => true),
+      );
+      vi.mocked(api.deleteGroup).mockResolvedValueOnce({
+        ok: false,
+        error: { code: "actor_browser_busy", message: "delivering to browser" },
+      });
+      await act(async () => result.handleDeleteGroup("g2"));
+      expect(showError).toHaveBeenCalledTimes(2);
+      const deleteMessage = showError.mock.calls[1]?.[0] as string;
+      expect(deleteMessage.startsWith("Background: ")).toBe(true);
+      expect(deleteMessage).not.toContain("delivering to browser");
+      expect(deleteMessage).toContain("（actor_browser_busy）");
+    } finally {
+      vi.unstubAllGlobals();
+      await i18n.changeLanguage("en");
+    }
   });
 });

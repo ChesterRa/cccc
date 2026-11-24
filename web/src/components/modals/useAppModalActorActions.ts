@@ -13,6 +13,7 @@ import * as api from "../../services/api";
 import { useGroupStore, useUIStore } from "../../stores";
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/actorProfiles";
 import { actorGenerationIdentity } from "../../utils/actorIdentity";
+import { formatDaemonError } from "../../utils/daemonErrorText";
 import {
   joinRuntimeSentences,
   runtimeSwitchErrorMessage,
@@ -388,10 +389,10 @@ export function useAppModalActorActions(args: {
     const isCurrentEdit = () =>
       editActorVisitRef.current === visit &&
       useGroupStore.getState().selectedGroupId === targetGroupId;
-    const actorUpdateError = (error: { code: string; message: string }) =>
-      error.code === "actor_browser_busy" || error.code === "delivery_unresolved"
-        ? runtimeSwitchErrorMessage(error, (key) => t(key))
-        : error.message;
+    const formatActorUpdateError = (error: { code: string; message: string }) =>
+      error.code === "delivery_unresolved"
+        ? `${error.code}: ${runtimeSwitchErrorMessage(error, (key) => t(key))}`
+        : formatDaemonError(error);
     setBusy("actor-update");
     try {
       if (payload.runtimeSwitch) {
@@ -515,7 +516,7 @@ export function useAppModalActorActions(args: {
           },
         );
         if (!convertResp.ok) {
-          throw new Error(`${convertResp.error.code}: ${actorUpdateError(convertResp.error)}`);
+          throw new Error(formatActorUpdateError(convertResp.error));
         }
         confirmationResult = convertResp.result;
         const updated =
@@ -549,7 +550,7 @@ export function useAppModalActorActions(args: {
             },
           );
           if (!profileResp.ok) {
-            throw new Error(`${profileResp.error.code}: ${actorUpdateError(profileResp.error)}`);
+            throw new Error(formatActorUpdateError(profileResp.error));
           }
           confirmationResult = profileResp.result;
           const updated =
@@ -593,7 +594,7 @@ export function useAppModalActorActions(args: {
             },
           );
           if (!customResp.ok) {
-            throw new Error(`${customResp.error.code}: ${actorUpdateError(customResp.error)}`);
+            throw new Error(formatActorUpdateError(customResp.error));
           }
           confirmationResult = customResp.result;
           const updated =
@@ -619,7 +620,7 @@ export function useAppModalActorActions(args: {
           clear,
         );
         if (!envResp.ok) {
-          throw new Error(`${envResp.error.code}: ${envResp.error.message}`);
+          throw new Error(formatDaemonError(envResp.error));
         }
         if (isCurrentEdit()) payload.onSecretsSaved?.(envResp.result.keys);
       }
@@ -639,7 +640,7 @@ export function useAppModalActorActions(args: {
 
       if (grokBotUrl !== undefined) {
         const bindResp = await api.bindGrokBot(targetGroupId, actorId, grokBotUrl);
-        if (!bindResp.ok) throw new Error(`${bindResp.error.code}: ${bindResp.error.message}`);
+        if (!bindResp.ok) throw new Error(formatDaemonError(bindResp.error));
       }
 
       if (options.restart) {
@@ -648,7 +649,7 @@ export function useAppModalActorActions(args: {
             ? await api.startActor(targetGroupId, actorId)
             : await api.restartActor(targetGroupId, actorId);
         if (!restartResp.ok) {
-          throw new Error(`${restartResp.error.code}: ${restartResp.error.message}`);
+          throw new Error(formatDaemonError(restartResp.error));
         }
         confirmationResult = restartResp.result;
         noticeRuntimeSessionReplaced(String(editingActor.title || actorId), restartResp.result);
@@ -713,7 +714,7 @@ export function useAppModalActorActions(args: {
       const title = editActorTitle.trim();
       if (title !== (editingActor.title || "").trim()) {
         const response = await api.updateActor(groupId, actorId, undefined, undefined, title);
-        if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
+        if (!response.ok) throw new Error(formatDaemonError(response.error));
         if (response.result.actor && isCurrentEdit())
           setEditingActor(
             api.actorWithAvatar(groupId, { ...response.result.actor, role: editingActor.role }),
@@ -818,7 +819,7 @@ export function useAppModalActorActions(args: {
         editProfileSaveRef.current?.profile.revision,
       );
       if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
+        showError(formatDaemonError(resp.error));
         return;
       }
       const profileId = String(resp.result?.profile?.id || "").trim();
@@ -842,7 +843,7 @@ export function useAppModalActorActions(args: {
             : undefined,
         );
         if (!copyResp.ok) {
-          showError(`${copyResp.error.code}: ${copyResp.error.message}`);
+          showError(formatDaemonError(copyResp.error));
           return;
         }
         if (editProfileSaveRef.current) editProfileSaveRef.current.copied = true;
@@ -860,7 +861,7 @@ export function useAppModalActorActions(args: {
           secrets.clear,
         );
         if (!secretResp.ok) {
-          showError(`${secretResp.error.code}: ${secretResp.error.message}`);
+          showError(formatDaemonError(secretResp.error));
           return;
         }
       }
@@ -1022,7 +1023,7 @@ export function useAppModalActorActions(args: {
             },
       );
       if (!resp.ok) {
-        setAddActorError(resp.error?.message || t("failedToAddAgent"));
+        setAddActorError(formatDaemonError(resp.error) || t("failedToAddAgent"));
         return false;
       }
 
@@ -1128,7 +1129,7 @@ export function useAppModalActorActions(args: {
         newProfileSaveRef.current?.revision,
       );
       if (!resp.ok) {
-        setAddActorError(resp.error?.message || t("failedToSaveActorProfile"));
+        setAddActorError(formatDaemonError(resp.error) || t("failedToSaveActorProfile"));
         return;
       }
       const profileId = String(resp.result?.profile?.id || "").trim();
@@ -1138,7 +1139,7 @@ export function useAppModalActorActions(args: {
         if (hasSecrets) {
           const secretResp = await api.updateActorProfilePrivateEnv(profileId, setVars, [], false);
           if (!secretResp.ok) {
-            setAddActorError(secretResp.error?.message || t("failedToSaveActorProfile"));
+            setAddActorError(formatDaemonError(secretResp.error) || t("failedToSaveActorProfile"));
             return;
           }
         }

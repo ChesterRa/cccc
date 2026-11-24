@@ -48,6 +48,14 @@
     "delivery_in_progress": "Delivery is already in progress. No need to send again; recipient status will update when it finishes ({{code}}).",
     "delivery_ambiguous": "Delivery may already have occurred. Check the member's terminal or wait for a reply; if you need to send it again, reopen recipient status and use \"Retry anyway\" ({{code}}).",
     "already_delivered": "This message was already handed to the runtime. No need to send it again ({{code}}).",
-    "shutdown_in_progress": "CCCC is restarting or stopping. Try again in a moment ({{code}})."
+    "shutdown_in_progress": "CCCC is restarting or stopping. Try again in a moment ({{code}}).",
+    "daemon_unavailable": "The CCCC daemon is not responding right now. Once it recovers, check whether your last action took effect before trying again ({{code}}).",
+    "path_not_found": "That directory or its parent folder could not be found. Check the path or use Browse to pick an existing folder ({{code}}).",
+    "not_dir": "This path or one of its parent paths is not a folder. Check the directory path and its parent folders, or pick an existing folder ({{code}}).",
+    "invalid_project_root": "The project directory bound to this Group is missing or inaccessible. Check that it still exists, or re-attach a valid directory ({{code}}).",
+    "no_enabled_recipients": "No members can receive this message. Add a member first or choose different recipients ({{code}}).",
+    "file_too_large": "This file exceeds the upload size limit. Try a smaller file, or pin a URL or choose a workspace file instead ({{code}}).",
+    "actor_browser_busy": "The browser is delivering work. Wait for it to finish, then try again ({{code}}).",
+    "actor_switch_pending": "Finish the previous switch first. Refresh the page, then choose Retry completion on the member ({{code}})."
   }
 }

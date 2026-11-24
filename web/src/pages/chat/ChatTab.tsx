@@ -50,6 +50,7 @@ import { getChatSession } from "../../stores/useUIStore";
 import { findPresentationSlot } from "../../utils/presentation";
 import { buildPresentationRefForSlot } from "../../utils/presentationRefs";
 import { clearPresentationSlot } from "../../services/api";
+import { formatDaemonError } from "../../utils/daemonErrorText";
 import { ResizableSidePanel } from "../../components/layout/ResizableSidePanel";
 import { MOBILE_APP_HEADER_HEIGHT_PX } from "../../utils/responsiveLayout";
 import { useShortTouchViewport } from "../../hooks/useShortTouchViewport";
@@ -1000,7 +1001,7 @@ export function ChatTab({
       if (!confirmed) return;
       const resp = await clearPresentationSlot(gid, normalized);
       if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
+        showError(formatDaemonError(resp.error));
         return;
       }
       setGroupPresentation(resp.result.presentation);
