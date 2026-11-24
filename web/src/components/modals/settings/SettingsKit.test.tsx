@@ -171,7 +171,7 @@ describe("settings pages on the kit", () => {
     expect(danger.disabled).toBe(true);
   });
 
-  it("navigation: the scope switch is a pressed-button group with no applies-to caption", async () => {
+  it("navigation: the scope switch is a pressed-button group, explained beside it when locked", async () => {
     const onScope = vi.fn();
     const renderNav = (globalEnabled: boolean) =>
       render(
@@ -200,22 +200,28 @@ describe("settings pages on the kit", () => {
     expect(host.textContent).not.toContain("navigation.appliesTo");
     await click(buttons()[1]);
     expect(onScope).not.toHaveBeenCalled();
-    // Only the phone row keeps a help key, beside the switch and never inside a scope
-    // key, so a tap on it cannot switch scope and a disabled key does not hide it.
+    // The phone row always keeps a help key; the desktop sidebar shows one only while
+    // the instance key is locked. Each sits beside its switch, never inside a scope key,
+    // so a tap on it cannot switch scope and a disabled key does not hide it.
     const switches = [...host.querySelectorAll<HTMLElement>("[data-settings-scope-switch]")];
     expect(switches).toHaveLength(2);
     for (const group of switches) {
       expect(group.querySelector("button button, [data-scope-help-trigger]")).toBeNull();
     }
-    expect(host.querySelectorAll("[data-scope-help-trigger]")).toHaveLength(1);
-    expect(host.querySelector("[data-settings-nav] [data-scope-help-trigger]")).toBeNull();
+    expect(host.querySelectorAll("[data-scope-help-trigger]")).toHaveLength(2);
+    const desktopHelp = host.querySelector<HTMLButtonElement>(
+      "[data-settings-nav] [data-scope-help-trigger]",
+    );
+    expect(desktopHelp).not.toBeNull();
     // The help explains both scopes, including why the instance is locked.
-    await click(host.querySelector<HTMLButtonElement>("[data-scope-help-trigger]")!);
+    await click(desktopHelp!);
     const help = document.querySelector<HTMLElement>("[data-scope-help-popup]")!;
     expect(help.textContent).toContain("navigation.groupScopeContent");
     expect(help.textContent).toContain("navigation.globalLockedContent");
 
     await renderNav(true);
+    expect(host.querySelectorAll("[data-scope-help-trigger]")).toHaveLength(1);
+    expect(host.querySelector("[data-settings-nav] [data-scope-help-trigger]")).toBeNull();
     await click(buttons()[1]);
     expect(onScope).toHaveBeenCalledWith("global");
   });

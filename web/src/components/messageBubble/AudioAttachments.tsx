@@ -86,7 +86,7 @@ export function AudioAttachments({
             <div
               key={`audio:${attachmentKeyPrefix}:${index}`}
               className={classNames(
-                "relative inline-flex max-w-full items-stretch overflow-hidden rounded-full border border-[var(--glass-border-subtle)] text-xs text-[var(--color-text-secondary)]",
+                "relative inline-flex max-w-full items-stretch rounded-full border border-[var(--glass-border-subtle)] text-xs text-[var(--color-text-secondary)]",
                 active && "bg-[var(--glass-tab-bg)]",
               )}
               data-message-audio
@@ -94,10 +94,14 @@ export function AudioAttachments({
               {active && (
                 <span
                   aria-hidden="true"
-                  data-message-audio-progress
-                  className="pointer-events-none absolute bottom-0 left-0 h-0.5 bg-[var(--color-text-primary)] transition-[width] duration-200"
-                  style={{ width: `${Math.round(progress * 1000) / 10}%` }}
-                />
+                  className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]"
+                >
+                  <span
+                    data-message-audio-progress
+                    className="absolute bottom-0 left-0 h-0.5 bg-[var(--color-text-primary)] transition-[width] duration-200"
+                    style={{ width: `${Math.round(progress * 1000) / 10}%` }}
+                  />
+                </span>
               )}
               <button
                 type="button"

@@ -80,11 +80,11 @@ export function SettingsNavigation({
         className="hidden min-h-0 w-64 shrink-0 flex-col border-r border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] sm:flex"
         data-settings-nav
       >
-        <div className="flex flex-col gap-3 px-3 pt-4 pb-2">
+        <div className="flex items-center gap-1 px-3 pt-4 pb-2">
           <div
             role="group"
             aria-label={t("navigation.targetScope")}
-            className="grid grid-cols-2 rounded-[10px] bg-[var(--glass-tab-bg)] p-[3px]"
+            className="grid min-w-0 flex-1 grid-cols-2 rounded-[10px] bg-[var(--glass-tab-bg)] p-[3px]"
             data-settings-scope-switch
           >
             {(
@@ -109,6 +109,9 @@ export function SettingsNavigation({
               </button>
             ))}
           </div>
+          {/* The desktop sidebar stays bare in the usual case; only a locked instance
+              key needs the help beside it, since a disabled key cannot say why. */}
+          {!globalEnabled && scopeHelp}
         </div>
 
         <nav className="flex-1 overflow-y-auto scrollbar-hide px-3 pb-4 pt-2">

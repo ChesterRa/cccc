@@ -1320,10 +1320,11 @@ in browsers without one, as for [workspace files](#workspace-files). Where neith
 download it or, unless CCCC is embedded through Connect, open it in a new tab. Other files stay
 downloads.
 
-Audio files keep their download chip and gain a play button. A message has one player,
-which appears below its files; choosing another file switches to it, so you can compare
-several clips. Starting audio pauses other message audio and video, and starting a video
-pauses audio. Playback stops if the message scrolls far out of view or you change Group.
+Click an audio file's name to play or pause it. The button at the right downloads the file.
+When the duration is known, the line along the bottom shows how much of the selected clip
+has played. Choosing another file switches playback to it. Starting audio pauses other
+message audio and video. Starting a video pauses audio. Playback stops if the message scrolls
+far out of view or you change Group.
 Which formats play depends on the browser. A file that fails to play shows a note; you can
 try it again, and its download remains available.
 
