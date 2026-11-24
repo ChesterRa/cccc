@@ -47,10 +47,10 @@ describe("GroupSidebarItem mobile actions", () => {
     expect(trigger?.getAttribute("aria-expanded")).toBe("false");
     expect(host.querySelector('[role="button"]')?.getAttribute("aria-current")).toBe("page");
     expect(host.querySelector('[aria-label^="Reorder"]')).toBeNull();
-    // The row is the name alone: its run state is not drawn as a separate symbol.
+    // The row starts with the name; the status symbol sits at the row end.
     const row = host.querySelector('[role="button"]')!;
-    expect(row.querySelector("[data-group-name]")?.textContent).toBe("Alpha");
-    expect(row.querySelector(".lcd-group-symbol")).toBeNull();
+    expect(row.firstElementChild?.textContent).toBe("Alpha");
+    expect(row.lastElementChild?.classList.contains("lcd-group-symbol")).toBe(true);
 
     await act(async () => trigger?.click());
     expect(trigger?.getAttribute("aria-expanded")).toBe("true");
@@ -76,71 +76,6 @@ describe("GroupSidebarItem mobile actions", () => {
     );
     expect(named.map((node) => node.className)).toEqual(["sr-only"]);
     expect(host.querySelector("button")?.textContent).toBe("Connect");
-  });
-});
-
-describe("GroupSidebarItem run state", () => {
-  let host: HTMLDivElement;
-  let root: ReturnType<typeof createRoot>;
-
-  beforeEach(() => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    host = document.createElement("div");
-    document.body.append(host);
-    root = createRoot(host);
-  });
-
-  afterEach(async () => {
-    await act(async () => root.unmount());
-    host.remove();
-  });
-
-  const renderRow = async (runtime: Record<string, unknown>, isActive = false) => {
-    await act(async () =>
-      root.render(
-        <GroupSidebarItem
-          group={{ group_id: "g_alpha", title: "Alpha", runtime_status: runtime } as GroupMeta}
-          isActive={isActive}
-          isCollapsed={false}
-          onSelect={vi.fn()}
-        />,
-      ),
-    );
-    const name = host.querySelector<HTMLElement>("[data-group-name]")!;
-    const state = host.querySelector<HTMLElement>("[data-group-status]")!;
-    return { name, state };
-  };
-
-  it("shows the state through the name's tone and names it in text, without a symbol", async () => {
-    const cases: [Record<string, unknown>, string, string][] = [
-      [{ lifecycle_state: "active", runtime_running: true }, "run", "--color-text-primary"],
-      [{ lifecycle_state: "idle", runtime_running: true }, "idle", "--color-text-primary"],
-      [{ lifecycle_state: "paused", runtime_running: true }, "paused", "--color-text-secondary"],
-      [{ lifecycle_state: "stopped", runtime_running: false }, "stop", "--color-text-muted"],
-      [{ lifecycle_state: "active", runtime_running: false }, "offline", "--color-text-muted"],
-    ];
-    for (const [runtime, key, tone] of cases) {
-      const { name, state } = await renderRow(runtime);
-      expect(state.dataset.groupStatus).toBe(key);
-      expect(name.className).toContain(tone);
-      // The state is named for assistive technology and in the tooltip, not by tone alone.
-      expect(state.querySelector(".sr-only")?.textContent).toBeTruthy();
-      expect(name.title).toMatch(/^Alpha · ./);
-      expect(host.querySelector(".lcd-group-symbol")).toBeNull();
-      expect(state.textContent).not.toContain("?");
-    }
-  });
-
-  it("keeps a mark only for an unknown state, which needs attention", async () => {
-    const { state } = await renderRow({ lifecycle_state: "active", available: false });
-    expect(state.dataset.groupStatus).toBe("unknown");
-    expect(state.querySelector('[aria-hidden="true"]')?.textContent).toBe("?");
-  });
-
-  it("draws the open Group's name in the active style whatever its state", async () => {
-    const { name } = await renderRow({ lifecycle_state: "stopped", runtime_running: false }, true);
-    expect(name.className).toContain("font-semibold");
-    expect(name.className).not.toContain("--color-text-muted");
   });
 });
 

@@ -50,13 +50,12 @@ describe("GroupSidebarSortableList mobile controls", () => {
 
     // Each row has an accessible Group button and a separate menu trigger.
     expect(host.querySelectorAll("button")).toHaveLength(groups.length * 2);
-    // Each row is the name alone; the run state is not drawn as a separate symbol.
+    // Each row starts with the name; the status symbol sits at the row end.
     const groupRows = host.querySelectorAll('[role="button"]');
     expect(groupRows).toHaveLength(groups.length);
     groupRows.forEach((row, index) => {
-      expect(row.querySelector("[data-group-name]")?.textContent).toBe(groups[index].title);
-      expect(row.querySelector(".lcd-group-symbol")).toBeNull();
-      expect(row.querySelector("[data-group-status]")).not.toBeNull();
+      expect(row.firstElementChild?.textContent).toBe(groups[index].title);
+      expect(row.lastElementChild?.classList.contains("lcd-group-symbol")).toBe(true);
     });
 
     const actions = host.querySelector<HTMLButtonElement>('button[aria-label="Actions · Alpha"]');

@@ -107,6 +107,8 @@
   --lcd-on-wait: #f1f0ec;
   --lcd-danger: #7e2f18;
   --lcd-link: #164a63;
+  /* A running Group's triangle: the one state symbol with a colour of its own. */
+  --lcd-run: #2e6b34;
   --lcd-sel-bg: #1f1e1b;
   --lcd-sel-fg: #ebe9e5;
   --lcd-sel-soft: #dad9d5;
@@ -156,6 +158,7 @@
   --lcd-on-wait: #21201e;
   --lcd-danger: #ee9c80;
   --lcd-link: #86c4e2;
+  --lcd-run: #8fcf8f;
   --lcd-sel-bg: #dad9d5;
   --lcd-sel-fg: #21201e;
   --lcd-sel-soft: #2e2e2b;
@@ -1659,6 +1662,13 @@
   height: 0.75em;
   background: currentColor;
   clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+
+/* The run triangle is green wherever the symbol appears, so Groups with running members
+   are easy to pick out along the row ends. The shape still names the state; the open
+   Group's reversed row keeps its own colour through the rule above. */
+:root[data-ui-style="lcd"] .lcd-group-symbol[data-lcd-shape="run"] {
+  color: var(--lcd-run);
 }
 
 :root[data-ui-style="lcd"] .lcd-group-symbol[data-lcd-shape="idle"]::before {
