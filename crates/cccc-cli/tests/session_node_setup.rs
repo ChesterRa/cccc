@@ -96,9 +96,16 @@ async fn explicit_runtime_keeps_successful_setup_after_connection_failure() {
             .run(&["--runtime", runtime, "--ticket-stdin"], &ticket)
             .await;
         assert!(!response.status.success());
+        // The connector reports the completed setup in plain lines on stderr;
+        // its stdout carries no JSON document.
         let output = String::from_utf8_lossy(&response.stdout);
-        assert!(output.contains("\"enabled\": true"), "{output}");
+        assert!(output.is_empty(), "{output}");
         let error = String::from_utf8_lossy(&response.stderr);
+        assert!(
+            error.contains(&format!("Native {runtime} integration enabled")),
+            "{error}"
+        );
+        assert!(error.contains("Configuration saved."), "{error}");
         assert!(error.contains("remains enabled"), "{error}");
         let current = session_nodes::saved_client(&f.node)
             .expect("saved")

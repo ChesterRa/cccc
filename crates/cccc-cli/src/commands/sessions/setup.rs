@@ -37,6 +37,17 @@ impl SetupResult {
         println!("{}", serde_json::to_string_pretty(&self.output)?);
         Ok(())
     }
+
+    /// For the interactive device connector: the warnings and the note as
+    /// plain lines among its other messages, instead of a JSON document.
+    pub(super) fn print_note(self) {
+        for warning in self.warnings {
+            eprintln!("{warning}");
+        }
+        if let Some(note) = self.output.get("note").and_then(Value::as_str) {
+            eprintln!("{note}");
+        }
+    }
 }
 
 fn pi_mcp(home: &HomeLayout, executable: &std::path::Path) -> Value {

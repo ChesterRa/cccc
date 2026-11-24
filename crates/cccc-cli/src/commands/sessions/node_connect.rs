@@ -35,13 +35,13 @@ pub(super) async fn run(
             "The running daemon on this computer does not support {runtime} device sessions. Update CCCC and restart the daemon before enabling this integration"
         );
         // `--runtime` requires `--ticket-stdin`, so a ticket is always in hand here.
-        setup::enable(home, runtime)
+        let enabled = setup::enable(home, runtime)
             .await
-            .context("Native setup failed; device pairing was not attempted and the pairing ticket was not used. Fix the native setup, then paste the same ticket again before it expires")?
-            .print()?;
+            .context("Native setup failed; device pairing was not attempted and the pairing ticket was not used. Fix the native setup, then paste the same ticket again before it expires")?;
         eprintln!(
             "Native {runtime} integration enabled; device connection has not completed yet. Native hooks still require your review; no native session was started."
         );
+        enabled.print_note();
     }
     eprintln!("Connecting to the hub. Keep this terminal running.");
     let result = target.connect(ticket, &name, runtime).await;
